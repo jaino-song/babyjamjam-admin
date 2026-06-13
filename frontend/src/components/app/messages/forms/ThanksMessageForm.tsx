@@ -6,7 +6,7 @@ import { useFormStore } from "@/stores/form-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { renderTemplate } from "@/lib/template-utils";
-import { GeneratedMsg } from "../templates/GeneratedMsg";
+import { AutoFillMsgCard } from "../templates/AutoFillMsgCard";
 import { NameInput } from "./form-components/NameInput";
 
 interface ThanksMessageFormProps {
@@ -55,7 +55,7 @@ export const ThanksMessageForm = ({ onPreviewMessageChange }: ThanksMessageFormP
             placeholder={t(locale, "thanks-msg.name-placeholder")}
           />
 
-        <GeneratedMsg
+        <AutoFillMsgCard
           title={t(locale, "common.generated-message-title")}
           copyButtonText={t(locale, "common.copy-button")}
           message={generatedMessage}

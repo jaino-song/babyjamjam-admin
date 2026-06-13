@@ -16,6 +16,7 @@ import {
   SplitLayout,
   DetailPanel,
   DetailTabs,
+  DetailTabPanels,
   InfoCard,
   InfoRow,
   StatusBadge,
@@ -345,59 +346,69 @@ export default function DashboardPage() {
                 />
               }
             >
-              <div data-component="dashboard-detail-content" className="space-y-4">
-                {activeDetailTab === "basic" && (
-                  <div data-component="dashboard-detail-basic-grid" className="grid grid-cols-2 gap-4">
-                    <InfoCard title={t(locale, "clients.form.customer-info") || "고객 정보"} className="col-start-1 row-start-1 row-end-3">
-                      <InfoRow label={t(locale, "clients.form.name")} value={selectedClientData.name} />
-                      <InfoRow label={t(locale, "clients.form.birthday")} value={selectedClientData.birthday || "-"} />
-                      <InfoRow label={t(locale, "clients.form.due-date")} value={formatDate(selectedClientData.dueDate)} />
-                      <InfoRow label={t(locale, "clients.form.phone")} value={selectedClientData.phone || "-"} />
-                      <InfoRow label={t(locale, "clients.form.address")} value={selectedClientData.address || "-"} />
-                    </InfoCard>
+              <DetailTabPanels
+                activeTab={activeDetailTab}
+                dataComponent="dashboard-detail-content"
+                panelDataComponent="dashboard-detail-content-panel"
+                panels={[
+                  {
+                    key: "basic",
+                    children: (
+                      <div data-component="dashboard-detail-basic-grid" className="grid grid-cols-2 gap-4">
+                        <InfoCard title={t(locale, "clients.form.customer-info") || "고객 정보"} className="col-start-1 row-start-1 row-end-3">
+                          <InfoRow label={t(locale, "clients.form.name")} value={selectedClientData.name} />
+                          <InfoRow label={t(locale, "clients.form.birthday")} value={selectedClientData.birthday || "-"} />
+                          <InfoRow label={t(locale, "clients.form.due-date")} value={formatDate(selectedClientData.dueDate)} />
+                          <InfoRow label={t(locale, "clients.form.phone")} value={selectedClientData.phone || "-"} />
+                          <InfoRow label={t(locale, "clients.form.address")} value={selectedClientData.address || "-"} />
+                        </InfoCard>
 
-                    <InfoCard title={t(locale, "clients.form.assigned-employee") || "담당 관리사"} className="col-start-1 row-start-3 row-end-5">
-                      <InfoRow label={t(locale, "clients.form.primary-employee")} value={selectedClientData.primaryEmployee?.name ?? "-"} />
-                      <InfoRow label={t(locale, "clients.form.secondary-employee")} value={selectedClientData.secondaryEmployee?.name ?? "-"} />
-                    </InfoCard>
+                        <InfoCard title={t(locale, "clients.form.assigned-employee") || "담당 관리사"} className="col-start-1 row-start-3 row-end-5">
+                          <InfoRow label={t(locale, "clients.form.primary-employee")} value={selectedClientData.primaryEmployee?.name ?? "-"} />
+                          <InfoRow label={t(locale, "clients.form.secondary-employee")} value={selectedClientData.secondaryEmployee?.name ?? "-"} />
+                        </InfoCard>
 
-                    <InfoCard title={t(locale, "clients.form.service-info") || "서비스 정보"} className="col-start-2 row-start-1 row-end-5">
-                      <InfoRow label={t(locale, "clients.form.voucher-type")} value={selectedClientData.type || "-"} />
-                      <InfoRow label={t(locale, "clients.form.duration")} value={selectedClientData.duration ? `${selectedClientData.duration}일` : "-"} />
-                      <InfoRow label={t(locale, "clients.form.start-date")} value={formatDate(selectedClientData.startDate)} />
-                      <InfoRow label={t(locale, "clients.form.end-date")} value={formatDate(selectedClientData.endDate)} />
-                      <InfoRow label={t(locale, "clients.form.full-price")} value={formatPrice(selectedClientData.fullPrice)} />
-                      <InfoRow label={t(locale, "clients.form.grant")} value={formatPrice(selectedClientData.grant)} />
-                      <InfoRow label={t(locale, "clients.form.actual-price")} value={formatPrice(selectedClientData.actualPrice)} />
-                    </InfoCard>
-                  </div>
-                )}
-
-                {activeDetailTab === "contracts" && (
-                  selectedClientContractInfo ? (
-                    <div data-component="dashboard-detail-contracts-grid" className="grid grid-cols-2 gap-4">
-                      <InfoCard title="계약서 정보" className="col-span-2">
-                        <InfoRow label="계약서명" value={selectedClientContractInfo.contractName} />
-                        <InfoRow label="계약서 ID" value={selectedClientContractInfo.documentId} />
-                        <InfoRow label="문서 상태" value={selectedClientContractInfo.documentStatus} />
-                        <InfoRow label="발송일" value={selectedClientContractInfo.sentDate} />
-                        <InfoRow label="계약 기간" value={selectedClientContractInfo.contractPeriod} />
-                        <InfoRow label="계약 금액" value={selectedClientContractInfo.contractAmount} />
-                      </InfoCard>
-                    </div>
-                  ) : (
-                    <div data-component="dashboard-detail-contracts-empty" className="text-center py-12 text-v3-text-muted text-[0.85rem]">
-                      계약서 정보가 없습니다
-                    </div>
-                  )
-                )}
-
-                {activeDetailTab === "alimtalk" && (
-                  <div data-component="dashboard-detail-alimtalk-empty" className="text-center py-12 text-v3-text-muted text-[0.85rem]">
-                    알림톡 발송 현황이 없습니다
-                  </div>
-                )}
-              </div>
+                        <InfoCard title={t(locale, "clients.form.service-info") || "서비스 정보"} className="col-start-2 row-start-1 row-end-5">
+                          <InfoRow label={t(locale, "clients.form.voucher-type")} value={selectedClientData.type || "-"} />
+                          <InfoRow label={t(locale, "clients.form.duration")} value={selectedClientData.duration ? `${selectedClientData.duration}일` : "-"} />
+                          <InfoRow label={t(locale, "clients.form.start-date")} value={formatDate(selectedClientData.startDate)} />
+                          <InfoRow label={t(locale, "clients.form.end-date")} value={formatDate(selectedClientData.endDate)} />
+                          <InfoRow label={t(locale, "clients.form.full-price")} value={formatPrice(selectedClientData.fullPrice)} />
+                          <InfoRow label={t(locale, "clients.form.grant")} value={formatPrice(selectedClientData.grant)} />
+                          <InfoRow label={t(locale, "clients.form.actual-price")} value={formatPrice(selectedClientData.actualPrice)} />
+                        </InfoCard>
+                      </div>
+                    ),
+                  },
+                  {
+                    key: "contracts",
+                    children: selectedClientContractInfo ? (
+                      <div data-component="dashboard-detail-contracts-grid" className="grid grid-cols-2 gap-4">
+                        <InfoCard title="계약서 정보" className="col-span-2">
+                          <InfoRow label="계약서명" value={selectedClientContractInfo.contractName} />
+                          <InfoRow label="계약서 ID" value={selectedClientContractInfo.documentId} />
+                          <InfoRow label="문서 상태" value={selectedClientContractInfo.documentStatus} />
+                          <InfoRow label="발송일" value={selectedClientContractInfo.sentDate} />
+                          <InfoRow label="계약 기간" value={selectedClientContractInfo.contractPeriod} />
+                          <InfoRow label="계약 금액" value={selectedClientContractInfo.contractAmount} />
+                        </InfoCard>
+                      </div>
+                    ) : (
+                      <div data-component="dashboard-detail-contracts-empty" className="text-center py-12 text-v3-text-muted text-[0.85rem]">
+                        계약서 정보가 없습니다
+                      </div>
+                    ),
+                  },
+                  {
+                    key: "alimtalk",
+                    children: (
+                      <div data-component="dashboard-detail-alimtalk-empty" className="text-center py-12 text-v3-text-muted text-[0.85rem]">
+                        알림톡 발송 현황이 없습니다
+                      </div>
+                    ),
+                  },
+                ]}
+              />
             </DetailPanel>
           ) : (
             <Block

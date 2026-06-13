@@ -21,10 +21,10 @@ export const DateInput = ({
         {required && <span className="text-destructive ml-1">*</span>}
       </Label>
       <Input
+        variant="v3"
         type="date"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="bg-background"
       />
     </div>
   );

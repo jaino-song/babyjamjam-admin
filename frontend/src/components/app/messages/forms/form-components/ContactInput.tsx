@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { cn } from "@/lib/utils";
+import type { ChangeEvent } from "react";
+
+import { TitleTextInputMolecule } from "./TitleTextInputMolecule";
 
 const PHONE_REGEX = /^[0-9-]*$/;
 
@@ -12,6 +12,11 @@ interface ContactInputProps {
   setPhone: (phone: string) => void;
   label: string;
   placeholder: string;
+  disabled?: boolean;
+  dataComponent?: string;
+  containerClassName?: string;
+  inputClassName?: string;
+  labelClassName?: string;
 }
 
 export const ContactInput = ({
@@ -19,10 +24,15 @@ export const ContactInput = ({
   setPhone,
   label,
   placeholder,
+  disabled = false,
+  dataComponent = "messages-form-contact-input",
+  containerClassName,
+  inputClassName,
+  labelClassName,
 }: ContactInputProps) => {
   const [error, setError] = useState(false);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
 
     if (PHONE_REGEX.test(value)) {
@@ -34,17 +44,18 @@ export const ContactInput = ({
   };
 
   return (
-    <div className="space-y-2" data-component="messages-form-contact-input">
-      <Label>{label}</Label>
-      <Input
-        value={phone}
-        onChange={handleChange}
-        placeholder={placeholder}
-        className={cn(error && "border-destructive")}
-      />
-      {error && (
-        <p className="text-xs text-destructive">숫자만 입력할 수 있습니다</p>
-      )}
-    </div>
+    <TitleTextInputMolecule
+      dataComponent={dataComponent}
+      label={label}
+      value={phone}
+      onChange={handleChange}
+      placeholder={placeholder}
+      disabled={disabled}
+      error={error}
+      helperText={error ? "숫자만 입력할 수 있습니다" : undefined}
+      containerClassName={containerClassName}
+      inputClassName={inputClassName}
+      labelClassName={labelClassName}
+    />
   );
 };

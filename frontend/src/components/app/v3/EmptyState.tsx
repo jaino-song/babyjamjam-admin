@@ -11,11 +11,11 @@ export function EmptyState({ icon: Icon, message, name, className }: EmptyStateP
   return (
     <div
       data-component={name}
-      className={`bg-white rounded-[28px] shadow-v3 flex items-center justify-center h-full min-h-0 ${className ?? ""}`}
+      className={`flex h-full min-h-0 items-center justify-center rounded-[28px] bg-white shadow-v3 ${className ?? ""}`}
     >
       <div className="text-center text-v3-text-muted">
-        {Icon && <Icon className="w-12 h-12 mx-auto mb-3 opacity-30" />}
-        <p className="text-[0.8rem]">{message}</p>
+        {Icon && <Icon className="mx-auto mb-[calc(12px*var(--v3-ui-scale,1))] h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] opacity-30" />}
+        <p className="text-[calc(12.8px*var(--v3-ui-scale,1))]">{message}</p>
       </div>
     </div>
   );

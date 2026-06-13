@@ -27,13 +27,13 @@ export const NumberInput = ({
         {required && <span className="text-destructive ml-1">*</span>}
       </Label>
       <Input
+        variant="v3"
         type="number"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         min={min}
         max={max}
-        className="bg-background"
       />
     </div>
   );

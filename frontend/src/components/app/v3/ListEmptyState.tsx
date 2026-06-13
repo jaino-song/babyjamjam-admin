@@ -18,11 +18,11 @@ export function ListEmptyState({
   return (
     <div
       data-component={name}
-      className={cn("flex min-h-[320px] flex-1 items-center justify-center", className)}
+      className={cn("flex min-h-[calc(320px*var(--v3-ui-scale,1))] flex-1 items-center justify-center", className)}
     >
       <div data-component={name ? `${name}-copy` : "list-empty-state-copy"} className="text-center text-v3-text-muted">
-        <Icon className="mx-auto mb-3 h-12 w-12 opacity-30" />
-        <p className="text-[0.8rem]">{message}</p>
+        <Icon className="mx-auto mb-[calc(12px*var(--v3-ui-scale,1))] h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] opacity-30" />
+        <p className="text-[calc(12.8px*var(--v3-ui-scale,1))]">{message}</p>
       </div>
     </div>
   );

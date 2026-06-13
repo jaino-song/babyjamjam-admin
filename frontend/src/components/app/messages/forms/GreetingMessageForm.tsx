@@ -5,7 +5,7 @@ import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { renderTemplate } from "@/lib/template-utils";
-import { GeneratedMsg } from "../templates/GeneratedMsg";
+import { AutoFillMsgCard } from "../templates/AutoFillMsgCard";
 
 
 interface GreetingMessageFormProps {
@@ -41,7 +41,7 @@ export const GreetingMessageForm = ({ onPreviewMessageChange }: GreetingMessageF
       <div className="flex flex-col">
         {/* generated message */}
         {displayMessage && (
-          <GeneratedMsg
+          <AutoFillMsgCard
             title={t(locale, "common.generated-message-title")}
             copyButtonText={t(locale, "common.copy-button")}
             message={displayMessage}

@@ -9,6 +9,8 @@ export type { StatsBarItem } from './StatsBar';
 export { PageHeader } from './PageHeader';
 export { SearchBox } from './SearchBox';
 export { ExpandableSearch } from './ExpandableSearch';
+export { CompactDateSelect } from './CompactDateSelect';
+export type { CompactDateSelectOption } from './CompactDateSelect';
 export { PanelTitleGroup } from './PanelTitleGroup';
 export { FilterChips } from './FilterChips';
 export { SearchFilterBar } from './SearchFilterBar';
@@ -20,7 +22,8 @@ export type { StatusType } from './StatusBadge';
 export { ListPanel } from './ListPanel';
 export { DetailPanel } from './DetailPanel';
 export { DetailEmptyState } from './DetailEmptyState';
-export { SplitLayout, useSplitLayoutNav } from './SplitLayout';
+export { SplitLayout, useSplitLayoutNav, useSplitLayoutSelection } from './SplitLayout';
+export type { SplitLayoutMode } from './SplitLayout';
 export { AnimatedSlotList } from './AnimatedSlotList';
 export { HeaderActionButton } from './HeaderActionButton';
 export type { HeaderActionButtonProps } from './HeaderActionButton';
@@ -28,6 +31,15 @@ export { RecentActivitiesPanel } from './RecentActivitiesPanel';
 export type { ActionRequiredItem, RecentActivitiesPanelProps } from './RecentActivitiesPanel';
 export { SteppedWizard } from './SteppedWizard';
 export type { WizardStep, SteppedWizardProps } from './SteppedWizard';
+export { SteppedWizardStepper } from './SteppedWizardStepper';
+export type { SteppedWizardStepperProps, SteppedWizardStepperStep } from './SteppedWizardStepper';
+export {
+  SteppedWizardPanelContent,
+  SteppedWizardPanelFooter,
+  STEPPED_WIZARD_PANEL_CONTENT_CLASS_NAME,
+  STEPPED_WIZARD_PANEL_STEP_CONTENT_CLASS_NAME,
+  STEPPED_WIZARD_PANEL_FOOTER_CLASS_NAME,
+} from './SteppedWizardPanelLayout';
 export { SectionNav } from './SectionNav';
 export type { SectionNavItem } from './SectionNav';
 export { Stepper } from './Stepper';
@@ -41,3 +53,5 @@ export { DetailActions } from './DetailActions';
 export type { DetailAction } from './DetailActions';
 export { DetailTabs } from './DetailTabs';
 export type { DetailTab } from './DetailTabs';
+export { DetailTabPanels } from './DetailTabPanels';
+export type { DetailTabPanelItem, DetailTabPanelsProps } from './DetailTabPanels';

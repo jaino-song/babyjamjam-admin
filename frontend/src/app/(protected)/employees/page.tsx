@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
     Users,
     UserCheck,
@@ -21,7 +20,10 @@ import {
     useDeleteEmployee,
 } from "@/hooks/useEmployees";
 import { useInfiniteEmployees } from "@/hooks/useInfiniteEmployees";
-import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
+import {
+    EmployeeFormDialog,
+    EmployeeFormPanel,
+} from "@/components/app/employees/EmployeeFormDialog";
 import {
     StatsBar,
     SplitLayout,
@@ -93,9 +95,9 @@ function formatPhoneNumber(phone: string | null | undefined): string {
 }
 
 export default function EmployeesPage() {
-    const router = useRouter();
     const [search, setSearch] = useState("");
     const [filter, setFilter] = useState("all");
+    const [isCreatingEmployee, setIsCreatingEmployee] = useState(false);
     const [formDialogOpen, setFormDialogOpen] = useState(false);
     const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
     const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
@@ -120,14 +122,19 @@ export default function EmployeesPage() {
     }, [allEmployees]);
 
     const handleAddNew = () => {
-        router.push("/employees/new");
+        setEditingEmployee(null);
+        setFormDialogOpen(false);
+        setSelectedEmployee(null);
+        setIsCreatingEmployee(true);
     };
 
     const handleSelectEmployee = (employee: Employee) => {
+        setIsCreatingEmployee(false);
         setSelectedEmployee(employee);
     };
 
     const handleEdit = (employee: Employee) => {
+        setIsCreatingEmployee(false);
         setEditingEmployee(employee);
         setFormDialogOpen(true);
     };
@@ -155,6 +162,15 @@ export default function EmployeesPage() {
         setEditingEmployee(null);
     };
 
+    const handleFormPanelClose = () => {
+        setIsCreatingEmployee(false);
+    };
+
+    const handleFormPanelSuccess = (employee: Employee) => {
+        setIsCreatingEmployee(false);
+        setSelectedEmployee(employee);
+    };
+
     return (
         <PageSection name="employees">
             <StatsBar
@@ -168,7 +184,17 @@ export default function EmployeesPage() {
                 ]}
             />
 
-            <SplitLayout hasSelection={!!selectedEmployee} onBack={() => setSelectedEmployee(null)}>
+            <SplitLayout
+                hasSelection={isCreatingEmployee || !!selectedEmployee}
+                onBack={() => {
+                    if (isCreatingEmployee) {
+                        handleFormPanelClose();
+                        return;
+                    }
+
+                    setSelectedEmployee(null);
+                }}
+            >
                 <ListPanel
                     title="직원 목록"
                     tabs={filterItems}
@@ -184,6 +210,7 @@ export default function EmployeesPage() {
                             label="직원 추가"
                             onClick={handleAddNew}
                             data-component="employees-header-add"
+                            className="text-[calc(12px*var(--v3-ui-scale,1))]"
                         />
                     }
                 >
@@ -260,7 +287,30 @@ export default function EmployeesPage() {
                     )}
                 </ListPanel>
 
-                {selectedEmployee ? (
+                {isCreatingEmployee ? (
+                    <EmployeeFormPanel
+                        onClose={handleFormPanelClose}
+                        onSuccess={handleFormPanelSuccess}
+                        renderLayout={({ content, footer }) => (
+                            <DetailPanel
+                                compactBackLabel="직원 목록으로 돌아가기"
+                                title="직원 추가"
+                                subtitle="이름, 연락처, 등급과 근무 가능 지역을 입력합니다."
+                                avatar={
+                                    <div
+                                        data-component="employees-create-avatar"
+                                        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
+                                    >
+                                        <UserCheck className="h-5 w-5" />
+                                    </div>
+                                }
+                                footer={footer}
+                            >
+                                {content}
+                            </DetailPanel>
+                        )}
+                    />
+                ) : selectedEmployee ? (
                     <EmployeeDetail
                         employee={selectedEmployee}
                         onEdit={handleEdit}

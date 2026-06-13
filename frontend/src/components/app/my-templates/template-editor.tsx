@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ContentPaper } from "../root/content-paper";
 import { useCreateMessageTemplate, useUpdateMessageTemplate } from "@/hooks/use-message-templates";
@@ -144,13 +143,7 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
                 </Alert>
             )}
 
-            <div className="p-6 border rounded-lg">
-                <h3 className="text-lg font-semibold mb-2">
-                    {t(locale, "template-editor.preview")}
-                </h3>
-                <Separator className="mb-4" />
-                <TemplatePreview content={content} variables={variables} />
-            </div>
+            <TemplatePreview content={content} variables={variables} />
 
             <div className="flex justify-end gap-3 pb-6">
                 <Button variant="outline" onClick={() => router.back()}>

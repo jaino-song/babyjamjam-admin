@@ -149,7 +149,7 @@ export default function FilesPage() {
         ]}
       />
 
-      <SplitLayout>
+      <SplitLayout hasSelection={!!selectedDocument} onBack={() => setSelectedDocId(null)}>
         <ListPanel
           title="파일 목록"
           tabs={filterItems}

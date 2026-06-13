@@ -341,7 +341,7 @@ export function SidebarNotifications() {
         aria-label="알림 열기"
         aria-expanded={open}
         className={cn(
-          "relative z-50 h-8 w-8 rounded-full border-0 bg-white text-v3-primary shadow-none [&_svg]:!size-5",
+          "relative z-50 h-[calc(32px*var(--v3-ui-scale,1))] w-[calc(32px*var(--v3-ui-scale,1))] rounded-full border-0 bg-white text-v3-primary shadow-none [&_svg]:!size-[calc(20px*var(--v3-ui-scale,1))]",
           "hover:bg-v3-primary-light hover:text-v3-primary"
         )}
         onClick={() => setOpen((current) => !current)}
@@ -350,7 +350,7 @@ export function SidebarNotifications() {
         {unreadCount > 0 ? (
           <span
             data-component="sidebar-notifications-badge"
-            className="absolute -right-1 -top-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-v3-primary p-0 text-[0.55rem] font-bold leading-none text-white"
+            className="absolute -right-[calc(4px*var(--v3-ui-scale,1))] -top-[calc(4px*var(--v3-ui-scale,1))] inline-flex h-[calc(16px*var(--v3-ui-scale,1))] w-[calc(16px*var(--v3-ui-scale,1))] items-center justify-center rounded-full bg-v3-primary p-0 text-[calc(8.8px*var(--v3-ui-scale,1))] font-bold leading-none text-white"
           >
             {unreadCount > 9 ? "9+" : unreadCount}
           </span>

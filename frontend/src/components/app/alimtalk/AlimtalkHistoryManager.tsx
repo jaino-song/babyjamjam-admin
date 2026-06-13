@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import {
   AlertCircle,
   CalendarClock,
@@ -21,6 +21,7 @@ import {
   ListEmptyState,
   ListPanel,
   SplitLayout,
+  useSplitLayoutSelection,
 } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAlimtalkHistory } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
@@ -31,11 +32,9 @@ import type {
   TriggerRecipientType,
   TriggerTemplateKey,
 } from "@/features/alimtalk-triggers/types";
-import { useIsMobile } from "@/hooks/useIsMobile";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { cn } from "@/lib/utils";
 
-type HistorySelection = number | null;
 type HistoryListFilter = "all" | AlimtalkHistoryStatus;
 
 const EVENT_META: Record<TriggerEventType, { label: string; icon: typeof Send }> = {
@@ -289,8 +288,6 @@ export function AlimtalkHistoryManager() {
   const [statusFilter, setStatusFilter] = useState<HistoryListFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const deferredSearchQuery = useDeferredValue(searchQuery);
-  const [selectedRecordId, setSelectedRecordId] = useState<HistorySelection>(null);
-  const isMobile = useIsMobile();
 
   const { data: historyRecords = [], isLoading } = useAlimtalkHistory();
 
@@ -300,6 +297,12 @@ export function AlimtalkHistoryManager() {
       return matchesStatus && matchesHistorySearch(record, deferredSearchQuery);
     });
   }, [deferredSearchQuery, historyRecords, statusFilter]);
+  const historyRecordIds = useMemo(() => filteredRecords.map((record) => record.id), [filteredRecords]);
+  const {
+    selectedId: selectedRecordId,
+    setSelectedId: setSelectedRecordId,
+    setSplitLayoutMode,
+  } = useSplitLayoutSelection(historyRecordIds);
 
   const activeFilterMeta = HISTORY_FILTER_META[statusFilter];
   const emptyStateMessage = getHistoryEmptyMessage(
@@ -315,30 +318,16 @@ export function AlimtalkHistoryManager() {
   const selectedEventMeta = selectedRecord ? getEventMeta(selectedRecord.eventType) : null;
   const SelectedEventIcon = selectedEventMeta?.icon;
 
-  useEffect(() => {
-    if (filteredRecords.length === 0) {
-      if (selectedRecordId !== null) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setSelectedRecordId(null);
-      }
-      return;
-    }
-
-    if (isMobile) {
-      return;
-    }
-
-    if (selectedRecordId === null || !filteredRecords.some((record) => record.id === selectedRecordId)) {
-      setSelectedRecordId(filteredRecords[0].id);
-    }
-  }, [filteredRecords, isMobile, selectedRecordId]);
-
   return (
     <section
       data-component="alimtalk-history-manager"
       className="h-full min-h-0"
     >
-      <SplitLayout hasSelection={!!selectedRecord} onBack={() => setSelectedRecordId(null)}>
+      <SplitLayout
+        hasSelection={!!selectedRecord}
+        onBack={() => setSelectedRecordId(null)}
+        onModeChange={setSplitLayoutMode}
+      >
         <ListPanel
           title="발송 기록"
           subtitle="발송된 알림톡 기록을 볼 수 있어요."
@@ -386,7 +375,7 @@ export function AlimtalkHistoryManager() {
               className="space-y-2"
               slotClassName={({ item, isLoading: slotLoading }) => {
                 return cn(
-                  "flex items-start gap-3 rounded-[18px] border-2 border-transparent bg-white p-4 text-left transition-all duration-200",
+                  "flex items-center gap-2.5 rounded-[16px] border-2 border-transparent bg-white p-3 text-left transition-all duration-200",
                   !slotLoading && "cursor-pointer",
                   !slotLoading && item?.id === selectedRecord?.id
                     ? "border-v3-primary bg-v3-primary-light"
@@ -397,22 +386,21 @@ export function AlimtalkHistoryManager() {
               render={({ item: record, isLoading: slotLoading }) => {
                 if (slotLoading) {
                   return (
-                    <div data-component="alimtalk-history-list-item-body" className="flex items-start gap-3">
+                    <>
                       <div
-                        data-component="alimtalk-history-list-item-icon"
-                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-v3-dim-white"
+                        data-component="alimtalk-history-list-skeleton-icon"
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] bg-v3-dim-white"
                       >
                         <Skeleton className="h-4 w-4 rounded-md bg-white/80" />
                       </div>
                       <div
-                        data-component="alimtalk-history-list-item-copy"
-                        className="min-w-0 flex-1 space-y-2"
+                        data-component="alimtalk-history-list-skeleton-copy"
+                        className="min-w-0 flex-1 space-y-1.5"
                       >
                         <Skeleton className="h-4 w-36 bg-v3-dim-white" />
-                        <Skeleton className="h-3 w-32 bg-v3-dim-white" />
-                        <Skeleton className="h-3 w-24 bg-v3-dim-white" />
+                        <Skeleton className="h-3 w-44 bg-v3-dim-white" />
                       </div>
-                    </div>
+                    </>
                   );
                 }
 
@@ -423,10 +411,10 @@ export function AlimtalkHistoryManager() {
                 const statusMeta = getStatusMeta(record.status);
 
                 return (
-                  <div data-component="alimtalk-history-list-item-body" className="flex items-start gap-3">
+                  <>
                     <div
                       data-component="alimtalk-history-list-item-icon"
-                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-v3-dim-white text-v3-primary"
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] bg-v3-dim-white text-v3-primary"
                     >
                       <EventIcon className="h-4 w-4" />
                     </div>
@@ -435,27 +423,24 @@ export function AlimtalkHistoryManager() {
                       data-component="alimtalk-history-list-item-copy"
                       className="min-w-0 flex-1"
                     >
-                      <p className="truncate text-sm font-semibold text-v3-dark">
+                      <p className="truncate text-[0.82rem] font-semibold text-v3-dark">
                         {getRecordTitle(record)}
                       </p>
-                      <p className="mt-1 truncate text-[0.78rem] text-v3-text-muted">
-                        {(record.recipientName ?? "-")} · {record.receiver}
-                      </p>
-                      <p className="mt-1 text-[0.72rem] text-v3-text-muted">
-                        {formatCompactDateTime(getRecordTimestamp(record))}
+                      <p className="mt-0.5 truncate text-[0.72rem] text-v3-text-muted">
+                        {(record.recipientName ?? "-")} · {record.receiver} · {formatCompactDateTime(getRecordTimestamp(record))}
                       </p>
                     </div>
 
                     <span
                       data-component="alimtalk-history-list-item-status"
                       className={cn(
-                        "inline-flex items-center rounded-full px-2.5 py-1 text-[0.68rem] font-semibold",
+                        "inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[0.64rem] font-semibold",
                         statusMeta.tone
                       )}
                     >
                       {statusMeta.label}
                     </span>
-                  </div>
+                  </>
                 );
               }}
             />

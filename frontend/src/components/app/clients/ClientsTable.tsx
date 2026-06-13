@@ -2,16 +2,16 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { Plus, Search, Users } from "lucide-react";
+import { Plus, Users } from "lucide-react";
 import { useClients, useDeleteClient, useClient } from "@/hooks/useClients";
 import { Client, SERVICE_STATUS_OPTIONS, type ServiceStatus } from "@/lib/client/types";
 import { ClientFormDialog } from "./ClientFormDialog";
 import { ClientDetailModal } from "./ClientDetailModal";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
+import { ExpandableSearch } from "@/components/app/v3/ExpandableSearch";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { ContentPaper } from "../root/content-paper";
 import { DataTablePagination } from "../ui/datatable/DataTablePagination";
@@ -126,8 +126,8 @@ export function ClientsTable() {
         }
     };
 
-    const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setSearchQuery(e.target.value);
+    const handleSearchChange = (value: string) => {
+        setSearchQuery(value);
         setPage(0);
     };
 
@@ -165,16 +165,13 @@ export function ClientsTable() {
             </div>
 
             <div data-component="clients-table-filters" className="flex flex-col lg:flex-row gap-4 items-start lg:items-center">
-                <div className="relative w-full lg:max-w-md shadow-sm rounded-full transition-transform focus-within:scale-[1.01]">
-                    <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-muted-foreground w-4 h-4" />
-                    <Input 
-                        variant="v3-pill" 
-                        placeholder={t(locale, "clients.search-placeholder")} 
-                        className="pl-12 pr-6 h-12 bg-white border-none shadow-[0_4px_24px_hsla(214,50%,20%,0.06)]" 
-                        value={searchQuery} 
-                        onChange={handleSearchChange} 
-                    />
-                </div>
+                <ExpandableSearch
+                    value={searchQuery}
+                    onChange={handleSearchChange}
+                    placeholder={t(locale, "clients.search-placeholder")}
+                    expandedWidth="flex-1"
+                    className="h-12 w-full rounded-full bg-white px-4 shadow-sm transition-transform focus-within:scale-[1.01] lg:max-w-md"
+                />
                 <div className="flex gap-2 overflow-x-auto pb-2 lg:pb-0 w-full no-scrollbar">
                     {STATUS_FILTER_OPTIONS.map((opt) => (
                         <Button

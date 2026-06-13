@@ -1,5 +1,15 @@
 export const FILE_STORAGE_PORT = Symbol('FileStoragePort');
 
+export class FileStorageObjectNotFoundError extends Error {
+  constructor(
+    public readonly path: string,
+    public readonly operation: 'download' | 'signed-url',
+  ) {
+    super(`File storage object not found during ${operation}: ${path}`);
+    this.name = 'FileStorageObjectNotFoundError';
+  }
+}
+
 export interface FileStoragePort {
   /**
    * upload a file to storage

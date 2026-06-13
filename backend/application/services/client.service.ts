@@ -8,7 +8,7 @@ import {
     UpdateClientUsecase,
 } from "application/usecases/client";
 import { ClientEntity } from "domain/entities/client.entity";
-import { CLIENT_REPOSITORY, IClientRepository, PaginatedResult } from "domain/repositories/client.repository.interface";
+import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { computeServiceStatus, isServiceStatus, SERVICE_STATUS, SERVICE_STATUS_VALUES, ServiceStatusType } from "domain/value-objects/service-status.vo";
 import { AlimtalkService } from "./alimtalk.service";
@@ -51,7 +51,7 @@ export interface ClientWithEmployees {
     actualPrice: string | null;
     startDate: Date | null;
     endDate: Date | null;
-    careCenter: boolean;
+    careCenter: boolean | null;
     voucherClient: boolean;
     birthday: string | null;
     dueDate: Date | null;
@@ -129,18 +129,16 @@ export class ClientService {
         const areaScope = branchid
             ? [{ branchId: branchid }, { branchId: null }]
             : [{ branchId: null }];
-        const bankAccountInfo = await this.prismaService.bank_account_info.findFirst({
+        const area = await this.prismaService.area.findFirst({
             where: {
-                areaId,
-                area: {
-                    OR: areaScope,
-                },
+                id: areaId,
+                OR: areaScope,
             },
-            select: { areaId: true },
+            select: { id: true },
         });
 
-        if (!bankAccountInfo) {
-            throw new BadRequestException("areaId must reference an available bank account");
+        if (!area) {
+            throw new BadRequestException("areaId must reference an available area");
         }
     }
 
@@ -157,7 +155,7 @@ export class ClientService {
         actualPrice?: string | null;
         startDate?: string | null;
         endDate?: string | null;
-        careCenter: boolean;
+        careCenter: boolean | null;
         voucherClient: boolean;
         birthday?: string | null;
         dueDate?: string | null;
@@ -453,7 +451,7 @@ export class ClientService {
         actualPrice?: string | null;
         startDate?: string | null;
         endDate?: string | null;
-        careCenter?: boolean;
+        careCenter?: boolean | null;
         voucherClient?: boolean;
         birthday?: string | null;
         dueDate?: string | null;

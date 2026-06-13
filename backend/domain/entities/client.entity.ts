@@ -11,7 +11,7 @@ interface UpdateClientProps {
     actualPrice?: string | null;
     startDate?: Date | null;
     endDate?: Date | null;
-    careCenter?: boolean;
+    careCenter?: boolean | null;
     voucherClient?: boolean;
     birthday?: string | null;
     dueDate?: Date | null;
@@ -32,7 +32,7 @@ interface CreateClientProps {
     actualPrice: string | null;
     startDate: Date | null;
     endDate: Date | null;
-    careCenter: boolean;
+    careCenter: boolean | null;
     voucherClient: boolean;
     birthday: string | null;
     dueDate: Date | null;
@@ -56,7 +56,7 @@ export class ClientEntity {
         public actualPrice: string | null,
         public startDate: Date | null,
         public endDate: Date | null,
-        public careCenter: boolean,
+        public careCenter: boolean | null,
         public voucherClient: boolean,
         public birthday: string | null,
         public serviceStatus: string | null,
@@ -71,7 +71,7 @@ export class ClientEntity {
     ) {}
 
     isGoingToCareCenter(): boolean {
-        return this.careCenter;
+        return this.careCenter === true;
     }
 
     isVoucherClient(): boolean {
@@ -159,7 +159,7 @@ export class ClientEntity {
         actualPrice: string | null,
         startDate: Date | null,
         endDate: Date | null,
-        careCenter: boolean,
+        careCenter: boolean | null,
         voucherClient: boolean,
         birthday: string | null,
         dueDate: Date | null,

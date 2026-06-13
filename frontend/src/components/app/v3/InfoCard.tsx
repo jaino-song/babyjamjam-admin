@@ -18,8 +18,8 @@ export function InfoCard({
   "data-component": dataComponent = "info-card",
 }: InfoCardProps) {
   return (
-    <div data-component={dataComponent} className={cn("bg-v3-dim-white rounded-[18px] p-4", className)}>
-      <h3 data-component="info-card-title" className="text-[0.65rem] uppercase tracking-[0.1em] text-v3-text-muted font-semibold mb-3">
+    <div data-component={dataComponent} className={cn("rounded-[18px] bg-v3-dim-white p-[calc(16px*var(--v3-ui-scale,1))]", className)}>
+      <h3 data-component="info-card-title" className="mb-[calc(12px*var(--v3-ui-scale,1))] text-[calc(12px*var(--v3-ui-scale,1))] font-semibold uppercase tracking-[0.1em] text-v3-text-muted">
         {title}
       </h3>
       {children}

@@ -5,7 +5,7 @@ import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { renderTemplate } from "@/lib/template-utils";
-import { GeneratedMsg } from "../templates/GeneratedMsg";
+import { AutoFillMsgCard } from "../templates/AutoFillMsgCard";
 
 
 interface InfoMessageFormProps {
@@ -41,11 +41,11 @@ export const InfoMessageForm = ({ onPreviewMessageChange }: InfoMessageFormProps
       <div className="flex flex-col">
         {/* generated message */}
         {displayMessage && (
-          <GeneratedMsg
+          <AutoFillMsgCard
             title={t(locale, "common.generated-message-title")}
             copyButtonText={t(locale, "common.copy-button")}
             message={displayMessage}
-            bodyDescription={systemTemplate?.description || "기본 안내 문구를 검토하고 바로 수정할 수 있습니다."}
+            bodyDescription="메시지 내용을 수정할 수 있어요."
             onMessageChange={(message) => {
               setIsDirty(true);
               setGeneratedMessage(message);

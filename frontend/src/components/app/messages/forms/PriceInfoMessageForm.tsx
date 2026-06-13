@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import voucherOptions from "../templates/json/voucher.json";
-import { GeneratedMsg } from "../templates/GeneratedMsg";
+import { AutoFillMsgCard } from "../templates/AutoFillMsgCard";
 import bankAccountJSON from "../templates/json/bank-account.json";
 import { priceInfoMsgTemplate } from "../templates/messageTemplate/priceInfoMsg";
 import { t } from "@/lib/i18n/translations";
@@ -354,7 +354,7 @@ export const PriceInfoMessageForm = ({ onPreviewMessageChange }: PriceInfoMessag
             </div>
           )}
 
-        <GeneratedMsg
+        <AutoFillMsgCard
           title={t(locale, "common.generated-message-title")}
           copyButtonText={t(locale, "common.copy-button")}
           message={generatedMessage}

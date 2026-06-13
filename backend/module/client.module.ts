@@ -11,6 +11,7 @@ import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interfa
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { DatabaseModule } from "infrastructure/database/database.module";
 import { ClientService } from "application/services/client.service";
+import { ClientDueDateSchedulerService } from "application/services/client-due-date-scheduler.service";
 import { ClientGreetingSmsAutomationService } from "application/services/client-greeting-sms-automation.service";
 import { ClientController } from "interface/controllers/client.controller";
 import { AlimtalkModule } from "./alimtalk.module";
@@ -29,6 +30,7 @@ import { SystemTemplateModule } from "./system-template.module";
         ListClientsPaginatedUsecase,
         UpdateClientUsecase,
         ClientService,
+        ClientDueDateSchedulerService,
         ClientGreetingSmsAutomationService,
         {
             provide: CLIENT_REPOSITORY,

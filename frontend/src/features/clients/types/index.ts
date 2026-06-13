@@ -25,11 +25,12 @@ export interface Client {
     actualPrice: string | null;
     startDate: string | null;
     endDate: string | null;
-    careCenter: boolean;
+    careCenter: boolean | null;
     voucherClient: boolean;
     breastPump: boolean;
     serviceStatus: ServiceStatus | null;      // Renamed from contractStatus
     eDocId: string | null;
+    areaId?: string | null;
     hasSigned: boolean;
     documentStatus: DocumentStatus;    // eformsign document status: created/opened/completed
 }
@@ -50,10 +51,11 @@ export interface CreateClientDto {
     actualPrice?: string | null;
     startDate?: string | null;
     endDate?: string | null;
-    careCenter: boolean;
+    careCenter: boolean | null;
     voucherClient: boolean;
     breastPump: boolean;
     serviceStatus?: ServiceStatus | null;
+    areaId?: string | null;
 }
 
 // Update client DTO - Frontend sends employeeId, backend converts to scheduleId
@@ -72,7 +74,8 @@ export interface UpdateClientDto {
     actualPrice?: string | null;
     startDate?: string | null;
     endDate?: string | null;
-    careCenter?: boolean;
+    careCenter?: boolean | null;
+    areaId?: string | null;
     voucherClient?: boolean;
     breastPump?: boolean;
     serviceStatus?: ServiceStatus | null;

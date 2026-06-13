@@ -10,6 +10,7 @@ import {
     UploadedFile,
     BadRequestException,
     Inject,
+    NotFoundException,
     Res,
     Query,
     UseGuards,
@@ -23,7 +24,11 @@ import {
     DocumentEntity,
     max_file_size,
 } from "domain/entities/document.entity";
-import { FILE_STORAGE_PORT, FileStoragePort } from "domain/ports/file-storage.port";
+import {
+    FILE_STORAGE_PORT,
+    FileStorageObjectNotFoundError,
+    FileStoragePort,
+} from "domain/ports/file-storage.port";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 
@@ -59,6 +64,18 @@ function parseDocumentTags(tags: string[] | string | undefined): string[] {
     }
 
     return parsed;
+}
+
+function isMissingStorageObjectError(error: unknown): boolean {
+    if (error instanceof FileStorageObjectNotFoundError) {
+        return true;
+    }
+
+    if (!(error instanceof Error)) {
+        return false;
+    }
+
+    return error.message.toLowerCase().includes("object not found");
 }
 
 @Controller("documents")
@@ -156,7 +173,7 @@ export class DocumentController {
         const entities = categoryId 
             ? await this.documentService.findByCategoryId(tenant.branchId ?? "", categoryId) 
             : await this.documentService.findAll(tenant.branchId ?? "");
-        return Promise.all(entities.map((entity) => this.toResponse(entity)));
+        return entities.map((entity) => this.toListResponse(entity));
     }
 
     @Get(":id")
@@ -175,7 +192,7 @@ export class DocumentController {
         @Param("branchid") branchid: string
     ) {
         const entities = await this.documentService.findByOrgId(tenant.branchId ?? "", branchid);
-        return Promise.all(entities.map((entity) => this.toResponse(entity)));
+        return entities.map((entity) => this.toListResponse(entity));
     }
 
     @Get("category/:categoryId")
@@ -187,7 +204,7 @@ export class DocumentController {
             tenant.branchId ?? "",
             categoryId
         );
-        return Promise.all(entities.map((entity) => this.toResponse(entity)));
+        return entities.map((entity) => this.toListResponse(entity));
     }
 
     @Put(":id")
@@ -229,7 +246,16 @@ export class DocumentController {
          @Query("attachment") attachment?: string,
      ) {
          const doc = await this.documentService.findById(tenant.branchId ?? "", id);
-         const fileBuffer = await this.fileStorage.download(doc.storagepath);
+         let fileBuffer: Buffer;
+         try {
+             fileBuffer = await this.fileStorage.download(doc.storagepath);
+         } catch (error) {
+             if (isMissingStorageObjectError(error)) {
+                 throw new NotFoundException("Document file not found");
+             }
+
+             throw error;
+         }
          
          // Helper to get extension from mimetype
          const getExtension = (mimetype: string): string => {
@@ -278,9 +304,27 @@ export class DocumentController {
      }
 
     private async toResponse(entity: DocumentEntity, storageUrl?: string) {
-        const resolvedStorageUrl = storageUrl
-            ?? await this.fileStorage.createSignedUrl(entity.storagepath);
+        let resolvedStorageUrl = storageUrl;
+        if (resolvedStorageUrl === undefined) {
+            try {
+                resolvedStorageUrl = await this.fileStorage.createSignedUrl(entity.storagepath);
+            } catch (error) {
+                if (isMissingStorageObjectError(error)) {
+                    throw new NotFoundException("Document file not found");
+                }
 
+                throw error;
+            }
+        }
+
+        return this.serializeDocument(entity, resolvedStorageUrl);
+    }
+
+    private toListResponse(entity: DocumentEntity) {
+        return this.serializeDocument(entity, null);
+    }
+
+    private serializeDocument(entity: DocumentEntity, storageUrl: string | null) {
         return {
             id: entity.id,
             name: entity.name,
@@ -290,7 +334,7 @@ export class DocumentController {
             mimeType: entity.mimetype,
             fileSize: entity.filesize,
             storagePath: entity.storagepath,
-            storageUrl: resolvedStorageUrl,
+            storageUrl,
             orgId: entity.branchid,
             uploadedBy: entity.uploadedby,
             createdAt: entity.createdat,

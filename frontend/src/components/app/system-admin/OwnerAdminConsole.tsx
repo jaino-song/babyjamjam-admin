@@ -30,6 +30,7 @@ import {
   SectionNav,
   SplitLayout,
   StatsBar,
+  type SplitLayoutMode,
   type StatsBarItem,
 } from "@/components/app/v3";
 import { NotificationTestSection } from "@/components/app/settings/NotificationTestSection";
@@ -1259,7 +1260,7 @@ function createInitialViewState(
     acc[section.id] = {
       tab: "all",
       search: "",
-      selectedRecordId: section.records[0]?.id ?? null,
+      selectedRecordId: null,
     };
 
     return acc;
@@ -1270,23 +1271,25 @@ function resolveSelectedRecordId(
   section: AdminSection,
   nextTab: string,
   nextSearch: string,
-  preferredSelectedRecordId: string | null
+  preferredSelectedRecordId: string | null,
+  shouldAutoSelectFirst: boolean
 ) {
-  if (preferredSelectedRecordId === null) {
-    return null;
-  }
-
   const visibleRecords = filterSectionRecords(section, nextTab, nextSearch);
+
+  if (preferredSelectedRecordId === null) {
+    return shouldAutoSelectFirst ? (visibleRecords[0]?.id ?? null) : null;
+  }
 
   if (visibleRecords.some((record) => record.id === preferredSelectedRecordId)) {
     return preferredSelectedRecordId;
   }
 
-  return visibleRecords[0]?.id ?? null;
+  return shouldAutoSelectFirst ? (visibleRecords[0]?.id ?? null) : null;
 }
 
 export function OwnerAdminConsole() {
   const [activeSectionId, setActiveSectionId] = useState<AdminSectionId>("signups");
+  const [splitLayoutMode, setSplitLayoutMode] = useState<SplitLayoutMode | null>(null);
   const queryClient = useQueryClient();
   const {
     data: systemAdminUsers = [],
@@ -1346,14 +1349,18 @@ export function OwnerAdminConsole() {
   const filteredRecords = useMemo(() => {
     return filterSectionRecords(activeSection, activeViewState.tab, deferredSearchQuery);
   }, [activeSection, activeViewState.tab, deferredSearchQuery]);
+  const shouldAutoSelectFirstRecord = splitLayoutMode === "desktop";
   const resolvedSelectedRecordId =
     activeViewState.selectedRecordId === null
-      ? null
+      ? shouldAutoSelectFirstRecord
+        ? (filteredRecords[0]?.id ?? null)
+        : null
       : resolveSelectedRecordId(
           activeSection,
           activeViewState.tab,
           deferredSearchQuery,
-          activeViewState.selectedRecordId
+          activeViewState.selectedRecordId,
+          shouldAutoSelectFirstRecord
         );
 
   const selectedRecord = useMemo(
@@ -1392,6 +1399,7 @@ export function OwnerAdminConsole() {
         <div className="min-h-0 flex-1">
           <SplitLayout
             hasSelection={!!selectedRecord}
+            onModeChange={setSplitLayoutMode}
             onBack={() =>
               updateActiveSectionState((current) => ({
                 ...current,
@@ -1414,7 +1422,8 @@ export function OwnerAdminConsole() {
                           activeSection,
                           nextTab,
                           current.search,
-                          current.selectedRecordId
+                          current.selectedRecordId,
+                          shouldAutoSelectFirstRecord
                         ),
                       }))
                   : undefined
@@ -1428,7 +1437,8 @@ export function OwnerAdminConsole() {
                     activeSection,
                     current.tab,
                     nextSearch,
-                    current.selectedRecordId
+                    current.selectedRecordId,
+                    shouldAutoSelectFirstRecord
                   ),
                 }))
               }

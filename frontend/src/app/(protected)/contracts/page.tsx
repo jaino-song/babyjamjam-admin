@@ -27,7 +27,6 @@ import {
 import { useEformsignAuth } from "@/hooks/useEformsignAuth";
 import { useEformsignDocsLiveStream } from "@/hooks/useEformsignDocsLiveStream";
 import { useIsMobile } from "@/hooks/useIsMobile";
-import { useBreakpoint } from "@/hooks/useBreakpoint";
 import { useInfiniteContracts } from "@/hooks/useInfiniteContracts";
 import { useEformsignWebhookUpdates } from "@/hooks/useEformsignWebhookUpdates";
 import type { EformsignDocument, EformsignDocumentOption } from "@/lib/eformsign/types";
@@ -43,12 +42,14 @@ import {
   ListPanel,
   DetailPanel,
   DetailTabs,
+  DetailTabPanels,
   StatusBadge,
   InfoCard,
   InfoRow,
   ActivityTimeline,
   AnimatedSlotList,
   HeaderActionButton,
+  SteppedWizardStepper,
   Stepper,
   EmptyState,
   PageSection,
@@ -95,7 +96,10 @@ import { inferVoucherDurationFromAmounts } from "@/lib/voucher/duration";
 import { clientsApi } from "@/features/clients/api/clients.api";
 import type { Client, PaginatedResponse } from "@/lib/client/types";
 import { ContractsListItem } from "@/components/app/contracts/ContractsListItem";
-import { ContractCreationForm } from "@/components/app/messages/forms/ContractCreationForm";
+import {
+  ContractCreationForm,
+  CONTRACT_CREATION_STEPPER_STEPS,
+} from "@/components/app/contracts/ContractCreationForm";
 import { StaffCompletionIframeModal } from "@/components/app/contracts/StaffCompletionIframeModal";
 import {
   HeadlessProgressStepper,
@@ -411,9 +415,9 @@ function canReRequestDocument(doc: EformsignDocument): boolean {
 
 const NAV_SECTIONS = [
   { id: "maternity", label: "산모 계약서", icon: FileSignature },
-  { id: "caregiver", label: "제공인력 계약서", icon: Briefcase },
-  { id: "documents", label: "전자문서 목록", icon: FileText },
-  { id: "notifications", label: "알림 설정", icon: Bell },
+  { id: "caregiver", label: "제공인력 계약서", icon: Briefcase, disabled: true },
+  { id: "documents", label: "전자문서 목록", icon: FileText, disabled: true },
+  { id: "notifications", label: "알림 설정", icon: Bell, disabled: true },
 ] as const;
 
 type SectionId = (typeof NAV_SECTIONS)[number]["id"];
@@ -424,6 +428,7 @@ export default function ContractsPage() {
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [hasContractCreationSession, setHasContractCreationSession] = useState(false);
+  const [contractCreationActiveStep, setContractCreationActiveStep] = useState(0);
   const [deleteTargetDocumentId, setDeleteTargetDocumentId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -564,16 +569,21 @@ export default function ContractsPage() {
 
   const handleStartContractCreation = useCallback(() => {
     setSelectedDocId(null);
+    setContractCreationActiveStep(0);
     setIsCreating(true);
   }, []);
 
   const handleCloseContractCreation = useCallback(() => {
     setIsCreating(false);
     setHasContractCreationSession(false);
+    setContractCreationActiveStep(0);
   }, []);
 
   const handleContractCreationSessionChange = useCallback((hasSession: boolean) => {
     setHasContractCreationSession(hasSession);
+    if (!hasSession) {
+      setContractCreationActiveStep(0);
+    }
   }, []);
 
   const handleDeleteRequest = (documentId: string) => {
@@ -618,8 +628,8 @@ export default function ContractsPage() {
 
   if (authError || error) {
     return (
-      <div data-component="contracts-error-container" className="p-6">
-        <div data-component="contracts-error-banner" className="bg-v3-burgundy-light text-v3-burgundy rounded-[18px] p-6 text-center">
+      <div data-component="contracts-error-container" className="p-[calc(24px*var(--v3-ui-scale,1))]">
+        <div data-component="contracts-error-banner" className="rounded-[18px] bg-v3-burgundy-light p-[calc(24px*var(--v3-ui-scale,1))] text-center text-v3-burgundy">
           {authError
             ? "인증에 실패했습니다. 페이지를 새로고침 해주세요."
             : "문서를 불러오는데 실패했습니다."}
@@ -641,7 +651,10 @@ export default function ContractsPage() {
         ]}
       />
 
-      <div data-component="contracts-sections" className="flex flex-col lg:flex-row gap-4 flex-1 min-h-0">
+      <div
+        data-component="contracts-sections"
+        className="flex flex-1 min-h-0 flex-col gap-[calc(16px*var(--v3-ui-scale,1))] lg:flex-row"
+      >
         <SectionNav
           items={NAV_SECTIONS}
           activeId={activeSection}
@@ -695,7 +708,7 @@ export default function ContractsPage() {
                   const isRefreshing = Boolean(item && pendingDocumentIds.has(item.id));
                   const isActive = !isLoading && item && selectedDocument?.id === item.id;
                   return cn(
-                    "flex items-center gap-3 p-4 rounded-[18px] transition-all duration-200 bg-white border-2 border-transparent",
+                    "flex items-center gap-[calc(12px*var(--v3-ui-scale,1))] rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--v3-ui-scale,1))] transition-all duration-200",
                     !isLoading && !isRefreshing && "cursor-pointer",
                     isActive
                       ? "bg-v3-primary-light border-2 border-v3-primary"
@@ -726,23 +739,35 @@ export default function ContractsPage() {
               data-component="contracts-create-retained-session"
               className={isCreating ? "contents" : "hidden"}
             >
-              <DetailPanel
-                title="전자계약서 작성"
-                subtitle="고객에게 전자계약서를 발송합니다"
-                avatar={
-                  <div
-                    data-component="contracts-create-avatar"
-                    className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
-                  >
-                    <Send className="h-5 w-5" />
-                  </div>
-                }
-              >
                 <ContractCreationForm
                   onClose={handleCloseContractCreation}
                   onSessionStateChange={handleContractCreationSessionChange}
+                  activeStep={contractCreationActiveStep}
+                  onActiveStepChange={setContractCreationActiveStep}
+                  renderLayout={({ content, footer }) => (
+                    <DetailPanel
+                      title="전자계약서 작성"
+                      subtitle="고객에게 전자계약서를 발송합니다"
+                      avatar={
+                        <div
+                          data-component="contracts-create-avatar"
+                          className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
+                        >
+                          <Send className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
+                        </div>
+                      }
+                      stepper={
+                        <SteppedWizardStepper
+                          steps={CONTRACT_CREATION_STEPPER_STEPS}
+                          currentStep={contractCreationActiveStep}
+                        />
+                      }
+                      footer={footer}
+                    >
+                      {content}
+                    </DetailPanel>
+                  )}
                 />
-              </DetailPanel>
             </div>
           )}
           {!isCreating && isInitialLoading ? (
@@ -777,8 +802,8 @@ export default function ContractsPage() {
                   title="제공인력 계약 목록"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
-                      <Briefcase className="h-5 w-5" />
+                    <div className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <Briefcase className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
                     </div>
                   }
                 >
@@ -788,8 +813,8 @@ export default function ContractsPage() {
                   title="제공인력 계약서"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
-                      <Briefcase className="h-5 w-5" />
+                    <div className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <Briefcase className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
                     </div>
                   }
                 >
@@ -806,8 +831,8 @@ export default function ContractsPage() {
                   title="전자문서 목록"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
-                      <FileText className="h-5 w-5" />
+                    <div className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <FileText className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
                     </div>
                   }
                 >
@@ -817,8 +842,8 @@ export default function ContractsPage() {
                   title="전자문서"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
-                      <FileText className="h-5 w-5" />
+                    <div className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <FileText className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
                     </div>
                   }
                 >
@@ -835,8 +860,8 @@ export default function ContractsPage() {
                   title="알림 설정"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
-                      <Bell className="h-5 w-5" />
+                    <div className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <Bell className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
                     </div>
                   }
                 >
@@ -846,8 +871,8 @@ export default function ContractsPage() {
                   title="알림 설정"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
-                      <Bell className="h-5 w-5" />
+                    <div className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <Bell className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
                     </div>
                   }
                 >
@@ -906,7 +931,6 @@ function ContractDetail({
   onDeleteRequest?: (documentId: string) => void;
 }) {
   const isMobile = useIsMobile();
-  const isNarrowHeader = useBreakpoint(1612);
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const customerName = getCustomerName(doc) ?? "–";
@@ -1495,7 +1519,7 @@ function ContractDetail({
         {
           label: "문서 ID",
           value: (
-            <span className="max-w-[14rem] break-all font-mono text-[0.75rem]">
+            <span className="max-w-[calc(224px*var(--v3-ui-scale,1))] break-all font-mono text-[calc(12px*var(--v3-ui-scale,1))]">
               {detailedDocument.id}
             </span>
           ),
@@ -1552,33 +1576,30 @@ function ContractDetail({
     />,
   ];
 
-  const activeTabCards =
-    activeDetailTab === "document"
-      ? documentTabCards
-      : activeDetailTab === "provider"
-        ? providerTabCards
-        : serviceTabCards;
-
   const stepperActions = (
-    <div data-component="contracts-stepper-actions" className="flex items-start gap-2">
+    <div data-component="contracts-stepper-actions" className="flex items-start gap-[calc(8px*var(--v3-ui-scale,1))]">
       {isRefreshing && (
         <div
           data-component="contracts-detail-sync-indicator"
-          className="flex items-center gap-1 rounded-full bg-v3-dim-white px-3 py-1 text-[0.7rem] font-medium text-v3-text-muted"
+          className="flex items-center gap-[calc(4px*var(--v3-ui-scale,1))] rounded-full bg-v3-dim-white px-[calc(12px*var(--v3-ui-scale,1))] py-[calc(4px*var(--v3-ui-scale,1))] text-[calc(11.2px*var(--v3-ui-scale,1))] font-medium text-v3-text-muted"
         >
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <Loader2 className="h-[calc(14px*var(--v3-ui-scale,1))] w-[calc(14px*var(--v3-ui-scale,1))] animate-spin" />
           동기화 중
         </div>
       )}
       <button
         type="button"
         data-component="contracts-detail-activity-trigger"
-        className="overflow-visible rounded-[18px] p-1 transition-colors duration-200 ease-out hover:bg-black/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary/20"
+        className="overflow-visible rounded-[18px] p-[calc(4px*var(--v3-ui-scale,1))] transition-colors duration-200 ease-out hover:bg-black/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary/20"
         onClick={() => setIsActivityOpen(true)}
         aria-label="계약서 단계 보기"
         title="계약서 단계 보기"
       >
-        <Stepper steps={steps} size={isMobile ? "sm" : undefined} />
+        <Stepper
+          steps={steps}
+          size={isMobile ? "sm" : "fluid"}
+          collapseOnHeaderOverflow
+        />
       </button>
       {(canReRequest || onDeleteRequest) && (
         <DropdownMenu>
@@ -1587,10 +1608,10 @@ function ContractDetail({
               variant="ghost"
               size="icon"
               data-component="contracts-detail-more-trigger"
-              className="mt-2 h-8 w-8 rounded-full border-0 p-0 text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-primary"
+              className="mt-[calc(8px*var(--v3-ui-scale,1))] h-[calc(32px*var(--v3-ui-scale,1))] w-[calc(32px*var(--v3-ui-scale,1))] rounded-full border-0 p-0 text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-primary"
               aria-label="계약 작업 더보기"
             >
-              <MoreVertical className="h-5 w-5" />
+              <MoreVertical className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent
@@ -1628,57 +1649,56 @@ function ContractDetail({
       title={detailedDocument.document_name}
       badges={<StatusBadge status={statusType} label={statusLabel} />}
       subtitle={
-        <span className="flex flex-wrap items-center gap-4 text-[0.75rem]">
-          <span className="flex items-center gap-1">
-            <Calendar className="w-3.5 h-3.5" />
+        <span className="flex flex-nowrap items-center gap-[calc(16px*var(--v3-ui-scale,1))] whitespace-nowrap text-[calc(12px*var(--v3-ui-scale,1))]">
+          <span className="flex shrink-0 items-center gap-[calc(4px*var(--v3-ui-scale,1))]">
+            <Calendar className="h-[calc(14px*var(--v3-ui-scale,1))] w-[calc(14px*var(--v3-ui-scale,1))] shrink-0" />
             발송일: {sentDateLabel}
           </span>
           {contractCompletedDate && (
-            <span className="flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5" />
+            <span className="flex shrink-0 items-center gap-[calc(4px*var(--v3-ui-scale,1))]">
+              <CheckCircle2 className="h-[calc(14px*var(--v3-ui-scale,1))] w-[calc(14px*var(--v3-ui-scale,1))] shrink-0" />
               서명 완료일: {contractCompletedDateLabel}
             </span>
           )}
           {expiredDate != null && expiredDate > 0 && (
-            <span className="flex items-center gap-1">
-              <Clock className="w-3.5 h-3.5" />
+            <span className="flex shrink-0 items-center gap-[calc(4px*var(--v3-ui-scale,1))]">
+              <Clock className="h-[calc(14px*var(--v3-ui-scale,1))] w-[calc(14px*var(--v3-ui-scale,1))] shrink-0" />
               만료일: {formatDate(expiredDate)}
             </span>
           )}
         </span>
       }
-      trailing={isNarrowHeader ? undefined : stepperActions}
+      trailing={isMobile ? undefined : stepperActions}
       headerAction={
         <>
-          {isNarrowHeader && stepperActions}
+          {isMobile && stepperActions}
           {isReviewNeeded ? (
-          <Button
-            variant="positive"
-            size="sm"
-            data-component="contracts-detail-finalize-trigger"
-            className="w-1/4"
-            onClick={() => {
-              setFinalizeEndDate((current) => current || formatIsoDateInput(contractEndDateIso));
-              setIsFinalizeOpen(true);
-            }}
-          >
-            <CheckCircle2 className="h-4 w-4" />
-            확인하기
-          </Button>
-        ) : (
-          <Button
-            variant="positive"
-            size="sm"
-            data-component="contracts-detail-preview-trigger"
-            className="w-1/4"
-            onClick={() => setIsPreviewOpen(true)}
-          >
-            <Eye className="h-4 w-4" />
-            문서 보기
-          </Button>
-        )}
-      </>
-    }
+            <Button
+              variant="positive"
+              size="sm"
+              data-component="contracts-detail-finalize-trigger"
+            className="w-[calc(176px*var(--v3-ui-scale,1))]"
+              onClick={() => {
+                setFinalizeEndDate((current) => current || formatIsoDateInput(contractEndDateIso));
+                setIsFinalizeOpen(true);
+              }}
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              확인하기
+            </Button>
+          ) : (
+            <button
+              type="button"
+              data-component="contracts-detail-preview-trigger"
+              className="flex w-[calc(220px*var(--v3-ui-scale,1))] items-center gap-[calc(12px*var(--v3-ui-scale,1))] rounded-xl bg-[hsl(var(--v3-primary))] px-[calc(16px*var(--v3-ui-scale,1))] py-[calc(10px*var(--v3-ui-scale,1))] text-left text-[calc(14px*var(--v3-ui-scale,1))] font-medium text-white transition-all duration-200"
+              onClick={() => setIsPreviewOpen(true)}
+            >
+              <Eye className="h-[calc(16px*var(--v3-ui-scale,1))] w-[calc(16px*var(--v3-ui-scale,1))] shrink-0" />
+              문서 보기
+            </button>
+          )}
+        </>
+      }
       tabs={
         <DetailTabs
           tabs={[...DETAIL_TABS]}
@@ -1687,11 +1707,28 @@ function ContractDetail({
         />
       }
     >
-      <div data-component="contracts-detail-content" className="space-y-5">
-        <div data-component="contracts-detail-tab-panel" className="grid gap-5 lg:grid-cols-2">
-          {activeTabCards}
-        </div>
-      </div>
+      <DetailTabPanels
+        activeTab={activeDetailTab}
+        dataComponent="contracts-detail-content"
+        panelDataComponent="contracts-detail-tab-panel"
+        panels={[
+          {
+            key: "document",
+            className: "grid gap-5 lg:grid-cols-2",
+            children: documentTabCards,
+          },
+          {
+            key: "provider",
+            className: "grid gap-5 lg:grid-cols-2",
+            children: providerTabCards,
+          },
+          {
+            key: "service",
+            className: "grid gap-5 lg:grid-cols-2",
+            children: serviceTabCards,
+          },
+        ]}
+      />
 
       <Dialog open={isReRequestDialogOpen} onOpenChange={handleReRequestDialogChange}>
         <DialogContent className="sm:max-w-[400px]">
@@ -1701,10 +1738,10 @@ function ContractDetail({
               {customerName} 님에게 전자문서 작성을 재요청 할까요?
             </DialogDescription>
           </DialogHeader>
-          <div data-component="contracts-rerequest-phone-field" className="pb-2">
+          <div data-component="contracts-rerequest-phone-field" className="pb-[calc(8px*var(--v3-ui-scale,1))]">
             <Label
               htmlFor={`contract-rerequest-phone-${doc.id}`}
-              className="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-v3-text-muted"
+              className="mb-[calc(8px*var(--v3-ui-scale,1))] block text-[calc(11.52px*var(--v3-ui-scale,1))] font-semibold uppercase tracking-[0.08em] text-v3-text-muted"
             >
               전송 전화번호
             </Label>
@@ -1720,14 +1757,14 @@ function ContractDetail({
               }
               maxLength={13}
               className={cn(
-                "h-12 rounded-[16px] border-[1.5px] border-v3-border bg-white px-4 text-[0.85rem] text-v3-dark shadow-none transition-all focus-visible:border-v3-primary focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]",
+                "h-[calc(48px*var(--v3-ui-scale,1))] rounded-[16px] border-[1.5px] border-v3-border bg-white px-[calc(16px*var(--v3-ui-scale,1))] text-[calc(13.6px*var(--v3-ui-scale,1))] text-v3-dark shadow-none transition-all focus-visible:border-v3-primary focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]",
                 hasEditedRecipientPhone &&
                   !isRecipientPhoneValid &&
                   "border-v3-burgundy focus-visible:border-v3-burgundy focus-visible:shadow-[0_0_0_3px_hsla(348,83%,47%,0.08)]"
               )}
             />
             {hasEditedRecipientPhone && !isRecipientPhoneValid && (
-              <p className="mt-2 text-[0.75rem] font-medium text-v3-burgundy">
+              <p className="mt-[calc(8px*var(--v3-ui-scale,1))] text-[calc(12px*var(--v3-ui-scale,1))] font-medium text-v3-burgundy">
                 전송할 전화번호를 올바르게 입력해 주세요.
               </p>
             )}
@@ -1761,7 +1798,7 @@ function ContractDetail({
           {isFinalizePending || finalizeProgress.step !== null ? (
             <div
               data-component="contracts-finalize-progress-section"
-              className="flex justify-center py-2"
+              className="flex justify-center py-[calc(8px*var(--v3-ui-scale,1))]"
             >
               <HeadlessProgressStepper
                 steps={FINALIZE_PROGRESS_STEPS}
@@ -1769,15 +1806,15 @@ function ContractDetail({
                 ariaLabel="전자계약서 최종 확인 진행 상태"
                 dataComponentPrefix="contracts-finalize-progress"
                 testIdPrefix="contracts-finalize-progress"
-                className="w-full max-w-[20rem]"
+                className="w-full max-w-[calc(320px*var(--v3-ui-scale,1))]"
               />
             </div>
           ) : (
             <>
-              <div data-component="contracts-finalize-end-date-field" className="pb-2">
+              <div data-component="contracts-finalize-end-date-field" className="pb-[calc(8px*var(--v3-ui-scale,1))]">
                 <Label
                   htmlFor={`contract-finalize-end-date-${doc.id}`}
-                  className="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-v3-text-muted"
+                  className="mb-[calc(8px*var(--v3-ui-scale,1))] block text-[calc(11.52px*var(--v3-ui-scale,1))] font-semibold uppercase tracking-[0.08em] text-v3-text-muted"
                 >
                   서비스 완료일
                 </Label>

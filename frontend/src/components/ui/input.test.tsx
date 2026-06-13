@@ -13,9 +13,12 @@ describe("Input Component", () => {
   it("renders v3 variant correctly", () => {
     const { container } = render(<Input variant="v3" />);
     const input = container.querySelector("input");
-    expect(input).toHaveClass("h-10");
-    expect(input).toHaveClass("rounded-2xl");
+    expect(input).toHaveClass("h-[38px]");
+    expect(input).toHaveClass("rounded-[13px]");
+    expect(input).toHaveClass("border-[1.35px]");
+    expect(input).toHaveClass("text-[0.8rem]");
     expect(input).toHaveClass("focus-visible:border-v3-primary");
+    expect(input).toHaveClass("focus-visible:ring-[3px]");
   });
 
   it("renders v3-pill variant correctly", () => {

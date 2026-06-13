@@ -10,21 +10,34 @@ import {
   useAlimtalkHistory,
   useUpcomingAlimtalkJobs,
 } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
+import { useAllClients } from "@/features/clients/hooks/use-clients";
 import { useToast } from "@/hooks/use-toast";
 import type {
-  AlimtalkHistoryRecord as ApiAlimtalkHistoryRecord,
   TriggerEventType,
   TriggerRecipientType,
-  TriggerTemplateKey,
   UpcomingAlimtalkJob,
 } from "@/features/alimtalk-triggers/types";
 import { messageDeliveryApi } from "@/services/api";
 import { CustomTemplateForm } from "@/components/app/messages/forms/custom-template-form";
-import { useIsMobile } from "@/hooks/useIsMobile";
+import {
+  getMessageHistoryEmptyStateCopy,
+  getMessageHistoryTemplateLabel as getHistoryTemplateLabel,
+  matchesMessageHistoryQuery as matchesHistoryQuery,
+  MessageHistoryDetailPanel,
+  MESSAGE_HISTORY_FILTER_META,
+  MESSAGE_HISTORY_STATUS_META,
+  MESSAGE_HISTORY_TABS,
+  normalizeMessageHistoryRecord as normalizeHistoryRecord,
+  formatMessageHistoryDate as formatHistoryDate,
+  type MessageHistoryFilter,
+  type MessageHistoryRecord,
+} from "@/components/app/messages/MessageHistoryDetailPanel";
 import {
   AnimatedSlotList,
+  CompactDateSelect,
   DetailEmptyState,
   DetailPanel,
+  DetailTabPanels,
   DetailTabs,
   HeaderActionButton,
   ListEmptyState,
@@ -32,9 +45,9 @@ import {
   PageSection,
   SectionNav,
   SplitLayout,
+  useSplitLayoutSelection,
 } from "@/components/app/v3";
 import { AlimtalkPhonePreview } from "@/components/app/alimtalk/AlimtalkPhonePreview";
-import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -44,14 +57,12 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
+import { normalizeKoreanPhoneLookupKey } from "@/lib/phone";
 import { cn } from "@/lib/utils";
 import {
-  AlertCircle,
   Bell,
   Briefcase,
   CalendarClock,
-  CalendarRange,
-  CheckCircle2,
   ClipboardList,
   Clock3,
   CreditCard,
@@ -64,7 +75,6 @@ import {
   Plus,
   RotateCcw,
   Settings2,
-  UserPlus,
   Users,
   Workflow,
 } from "lucide-react";
@@ -127,32 +137,16 @@ const MESSAGE_SECTIONS = [
   { id: "scheduled", label: "발송 예정", icon: Clock3 },
   { id: "history", label: "발송 기록", icon: History },
   { id: "templates", label: "템플릿", icon: FileText },
-  { id: "triggers", label: "발송 트리거 설정", icon: Workflow },
+  { id: "triggers", label: "자동화", icon: Workflow },
   { id: "settings", label: "설정", icon: Settings2 },
 ] as const;
 
 type MessageSectionId = (typeof MESSAGE_SECTIONS)[number]["id"];
 type PlaceholderSectionId = Exclude<MessageSectionId, "templates" | "triggers" | "history">;
 
-type MessageHistoryStatus = "sent" | "failed" | "pending";
-type MessageHistoryFilter = "all" | MessageHistoryStatus;
 type MessageHistoryRelativeDateFilter = "all" | "1d" | "7d" | "30d";
 type ScheduledPreviewFilter = "all" | "customer" | "staff";
 type TemplateDetailTab = "details" | "preview";
-
-interface MessageHistoryRecord {
-  id: number;
-  title: string;
-  templateLabel: string;
-  recipientName: string;
-  recipientPhone: string;
-  channelLabel: string;
-  sentAt: string;
-  status: MessageHistoryStatus;
-  messagePreview: string;
-  failureReason?: string;
-  icon: typeof MessageCircle;
-}
 
 const PLACEHOLDER_COPY: Record<
   PlaceholderSectionId,
@@ -262,85 +256,6 @@ const PLACEHOLDER_COPY: Record<
   },
 };
 
-const MESSAGE_HISTORY_STATUS_META: Record<
-  MessageHistoryStatus,
-  { label: string; icon: typeof CheckCircle2; tone: string }
-> = {
-  sent: {
-    label: "발송 성공",
-    icon: CheckCircle2,
-    tone: "bg-emerald-50 text-emerald-600",
-  },
-  failed: {
-    label: "발송 실패",
-    icon: AlertCircle,
-    tone: "bg-red-50 text-red-600",
-  },
-  pending: {
-    label: "재시도 대기",
-    icon: Clock3,
-    tone: "bg-amber-50 text-amber-600",
-  },
-};
-
-const MESSAGE_HISTORY_FILTER_META: Record<
-  MessageHistoryFilter,
-  {
-    label: string;
-    icon: typeof History;
-    badgeTone: string;
-    activeClassName: string;
-    indicatorClassName: string;
-  }
-> = {
-  all: {
-    label: "전체",
-    icon: History,
-    badgeTone: "bg-v3-primary-light text-v3-primary",
-    activeClassName: "text-v3-primary",
-    indicatorClassName: "bg-v3-primary",
-  },
-  sent: {
-    label: "성공",
-    icon: CheckCircle2,
-    badgeTone: "bg-emerald-50 text-emerald-600",
-    activeClassName: "text-emerald-600",
-    indicatorClassName: "bg-emerald-500",
-  },
-  pending: {
-    label: "대기",
-    icon: Clock3,
-    badgeTone: "bg-amber-50 text-amber-600",
-    activeClassName: "text-amber-600",
-    indicatorClassName: "bg-amber-500",
-  },
-  failed: {
-    label: "실패",
-    icon: AlertCircle,
-    badgeTone: "bg-red-50 text-red-600",
-    activeClassName: "text-red-600",
-    indicatorClassName: "bg-red-500",
-  },
-};
-
-const MESSAGE_HISTORY_TABS: {
-  value: MessageHistoryFilter;
-  label: string;
-  activeClassName: string;
-  indicatorClassName: string;
-}[] = (
-  ["all", "sent", "pending", "failed"] as const
-).map((value) => {
-  const meta = MESSAGE_HISTORY_FILTER_META[value];
-
-  return {
-    value,
-    label: meta.label,
-    activeClassName: meta.activeClassName,
-    indicatorClassName: meta.indicatorClassName,
-  };
-});
-
 const MESSAGE_HISTORY_RELATIVE_DATE_OPTIONS: {
   value: MessageHistoryRelativeDateFilter;
   label: string;
@@ -350,6 +265,11 @@ const MESSAGE_HISTORY_RELATIVE_DATE_OPTIONS: {
   { value: "7d", label: "1주일 전" },
   { value: "30d", label: "한달 전" },
 ];
+
+const MESSAGE_HISTORY_MONTH_OPTIONS = Array.from({ length: 12 }, (_, index) => {
+  const value = String(index + 1).padStart(2, "0");
+  return { value, label: `${index + 1}월` };
+});
 
 const SCHEDULED_PREVIEW_TABS: {
   value: ScheduledPreviewFilter;
@@ -417,21 +337,6 @@ const BUILTIN_TEMPLATE_PREVIEW_META: Record<
 };
 
 
-const HISTORY_EVENT_ICON_BY_TYPE: Record<TriggerEventType, typeof MessageCircle> = {
-  CLIENT_CREATED: UserPlus,
-  SERVICE_START: CalendarClock,
-  SERVICE_END: CalendarRange,
-  EMPLOYEE_ASSIGNED: Users,
-};
-
-const HISTORY_TEMPLATE_LABELS: Record<TriggerTemplateKey, string> = {
-  CLIENT_WELCOME: "고객 등록 안내",
-  SERVICE_START_REMINDER: "서비스 시작 리마인드",
-  SERVICE_INFO: "서비스 안내",
-  SERVICE_END_REMINDER: "서비스 종료 안내",
-  EMPLOYEE_ASSIGNED: "직원 배정 완료",
-};
-
 const SCHEDULED_EVENT_LABELS: Record<TriggerEventType, string> = {
   CLIENT_CREATED: "고객 등록",
   SERVICE_START: "서비스 시작",
@@ -449,41 +354,6 @@ const SCHEDULED_VARIABLE_LABELS: Record<string, string> = {
   serviceType: "서비스 유형",
   timingText: "발송 문구",
 };
-
-function getMessageHistoryEmptyStateCopy(filter: MessageHistoryFilter, hasSearchQuery: boolean) {
-  const copyByFilter: Record<MessageHistoryFilter, { title: string; description: string }> = {
-    all: {
-      title: "발송 기록이 없습니다.",
-      description: hasSearchQuery
-        ? "검색어를 바꾸거나 필터를 초기화해 주세요."
-        : "아직 확인할 발송 기록이 없습니다.",
-    },
-    sent: {
-      title: "성공 발송 기록이 없습니다.",
-      description: hasSearchQuery
-        ? "검색어를 바꾸거나 다른 탭을 선택해 주세요."
-        : "정상 발송된 메시지가 아직 없습니다.",
-    },
-    pending: {
-      title: "재시도 대기 기록이 없습니다.",
-      description: hasSearchQuery
-        ? "검색어를 바꾸거나 다른 탭을 선택해 주세요."
-        : "실패 후 재시도 대기 중인 메시지가 없습니다.",
-    },
-    failed: {
-      title: "실패 발송 기록이 없습니다.",
-      description: hasSearchQuery
-        ? "검색어를 바꾸거나 다른 탭을 선택해 주세요."
-        : "발송 실패로 남아 있는 메시지가 없습니다.",
-    },
-  };
-
-  return copyByFilter[filter];
-}
-
-function getHistoryTemplateLabel(templateKey: string) {
-  return HISTORY_TEMPLATE_LABELS[templateKey as TriggerTemplateKey] ?? templateKey;
-}
 
 function getScheduledRecipientBadge(recipientType: TriggerRecipientType) {
   return recipientType === "CLIENT" ? "고객" : "직원";
@@ -541,28 +411,6 @@ function matchesScheduledJobQuery(job: UpcomingAlimtalkJob, query: string) {
     getScheduledEventLabel(job.eventType),
     formatScheduledPreviewDate(job.scheduledFor),
   ].some((field) => field && matchesKoreanSearch(field, trimmedQuery));
-}
-
-function normalizeHistoryRecord(record: ApiAlimtalkHistoryRecord): MessageHistoryRecord {
-  const sentAt = record.lastAttemptAt ?? record.updatedAt ?? record.createdAt;
-  const status: MessageHistoryStatus =
-    record.status === "sent" || record.status === "pending" || record.status === "failed"
-      ? record.status
-      : "failed";
-
-  return {
-    id: record.id,
-    title: record.ruleName ?? getHistoryTemplateLabel(record.templateKey),
-    templateLabel: getHistoryTemplateLabel(record.templateKey),
-    recipientName: record.recipientName ?? record.clientName ?? record.employeeName ?? "-",
-    recipientPhone: record.receiver,
-    channelLabel: record.provider,
-    sentAt,
-    status,
-    messagePreview: record.messageBody,
-    failureReason: record.errorMessage ?? undefined,
-    icon: record.eventType ? HISTORY_EVENT_ICON_BY_TYPE[record.eventType] : MessageCircle,
-  };
 }
 
 const FormComponents: Record<
@@ -1341,44 +1189,20 @@ function MessageSectionPlaceholder({ sectionId }: { sectionId: PlaceholderSectio
   );
 }
 
-function formatHistoryDate(dateString: string) {
-  return new Date(dateString).toLocaleString("ko-KR", {
-    month: "numeric",
-    day: "numeric",
-    weekday: "short",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
+function matchesHistoryDateParts(sentAt: string, yearFilter: string, monthFilter: string) {
+  if (!yearFilter && !monthFilter) return true;
 
-function matchesHistoryQuery(record: MessageHistoryRecord, query: string) {
-  const trimmedQuery = query.trim().toLowerCase();
-  if (!trimmedQuery) return true;
-
-  const digitQuery = trimmedQuery.replace(/\D/g, "");
-  const recipientDigits = record.recipientPhone.replace(/\D/g, "");
-  if (digitQuery && recipientDigits.includes(digitQuery)) {
-    return true;
-  }
-
-  return [
-    record.title,
-    record.templateLabel,
-    record.recipientName,
-    record.recipientPhone,
-    record.channelLabel,
-    record.messagePreview,
-    record.failureReason ?? "",
-  ].some((field) => field.toLowerCase().includes(trimmedQuery));
-}
-
-function matchesHistoryDate(sentAt: string, dateFilter: string) {
   const targetDate = new Date(sentAt);
   if (Number.isNaN(targetDate.getTime())) return true;
-  const y = targetDate.getFullYear();
-  const m = String(targetDate.getMonth() + 1).padStart(2, "0");
-  const d = String(targetDate.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}` === dateFilter;
+
+  const matchesYear = !yearFilter || String(targetDate.getFullYear()) === yearFilter;
+  const matchesMonth = !monthFilter || String(targetDate.getMonth() + 1).padStart(2, "0") === monthFilter;
+
+  return matchesYear && matchesMonth;
+}
+
+function normalizeDatePart(value: string, emptyValue: string) {
+  return value === emptyValue ? "" : value;
 }
 
 function matchesHistoryRelativeDate(sentAt: string, relativeDateFilter: MessageHistoryRelativeDateFilter) {
@@ -1399,30 +1223,83 @@ function MessageHistorySection() {
   const [searchValue, setSearchValue] = useState("");
   const [statusFilter, setStatusFilter] = useState<MessageHistoryFilter>("all");
   const [relativeDateFilter, setRelativeDateFilter] = useState<MessageHistoryRelativeDateFilter>("all");
-  const [dateFilter, setDateFilter] = useState<string>("");
+  const [dateYear, setDateYear] = useState("");
+  const [dateMonth, setDateMonth] = useState("");
   const [isRetrying, setIsRetrying] = useState(false);
   const deferredSearchValue = useDeferredValue(searchValue);
   const { data: historyData = [], isLoading, isError } = useAlimtalkHistory();
+  const { data: clients = [] } = useAllClients();
   const { toast } = useToast();
+  const clientNameByPhone = useMemo(() => {
+    const map = new Map<string, string>();
+
+    clients.forEach((client) => {
+      const phoneDigits = normalizeKoreanPhoneLookupKey(client.phone ?? "");
+      const clientName = client.name.trim();
+      if (!phoneDigits || !clientName || map.has(phoneDigits)) return;
+
+      map.set(phoneDigits, clientName);
+    });
+
+    return map;
+  }, [clients]);
   const historyRecords = useMemo(
-    () => historyData.map((record) => normalizeHistoryRecord(record)),
-    [historyData]
+    () =>
+      historyData.map((record) => {
+        const normalizedRecord = normalizeHistoryRecord(record);
+        const matchedClientName = clientNameByPhone.get(normalizeKoreanPhoneLookupKey(normalizedRecord.recipientPhone));
+
+        if (!matchedClientName) return normalizedRecord;
+
+        return {
+          ...normalizedRecord,
+          recipientName: matchedClientName,
+          recipientListLabel: matchedClientName,
+        };
+      }),
+    [clientNameByPhone, historyData]
   );
-  const [selectedRecordId, setSelectedRecordId] = useState<number | null>(
-    historyRecords[0]?.id ?? null
-  );
-  const isMobile = useIsMobile();
+  const hasDatePartFilter = Boolean(dateYear || dateMonth);
+  const historyYearOptions = useMemo(() => {
+    const years = new Set<number>();
+    const currentYear = new Date().getFullYear();
+
+    historyRecords.forEach((record) => {
+      const sentDate = new Date(record.sentAt);
+      if (!Number.isNaN(sentDate.getTime())) {
+        years.add(sentDate.getFullYear());
+      }
+    });
+
+    for (let year = currentYear; year >= currentYear - 5; year -= 1) {
+      years.add(year);
+    }
+
+    return Array.from(years).sort((a, b) => b - a);
+  }, [historyRecords]);
+  const handleDateYearChange = useCallback((value: string) => {
+    setDateYear(normalizeDatePart(value, "year"));
+  }, []);
+  const handleDateMonthChange = useCallback((value: string) => {
+    setDateMonth(normalizeDatePart(value, "month"));
+  }, []);
 
   const filteredRecords = useMemo(
     () =>
       historyRecords.filter((record) => {
         const matchesStatus = statusFilter === "all" || record.status === statusFilter;
         const matchesRelativeDate = matchesHistoryRelativeDate(record.sentAt, relativeDateFilter);
-        const matchesDate = !dateFilter || matchesHistoryDate(record.sentAt, dateFilter);
+        const matchesDate = matchesHistoryDateParts(record.sentAt, dateYear, dateMonth);
         return matchesStatus && matchesRelativeDate && matchesDate && matchesHistoryQuery(record, deferredSearchValue);
       }),
-    [dateFilter, deferredSearchValue, historyRecords, relativeDateFilter, statusFilter]
+    [dateMonth, dateYear, deferredSearchValue, historyRecords, relativeDateFilter, statusFilter]
   );
+  const historyRecordIds = useMemo(() => filteredRecords.map((record) => record.id), [filteredRecords]);
+  const {
+    selectedId: selectedRecordId,
+    setSelectedId: setSelectedRecordId,
+    setSplitLayoutMode,
+  } = useSplitLayoutSelection(historyRecordIds);
 
   const emptyStateCopy = getMessageHistoryEmptyStateCopy(
     statusFilter,
@@ -1431,23 +1308,9 @@ function MessageHistorySection() {
   const activeFilterMeta = MESSAGE_HISTORY_FILTER_META[statusFilter];
 
   const selectedRecord = useMemo(() => {
-    if (filteredRecords.length === 0) {
-      return null;
-    }
-
-    if (selectedRecordId !== null) {
-      const matchedRecord = filteredRecords.find((record) => record.id === selectedRecordId);
-      if (matchedRecord) {
-        return matchedRecord;
-      }
-    }
-
-    if (isMobile) {
-      return null;
-    }
-
-    return filteredRecords[0];
-  }, [filteredRecords, isMobile, selectedRecordId]);
+    if (selectedRecordId === null) return null;
+    return filteredRecords.find((record) => record.id === selectedRecordId) ?? null;
+  }, [filteredRecords, selectedRecordId]);
 
   const canRetry = !!selectedRecord && selectedRecord.status !== "sent";
 
@@ -1475,7 +1338,11 @@ function MessageHistorySection() {
   }, [selectedRecord, toast]);
 
   return (
-    <SplitLayout hasSelection={!!selectedRecord} onBack={() => setSelectedRecordId(null)}>
+    <SplitLayout
+      hasSelection={!!selectedRecord}
+      onBack={() => setSelectedRecordId(null)}
+      onModeChange={setSplitLayoutMode}
+    >
       <ListPanel
         title="발송 기록"
         subtitle="발송된 메시지 기록을 볼 수 있어요."
@@ -1511,7 +1378,7 @@ function MessageHistorySection() {
         }
         subHeader={
           !isError ? (
-            <div data-component="messages-history-list-filters" className="flex items-center gap-2">
+            <div data-component="messages-history-list-filters" className="flex items-center justify-between gap-2">
               <div data-component="messages-history-list-filter-relative" className="w-[110px] shrink-0">
                 <Select value={relativeDateFilter} onValueChange={(value) => setRelativeDateFilter(value as MessageHistoryRelativeDateFilter)}>
                   <SelectTrigger
@@ -1530,25 +1397,53 @@ function MessageHistorySection() {
                   </SelectContent>
                 </Select>
               </div>
-              <input
+              <div
                 data-component="messages-history-list-filter-date"
-                type="date"
-                value={dateFilter}
-                onChange={(e) => setDateFilter(e.target.value)}
-                className="h-8 flex-1 rounded-[10px] border border-v3-border bg-white px-3 text-[0.76rem] text-v3-dark shadow-xs outline-none focus:border-v3-primary focus:ring-1 focus:ring-v3-primary/30"
-              />
-              {(dateFilter || relativeDateFilter !== "all") && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDateFilter("");
-                    setRelativeDateFilter("all");
-                  }}
-                  className="shrink-0 rounded-[8px] px-2 py-1 text-[0.72rem] font-medium text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-dark"
-                >
-                  초기화
-                </button>
-              )}
+                className="ml-auto flex flex-1 items-center justify-end gap-1.5"
+              >
+                {(hasDatePartFilter || relativeDateFilter !== "all") && (
+                  <button
+                    type="button"
+                    aria-label="필터 초기화"
+                    title="필터 초기화"
+                    data-component="messages-history-list-filter-reset"
+                    onClick={() => {
+                      setDateYear("");
+                      setDateMonth("");
+                      setRelativeDateFilter("all");
+                    }}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-white text-v3-text-muted transition-colors hover:bg-v3-dim-white hover:text-v3-dark"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                )}
+                <CompactDateSelect
+                  value={dateYear || "year"}
+                  onValueChange={handleDateYearChange}
+                  placeholder="연"
+                  dataComponent="messages-history-list-filter-date-year"
+                  contentDataComponent="messages-history-list-filter-date-year-content"
+                  options={[
+                    { label: "연", value: "year" },
+                    ...historyYearOptions.map((year) => ({
+                      label: `${year}년`,
+                      value: String(year),
+                    })),
+                  ]}
+                />
+
+                <CompactDateSelect
+                  value={dateMonth || "month"}
+                  onValueChange={handleDateMonthChange}
+                  placeholder="월"
+                  dataComponent="messages-history-list-filter-date-month"
+                  contentDataComponent="messages-history-list-filter-date-month-content"
+                  options={[
+                    { label: "월", value: "month" },
+                    ...MESSAGE_HISTORY_MONTH_OPTIONS,
+                  ]}
+                />
+              </div>
             </div>
           ) : undefined
         }
@@ -1615,19 +1510,30 @@ function MessageHistorySection() {
                     <div data-component="messages-history-list-item-copy" className="min-w-0 flex-1">
                       <p className="truncate text-[0.82rem] font-semibold text-v3-dark">{record.title}</p>
                       <p className="mt-0.5 truncate text-[0.72rem] text-v3-text-muted">
-                        {record.recipientName} · {record.recipientPhone} · {formatHistoryDate(record.sentAt)}
+                        {record.recipientListLabel}
                       </p>
                     </div>
 
-                    <span
-                      data-component="messages-history-list-item-status"
-                      className={cn(
-                        "inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[0.64rem] font-semibold",
-                        statusMeta.tone
-                      )}
+                    <div
+                      data-component="messages-history-list-item-meta"
+                      className="ml-auto flex shrink-0 flex-col items-end justify-end gap-1 text-right"
                     >
-                      {statusMeta.label}
-                    </span>
+                      <span
+                        data-component="messages-history-list-item-status"
+                        className={cn(
+                          "inline-flex items-center rounded-full px-2 py-0.5 text-[0.64rem] font-semibold",
+                          statusMeta.tone
+                        )}
+                      >
+                        {statusMeta.label}
+                      </span>
+                      <span
+                        data-component="messages-history-list-item-date"
+                        className="whitespace-nowrap text-[0.68rem] text-v3-text-muted"
+                      >
+                        {formatHistoryDate(record.sentAt)}
+                      </span>
+                    </div>
                   </>
                 );
               }}
@@ -1636,107 +1542,12 @@ function MessageHistorySection() {
         )}
       </ListPanel>
 
-      <DetailPanel
-        overlay={
-          !selectedRecord ? (
-            <ListEmptyState
-              name="messages-history-detail-empty"
-              icon={Users}
-              message="발송 기록을 선택하면 상세 정보가 표시됩니다."
-              className="flex-none min-h-0"
-            />
-          ) : null
-        }
-        avatar={
-          <div
-            data-component="messages-history-detail-avatar"
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
-          >
-            <History className="h-5 w-5" />
-          </div>
-        }
-        title={selectedRecord?.title ?? "발송 상세"}
-        subtitle={
-          selectedRecord
-            ? `${selectedRecord.channelLabel} · ${formatHistoryDate(selectedRecord.sentAt)}`
-            : "왼쪽 목록에서 발송 기록을 선택해 주세요."
-        }
-        badges={
-          selectedRecord ? (
-            <span
-              data-component="messages-history-detail-status"
-              className={cn(
-                "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[0.68rem] font-semibold",
-                MESSAGE_HISTORY_STATUS_META[selectedRecord.status].tone
-              )}
-            >
-              {(() => {
-                const StatusIcon = MESSAGE_HISTORY_STATUS_META[selectedRecord.status].icon;
-                return <StatusIcon className="h-3.5 w-3.5" />;
-              })()}
-              {MESSAGE_HISTORY_STATUS_META[selectedRecord.status].label}
-            </span>
-          ) : null
-        }
-        trailing={
-          canRetry ? (
-            <Button
-              data-component="messages-history-detail-retry"
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={handleRetry}
-              disabled={isRetrying}
-              className="rounded-full"
-            >
-              <RotateCcw className={cn("h-3.5 w-3.5", isRetrying && "animate-spin")} />
-              {isRetrying ? "재시도 중" : "재발송"}
-            </Button>
-          ) : null
-        }
-      >
-        {!selectedRecord ? null : (
-          <div data-component="messages-history-detail-content" className="space-y-4">
-            <div
-              data-component="messages-history-detail-preview-card"
-              className="rounded-[18px] border border-v3-border bg-v3-dim-white/30 p-4"
-            >
-              <p className="text-[0.75rem] font-semibold text-v3-text-muted">메시지 내용</p>
-              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-v3-dark">{selectedRecord.messagePreview}</p>
-            </div>
-
-            <div data-component="messages-history-detail-meta-grid" className="grid gap-3 sm:grid-cols-2">
-              <div
-                data-component="messages-history-detail-meta-recipient"
-                className="rounded-[16px] border border-v3-border bg-white p-4"
-              >
-                <p className="text-[0.72rem] font-semibold text-v3-text-muted">수신자</p>
-                <p className="mt-2 text-sm font-semibold text-v3-dark">{selectedRecord.recipientName}</p>
-                <p className="mt-1 text-[0.8rem] text-v3-text-muted">{selectedRecord.recipientPhone}</p>
-              </div>
-
-              <div
-                data-component="messages-history-detail-meta-template"
-                className="rounded-[16px] border border-v3-border bg-white p-4"
-              >
-                <p className="text-[0.72rem] font-semibold text-v3-text-muted">템플릿</p>
-                <p className="mt-2 text-sm font-semibold text-v3-dark">{selectedRecord.templateLabel}</p>
-                <p className="mt-1 text-[0.8rem] text-v3-text-muted">채널: {selectedRecord.channelLabel}</p>
-              </div>
-            </div>
-
-            {selectedRecord.failureReason ? (
-              <div
-                data-component="messages-history-detail-error"
-                className="rounded-[16px] border border-red-200 bg-red-50 p-4"
-              >
-                <p className="text-[0.72rem] font-semibold text-red-600">실패 사유</p>
-                <p className="mt-2 text-sm text-red-700">{selectedRecord.failureReason}</p>
-              </div>
-            ) : null}
-          </div>
-        )}
-      </DetailPanel>
+      <MessageHistoryDetailPanel
+        selectedRecord={selectedRecord}
+        canRetry={canRetry}
+        isRetrying={isRetrying}
+        onRetry={handleRetry}
+      />
     </SplitLayout>
   );
 }
@@ -1745,7 +1556,6 @@ export default function MessagesPage() {
   const locale = useLocale();
   const [activeSection, setActiveSection] = useState<MessageSectionId>("templates");
   const [templateFilter, setTemplateFilter] = useState<TemplateFilter>("builtin");
-  const [selectedValue, setSelectedValue] = useState<string | null>("builtin:greeting");
   const [templateDetailTab, setTemplateDetailTab] = useState<TemplateDetailTab>("details");
   const [templatePreviewOverride, setTemplatePreviewOverride] = useState<string | null>(null);
 
@@ -1764,13 +1574,19 @@ export default function MessagesPage() {
     () => (templateFilter === "builtin" ? BUILTIN_TEMPLATES : userTemplateItems),
     [templateFilter, userTemplateItems]
   );
+  const templateItemIds = useMemo(() => visibleItems.map((item) => item.id), [visibleItems]);
+  const {
+    selectedId: selectedValue,
+    setSelectedId: setSelectedValue,
+    setSplitLayoutMode: setTemplateSplitLayoutMode,
+  } = useSplitLayoutSelection(templateItemIds);
   const isTemplateListLoading = templateFilter === "branch" && isLoadingUserTemplates;
 
   const handleTemplateSelect = useCallback((id: string) => {
     setSelectedValue(id);
     setTemplateDetailTab("details");
     setTemplatePreviewOverride(null);
-  }, []);
+  }, [setSelectedValue]);
 
   const handleTemplateFilterChange = useCallback(
     (nextFilter: TemplateFilter) => {
@@ -1784,18 +1600,15 @@ export default function MessagesPage() {
           return current;
         }
 
-        return nextItems[0]?.id ?? null;
+        return null;
       });
     },
-    [userTemplateItems]
+    [setSelectedValue, userTemplateItems]
   );
 
   const activeTemplateId = useMemo(() => {
-    if (!selectedValue) {
-      return null;
-    }
-
-    return visibleItems.find((item) => item.id === selectedValue)?.id ?? visibleItems[0]?.id ?? null;
+    if (!selectedValue) return null;
+    return visibleItems.find((item) => item.id === selectedValue)?.id ?? null;
   }, [selectedValue, visibleItems]);
 
   const isBuiltin = activeTemplateId?.startsWith("builtin:") ?? false;
@@ -1845,6 +1658,7 @@ export default function MessagesPage() {
             <section data-component="messages-templates-section" className="flex min-h-0 flex-1 flex-col">
               <SplitLayout
                 hasSelection={!!activeTemplateId}
+                onModeChange={setTemplateSplitLayoutMode}
                 onBack={() => {
                   setSelectedValue(null);
                   setTemplateDetailTab("details");
@@ -1990,58 +1804,65 @@ export default function MessagesPage() {
                       왼쪽 목록에서 템플릿을 선택해 주세요.
                     </div>
                   ) : (
-                    <div data-component="messages-template-detail-tabpanes" className="flex min-h-0 flex-col">
-                      <div
-                        data-component="messages-template-detail-pane"
-                        className={cn(templateDetailTab === "details" ? "block" : "hidden")}
-                      >
-                        {SelectedBuiltinForm ? (
-                          <SelectedBuiltinForm
-                            onPreviewMessageChange={(message) => setTemplatePreviewOverride(message)}
-                          />
-                        ) : null}
+                    <DetailTabPanels
+                      activeTab={templateDetailTab}
+                      dataComponent="messages-template-detail-tabpanes"
+                      panelDataComponent="messages-template-detail-pane"
+                      className="min-h-0"
+                      panels={[
+                        {
+                          key: "details",
+                          children: (
+                            <>
+                              {SelectedBuiltinForm ? (
+                                <SelectedBuiltinForm
+                                  onPreviewMessageChange={(message) => setTemplatePreviewOverride(message)}
+                                />
+                              ) : null}
 
-                        {selectedUserTemplate ? (
-                          <CustomTemplateForm
-                            template={selectedUserTemplate as never}
-                            onPreviewMessageChange={(message) => setTemplatePreviewOverride(message)}
-                          />
-                        ) : null}
+                              {selectedUserTemplate ? (
+                                <CustomTemplateForm
+                                  template={selectedUserTemplate as never}
+                                  onPreviewMessageChange={(message) => setTemplatePreviewOverride(message)}
+                                />
+                              ) : null}
 
-                        {!SelectedBuiltinForm && !selectedUserTemplate ? (
-                          <div
-                            data-component="messages-template-missing"
-                            className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-sm text-v3-text-muted"
-                          >
-                            선택한 템플릿 정보를 불러오지 못했습니다.
-                          </div>
-                        ) : null}
-                      </div>
-
-                      <div
-                        data-component="messages-template-preview-pane"
-                        className={cn(templateDetailTab === "preview" ? "block" : "hidden")}
-                      >
-                        <div
-                          data-component="messages-template-preview-shell"
-                          className="rounded-[20px] border border-v3-border bg-v3-dim-white/30 p-5"
-                        >
-                          <p className="text-[0.72rem] font-semibold text-v3-primary">실시간 미리보기</p>
-                          <p className="mt-2 text-[0.82rem] leading-6 text-v3-text-muted">
-                            템플릿 본문을 알림톡 화면 형태로 렌더링합니다.
-                          </p>
-                          <AlimtalkPhonePreview
-                            className="pt-5"
-                            content={templatePreviewMessage}
-                            templateName={selectedTemplateTitle}
-                            headline={templatePreviewHeadline}
-                            subtitle={templatePreviewSubtitle}
-                            dataComponentPrefix="message"
-                            panelDataComponent="messages-template-preview-phone-panel"
-                          />
-                        </div>
-                      </div>
-                    </div>
+                              {!SelectedBuiltinForm && !selectedUserTemplate ? (
+                                <div
+                                  data-component="messages-template-missing"
+                                  className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-sm text-v3-text-muted"
+                                >
+                                  선택한 템플릿 정보를 불러오지 못했습니다.
+                                </div>
+                              ) : null}
+                            </>
+                          ),
+                        },
+                        {
+                          key: "preview",
+                          children: (
+                            <div
+                              data-component="messages-template-preview-shell"
+                              className="rounded-[20px] border border-v3-border bg-v3-dim-white/30 p-5"
+                            >
+                              <p className="text-[0.72rem] font-semibold text-v3-primary">실시간 미리보기</p>
+                              <p className="mt-2 text-[0.82rem] leading-6 text-v3-text-muted">
+                                템플릿 본문을 알림톡 화면 형태로 렌더링합니다.
+                              </p>
+                              <AlimtalkPhonePreview
+                                className="pt-5"
+                                content={templatePreviewMessage}
+                                templateName={selectedTemplateTitle}
+                                headline={templatePreviewHeadline}
+                                subtitle={templatePreviewSubtitle}
+                                dataComponentPrefix="message"
+                                panelDataComponent="messages-template-preview-phone-panel"
+                              />
+                            </div>
+                          ),
+                        },
+                      ]}
+                    />
                   )}
                 </DetailPanel>
               </SplitLayout>
@@ -2051,7 +1872,7 @@ export default function MessagesPage() {
               <MessageHistorySection />
             </section>
           ) : activeSection === "triggers" ? (
-            <section data-component="messages-triggers-section">
+            <section data-component="messages-triggers-section" className="flex h-full min-h-0 flex-1 flex-col">
               <TriggerRulesManager dataComponentPrefix="message" />
             </section>
           ) : activeSection === "settings" ? (

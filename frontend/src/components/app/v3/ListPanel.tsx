@@ -67,12 +67,12 @@ export function ListPanel({
   const headerAlignmentClass = subtitle ? "items-start" : "items-center";
   const headerClassName =
     headerPadding === "default"
-      ? `flex ${headerAlignmentClass} justify-between p-6 shrink-0`
+      ? `flex ${headerAlignmentClass} justify-between p-[calc(24px*var(--v3-ui-scale,1))] shrink-0`
       : headerPadding === "compact"
-        ? `flex ${headerAlignmentClass} justify-between p-6 pb-0 shrink-0`
+        ? `flex ${headerAlignmentClass} justify-between p-[calc(24px*var(--v3-ui-scale,1))] pb-0 shrink-0`
         : showControls
-          ? `flex ${headerAlignmentClass} justify-between p-6 pb-0 shrink-0`
-          : `flex ${headerAlignmentClass} justify-between p-6 shrink-0`;
+          ? `flex ${headerAlignmentClass} justify-between p-[calc(24px*var(--v3-ui-scale,1))] pb-0 shrink-0`
+          : `flex ${headerAlignmentClass} justify-between p-[calc(24px*var(--v3-ui-scale,1))] shrink-0`;
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { isScrollActive, handleScroll } = useScrollActivity();
@@ -91,16 +91,16 @@ export function ListPanel({
   const activeTabLabel = tabs?.find(t => t.value === activeTab)?.label ?? tabs?.[0]?.label ?? "";
 
   return (
-    <div data-component="list-panel" className="relative bg-white rounded-[28px] shadow-v3 flex flex-col flex-1 self-stretch overflow-hidden h-full min-h-0">
+    <div data-component="list-panel" className="relative flex h-full min-h-0 flex-1 self-stretch flex-col overflow-hidden rounded-[28px] bg-white shadow-v3">
       <div data-component="list-panel-top-area" className="shrink-0">
         <div data-component="list-panel-header" className={headerClassName}>
-          <div className="flex items-center gap-4 min-w-0">
+          <div className="flex min-w-0 items-center gap-[calc(16px*var(--v3-ui-scale,1))]">
             {avatar}
             <PanelTitleGroup
               component="list-panel"
               title={title}
               subtitle={subtitle}
-              titleClassName="text-lg"
+              titleClassName="text-[calc(18px*var(--v3-ui-scale,1))]"
             />
           </div>
           {headerActions && (
@@ -113,13 +113,13 @@ export function ListPanel({
           )}
         </div>
 
-        {subHeader && <div data-component="list-panel-sub-header" className="px-6 pt-3 shrink-0">{subHeader}</div>}
+        {subHeader && <div data-component="list-panel-sub-header" className="shrink-0 px-[calc(24px*var(--v3-ui-scale,1))] pt-[calc(12px*var(--v3-ui-scale,1))]">{subHeader}</div>}
 
         {showControls && (
           <div
             data-component="list-panel-tabs"
             className={cn(
-              "flex min-h-[52px] items-center px-6 pt-4 shrink-0",
+              "relative flex min-h-[calc(52px*var(--v3-ui-scale,1))] shrink-0 items-center gap-[calc(12px*var(--v3-ui-scale,1))] overflow-visible px-[calc(24px*var(--v3-ui-scale,1))] pt-[calc(16px*var(--v3-ui-scale,1))] [container-type:inline-size]",
               showTabs ? "justify-between" : "justify-end",
             )}
           >
@@ -135,22 +135,22 @@ export function ListPanel({
                     }}
                     disabled={disabled}
                     className={cn(
-                      "flex items-center gap-1.5 text-[0.75rem] font-semibold text-v3-dark px-3 py-1.5 rounded-[10px] border border-v3-border hover:bg-v3-dim-white transition-colors",
+                      "flex items-center gap-[calc(6px*var(--v3-ui-scale,1))] rounded-[10px] border border-v3-border px-[calc(12px*var(--v3-ui-scale,1))] py-[calc(6px*var(--v3-ui-scale,1))] text-[calc(12px*var(--v3-ui-scale,1))] font-semibold text-v3-dark transition-colors hover:bg-v3-dim-white",
                       disabled && "cursor-not-allowed opacity-60 hover:bg-white",
                     )}
                   >
                     {activeTabLabel}
-                    <ChevronDown className={cn("w-3.5 h-3.5 text-v3-text-muted transition-transform", dropdownOpen && "rotate-180")} />
+                    <ChevronDown className={cn("h-[calc(14px*var(--v3-ui-scale,1))] w-[calc(14px*var(--v3-ui-scale,1))] text-v3-text-muted transition-transform", dropdownOpen && "rotate-180")} />
                   </button>
                   {dropdownOpen && !disabled && (
-                    <div className="absolute top-full left-0 z-50 mt-1 min-w-[140px] max-h-[240px] overflow-y-auto rounded-[14px] border border-v3-border bg-white shadow-v3 py-1 animate-in fade-in-0 zoom-in-95">
+                    <div className="animate-in fade-in-0 zoom-in-95 absolute left-0 top-full z-50 mt-[calc(4px*var(--v3-ui-scale,1))] max-h-[calc(240px*var(--v3-ui-scale,1))] min-w-[calc(140px*var(--v3-ui-scale,1))] overflow-y-auto rounded-[14px] border border-v3-border bg-white py-[calc(4px*var(--v3-ui-scale,1))] shadow-v3">
                       {(tabs ?? []).map((tab) => (
                         <button
                           type="button"
                           key={tab.value}
                           onClick={() => { onTabChange?.(tab.value); setDropdownOpen(false); }}
                           className={cn(
-                            "w-full text-left text-[0.75rem] px-4 py-2 transition-colors",
+                            "w-full px-[calc(16px*var(--v3-ui-scale,1))] py-[calc(8px*var(--v3-ui-scale,1))] text-left text-[calc(12px*var(--v3-ui-scale,1))] transition-colors",
                             activeTab === tab.value
                               ? cn("font-semibold bg-v3-primary-light", tab.activeClassName ?? "text-v3-primary")
                               : "text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-text"
@@ -163,34 +163,39 @@ export function ListPanel({
                   )}
                 </div>
               ) : (
-                <div className="flex gap-1">
-                  {(tabs ?? []).map((tab) => (
-                    <button
-                      data-component="list-panel-tab-button"
-                      type="button"
-                      key={tab.value}
-                      disabled={disabled}
-                      onClick={() => onTabChange?.(tab.value)}
-                      className={cn(
-                        "relative px-3 pb-2 text-[0.75rem] transition-colors",
-                        activeTab === tab.value
-                          ? cn("font-semibold", tab.activeClassName ?? "text-primary")
-                          : "text-v3-text-muted hover:text-v3-text",
-                        disabled && "cursor-not-allowed text-v3-text-muted/60 hover:text-v3-text-muted/60"
-                      )}
-                    >
-                      {tab.label}
-                      {activeTab === tab.value ? (
-                        <span
-                          data-component="list-panel-tab-indicator"
-                          className={cn(
-                            "absolute bottom-0 left-0 h-0.5 w-full",
-                            tab.indicatorClassName ?? "bg-primary"
-                          )}
-                        />
-                      ) : null}
-                    </button>
-                  ))}
+                <div
+                  data-component="list-panel-tab-scroll"
+                  className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+                >
+                  <div className="flex w-max gap-[calc(4px*var(--v3-ui-scale,1))]">
+                    {(tabs ?? []).map((tab) => (
+                      <button
+                        data-component="list-panel-tab-button"
+                        type="button"
+                        key={tab.value}
+                        disabled={disabled}
+                        onClick={() => onTabChange?.(tab.value)}
+                        className={cn(
+                          "relative shrink-0 px-[calc(12px*var(--v3-ui-scale,1))] pb-[calc(8px*var(--v3-ui-scale,1))] text-[calc(12px*var(--v3-ui-scale,1))] transition-colors",
+                          activeTab === tab.value
+                            ? cn("font-semibold", tab.activeClassName ?? "text-primary")
+                            : "text-v3-text-muted hover:text-v3-text",
+                          disabled && "cursor-not-allowed text-v3-text-muted/60 hover:text-v3-text-muted/60"
+                        )}
+                      >
+                        {tab.label}
+                        {activeTab === tab.value ? (
+                          <span
+                            data-component="list-panel-tab-indicator"
+                            className={cn(
+                              "absolute bottom-0 left-0 h-0.5 w-full",
+                              tab.indicatorClassName ?? "bg-primary"
+                            )}
+                          />
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )
             ) : null}
@@ -199,8 +204,10 @@ export function ListPanel({
                 value={searchValue!}
                 onChange={onSearchChange!}
                 placeholder={searchPlaceholder}
-                className={tabsVariant === "inline" ? "pb-2" : undefined}
+                expandedWidth="w-[20cqw] min-w-[7rem] max-w-[12rem]"
+                className={tabsVariant === "inline" ? "pb-[calc(8px*var(--v3-ui-scale,1))]" : undefined}
                 disabled={disabled}
+                overlay={tabsVariant === "inline"}
               />
             )}
           </div>
@@ -209,7 +216,7 @@ export function ListPanel({
       {overlay ? (
         <div
           data-component="list-panel-overlay"
-          className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6 -translate-y-3"
+          className="pointer-events-none absolute inset-0 z-10 flex -translate-y-[calc(12px*var(--v3-ui-scale,1))] items-center justify-center p-[calc(24px*var(--v3-ui-scale,1))]"
         >
           {overlay}
         </div>
@@ -217,12 +224,12 @@ export function ListPanel({
 
       <div
         data-component="list-panel-content"
-        className="relative overflow-y-auto scrollbar-on-scroll min-h-0 flex-1 px-6 pt-3 flex flex-col"
+        className="scrollbar-on-scroll relative flex min-h-0 flex-1 flex-col overflow-y-auto px-[calc(24px*var(--v3-ui-scale,1))] pt-[calc(12px*var(--v3-ui-scale,1))]"
         data-scroll-active={isScrollActive ? "true" : "false"}
         onScroll={handleScroll}
       >
         {showContentSkeleton ? contentSkeleton : children}
-        <div className="sticky bottom-0 h-6 bg-white shrink-0" />
+        <div className="sticky bottom-0 h-[calc(24px*var(--v3-ui-scale,1))] shrink-0 bg-white" />
       </div>
       {disabled ? (
         <div
@@ -231,7 +238,7 @@ export function ListPanel({
           className="absolute inset-0 z-20 bg-slate-200/70 backdrop-blur-[1.5px]"
         >
           {disabledOverlay ? (
-            <div className="flex h-full items-center justify-center p-6">{disabledOverlay}</div>
+            <div className="flex h-full items-center justify-center p-[calc(24px*var(--v3-ui-scale,1))]">{disabledOverlay}</div>
           ) : null}
         </div>
       ) : null}

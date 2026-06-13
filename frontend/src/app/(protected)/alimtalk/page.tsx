@@ -22,6 +22,7 @@ import {
 import { ContentPaper } from "@/components/app/root/content-paper";
 import {
   DetailPanel,
+  DetailTabPanels,
   DetailTabs,
   HeaderActionButton,
   ListEmptyState,
@@ -29,6 +30,7 @@ import {
   PageSection,
   SectionNav,
   SplitLayout,
+  useSplitLayoutSelection,
 } from "@/components/app/v3";
 import { Button } from "@/components/ui/button";
 import {
@@ -53,7 +55,7 @@ const NAV_SECTIONS = [
   { id: "overview", label: "발송 예정", icon: Send },
   { id: "history", label: "발송 기록", icon: History },
   { id: "templates", label: "템플릿", icon: FileText },
-  { id: "triggers", label: "발송 트리거 설정", icon: Workflow },
+  { id: "triggers", label: "자동화", icon: Workflow },
   { id: "settings", label: "설정", icon: Settings },
 ] as const;
 
@@ -1541,7 +1543,6 @@ function TemplatesSection() {
   const [customTemplates, setCustomTemplates] = useState<TemplateRecord[]>(CUSTOM_TEMPLATES);
   const [mode, setMode] = useState<TemplateMode>("browse");
   const [activeGroup, setActiveGroup] = useState<TemplateGroup>("builtin");
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(BUILTIN_TEMPLATES[0]?.id ?? "");
   const [activeDetailTab, setActiveDetailTab] = useState<TemplateDetailTab>("details");
   const [mobilePanel, setMobilePanel] = useState(0);
 
@@ -1554,6 +1555,12 @@ function TemplatesSection() {
     () => [...BUILTIN_TEMPLATES, ...customTemplates],
     [customTemplates]
   );
+  const visibleTemplateIds = useMemo(() => visibleTemplates.map((template) => template.id), [visibleTemplates]);
+  const {
+    selectedId: selectedTemplateId,
+    setSelectedId: setSelectedTemplateId,
+    setSplitLayoutMode,
+  } = useSplitLayoutSelection(visibleTemplateIds);
 
   const selectedTemplate = useMemo(
     () => templateLibrary.find((template) => template.id === selectedTemplateId) ?? null,
@@ -1564,23 +1571,23 @@ function TemplatesSection() {
     if (value !== "builtin" && value !== "custom") return;
 
     const nextGroup = value as TemplateGroup;
-    const nextTemplates = nextGroup === "builtin" ? BUILTIN_TEMPLATES : customTemplates;
 
     setActiveGroup(nextGroup);
     setSelectedTemplateId((previous) => {
+      if (!previous) return null;
       const previousTemplate = templateLibrary.find((template) => template.id === previous);
       if (previousTemplate?.group === nextGroup) return previous;
-      return nextTemplates[0]?.id ?? "";
+      return null;
     });
     setActiveDetailTab("details");
     setMobilePanel(0);
-  }, [customTemplates, templateLibrary]);
+  }, [setSelectedTemplateId, templateLibrary]);
 
   const handleSelectTemplate = useCallback((templateId: string) => {
     setSelectedTemplateId(templateId);
     setActiveDetailTab("details");
     setMobilePanel(1);
-  }, []);
+  }, [setSelectedTemplateId]);
 
   const handleCreatedTemplate = useCallback((template: TemplateRecord) => {
     setCustomTemplates((previous) => [template, ...previous]);
@@ -1589,7 +1596,7 @@ function TemplatesSection() {
     setActiveDetailTab("details");
     setMobilePanel(0);
     setMode("browse");
-  }, []);
+  }, [setSelectedTemplateId]);
 
   if (mode === "create") {
     return <TemplateCreator onBack={() => setMode("browse")} onCreated={handleCreatedTemplate} />;
@@ -1600,7 +1607,13 @@ function TemplatesSection() {
       data-component="alimtalk-templates-browser"
       className="h-full min-h-0"
     >
-      <SplitLayout columns={2} activePanel={mobilePanel} hasSelection={!!selectedTemplate} onBack={() => setMobilePanel(0)}>
+      <SplitLayout
+        columns={2}
+        activePanel={mobilePanel}
+        hasSelection={!!selectedTemplate}
+        onBack={() => setMobilePanel(0)}
+        onModeChange={setSplitLayoutMode}
+      >
         <ListPanel
           title="알림톡 템플릿"
           tabs={TEMPLATE_GROUP_TABS.map((tab) => ({ value: tab.value, label: tab.label }))}
@@ -1704,22 +1717,36 @@ function TemplatesSection() {
             <div data-component="alimtalk-templates-detail-empty" className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-sm text-v3-text-muted">
               왼쪽 목록에서 템플릿을 선택해 주세요.
             </div>
-          ) : activeDetailTab === "details" ? (
-            <TemplateDetails template={selectedTemplate} />
           ) : (
-            <div data-component="alimtalk-templates-preview-panel" className="flex justify-center py-2">
-              <TemplatePhonePreview
-                tplType={selectedTemplate.tplType}
-                tplEmType={selectedTemplate.tplEmType}
-                title={selectedTemplate.title}
-                subtitle={selectedTemplate.subtitle}
-                content={selectedTemplate.content}
-                extra={selectedTemplate.extra}
-                advert={selectedTemplate.advert}
-                imagePreviewUrl={selectedTemplate.imagePreviewUrl}
-                buttons={selectedTemplate.buttons}
-              />
-            </div>
+            <DetailTabPanels
+              activeTab={activeDetailTab}
+              dataComponent="alimtalk-templates-detail-content"
+              panelDataComponent="alimtalk-templates-detail-tab-panel"
+              panels={[
+                {
+                  key: "details",
+                  children: <TemplateDetails template={selectedTemplate} />,
+                },
+                {
+                  key: "preview",
+                  children: (
+                    <div data-component="alimtalk-templates-preview-panel" className="flex justify-center py-2">
+                      <TemplatePhonePreview
+                        tplType={selectedTemplate.tplType}
+                        tplEmType={selectedTemplate.tplEmType}
+                        title={selectedTemplate.title}
+                        subtitle={selectedTemplate.subtitle}
+                        content={selectedTemplate.content}
+                        extra={selectedTemplate.extra}
+                        advert={selectedTemplate.advert}
+                        imagePreviewUrl={selectedTemplate.imagePreviewUrl}
+                        buttons={selectedTemplate.buttons}
+                      />
+                    </div>
+                  ),
+                },
+              ]}
+            />
           )}
         </DetailPanel>
       </SplitLayout>

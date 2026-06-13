@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { SplitLayout, ListPanel, DetailPanel, AnimatedSlotList, ListEmptyState } from "@/components/app/v3";
+import { SplitLayout, ListPanel, DetailPanel, AnimatedSlotList, ListEmptyState, useSplitLayoutSelection } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
@@ -76,7 +76,6 @@ const TEMPLATE_DETAILS: Record<AlimtalkTemplateType, { title: string; content: s
 };
 
 export default function AlimtalkTemplatesPage() {
-  const [selectedValue, setSelectedValue] = useState<string | null>("builtin:greeting");
   const [activeGroup, setActiveGroup] = useState<TemplateGroup>("builtin");
   const [mobilePanel, setMobilePanel] = useState(0);
 
@@ -95,6 +94,12 @@ export default function AlimtalkTemplatesPage() {
   );
 
   const visibleItems = activeGroup === "builtin" ? BUILTIN_TEMPLATES : userTemplateItems;
+  const visibleItemIds = useMemo(() => visibleItems.map((item) => item.id), [visibleItems]);
+  const {
+    selectedId: selectedValue,
+    setSelectedId: setSelectedValue,
+    setSplitLayoutMode,
+  } = useSplitLayoutSelection(visibleItemIds);
   const isListLoading = activeGroup === "user" && isLoadingUserTemplates;
 
   const handleGroupChange = useCallback(
@@ -107,21 +112,21 @@ export default function AlimtalkTemplatesPage() {
       setSelectedValue((previous) => {
         if (nextGroup === "builtin") {
           if (previous?.startsWith("builtin:")) return previous;
-          return BUILTIN_TEMPLATES[0]?.id ?? null;
+          return null;
         }
 
         if (previous?.startsWith("user:")) return previous;
-        return userTemplateItems[0]?.id ?? null;
+        return null;
       });
     },
-    [userTemplateItems]
+    [setSelectedValue]
   );
 
   const handleTemplateSelect = useCallback((id: string) => {
     setSelectedValue(id);
     setActiveGroup(id.startsWith("user:") ? "user" : "builtin");
     setMobilePanel(1);
-  }, []);
+  }, [setSelectedValue]);
 
   const isBuiltin = selectedValue?.startsWith("builtin:") ?? false;
   const builtinType = isBuiltin && selectedValue ? (selectedValue.replace("builtin:", "") as AlimtalkTemplateType) : null;
@@ -134,6 +139,7 @@ export default function AlimtalkTemplatesPage() {
         activePanel={mobilePanel}
         hasSelection={!!selectedValue}
         onBack={() => setMobilePanel(0)}
+        onModeChange={setSplitLayoutMode}
       >
         <ListPanel
           title="알림톡 템플릿"

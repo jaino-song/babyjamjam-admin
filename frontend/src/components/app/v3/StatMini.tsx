@@ -37,7 +37,7 @@ export function StatMini({
     <div
       data-component="stat-mini"
       className={cn(
-        "w-44 bg-white rounded-[20px] shadow-v3 hover:shadow-v3-hover hover:-translate-y-1 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] p-4 will-change-transform flex gap-4 items-center justify-start",
+        "flex w-[calc(176px*var(--v3-ui-scale,1))] items-center justify-start gap-[calc(16px*var(--v3-ui-scale,1))] rounded-[20px] bg-white p-[calc(16px*var(--v3-ui-scale,1))] shadow-v3 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform hover:-translate-y-1 hover:shadow-v3-hover",
         // Component-level animation so stats behave identically across pages.
         "animate-v3-pop-up"
       )}
@@ -46,28 +46,28 @@ export function StatMini({
       <div
         data-component="stat-mini-icon"
         className={cn(
-          "w-12 h-12 rounded-[14px] flex items-center justify-center",
+          "flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] items-center justify-center rounded-[14px]",
           isLoading ? "bg-v3-dim-white" : variant.bg
         )}
       >
         {isLoading ? (
-          <Skeleton className="w-6 h-6 rounded-md bg-white/70" />
+          <Skeleton className="h-[calc(24px*var(--v3-ui-scale,1))] w-[calc(24px*var(--v3-ui-scale,1))] rounded-md bg-white/70" />
         ) : (
-          <Icon className={`w-6 h-6 ${variant.text}`} />
+          <Icon className={`h-[calc(24px*var(--v3-ui-scale,1))] w-[calc(24px*var(--v3-ui-scale,1))] ${variant.text}`} />
         )}
       </div>
       {isLoading ? (
-        <div className="space-y-2">
-          <Skeleton className="h-7 w-16 bg-v3-dim-white" />
-          <Skeleton className="h-3 w-20 bg-v3-dim-white" />
+        <div className="space-y-[calc(8px*var(--v3-ui-scale,1))]">
+          <Skeleton className="h-[calc(28px*var(--v3-ui-scale,1))] w-[calc(64px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
+          <Skeleton className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(80px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
         </div>
       ) : (
         <div>
-          <span className="flex items-center gap-1">
-            <p className="text-2xl font-bold text-v3-dark">{value}</p>
-            <p className="text-[0.7rem] text-v3-text-muted self-end mb-1">{counter}</p>
+          <span className="flex items-center gap-[calc(4px*var(--v3-ui-scale,1))]">
+            <p className="text-[calc(24px*var(--v3-ui-scale,1))] font-bold text-v3-dark">{value}</p>
+            <p className="mb-[calc(4px*var(--v3-ui-scale,1))] self-end text-[calc(11.2px*var(--v3-ui-scale,1))] text-v3-text-muted">{counter}</p>
           </span>
-          <p className="text-[0.7rem] text-v3-text-muted">{label}</p>
+          <p className="text-[calc(11.2px*var(--v3-ui-scale,1))] text-v3-text-muted">{label}</p>
         </div>
       )}
     </div>

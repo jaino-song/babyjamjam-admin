@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { MessageTemplate } from "@/features/message-templates";
-import { GeneratedMsg } from "../messages/templates/GeneratedMsg";
+import { AutoFillMsgCard } from "../messages/templates/AutoFillMsgCard";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 
@@ -82,7 +82,7 @@ export function UserTemplateForm({ template }: UserTemplateFormProps) {
             </Button>
 
             {generatedMessage && (
-                <GeneratedMsg
+                <AutoFillMsgCard
                     title={t(locale, "common.generated-message-title")}
                     copyButtonText={t(locale, "common.copy-button")}
                     message={generatedMessage}

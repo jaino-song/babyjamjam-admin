@@ -9,7 +9,7 @@ import {
 } from "./select";
 
 describe("Select Component", () => {
-  it("renders the shared pill trigger styles by default", () => {
+  it("renders the shared compact input trigger styles by default", () => {
     const { container } = render(
       <Select>
         <SelectTrigger>
@@ -20,10 +20,12 @@ describe("Select Component", () => {
 
     const trigger = container.querySelector('[data-slot="select-trigger"]');
 
-    expect(trigger).toHaveClass("rounded-full");
-    expect(trigger).toHaveClass("border-2");
+    expect(trigger).toHaveClass("h-[38px]");
+    expect(trigger).toHaveClass("rounded-[13px]");
+    expect(trigger).toHaveClass("border-[1.35px]");
     expect(trigger).toHaveClass("border-v3-border");
-    expect(trigger).toHaveClass("btn-press");
+    expect(trigger).toHaveClass("text-[0.8rem]");
+    expect(trigger).toHaveClass("focus-visible:ring-[3px]");
   });
 
   it("renders the shared dropdown surface styles", () => {

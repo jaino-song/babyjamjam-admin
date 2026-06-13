@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Building2,
   CheckCircle2,
@@ -8,12 +9,19 @@ import {
   Send,
   ShieldCheck,
 } from "lucide-react";
-import { AnimatedSlotList, DetailPanel, ListPanel } from "@/components/app/v3";
+import {
+  AnimatedSlotList,
+  DetailEmptyState,
+  DetailPanel,
+  ListEmptyState,
+  ListPanel,
+} from "@/components/app/v3";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { settingsApi } from "@/services/api";
 
 const UNIFIED_SENDER_PHONE = "1661-2386";
 
@@ -60,6 +68,10 @@ function formatRequestedAt(date: Date) {
 export function MessageTenantApplicationSettings() {
   const { data: authUser } = useGetAuthUser();
   const { toast } = useToast();
+  const { data: messageSenderApproval, isLoading: isMessageSenderApprovalLoading } = useQuery({
+    queryKey: ["settings", "message-sender-approval"],
+    queryFn: settingsApi.getMessageSenderApproval,
+  });
   const [agreements, setAgreements] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(ALIGO_POLICY_ITEMS.map((item) => [item.id, false])),
   );
@@ -68,19 +80,26 @@ export function MessageTenantApplicationSettings() {
   const tenantName = authUser?.branchName?.trim() || "현재 선택된 지점";
   const allAgreed = ALIGO_POLICY_ITEMS.every((item) => agreements[item.id]);
   const canSubmit = allAgreed;
+  const isMessageSenderApproved = messageSenderApproval?.isApproved === true;
   const listItems = useMemo<TenantApplicationListItem[]>(
-    () => [
-      {
-        id: CURRENT_TENANT_ITEM_ID,
-        title: "메시지 발송 기능 신청",
-        subtitle: requestedAt
-          ? `신청 접수 ${requestedAt}`
-          : "알리고 정책 동의 후 신청해 주세요.",
-        statusLabel: requestedAt ? "접수됨" : canSubmit ? "준비 완료" : "작성 중",
-        icon: Building2,
-      },
-    ],
-    [canSubmit, requestedAt],
+    () => {
+      if (isMessageSenderApprovalLoading || isMessageSenderApproved) {
+        return [];
+      }
+
+      return [
+        {
+          id: CURRENT_TENANT_ITEM_ID,
+          title: "메시지 발송 기능 신청",
+          subtitle: requestedAt
+            ? `신청 접수 ${requestedAt}`
+            : "알리고 정책 동의 후 신청해 주세요.",
+          statusLabel: requestedAt ? "접수됨" : canSubmit ? "준비 완료" : "작성 중",
+          icon: Building2,
+        },
+      ];
+    },
+    [canSubmit, isMessageSenderApprovalLoading, isMessageSenderApproved, requestedAt],
   );
 
   const toggleAgreement = (id: string, checked: boolean) => {
@@ -100,6 +119,47 @@ export function MessageTenantApplicationSettings() {
     setRequestedAt(formatRequestedAt(now));
     toast({ description: `${tenantName} 메시지 발송 신청이 접수되었습니다.` });
   };
+  const emptyListMessage = isMessageSenderApprovalLoading
+    ? "설정 정보를 불러오는 중입니다."
+    : "표시할 설정 항목이 없습니다.";
+  const emptyDetailMessage = isMessageSenderApprovalLoading
+    ? "설정 정보를 불러오는 중입니다."
+    : "설정 항목을 선택해 주세요.";
+
+  if (isMessageSenderApprovalLoading || isMessageSenderApproved) {
+    return (
+      <div
+        data-component="messages-settings-layout"
+        className="grid min-h-[560px] flex-1 gap-6 lg:grid-cols-[380px_1fr]"
+      >
+        <ListPanel
+          title="설정"
+          subtitle="메시지에 관련된 설정들을 정할 수 있어요"
+          headerActions={
+            <span className="inline-flex items-center whitespace-nowrap rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary">
+              0개
+            </span>
+          }
+        >
+          <ListEmptyState
+            name="messages-settings-list-empty"
+            message={emptyListMessage}
+            className="flex-none"
+          />
+        </ListPanel>
+
+        <DetailPanel
+          title="설정"
+          subtitle="메시지에 관련된 설정들을 정할 수 있어요"
+        >
+          <DetailEmptyState
+            name="messages-settings-detail-empty"
+            message={emptyDetailMessage}
+          />
+        </DetailPanel>
+      </div>
+    );
+  }
 
   return (
     <div

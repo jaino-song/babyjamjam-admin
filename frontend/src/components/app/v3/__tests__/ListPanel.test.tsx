@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { ListEmptyState } from "../ListEmptyState";
 import { ListPanel } from "../ListPanel";
 
@@ -23,5 +23,61 @@ describe("ListPanel", () => {
     expect(container.querySelector('[data-component="list-panel-overlay"]')).toBeInTheDocument();
     expect(container.querySelector('[data-component="list-panel-empty"]')).toBeInTheDocument();
     expect(screen.getByText("항목이 없습니다.")).toBeInTheDocument();
+  });
+
+  it("keeps inline tabs scrollable while search expands as an overlay", () => {
+    const { container } = render(
+      <ListPanel
+        title="고객 목록"
+        tabs={[
+          { label: "전체", value: "all" },
+          { label: "대기", value: "waiting" },
+          { label: "교체 요청", value: "replacement_requested" },
+          { label: "진행중", value: "active" },
+          { label: "완료", value: "completed" },
+          { label: "중단", value: "terminated" },
+        ]}
+        activeTab="all"
+        searchValue=""
+        onSearchChange={jest.fn()}
+      >
+        {null}
+      </ListPanel>,
+    );
+
+    expect(container.querySelector('[data-component="list-panel-tab-scroll"]')).toHaveClass(
+      "min-w-0",
+      "flex-1",
+      "overflow-x-auto",
+    );
+    expect(container.querySelector('[data-component="expandable-search"]')).toHaveClass(
+      "h-[calc(40px*var(--v3-ui-scale,1))]",
+      "w-[calc(32px*var(--v3-ui-scale,1))]",
+      "overflow-visible",
+    );
+    expect(container.querySelector('[data-component="expandable-search-overlay"]')).toHaveClass(
+      "absolute",
+      "right-0",
+      "h-[calc(40px*var(--v3-ui-scale,1))]",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "검색 열기" }));
+
+    expect(screen.queryByPlaceholderText("검색...")).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component="expandable-search-overlay"]')).toHaveClass(
+      "bg-[linear-gradient(to_right,rgb(255_255_255_/_0)_0%,rgb(255_255_255)_10%,rgb(255_255_255)_100%)]",
+      "w-[20cqw]",
+      "min-w-[7rem]",
+      "max-w-[12rem]",
+    );
+    expect(container.querySelector('[data-component="expandable-search-overlay"]')).not.toHaveClass("shadow-v3");
+    expect(screen.getByRole("button", { name: "검색 닫기" })).toHaveClass(
+      "transition-transform",
+      "duration-200",
+    );
+    expect(container.querySelector('input[type="text"]')).toHaveClass(
+      "flex-1",
+      "border-0",
+    );
   });
 });

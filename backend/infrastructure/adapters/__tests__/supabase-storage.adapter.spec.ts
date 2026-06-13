@@ -1,6 +1,7 @@
 import { ConfigService } from "@nestjs/config";
 import { createClient } from "@supabase/supabase-js";
 
+import { FileStorageObjectNotFoundError } from "../../../domain/ports/file-storage.port";
 import {
     StorageSignedUrlError,
     SupabaseStorageAdapter,
@@ -174,5 +175,35 @@ describe("SupabaseStorageAdapter", () => {
         ).rejects.toThrow(
             'Failed to create signed URL for "documents/contract.pdf": permission denied',
         );
+    });
+
+    it("should throw a typed missing-object error when signed URL creation cannot find the object", async () => {
+        const { bucket, client } = createSupabaseMock();
+        bucket.createSignedUrl.mockResolvedValue({
+            data: null,
+            error: { message: "Object not found", statusCode: "404" },
+        });
+        jest.mocked(createClient).mockReturnValue(client as never);
+
+        const adapter = new SupabaseStorageAdapter(createConfigService());
+
+        await expect(
+            adapter.createSignedUrl("documents/missing.pdf"),
+        ).rejects.toThrow(FileStorageObjectNotFoundError);
+    });
+
+    it("should throw a typed missing-object error when download cannot find the object", async () => {
+        const { bucket, client } = createSupabaseMock();
+        bucket.download.mockResolvedValue({
+            data: null,
+            error: { message: "Object not found", statusCode: "404" },
+        });
+        jest.mocked(createClient).mockReturnValue(client as never);
+
+        const adapter = new SupabaseStorageAdapter(createConfigService());
+
+        await expect(
+            adapter.download("documents/missing.pdf"),
+        ).rejects.toThrow(FileStorageObjectNotFoundError);
     });
 });

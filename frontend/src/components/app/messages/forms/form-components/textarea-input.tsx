@@ -27,7 +27,6 @@ export const TextareaInput = ({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         rows={4}
-        className="bg-background"
       />
     </div>
   );

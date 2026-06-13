@@ -49,19 +49,19 @@ function ContractsListItemComponent({
       <>
         <div
           data-component="contracts-list-item-skeleton-icon"
-          className="w-11 h-11 rounded-[14px] shrink-0 shadow-md bg-v3-dim-white flex items-center justify-center"
+          className="flex h-[calc(44px*var(--v3-ui-scale,1))] w-[calc(44px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[14px] bg-v3-dim-white shadow-md"
         >
-          <Skeleton className="w-5 h-5 rounded-md bg-white/70" />
+          <Skeleton className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))] rounded-md bg-white/70" />
         </div>
         <div
           data-component="contracts-list-item-skeleton-content"
           className="flex-1 min-w-0"
         >
-          <Skeleton className="h-4 w-24 mb-1.5 bg-v3-dim-white" />
-          <Skeleton className="h-3 w-40 mb-2 bg-v3-dim-white" />
-          <Skeleton className="h-3 w-52 bg-v3-dim-white" />
+          <Skeleton className="mb-[calc(6px*var(--v3-ui-scale,1))] h-[calc(16px*var(--v3-ui-scale,1))] w-[calc(96px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
+          <Skeleton className="mb-[calc(8px*var(--v3-ui-scale,1))] h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(160px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
+          <Skeleton className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(208px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
         </div>
-        <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white shrink-0" />
+        <Skeleton className="h-[calc(24px*var(--v3-ui-scale,1))] w-[calc(56px*var(--v3-ui-scale,1))] shrink-0 rounded-full bg-v3-dim-white" />
       </>
     );
   }
@@ -79,7 +79,7 @@ function ContractsListItemComponent({
       <div
         data-component="contracts-list-item-icon"
         className={cn(
-          "w-11 h-11 rounded-[14px] flex items-center justify-center shrink-0 shadow-md",
+          "flex h-[calc(44px*var(--v3-ui-scale,1))] w-[calc(44px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[14px] shadow-md",
           category === "completed"
             ? "bg-v3-green-light"
             : category === "rejected"
@@ -91,7 +91,7 @@ function ContractsListItemComponent({
       >
         <FileSignature
           className={cn(
-            "w-5 h-5",
+            "h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]",
             category === "completed"
               ? "text-v3-green"
               : category === "rejected"
@@ -106,29 +106,29 @@ function ContractsListItemComponent({
       <div data-component="contracts-list-item-content" className="flex-1 min-w-0">
         <div
           data-component="contracts-list-item-title-row"
-          className="flex items-center gap-2 mb-0.5"
+          className="mb-[calc(2px*var(--v3-ui-scale,1))] flex items-center gap-[calc(8px*var(--v3-ui-scale,1))]"
         >
-          <span className="font-bold text-[0.85rem] text-v3-dark truncate">
+          <span className="truncate text-[calc(13.6px*var(--v3-ui-scale,1))] font-bold text-v3-dark">
             {customerName}
           </span>
         </div>
         <div
           data-component="contracts-list-item-subtitle"
-          className="flex items-center gap-2 text-[0.7rem] text-v3-text-muted truncate"
+          className="flex items-center gap-[calc(8px*var(--v3-ui-scale,1))] truncate text-[calc(11.2px*var(--v3-ui-scale,1))] text-v3-text-muted"
         >
           {document.document_name}
         </div>
         <div
           data-component="contracts-list-item-meta"
-          className="mt-1.5 flex items-center gap-3 overflow-hidden whitespace-nowrap text-[0.65rem] leading-none text-v3-text-muted"
+          className="mt-[calc(6px*var(--v3-ui-scale,1))] flex items-center gap-[calc(12px*var(--v3-ui-scale,1))] overflow-hidden whitespace-nowrap text-[calc(10.4px*var(--v3-ui-scale,1))] leading-none text-v3-text-muted"
         >
-          <span className="flex min-w-0 items-center gap-1 shrink-0">
-            <Calendar className="h-3 w-3 shrink-0" />
+          <span className="flex min-w-0 shrink-0 items-center gap-[calc(4px*var(--v3-ui-scale,1))]">
+            <Calendar className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(12px*var(--v3-ui-scale,1))] shrink-0" />
             발송 {sentDate}
           </span>
           {signedDate && (
-            <span className="flex min-w-0 items-center gap-1 shrink-0">
-              <CircleCheck className="h-3 w-3 shrink-0" />
+            <span className="flex min-w-0 shrink-0 items-center gap-[calc(4px*var(--v3-ui-scale,1))]">
+              <CircleCheck className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(12px*var(--v3-ui-scale,1))] shrink-0" />
               완료 {signedDate}
             </span>
           )}

@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { useQuery } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 import { TriggerRulesManager } from "../TriggerRulesManager";
 import {
   useAlimtalkTriggerRules,
@@ -12,6 +13,50 @@ import {
 jest.mock("@tanstack/react-query", () => ({
   useQuery: jest.fn(),
 }));
+
+jest.mock("@/components/app/v3", () => {
+  const React = jest.requireActual("react");
+  const actual = jest.requireActual("@/components/app/v3");
+
+  return {
+    ...actual,
+    SplitLayout: ({
+      children,
+      hasSelection,
+      onBack,
+      onModeChange,
+    }: {
+      children: ReactNode;
+      hasSelection?: boolean;
+      onBack?: () => void;
+      onModeChange?: (mode: "desktop" | "compact") => void;
+    }) => {
+      React.useLayoutEffect(() => {
+        onModeChange?.("compact");
+      }, [onModeChange]);
+
+      return React.createElement(
+        "div",
+        {
+          "data-component": "split-layout",
+          "data-mode": "compact",
+          "data-has-selection": hasSelection ? "true" : "false",
+        },
+        hasSelection
+          ? React.createElement(
+              "button",
+              {
+                type: "button",
+                onClick: onBack,
+              },
+              "목록으로 돌아가기",
+            )
+          : null,
+        children,
+      );
+    },
+  };
+});
 
 jest.mock("@/hooks/use-toast", () => ({
   useToast: () => ({
@@ -76,6 +121,10 @@ function mockSettingsQueries({
 
 beforeEach(() => {
   jest.clearAllMocks();
+  Object.defineProperty(window, "innerWidth", {
+    configurable: true,
+    value: 1200,
+  });
 
   mockSettingsQueries();
 
@@ -160,5 +209,18 @@ describe("TriggerRulesManager", () => {
     expect(
       screen.queryByText("메시지 발송 승인 후에 설정 가능합니다. 설정에서 메시지 발송 기능을 신청해 주세요."),
     ).not.toBeInTheDocument();
+  });
+
+  it("does not preselect the first rule in compact split layout", async () => {
+    mockSettingsQueries({ providerEnabled: false, senderApproved: true });
+
+    const { container } = render(<TriggerRulesManager />);
+    window.dispatchEvent(new Event("resize"));
+
+    expect(
+      await screen.findByText("왼쪽 목록에서 규칙을 선택하거나 새 규칙을 만들어 주세요."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("규칙 활성화")).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component="split-layout"]')).toHaveAttribute("data-has-selection", "false");
   });
 });

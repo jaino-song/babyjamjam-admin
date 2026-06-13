@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useVoucherPriceInfos } from "@/hooks/useVoucherData";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
@@ -22,7 +23,7 @@ import {
     Dialog,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Input, V3_INPUT_CONTROL_CLASS_NAME } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
     Select,
@@ -39,18 +40,38 @@ import { StatusBadge } from "@/components/app/ui/status-badge";
 import { Spinner } from "@/components/ui/spinner";
 import { TitleDescChildrenMolecule } from "@/components/app/ui/TitleDescChildrenMolecule";
 import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
+import { TitleTextInputMolecule } from "../messages/forms/form-components/TitleTextInputMolecule";
+import {
+    SteppedWizardPanelContent,
+    SteppedWizardPanelFooter,
+} from "@/components/app/v3/SteppedWizardPanelLayout";
 
-interface ClientFormDialogProps {
+export interface ClientFormDialogProps {
     open: boolean;
     onClose: () => void;
     client?: Client | null; // null/undefined for create mode, Client for edit mode
     onSuccess?: (client: Client) => void; // Optional callback when client is created/updated
 }
 
+export interface ClientFormPanelProps extends Omit<ClientFormDialogProps, "open"> {
+    open?: boolean;
+    activeStep?: number;
+    onActiveStepChange?: (step: number) => void;
+    renderLayout?: (parts: { content: ReactNode; footer: ReactNode }) => ReactNode;
+}
+
 const FIELD_GRID_CLASS_NAME = "grid grid-cols-1 gap-4 sm:grid-cols-2";
 const SECTION_CARD_CLASS_NAME = "rounded-[24px] border border-v3-border/70 bg-white p-5";
 const LABEL_CLASS_NAME = "text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-v3-text-muted";
-const V3_INPUT_CLASS_NAME = "h-12 rounded-[16px] border-[1.5px] border-v3-border bg-white px-4 text-[0.85rem] text-v3-dark shadow-none transition-all focus-visible:border-v3-primary focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]";
+const V3_INPUT_CLASS_NAME = V3_INPUT_CONTROL_CLASS_NAME;
+export const CLIENT_FORM_STEPPER_STEPS = [
+    { label: "이용자\n정보" },
+    { label: "제공인력\n정보" },
+    { label: "바우처\n정보" },
+    { label: "계약\n정보" },
+] as const;
+
+const CLIENT_FORM_LAST_STEP_INDEX = CLIENT_FORM_STEPPER_STEPS.length - 1;
 
 // Format number with commas (handles comma-formatted strings too)
 const formatPrice = (price: number | string): string => {
@@ -92,7 +113,51 @@ const formatDateForInput = (dateString: string | null | undefined): string => {
     return date.toISOString().split("T")[0];
 };
 
+export function ClientFormPanel({
+    open = true,
+    onClose,
+    client,
+    onSuccess,
+    activeStep,
+    onActiveStepChange,
+    renderLayout,
+}: ClientFormPanelProps) {
+    return (
+        <ClientFormContent
+            surface="panel"
+            open={open}
+            onClose={onClose}
+            client={client}
+            onSuccess={onSuccess}
+            activeStep={activeStep}
+            onActiveStepChange={onActiveStepChange}
+            renderLayout={renderLayout}
+        />
+    );
+}
+
 export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFormDialogProps) {
+    return (
+        <ClientFormContent
+            surface="dialog"
+            open={open}
+            onClose={onClose}
+            client={client}
+            onSuccess={onSuccess}
+        />
+    );
+}
+
+function ClientFormContent({
+    surface,
+    open,
+    onClose,
+    client,
+    onSuccess,
+    activeStep: controlledActiveStep,
+    onActiveStepChange,
+    renderLayout,
+}: ClientFormDialogProps & Pick<ClientFormPanelProps, "activeStep" | "onActiveStepChange" | "renderLayout"> & { surface: "dialog" | "panel" }) {
     const router = useRouter();
     const searchParams = useSearchParams();
     const locale = useLocale();
@@ -132,6 +197,18 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
 
     const [error, setError] = useState<string | null>(null);
     const contentRef = useRef<HTMLDivElement>(null);
+    const [internalActiveStep, setInternalActiveStep] = useState(0);
+    const activeStep = controlledActiveStep ?? internalActiveStep;
+    const setActiveStep = useCallback(
+        (nextStep: number) => {
+            const clampedStep = Math.max(0, Math.min(nextStep, CLIENT_FORM_LAST_STEP_INDEX));
+            if (controlledActiveStep === undefined) {
+                setInternalActiveStep(clampedStep);
+            }
+            onActiveStepChange?.(clampedStep);
+        },
+        [controlledActiveStep, onActiveStepChange]
+    );
 
     // Track if prices were manually edited
     const [pricesManuallyEdited, setPricesManuallyEdited] = useState(false);
@@ -290,6 +367,12 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         setTimeout(scrollToTop, 0);
     };
 
+    const handleStepChange = (nextStep: number) => {
+        setError(null);
+        setActiveStep(nextStep);
+        setTimeout(scrollToTop, 0);
+    };
+
     const handleSubmit = async () => {
         setError(null);
 
@@ -386,6 +469,32 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
 
     const isSubmitting = createClient.isPending || updateClient.isPending;
 
+    const isBasicStepValid = Boolean(
+        formData.name.trim() &&
+        formData.birthday?.trim() &&
+        formData.dueDate?.trim() &&
+        formData.address?.trim() &&
+        formData.phone?.trim()
+    );
+    const isEmployeeStepValid = true;
+    const isVoucherStepValid = Boolean(
+        formData.type?.trim() &&
+        formData.duration &&
+        formData.fullPrice?.trim()
+    );
+    const isContractStepValid = Boolean(
+        formData.startDate?.trim() &&
+        formData.endDate?.trim()
+    );
+    const stepValidation = [
+        isBasicStepValid,
+        isEmployeeStepValid,
+        isVoucherStepValid,
+        isContractStepValid,
+    ] as const;
+    const isCurrentStepValid = stepValidation[activeStep] ?? true;
+    const isFormComplete = isBasicStepValid && isVoucherStepValid && isContractStepValid;
+
     const handleDialogClose = () => {
         clearDraft();
 
@@ -396,365 +505,714 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         onClose();
     };
 
+    const formTitle = isEditMode
+        ? t(locale, "clients.form.edit-title")
+        : t(locale, "clients.form.add-title");
+    const formDescription = isEditMode
+        ? "기본 정보, 담당 인력, 서비스 조건을 한 번에 수정합니다."
+        : "고객의 기본 정보와 서비스 조건을 단계 없이 빠르게 등록합니다.";
+    const dialogFormActions = (
+        <>
+            <Button variant="neutral" onClick={handleDialogClose} disabled={isSubmitting}>
+                {t(locale, "common.cancel")}
+            </Button>
+            <Button onClick={handleSubmit} disabled={isSubmitting}>
+                {isSubmitting ? (
+                    <Spinner className="h-4 w-4" />
+                ) : isEditMode ? (
+                    t(locale, "common.save")
+                ) : (
+                    t(locale, "common.create")
+                )}
+            </Button>
+        </>
+    );
+    const panelFormActions = (
+        <>
+            <Button variant="neutral" onClick={handleDialogClose} disabled={isSubmitting}>
+                {t(locale, "common.cancel")}
+            </Button>
+            <div className="flex items-center gap-2">
+                {activeStep > 0 && (
+                    <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => handleStepChange(activeStep - 1)}
+                        disabled={isSubmitting}
+                        data-component="clients-form-panel-prev"
+                    >
+                        <ChevronLeft className="h-4 w-4" />
+                        이전
+                    </Button>
+                )}
+                {activeStep < CLIENT_FORM_LAST_STEP_INDEX ? (
+                    <Button
+                        type="button"
+                        onClick={() => handleStepChange(activeStep + 1)}
+                        disabled={!isCurrentStepValid || isSubmitting}
+                        data-component="clients-form-panel-next"
+                    >
+                        다음
+                        <ChevronRight className="h-4 w-4" />
+                    </Button>
+                ) : (
+                    <Button
+                        type="button"
+                        onClick={handleSubmit}
+                        disabled={isSubmitting || !isFormComplete}
+                        data-component="clients-form-panel-submit"
+                    >
+                        {isSubmitting ? (
+                            <Spinner className="h-4 w-4" />
+                        ) : isEditMode ? (
+                            t(locale, "common.save")
+                        ) : (
+                            t(locale, "common.create")
+                        )}
+                    </Button>
+                )}
+            </div>
+        </>
+    );
+
+    const basicInfoSection = (
+        <TitleDescChildrenMolecule
+            title={t(locale, "clients.form.section-basic")}
+            description="고객의 프로필과 연락처를 먼저 입력해 주세요."
+            className={SECTION_CARD_CLASS_NAME}
+            titleClassName={LABEL_CLASS_NAME}
+        >
+            <div className={FIELD_GRID_CLASS_NAME}>
+                <div className="space-y-2">
+                    <Label htmlFor="name" className={LABEL_CLASS_NAME}>
+                        {t(locale, "clients.form.name")}
+                        <span className="text-destructive ml-1">*</span>
+                    </Label>
+                    <Input
+                        id="name"
+                        className={V3_INPUT_CLASS_NAME}
+                        value={formData.name}
+                        onChange={(e) => handleChange("name", e.target.value)}
+                    />
+                </div>
+                <div className="space-y-2">
+                    <Label htmlFor="birthday" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.birthday")}</Label>
+                    <Input
+                        id="birthday"
+                        className={V3_INPUT_CLASS_NAME}
+                        placeholder="YYMMDD"
+                        value={formData.birthday ?? ""}
+                        onChange={(e) => handleChange("birthday", e.target.value)}
+                        maxLength={6}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                        {t(locale, "clients.form.birthday-helper")}
+                    </p>
+                </div>
+                <div className="space-y-2">
+                    <Label htmlFor="dueDate" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.due-date")}</Label>
+                    <Input
+                        id="dueDate"
+                        type="date"
+                        className={V3_INPUT_CLASS_NAME}
+                        value={formData.dueDate || ""}
+                        onChange={(e) => handleChange("dueDate", e.target.value)}
+                    />
+                </div>
+                <div className="space-y-2">
+                    <Label htmlFor="phone" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.phone")}</Label>
+                    <Input
+                        id="phone"
+                        className={V3_INPUT_CLASS_NAME}
+                        placeholder="010-1234-5678"
+                        value={formData.phone ?? ""}
+                        onChange={(e) => handleChange("phone", formatPhoneNumber(e.target.value))}
+                        maxLength={13}
+                    />
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                    <Label htmlFor="address" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.address")}</Label>
+                    <Input
+                        id="address"
+                        className={V3_INPUT_CLASS_NAME}
+                        value={formData.address ?? ""}
+                        onChange={(e) => handleChange("address", e.target.value)}
+                    />
+                </div>
+            </div>
+        </TitleDescChildrenMolecule>
+    );
+
+    const employeeSection = (
+        <TitleDescChildrenMolecule
+            title={t(locale, "clients.form.section-employee")}
+            description="서비스를 담당할 제공인력을 배정해 주세요."
+            className={SECTION_CARD_CLASS_NAME}
+            titleClassName={LABEL_CLASS_NAME}
+        >
+            <div className={FIELD_GRID_CLASS_NAME}>
+                <EmployeeAutocomplete
+                    value={formData.primaryEmployeeId}
+                    onChange={(id) => handleChange("primaryEmployeeId", id)}
+                    label={t(locale, "clients.form.primary-employee")}
+                    excludeIds={formData.secondaryEmployeeId != null ? [formData.secondaryEmployeeId] : []}
+                    allowManualEntry
+                    onManualEntry={() => {
+                        setDraft({
+                            formData,
+                            pricesManuallyEdited,
+                            client: client ?? null,
+                        });
+                        router.push("/employees/new?returnTo=/clients?openClientForm=1&target=primary");
+                    }}
+                />
+                <EmployeeAutocomplete
+                    value={formData.secondaryEmployeeId ?? null}
+                    onChange={(id) => handleChange("secondaryEmployeeId", id)}
+                    label={t(locale, "clients.form.secondary-employee")}
+                    excludeIds={formData.primaryEmployeeId != null ? [formData.primaryEmployeeId] : []}
+                    allowManualEntry
+                    onManualEntry={() => {
+                        setDraft({
+                            formData,
+                            pricesManuallyEdited,
+                            client: client ?? null,
+                        });
+                        router.push("/employees/new?returnTo=/clients?openClientForm=1&target=secondary");
+                    }}
+                />
+            </div>
+        </TitleDescChildrenMolecule>
+    );
+
+    const voucherInfoSections = (
+        <>
+            <TitleDescChildrenMolecule
+                title={t(locale, "clients.form.section-service")}
+                description="바우처 유형과 서비스 기간을 선택해 주세요."
+                className={SECTION_CARD_CLASS_NAME}
+                titleClassName={LABEL_CLASS_NAME}
+            >
+                <div className="flex flex-wrap items-end gap-4">
+                    <div className="flex-1 space-y-2">
+                        <Label className={LABEL_CLASS_NAME}>{t(locale, "clients.form.voucher-type")}</Label>
+                        <Select
+                            value={formData.type || ""}
+                            onValueChange={handleTypeChange}
+                        >
+                            <SelectTrigger className="w-full">
+                                <SelectValue placeholder={t(locale, "clients.form.voucher-type")} />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
+                                    <SelectGroup key={groupName}>
+                                        <SelectLabel className="font-semibold">{groupName}</SelectLabel>
+                                        {Object.entries(types).map(([typeValue, typeData]) => (
+                                            <SelectItem key={typeValue} value={typeValue} className="pl-6">
+                                                {typeData.label}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectGroup>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="flex-1 space-y-2">
+                        <Label className={LABEL_CLASS_NAME}>{t(locale, "clients.form.duration")}</Label>
+                        <div className="relative">
+                            <Select
+                                value={formData.duration?.toString() || ""}
+                                onValueChange={(value) => {
+                                    handleChange("duration", value ? Number(value) : null);
+                                    setPricesManuallyEdited(false);
+                                }}
+                                disabled={!formData.type || isPriceLoading}
+                            >
+                                <SelectTrigger className="w-full">
+                                    <SelectValue placeholder={t(locale, "clients.form.duration")} />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {availableDurations.map((duration) => (
+                                        <SelectItem key={duration} value={String(duration)}>
+                                            {duration}일
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            {isPriceLoading && (
+                                <div className="absolute right-10 top-1/2 -translate-y-1/2">
+                                    <Spinner className="h-4 w-4" />
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </TitleDescChildrenMolecule>
+
+            <TitleDescChildrenMolecule
+                title={t(locale, "clients.form.section-pricing")}
+                description="서비스 금액과 지원 금액을 확인하고 조정해 주세요."
+                className={SECTION_CARD_CLASS_NAME}
+                titleClassName={LABEL_CLASS_NAME}
+            >
+                <div className="flex items-center gap-2">
+                    {selectedPriceInfo && !pricesManuallyEdited && (
+                        <StatusBadge variant="doc_requested" size="sm">
+                            {t(locale, "clients.form.auto-filled")}
+                        </StatusBadge>
+                    )}
+                </div>
+
+                <div className="flex flex-wrap items-end gap-4">
+                    <div className="flex-1 space-y-2">
+                        <Label htmlFor="fullPrice" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.full-price")}</Label>
+                        <div className="relative">
+                            <Input
+                                id="fullPrice"
+                                placeholder="0"
+                                value={formatPrice(formData.fullPrice || "")}
+                                onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
+                                className={cn(V3_INPUT_CLASS_NAME, "pr-8")}
+                            />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                                원
+                            </span>
+                        </div>
+                    </div>
+                    <div className="flex-1 space-y-2">
+                        <Label htmlFor="grant" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.grant")}</Label>
+                        <div className="relative">
+                            <Input
+                                id="grant"
+                                placeholder="0"
+                                value={formatPrice(formData.grant || "")}
+                                onChange={(e) => handlePriceChange("grant", e.target.value.replace(/,/g, ""))}
+                                className={cn(V3_INPUT_CLASS_NAME, "pr-8")}
+                            />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                                원
+                            </span>
+                        </div>
+                    </div>
+                    <div className="flex-1 space-y-2">
+                        <Label htmlFor="actualPrice" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.actual-price")}</Label>
+                        <div className="relative">
+                            <Input
+                                id="actualPrice"
+                                placeholder="0"
+                                value={formatPrice(formData.actualPrice || "")}
+                                onChange={(e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, ""))}
+                                className={cn(V3_INPUT_CLASS_NAME, "pr-8")}
+                            />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                                원
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </TitleDescChildrenMolecule>
+        </>
+    );
+
+    const contractInfoSections = (
+        <>
+            <TitleDescChildrenMolecule
+                title={t(locale, "clients.form.section-contract")}
+                description="계약 상태와 서비스 일정을 정리해 주세요."
+                className={SECTION_CARD_CLASS_NAME}
+                titleClassName={LABEL_CLASS_NAME}
+            >
+                <div className="flex flex-wrap items-end gap-4">
+                    <div className="flex-1 space-y-2">
+                        <Label className={LABEL_CLASS_NAME}>{t(locale, "clients.form.contract-status")}</Label>
+                        <Select
+                            value={formData.serviceStatus || ""}
+                            onValueChange={(value) => handleChange("serviceStatus", value)}
+                        >
+                            <SelectTrigger className="w-full">
+                                <SelectValue placeholder={t(locale, "clients.form.contract-status")} />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {SERVICE_STATUS_OPTIONS.map((status) => (
+                                    <SelectItem key={status.value} value={status.value}>
+                                        {status.label}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="flex-1 space-y-2">
+                        <Label htmlFor="startDate" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.start-date")}</Label>
+                        <Input
+                            id="startDate"
+                            type="date"
+                            className={V3_INPUT_CLASS_NAME}
+                            value={formData.startDate || ""}
+                            onChange={(e) => handleChange("startDate", e.target.value)}
+                        />
+                    </div>
+                    <div className="flex-1 space-y-2">
+                        <Label htmlFor="endDate" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.end-date")}</Label>
+                        <Input
+                            id="endDate"
+                            type="date"
+                            className={V3_INPUT_CLASS_NAME}
+                            value={formData.endDate || ""}
+                            onChange={(e) => handleChange("endDate", e.target.value)}
+                        />
+                    </div>
+                </div>
+            </TitleDescChildrenMolecule>
+
+            <TitleDescChildrenMolecule
+                title={t(locale, "clients.form.section-flags")}
+                description="추가 서비스 옵션을 설정해 주세요."
+                className={SECTION_CARD_CLASS_NAME}
+                titleClassName={LABEL_CLASS_NAME}
+            >
+                <div className="flex flex-wrap gap-6">
+                    <div className="flex items-center gap-2">
+                        <Switch
+                            id="voucherClient"
+                            checked={formData.voucherClient}
+                            onCheckedChange={(checked) => handleChange("voucherClient", checked)}
+                        />
+                        <Label htmlFor="voucherClient" className="cursor-pointer">
+                            {t(locale, "clients.form.voucher-client")}
+                        </Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <Switch
+                            id="careCenter"
+                            checked={formData.careCenter === true}
+                            onCheckedChange={(checked) => handleChange("careCenter", checked)}
+                        />
+                        <Label htmlFor="careCenter" className="cursor-pointer">
+                            {t(locale, "clients.form.care-center")}
+                        </Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <Switch
+                            id="breastPump"
+                            checked={formData.breastPump}
+                            onCheckedChange={(checked) => handleChange("breastPump", checked)}
+                        />
+                        <Label htmlFor="breastPump" className="cursor-pointer">
+                            {t(locale, "clients.form.breast-pump")}
+                        </Label>
+                    </div>
+                </div>
+            </TitleDescChildrenMolecule>
+        </>
+    );
+
+    const panelBasicInfoStep = (
+        <>
+            <TitleTextInputMolecule
+                id="name"
+                label={t(locale, "clients.form.name")}
+                value={formData.name}
+                onValueChange={(value) => handleChange("name", value)}
+                required
+                dataComponent="clients-form-panel-name-input"
+            />
+            <TitleTextInputMolecule
+                id="birthday"
+                label={t(locale, "clients.form.birthday")}
+                placeholder="YYMMDD"
+                value={formData.birthday ?? ""}
+                onValueChange={(value) => handleChange("birthday", value)}
+                maxLength={6}
+                dataComponent="clients-form-panel-birthday-input"
+            />
+            <TitleTextInputMolecule
+                id="dueDate"
+                type="date"
+                label={t(locale, "clients.form.due-date")}
+                value={formData.dueDate || ""}
+                onValueChange={(value) => handleChange("dueDate", value)}
+                dataComponent="clients-form-panel-due-date-input"
+            />
+            <TitleTextInputMolecule
+                id="phone"
+                label={t(locale, "clients.form.phone")}
+                placeholder="010-1234-5678"
+                value={formData.phone ?? ""}
+                onValueChange={(value) => handleChange("phone", formatPhoneNumber(value))}
+                maxLength={13}
+                dataComponent="clients-form-panel-phone-input"
+            />
+            <TitleTextInputMolecule
+                id="address"
+                label={t(locale, "clients.form.address")}
+                value={formData.address ?? ""}
+                onValueChange={(value) => handleChange("address", value)}
+                dataComponent="clients-form-panel-address-input"
+            />
+        </>
+    );
+
+    const panelEmployeeStep = (
+        <>
+            <EmployeeAutocomplete
+                value={formData.primaryEmployeeId}
+                onChange={(id) => handleChange("primaryEmployeeId", id)}
+                label={t(locale, "clients.form.primary-employee")}
+                excludeIds={formData.secondaryEmployeeId != null ? [formData.secondaryEmployeeId] : []}
+                allowManualEntry
+                onManualEntry={() => {
+                    setDraft({
+                        formData,
+                        pricesManuallyEdited,
+                        client: client ?? null,
+                    });
+                    router.push("/employees/new?returnTo=/clients?openClientForm=1&target=primary");
+                }}
+            />
+            <EmployeeAutocomplete
+                value={formData.secondaryEmployeeId ?? null}
+                onChange={(id) => handleChange("secondaryEmployeeId", id)}
+                label={t(locale, "clients.form.secondary-employee")}
+                excludeIds={formData.primaryEmployeeId != null ? [formData.primaryEmployeeId] : []}
+                allowManualEntry
+                onManualEntry={() => {
+                    setDraft({
+                        formData,
+                        pricesManuallyEdited,
+                        client: client ?? null,
+                    });
+                    router.push("/employees/new?returnTo=/clients?openClientForm=1&target=secondary");
+                }}
+            />
+        </>
+    );
+
+    const panelVoucherInfoStep = (
+        <>
+            <div className="flex flex-col gap-2">
+                <Label>{t(locale, "clients.form.voucher-type")}</Label>
+                <Select
+                    value={formData.type || ""}
+                    onValueChange={handleTypeChange}
+                >
+                    <SelectTrigger className="w-full">
+                        <SelectValue placeholder={t(locale, "clients.form.voucher-type")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
+                            <SelectGroup key={groupName}>
+                                <SelectLabel className="font-semibold">{groupName}</SelectLabel>
+                                {Object.entries(types).map(([typeValue, typeData]) => (
+                                    <SelectItem key={typeValue} value={typeValue} className="pl-6">
+                                        {typeData.label}
+                                    </SelectItem>
+                                ))}
+                            </SelectGroup>
+                        ))}
+                    </SelectContent>
+                </Select>
+            </div>
+            <div className="flex flex-col gap-2">
+                <Label>{t(locale, "clients.form.duration")}</Label>
+                <div className="relative">
+                    <Select
+                        value={formData.duration?.toString() || ""}
+                        onValueChange={(value) => {
+                            handleChange("duration", value ? Number(value) : null);
+                            setPricesManuallyEdited(false);
+                        }}
+                        disabled={!formData.type || isPriceLoading}
+                    >
+                        <SelectTrigger className="w-full">
+                            <SelectValue placeholder={t(locale, "clients.form.duration")} />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {availableDurations.map((duration) => (
+                                <SelectItem key={duration} value={String(duration)}>
+                                    {duration}일
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                    {isPriceLoading && (
+                        <div className="absolute right-10 top-1/2 -translate-y-1/2">
+                            <Spinner className="h-4 w-4" />
+                        </div>
+                    )}
+                </div>
+            </div>
+            {selectedPriceInfo && !pricesManuallyEdited ? (
+                <StatusBadge variant="doc_requested" size="sm" className="self-start">
+                    {t(locale, "clients.form.auto-filled")}
+                </StatusBadge>
+            ) : null}
+            <TitleTextInputMolecule
+                id="fullPrice"
+                label={t(locale, "clients.form.full-price")}
+                placeholder="0"
+                value={formatPrice(formData.fullPrice || "")}
+                onValueChange={(value) => handlePriceChange("fullPrice", value.replace(/,/g, ""))}
+                dataComponent="clients-form-panel-full-price-input"
+            />
+            <TitleTextInputMolecule
+                id="grant"
+                label={t(locale, "clients.form.grant")}
+                placeholder="0"
+                value={formatPrice(formData.grant || "")}
+                onValueChange={(value) => handlePriceChange("grant", value.replace(/,/g, ""))}
+                dataComponent="clients-form-panel-grant-input"
+            />
+            <TitleTextInputMolecule
+                id="actualPrice"
+                label={t(locale, "clients.form.actual-price")}
+                placeholder="0"
+                value={formatPrice(formData.actualPrice || "")}
+                onValueChange={(value) => handlePriceChange("actualPrice", value.replace(/,/g, ""))}
+                dataComponent="clients-form-panel-actual-price-input"
+            />
+        </>
+    );
+
+    const panelContractInfoStep = (
+        <>
+            <div className="flex flex-col gap-2">
+                <Label>{t(locale, "clients.form.contract-status")}</Label>
+                <Select
+                    value={formData.serviceStatus || ""}
+                    onValueChange={(value) => handleChange("serviceStatus", value)}
+                >
+                    <SelectTrigger className="w-full">
+                        <SelectValue placeholder={t(locale, "clients.form.contract-status")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {SERVICE_STATUS_OPTIONS.map((status) => (
+                            <SelectItem key={status.value} value={status.value}>
+                                {status.label}
+                            </SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+            </div>
+            <TitleTextInputMolecule
+                id="startDate"
+                type="date"
+                label={t(locale, "clients.form.start-date")}
+                value={formData.startDate || ""}
+                onValueChange={(value) => handleChange("startDate", value)}
+                dataComponent="clients-form-panel-start-date-input"
+            />
+            <TitleTextInputMolecule
+                id="endDate"
+                type="date"
+                label={t(locale, "clients.form.end-date")}
+                value={formData.endDate || ""}
+                onValueChange={(value) => handleChange("endDate", value)}
+                dataComponent="clients-form-panel-end-date-input"
+            />
+            <div className="flex flex-wrap gap-6 pt-1">
+                <div className="flex items-center gap-2">
+                    <Switch
+                        id="voucherClientPanel"
+                        checked={formData.voucherClient}
+                        onCheckedChange={(checked) => handleChange("voucherClient", checked)}
+                    />
+                    <Label htmlFor="voucherClientPanel" className="cursor-pointer">
+                        {t(locale, "clients.form.voucher-client")}
+                    </Label>
+                </div>
+                <div className="flex items-center gap-2">
+                    <Switch
+                        id="careCenterPanel"
+                        checked={formData.careCenter === true}
+                        onCheckedChange={(checked) => handleChange("careCenter", checked)}
+                    />
+                    <Label htmlFor="careCenterPanel" className="cursor-pointer">
+                        {t(locale, "clients.form.care-center")}
+                    </Label>
+                </div>
+                <div className="flex items-center gap-2">
+                    <Switch
+                        id="breastPumpPanel"
+                        checked={formData.breastPump}
+                        onCheckedChange={(checked) => handleChange("breastPump", checked)}
+                    />
+                    <Label htmlFor="breastPumpPanel" className="cursor-pointer">
+                        {t(locale, "clients.form.breast-pump")}
+                    </Label>
+                </div>
+            </div>
+        </>
+    );
+
+    const dialogFormSteps = [
+        basicInfoSection,
+        employeeSection,
+        voucherInfoSections,
+        contractInfoSections,
+    ] as const;
+    const panelFormSteps = [
+        panelBasicInfoStep,
+        panelEmployeeStep,
+        panelVoucherInfoStep,
+        panelContractInfoStep,
+    ] as const;
+
+    const formError = error ? (
+        <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+        </Alert>
+    ) : null;
+
+    const formContent = surface === "panel" ? (
+        <SteppedWizardPanelContent
+            ref={contentRef}
+            dataComponent="clients-form-panel-content"
+            stepContentClassName="justify-between gap-4"
+            feedback={formError}
+        >
+            {panelFormSteps[activeStep]}
+        </SteppedWizardPanelContent>
+    ) : (
+        <div
+            ref={contentRef}
+            data-component="clients-form-dialog-content"
+            className="space-y-5"
+        >
+            {formError}
+            {dialogFormSteps}
+        </div>
+    );
+
+    const panelFooter = (
+        <SteppedWizardPanelFooter>
+            {panelFormActions}
+        </SteppedWizardPanelFooter>
+    );
+
+    if (surface === "panel" && !open) {
+        return null;
+    }
+
+    if (surface === "panel") {
+        return renderLayout ? renderLayout({ content: formContent, footer: panelFooter }) : (
+            <>
+                {formContent}
+                {panelFooter}
+            </>
+        );
+    }
+
     return (
         <Dialog data-component="clients-form-dialog" open={open} onOpenChange={(isOpen) => !isOpen && handleDialogClose()}>
             <FormDialogShell
                 dataComponent="clients-form-dialog"
-                title={
-                    isEditMode
-                        ? t(locale, "clients.form.edit-title")
-                        : t(locale, "clients.form.add-title")
-                }
-                description={
-                    isEditMode
-                        ? "기본 정보, 담당 인력, 서비스 조건을 한 번에 수정합니다."
-                        : "고객의 기본 정보와 서비스 조건을 단계 없이 빠르게 등록합니다."
-                }
+                title={formTitle}
+                description={formDescription}
                 dialogClassName="w-[85%] max-w-[460px] min-h-[70vh] max-h-[70vh] sm:w-[85%] sm:max-w-[460px]"
                 contentClassName="space-y-5"
-                footer={
-                    <>
-                        <Button variant="neutral" onClick={handleDialogClose} disabled={isSubmitting}>
-                            {t(locale, "common.cancel")}
-                        </Button>
-                        <Button onClick={handleSubmit} disabled={isSubmitting}>
-                            {isSubmitting ? (
-                                <Spinner className="h-4 w-4" />
-                            ) : isEditMode ? (
-                                t(locale, "common.save")
-                            ) : (
-                                t(locale, "common.create")
-                            )}
-                        </Button>
-                    </>
-                }
+                footer={dialogFormActions}
             >
-                <div ref={contentRef} data-component="clients-form-dialog-content" className="space-y-5">
-                    {error && (
-                        <Alert variant="destructive">
-                            <AlertDescription>{error}</AlertDescription>
-                        </Alert>
-                    )}
-
-                    <TitleDescChildrenMolecule
-                        title={t(locale, "clients.form.section-basic")}
-                        description="고객의 프로필과 연락처를 먼저 입력해 주세요."
-                        className={SECTION_CARD_CLASS_NAME}
-                        titleClassName={LABEL_CLASS_NAME}
-                    >
-                        <div className={FIELD_GRID_CLASS_NAME}>
-                            <div className="space-y-2">
-                                <Label htmlFor="name" className={LABEL_CLASS_NAME}>
-                                    {t(locale, "clients.form.name")}
-                                    <span className="text-destructive ml-1">*</span>
-                                </Label>
-                                <Input
-                                    id="name"
-                                    className={V3_INPUT_CLASS_NAME}
-                                    value={formData.name}
-                                    onChange={(e) => handleChange("name", e.target.value)}
-                                />
-                            </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="birthday" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.birthday")}</Label>
-                                <Input
-                                    id="birthday"
-                                    className={V3_INPUT_CLASS_NAME}
-                                    placeholder="YYMMDD"
-                                    value={formData.birthday ?? ""}
-                                    onChange={(e) => handleChange("birthday", e.target.value)}
-                                    maxLength={6}
-                                />
-                                <p className="text-xs text-muted-foreground">
-                                    {t(locale, "clients.form.birthday-helper")}
-                                </p>
-                            </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="dueDate" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.due-date")}</Label>
-                                <Input
-                                    id="dueDate"
-                                    type="date"
-                                    className={V3_INPUT_CLASS_NAME}
-                                    value={formData.dueDate || ""}
-                                    onChange={(e) => handleChange("dueDate", e.target.value)}
-                                />
-                            </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="phone" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.phone")}</Label>
-                                <Input
-                                    id="phone"
-                                    className={V3_INPUT_CLASS_NAME}
-                                    placeholder="010-1234-5678"
-                                    value={formData.phone ?? ""}
-                                    onChange={(e) => handleChange("phone", formatPhoneNumber(e.target.value))}
-                                    maxLength={13}
-                                />
-                            </div>
-                            <div className="space-y-2 sm:col-span-2">
-                                <Label htmlFor="address" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.address")}</Label>
-                                <Input
-                                    id="address"
-                                    className={V3_INPUT_CLASS_NAME}
-                                    value={formData.address ?? ""}
-                                    onChange={(e) => handleChange("address", e.target.value)}
-                                />
-                            </div>
-                        </div>
-                    </TitleDescChildrenMolecule>
-
-                    <TitleDescChildrenMolecule
-                        title={t(locale, "clients.form.section-employee")}
-                        description="서비스를 담당할 제공인력을 배정해 주세요."
-                        className={SECTION_CARD_CLASS_NAME}
-                        titleClassName={LABEL_CLASS_NAME}
-                    >
-                        <div className={FIELD_GRID_CLASS_NAME}>
-                            <EmployeeAutocomplete
-                                value={formData.primaryEmployeeId}
-                                onChange={(id) => handleChange("primaryEmployeeId", id)}
-                                label={t(locale, "clients.form.primary-employee")}
-                                excludeIds={formData.secondaryEmployeeId != null ? [formData.secondaryEmployeeId] : []}
-                                allowManualEntry
-                                onManualEntry={() => {
-                                    setDraft({
-                                        formData,
-                                        pricesManuallyEdited,
-                                        client: client ?? null,
-                                    });
-                                    router.push("/employees/new?returnTo=/clients?openClientForm=1&target=primary");
-                                }}
-                            />
-                            <EmployeeAutocomplete
-                                value={formData.secondaryEmployeeId ?? null}
-                                onChange={(id) => handleChange("secondaryEmployeeId", id)}
-                                label={t(locale, "clients.form.secondary-employee")}
-                                excludeIds={formData.primaryEmployeeId != null ? [formData.primaryEmployeeId] : []}
-                                allowManualEntry
-                                onManualEntry={() => {
-                                    setDraft({
-                                        formData,
-                                        pricesManuallyEdited,
-                                        client: client ?? null,
-                                    });
-                                    router.push("/employees/new?returnTo=/clients?openClientForm=1&target=secondary");
-                                }}
-                            />
-                        </div>
-                    </TitleDescChildrenMolecule>
-
-                    <TitleDescChildrenMolecule
-                        title={t(locale, "clients.form.section-service")}
-                        description="바우처 유형과 서비스 기간을 선택해 주세요."
-                        className={SECTION_CARD_CLASS_NAME}
-                        titleClassName={LABEL_CLASS_NAME}
-                    >
-                        <div className="flex flex-wrap items-end gap-4">
-                            <div className="flex-1 space-y-2">
-                                <Label className={LABEL_CLASS_NAME}>{t(locale, "clients.form.voucher-type")}</Label>
-                                <Select
-                                    value={formData.type || ""}
-                                    onValueChange={handleTypeChange}
-                                >
-                                    <SelectTrigger className="h-12 w-full">
-                                        <SelectValue placeholder={t(locale, "clients.form.voucher-type")} />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
-                                            <SelectGroup key={groupName}>
-                                                <SelectLabel className="font-semibold">{groupName}</SelectLabel>
-                                                {Object.entries(types).map(([typeValue, typeData]) => (
-                                                    <SelectItem key={typeValue} value={typeValue} className="pl-6">
-                                                        {typeData.label}
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectGroup>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="flex-1 space-y-2">
-                                <Label className={LABEL_CLASS_NAME}>{t(locale, "clients.form.duration")}</Label>
-                                <div className="relative">
-                                    <Select
-                                        value={formData.duration?.toString() || ""}
-                                        onValueChange={(value) => {
-                                            handleChange("duration", value ? Number(value) : null);
-                                            setPricesManuallyEdited(false);
-                                        }}
-                                        disabled={!formData.type || isPriceLoading}
-                                    >
-                                        <SelectTrigger className="h-12 w-full">
-                                            <SelectValue placeholder={t(locale, "clients.form.duration")} />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {availableDurations.map((duration) => (
-                                                <SelectItem key={duration} value={String(duration)}>
-                                                    {duration}일
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                    {isPriceLoading && (
-                                        <div className="absolute right-10 top-1/2 -translate-y-1/2">
-                                            <Spinner className="h-4 w-4" />
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                    </TitleDescChildrenMolecule>
-
-                    <TitleDescChildrenMolecule
-                        title={t(locale, "clients.form.section-pricing")}
-                        description="서비스 금액과 지원 금액을 확인하고 조정해 주세요."
-                        className={SECTION_CARD_CLASS_NAME}
-                        titleClassName={LABEL_CLASS_NAME}
-                    >
-                        <div className="flex items-center gap-2">
-                            {selectedPriceInfo && !pricesManuallyEdited && (
-                                <StatusBadge variant="doc_requested" size="sm">
-                                    {t(locale, "clients.form.auto-filled")}
-                                </StatusBadge>
-                            )}
-                        </div>
-
-                        <div className="flex flex-wrap items-end gap-4">
-                            <div className="flex-1 space-y-2">
-                                <Label htmlFor="fullPrice" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.full-price")}</Label>
-                                <div className="relative">
-                                    <Input
-                                        id="fullPrice"
-                                        placeholder="0"
-                                        value={formatPrice(formData.fullPrice || "")}
-                                        onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
-                                        className={cn(V3_INPUT_CLASS_NAME, "pr-8")}
-                                    />
-                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
-                                        원
-                                    </span>
-                                </div>
-                            </div>
-                            <div className="flex-1 space-y-2">
-                                <Label htmlFor="grant" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.grant")}</Label>
-                                <div className="relative">
-                                    <Input
-                                        id="grant"
-                                        placeholder="0"
-                                        value={formatPrice(formData.grant || "")}
-                                        onChange={(e) => handlePriceChange("grant", e.target.value.replace(/,/g, ""))}
-                                        className={cn(V3_INPUT_CLASS_NAME, "pr-8")}
-                                    />
-                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
-                                        원
-                                    </span>
-                                </div>
-                            </div>
-                            <div className="flex-1 space-y-2">
-                                <Label htmlFor="actualPrice" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.actual-price")}</Label>
-                                <div className="relative">
-                                    <Input
-                                        id="actualPrice"
-                                        placeholder="0"
-                                        value={formatPrice(formData.actualPrice || "")}
-                                        onChange={(e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, ""))}
-                                        className={cn(V3_INPUT_CLASS_NAME, "pr-8")}
-                                    />
-                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
-                                        원
-                                    </span>
-                                </div>
-                            </div>
-                        </div>
-                    </TitleDescChildrenMolecule>
-
-                    <TitleDescChildrenMolecule
-                        title={t(locale, "clients.form.section-contract")}
-                        description="계약 상태와 서비스 일정을 정리해 주세요."
-                        className={SECTION_CARD_CLASS_NAME}
-                        titleClassName={LABEL_CLASS_NAME}
-                    >
-                        <div className="flex flex-wrap items-end gap-4">
-                            <div className="flex-1 space-y-2">
-                                <Label className={LABEL_CLASS_NAME}>{t(locale, "clients.form.contract-status")}</Label>
-                                <Select
-                                    value={formData.serviceStatus || ""}
-                                    onValueChange={(value) => handleChange("serviceStatus", value)}
-                                >
-                                    <SelectTrigger className="h-12 w-full">
-                                        <SelectValue placeholder={t(locale, "clients.form.contract-status")} />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {SERVICE_STATUS_OPTIONS.map((status) => (
-                                            <SelectItem key={status.value} value={status.value}>
-                                                {status.label}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="flex-1 space-y-2">
-                                <Label htmlFor="startDate" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.start-date")}</Label>
-                                <Input
-                                    id="startDate"
-                                    type="date"
-                                    className={V3_INPUT_CLASS_NAME}
-                                    value={formData.startDate || ""}
-                                    onChange={(e) => handleChange("startDate", e.target.value)}
-                                />
-                            </div>
-                            <div className="flex-1 space-y-2">
-                                <Label htmlFor="endDate" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.end-date")}</Label>
-                                <Input
-                                    id="endDate"
-                                    type="date"
-                                    className={V3_INPUT_CLASS_NAME}
-                                    value={formData.endDate || ""}
-                                    onChange={(e) => handleChange("endDate", e.target.value)}
-                                />
-                            </div>
-                        </div>
-                    </TitleDescChildrenMolecule>
-
-                    <TitleDescChildrenMolecule
-                        title={t(locale, "clients.form.section-flags")}
-                        description="추가 서비스 옵션을 설정해 주세요."
-                        className={SECTION_CARD_CLASS_NAME}
-                        titleClassName={LABEL_CLASS_NAME}
-                    >
-                        <div className="flex flex-wrap gap-6">
-                            <div className="flex items-center gap-2">
-                                <Switch
-                                    id="voucherClient"
-                                    checked={formData.voucherClient}
-                                    onCheckedChange={(checked) => handleChange("voucherClient", checked)}
-                                />
-                                <Label htmlFor="voucherClient" className="cursor-pointer">
-                                    {t(locale, "clients.form.voucher-client")}
-                                </Label>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <Switch
-                                    id="careCenter"
-                                    checked={formData.careCenter}
-                                    onCheckedChange={(checked) => handleChange("careCenter", checked)}
-                                />
-                                <Label htmlFor="careCenter" className="cursor-pointer">
-                                    {t(locale, "clients.form.care-center")}
-                                </Label>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <Switch
-                                    id="breastPump"
-                                    checked={formData.breastPump}
-                                    onCheckedChange={(checked) => handleChange("breastPump", checked)}
-                                />
-                                <Label htmlFor="breastPump" className="cursor-pointer">
-                                    {t(locale, "clients.form.breast-pump")}
-                                </Label>
-                            </div>
-                        </div>
-                    </TitleDescChildrenMolecule>
-                </div>
+                {formContent}
             </FormDialogShell>
         </Dialog>
     );

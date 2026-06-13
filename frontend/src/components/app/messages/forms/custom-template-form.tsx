@@ -7,7 +7,7 @@ import { useFormStore } from "@/stores/form-store";
 import { useTemplateStore } from "@/stores/template-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
-import { GeneratedMsg } from "../templates/GeneratedMsg";
+import { AutoFillMsgCard } from "../templates/AutoFillMsgCard";
 import { DynamicInput } from "./form-components/dynamic-input";
 
 interface CustomTemplateFormProps {
@@ -122,7 +122,7 @@ export const CustomTemplateForm = ({ template, onPreviewMessageChange }: CustomT
                     ))}
                 </div>
 
-                <GeneratedMsg
+                <AutoFillMsgCard
                     title={t(locale, "common.generated-message-title")}
                     copyButtonText={t(locale, "common.copy-button")}
                     message={generatedMessage}

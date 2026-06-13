@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Check } from "lucide-react";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -20,8 +20,9 @@ import {
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Input, V3_INPUT_CONTROL_CLASS_NAME } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
     Select,
     SelectContent,
@@ -33,6 +34,10 @@ import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import { TitleDescChildrenMolecule } from "@/components/app/ui/TitleDescChildrenMolecule";
 import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
+import {
+    SteppedWizardPanelContent,
+    SteppedWizardPanelFooter,
+} from "@/components/app/v3";
 import {
     DEFAULT_EMPLOYEE_GRADE,
     formatWorkAreaLabel,
@@ -46,6 +51,11 @@ interface EmployeeFormDialogProps {
     onClose: () => void;
     employee?: Employee | null;
     onSuccess?: (employee: Employee) => void;
+}
+
+interface EmployeeFormPanelProps extends Omit<EmployeeFormDialogProps, "open"> {
+    open?: boolean;
+    renderLayout?: (slots: { content: ReactNode; footer: ReactNode }) => ReactNode;
 }
 
 interface FormData {
@@ -66,8 +76,12 @@ const initialFormData: FormData = {
 
 const FIELD_GRID_CLASS_NAME = "grid grid-cols-1 gap-4 sm:grid-cols-2";
 const LABEL_CLASS_NAME = "text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-v3-text-muted";
-const V3_INPUT_CLASS_NAME = "h-12 rounded-[16px] border-[1.5px] border-v3-border bg-white px-4 text-[0.85rem] text-v3-dark shadow-none transition-all focus-visible:border-v3-primary focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]";
+const V3_INPUT_CLASS_NAME = V3_INPUT_CONTROL_CLASS_NAME;
 const OPTION_CLASS_NAME = "rounded-[14px] border-[1.5px] px-4 py-2.5 text-[0.8rem] font-semibold transition-all";
+const PANEL_FIELD_CLASS_NAME = "flex flex-col gap-2";
+const PANEL_INPUT_CLASS_NAME = V3_INPUT_CONTROL_CLASS_NAME;
+const PANEL_CONTENT_CLASS_NAME = "h-auto min-h-full";
+const PANEL_FIELDS_CLASS_NAME = "flex-none w-full gap-6 pb-8";
 
 function formatPhoneNumber(value: string): string {
     const numbers = value.replace(/[^\d]/g, "");
@@ -80,7 +94,45 @@ function parsePhoneNumber(value: string): string {
     return value.replace(/[^\d]/g, "");
 }
 
+export function EmployeeFormPanel({
+    open = true,
+    onClose,
+    employee,
+    onSuccess,
+    renderLayout,
+}: EmployeeFormPanelProps) {
+    return (
+        <EmployeeFormContent
+            surface="panel"
+            open={open}
+            onClose={onClose}
+            employee={employee}
+            onSuccess={onSuccess}
+            renderLayout={renderLayout}
+        />
+    );
+}
+
 export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: EmployeeFormDialogProps) {
+    return (
+        <EmployeeFormContent
+            surface="dialog"
+            open={open}
+            onClose={onClose}
+            employee={employee}
+            onSuccess={onSuccess}
+        />
+    );
+}
+
+function EmployeeFormContent({
+    surface,
+    open,
+    onClose,
+    employee,
+    onSuccess,
+    renderLayout,
+}: EmployeeFormDialogProps & Pick<EmployeeFormPanelProps, "renderLayout"> & { surface: "dialog" | "panel" }) {
     const locale = useLocale();
     const queryClient = useQueryClient();
     const [formData, setFormData] = useState<FormData>(initialFormData);
@@ -208,6 +260,382 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
         onClose();
     };
 
+    const dialogFooter = (
+        <div className="ml-auto flex w-full flex-col-reverse gap-2 sm:w-[360px] sm:flex-row sm:justify-end">
+            <Button
+                variant="neutral"
+                size="md"
+                onClick={handleClose}
+                disabled={isLoading}
+                data-component="employees-form-dialog-cancel"
+                className="w-full sm:flex-1"
+            >
+                {t(locale, "common.cancel")}
+            </Button>
+            <Button
+                variant="positive"
+                size="md"
+                onClick={handleSubmit}
+                disabled={isLoading || !isFormValid}
+                data-component="employees-form-dialog-submit"
+                className="w-full sm:flex-1"
+            >
+                {isLoading ? (
+                    <Spinner className="h-4 w-4" />
+                ) : isEditMode ? (
+                    t(locale, "common.save")
+                ) : (
+                    t(locale, "common.create")
+                )}
+            </Button>
+        </div>
+    );
+
+    const panelFooter = (
+        <SteppedWizardPanelFooter>
+            <Button
+                type="button"
+                variant="ghost"
+                onClick={handleClose}
+                disabled={isLoading}
+                data-component="employees-form-panel-cancel"
+            >
+                {t(locale, "common.cancel")}
+            </Button>
+            <div className="flex items-center gap-2">
+                <Button
+                    type="button"
+                    variant="positive"
+                    onClick={handleSubmit}
+                    disabled={isLoading || !isFormValid}
+                    data-component="employees-form-panel-submit"
+                >
+                    {isLoading ? (
+                        <Spinner className="h-4 w-4" />
+                    ) : isEditMode ? (
+                        t(locale, "common.save")
+                    ) : (
+                        t(locale, "common.create")
+                    )}
+                </Button>
+            </div>
+        </SteppedWizardPanelFooter>
+    );
+
+    const feedback = error ? (
+        <Alert
+            variant="destructive"
+            data-component="employees-form-dialog-error"
+            className="rounded-[18px] border-none bg-v3-burgundy-light px-4 py-3 text-v3-burgundy [&>svg]:text-v3-burgundy"
+        >
+            <AlertDescription>{error}</AlertDescription>
+        </Alert>
+    ) : null;
+
+    const formSections = (
+        <>
+            <TitleDescChildrenMolecule
+                data-component="employees-form-dialog-section-basic"
+                title={t(locale, "employees.form.section-basic")}
+                description="제공인력의 기본 정보를 입력해 주세요."
+                className="rounded-[24px] border border-v3-border/70 bg-white p-5"
+            >
+                <div data-component="employees-form-dialog-field-name" className="space-y-2">
+                    <Label htmlFor="name" className={LABEL_CLASS_NAME}>
+                        {t(locale, "employees.form.name")}
+                        <span className="ml-1 text-v3-burgundy">*</span>
+                    </Label>
+                    <Input
+                        id="name"
+                        variant="v3"
+                        value={formData.name}
+                        onChange={(e) => handleChange("name", e.target.value)}
+                        placeholder="홍길동"
+                        className={V3_INPUT_CLASS_NAME}
+                    />
+                </div>
+
+                <div data-component="employees-form-dialog-grid" className={FIELD_GRID_CLASS_NAME}>
+                    <div data-component="employees-form-dialog-field-phone" className="space-y-2">
+                        <Label htmlFor="phone" className={LABEL_CLASS_NAME}>
+                            {t(locale, "employees.form.phone")}
+                            <span className="ml-1 text-v3-burgundy">*</span>
+                        </Label>
+                        <Input
+                            id="phone"
+                            variant="v3"
+                            placeholder="010-1234-5678"
+                            value={formatPhoneNumber(formData.phone)}
+                            onChange={(e) => handleChange("phone", parsePhoneNumber(e.target.value))}
+                            onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
+                            maxLength={13}
+                            className={cn(
+                                V3_INPUT_CLASS_NAME,
+                                touched.phone && !isPhoneValid && "border-v3-burgundy focus-visible:border-v3-burgundy"
+                            )}
+                        />
+                        {touched.phone && !isPhoneValid && (
+                            <p className="text-[0.75rem] font-medium text-v3-burgundy">
+                                {t(locale, "employees.form.phone-required")}
+                            </p>
+                        )}
+                    </div>
+
+                    <div data-component="employees-form-dialog-field-grade" className="space-y-2">
+                        <Label className={LABEL_CLASS_NAME}>
+                            {t(locale, "employees.form.grade")}
+                            <span className="ml-1 text-v3-burgundy">*</span>
+                        </Label>
+                        <Select value={formData.grade} onValueChange={(value) => handleChange("grade", value)}>
+                            <SelectTrigger className="w-full">
+                                <SelectValue placeholder={t(locale, "employees.form.grade")} />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {GRADES.map((grade) => (
+                                    <SelectItem key={grade} value={grade}>
+                                        {grade}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                </div>
+            </TitleDescChildrenMolecule>
+
+            <TitleDescChildrenMolecule
+                data-component="employees-form-dialog-section-work"
+                title={t(locale, "employees.form.section-work")}
+                description="근무 가능 지역과 근무 가능 여부를 설정해 주세요."
+                className="rounded-[24px] border border-v3-border/70 bg-white p-5"
+            >
+                <fieldset
+                    className="space-y-3"
+                    onBlurCapture={() => setTouched((prev) => ({ ...prev, workArea: true }))}
+                >
+                    <legend className={LABEL_CLASS_NAME}>
+                        {t(locale, "employees.form.work-area")}
+                        <span className="ml-1 text-v3-burgundy">*</span>
+                    </legend>
+
+                    <div
+                        data-component="employees-form-dialog-field-work-area-options"
+                        className="flex flex-wrap gap-3"
+                    >
+                        {WORK_AREAS.map((area) => {
+                            const isSelected = formData.workArea.includes(area);
+
+                            return (
+                                <button
+                                    key={area}
+                                    type="button"
+                                    onClick={() => toggleWorkArea(area)}
+                                    className={cn(
+                                        OPTION_CLASS_NAME,
+                                        isSelected
+                                            ? "border-v3-primary bg-v3-primary-light text-v3-primary"
+                                            : "border-v3-border bg-white text-v3-text-muted hover:border-v3-primary/40 hover:text-v3-dark"
+                                    )}
+                                >
+                                    {isSelected && <Check className="mr-1.5 inline h-3.5 w-3.5" strokeWidth={2.5} />}
+                                    {formatWorkAreaLabel(area)}
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    {touched.workArea && !isWorkAreaValid && (
+                        <p className="text-[0.75rem] font-medium text-v3-burgundy">
+                            {t(locale, "employees.form.work-area-required")}
+                        </p>
+                    )}
+                </fieldset>
+
+                <TitleDescChildrenMolecule
+                    data-component="employees-form-dialog-field-open-status"
+                    title={t(locale, "employees.form.open-to-next-work")}
+                    className="space-y-3"
+                    bodyClassName="space-y-0"
+                    titleClassName={LABEL_CLASS_NAME}
+                >
+                    <div className="flex flex-wrap gap-3">
+                        {[
+                            { value: true, label: "가능" },
+                            { value: false, label: "불가" },
+                        ].map((option) => (
+                            <button
+                                key={String(option.value)}
+                                type="button"
+                                onClick={() => handleChange("openToNextWork", option.value)}
+                                className={cn(
+                                    OPTION_CLASS_NAME,
+                                    formData.openToNextWork === option.value
+                                        ? "border-v3-primary bg-v3-primary-light text-v3-primary"
+                                        : "border-v3-border bg-white text-v3-text-muted hover:border-v3-primary/40 hover:text-v3-dark"
+                                )}
+                            >
+                                {formData.openToNextWork === option.value && (
+                                    <Check className="mr-1.5 inline h-3.5 w-3.5" strokeWidth={2.5} />
+                                )}
+                                {option.label}
+                            </button>
+                        ))}
+                    </div>
+                </TitleDescChildrenMolecule>
+            </TitleDescChildrenMolecule>
+        </>
+    );
+
+    const dialogContent = (
+        <div data-component="employees-form-content" className="space-y-5">
+            {feedback}
+            {formSections}
+        </div>
+    );
+
+    const panelFields = (
+        <>
+            <div className={PANEL_FIELD_CLASS_NAME} data-component="employees-form-panel-name-field">
+                <Label htmlFor="employee-panel-name" className="text-[12px]">
+                    {t(locale, "employees.form.name")}
+                    <span className="ml-1 text-v3-burgundy">*</span>
+                </Label>
+                <Input
+                    id="employee-panel-name"
+                    variant="v3"
+                    value={formData.name}
+                    onChange={(event) => handleChange("name", event.target.value)}
+                    placeholder="홍길동"
+                    className={cn(PANEL_INPUT_CLASS_NAME, "text-[12px]")}
+                />
+            </div>
+
+            <div className={PANEL_FIELD_CLASS_NAME} data-component="employees-form-panel-phone-field">
+                <Label htmlFor="employee-panel-phone">
+                    {t(locale, "employees.form.phone")}
+                    <span className="ml-1 text-v3-burgundy">*</span>
+                </Label>
+                <Input
+                    id="employee-panel-phone"
+                    variant="v3"
+                    placeholder="010-1234-5678"
+                    value={formatPhoneNumber(formData.phone)}
+                    onChange={(event) => handleChange("phone", parsePhoneNumber(event.target.value))}
+                    onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
+                    maxLength={13}
+                    className={cn(
+                        PANEL_INPUT_CLASS_NAME,
+                        touched.phone && !isPhoneValid && "border-v3-burgundy focus-visible:border-v3-burgundy"
+                    )}
+                />
+                {touched.phone && !isPhoneValid && (
+                    <p className="text-[0.75rem] font-medium text-v3-burgundy">
+                        {t(locale, "employees.form.phone-required")}
+                    </p>
+                )}
+            </div>
+
+            <div className={PANEL_FIELD_CLASS_NAME} data-component="employees-form-panel-grade-field">
+                <Label>
+                    {t(locale, "employees.form.grade")}
+                    <span className="ml-1 text-v3-burgundy">*</span>
+                </Label>
+                <Select value={formData.grade} onValueChange={(value) => handleChange("grade", value)}>
+                    <SelectTrigger className={cn(PANEL_INPUT_CLASS_NAME, "w-full")}>
+                        <SelectValue placeholder={t(locale, "employees.form.grade")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {GRADES.map((grade) => (
+                            <SelectItem key={grade} value={grade}>
+                                {grade}
+                            </SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+            </div>
+
+            <div className={PANEL_FIELD_CLASS_NAME} data-component="employees-form-panel-work-area-field">
+                <Label>
+                    {t(locale, "employees.form.work-area")}
+                    <span className="ml-1 text-v3-burgundy">*</span>
+                </Label>
+                <Select
+                    value={formData.workArea[0] ?? ""}
+                    onValueChange={(value) => {
+                        handleChange("workArea", [value]);
+                        setTouched((prev) => ({ ...prev, workArea: true }));
+                    }}
+                >
+                    <SelectTrigger
+                        className={cn(PANEL_INPUT_CLASS_NAME, "w-full")}
+                        data-component="employees-form-panel-work-area-trigger"
+                    >
+                        <SelectValue placeholder="근무 지역 선택" />
+                    </SelectTrigger>
+                    <SelectContent data-component="employees-form-panel-work-area-options">
+                        {WORK_AREAS.map((area) => (
+                            <SelectItem key={area} value={area}>
+                                {formatWorkAreaLabel(area)}
+                            </SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+                {touched.workArea && !isWorkAreaValid && (
+                    <p className="text-[0.75rem] font-medium text-v3-burgundy">
+                        {t(locale, "employees.form.work-area-required")}
+                    </p>
+                )}
+            </div>
+
+            <div className={PANEL_FIELD_CLASS_NAME} data-component="employees-form-panel-open-status-field">
+                <Label htmlFor="employee-panel-open-status">
+                    {t(locale, "employees.form.open-to-next-work")}
+                </Label>
+                <div
+                    data-component="employees-form-panel-open-status-control"
+                    className="flex h-[38px] items-center justify-between rounded-[13px] border-[1.35px] border-v3-border bg-white px-3.5"
+                >
+                    <span className="text-[0.8rem] font-medium text-v3-dark">
+                        {formData.openToNextWork ? "가능" : "불가"}
+                    </span>
+                    <Switch
+                        id="employee-panel-open-status"
+                        variant="v3"
+                        checked={formData.openToNextWork}
+                        onCheckedChange={(checked) => handleChange("openToNextWork", checked)}
+                        data-component="employees-form-panel-open-status-switch"
+                    />
+                </div>
+            </div>
+        </>
+    );
+
+    const panelContent = (
+        <SteppedWizardPanelContent
+            dataComponent="employees-form-panel-content"
+            stepContentDataComponent="employees-form-panel-fields"
+            className={PANEL_CONTENT_CLASS_NAME}
+            stepContentClassName={PANEL_FIELDS_CLASS_NAME}
+            feedback={feedback}
+        >
+            {panelFields}
+        </SteppedWizardPanelContent>
+    );
+
+    if (surface === "panel") {
+        if (!open) return null;
+
+        return renderLayout ? (
+            <>{renderLayout({ content: panelContent, footer: panelFooter })}</>
+        ) : (
+            <div data-component="employees-form-panel" className="flex h-full min-h-0 flex-col">
+                <div data-component="employees-form-panel-content-fallback" className="min-h-0 flex-1 overflow-y-auto">
+                    {panelContent}
+                </div>
+                {panelFooter}
+            </div>
+        );
+    }
+
     return (
         <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
             <FormDialogShell
@@ -220,197 +648,9 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
                 }
                 description="이름, 연락처, 등급과 근무 가능 지역을 한 번에 정리합니다."
                 dialogClassName="w-[min(720px,calc(100vw-1.5rem))] max-w-[720px] max-h-[90vh]"
-                footer={
-                    <div className="ml-auto flex w-full flex-col-reverse gap-2 sm:w-[360px] sm:flex-row sm:justify-end">
-                        <Button
-                            variant="neutral"
-                            size="md"
-                            onClick={handleClose}
-                            disabled={isLoading}
-                            data-component="employees-form-dialog-cancel"
-                            className="w-full sm:flex-1"
-                        >
-                            {t(locale, "common.cancel")}
-                        </Button>
-                        <Button
-                            variant="positive"
-                            size="md"
-                            onClick={handleSubmit}
-                            disabled={isLoading || !isFormValid}
-                            data-component="employees-form-dialog-submit"
-                            className="w-full sm:flex-1"
-                        >
-                            {isLoading ? (
-                                <Spinner className="h-4 w-4" />
-                            ) : isEditMode ? (
-                                t(locale, "common.save")
-                            ) : (
-                                t(locale, "common.create")
-                            )}
-                        </Button>
-                    </div>
-                }
+                footer={dialogFooter}
             >
-                    {error && (
-                        <Alert
-                            variant="destructive"
-                            data-component="employees-form-dialog-error"
-                            className="rounded-[18px] border-none bg-v3-burgundy-light px-4 py-3 text-v3-burgundy [&>svg]:text-v3-burgundy"
-                        >
-                            <AlertDescription>{error}</AlertDescription>
-                        </Alert>
-                    )}
-
-                    <TitleDescChildrenMolecule
-                        data-component="employees-form-dialog-section-basic"
-                        title={t(locale, "employees.form.section-basic")}
-                        description="제공인력의 기본 정보를 입력해 주세요."
-                        className="rounded-[24px] border border-v3-border/70 bg-white p-5"
-                    >
-                        <div data-component="employees-form-dialog-field-name" className="space-y-2">
-                            <Label htmlFor="name" className={LABEL_CLASS_NAME}>
-                                {t(locale, "employees.form.name")}
-                                <span className="ml-1 text-v3-burgundy">*</span>
-                            </Label>
-                            <Input
-                                id="name"
-                                variant="v3"
-                                value={formData.name}
-                                onChange={(e) => handleChange("name", e.target.value)}
-                                placeholder="홍길동"
-                                className={V3_INPUT_CLASS_NAME}
-                            />
-                        </div>
-
-                        <div data-component="employees-form-dialog-grid" className={FIELD_GRID_CLASS_NAME}>
-                            <div data-component="employees-form-dialog-field-phone" className="space-y-2">
-                                <Label htmlFor="phone" className={LABEL_CLASS_NAME}>
-                                    {t(locale, "employees.form.phone")}
-                                    <span className="ml-1 text-v3-burgundy">*</span>
-                                </Label>
-                                <Input
-                                    id="phone"
-                                    variant="v3"
-                                    placeholder="010-1234-5678"
-                                    value={formatPhoneNumber(formData.phone)}
-                                    onChange={(e) => handleChange("phone", parsePhoneNumber(e.target.value))}
-                                    onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
-                                    maxLength={13}
-                                    className={cn(
-                                        V3_INPUT_CLASS_NAME,
-                                        touched.phone && !isPhoneValid && "border-v3-burgundy focus-visible:border-v3-burgundy"
-                                    )}
-                                />
-                                {touched.phone && !isPhoneValid && (
-                                    <p className="text-[0.75rem] font-medium text-v3-burgundy">
-                                        {t(locale, "employees.form.phone-required")}
-                                    </p>
-                                )}
-                            </div>
-
-                            <div data-component="employees-form-dialog-field-grade" className="space-y-2">
-                                <Label className={LABEL_CLASS_NAME}>
-                                    {t(locale, "employees.form.grade")}
-                                    <span className="ml-1 text-v3-burgundy">*</span>
-                                </Label>
-                                <Select value={formData.grade} onValueChange={(value) => handleChange("grade", value)}>
-                                    <SelectTrigger className="h-12 w-full">
-                                        <SelectValue placeholder={t(locale, "employees.form.grade")} />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {GRADES.map((grade) => (
-                                            <SelectItem key={grade} value={grade}>
-                                                {grade}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                        </div>
-                    </TitleDescChildrenMolecule>
-
-                    <TitleDescChildrenMolecule
-                        data-component="employees-form-dialog-section-work"
-                        title={t(locale, "employees.form.section-work")}
-                        description="근무 가능 지역과 근무 가능 여부를 설정해 주세요."
-                        className="rounded-[24px] border border-v3-border/70 bg-white p-5"
-                    >
-                        <fieldset
-                            className="space-y-3"
-                            onBlurCapture={() => setTouched((prev) => ({ ...prev, workArea: true }))}
-                        >
-                            <legend className={LABEL_CLASS_NAME}>
-                                {t(locale, "employees.form.work-area")}
-                                <span className="ml-1 text-v3-burgundy">*</span>
-                            </legend>
-
-                            <div
-                                data-component="employees-form-dialog-field-work-area-options"
-                                className={cn(
-                                    "flex flex-wrap gap-3"
-                                )}
-                            >
-                                {WORK_AREAS.map((area) => {
-                                    const isSelected = formData.workArea.includes(area);
-
-                                    return (
-                                        <button
-                                            key={area}
-                                            type="button"
-                                            onClick={() => toggleWorkArea(area)}
-                                            className={cn(
-                                                OPTION_CLASS_NAME,
-                                                isSelected
-                                                    ? "border-v3-primary bg-v3-primary-light text-v3-primary"
-                                                    : "border-v3-border bg-white text-v3-text-muted hover:border-v3-primary/40 hover:text-v3-dark"
-                                            )}
-                                        >
-                                            {isSelected && <Check className="mr-1.5 inline h-3.5 w-3.5" strokeWidth={2.5} />}
-                                            {formatWorkAreaLabel(area)}
-                                        </button>
-                                    );
-                                })}
-                            </div>
-
-                            {touched.workArea && !isWorkAreaValid && (
-                                <p className="text-[0.75rem] font-medium text-v3-burgundy">
-                                    {t(locale, "employees.form.work-area-required")}
-                                </p>
-                            )}
-                        </fieldset>
-
-                        <TitleDescChildrenMolecule
-                            data-component="employees-form-dialog-field-open-status"
-                            title={t(locale, "employees.form.open-to-next-work")}
-                            className="space-y-3"
-                            bodyClassName="space-y-0"
-                            titleClassName={LABEL_CLASS_NAME}
-                        >
-                            <div className="flex flex-wrap gap-3">
-                                {[
-                                    { value: true, label: "가능" },
-                                    { value: false, label: "불가" },
-                                ].map((option) => (
-                                    <button
-                                        key={String(option.value)}
-                                        type="button"
-                                        onClick={() => handleChange("openToNextWork", option.value)}
-                                        className={cn(
-                                            OPTION_CLASS_NAME,
-                                            formData.openToNextWork === option.value
-                                                ? "border-v3-primary bg-v3-primary-light text-v3-primary"
-                                                : "border-v3-border bg-white text-v3-text-muted hover:border-v3-primary/40 hover:text-v3-dark"
-                                        )}
-                                    >
-                                        {formData.openToNextWork === option.value && (
-                                            <Check className="mr-1.5 inline h-3.5 w-3.5" strokeWidth={2.5} />
-                                        )}
-                                        {option.label}
-                                    </button>
-                                ))}
-                            </div>
-                        </TitleDescChildrenMolecule>
-                    </TitleDescChildrenMolecule>
+                {dialogContent}
             </FormDialogShell>
         </Dialog>
     );

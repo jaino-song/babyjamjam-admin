@@ -56,6 +56,9 @@ describe("ClientService", () => {
         eformsign_doc: {
             findMany: jest.fn().mockResolvedValue([]),
         },
+        area: {
+            findFirst: jest.fn().mockResolvedValue({ id: "incheon" }),
+        },
     });
 
     const createMockAlimtalkService = () => ({
@@ -225,6 +228,40 @@ describe("ClientService", () => {
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
                 expect(result).toBe(mockClient);
             });
+        });
+
+        it("should allow an areaId when the area belongs to the branch", async () => {
+            // Arrange
+            const mockClient = createClientEntity();
+            createClientUsecase.execute.mockResolvedValue(mockClient);
+
+            const params = {
+                name: "New Client",
+                phone: "010-1234-5678",
+                careCenter: null,
+                voucherClient: true,
+                breastPump: false,
+                areaId: "incheon",
+            };
+
+            // Act
+            await service.create(branchId, params);
+
+            // Assert
+            expect(prismaService.area.findFirst).toHaveBeenCalledWith({
+                where: {
+                    id: "incheon",
+                    OR: [{ branchId }, { branchId: null }],
+                },
+                select: { id: true },
+            });
+            expect(createClientUsecase.execute).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({
+                    areaId: "incheon",
+                    careCenter: null,
+                }),
+            );
         });
 
         it("should trigger the new client greeting SMS automation after client creation", async () => {
