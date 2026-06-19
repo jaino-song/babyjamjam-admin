@@ -1,15 +1,27 @@
 "use client";
 
-import { useCallback, useDeferredValue, useMemo, useState } from "react";
+import {
+  cloneElement,
+  isValidElement,
+  useCallback,
+  useDeferredValue,
+  useMemo,
+  useState,
+  type ReactElement,
+} from "react";
 import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import type { SystemTemplateKey } from "@/features/system-templates/types";
 import {
-  useAlimtalkHistory,
-  useUpcomingAlimtalkJobs,
+  useAlimtalkHistory as useMessageDeliveryHistory,
+  useUpcomingAlimtalkJobs as useUpcomingMessageJobs,
 } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
+import {
+  isHistoryRecordInChannel,
+  isUpcomingJobInChannel,
+} from "@/features/alimtalk-triggers/channel";
 import { useAllClients } from "@/features/clients/hooks/use-clients";
 import { useToast } from "@/hooks/use-toast";
 import type {
@@ -25,7 +37,6 @@ import {
   matchesMessageHistoryQuery as matchesHistoryQuery,
   MessageHistoryDetailPanel,
   MESSAGE_HISTORY_FILTER_META,
-  MESSAGE_HISTORY_STATUS_META,
   MESSAGE_HISTORY_TABS,
   normalizeMessageHistoryRecord as normalizeHistoryRecord,
   formatMessageHistoryDate as formatHistoryDate,
@@ -50,6 +61,10 @@ import {
 } from "@/components/app/v3";
 import { AlimtalkPhonePreview } from "@/components/app/alimtalk/AlimtalkPhonePreview";
 import {
+  AutoFillMsgCardSide,
+  type AutoFillMsgCardVariableItem,
+} from "@/components/app/messages/templates/AutoFillMsgCard";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -57,8 +72,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { StatusBadge } from "@/components/app/ui/status-badge";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
-import { normalizeKoreanPhoneLookupKey } from "@/lib/phone";
+import { findMessageHistoryClient } from "@/lib/message-history/client-match";
 import { cn } from "@/lib/utils";
 import {
   Bell,
@@ -72,6 +88,7 @@ import {
   Heart,
   History,
   Info,
+  Loader2,
   MessageCircle,
   Plus,
   RotateCcw,
@@ -87,10 +104,14 @@ import { ReminderMessageForm } from "@/components/app/messages/forms/ReminderMes
 import { ThanksMessageForm } from "@/components/app/messages/forms/ThanksMessageForm";
 import { SurveyMessageForm } from "@/components/app/messages/forms/SurveyMessageForm";
 import { InfoMessageForm } from "@/components/app/messages/forms/InfoMessageForm";
-import { TemplateSendForm } from "@/components/app/messages/forms/TemplateSendForm";
+import {
+  TemplateSendForm,
+  type TemplateSendFormSubmitState,
+} from "@/components/app/messages/forms/TemplateSendForm";
 import type { TemplateMessageFormLayout } from "@/components/app/messages/forms/form-components/TemplateMessageFormLayout";
 import { MessageTenantApplicationSettings } from "@/components/app/messages/MessageTenantApplicationSettings";
 import { TriggerRulesManager } from "@/components/app/alimtalk/TriggerRulesManager";
+import { Button } from "@/components/ui/button";
 
 type BuiltinTemplateType = "greeting" | "service-info" | "price-info" | "reminder" | "thanks" | "survey" | "info";
 type TemplateFilter = "builtin" | "branch";
@@ -148,6 +169,14 @@ const MESSAGE_SECTIONS = [
 
 type MessageSectionId = (typeof MESSAGE_SECTIONS)[number]["id"];
 type PlaceholderSectionId = Exclude<MessageSectionId, "send" | "templates" | "triggers" | "history">;
+
+const TEMPLATE_SEND_FORM_ID = "messages-template-send-form-active";
+
+function getMessageHistoryListStatusMeta(status: MessageHistoryRecord["status"]) {
+  return status === "sent"
+    ? { label: "성공", variant: "success" as const }
+    : { label: "실패", variant: "danger" as const };
+}
 
 type MessageHistoryRelativeDateFilter = "all" | "1d" | "7d" | "30d";
 type ScheduledPreviewFilter = "all" | "customer" | "staff";
@@ -423,6 +452,7 @@ const FormComponents: Record<
   React.ComponentType<{
     onPreviewMessageChange?: (message: string) => void;
     renderLayout?: TemplateMessageFormLayout;
+    showMessageSide?: boolean;
   }>
 > = {
   greeting: GreetingMessageForm,
@@ -439,10 +469,14 @@ function MessageScheduledSection() {
   const [scheduledFilter, setScheduledFilter] = useState<ScheduledPreviewFilter>("all");
   const [scheduledSearchValue, setScheduledSearchValue] = useState("");
   const deferredScheduledSearchValue = useDeferredValue(scheduledSearchValue);
-  const { data: upcomingJobs = [], isLoading } = useUpcomingAlimtalkJobs();
+  const { data: upcomingJobs = [], isLoading } = useUpcomingMessageJobs();
+  const smsUpcomingJobs = useMemo(
+    () => upcomingJobs.filter((job) => isUpcomingJobInChannel(job, "sms")),
+    [upcomingJobs],
+  );
 
   const filteredJobs = useMemo(() => {
-    return upcomingJobs
+    return smsUpcomingJobs
       .filter((job) => {
         const matchesRecipientType =
           scheduledFilter === "all" ||
@@ -457,7 +491,7 @@ function MessageScheduledSection() {
         return matchesScheduledJobQuery(job, deferredScheduledSearchValue);
       })
       .sort((left, right) => new Date(left.scheduledFor).getTime() - new Date(right.scheduledFor).getTime());
-  }, [deferredScheduledSearchValue, scheduledFilter, upcomingJobs]);
+  }, [deferredScheduledSearchValue, scheduledFilter, smsUpcomingJobs]);
 
   const selectedJob = useMemo(() => {
     if (!selectedJobId) return null;
@@ -492,7 +526,7 @@ function MessageScheduledSection() {
               data-component="messages-scheduled-list-badge"
               className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary"
             >
-              {(hasScheduledFilters ? filteredJobs.length : upcomingJobs.length)}개
+              {(hasScheduledFilters ? filteredJobs.length : smsUpcomingJobs.length)}개
             </span>
           }
         >
@@ -542,19 +576,19 @@ function MessageScheduledSection() {
         </ListPanel>
 
         <DetailPanel
-          avatar={
+          avatar={selectedJob ? (
             <div
               data-component="messages-scheduled-detail-avatar"
               className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
             >
               <Clock3 className="h-5 w-5" />
             </div>
-          }
-          title={selectedJob ? `${selectedJob.payload.recipientName || "수신자"} 예약 발송` : "발송 상세"}
+          ) : undefined}
+          title={selectedJob ? `${selectedJob.payload.recipientName || "수신자"} 예약 발송` : undefined}
           subtitle={
             selectedJob
               ? `${getHistoryTemplateLabel(selectedJob.templateKey)} · ${selectedJobPhone}`
-              : "발송 예정 메시지를 선택하면 상세 정보가 표시됩니다."
+              : undefined
           }
           badges={
             selectedJob ? (
@@ -889,16 +923,16 @@ function MessageSectionPlaceholder({ sectionId }: { sectionId: PlaceholderSectio
         </ListPanel>
 
         <DetailPanel
-          avatar={
+          avatar={!isScheduledSection || selectedPreview ? (
             <div
               data-component="messages-section-placeholder-detail-avatar"
               className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
             >
               <Icon className="h-5 w-5" />
             </div>
-          }
-          title={selectedPreview?.detailTitle ?? `${section.label} 상세`}
-          subtitle={detailSubtitle}
+          ) : undefined}
+          title={selectedPreview?.detailTitle ?? (isScheduledSection ? undefined : `${section.label} 상세`)}
+          subtitle={isScheduledSection && !selectedPreview ? undefined : detailSubtitle}
           badges={
             isScheduledSection && selectedPreview ? (
               <span
@@ -1150,27 +1184,22 @@ function MessageHistorySection() {
   const [dateMonth, setDateMonth] = useState("");
   const [isRetrying, setIsRetrying] = useState(false);
   const deferredSearchValue = useDeferredValue(searchValue);
-  const { data: historyData = [], isLoading, isError } = useAlimtalkHistory();
+  const { data: historyData = [], isLoading, isError } = useMessageDeliveryHistory();
   const { data: clients = [] } = useAllClients();
   const { toast } = useToast();
-  const clientNameByPhone = useMemo(() => {
-    const map = new Map<string, string>();
-
-    clients.forEach((client) => {
-      const phoneDigits = normalizeKoreanPhoneLookupKey(client.phone ?? "");
-      const clientName = client.name.trim();
-      if (!phoneDigits || !clientName || map.has(phoneDigits)) return;
-
-      map.set(phoneDigits, clientName);
-    });
-
-    return map;
-  }, [clients]);
+  const smsHistoryData = useMemo(
+    () => historyData.filter((record) => isHistoryRecordInChannel(record, "sms")),
+    [historyData],
+  );
   const historyRecords = useMemo(
     () =>
-      historyData.map((record) => {
-        const normalizedRecord = normalizeHistoryRecord(record);
-        const matchedClientName = clientNameByPhone.get(normalizeKoreanPhoneLookupKey(normalizedRecord.recipientPhone));
+      smsHistoryData.map((record) => {
+        const matchedClient = findMessageHistoryClient(record, clients);
+        const matchedClientName = matchedClient?.name.trim() ?? "";
+        const normalizedRecord = normalizeHistoryRecord(record, {
+          recipientNameFallback: matchedClientName,
+          recipientListLabelFallback: matchedClientName,
+        });
 
         if (!matchedClientName) return normalizedRecord;
 
@@ -1180,7 +1209,7 @@ function MessageHistorySection() {
           recipientListLabel: matchedClientName,
         };
       }),
-    [clientNameByPhone, historyData]
+    [clients, smsHistoryData]
   );
   const hasDatePartFilter = Boolean(dateYear || dateMonth);
   const historyYearOptions = useMemo(() => {
@@ -1406,7 +1435,7 @@ function MessageHistorySection() {
                 }
 
                 if (!record) return null;
-                const statusMeta = MESSAGE_HISTORY_STATUS_META[record.status];
+                const statusMeta = getMessageHistoryListStatusMeta(record.status);
                 const ItemIcon = record.icon;
 
                 return (
@@ -1421,15 +1450,13 @@ function MessageHistorySection() {
                         data-component="messages-history-list-item-meta"
                         className="flex shrink-0 flex-col items-end justify-end gap-1 text-right"
                       >
-                        <span
+                        <StatusBadge
                           data-component="messages-history-list-item-status"
-                          className={cn(
-                            "inline-flex items-center rounded-full px-2 py-0.5 text-[0.64rem] font-semibold",
-                            statusMeta.tone
-                          )}
+                          variant={statusMeta.variant}
+                          size="sm"
                         >
                           {statusMeta.label}
-                        </span>
+                        </StatusBadge>
                         <span
                           data-component="messages-history-list-item-date"
                           className="whitespace-nowrap text-[0.68rem] text-v3-text-muted"
@@ -1462,6 +1489,8 @@ export default function MessagesPage() {
   const [templateFilter, setTemplateFilter] = useState<TemplateFilter>("builtin");
   const [templateDetailTab, setTemplateDetailTab] = useState<TemplateDetailTab>("details");
   const [templatePreviewOverride, setTemplatePreviewOverride] = useState<string | null>(null);
+  const [templateSendSubmitState, setTemplateSendSubmitState] =
+    useState<TemplateSendFormSubmitState | null>(null);
 
   const { data: userTemplatesData, isLoading: isLoadingUserTemplates } = useMessageTemplates(1, 100);
   const userTemplates = useMemo(() => userTemplatesData ?? [], [userTemplatesData]);
@@ -1540,32 +1569,120 @@ export default function MessagesPage() {
     "";
   const templatePreviewHeadline = selectedUserTemplate ? selectedTemplateTitle : builtinPreviewMeta?.headline;
   const templatePreviewSubtitle = selectedUserTemplate ? "지점 템플릿" : builtinPreviewMeta?.subtitle;
+  const templatePreviewGeneratedTitle = t(locale, "common.generated-message-title");
+  const templatePreviewMetaItems = useMemo(
+    () => [
+      { label: "구성 영역", value: templatePreviewGeneratedTitle },
+      { label: "메시지 길이", value: `${templatePreviewMessage.length}자` },
+      {
+        label: "문단 수",
+        value: `${templatePreviewMessage.split("\n").filter((line) => line.trim().length > 0).length}개`,
+      },
+      { label: "편집 상태", value: "수정 가능" },
+    ],
+    [templatePreviewGeneratedTitle, templatePreviewMessage],
+  );
+  const templatePreviewVariableItems = useMemo<AutoFillMsgCardVariableItem[]>(() => {
+    if (selectedUserTemplate?.variables.length) {
+      return selectedUserTemplate.variables.map((variable) => ({
+        token: `{{${variable.key}}}`,
+        label: variable.label,
+        value: "-",
+      }));
+    }
+
+    const tokenPattern = /{{\s*([^{}]+?)\s*}}|#\{([^{}]+?)\}/g;
+    const seenTokens = new Set<string>();
+    const items: AutoFillMsgCardVariableItem[] = [];
+    let match = tokenPattern.exec(templatePreviewMessage);
+
+    while (match) {
+      const token = match[0];
+      const label = match[1] ?? match[2] ?? token;
+
+      if (!seenTokens.has(token)) {
+        seenTokens.add(token);
+        items.push({
+          token,
+          label,
+          value: "-",
+        });
+      }
+
+      match = tokenPattern.exec(templatePreviewMessage);
+    }
+
+    return items;
+  }, [selectedUserTemplate, templatePreviewMessage]);
   const sendTemplateFormLayout: TemplateMessageFormLayout = ({
     fields,
     messageCard,
     requiresRecipientName,
-  }) => (
-    <>
-      <TemplateSendForm
-        key={activeTemplateId}
-        templateId={activeTemplateId ?? selectedTemplateTitle}
-        templateName={selectedTemplateTitle}
-        message={templatePreviewMessage}
-        requiresRecipientName={requiresRecipientName}
+  }) => {
+    const flattenedMessageCard = isValidElement(messageCard)
+      ? cloneElement(messageCard as ReactElement<{ layout?: "flat" }>, { layout: "flat" })
+      : messageCard;
+
+    return (
+      <div
+        data-component="messages-template-send-layout"
+        className="grid h-full min-h-0 items-stretch gap-4 xl:grid-cols-[minmax(14rem,0.85fr)_minmax(0,1.45fr)]"
       >
-        {fields}
-      </TemplateSendForm>
-      {messageCard}
-    </>
-  );
+        <TemplateSendForm
+          key={activeTemplateId}
+          templateId={activeTemplateId ?? selectedTemplateTitle}
+          templateName={selectedTemplateTitle}
+          message={templatePreviewMessage}
+          requiresRecipientName={requiresRecipientName}
+          className="h-full"
+          formId={TEMPLATE_SEND_FORM_ID}
+          showSubmitButton={false}
+          onSubmitStateChange={setTemplateSendSubmitState}
+        >
+          {fields}
+        </TemplateSendForm>
+        {flattenedMessageCard}
+      </div>
+    );
+  };
   const selectedTemplateRenderLayout =
     activeSection === "send" ? sendTemplateFormLayout : undefined;
+  const selectedTemplateHeaderTrailing = activeTemplateId ? (
+    <>
+      {selectedUserTemplate ? (
+        <div
+          data-component="messages-template-detail-summary"
+          className="inline-flex items-center gap-1 rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary"
+        >
+          <FileText className="h-3.5 w-3.5" />
+          {`${selectedUserTemplate.variables.length}개 변수`}
+        </div>
+      ) : null}
+
+      {activeSection === "send" ? (
+        <Button
+          type="submit"
+          form={templateSendSubmitState?.formId ?? TEMPLATE_SEND_FORM_ID}
+          disabled={!templateSendSubmitState || templateSendSubmitState.isSubmitDisabled}
+          className="shrink-0"
+        >
+          {templateSendSubmitState?.isSending ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <Send className="h-4 w-4" aria-hidden="true" />
+          )}
+          {templateSendSubmitState?.isSending ? "발송 중..." : "즉시 발송"}
+        </Button>
+      ) : null}
+    </>
+  ) : undefined;
   const selectedTemplateFormContent = (
     <>
       {SelectedBuiltinForm ? (
         <SelectedBuiltinForm
           onPreviewMessageChange={(message) => setTemplatePreviewOverride(message)}
           renderLayout={selectedTemplateRenderLayout}
+          showMessageSide={false}
         />
       ) : null}
 
@@ -1574,6 +1691,7 @@ export default function MessagesPage() {
           template={selectedUserTemplate as never}
           onPreviewMessageChange={(message) => setTemplatePreviewOverride(message)}
           renderLayout={selectedTemplateRenderLayout}
+          showMessageSide={false}
         />
       ) : null}
 
@@ -1713,17 +1831,7 @@ export default function MessagesPage() {
                       </span>
                     ) : undefined
                   }
-                  trailing={
-                    activeTemplateId && selectedUserTemplate ? (
-                      <div
-                        data-component="messages-template-detail-summary"
-                        className="inline-flex items-center gap-1 rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary"
-                      >
-                        <FileText className="h-3.5 w-3.5" />
-                        {`${selectedUserTemplate.variables.length}개 변수`}
-                      </div>
-                    ) : undefined
-                  }
+                  trailing={selectedTemplateHeaderTrailing}
                   tabs={
                     activeTemplateId ? (
                       <DetailTabs
@@ -1744,34 +1852,52 @@ export default function MessagesPage() {
                       activeTab={templateDetailTab}
                       dataComponent="messages-template-detail-tabpanes"
                       panelDataComponent="messages-template-detail-pane"
-                      className="shrink-0"
+                      className={
+                        templateDetailTab === "preview" || activeSection === "send"
+                          ? "flex min-h-0 flex-1"
+                          : "min-h-0 shrink-0"
+                      }
+                      trackClassName={
+                        templateDetailTab === "preview" || activeSection === "send"
+                          ? "min-h-0 flex-1"
+                          : "min-h-0"
+                      }
+                      panelClassName={
+                        templateDetailTab === "preview" || activeSection === "send"
+                          ? "h-full min-h-0"
+                          : "min-h-0"
+                      }
                       panels={[
                         {
                           key: "details",
                           className: activeSection === "send"
-                            ? "grid min-h-0 grid-rows-[auto_minmax(0,2fr)] gap-4"
+                            ? "min-h-0"
                             : undefined,
                           children: selectedTemplateFormContent,
                         },
                         {
                           key: "preview",
+                          className: "flex min-h-0 justify-center overflow-y-auto",
                           children: (
                             <div
-                              data-component="messages-template-preview-shell"
-                              className="rounded-[20px] border border-v3-border bg-v3-dim-white/30 p-5"
+                              data-component="messages-template-preview-layout"
+                              className="flex min-h-0 w-full flex-wrap items-start justify-center gap-4"
                             >
-                              <p className="text-[0.72rem] font-semibold text-v3-primary">실시간 미리보기</p>
-                              <p className="mt-2 text-[0.82rem] leading-6 text-v3-text-muted">
-                                템플릿 본문을 알림톡 화면 형태로 렌더링합니다.
-                              </p>
                               <AlimtalkPhonePreview
-                                className="pt-5"
+                                className="h-full min-h-0 overflow-hidden py-0"
                                 content={templatePreviewMessage}
                                 templateName={selectedTemplateTitle}
                                 headline={templatePreviewHeadline}
                                 subtitle={templatePreviewSubtitle}
                                 dataComponentPrefix="message"
                                 panelDataComponent="messages-template-preview-phone-panel"
+                              />
+                              <AutoFillMsgCardSide
+                                title={templatePreviewGeneratedTitle}
+                                message={templatePreviewMessage}
+                                metaItems={templatePreviewMetaItems}
+                                variableItems={templatePreviewVariableItems}
+                                className="w-full min-w-[260px] max-w-[360px] shrink-0"
                               />
                             </div>
                           ),
@@ -1788,7 +1914,7 @@ export default function MessagesPage() {
             </section>
           ) : activeSection === "triggers" ? (
             <section data-component="messages-triggers-section" className="flex h-full min-h-0 flex-1 flex-col">
-              <TriggerRulesManager dataComponentPrefix="message" />
+              <TriggerRulesManager dataComponentPrefix="message" channel="sms" />
             </section>
           ) : activeSection === "settings" ? (
             <section data-component="messages-settings-section" className="flex min-h-0 flex-1 flex-col">

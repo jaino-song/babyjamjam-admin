@@ -15,9 +15,14 @@ import {
 interface InfoMessageFormProps {
   onPreviewMessageChange?: (message: string) => void;
   renderLayout?: TemplateMessageFormLayout;
+  showMessageSide?: boolean;
 }
 
-export const InfoMessageForm = ({ onPreviewMessageChange, renderLayout }: InfoMessageFormProps) => {
+export const InfoMessageForm = ({
+  onPreviewMessageChange,
+  renderLayout,
+  showMessageSide = true,
+}: InfoMessageFormProps) => {
   const locale = useLocale();
   const [generatedMessage, setGeneratedMessage] = useState("");
   const [isDirty, setIsDirty] = useState(false);
@@ -49,6 +54,7 @@ export const InfoMessageForm = ({ onPreviewMessageChange, renderLayout }: InfoMe
         setGeneratedMessage(message);
       }}
       handleCopy={handleCopy}
+      showSide={showMessageSide}
     />
   ) : null;
 

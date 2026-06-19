@@ -17,9 +17,14 @@ import {
 interface ThanksMessageFormProps {
   onPreviewMessageChange?: (message: string) => void;
   renderLayout?: TemplateMessageFormLayout;
+  showMessageSide?: boolean;
 }
 
-export const ThanksMessageForm = ({ onPreviewMessageChange, renderLayout }: ThanksMessageFormProps) => {
+export const ThanksMessageForm = ({
+  onPreviewMessageChange,
+  renderLayout,
+  showMessageSide = true,
+}: ThanksMessageFormProps) => {
   const locale = useLocale();
   const [messageOverride, setMessageOverride] = useState<string | null>(null);
   const { name, setName } = useFormStore();
@@ -72,6 +77,7 @@ export const ThanksMessageForm = ({ onPreviewMessageChange, renderLayout }: Than
       variableItems={variableItems}
       onMessageChange={setMessageOverride}
       handleCopy={handleCopy}
+      showSide={showMessageSide}
     />
   );
 

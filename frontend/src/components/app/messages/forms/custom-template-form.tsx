@@ -19,9 +19,15 @@ interface CustomTemplateFormProps {
     template: MessageTemplate;
     onPreviewMessageChange?: (message: string) => void;
     renderLayout?: TemplateMessageFormLayout;
+    showMessageSide?: boolean;
 }
 
-export const CustomTemplateForm = ({ template, onPreviewMessageChange, renderLayout }: CustomTemplateFormProps) => {
+export const CustomTemplateForm = ({
+    template,
+    onPreviewMessageChange,
+    renderLayout,
+    showMessageSide = true,
+}: CustomTemplateFormProps) => {
     const locale = useLocale();
     const formStore = useFormStore();
     const { variableValues, setVariableValue } = useTemplateStore();
@@ -146,6 +152,7 @@ export const CustomTemplateForm = ({ template, onPreviewMessageChange, renderLay
             variableEmptyText="입력된 변수 값이 없습니다."
             onMessageChange={setMessageOverride}
             handleCopy={handleCopy}
+            showSide={showMessageSide}
         />
     );
 

@@ -17,9 +17,14 @@ import {
 interface ReminderMessageFormProps {
   onPreviewMessageChange?: (message: string) => void;
   renderLayout?: TemplateMessageFormLayout;
+  showMessageSide?: boolean;
 }
 
-export const ReminderMessageForm = ({ onPreviewMessageChange, renderLayout }: ReminderMessageFormProps) => {
+export const ReminderMessageForm = ({
+  onPreviewMessageChange,
+  renderLayout,
+  showMessageSide = true,
+}: ReminderMessageFormProps) => {
   const locale = useLocale();
   const [messageOverride, setMessageOverride] = useState<string | null>(null);
   const { name, setName } = useFormStore();
@@ -72,6 +77,7 @@ export const ReminderMessageForm = ({ onPreviewMessageChange, renderLayout }: Re
       variableItems={variableItems}
       onMessageChange={setMessageOverride}
       handleCopy={handleCopy}
+      showSide={showMessageSide}
     />
   );
 

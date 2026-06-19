@@ -17,9 +17,14 @@ import {
 interface SurveyMessageFormProps {
   onPreviewMessageChange?: (message: string) => void;
   renderLayout?: TemplateMessageFormLayout;
+  showMessageSide?: boolean;
 }
 
-export const SurveyMessageForm = ({ onPreviewMessageChange, renderLayout }: SurveyMessageFormProps) => {
+export const SurveyMessageForm = ({
+  onPreviewMessageChange,
+  renderLayout,
+  showMessageSide = true,
+}: SurveyMessageFormProps) => {
   const locale = useLocale();
   const [messageOverride, setMessageOverride] = useState<string | null>(null);
   const { name, setName } = useFormStore();
@@ -72,6 +77,7 @@ export const SurveyMessageForm = ({ onPreviewMessageChange, renderLayout }: Surv
       variableItems={variableItems}
       onMessageChange={setMessageOverride}
       handleCopy={handleCopy}
+      showSide={showMessageSide}
     />
   );
 

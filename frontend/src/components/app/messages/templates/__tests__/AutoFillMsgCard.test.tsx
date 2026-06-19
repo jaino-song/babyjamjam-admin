@@ -34,4 +34,47 @@ describe("AutoFillMsgCard", () => {
     });
     expect(handleMessageChange).toHaveBeenCalledWith("수정된 메시지");
   });
+
+  it("can render detail sections without the internal detail grid wrapper", () => {
+    const { container } = render(
+      <div data-testid="parent-grid">
+        <AutoFillMsgCard
+          title="생성 메시지"
+          copyButtonText="복사"
+          message="안녕하세요"
+          handleCopy={jest.fn()}
+          layout="flat"
+        />
+      </div>,
+    );
+
+    expect(
+      container.querySelector('[data-component="messages-generated-msg-detail-grid"]'),
+    ).not.toBeInTheDocument();
+    expect(
+      container.querySelector('[data-component="messages-generated-msg-detail-content"]'),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector('[data-component="messages-generated-msg-detail-side"]'),
+    ).toBeInTheDocument();
+  });
+
+  it("can hide the metadata and variables side panel", () => {
+    const { container } = render(
+      <AutoFillMsgCard
+        title="생성 메시지"
+        copyButtonText="복사"
+        message="안녕하세요"
+        handleCopy={jest.fn()}
+        showSide={false}
+      />,
+    );
+
+    expect(
+      container.querySelector('[data-component="messages-generated-msg-detail-content"]'),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector('[data-component="messages-generated-msg-detail-side"]'),
+    ).not.toBeInTheDocument();
+  });
 });

@@ -79,6 +79,7 @@ function getVoucherDerivedFields(selectedVoucher: VoucherPriceInfo) {
 interface PriceInfoMessageFormProps {
   onPreviewMessageChange?: (message: string) => void;
   renderLayout?: TemplateMessageFormLayout;
+  showMessageSide?: boolean;
 }
 
 function RequiredLabel({ children }: { children: ReactNode }) {
@@ -90,7 +91,11 @@ function RequiredLabel({ children }: { children: ReactNode }) {
   );
 }
 
-export const PriceInfoMessageForm = ({ onPreviewMessageChange, renderLayout }: PriceInfoMessageFormProps) => {
+export const PriceInfoMessageForm = ({
+  onPreviewMessageChange,
+  renderLayout,
+  showMessageSide = true,
+}: PriceInfoMessageFormProps) => {
   const locale = useLocale();
   const [messageOverride, setMessageOverride] = useState<string | null>(null);
   const [durationTooltipOpen, setDurationTooltipOpen] = useState<boolean>(false);
@@ -346,36 +351,32 @@ export const PriceInfoMessageForm = ({ onPreviewMessageChange, renderLayout }: P
         </TemplateFieldGridItem>
       )}
       <TemplateFieldGridItem>
-        <RequiredLabel>{t(locale, "price-info-msg.voucher-year-label")}</RequiredLabel>
+        <RequiredLabel>
+          {isVoucherPriceInfosLoading
+            ? t(locale, "common.loading")
+            : t(locale, "price-info-msg.voucher-type-label")}
+        </RequiredLabel>
         <Select
-          value={String(voucherYear)}
-          onValueChange={(value: string) => {
-            setVoucherYear(Number(value));
-            setFormData((prev) => ({
-              ...prev,
-              weeks: 0,
-              duration: "",
-              voucherId: null,
-              fullPrice: "",
-              grant: "",
-              actualPrice: "",
-            }));
-            setMessageOverride(null);
-            setVoucherDuration("");
-            setFullPrice("");
-            setGrant("");
-            setActualPrice("");
-          }}
+          value={formData.type}
+          onValueChange={handleVoucherTypeChange}
+          disabled={isVoucherPriceInfosLoading}
           required
         >
           <SelectTrigger className="w-full">
-            <SelectValue placeholder={t(locale, "price-info-msg.voucher-year-label")} />
+            <SelectValue placeholder={t(locale, "price-info-msg.voucher-type-label")} />
           </SelectTrigger>
           <SelectContent>
-            {[voucherYear - 1, voucherYear, voucherYear + 1].map((year) => (
-              <SelectItem key={year} value={String(year)}>
-                {year}년
-              </SelectItem>
+            {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
+              <div key={groupName}>
+                <div className="px-2 py-1.5 text-sm font-semibold text-muted-foreground">
+                  {groupName}
+                </div>
+                {Object.entries(types).map(([typeValue, typeData]) => (
+                  <SelectItem key={typeValue} value={typeValue} className="pl-6">
+                    {typeData.label}
+                  </SelectItem>
+                ))}
+              </div>
             ))}
           </SelectContent>
         </Select>
@@ -431,53 +432,41 @@ export const PriceInfoMessageForm = ({ onPreviewMessageChange, renderLayout }: P
 
       <TemplateFieldGridItem>
         <RequiredLabel>
-          {isVoucherPriceInfosLoading
-            ? t(locale, "common.loading")
-            : t(locale, "price-info-msg.voucher-type-label")}
+          {t(locale, "price-info-msg.voucher-year-label")}
         </RequiredLabel>
         <Select
-          value={formData.type}
-          onValueChange={handleVoucherTypeChange}
-          disabled={isVoucherPriceInfosLoading}
+          value={String(voucherYear)}
+          onValueChange={(value: string) => {
+            setVoucherYear(Number(value));
+            setFormData((prev) => ({
+              ...prev,
+              weeks: 0,
+              duration: "",
+              voucherId: null,
+              fullPrice: "",
+              grant: "",
+              actualPrice: "",
+            }));
+            setMessageOverride(null);
+            setVoucherDuration("");
+            setFullPrice("");
+            setGrant("");
+            setActualPrice("");
+          }}
           required
         >
           <SelectTrigger className="w-full">
-            <SelectValue placeholder={t(locale, "price-info-msg.voucher-type-label")} />
+            <SelectValue placeholder={t(locale, "price-info-msg.voucher-year-label")} />
           </SelectTrigger>
           <SelectContent>
-            {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
-              <div key={groupName}>
-                <div className="px-2 py-1.5 text-sm font-semibold text-muted-foreground">
-                  {groupName}
-                </div>
-                {Object.entries(types).map(([typeValue, typeData]) => (
-                  <SelectItem key={typeValue} value={typeValue} className="pl-6">
-                    {typeData.label}
-                  </SelectItem>
-                ))}
-              </div>
+            {[voucherYear - 1, voucherYear, voucherYear + 1].map((year) => (
+              <SelectItem key={year} value={String(year)}>
+                {year}년
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
       </TemplateFieldGridItem>
-
-      {/* Price Info */}
-      {formData.fullPrice && formData.grant && formData.actualPrice && (
-        <div className="col-span-full flex flex-col gap-2">
-          <p className="text-sm font-medium">
-            {t(locale, "price-info-msg.full-price-label")}: {formatPrice(formData.fullPrice)}
-            {t(locale, "common.currency-symbol")}
-          </p>
-          <p className="text-sm font-medium">
-            {t(locale, "price-info-msg.grant-price-label")}: {formatPrice(formData.grant)}
-            {t(locale, "common.currency-symbol")}
-          </p>
-          <p className="text-sm font-medium">
-            {t(locale, "price-info-msg.actual-price-label")}: {formatPrice(formData.actualPrice)}
-            {t(locale, "common.currency-symbol")}
-          </p>
-        </div>
-      )}
 
     </>
   );
@@ -492,6 +481,7 @@ export const PriceInfoMessageForm = ({ onPreviewMessageChange, renderLayout }: P
       variableItems={priceVariableItems}
       onMessageChange={setMessageOverride}
       handleCopy={handleCopy}
+      showSide={showMessageSide}
     />
   );
 

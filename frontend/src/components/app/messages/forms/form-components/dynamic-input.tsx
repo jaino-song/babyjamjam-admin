@@ -85,9 +85,5 @@ export const DynamicInput = ({ variable, value, onChange, forceRequired = false 
             );
     }
 
-    return (
-        <div data-component="messages-form-dynamic-input">
-            {content}
-        </div>
-    );
+    return content;
 };

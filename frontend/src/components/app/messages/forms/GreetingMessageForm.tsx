@@ -15,9 +15,14 @@ import {
 interface GreetingMessageFormProps {
   onPreviewMessageChange?: (message: string) => void;
   renderLayout?: TemplateMessageFormLayout;
+  showMessageSide?: boolean;
 }
 
-export const GreetingMessageForm = ({ onPreviewMessageChange, renderLayout }: GreetingMessageFormProps) => {
+export const GreetingMessageForm = ({
+  onPreviewMessageChange,
+  renderLayout,
+  showMessageSide = true,
+}: GreetingMessageFormProps) => {
   const locale = useLocale();
   const [generatedMessage, setGeneratedMessage] = useState("");
   const [isDirty, setIsDirty] = useState(false);
@@ -49,6 +54,7 @@ export const GreetingMessageForm = ({ onPreviewMessageChange, renderLayout }: Gr
         setGeneratedMessage(message);
       }}
       handleCopy={handleCopy}
+      showSide={showMessageSide}
     />
   ) : null;
 

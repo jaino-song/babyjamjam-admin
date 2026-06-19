@@ -17,9 +17,14 @@ import {
 interface ServiceInfoMessageFormProps {
   onPreviewMessageChange?: (message: string) => void;
   renderLayout?: TemplateMessageFormLayout;
+  showMessageSide?: boolean;
 }
 
-export const ServiceInfoMessageForm = ({ onPreviewMessageChange, renderLayout }: ServiceInfoMessageFormProps) => {
+export const ServiceInfoMessageForm = ({
+  onPreviewMessageChange,
+  renderLayout,
+  showMessageSide = true,
+}: ServiceInfoMessageFormProps) => {
   const locale = useLocale();
   const [messageOverride, setMessageOverride] = useState<string | null>(null);
   const { name, setName } = useFormStore();
@@ -76,6 +81,7 @@ export const ServiceInfoMessageForm = ({ onPreviewMessageChange, renderLayout }:
       variableItems={variableItems}
       onMessageChange={setMessageOverride}
       handleCopy={handleCopy}
+      showSide={showMessageSide}
     />
   );
 
