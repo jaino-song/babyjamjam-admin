@@ -69,6 +69,12 @@ export interface IClientRepository {
         branchid: string,
         days: number
     ): Promise<ClientEntity[]>;
+
+    /**
+     * Find a client in the branch whose phone, normalized to bare digits, equals
+     * the given normalized phone. Used to dedupe (reuse existing) on create.
+     */
+    findByPhone(branchid: string, normalizedPhone: string): Promise<ClientEntity | null>;
 }
 
 export const CLIENT_REPOSITORY = "CLIENT_REPOSITORY";

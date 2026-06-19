@@ -105,6 +105,7 @@ model client {
   callRecords          call_record[]
   clientDrafts         client_draft[]
 
+  @@unique([branchId, phone], map: "client_branch_phone_key")
   @@index([areaId], map: "idx_client_area")
   @@index([branchId], map: "idx_client_branch")
   @@index([createdAt], map: "idx_client_created_at")

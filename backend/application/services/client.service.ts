@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, Inject, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, Inject, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { normalizePhone } from "application/utils/normalize-phone";
 import {
     CreateClientUsecase,
     DeleteClientUsecase,
@@ -262,6 +263,15 @@ export class ClientService {
         const dueDate = params.dueDate ? new Date(params.dueDate) : null;
         this.assertAllowedServiceStatus(params.serviceStatus);
         await this.assertAllowedClientArea(branchid, params.areaId);
+
+        const normalizedPhone = normalizePhone(params.phone ?? null);
+        if (normalizedPhone) {
+            const existing = await this.clientRepository.findByPhone(branchid, normalizedPhone);
+            if (existing) {
+                this.logger.log(`[Client] Reusing existing client ${existing.id} for duplicate phone in branch ${branchid}`);
+                return existing;
+            }
+        }
 
         // First create the client
         const client = await this.createClientUsecase.execute(branchid, {
@@ -567,6 +577,14 @@ export class ClientService {
         }
         this.assertAllowedServiceStatus(params.serviceStatus);
         await this.assertAllowedClientArea(branchid, params.areaId);
+
+        const normalizedPhone = normalizePhone(params.phone ?? null);
+        if (normalizedPhone) {
+            const clientWithPhone = await this.clientRepository.findByPhone(branchid, normalizedPhone);
+            if (clientWithPhone && clientWithPhone.id !== id) {
+                throw new ConflictException({ statusCode: 409, code: "P2002", error: "Conflict", field: "phone" });
+            }
+        }
 
         const startDate = params.startDate ? new Date(params.startDate) : existingClient.startDate ?? new Date();
         const endDate = params.endDate ? new Date(params.endDate) : existingClient.endDate ?? new Date(startDate.getTime() + 365 * 24 * 60 * 60 * 1000);

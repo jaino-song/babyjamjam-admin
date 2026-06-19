@@ -4,6 +4,7 @@ import { IClientRepository, PaginatedResult } from "domain/repositories/client.r
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { ClientMapper } from "infrastructure/database/mapper/client.mapper";
 import { hasColumn } from "infrastructure/database/schema-capabilities";
+import { normalizePhone } from "application/utils/normalize-phone";
 
 @Injectable()
 export class SbClientRepository implements IClientRepository {
@@ -344,5 +345,17 @@ export class SbClientRepository implements IClientRepository {
             select,
         });
         return clients.map((client) => ClientMapper.toDomain(client as any));
+    }
+
+    async findByPhone(branchid: string, normalizedPhone: string): Promise<ClientEntity | null> {
+        const candidates = await this.prismaService.client.findMany({
+            where: { branchId: branchid, phone: { not: null } },
+            select: { id: true, phone: true },
+        });
+        const matched = candidates.find(
+            (row) => normalizePhone(row.phone) === normalizedPhone
+        );
+        if (!matched) return null;
+        return this.findById(branchid, matched.id);
     }
 }
