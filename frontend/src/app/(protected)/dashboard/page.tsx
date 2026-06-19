@@ -8,6 +8,7 @@ import {
   useDashboardOverview,
 } from "@/hooks/useDashboardStats";
 import { Client } from "@/lib/client/types";
+import { getClientBadgeAvatarClassName, getClientBadges } from "@/lib/client/badges";
 import { getActionRequiredStatus } from "@/lib/client/action-required";
 import { useInitialUser } from "@/providers/UserProvider";
 import { cn } from "@/lib/utils";
@@ -22,16 +23,13 @@ import {
   InfoRow,
   StatusBadge,
   RecentActivitiesPanel,
-  getRecentActivityAvatarClass,
   type ActionRequiredItem,
-  type StatusType,
 } from "@/components/app/v3";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import {
   Users,
   Calendar,
-  FileSignature,
   Send,
   MoreVertical,
   ExternalLink,
@@ -49,26 +47,8 @@ import { Block } from "@/components/app/v3/Block";
 const DASHBOARD_STAT_KEYS = [
   { icon: Users, valueKey: "activeClients" as const, label: "서비스 진행 중", colorIndex: 0, counter: "명" },
   { icon: Calendar, valueKey: "upcomingSoon" as const, label: "곧 시작 예정", colorIndex: 1, counter: "건" },
-  { icon: FileSignature, valueKey: "contractsPendingSignature" as const, label: "문서 서명 대기 중", colorIndex: 2, counter: "건" },
-  { icon: Send, valueKey: "contractsNotSent" as const, label: "문서 발송 대기 중", colorIndex: 3, counter: "건" },
+  { icon: Send, valueKey: "contractsRequired" as const, label: "계약서 필요", colorIndex: 3, counter: "건" },
 ];
-
-const mapServiceStatusToV3 = (status: string | null): StatusType => {
-  switch (status) {
-    case "active":
-      return "active";
-    case "waiting":
-      return "pending";
-    case "replacement_requested":
-      return "terminated";
-    case "terminated":
-      return "terminated";
-    case "completed":
-      return "completed";
-    default:
-      return "pending";
-  }
-};
 
 const formatDate = (dateStr: string | null): string => {
   if (!dateStr) return "-";
@@ -81,23 +61,6 @@ const formatPrice = (price: string | null): string => {
   const num = parseInt(cleaned, 10);
   if (isNaN(num)) return "-";
   return `${num.toLocaleString("ko-KR")}원`;
-};
-
-const getStatusLabel = (status: string | null): string => {
-  switch (status) {
-    case "active":
-      return "진행중";
-    case "waiting":
-      return "대기";
-    case "replacement_requested":
-      return "교체 요청";
-    case "completed":
-      return "완료";
-    case "terminated":
-      return "중단";
-    default:
-      return "-";
-  }
 };
 
 const getDocumentStatusLabel = (status: Client["documentStatus"], locale: ReturnType<typeof useLocale>) => {
@@ -289,8 +252,9 @@ export default function DashboardPage() {
     return {
       activeClients: clients.filter((client) => client.serviceStatus === "active").length,
       upcomingSoon: visibleUpcomingClients.length,
-      contractsPendingSignature: actionRequiredClients.filter((item) => item.reason === "이용자 완료 필요").length,
-      contractsNotSent: actionRequiredClients.filter((item) => item.reason === "발송 필요").length,
+      contractsRequired: actionRequiredClients.filter((item) => (
+        item.reason === "이용자 완료 필요" || item.reason === "발송 필요"
+      )).length,
     };
   }, [actionRequiredClients, clients, visibleUpcomingClients]);
 
@@ -299,24 +263,13 @@ export default function DashboardPage() {
     return clients.find((client) => client.id === selectedClient.id) ?? selectedClient;
   }, [clients, selectedClient]);
 
+  const selectedClientBadges = useMemo(() => {
+    return getClientBadges(selectedClientData);
+  }, [selectedClientData]);
+
   const selectedClientAvatarClass = useMemo(() => {
-    if (!selectedClientData) {
-      return "";
-    }
-
-    const actionItem = actionRequiredClients.find(
-      (item) => item.client.id === selectedClientData.id,
-    );
-    const isUpcoming = visibleUpcomingClients.some(
-      (client) => client.id === selectedClientData.id,
-    );
-
-    return getRecentActivityAvatarClass({
-      name: selectedClientData.name,
-      actionPriority: actionItem?.priority,
-      isUpcoming,
-    });
-  }, [actionRequiredClients, selectedClientData, visibleUpcomingClients]);
+    return getClientBadgeAvatarClassName(selectedClientBadges[0]);
+  }, [selectedClientBadges]);
 
   const selectedClientContractInfo = useMemo(() => {
     if (!selectedClientData) {
@@ -396,26 +349,23 @@ export default function DashboardPage() {
                 <div
                   data-component="dashboard-detail-avatar"
                   className={cn(
-                    "w-16 h-16 rounded-[20px] flex items-center justify-center text-xl font-bold text-white shadow-lg shrink-0",
+                    "w-16 h-16 rounded-[20px] flex items-center justify-center shadow-lg shrink-0",
                     selectedClientAvatarClass
                   )}
                 >
-                  {selectedClientData.name.charAt(0)}
+                  <Users className="w-7 h-7 shrink-0 transition-colors text-current" aria-hidden="true" />
                 </div>
               }
               title={selectedClientData.name}
               badges={
                 <>
-                  <StatusBadge
-                    status={mapServiceStatusToV3(selectedClientData.serviceStatus)}
-                    label={getStatusLabel(selectedClientData.serviceStatus)}
-                  />
-                  {selectedClientData.breastPump && (
-                    <StatusBadge status="breastPump" />
-                  )}
-                  {selectedClientData.careCenter && (
-                    <StatusBadge status="careCenter" />
-                  )}
+                  {selectedClientBadges.map((badge) => (
+                    <StatusBadge
+                      key={badge.key}
+                      status={badge.status}
+                      label={badge.label}
+                    />
+                  ))}
                 </>
               }
               subtitle={

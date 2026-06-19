@@ -120,6 +120,7 @@ export function AnimatedSlotList<T>({
         const slotArgs = { index, item, isLoading: isSlotLoading };
 
         const staggerIndex = isAppendLoadingSlot ? index - itemsLength : index;
+        const shouldAnimateSlot = staggerIndex > 0;
         const animationDelay = `${Math.max(0, staggerIndex) * delayStepSeconds}s`;
         const slotState = getSlotState?.(slotArgs) ?? {};
         const isInteractive =
@@ -152,10 +153,11 @@ export function AnimatedSlotList<T>({
               key={slotKey}
               data-component={itemDataComponent}
               className={cn(
-                "animate-v3-pop-up h-[calc(94px*var(--v3-ui-scale,1))] overflow-hidden px-[calc(16px*var(--v3-ui-scale,1))] py-[calc(16px*var(--v3-ui-scale,1))]",
+                shouldAnimateSlot && "animate-v3-pop-up",
+                "h-[calc(94px*var(--v3-ui-scale,1))] overflow-hidden px-[calc(16px*var(--v3-ui-scale,1))] py-[calc(16px*var(--v3-ui-scale,1))]",
                 computedSlotClassName
               )}
-              style={{ animationDelay }}
+              style={shouldAnimateSlot ? { animationDelay } : undefined}
             >
               <div
                 data-component={`${itemDataComponent}-text-skeleton`}
@@ -173,12 +175,12 @@ export function AnimatedSlotList<T>({
             key={slotKey}
             data-component={itemDataComponent}
             className={cn(
-              "animate-v3-pop-up",
+              shouldAnimateSlot && "animate-v3-pop-up",
               variantClassName,
               computedSlotClassName,
               shouldHide && "hidden"
             )}
-            style={{ animationDelay }}
+            style={shouldAnimateSlot ? { animationDelay } : undefined}
             onClick={
               !isSlotLoading && item && onSlotClick ? () => onSlotClick(item, index) : undefined
             }

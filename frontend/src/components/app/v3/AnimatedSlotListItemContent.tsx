@@ -1,11 +1,22 @@
 "use client";
 
-import { cloneElement, createElement, isValidElement, type ReactNode } from "react";
+import { Children, Fragment, cloneElement, createElement, isValidElement, type ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
 type AnimatedSlotListItemIcon = LucideIcon | ReactNode;
+
+function getDirectStatusChildren(status: ReactNode) {
+  if (
+    isValidElement<{ children?: ReactNode }>(status) &&
+    status.type === Fragment
+  ) {
+    return Children.toArray(status.props.children);
+  }
+
+  return Children.toArray(status);
+}
 
 export interface AnimatedSlotListItemContentProps {
   icon: AnimatedSlotListItemIcon;
@@ -20,6 +31,7 @@ export interface AnimatedSlotListItemContentProps {
   titleClassName?: string;
   subtitleClassName?: string;
   metaClassName?: string;
+  statusClassName?: string;
 }
 
 export function AnimatedSlotListItemContent({
@@ -35,6 +47,7 @@ export function AnimatedSlotListItemContent({
   titleClassName,
   subtitleClassName,
   metaClassName,
+  statusClassName,
 }: AnimatedSlotListItemContentProps) {
   const hasSupportingContent = Boolean(subtitle || meta);
   const iconClassNames = cn(
@@ -56,6 +69,21 @@ export function AnimatedSlotListItemContent({
     <span className={cn("text-[calc(14px*var(--v3-ui-scale,1))] font-bold leading-none", iconClassName)}>
       {Icon}
     </span>
+  );
+  const statusChildren = status ? getDirectStatusChildren(status) : [];
+  const shouldCompactStatus = statusChildren.length > 1;
+  const renderedStatus = shouldCompactStatus ? (
+    <>
+      {statusChildren[0]}
+      <span
+        data-component={`${dataComponent}-status-more`}
+        className="shrink-0 text-[calc(10.4px*var(--v3-ui-scale,1))] font-semibold text-v3-text-muted"
+      >
+        +{statusChildren.length - 1}
+      </span>
+    </>
+  ) : (
+    status
   );
 
   return (
@@ -118,8 +146,15 @@ export function AnimatedSlotListItemContent({
       </div>
 
       {status ? (
-        <div data-component={`${dataComponent}-status`} className="shrink-0">
-          {status}
+        <div
+          data-component={`${dataComponent}-status`}
+          className={cn(
+            "shrink-0",
+            shouldCompactStatus && "flex items-center justify-end gap-1",
+            statusClassName
+          )}
+        >
+          {renderedStatus}
         </div>
       ) : null}
     </>

@@ -3,14 +3,17 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { Bell, Clock3, Headset, X } from "lucide-react";
+import { Bell, Headset, Users, X } from "lucide-react";
 
 import { useClientAlerts } from "@/hooks/useClientAlerts";
 import { useMarkAsRead, useNotifications, type Notification } from "@/hooks/usePushNotification";
+import type { ActionRequiredReason, ActionRequiredStatus } from "@/lib/client/action-required";
 import { PanelTitleGroup } from "@/components/app/v3/PanelTitleGroup";
 import { useScrollActivity } from "@/components/app/v3/useScrollActivity";
+import { StatusPill } from "@/components/app/ui/status-badge";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AnimatedSlotList } from "@/components/app/v3/AnimatedSlotList";
+import { AnimatedSlotListItemContent } from "@/components/app/v3/AnimatedSlotListItemContent";
 import { cn } from "@/lib/utils";
 
 interface SidebarNotificationItem {
@@ -24,36 +27,28 @@ interface SidebarNotificationItem {
     unread: boolean;
     tone: "default" | "warning";
     icon: "client" | "consultation";
+    actionReason?: ActionRequiredReason;
+    actionPriority?: ActionRequiredStatus["priority"];
 }
 
-const SIDEBAR_NOTIFICATIONS_MODAL_WIDTH = 352;
+const SIDEBAR_NOTIFICATIONS_MODAL_WIDTH = 400;
 
-const CLIENT_AVATAR_GRADIENTS = [
-  "bg-gradient-to-br from-[hsl(214,100%,34%)] to-[hsl(214,100%,28%)]",
-  "bg-gradient-to-br from-[hsl(137,34%,31%)] to-[hsl(137,34%,25%)]",
-  "bg-gradient-to-br from-[hsl(355,36%,45%)] to-[hsl(355,36%,38%)]",
-  "bg-gradient-to-br from-[hsl(34,100%,55%)] to-[hsl(34,100%,45%)]",
-  "bg-gradient-to-br from-[hsl(175,60%,40%)] to-[hsl(175,60%,30%)]",
-  "bg-gradient-to-br from-[hsl(270,60%,55%)] to-[hsl(270,60%,45%)]",
-];
+const getNotificationIconContainerClassName = (notification: SidebarNotificationItem) => {
+  if (notification.tone === "warning") {
+    return "border border-[hsla(38,92%,35%,0.18)] bg-[hsl(47,100%,92%)] text-[hsl(38,92%,35%)]";
+  }
 
-const getClientAvatarGradient = (name: string) => {
-  const charCode = name.charCodeAt(0) || 0;
-  return CLIENT_AVATAR_GRADIENTS[charCode % CLIENT_AVATAR_GRADIENTS.length];
+  if (notification.icon === "consultation") {
+    return "border border-[hsl(214,70%,85%)] bg-[hsl(214,80%,95%)] text-v3-primary";
+  }
+
+  return "border border-[hsl(214,70%,85%)] bg-[hsl(214,80%,95%)] text-v3-primary";
 };
 
-const getClientInitials = (name: string) => {
-  const normalized = name.replace(/^\[[^\]]+\]\s*/, "").trim();
-  if (!normalized) {
-    return "C";
-  }
-
-  const parts = normalized.split(/\s+/).filter(Boolean);
-  if (parts.length > 1) {
-    return `${parts[0].charAt(0)}${parts[parts.length - 1].charAt(0)}`.toUpperCase();
-  }
-
-  return normalized.slice(0, 2).toUpperCase();
+const getNotificationStatusVariant = (
+  priority: ActionRequiredStatus["priority"] = 3,
+) => {
+  return priority === 1 ? "danger" : priority === 2 ? "warning" : "primary";
 };
 
 const getNotificationUrl = (notification: Notification): string | undefined => {
@@ -129,6 +124,8 @@ export function SidebarNotifications() {
         unread: true,
         tone: alert.priority === 1 ? "warning" : "default",
         icon: "client" as const,
+        actionReason: alert.reason,
+        actionPriority: alert.priority,
       };
     });
 
@@ -225,16 +222,14 @@ export function SidebarNotifications() {
           {modalPosition ? (
             <div
               data-component="sidebar-notifications-modal"
-              className="fixed z-[1000] w-[22rem] max-w-[calc(100vw-24px)] max-h-[calc(100vh-24px)] bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden"
+              className="fixed z-[1000] w-[25rem] max-w-[calc(100vw-24px)] max-h-[calc(100vh-24px)] bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden"
               style={{ top: modalPosition.top, left: modalPosition.left }}
             >
               <div className="flex items-start justify-between p-6 pb-4 shrink-0">
                 <PanelTitleGroup
                   component="list-panel"
                   title="알림"
-                  subtitle="알림 항목들을 확인해 보세요."
                   titleClassName="text-xl"
-                  subtitleClassName="text-[0.8rem]"
                 />
                 <button
                   type="button"
@@ -253,59 +248,52 @@ export function SidebarNotifications() {
                 onScroll={handleScroll}
               >
                 {notifications.length ? (
-                  <div className="space-y-2">
-                    {notifications.map((notification) => (
-                      <div
-                        key={notification.id}
-                        data-component="sidebar-notifications-item"
-                        role={notification.url ? "button" : undefined}
-                        tabIndex={notification.url ? 0 : undefined}
-                        onClick={() => handleNotificationClick(notification)}
-                        onKeyDown={(event) => {
-                          if (!notification.url) return;
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            handleNotificationClick(notification);
-                          }
-                        }}
-                        className={cn(
-                          "rounded-[18px] border border-v3-border/70 bg-white px-3 py-3",
-                          notification.url && "cursor-pointer transition-colors hover:bg-v3-primary-light/45",
-                          notification.unread && "border-v3-primary/20 bg-v3-primary-light/20",
-                        )}
-                      >
-                        <div className="flex items-start gap-3">
-                          <Avatar className="mt-0.5 h-8 w-8 shrink-0 shadow-sm">
-                            <AvatarFallback
-                              className={cn(
-                                "text-[0.65rem] font-bold text-white",
-                                notification.icon === "consultation"
-                                  ? "bg-v3-primary"
-                                  : getClientAvatarGradient(notification.name)
-                              )}
-                            >
-                              {notification.icon === "consultation" ? (
-                                <Headset className="h-4 w-4" />
-                              ) : (
-                                getClientInitials(notification.name)
-                              )}
-                            </AvatarFallback>
-                          </Avatar>
+                  <AnimatedSlotList<SidebarNotificationItem>
+                    items={notifications}
+                    isLoading={false}
+                    itemDataComponent="sidebar-notifications-item"
+                    getItemKey={(notification) => notification.id}
+                    onSlotClick={(notification) => handleNotificationClick(notification)}
+                    getSlotState={({ item }) => ({
+                      isInteractive: Boolean(item),
+                    })}
+                    slotClassName={({ item }) =>
+                      cn(
+                        "hover:!border-transparent hover:!bg-v3-primary-light/55",
+                        item?.unread && "border-v3-primary/20 bg-v3-primary-light/20 hover:!border-v3-primary/20 hover:!bg-v3-primary-light/65",
+                      )
+                    }
+                    render={({ item }) => {
+                      if (!item) return null;
 
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-start justify-between gap-2">
-                              <p className="text-[0.8rem] font-semibold text-v3-dark">{notification.name}</p>
-                              <span className="inline-flex items-center gap-1 whitespace-nowrap text-[0.68rem] font-medium text-v3-text-muted">
-                                <Clock3 className="h-3.5 w-3.5" />
-                                {notification.timeLabel}
+                      const Icon = item.icon === "consultation" ? Headset : Users;
+
+                      return (
+                        <AnimatedSlotListItemContent
+                          dataComponent="sidebar-notifications-item-content"
+                          icon={Icon}
+                          iconContainerClassName={getNotificationIconContainerClassName(item)}
+                          title={item.name}
+                          subtitle={item.message}
+                          status={
+                            <div className="flex shrink-0 flex-col items-end justify-center gap-[calc(4px*var(--v3-ui-scale,1))]">
+                              {item.actionReason ? (
+                                <StatusPill
+                                  variant={getNotificationStatusVariant(item.actionPriority)}
+                                  size="sm"
+                                >
+                                  {item.actionReason}
+                                </StatusPill>
+                              ) : null}
+                              <span className="inline-flex items-center whitespace-nowrap text-[calc(10.4px*var(--v3-ui-scale,1))] font-medium text-v3-text-muted">
+                                {item.timeLabel}
                               </span>
                             </div>
-                            <p className="mt-1 text-[0.74rem] leading-5 text-v3-text-muted">{notification.message}</p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                          }
+                        />
+                      );
+                    }}
+                  />
                 ) : (
                   <div
                     data-component="sidebar-notifications-empty"

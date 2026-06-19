@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Search } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 interface ExpandableSearchProps {
@@ -105,21 +108,24 @@ export function ExpandableSearch({
               : "w-[calc(32px*var(--v3-ui-scale,1))]"
           )}
         >
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
             onClick={handleToggle}
             onMouseDown={(event) => event.preventDefault()}
             disabled={disabled}
             aria-label={expanded ? closeLabel : openLabel}
             className={cn(
-              "flex h-[calc(32px*var(--v3-ui-scale,1))] w-[calc(32px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[10px] transition-transform duration-200 hover:bg-v3-dim-white",
+              "h-[calc(32px*var(--v3-ui-scale,1))] w-[calc(32px*var(--v3-ui-scale,1))] shrink-0 rounded-[10px] border-0 bg-transparent p-0 shadow-none transition-transform duration-200 hover:bg-v3-dim-white hover:text-v3-text-muted",
               disabled && "cursor-not-allowed opacity-50 hover:bg-transparent",
             )}
           >
             <Search className="h-[calc(18px*var(--v3-ui-scale,1))] w-[calc(18px*var(--v3-ui-scale,1))] text-v3-text-muted" />
-          </button>
-          <input
+          </Button>
+          <Input
             ref={inputRef}
+            data-slot="input"
             type="text"
             value={value}
             onChange={(e) => onChange(e.target.value)}
@@ -132,7 +138,7 @@ export function ExpandableSearch({
               pointerEvents: expanded ? "auto" : "none",
             }}
             className={cn(
-              "expandable-search-overlay-input h-[calc(32px*var(--v3-ui-scale,1))] min-w-0 flex-1 border-0 bg-transparent text-[calc(12.8px*var(--v3-ui-scale,1))] text-v3-dark shadow-none outline-none caret-v3-primary placeholder:text-v3-text-muted/50 focus:outline-none focus:ring-0",
+              "expandable-search-overlay-input h-[calc(32px*var(--v3-ui-scale,1))] min-w-0 flex-1 w-auto rounded-none border-0 bg-transparent px-0 py-0 text-[calc(12.8px*var(--v3-ui-scale,1))] text-v3-dark shadow-none outline-none caret-v3-primary placeholder:text-v3-text-muted/50 focus:outline-none focus:ring-0",
               disabled && "cursor-not-allowed text-v3-text-muted",
             )}
           />
@@ -143,29 +149,37 @@ export function ExpandableSearch({
 
   return (
     <div data-component="expandable-search" className={cn("flex items-center gap-[calc(6px*var(--v3-ui-scale,1))]", className)}>
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="icon"
         onClick={handleToggle}
         onMouseDown={(event) => event.preventDefault()}
         disabled={disabled}
         aria-label={expanded ? closeLabel : openLabel}
         className={cn(
-          "flex h-[calc(32px*var(--v3-ui-scale,1))] w-[calc(32px*var(--v3-ui-scale,1))] items-center justify-center rounded-[10px] hover:bg-v3-dim-white",
+          "h-[calc(32px*var(--v3-ui-scale,1))] w-[calc(32px*var(--v3-ui-scale,1))] shrink-0 rounded-[10px] border-0 bg-transparent p-0 shadow-none transition-transform duration-200 hover:bg-v3-dim-white hover:text-v3-text-muted",
           disabled && "cursor-not-allowed opacity-50 hover:bg-transparent",
         )}
       >
-        <Search className={expanded ? "hidden" : "h-[calc(18px*var(--v3-ui-scale,1))] w-[calc(18px*var(--v3-ui-scale,1))] text-v3-text-muted"} />
-      </button>
-      <input
+        <Search className="h-[calc(18px*var(--v3-ui-scale,1))] w-[calc(18px*var(--v3-ui-scale,1))] text-v3-text-muted" />
+      </Button>
+      <Input
         ref={inputRef}
+        data-slot="input"
         type="text"
         placeholder={expanded ? placeholder : undefined}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onBlur={handleBlur}
         disabled={disabled}
+        style={{
+          opacity: expanded ? 1 : 0,
+          paddingInline: expanded ? "calc(8px * var(--v3-ui-scale, 1))" : 0,
+          pointerEvents: expanded ? "auto" : "none",
+        }}
         className={cn(
-          "border-0 bg-transparent text-[calc(12.8px*var(--v3-ui-scale,1))] text-v3-dark shadow-none outline-none caret-v3-primary placeholder:text-v3-text-muted/50 focus:outline-none focus:ring-0",
+          "h-[calc(32px*var(--v3-ui-scale,1))] min-w-0 rounded-none border-0 bg-transparent px-0 py-0 text-[calc(12.8px*var(--v3-ui-scale,1))] text-v3-dark shadow-none outline-none caret-v3-primary placeholder:text-v3-text-muted/50 transition-[width,opacity,padding-inline] duration-[260ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus:ring-0 motion-reduce:transition-none",
           expanded ? expandedWidth : "w-0",
           disabled && "cursor-not-allowed text-v3-text-muted",
         )}

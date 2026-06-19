@@ -23,7 +23,8 @@ import {
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useClients, useDeleteClient, useClient } from "@/hooks/useClients";
-import { Client, SERVICE_STATUS_OPTIONS, type ServiceStatus } from "@/lib/client/types";
+import type { Client, ServiceStatus } from "@/lib/client/types";
+import { getClientBadgeAvatarClassName, getClientBadges } from "@/lib/client/badges";
 import { useAlimtalkHistory } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
 import type { AlimtalkHistoryRecord } from "@/features/alimtalk-triggers/types";
 import {
@@ -67,7 +68,7 @@ import {
 } from "@/components/app/v3";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { normalizeKoreanPhoneLookupKey } from "@/lib/phone";
-import type { StatusType } from "@/components/app/v3";
+import { matchesMessageHistoryClient } from "@/lib/message-history/client-match";
 
 const FILTER_CHIPS = [
     { label: "전체", value: "all" },
@@ -119,41 +120,6 @@ const CLIENT_MESSAGE_HISTORY_LIST_STATUS_LABELS = {
     pending: "대기",
 } satisfies Record<MessageHistoryRecord["status"], string>;
 
-const getAvatarGradient = (name: string) => {
-    const charCode = name.charCodeAt(0);
-    const gradients = [
-        "bg-gradient-to-br from-[hsl(214,100%,34%)] to-[hsl(214,100%,28%)]",
-        "bg-gradient-to-br from-[hsl(137,34%,31%)] to-[hsl(137,34%,25%)]",
-        "bg-gradient-to-br from-[hsl(355,36%,45%)] to-[hsl(355,36%,38%)]",
-        "bg-gradient-to-br from-[hsl(34,100%,55%)] to-[hsl(34,100%,45%)]",
-        "bg-gradient-to-br from-[hsl(175,60%,40%)] to-[hsl(175,60%,30%)]",
-        "bg-gradient-to-br from-[hsl(270,60%,55%)] to-[hsl(270,60%,45%)]",
-    ];
-    return gradients[charCode % gradients.length];
-};
-
-const getStatusLabel = (status: string | null) => {
-    const option = SERVICE_STATUS_OPTIONS.find((o) => o.value === status);
-    return option ? option.label : "-";
-};
-
-const mapServiceStatusToV3 = (status: string | null): StatusType => {
-    switch (status) {
-        case "active":
-            return "active";
-        case "waiting":
-            return "pending";
-        case "replacement_requested":
-            return "terminated";
-        case "terminated":
-            return "terminated";
-        case "completed":
-            return "completed";
-        default:
-            return "pending";
-    }
-};
-
 const formatDate = (dateStr: string | null): string => {
     if (!dateStr) return "-";
     return new Date(dateStr).toLocaleDateString("ko-KR");
@@ -198,7 +164,7 @@ function getClientMessageHistoryTime(record: AlimtalkHistoryRecord) {
 
 function ClientMessageHistoryList({
     records,
-    hasClientPhone,
+    canLookupMessages,
     isError,
     isLoading,
     clientName,
@@ -206,18 +172,18 @@ function ClientMessageHistoryList({
     onSelectRecord,
 }: {
     records: AlimtalkHistoryRecord[];
-    hasClientPhone: boolean;
+    canLookupMessages: boolean;
     isError: boolean;
     isLoading: boolean;
     clientName: string;
     selectedRecordId: number | null;
     onSelectRecord: (record: AlimtalkHistoryRecord) => void;
 }) {
-    if (!hasClientPhone) {
+    if (!canLookupMessages) {
         return (
             <DetailEmptyState
                 name="clients-detail-messages-empty"
-                message="고객 전화번호가 등록되어 있지 않습니다"
+                message="고객 정보가 없어 메시지 발송 내역을 조회할 수 없습니다"
             />
         );
     }
@@ -265,36 +231,35 @@ function ClientMessageHistoryList({
     }
 
     return (
-        <div data-component="clients-detail-messages-list" className="space-y-2">
-            {records.map((record) => {
-                const normalizedRecord = normalizeMessageHistoryRecord(record, {
-                    recipientNameFallback: clientName,
-                    recipientListLabelFallback: clientName,
-                });
-                const statusMeta = MESSAGE_HISTORY_STATUS_META[normalizedRecord.status] ?? MESSAGE_HISTORY_STATUS_META.failed;
-                const statusBorderClassName =
-                    normalizedRecord.status === "sent"
-                        ? "border-[hsl(137,34%,84%)]"
-                        : normalizedRecord.status === "pending"
-                            ? "border-amber-100"
-                            : "border-red-100";
-                const ItemIcon = normalizedRecord.icon;
-                const isSelected = selectedRecordId === record.id;
+        <div data-component="clients-detail-messages-list">
+            <AnimatedSlotList<AlimtalkHistoryRecord>
+                items={records}
+                isLoading={false}
+                itemVariant="card"
+                itemDataComponent="clients-detail-messages-list-item"
+                getItemKey={(record) => String(record.id)}
+                getSlotState={({ item }) => ({
+                    isActive: item?.id === selectedRecordId,
+                    isInteractive: Boolean(item),
+                })}
+                onSlotClick={(record) => onSelectRecord(record)}
+                render={({ item: record }) => {
+                    if (!record) return null;
 
-                return (
-                    <button
-                        key={record.id}
-                        type="button"
-                        data-component="clients-detail-messages-list-item"
-                        aria-pressed={isSelected}
-                        onClick={() => onSelectRecord(record)}
-                        className={cn(
-                            "flex min-h-[calc(94px*var(--v3-ui-scale,1))] w-full items-center gap-[calc(12px*var(--v3-ui-scale,1))] rounded-[18px] border-2 bg-white p-[calc(16px*var(--v3-ui-scale,1))] text-left transition-all duration-200",
-                            isSelected
-                                ? "border-v3-primary bg-v3-primary-light"
-                                : "border-transparent hover:border-v3-primary/30 hover:bg-v3-primary-light/50"
-                        )}
-                    >
+                    const normalizedRecord = normalizeMessageHistoryRecord(record, {
+                        recipientNameFallback: clientName,
+                        recipientListLabelFallback: clientName,
+                    });
+                    const statusMeta = MESSAGE_HISTORY_STATUS_META[normalizedRecord.status] ?? MESSAGE_HISTORY_STATUS_META.failed;
+                    const statusBorderClassName =
+                        normalizedRecord.status === "sent"
+                            ? "border-[hsl(137,34%,84%)]"
+                            : normalizedRecord.status === "pending"
+                                ? "border-amber-100"
+                                : "border-red-100";
+                    const ItemIcon = normalizedRecord.icon;
+
+                    return (
                         <AnimatedSlotListItemContent
                             dataComponent="clients-detail-messages-list-item"
                             icon={ItemIcon}
@@ -319,9 +284,9 @@ function ClientMessageHistoryList({
                                 </div>
                             }
                         />
-                    </button>
-                );
-            })}
+                    );
+                }}
+            />
         </div>
     );
 }
@@ -532,21 +497,26 @@ export default function ClientsPage() {
     const activeSelectedClient = selectedClient ?? (clientIdParam ? clientFromParam ?? null : null);
     const panelFormClient = shouldOpenClientFormFromUrl ? clientDialogDraft?.client ?? null : null;
     const shouldShowClientFormPanel = isCreatingClient || shouldOpenClientFormFromUrl;
+    const activeSelectedClientBadges = useMemo(
+        () => activeSelectedClient ? getClientBadges(activeSelectedClient) : [],
+        [activeSelectedClient]
+    );
     const activeSelectedClientPhoneKey = useMemo(
         () => normalizeKoreanPhoneLookupKey(activeSelectedClient?.phone ?? ""),
         [activeSelectedClient?.phone]
     );
+    const activeSelectedClientId = activeSelectedClient?.id ?? null;
 
     const clients = useMemo(() => data?.data || [], [data?.data]);
 
     const activeClientMessageHistory = useMemo(
         () =>
-            activeSelectedClientPhoneKey
+            activeSelectedClientId !== null || activeSelectedClientPhoneKey
                 ? messageHistoryData
-                    .filter((record) => normalizeKoreanPhoneLookupKey(record.receiver) === activeSelectedClientPhoneKey)
+                    .filter((record) => matchesMessageHistoryClient(record, activeSelectedClient))
                     .sort((left, right) => getClientMessageHistoryTime(right) - getClientMessageHistoryTime(left))
                 : [],
-        [activeSelectedClientPhoneKey, messageHistoryData]
+        [activeSelectedClient, activeSelectedClientId, activeSelectedClientPhoneKey, messageHistoryData]
     );
 
     const selectedClientMessageRecord = useMemo(
@@ -876,17 +846,18 @@ export default function ClientsPage() {
 	                                            );
 	                                        }
 
-	                                        if (!client) return null;
+		                                        if (!client) return null;
+		                                        const clientBadges = getClientBadges(client);
+		                                        const primaryClientBadge = clientBadges[0] ?? null;
 
-	                                        return (
-	                                            <AnimatedSlotListItemContent
-	                                                dataComponent="clients-list-item"
-	                                                icon={Users}
-	                                                iconContainerClassName={cn(getAvatarGradient(client.name), "text-white")}
-	                                                iconClassName="text-white"
-	                                                title={client.name}
-	                                                subtitle={
-	                                                    <>
+		                                        return (
+		                                            <AnimatedSlotListItemContent
+		                                                dataComponent="clients-list-item"
+		                                                icon={Users}
+		                                                iconContainerClassName={getClientBadgeAvatarClassName(primaryClientBadge)}
+		                                                title={client.name}
+		                                                subtitle={
+		                                                    <>
 	                                                        {client.phone ? <span>{client.phone}</span> : null}
 	                                                        {client.address ? (
 	                                                            <span className="truncate">
@@ -895,13 +866,14 @@ export default function ClientsPage() {
 	                                                        ) : null}
 	                                                    </>
 	                                                }
-	                                                status={(
-	                                                    <StatusBadge
-	                                                        status={mapServiceStatusToV3(client.serviceStatus)}
-	                                                        label={getStatusLabel(client.serviceStatus)}
-	                                                    />
-	                                                )}
-	                                            />
+			                                                status={clientBadges.map((badge, badgeIndex) => (
+			                                                    <StatusBadge
+			                                                        key={badge.key ?? `${badge.status}-${badge.label ?? badgeIndex}`}
+			                                                        status={badge.status}
+			                                                        label={badge.label}
+			                                                    />
+			                                                ))}
+			                                            />
 	                                        );
 	                                    }}
 	                                />
@@ -954,30 +926,23 @@ export default function ClientsPage() {
                                 <div
                                     data-component="clients-detail-avatar"
                                     className={cn(
-                                        "w-16 h-16 rounded-[20px] flex items-center justify-center text-white shadow-lg shrink-0",
-                                        getAvatarGradient(activeSelectedClient.name)
+                                        "w-16 h-16 rounded-[20px] flex items-center justify-center shadow-lg shrink-0",
+                                        getClientBadgeAvatarClassName(activeSelectedClientBadges[0])
                                     )}
                                 >
-                                    <Users className="w-7 h-7 shrink-0 transition-colors text-white" aria-hidden="true" />
+                                    <Users className="w-7 h-7 shrink-0 transition-colors text-current" aria-hidden="true" />
                                 </div>
                             }
                             title={activeSelectedClient.name}
                             badges={
                                 <>
-                                    <StatusBadge
-                                        status={mapServiceStatusToV3(
-                                            activeSelectedClient.serviceStatus
-                                        )}
-                                        label={getStatusLabel(
-                                            activeSelectedClient.serviceStatus
-                                        )}
-                                    />
-                                    {activeSelectedClient.breastPump && (
-                                        <StatusBadge status="breastPump" />
-                                    )}
-                                    {activeSelectedClient.careCenter && (
-                                        <StatusBadge status="careCenter" />
-                                    )}
+                                    {activeSelectedClientBadges.map((badge) => (
+                                        <StatusBadge
+                                            key={badge.key}
+                                            status={badge.status}
+                                            label={badge.label}
+                                        />
+                                    ))}
                                 </>
                             }
                             subtitle={
@@ -1019,6 +984,7 @@ export default function ClientsPage() {
                                 activeTab={activeDetailTab}
                                 dataComponent="clients-detail-content"
                                 panelDataComponent="clients-detail-content-panel"
+                                className="shrink-0"
                                 panels={[
                                     {
                                         key: "basic",
@@ -1119,7 +1085,7 @@ export default function ClientsPage() {
                                         children: (
                                             <ClientMessageHistoryList
                                                 records={activeClientMessageHistory}
-                                                hasClientPhone={activeSelectedClientPhoneKey.length > 0}
+                                                canLookupMessages={activeSelectedClientId !== null || activeSelectedClientPhoneKey.length > 0}
                                                 isLoading={isMessageHistoryLoading}
                                                 isError={isMessageHistoryError}
                                                 clientName={activeSelectedClient.name}

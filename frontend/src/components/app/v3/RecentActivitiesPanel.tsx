@@ -2,16 +2,17 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2, Users } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { StatusPill } from "@/components/app/ui/status-badge";
 import {
   type ActionRequiredReason,
   type ActionRequiredStatus,
 } from "@/lib/client/action-required";
+import { getClientBadgeAvatarClassName, getClientBadges } from "@/lib/client/badges";
 import { cn } from "@/lib/utils";
 import { AnimatedSlotList } from "./AnimatedSlotList";
 import { AnimatedSlotListItemContent } from "./AnimatedSlotListItemContent";
+import { StatusBadge } from "./StatusBadge";
 import { useScrollActivity } from "./useScrollActivity";
 import type { Client } from "@/lib/client/types";
 
@@ -60,22 +61,22 @@ const PRIORITY_COLORS: Record<
   { iconBg: string; badgeBg: string; badgeText: string; badgeBorder: string }
 > = {
   1: {
-    iconBg: "bg-[hsl(355,36%,45%)]",
+    iconBg: "border border-[hsla(355,36%,45%,0.20)] bg-[hsl(355,40%,94%)] text-[hsl(355,36%,45%)]",
     badgeBg: "bg-[hsl(355,40%,94%)]",
     badgeText: "text-[hsl(355,36%,45%)]",
     badgeBorder: "border-[hsla(355,36%,45%,0.20)]",
   },
   2: {
-    iconBg: "bg-[hsl(34,100%,55%)]",
-    badgeBg: "bg-[hsl(34,100%,94%)]",
-    badgeText: "text-[hsl(34,80%,38%)]",
-    badgeBorder: "border-[hsla(34,80%,38%,0.20)]",
+    iconBg: "border border-[hsla(38,92%,35%,0.18)] bg-[hsl(47,100%,92%)] text-[hsl(38,92%,35%)]",
+    badgeBg: "bg-[hsl(47,100%,92%)]",
+    badgeText: "text-[hsl(38,92%,35%)]",
+    badgeBorder: "border-[hsla(38,92%,35%,0.18)]",
   },
   3: {
-    iconBg: "bg-v3-primary",
+    iconBg: "border border-[hsl(214,70%,85%)] bg-[hsl(214,80%,95%)] text-v3-primary",
     badgeBg: "bg-[hsl(214,80%,95%)]",
     badgeText: "text-v3-primary",
-    badgeBorder: "border-[hsla(214,100%,34%,0.20)]",
+    badgeBorder: "border-[hsl(214,70%,85%)]",
   },
 };
 
@@ -85,25 +86,11 @@ export function getRecentActivityActionVisual(
   return PRIORITY_COLORS[priority] ?? PRIORITY_COLORS[3];
 }
 
-const AVATAR_GRADIENTS = [
-  "bg-gradient-to-br from-[hsl(214,100%,34%)] to-[hsl(214,100%,28%)]",
-  "bg-gradient-to-br from-[hsl(137,34%,31%)] to-[hsl(137,34%,25%)]",
-  "bg-gradient-to-br from-[hsl(355,36%,45%)] to-[hsl(355,36%,38%)]",
-  "bg-gradient-to-br from-[hsl(34,100%,55%)] to-[hsl(34,100%,45%)]",
-  "bg-gradient-to-br from-[hsl(175,60%,40%)] to-[hsl(175,60%,30%)]",
-  "bg-gradient-to-br from-[hsl(270,60%,55%)] to-[hsl(270,60%,45%)]",
-];
-
-function getAvatarGradient(name: string) {
-  return AVATAR_GRADIENTS[name.charCodeAt(0) % AVATAR_GRADIENTS.length];
-}
-
 export function getRecentActivityAvatarClass({
-  name,
   actionPriority,
   isUpcoming = false,
 }: {
-  name: string;
+  name?: string;
   actionPriority?: ActionRequiredStatus["priority"];
   isUpcoming?: boolean;
 }) {
@@ -115,7 +102,7 @@ export function getRecentActivityAvatarClass({
     return getRecentActivityActionVisual(3).iconBg;
   }
 
-  return getAvatarGradient(name);
+  return getRecentActivityActionVisual(3).iconBg;
 }
 
 function getRelativeDate(dateStr: string): string {
@@ -440,57 +427,29 @@ export function RecentActivitiesPanel({
                   return null;
                 }
 
-                if (item.actionReason) {
-                  const colors = getRecentActivityActionVisual(item.actionPriority);
-                  const badgeVariant =
-                    item.actionPriority === 1 ? "danger" : item.actionPriority === 2 ? "warning" : "primary";
-
-                  return (
-                    <AnimatedSlotListItemContent
-                      dataComponent="dashboard-split-list-item-content"
-                      icon={item.client.name.charAt(0)}
-                      iconContainerClassName={cn(colors.iconBg, "text-white")}
-                      iconClassName="text-white"
-                      title={item.client.name}
-                      subtitle={`${item.client.type || "일반"} · ${item.client.primaryEmployee?.name || "-"}${
-                        item.isUpcoming && item.client.startDate ? ` · ${getRelativeDate(item.client.startDate)}` : ""
-                      }`}
-                      status={
-                        <div className="flex shrink-0 flex-wrap justify-end gap-1">
-                          <StatusPill variant={badgeVariant} size="sm">
-                            {item.actionReason}
-                          </StatusPill>
-                          {item.isUpcoming ? (
-                            <StatusPill variant="primary" size="sm">
-                              곧 시작
-                            </StatusPill>
-                          ) : null}
-                        </div>
-                      }
-                    />
-                  );
-                }
+                const clientBadges = getClientBadges(item.client);
+                const primaryClientBadge = clientBadges[0] ?? null;
+                const subtitle = `${item.client.type || "일반"} · ${item.client.primaryEmployee?.name || "-"}${
+                  item.isUpcoming && item.client.startDate ? ` · ${getRelativeDate(item.client.startDate)}` : ""
+                }`;
 
                 return (
                   <AnimatedSlotListItemContent
                     dataComponent="dashboard-split-list-item-content"
-                    icon={item.client.name.charAt(0)}
-                    iconContainerClassName={cn(
-                      getRecentActivityAvatarClass({
-                        name: item.client.name,
-                        isUpcoming: item.isUpcoming,
-                      }),
-                      "text-white"
-                    )}
-                    iconClassName="text-white"
+                    icon={Users}
+                    iconContainerClassName={getClientBadgeAvatarClassName(primaryClientBadge)}
                     title={item.client.name}
-                    subtitle={`${item.client.type || "일반"} · ${item.client.primaryEmployee?.name || "-"} · ${
-                      item.client.startDate ? getRelativeDate(item.client.startDate) : "-"
-                    }`}
+                    subtitle={subtitle}
                     status={
-                      <StatusPill variant="primary" size="sm">
-                        곧 시작
-                      </StatusPill>
+                      clientBadges.length > 0
+                        ? clientBadges.map((badge) => (
+                            <StatusBadge
+                              key={badge.key}
+                              status={badge.status}
+                              label={badge.label}
+                            />
+                          ))
+                        : null
                     }
                   />
                 );
