@@ -143,7 +143,7 @@ describe("AlimtalkRetrySchedulerService", () => {
         );
     });
 
-    it("schedules another one-hour retry when an automatic SMS retry is still rejected", async () => {
+    it("schedules another five-minute retry when an automatic SMS retry is still rejected", async () => {
         nowSpy.mockReturnValue(new Date("2026-06-05T10:20:00.000Z").getTime());
         const log = createSmsRetryLog();
         logRepository.findPendingRetries.mockResolvedValue([log]);
@@ -159,7 +159,46 @@ describe("AlimtalkRetrySchedulerService", () => {
                 status: "failed",
                 attempts: 2,
                 errorMessage: "Aligo SMS API error (403): 등록되지 않은 IP 입니다.",
-                nextRetryAt: new Date("2026-06-05T11:20:00.000Z"),
+                nextRetryAt: new Date("2026-06-05T10:25:00.000Z"),
+            }),
+        );
+    });
+
+    it("preserves scheduled SMS fields when retrying a scheduled delivery log", async () => {
+        const log = createSmsRetryLog();
+        log.variables = {
+            ...log.variables,
+            scheduledDate: "20260605",
+            scheduledTime: "1430",
+            testMode: "true",
+        };
+        logRepository.findPendingRetries.mockResolvedValue([log]);
+        aligoService.sendSms.mockResolvedValue({
+            request: {
+                senderPhone: "0212345678",
+                receiver: "01012345678",
+                msgType: "LMS",
+                scheduledDate: "20260605",
+                scheduledTime: "1430",
+                testModeYn: "N",
+            },
+            response: {
+                result_code: 1,
+                message: "성공적으로 전송요청 하였습니다.",
+                msg_id: 124,
+                success_cnt: 1,
+                error_cnt: 0,
+                msg_type: "LMS",
+            },
+        });
+
+        await scheduler.retryFailedMessages();
+
+        expect(aligoService.sendSms).toHaveBeenCalledWith(
+            expect.objectContaining({
+                scheduledDate: "20260605",
+                scheduledTime: "1430",
+                testMode: true,
             }),
         );
     });

@@ -6,7 +6,7 @@ import { ALIGO_TEMPLATES } from "application/dto/aligo";
 import { AligoTemplateKey } from "application/dto/aligo/alimtalk-template.dto";
 import { AligoService } from "application/services/aligo.service";
 import { maskPhone } from "application/utils/mask";
-import { AlimtalkLogEntity } from "domain/entities/alimtalk-log.entity";
+import { AlimtalkLogEntity, SMS_DELIVERY_RETRY_DELAY_MS } from "domain/entities/alimtalk-log.entity";
 import { SchedulerExecutionGuard } from "./scheduler-execution.guard";
 import {
     isTransientPrismaConnectivityError,
@@ -15,8 +15,6 @@ import {
 
 const MAX_RUN_MS = 15 * 60 * 1000;
 const DB_COOLDOWN_MS = 5 * 60 * 1000;
-const AUTOMATIC_SMS_RETRY_DELAY_MS = 60 * 60 * 1000;
-
 @Injectable()
 export class AlimtalkRetrySchedulerService {
     private readonly logger = new Logger(AlimtalkRetrySchedulerService.name);
@@ -99,6 +97,8 @@ export class AlimtalkRetrySchedulerService {
 
     private async retrySmsLog(log: AlimtalkLogEntity): Promise<void> {
         try {
+            const scheduledDate = this.stringVariable(log, "scheduledDate");
+            const scheduledTime = this.stringVariable(log, "scheduledTime");
             const result = await this.aligoService.sendSms({
                 senderPhone: this.stringVariable(log, "senderPhone"),
                 receiver: log.receiver,
@@ -106,6 +106,9 @@ export class AlimtalkRetrySchedulerService {
                 recipientName: this.stringVariable(log, "recipientName") ?? undefined,
                 title: this.stringVariable(log, "title") ?? undefined,
                 msgType: this.smsMessageTypeVariable(log, "msgType"),
+                ...(scheduledDate ? { scheduledDate } : {}),
+                ...(scheduledTime ? { scheduledTime } : {}),
+                ...(this.booleanVariable(log, "testMode") ? { testMode: true } : {}),
             });
 
             if (!this.isAcceptedSmsResult(result)) {
@@ -131,7 +134,7 @@ export class AlimtalkRetrySchedulerService {
         log.attempts += 1;
         log.lastAttemptAt = new Date(Date.now());
         log.nextRetryAt = log.canRetry()
-            ? new Date(Date.now() + AUTOMATIC_SMS_RETRY_DELAY_MS)
+            ? new Date(Date.now() + SMS_DELIVERY_RETRY_DELAY_MS)
             : null;
     }
 
@@ -152,5 +155,9 @@ export class AlimtalkRetrySchedulerService {
     ): "SMS" | "LMS" | "AUTO" | undefined {
         const value = this.stringVariable(log, key);
         return value === "SMS" || value === "LMS" || value === "AUTO" ? value : undefined;
+    }
+
+    private booleanVariable(log: AlimtalkLogEntity, key: string): boolean {
+        return this.stringVariable(log, key) === "true";
     }
 }

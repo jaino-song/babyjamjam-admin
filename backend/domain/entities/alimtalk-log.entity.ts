@@ -1,4 +1,24 @@
-const MAX_ATTEMPTS = 3;
+export const SMS_DELIVERY_MAX_ATTEMPTS = 3;
+export const SMS_DELIVERY_RETRY_DELAY_MS = 5 * 60 * 1000;
+export const ALIMTALK_DELIVERY_MAX_ATTEMPTS = 3;
+export const ALIMTALK_DELIVERY_RETRY_DELAY_MS = 5 * 60 * 1000;
+
+export interface MessageDeliveryRetryPolicy {
+    maxAttempts: number;
+    retryDelayMs: number;
+}
+
+export function getMessageDeliveryRetryPolicy(provider: string): MessageDeliveryRetryPolicy {
+    return provider === "aligo_sms"
+        ? {
+            maxAttempts: SMS_DELIVERY_MAX_ATTEMPTS,
+            retryDelayMs: SMS_DELIVERY_RETRY_DELAY_MS,
+        }
+        : {
+            maxAttempts: ALIMTALK_DELIVERY_MAX_ATTEMPTS,
+            retryDelayMs: ALIMTALK_DELIVERY_RETRY_DELAY_MS,
+        };
+}
 
 export type AlimtalkLogStatus = "pending" | "sent" | "failed";
 
@@ -45,12 +65,11 @@ export class AlimtalkLogEntity {
     }
 
     canRetry(): boolean {
-        return this.attempts < MAX_ATTEMPTS;
+        return this.attempts < getMessageDeliveryRetryPolicy(this.provider).maxAttempts;
     }
 
     private scheduleRetry(): void {
-        const backoffSeconds = Math.pow(2, this.attempts) * 2; // 2s, 4s, 8s
-        this.nextRetryAt = new Date(Date.now() + backoffSeconds * 1000);
+        this.nextRetryAt = new Date(Date.now() + getMessageDeliveryRetryPolicy(this.provider).retryDelayMs);
     }
 
     static create(params: {

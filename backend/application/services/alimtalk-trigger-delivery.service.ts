@@ -13,7 +13,11 @@ import {
     AlimtalkTriggerTemplateKey,
 } from "domain/constants/alimtalk-trigger-catalog";
 import { AlimtalkTriggerJobEntity } from "domain/entities/alimtalk-trigger-job.entity";
-import { AlimtalkLogEntity, AlimtalkLogStatus } from "domain/entities/alimtalk-log.entity";
+import {
+    AlimtalkLogEntity,
+    AlimtalkLogStatus,
+    SMS_DELIVERY_RETRY_DELAY_MS,
+} from "domain/entities/alimtalk-log.entity";
 import {
     ALIMTALK_LOG_REPOSITORY,
     IAlimtalkLogRepository,
@@ -191,7 +195,9 @@ export class AlimtalkTriggerDeliveryService {
                 params.errorMessage,
                 1,
                 now,
-                null,
+                params.status === "failed"
+                    ? new Date(now.getTime() + SMS_DELIVERY_RETRY_DELAY_MS)
+                    : null,
                 now,
                 now,
             ),
