@@ -12,6 +12,7 @@ interface ContactInputProps {
   setPhone: (phone: string) => void;
   label: string;
   placeholder: string;
+  required?: boolean;
   disabled?: boolean;
   dataComponent?: string;
   containerClassName?: string;
@@ -24,6 +25,7 @@ export const ContactInput = ({
   setPhone,
   label,
   placeholder,
+  required = false,
   disabled = false,
   dataComponent = "messages-form-contact-input",
   containerClassName,
@@ -50,6 +52,7 @@ export const ContactInput = ({
       value={phone}
       onChange={handleChange}
       placeholder={placeholder}
+      required={required}
       disabled={disabled}
       error={error}
       helperText={error ? "숫자만 입력할 수 있습니다" : undefined}

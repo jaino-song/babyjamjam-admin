@@ -156,7 +156,7 @@ export default async function TrafficDetailPage() {
       <Block name="stats-traffic-trend">
         <div
           data-component="stats-traffic-trend-card"
-          className="bg-white rounded-[28px] shadow-v3 p-6"
+          className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-4">
             <h3 className="text-[0.95rem] font-bold text-v3-text">조회수 · 방문자 추이 (7일)</h3>
@@ -246,7 +246,7 @@ export default async function TrafficDetailPage() {
       >
         <div
           data-component="stats-traffic-top-pages-card"
-          className="bg-white rounded-[28px] shadow-v3 p-6"
+          className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
             <h3 className="text-[0.95rem] font-bold text-v3-text">인기 페이지</h3>
@@ -294,7 +294,7 @@ export default async function TrafficDetailPage() {
 
         <div
           data-component="stats-traffic-sources-card"
-          className="bg-white rounded-[28px] shadow-v3 p-6"
+          className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
             <h3 className="text-[0.95rem] font-bold text-v3-text">유입 소스</h3>
@@ -332,7 +332,7 @@ export default async function TrafficDetailPage() {
       >
         <div
           data-component="stats-traffic-device-card"
-          className="bg-white rounded-[28px] shadow-v3 p-6"
+          className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-4">
             <h3 className="text-[0.95rem] font-bold text-v3-text">디바이스 · 브라우저</h3>
@@ -385,7 +385,7 @@ export default async function TrafficDetailPage() {
 
         <div
           data-component="stats-traffic-region-card"
-          className="bg-white rounded-[28px] shadow-v3 p-6"
+          className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
             <h3 className="text-[0.95rem] font-bold text-v3-text">지역</h3>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 export interface DetailTab {
@@ -22,6 +22,7 @@ export function DetailTabs({ tabs, activeTab, onTabChange }: DetailTabsProps) {
     width: 0,
     isReady: false,
   });
+  const [isIndicatorTransitionEnabled, setIsIndicatorTransitionEnabled] = useState(false);
 
   const measureIndicator = useCallback(() => {
     const root = rootRef.current;
@@ -67,6 +68,18 @@ export function DetailTabs({ tabs, activeTab, onTabChange }: DetailTabsProps) {
     };
   }, [measureIndicator, tabs]);
 
+  useEffect(() => {
+    if (!indicatorMetrics.isReady) return;
+
+    const animationFrameId = requestAnimationFrame(() => {
+      setIsIndicatorTransitionEnabled(true);
+    });
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [indicatorMetrics.isReady]);
+
   return (
     <div
       ref={rootRef}
@@ -95,6 +108,8 @@ export function DetailTabs({ tabs, activeTab, onTabChange }: DetailTabsProps) {
         data-component="detail-tabs-indicator"
         className={cn(
           "pointer-events-none absolute bottom-0 left-0 h-[calc(2px*var(--v3-ui-scale,1))] bg-primary",
+          isIndicatorTransitionEnabled &&
+            "transition-[transform,width,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
           indicatorMetrics.isReady ? "opacity-100" : "opacity-0"
         )}
         style={{

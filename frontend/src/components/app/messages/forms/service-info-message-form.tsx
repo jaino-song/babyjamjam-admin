@@ -5,17 +5,24 @@ import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { renderTemplate } from "@/lib/template-utils";
+import { useFormStore } from "@/stores/form-store";
 import { AutoFillMsgCard } from "../templates/AutoFillMsgCard";
 import { TitleTextInputMolecule } from "./form-components/TitleTextInputMolecule";
+import { TemplateFieldGridItem } from "./form-components/TemplateFieldGrid";
+import {
+  TemplateMessageFormFrame,
+  type TemplateMessageFormLayout,
+} from "./form-components/TemplateMessageFormLayout";
 
 interface ServiceInfoMessageFormProps {
   onPreviewMessageChange?: (message: string) => void;
+  renderLayout?: TemplateMessageFormLayout;
 }
 
-export const ServiceInfoMessageForm = ({ onPreviewMessageChange }: ServiceInfoMessageFormProps) => {
+export const ServiceInfoMessageForm = ({ onPreviewMessageChange, renderLayout }: ServiceInfoMessageFormProps) => {
   const locale = useLocale();
-  const [name, setName] = useState("");
   const [messageOverride, setMessageOverride] = useState<string | null>(null);
+  const { name, setName } = useFormStore();
   const { data: systemTemplate } = useSystemTemplate("SERVICE_INFO");
 
   const handleCopy = () => {
@@ -40,38 +47,45 @@ export const ServiceInfoMessageForm = ({ onPreviewMessageChange }: ServiceInfoMe
     }
   }, [generatedMessage, onPreviewMessageChange]);
 
-  return (
-    <div
-      data-component="messages-service-info-form"
-      className="flex flex-col animate-fade-in"
-    >
-      <div className="flex flex-col gap-4">
-        <TitleTextInputMolecule
-          id="client-name"
-          label={t(locale, "service-info-msg.name-label")}
-          value={name}
-          onValueChange={(value) => {
-            setName(value);
-            setMessageOverride(null);
-          }}
-          placeholder={t(locale, "service-info-msg.name-placeholder")}
-          dataComponent="messages-service-info-name-input"
-        />
+  const fields = renderLayout ? null : (
+    <TemplateFieldGridItem>
+      <TitleTextInputMolecule
+        id="client-name"
+        label={t(locale, "service-info-msg.name-label")}
+        value={name}
+        onValueChange={(value) => {
+          setName(value);
+          setMessageOverride(null);
+        }}
+        placeholder={t(locale, "service-info-msg.name-placeholder")}
+        dataComponent="messages-service-info-name-input"
+      />
+    </TemplateFieldGridItem>
+  );
 
-        <AutoFillMsgCard
-          title={t(locale, "common.generated-message-title")}
-          copyButtonText={t(locale, "common.copy-button")}
-          message={generatedMessage}
-          bodyDescription={systemTemplate?.description || "메시지 문구를 직접 수정할 수 있어요."}
-          metaItems={[
-            { label: "템플릿 유형", value: "서비스 안내" },
-            { label: t(locale, "service-info-msg.name-label"), value: name.trim() || "-" },
-          ]}
-          variableItems={variableItems}
-          onMessageChange={setMessageOverride}
-          handleCopy={handleCopy}
-        />
-      </div>
-    </div>
+  const messageCard = (
+    <AutoFillMsgCard
+      title={t(locale, "common.generated-message-title")}
+      copyButtonText={t(locale, "common.copy-button")}
+      message={generatedMessage}
+      bodyDescription={systemTemplate?.description || "메시지 문구를 직접 수정할 수 있어요."}
+      metaItems={[
+        { label: "템플릿 유형", value: "서비스 안내" },
+        { label: t(locale, "service-info-msg.name-label"), value: name.trim() || "-" },
+      ]}
+      variableItems={variableItems}
+      onMessageChange={setMessageOverride}
+      handleCopy={handleCopy}
+    />
+  );
+
+  return (
+    <TemplateMessageFormFrame
+      dataComponent="messages-service-info-form"
+      fields={fields}
+      messageCard={messageCard}
+      requiresRecipientName
+      renderLayout={renderLayout}
+    />
   );
 };

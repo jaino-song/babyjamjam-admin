@@ -1,4 +1,4 @@
-# Unify aligo sending number to `1661-2386`
+# Unify aligo sending number to `010-9641-1878`
 
 **Date:** 2026-06-09
 **Branch:** `feat/aligo-unified-sender`
@@ -15,14 +15,14 @@ This is operationally heavy: each tenant's number must be pre-registered with al
 (발신번호 사전등록) before it can be used, and the operator has to collect and vet a
 number per branch.
 
-We are unifying onto a **single sending number, `1661-2386`**, which the company has
+We are unifying onto a **single sending number, `010-9641-1878`**, which the company has
 already pre-registered with aligo. Tenants no longer provide a number when applying for
 messaging permission. The permission gate itself stays — the operator still approves
 *which branches may use messaging* — only the phone-number collection is removed.
 
 ## Goals
 
-- All aligo sends (alimtalk + SMS, manual + automated) go out from one number, `1661-2386`.
+- All aligo sends (alimtalk + SMS, manual + automated) go out from one number, `010-9641-1878`.
 - The messaging-permission application no longer asks for, validates, or stores a number.
 - The approval gate is preserved: a branch must be `approved` before it can send.
 - Remove the now-orphaned `branch.sms_sender_phone` column. Keep the 6 approval columns.
@@ -31,15 +31,15 @@ messaging permission. The permission gate itself stays — the operator still ap
 
 - No change to *who* can request/approve (roles stay: owner/admin/manager request; owner approves).
 - No change to the alimtalk template system, message scheduling, or delivery logging.
-- No new aligo "발신번호 등록" API integration — pre-registration of `1661-2386` is an
+- No new aligo "발신번호 등록" API integration — pre-registration of `010-9641-1878` is an
   operational precondition handled outside this codebase.
 - Not dropping the approval-status columns (only `sms_sender_phone`).
 
 ## Key decisions (confirmed)
 
 1. **Permission gate:** keep the approve step; drop only the number field.
-2. **Sender config:** constant default `"1661-2386"`, overridable by `ALIGO_SENDER_PHONE`
-   env. Digit-normalized (`16612386`) on the wire; human-readable `1661-2386` in UI copy.
+2. **Sender config:** constant default `"010-9641-1878"`, overridable by `ALIGO_SENDER_PHONE`
+   env. Digit-normalized (`01096411878`) on the wire; human-readable `010-9641-1878` in UI copy.
 3. **DB:** keep the approval columns; drop only `sms_sender_phone` (a targeted destructive
    migration).
 
@@ -56,7 +56,7 @@ Make the application flow number-less. Drop the orphaned column.
 ### A. Sending — one number everywhere
 
 **`backend/infrastructure/api/aligo-api.client.ts`**
-- Introduce `export const DEFAULT_ALIGO_SENDER_PHONE = "1661-2386"`.
+- Introduce `export const DEFAULT_ALIGO_SENDER_PHONE = "010-9641-1878"`.
 - Line 37: `this.ALIGO_SENDER_PHONE = (configService.get("ALIGO_SENDER_PHONE") || DEFAULT_ALIGO_SENDER_PHONE).replace(/\D/g, "")`
   — env override wins; digit-normalized for the wire.
 - `sendAlimtalk` (line 59) and `sendSms` (line 110) already use `this.ALIGO_SENDER_PHONE`;
@@ -133,7 +133,7 @@ displays the unified number as a static fact (see D). No extra plumbing.
 
 ### D. UI
 
-Display the unified number as a static product fact (e.g. "문자는 **1661-2386** 번호로
+Display the unified number as a static product fact (e.g. "문자는 **010-9641-1878** 번호로
 발송됩니다"); remove all number input/validation/display.
 
 - `frontend/src/components/app/messages/MessageTenantApplicationSettings.tsx` — remove the
@@ -170,7 +170,7 @@ Update specs that mock a returned from-number or assert `sendSms({ sender… })`
 - `backend/test/services/alimtalk-trigger-delivery.service.spec.ts` — same.
 - `backend/test/services/system-admin.service.spec.ts` — drop `smsSenderPhone` from mocks /
   expected payload.
-- Add an `aligo-api.client.spec.ts` case: env unset → sender defaults to `16612386`.
+- Add an `aligo-api.client.spec.ts` case: env unset → sender defaults to `01096411878`.
 - E2E behavior unchanged (seed branch stays `approved`).
 
 Verification commands: `npm run type-check` (backend, frontend, mobile) and the affected
@@ -186,13 +186,13 @@ Manual SMS:   POST /message-deliveries/sms
                 → ensureApproved(branchId)            [gate only; throws if not approved]
                 → aligoService.sendSms({ …, no sender })
                 → SendAligoSmsUsecase                  [sender undefined]
-                → AligoApiClient.sendSms               [sender = ALIGO_SENDER_PHONE = 16612386]
+                → AligoApiClient.sendSms               [sender = ALIGO_SENDER_PHONE = 01096411878]
 
 Automated SMS: client-greeting / trigger-delivery
                 → ensureApproved(branchId)            [gate only]
-                → aligoService.sendSms({ …, no sender }) → … → 16612386
+                → aligoService.sendSms({ …, no sender }) → … → 01096411878
 
-Alimtalk:     unchanged — already sends from ALIGO_SENDER_PHONE (now defaulted to 16612386)
+Alimtalk:     unchanged — already sends from ALIGO_SENDER_PHONE (now defaulted to 01096411878)
 
 Application:  POST /settings/message-sender-approval/request   [empty body] → status=pending
               POST /settings/message-sender-approval/:id/approve → status=approved
@@ -201,9 +201,9 @@ Application:  POST /settings/message-sender-approval/request   [empty body] → 
 
 ## Risks / assumptions
 
-- **`1661-2386` is already pre-registered with aligo** as an approved 발신번호. The code
+- **`010-9641-1878` is already pre-registered with aligo** as an approved 발신번호. The code
   cannot verify this; it is an operational precondition.
-- **Automated SMS senders move to `1661-2386`** as well (greeting, trigger-delivery) — this
+- **Automated SMS senders move to `010-9641-1878`** as well (greeting, trigger-delivery) — this
   is intended ("one number") but is a behavior change beyond the manual send button.
 - **Destructive migration:** dropping `sms_sender_phone` is safe in dev/preview; the prod
   cutover is gated on `migrate diff` review.

@@ -249,4 +249,118 @@ describe("ClientAutocomplete", () => {
       expect(screen.queryByPlaceholderText("이름, 연락처 또는 주소로 검색")).not.toBeInTheDocument();
     });
   });
+
+  it("searches and displays by phone when configured for phone mode", async () => {
+    const onChange = jest.fn();
+
+    const { rerender } = render(
+      <ClientAutocomplete
+        value={null}
+        onChange={onChange}
+        label="휴대 전화번호"
+        placeholder="연락처 검색 또는 직접 입력"
+        manualValue=""
+        onManualValueChange={jest.fn()}
+        displayValueMode="phone"
+        searchMode="phone"
+      />
+    );
+
+    const trigger = screen.getByRole("combobox");
+    fireEvent.click(trigger);
+    fireEvent.change(screen.getByPlaceholderText("연락처 검색 또는 직접 입력"), {
+      target: { value: "송진호" },
+    });
+    rerender(
+      <ClientAutocomplete
+        value={null}
+        onChange={onChange}
+        label="휴대 전화번호"
+        placeholder="연락처 검색 또는 직접 입력"
+        manualValue="송진호"
+        onManualValueChange={jest.fn()}
+        displayValueMode="phone"
+        searchMode="phone"
+      />
+    );
+
+    expect(screen.queryByText("010-6621-1878")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("연락처 검색 또는 직접 입력"), {
+      target: { value: "6621" },
+    });
+    rerender(
+      <ClientAutocomplete
+        value={null}
+        onChange={onChange}
+        label="휴대 전화번호"
+        placeholder="연락처 검색 또는 직접 입력"
+        manualValue="6621"
+        onManualValueChange={jest.fn()}
+        displayValueMode="phone"
+        searchMode="phone"
+      />
+    );
+    fireEvent.click(screen.getByText("송진호"));
+
+    expect(onChange).toHaveBeenCalledWith(client.id, client);
+    rerender(
+      <ClientAutocomplete
+        value={client.id}
+        onChange={onChange}
+        label="휴대 전화번호"
+        placeholder="연락처 검색 또는 직접 입력"
+        manualValue=""
+        onManualValueChange={jest.fn()}
+        displayValueMode="phone"
+        searchMode="phone"
+      />
+    );
+    expect(trigger).toHaveTextContent("010-6621-1878");
+  });
+
+  it("selects the exact phone match on Enter in phone mode", () => {
+    const onChange = jest.fn();
+    const onManualValueChange = jest.fn();
+
+    const { rerender } = render(
+      <ClientAutocomplete
+        value={null}
+        onChange={onChange}
+        label="휴대 전화번호"
+        placeholder="연락처 검색 또는 직접 입력"
+        manualValue=""
+        onManualValueChange={onManualValueChange}
+        displayValueMode="phone"
+        searchMode="phone"
+      />
+    );
+
+    fireEvent.click(screen.getByRole("combobox"));
+    fireEvent.change(screen.getByPlaceholderText("연락처 검색 또는 직접 입력"), {
+      target: { value: "01066211878" },
+    });
+    rerender(
+      <ClientAutocomplete
+        value={null}
+        onChange={onChange}
+        label="휴대 전화번호"
+        placeholder="연락처 검색 또는 직접 입력"
+        manualValue="01066211878"
+        onManualValueChange={onManualValueChange}
+        displayValueMode="phone"
+        searchMode="phone"
+      />
+    );
+
+    expect(screen.getByPlaceholderText("연락처 검색 또는 직접 입력")).toHaveValue("010-6621-1878");
+    expect(screen.getByText("010-6621-1878 · 인천시 서구")).toBeInTheDocument();
+
+    fireEvent.keyDown(screen.getByPlaceholderText("연락처 검색 또는 직접 입력"), {
+      key: "Enter",
+      code: "Enter",
+    });
+
+    expect(onChange).toHaveBeenCalledWith(client.id, client);
+  });
 });

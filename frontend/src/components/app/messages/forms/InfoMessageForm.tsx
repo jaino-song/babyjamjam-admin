@@ -6,13 +6,18 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { renderTemplate } from "@/lib/template-utils";
 import { AutoFillMsgCard } from "../templates/AutoFillMsgCard";
+import {
+  TemplateMessageFormFrame,
+  type TemplateMessageFormLayout,
+} from "./form-components/TemplateMessageFormLayout";
 
 
 interface InfoMessageFormProps {
   onPreviewMessageChange?: (message: string) => void;
+  renderLayout?: TemplateMessageFormLayout;
 }
 
-export const InfoMessageForm = ({ onPreviewMessageChange }: InfoMessageFormProps) => {
+export const InfoMessageForm = ({ onPreviewMessageChange, renderLayout }: InfoMessageFormProps) => {
   const locale = useLocale();
   const [generatedMessage, setGeneratedMessage] = useState("");
   const [isDirty, setIsDirty] = useState(false);
@@ -33,27 +38,27 @@ export const InfoMessageForm = ({ onPreviewMessageChange }: InfoMessageFormProps
     alert(t(locale, "common.copy-success-message"));
   };
 
+  const messageCard = displayMessage ? (
+    <AutoFillMsgCard
+      title={t(locale, "common.generated-message-title")}
+      copyButtonText={t(locale, "common.copy-button")}
+      message={displayMessage}
+      bodyDescription="메시지 내용을 수정할 수 있어요."
+      onMessageChange={(message) => {
+        setIsDirty(true);
+        setGeneratedMessage(message);
+      }}
+      handleCopy={handleCopy}
+    />
+  ) : null;
+
   return (
-    <div
-      data-component="messages-info-form"
-      className="flex flex-col animate-fade-in"
-    >
-      <div className="flex flex-col">
-        {/* generated message */}
-        {displayMessage && (
-          <AutoFillMsgCard
-            title={t(locale, "common.generated-message-title")}
-            copyButtonText={t(locale, "common.copy-button")}
-            message={displayMessage}
-            bodyDescription="메시지 내용을 수정할 수 있어요."
-            onMessageChange={(message) => {
-              setIsDirty(true);
-              setGeneratedMessage(message);
-            }}
-            handleCopy={handleCopy}
-          />
-        )}
-      </div>
-    </div>
+    <TemplateMessageFormFrame
+      dataComponent="messages-info-form"
+      fields={null}
+      messageCard={messageCard}
+      requiresRecipientName={false}
+      renderLayout={renderLayout}
+    />
   );
 };

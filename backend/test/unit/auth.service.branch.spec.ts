@@ -35,6 +35,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
         send: jest.fn().mockResolvedValue("mock-message-id"),
         sendVerificationEmail: jest.fn().mockResolvedValue("mock-verification-id"),
         sendPasswordResetEmail: jest.fn().mockResolvedValue("mock-reset-id"),
+        sendNotificationEmail: jest.fn().mockResolvedValue("mock-notification-id"),
     });
 
     const createMockAuthTokenRepository = () => ({
@@ -137,7 +138,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 prismaService.branch.findUnique.mockResolvedValue(mockBranch);
 
                 // #when
-                const result = await service.validateKakaoUser(kakaoData);
+                await service.validateKakaoUser(kakaoData);
 
                 // #then
                 expect(jwtService.signAsync).toHaveBeenCalledTimes(2);
@@ -197,7 +198,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
         });
 
         describe("given user with no branches", () => {
-            it("should require account completion instead of issuing branch-scoped JWT", async () => {
+            it("should reject login with the no accessible branch message", async () => {
                 // #given
                 const kakaoData = {
                     kakaoId: "kakao-12345",
@@ -209,17 +210,17 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 prismaService.user_branch.findMany.mockResolvedValue([]);
 
                 // #when
-                const result = await service.validateKakaoUser(kakaoData);
+                const action = () => service.validateKakaoUser(kakaoData);
 
                 // #then
-                expect(result).toHaveProperty("onboardingRequired", true);
-                expect(result).toHaveProperty("onboardingKind", "account_completion");
+                await expect(action).rejects.toThrow(ForbiddenException);
+                await expect(action).rejects.toThrow("접근 가능한 지점이 없습니다. 관리자에게 문의해 주세요.");
                 expect(jwtService.signAsync).not.toHaveBeenCalled();
             });
         });
 
         describe("given user only has a hidden Incheon district branch", () => {
-            it("should not auto-select the hidden branch", async () => {
+            it("should reject login because no visible branch is accessible", async () => {
                 const kakaoData = {
                     kakaoId: "kakao-12345",
                     email: "test@example.com",
@@ -241,15 +242,10 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                     },
                 ]);
 
-                const result = await service.validateKakaoUser(kakaoData);
+                const action = () => service.validateKakaoUser(kakaoData);
 
-                expect(result).toMatchObject({
-                    onboardingRequired: true,
-                    onboardingKind: "account_completion",
-                    prefill: expect.objectContaining({
-                        branchId: undefined,
-                    }),
-                });
+                await expect(action).rejects.toThrow(ForbiddenException);
+                await expect(action).rejects.toThrow("접근 가능한 지점이 없습니다. 관리자에게 문의해 주세요.");
                 expect(jwtService.signAsync).not.toHaveBeenCalled();
             });
         });

@@ -1,13 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Resend } from 'resend';
 import { maskEmail } from 'application/utils/mask';
-import { EmailPort, EmailOptions } from '../../domain/ports/email.port';
+import { EmailPort, EmailOptions, NotificationEmailOptions } from '../../domain/ports/email.port';
 
 // Published Resend template IDs
 const TEMPLATE_IDS = {
     EMAIL_VERIFICATION: 'f0c6da72-cf5e-418a-94b5-b55c5558ceac',
     PASSWORD_RESET: '5cf0eeff-f03c-4eca-a422-5ad28ef414ec',
+    NOTIFICATION_EMAIL: 'fb382b23-a82b-4834-8800-f340c0279224',
 } as const;
+
+const DEFAULT_FROM_EMAIL = 'admin@babyjamjam.com';
 
 @Injectable()
 export class ResendEmailAdapter implements EmailPort {
@@ -23,7 +26,7 @@ export class ResendEmailAdapter implements EmailPort {
         } else {
             this.resend = new Resend(apiKey);
         }
-        this.fromEmail = process.env['RESEND_FROM_EMAIL'] || 'noreply@example.com';
+        this.fromEmail = process.env['RESEND_FROM_EMAIL'] || DEFAULT_FROM_EMAIL;
     }
 
     async send(options: EmailOptions): Promise<string> {
@@ -82,6 +85,20 @@ export class ResendEmailAdapter implements EmailPort {
                 NAME: name || '사용자',
                 RESET_URL: resetUrl,
                 EXPIRY_HOURS: 1,
+            },
+        });
+    }
+
+    async sendNotificationEmail(options: NotificationEmailOptions): Promise<string> {
+        return this.sendWithTemplate({
+            to: options.to,
+            templateId: TEMPLATE_IDS.NOTIFICATION_EMAIL,
+            variables: {
+                NAME: options.name || '사용자',
+                TITLE: options.title,
+                BODY: options.body,
+                CTA_URL: options.ctaUrl,
+                CTA_LABEL: options.ctaLabel,
             },
         });
     }

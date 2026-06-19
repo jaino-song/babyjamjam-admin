@@ -63,129 +63,127 @@ export const AutoFillMsgCard = memo(function AutoFillMsgCard({
       animate={{ opacity: 1, filter: "blur(0px)" }}
       transition={{ duration: 0.8 }}
       data-component="messages-generated-msg-panel"
-      className=""
+      className="min-h-0 space-y-4"
     >
-      <div data-component="messages-generated-msg-detail" className="space-y-4">
+      <div
+        data-component="messages-generated-msg-detail-grid"
+        className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]"
+      >
         <div
-          data-component="messages-generated-msg-detail-grid"
-          className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]"
+          data-component="messages-generated-msg-detail-content"
+          className="scrollbar-hide flex flex-col rounded-[20px] bg-v3-dim-white p-5"
         >
           <div
-            data-component="messages-generated-msg-detail-content"
-            className="scrollbar-hide flex flex-col rounded-[20px] bg-v3-dim-white p-5"
+            data-component="messages-generated-msg-detail-content-header"
+            className="mb-4 flex items-start justify-between gap-4"
           >
-            <div
-              data-component="messages-generated-msg-detail-content-header"
-              className="mb-4 flex items-start justify-between gap-4"
-            >
-              <div data-component="messages-generated-msg-detail-content-title" className="min-w-0">
-                <h3 className="text-[0.9rem] font-bold text-v3-dark">{bodyTitle}</h3>
-                <p className="mt-0.5 text-[0.75rem] text-v3-text-muted">{bodyDescription}</p>
-              </div>
-              <HeaderActionButton
-                icon={Copy}
-                label={copyButtonText}
-                onClick={handleCopy}
-                data-component="messages-generated-msg-copy"
-                className="text-[12px]"
-              />
+            <div data-component="messages-generated-msg-detail-content-title" className="min-w-0">
+              <h3 className="text-[0.9rem] font-bold text-v3-dark">{bodyTitle}</h3>
+              <p className="mt-0.5 text-[0.75rem] text-v3-text-muted">{bodyDescription}</p>
             </div>
-
-            <div
-              data-component="messages-generated-msg-detail-content-body"
-              className="flex min-h-[320px] flex-1 rounded-[18px] bg-white p-4"
-            >
-              <MsgField value={message} onChange={onMessageChange} />
-            </div>
+            <HeaderActionButton
+              icon={Copy}
+              label={copyButtonText}
+              onClick={handleCopy}
+              data-component="messages-generated-msg-copy"
+              className="text-[12px]"
+            />
           </div>
 
           <div
-            data-component="messages-generated-msg-detail-side"
-            className="flex flex-col gap-3 self-start"
+            data-component="messages-generated-msg-detail-content-body"
+            className="flex min-h-[320px] flex-1 rounded-[18px] bg-white p-4"
           >
-            <InfoCard
-              data-component="messages-generated-msg-detail-meta"
-              title={metaTitle}
-              className="h-fit"
-            >
-              <div
-                data-component="messages-generated-msg-detail-meta-list"
-                className="-mt-1"
-              >
-                {resolvedMetaItems.map((item) => (
-                  <InfoRow
-                    key={`${item.label}`}
-                    data-component="messages-generated-msg-detail-meta-item"
-                    label={item.label}
-                    value={item.value}
-                  />
-                ))}
-              </div>
-            </InfoCard>
-
-            <InfoCard
-              data-component="messages-generated-msg-detail-variables"
-              title={variableTitle}
-              className="h-fit"
-            >
-              <div
-                data-component="messages-generated-msg-detail-variables-body"
-                className="-mt-1"
-              >
-                {hasVariableItems ? (
-                  <div
-                    data-component="messages-generated-msg-detail-variable-list"
-                    className="space-y-1"
-                  >
-                    {variableItems?.map((item) => (
-                      <div
-                        key={`${item.token}-${item.label}`}
-                        data-component="messages-generated-msg-detail-variable-item"
-                        className="flex items-center justify-between gap-3 border-b border-v3-border py-2.5 text-[0.75rem] last:border-b-0"
-                      >
-                        <div
-                          data-component="messages-generated-msg-detail-variable-meta"
-                          className="flex min-w-0 flex-wrap items-center gap-2"
-                        >
-                          <span
-                            data-component="messages-generated-msg-detail-variable-label"
-                            className="text-v3-text-muted"
-                          >
-                            {item.label}
-                          </span>
-                          <span
-                            data-component="messages-generated-msg-detail-variable-token"
-                            className="inline-flex items-center rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary"
-                          >
-                            {item.token}
-                          </span>
-                        </div>
-                        <p
-                          data-component="messages-generated-msg-detail-variable-value"
-                          className="shrink-0 text-right text-[0.75rem] font-semibold text-v3-dark"
-                        >
-                          {item.value}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-[0.75rem] text-v3-text-muted">{variableEmptyText}</p>
-                )}
-              </div>
-            </InfoCard>
+            <MsgField value={message} onChange={onMessageChange} />
           </div>
         </div>
 
-        {children ? (
-          <div
-            data-component="messages-generated-msg-actions"
-            className="rounded-[20px] border border-v3-border bg-white p-5"
+        <div
+          data-component="messages-generated-msg-detail-side"
+          className="flex flex-col gap-3 self-start"
+        >
+          <InfoCard
+            data-component="messages-generated-msg-detail-meta"
+            title={metaTitle}
+            className="h-fit"
           >
-            {children}
-          </div>
-        ) : null}
+            <div
+              data-component="messages-generated-msg-detail-meta-list"
+              className="-mt-1"
+            >
+              {resolvedMetaItems.map((item) => (
+                <InfoRow
+                  key={`${item.label}`}
+                  data-component="messages-generated-msg-detail-meta-item"
+                  label={item.label}
+                  value={item.value}
+                />
+              ))}
+            </div>
+          </InfoCard>
+
+          <InfoCard
+            data-component="messages-generated-msg-detail-variables"
+            title={variableTitle}
+            className="h-fit"
+          >
+            <div
+              data-component="messages-generated-msg-detail-variables-body"
+              className="-mt-1"
+            >
+              {hasVariableItems ? (
+                <div
+                  data-component="messages-generated-msg-detail-variable-list"
+                  className="space-y-1"
+                >
+                  {variableItems?.map((item) => (
+                    <div
+                      key={`${item.token}-${item.label}`}
+                      data-component="messages-generated-msg-detail-variable-item"
+                      className="flex items-center justify-between gap-3 border-b border-v3-border py-2.5 text-[0.75rem] last:border-b-0"
+                    >
+                      <div
+                        data-component="messages-generated-msg-detail-variable-meta"
+                        className="flex min-w-0 flex-wrap items-center gap-2"
+                      >
+                        <span
+                          data-component="messages-generated-msg-detail-variable-label"
+                          className="text-v3-text-muted"
+                        >
+                          {item.label}
+                        </span>
+                        <span
+                          data-component="messages-generated-msg-detail-variable-token"
+                          className="inline-flex items-center rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary"
+                        >
+                          {item.token}
+                        </span>
+                      </div>
+                      <p
+                        data-component="messages-generated-msg-detail-variable-value"
+                        className="shrink-0 text-right text-[0.75rem] font-semibold text-v3-dark"
+                      >
+                        {item.value}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[0.75rem] text-v3-text-muted">{variableEmptyText}</p>
+              )}
+            </div>
+          </InfoCard>
+        </div>
       </div>
+
+      {children ? (
+        <div
+          data-component="messages-generated-msg-actions"
+          className="rounded-[20px] border border-v3-border bg-white p-5"
+        >
+          {children}
+        </div>
+      ) : null}
     </motion.div>
   );
 });

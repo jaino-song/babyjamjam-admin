@@ -110,8 +110,8 @@ export function useInfiniteContracts({
           return await eformsignApi.getInProgressDocuments(params);
         case "completed":
           return await eformsignApi.getCompletedDocuments(params);
-        case "rejected":
-          return await eformsignApi.getRejectedDocuments(params);
+        case "expired":
+          return await eformsignApi.getExpiredDocuments(params);
         case null:
         default:
           return await eformsignApi.getAllDocuments({ ...params, type: null });
@@ -134,7 +134,7 @@ export function useInfiniteContracts({
 
   // Flatten loaded pages into a single document list, deduping by id.
   // The backend's getAllDocuments only dedupes within a single response, so a
-  // document appearing in multiple status streams (e.g. completed and rejected)
+  // document appearing in multiple status streams (e.g. completed and expired)
   // can leak across pages. Dedupe here to keep React keys unique and avoid
   // double-rendering.
   const fetchedDocuments = useMemo(() => {

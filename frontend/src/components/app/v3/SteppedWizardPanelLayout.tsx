@@ -8,6 +8,7 @@ interface SteppedWizardPanelContentProps {
   feedback?: React.ReactNode;
   dataComponent?: string;
   stepContentDataComponent?: string;
+  flattenStepContent?: boolean;
   className?: string;
   stepContentClassName?: string;
 }
@@ -32,11 +33,30 @@ export const SteppedWizardPanelContent = React.forwardRef<
     feedback,
     dataComponent = "stepped-wizard-panel-content",
     stepContentDataComponent = "stepped-wizard-step-content",
+    flattenStepContent = false,
     className,
     stepContentClassName,
   },
   ref,
 ) {
+  if (flattenStepContent) {
+    return (
+      <div
+        ref={ref}
+        data-component={dataComponent}
+        className={cn(
+          STEPPED_WIZARD_PANEL_CONTENT_CLASS_NAME,
+          "flex-1",
+          className,
+          stepContentClassName,
+        )}
+      >
+        {children}
+        {feedback}
+      </div>
+    );
+  }
+
   return (
     <div
       ref={ref}

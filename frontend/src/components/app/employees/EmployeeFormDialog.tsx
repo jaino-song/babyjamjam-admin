@@ -34,6 +34,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import { TitleDescChildrenMolecule } from "@/components/app/ui/TitleDescChildrenMolecule";
 import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
+import { TitleTextInputMolecule } from "@/components/app/messages/forms/form-components/TitleTextInputMolecule";
 import {
     SteppedWizardPanelContent,
     SteppedWizardPanelFooter,
@@ -80,6 +81,8 @@ const V3_INPUT_CLASS_NAME = V3_INPUT_CONTROL_CLASS_NAME;
 const OPTION_CLASS_NAME = "rounded-[14px] border-[1.5px] px-4 py-2.5 text-[0.8rem] font-semibold transition-all";
 const PANEL_FIELD_CLASS_NAME = "flex flex-col gap-2";
 const PANEL_INPUT_CLASS_NAME = V3_INPUT_CONTROL_CLASS_NAME;
+const PANEL_LABEL_CLASS_NAME = "text-[12px]";
+const PANEL_TEXT_INPUT_CLASS_NAME = "text-[12px]";
 const PANEL_CONTENT_CLASS_NAME = "h-auto min-h-full";
 const PANEL_FIELDS_CLASS_NAME = "flex-none w-full gap-6 pb-8";
 
@@ -494,53 +497,55 @@ function EmployeeFormContent({
 
     const panelFields = (
         <>
-            <div className={PANEL_FIELD_CLASS_NAME} data-component="employees-form-panel-name-field">
-                <Label htmlFor="employee-panel-name" className="text-[12px]">
-                    {t(locale, "employees.form.name")}
-                    <span className="ml-1 text-v3-burgundy">*</span>
-                </Label>
-                <Input
-                    id="employee-panel-name"
-                    variant="v3"
-                    value={formData.name}
-                    onChange={(event) => handleChange("name", event.target.value)}
-                    placeholder="홍길동"
-                    className={cn(PANEL_INPUT_CLASS_NAME, "text-[12px]")}
-                />
-            </div>
+            <TitleTextInputMolecule
+                id="employee-panel-name"
+                label={
+                    <>
+                        {t(locale, "employees.form.name")}
+                        <span className="ml-1 text-v3-burgundy">*</span>
+                    </>
+                }
+                value={formData.name}
+                onValueChange={(value) => handleChange("name", value)}
+                placeholder="홍길동"
+                dataComponent="employees-form-panel-name-field"
+                inputDataComponent="employees-form-panel-name-input"
+                labelClassName={PANEL_LABEL_CLASS_NAME}
+                inputClassName={cn(PANEL_INPUT_CLASS_NAME, PANEL_TEXT_INPUT_CLASS_NAME)}
+            />
 
-            <div className={PANEL_FIELD_CLASS_NAME} data-component="employees-form-panel-phone-field">
-                <Label htmlFor="employee-panel-phone">
-                    {t(locale, "employees.form.phone")}
-                    <span className="ml-1 text-v3-burgundy">*</span>
-                </Label>
-                <Input
-                    id="employee-panel-phone"
-                    variant="v3"
-                    placeholder="010-1234-5678"
-                    value={formatPhoneNumber(formData.phone)}
-                    onChange={(event) => handleChange("phone", parsePhoneNumber(event.target.value))}
-                    onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
-                    maxLength={13}
-                    className={cn(
-                        PANEL_INPUT_CLASS_NAME,
-                        touched.phone && !isPhoneValid && "border-v3-burgundy focus-visible:border-v3-burgundy"
-                    )}
-                />
-                {touched.phone && !isPhoneValid && (
-                    <p className="text-[0.75rem] font-medium text-v3-burgundy">
-                        {t(locale, "employees.form.phone-required")}
-                    </p>
+            <TitleTextInputMolecule
+                id="employee-panel-phone"
+                label={
+                    <>
+                        {t(locale, "employees.form.phone")}
+                        <span className="ml-1 text-v3-burgundy">*</span>
+                    </>
+                }
+                value={formatPhoneNumber(formData.phone)}
+                onValueChange={(value) => handleChange("phone", parsePhoneNumber(value))}
+                onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
+                maxLength={13}
+                placeholder="010-1234-5678"
+                dataComponent="employees-form-panel-phone-field"
+                inputDataComponent="employees-form-panel-phone-input"
+                labelClassName={PANEL_LABEL_CLASS_NAME}
+                inputClassName={cn(
+                    PANEL_INPUT_CLASS_NAME,
+                    PANEL_TEXT_INPUT_CLASS_NAME,
+                    touched.phone && !isPhoneValid && "border-v3-burgundy focus-visible:border-v3-burgundy"
                 )}
-            </div>
+                helperText={touched.phone && !isPhoneValid ? t(locale, "employees.form.phone-required") : undefined}
+                helperTextClassName="text-[0.75rem] font-medium text-v3-burgundy"
+            />
 
             <div className={PANEL_FIELD_CLASS_NAME} data-component="employees-form-panel-grade-field">
-                <Label>
+                <Label className={PANEL_LABEL_CLASS_NAME}>
                     {t(locale, "employees.form.grade")}
                     <span className="ml-1 text-v3-burgundy">*</span>
                 </Label>
                 <Select value={formData.grade} onValueChange={(value) => handleChange("grade", value)}>
-                    <SelectTrigger className={cn(PANEL_INPUT_CLASS_NAME, "w-full")}>
+                    <SelectTrigger className={cn(PANEL_INPUT_CLASS_NAME, PANEL_TEXT_INPUT_CLASS_NAME, "w-full")}>
                         <SelectValue placeholder={t(locale, "employees.form.grade")} />
                     </SelectTrigger>
                     <SelectContent>
@@ -554,7 +559,7 @@ function EmployeeFormContent({
             </div>
 
             <div className={PANEL_FIELD_CLASS_NAME} data-component="employees-form-panel-work-area-field">
-                <Label>
+                <Label className={PANEL_LABEL_CLASS_NAME}>
                     {t(locale, "employees.form.work-area")}
                     <span className="ml-1 text-v3-burgundy">*</span>
                 </Label>
@@ -566,7 +571,7 @@ function EmployeeFormContent({
                     }}
                 >
                     <SelectTrigger
-                        className={cn(PANEL_INPUT_CLASS_NAME, "w-full")}
+                        className={cn(PANEL_INPUT_CLASS_NAME, PANEL_TEXT_INPUT_CLASS_NAME, "w-full")}
                         data-component="employees-form-panel-work-area-trigger"
                     >
                         <SelectValue placeholder="근무 지역 선택" />
@@ -587,14 +592,14 @@ function EmployeeFormContent({
             </div>
 
             <div className={PANEL_FIELD_CLASS_NAME} data-component="employees-form-panel-open-status-field">
-                <Label htmlFor="employee-panel-open-status">
+                <Label htmlFor="employee-panel-open-status" className={PANEL_LABEL_CLASS_NAME}>
                     {t(locale, "employees.form.open-to-next-work")}
                 </Label>
                 <div
                     data-component="employees-form-panel-open-status-control"
                     className="flex h-[38px] items-center justify-between rounded-[13px] border-[1.35px] border-v3-border bg-white px-3.5"
                 >
-                    <span className="text-[0.8rem] font-medium text-v3-dark">
+                    <span className="text-[12px] font-medium text-v3-dark">
                         {formData.openToNextWork ? "가능" : "불가"}
                     </span>
                     <Switch

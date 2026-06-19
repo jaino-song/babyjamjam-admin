@@ -5,7 +5,10 @@ import { CalendarClock, Headset, MapPin, Phone, Search, UserRound } from "lucide
 
 import {
     AnimatedSlotList,
+    AnimatedSlotListItemContent,
     DetailPanel,
+    DetailTabPanels,
+    DetailTabs,
     EmptyState,
     InfoCard,
     InfoRow,
@@ -23,13 +26,19 @@ import {
 import { StatusPill } from "@/components/app/ui/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useConsultationInquiries, useMarkConsultationInquiryRead } from "@/hooks/useConsultationInquiries";
-import { cn } from "@/lib/utils";
 import type { ConsultationInquiry } from "@/services/api";
 
 const READ_TABS = [
     { label: "읽지 않음", value: "unread" },
     { label: "읽음", value: "read" },
 ];
+
+const CONSULTATION_DETAIL_TABS = [
+    { key: "customer", label: "고객 정보" },
+    { key: "inquiry", label: "문의 내용" },
+] as const;
+
+type ConsultationDetailTabKey = (typeof CONSULTATION_DETAIL_TABS)[number]["key"];
 
 function formatDate(value: string): string {
     const date = new Date(value);
@@ -84,6 +93,7 @@ function getReadVariant(readAt: string | null): "neutral" | "warning" {
 
 export default function ConsultationsPage() {
     const [activeReadState, setActiveReadState] = useState("unread");
+    const [activeDetailTab, setActiveDetailTab] = useState<ConsultationDetailTabKey>("customer");
     const [search, setSearch] = useState("");
     const [selectedInquiry, setSelectedInquiry] = useState<ConsultationInquiry | null>(null);
 
@@ -183,6 +193,7 @@ export default function ConsultationsPage() {
                 hasSelection={!!activeInquiry}
                 onBack={() => {
                     setSelectedInquiry(null);
+                    setActiveDetailTab("customer");
                 }}
             >
                 <ListPanel
@@ -192,6 +203,7 @@ export default function ConsultationsPage() {
                     onTabChange={(value) => {
                         setActiveReadState(value);
                         setSelectedInquiry(null);
+                        setActiveDetailTab("customer");
                     }}
                     searchValue={search}
                     onSearchChange={setSearch}
@@ -210,19 +222,17 @@ export default function ConsultationsPage() {
                             loadingCount={6}
                             className="space-y-2"
                             getItemKey={(item) => item.id}
-                            slotClassName={({ item, isLoading: slotLoading }) => {
+                            getSlotState={({ item, isLoading: slotLoading }) => {
                                 const isActive = !slotLoading && item?.id === activeInquiry?.id;
 
-                                return cn(
-                                    "flex items-center gap-3 rounded-[18px] border-2 border-transparent p-4 transition-all duration-200",
-                                    !slotLoading && "cursor-pointer",
-                                    isActive
-                                        ? "bg-v3-primary-light border-v3-primary"
-                                        : !slotLoading && "hover:bg-v3-primary-light/50 hover:border-v3-primary/30",
-                                );
+                                return {
+                                    isActive,
+                                    isInteractive: !slotLoading && Boolean(item),
+                                };
                             }}
                             onSlotClick={(inquiry) => {
                                 setSelectedInquiry(inquiry);
+                                setActiveDetailTab("customer");
                                 if (!inquiry.readAt) {
                                     markRead.mutate(inquiry.id, {
                                         onSuccess: (updatedInquiry) => {
@@ -248,26 +258,25 @@ export default function ConsultationsPage() {
                                 if (!item) return null;
 
                                 return (
-                                    <>
-                                        <div data-component="consultations-list-item-icon" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-v3-primary text-white shadow-md">
-                                            <Headset className="h-5 w-5" />
-                                        </div>
-                                        <div data-component="consultations-list-item-content" className="min-w-0 flex-1">
-                                            <div data-component="consultations-list-item-title-row" className="mb-1 flex items-center gap-2">
-                                                <span className="truncate text-[0.86rem] font-bold text-v3-dark">
-                                                    {item.motherName}
-                                                </span>
-                                                <StatusPill variant={getReadVariant(item.readAt)} size="sm">
-                                                    {getReadLabel(item.readAt)}
-                                                </StatusPill>
-                                            </div>
-                                            <div data-component="consultations-list-item-meta-row" className="flex min-w-0 items-center gap-2 text-[0.72rem] text-v3-text-muted">
-                                                <Phone className="h-3.5 w-3.5 shrink-0" />
+                                    <AnimatedSlotListItemContent
+                                        dataComponent="consultations-list-item"
+                                        icon={Headset}
+                                        iconContainerClassName="bg-v3-primary text-white"
+                                        iconClassName="text-white"
+                                        title={item.motherName}
+                                        subtitle={
+                                            <>
+                                                <Phone className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(12px*var(--v3-ui-scale,1))] shrink-0" />
                                                 <span className="shrink-0">{item.phone}</span>
                                                 <span className="truncate">{item.address}</span>
-                                            </div>
-                                        </div>
-                                    </>
+                                            </>
+                                        }
+                                        status={(
+                                            <StatusPill variant={getReadVariant(item.readAt)} size="sm">
+                                                {getReadLabel(item.readAt)}
+                                            </StatusPill>
+                                        )}
+                                    />
                                 );
                             }}
                         />
@@ -288,66 +297,89 @@ export default function ConsultationsPage() {
                                 {getReadLabel(activeInquiry.readAt)}
                             </StatusPill>
                         }
+                        tabs={
+                            <DetailTabs
+                                tabs={[...CONSULTATION_DETAIL_TABS]}
+                                activeTab={activeDetailTab}
+                                onTabChange={(key) => setActiveDetailTab(key as ConsultationDetailTabKey)}
+                            />
+                        }
                     >
-                        <div data-component="consultations-detail" className="space-y-4">
-                            <div data-component="consultations-detail-basic-grid" className="grid grid-cols-2 gap-4">
-                                <InfoCard title="상담자 정보" className="col-start-1 row-start-1">
-                                    <InfoRow label="이름" value={activeInquiry.motherName} />
-                                    <InfoRow label="연락처" value={activeInquiry.phone} />
-                                    <InfoRow label="주소" value={activeInquiry.address} />
-                                    <InfoRow label="출산 예정일" value={formatDate(activeInquiry.dueDate)} />
-                                    <InfoRow label="출산 경험" value={activeInquiry.birthExperience} />
-                                    <InfoRow label="바우처 유형" value={activeInquiry.voucherType || "-"} />
-                                </InfoCard>
-
-                                <InfoCard title="문의 정보" className="col-start-2 row-start-1">
-                                    <InfoRow label="근무 지역" value={getInquiryRegion(activeInquiry.address)} />
-                                    <InfoRow label="추천 경로" value={activeInquiry.referralSource || "-"} />
-                                    <InfoRow label="선호 매니저" value={activeInquiry.preferredCaregiverName || "-"} />
-                                    <InfoRow label="출처" value={getInquirySourceLabel(activeInquiry.source)} />
-                                    <InfoRow label="담당 지점" value={activeInquiry.branchName ?? "-"} />
-                                    <InfoRow
-                                        label="추가 사항"
-                                        value={
-                                            activeInquiry.additionalNotes?.trim() ? (
-                                                <span className="whitespace-pre-wrap text-left inline-block">
-                                                    {activeInquiry.additionalNotes.trim()}
-                                                </span>
-                                            ) : (
-                                                "-"
-                                            )
-                                        }
-                                    />
-                                    {previousConsultationDates.length > 0 ? (
-                                        <div data-component="consultations-phone-history" className="flex items-start gap-4 py-2.5 border-b border-v3-border last:border-b-0">
-                                            <span className="shrink-0 text-[0.8rem] text-v3-text-muted">이전 상담</span>
-                                            <span data-component="consultations-phone-history-values" className="ml-auto min-w-0 flex-1 text-[0.8rem] font-semibold text-v3-dark text-right">
-                                                {previousConsultationDates.map((date) => (
-                                                    <span key={date} className="block">
-                                                        {date}
-                                                    </span>
-                                                ))}
-                                            </span>
+                        <DetailTabPanels
+                            activeTab={activeDetailTab}
+                            dataComponent="consultations-detail"
+                            panelDataComponent="consultations-detail-panel"
+                            panels={[
+                                {
+                                    key: "customer",
+                                    children: (
+                                        <div data-component="consultations-detail-basic-grid" className="grid grid-cols-1 gap-4">
+                                            <InfoCard title="고객 정보">
+                                                <InfoRow label="이름" value={activeInquiry.motherName} />
+                                                <InfoRow label="연락처" value={activeInquiry.phone} />
+                                                <InfoRow label="주소" value={activeInquiry.address} />
+                                                <InfoRow label="출산 예정일" value={formatDate(activeInquiry.dueDate)} />
+                                                <InfoRow label="출산 경험" value={activeInquiry.birthExperience} />
+                                                <InfoRow label="바우처 유형" value={activeInquiry.voucherType || "-"} />
+                                            </InfoCard>
                                         </div>
-                                    ) : null}
-                                </InfoCard>
+                                    ),
+                                },
+                                {
+                                    key: "inquiry",
+                                    children: (
+                                        <div data-component="consultations-detail-inquiry-grid" className="grid grid-cols-2 gap-4">
+                                            <InfoCard title="문의 정보" className="col-span-2">
+                                                <InfoRow label="근무 지역" value={getInquiryRegion(activeInquiry.address)} />
+                                                <InfoRow label="추천 경로" value={activeInquiry.referralSource || "-"} />
+                                                <InfoRow label="선호 매니저" value={activeInquiry.preferredCaregiverName || "-"} />
+                                                <InfoRow label="출처" value={getInquirySourceLabel(activeInquiry.source)} />
+                                                <InfoRow label="담당 지점" value={activeInquiry.branchName ?? "-"} />
+                                                <InfoRow
+                                                    label="추가 사항"
+                                                    value={
+                                                        activeInquiry.additionalNotes?.trim() ? (
+                                                            <span className="whitespace-pre-wrap text-left inline-block">
+                                                                {activeInquiry.additionalNotes.trim()}
+                                                            </span>
+                                                        ) : (
+                                                            "-"
+                                                        )
+                                                    }
+                                                />
+                                                {previousConsultationDates.length > 0 ? (
+                                                    <div data-component="consultations-phone-history" className="flex items-start gap-4 py-2.5 border-b border-v3-border last:border-b-0">
+                                                        <span className="shrink-0 text-[0.8rem] text-v3-text-muted">이전 상담</span>
+                                                        <span data-component="consultations-phone-history-values" className="ml-auto min-w-0 flex-1 text-[0.8rem] font-semibold text-v3-dark text-right">
+                                                            {previousConsultationDates.map((date) => (
+                                                                <span key={date} className="block">
+                                                                    {date}
+                                                                </span>
+                                                            ))}
+                                                        </span>
+                                                    </div>
+                                                ) : null}
+                                            </InfoCard>
 
-                                <SelectedServicesCard inquiry={activeInquiry} className="col-span-2" />
+                                            <SelectedServicesCard inquiry={activeInquiry} className="col-span-2" />
 
-                                <InfoCard title="문의 상태" className="col-span-2">
-                                    <InfoRow
-                                        label="확인 여부"
-                                        value={
-                                            activeInquiry.readAt
-                                                ? `읽음 · ${formatDateTime(activeInquiry.readAt)}`
-                                                : "읽지 않음"
-                                        }
-                                    />
-                                    <InfoRow label="진행 상태" value={getInquiryStatusLabel(activeInquiry.status)} />
-                                    <InfoRow label="개인정보 동의" value={formatDateTime(activeInquiry.privacyAcceptedAt)} />
-                                </InfoCard>
-                            </div>
-                        </div>
+                                            <InfoCard title="문의 상태" className="col-span-2">
+                                                <InfoRow
+                                                    label="확인 여부"
+                                                    value={
+                                                        activeInquiry.readAt
+                                                            ? `읽음 · ${formatDateTime(activeInquiry.readAt)}`
+                                                            : "읽지 않음"
+                                                    }
+                                                />
+                                                <InfoRow label="진행 상태" value={getInquiryStatusLabel(activeInquiry.status)} />
+                                                <InfoRow label="개인정보 동의" value={formatDateTime(activeInquiry.privacyAcceptedAt)} />
+                                            </InfoCard>
+                                        </div>
+                                    ),
+                                },
+                            ]}
+                        />
                     </DetailPanel>
                 ) : (
                     <EmptyState

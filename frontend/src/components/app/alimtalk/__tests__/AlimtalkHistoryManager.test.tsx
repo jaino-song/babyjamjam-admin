@@ -102,7 +102,8 @@ describe("AlimtalkHistoryManager", () => {
       expect(container.querySelector('[data-component="split-layout"]')).toHaveAttribute("data-has-selection", "false");
     });
 
-    expect(container.querySelector('[data-component="alimtalk-history-detail-empty"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-component="alimtalk-history-detail-empty"]')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component="list-empty-state-copy"]')).toBeInTheDocument();
     expect(container.querySelector('[data-component="alimtalk-history-detail"]')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText("인사(소개)"));

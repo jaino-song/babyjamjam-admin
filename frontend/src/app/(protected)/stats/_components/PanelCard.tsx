@@ -36,7 +36,7 @@ export function PanelCard({
     <section
       data-component={dataComponent}
       className={cn(
-        "bg-white rounded-[28px] shadow-v3 p-6 flex flex-col gap-4 min-h-[280px]",
+        "animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6 flex flex-col gap-4 min-h-[280px]",
         className
       )}
     >

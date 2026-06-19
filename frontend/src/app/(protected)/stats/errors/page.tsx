@@ -136,7 +136,7 @@ export default async function ErrorsDetailPage() {
       <Block name="stats-errors-chart">
         <div
           data-component="stats-errors-chart-card"
-          className="bg-white rounded-[28px] shadow-v3 p-6"
+          className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-4">
             <h3 className="text-[0.95rem] font-bold text-v3-text">이벤트 추이 (24시간)</h3>
@@ -238,7 +238,7 @@ export default async function ErrorsDetailPage() {
       <Block name="stats-errors-issues">
         <div
           data-component="stats-errors-issues-card"
-          className="bg-white rounded-[28px] shadow-v3 p-6 overflow-hidden"
+          className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6 overflow-hidden"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
             <h3 className="text-[0.95rem] font-bold text-v3-text">미해결 이슈 ({totalIssues}건)</h3>

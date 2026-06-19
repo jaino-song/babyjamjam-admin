@@ -6,7 +6,7 @@ import { getFeedbackList, getFeedbackStats, getFeedbackDetail, FeedbackItem, Ses
 import { cn } from '@/lib/utils';
 import { MessageSquare, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
-import { StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, AnimatedSlotList, EmptyState, PageSection, DetailSkeleton, ListEmptyState } from '@/components/app/v3';
+import { StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, AnimatedSlotList, AnimatedSlotListItemContent, EmptyState, PageSection, DetailSkeleton, ListEmptyState } from '@/components/app/v3';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -105,15 +105,12 @@ export default function AdminFeedbackPage() {
               isLoading={feedbackLoading}
               loadingCount={5}
               className="space-y-2"
-              slotClassName={({ item, isLoading: slotLoading }) => {
+              getSlotState={({ item, isLoading: slotLoading }) => {
                 const isActive = !slotLoading && item && selectedFeedback?.id === item.id;
-                return cn(
-                  'flex items-center gap-3 p-3 rounded-[14px] transition-all duration-200 bg-white border-2 border-transparent',
-                  !slotLoading && 'cursor-pointer',
-                  isActive
-                    ? 'bg-v3-primary-light border-2 border-v3-primary'
-                    : !slotLoading && 'hover:bg-v3-primary-light/50 hover:border-v3-primary/30'
-                );
+                return {
+                  isActive: Boolean(isActive),
+                  isInteractive: !slotLoading && Boolean(item),
+                };
               }}
               onSlotClick={(feedback) => setSelectedFeedbackId(feedback.id)}
               render={({ item: feedback, isLoading: slotLoading }) => {
@@ -133,28 +130,19 @@ export default function AdminFeedbackPage() {
                 }
                 if (!feedback) return null;
                 return (
-                  <>
-                     <div data-component="admin-list-item-icon" className={cn(
-                       'w-9 h-9 rounded-[10px] flex items-center justify-center shrink-0',
-                      feedback.type === 'positive' ? 'bg-emerald-50' : 'bg-red-50'
-                    )}>
-                      {feedback.type === 'positive'
-                        ? <ThumbsUp className="w-4 h-4 text-emerald-500" />
-                        : <ThumbsDown className="w-4 h-4 text-red-500" />
-                      }
-                    </div>
-                     <div data-component="admin-list-item-content" className="flex-1 min-w-0">
-                      <p className="text-[0.8rem] font-semibold text-v3-dark truncate">
-                        {feedback.user.name || feedback.user.email || '익명'}
-                      </p>
-                      <p className="text-[0.7rem] text-v3-text-muted truncate">
-                        {truncateText(feedback.comment, 30)}
-                      </p>
-                    </div>
-                    <span className="text-[0.65rem] text-v3-text-muted whitespace-nowrap">
-                      {formatDate(feedback.createdAt)}
-                    </span>
-                  </>
+                  <AnimatedSlotListItemContent
+                    dataComponent="admin-list-item"
+                    icon={feedback.type === 'positive' ? ThumbsUp : ThumbsDown}
+                    iconContainerClassName={feedback.type === 'positive' ? 'bg-emerald-50' : 'bg-red-50'}
+                    iconClassName={feedback.type === 'positive' ? 'text-emerald-500' : 'text-red-500'}
+                    title={feedback.user.name || feedback.user.email || '익명'}
+                    subtitle={truncateText(feedback.comment, 30)}
+                    status={
+                      <span className="whitespace-nowrap text-[calc(10.4px*var(--v3-ui-scale,1))] text-v3-text-muted">
+                        {formatDate(feedback.createdAt)}
+                      </span>
+                    }
+                  />
                 );
               }}
             />

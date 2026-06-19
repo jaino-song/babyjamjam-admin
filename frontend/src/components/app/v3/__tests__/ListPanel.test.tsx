@@ -21,7 +21,9 @@ describe("ListPanel", () => {
     );
 
     expect(container.querySelector('[data-component="list-panel-overlay"]')).toBeInTheDocument();
-    expect(container.querySelector('[data-component="list-panel-empty"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-component="list-panel-empty"]')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component="list-empty-state-copy"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-component="list-panel-empty-copy"]')).not.toBeInTheDocument();
     expect(screen.getByText("항목이 없습니다.")).toBeInTheDocument();
   });
 
@@ -45,6 +47,9 @@ describe("ListPanel", () => {
       </ListPanel>,
     );
 
+    expect(container.querySelector('[data-component="list-panel-tabs"]')).toHaveClass(
+      "[container-type:inline-size]",
+    );
     expect(container.querySelector('[data-component="list-panel-tab-scroll"]')).toHaveClass(
       "min-w-0",
       "flex-1",
@@ -59,18 +64,19 @@ describe("ListPanel", () => {
       "absolute",
       "right-0",
       "h-[calc(40px*var(--v3-ui-scale,1))]",
+      "expandable-search-overlay-surface",
     );
 
     fireEvent.click(screen.getByRole("button", { name: "검색 열기" }));
 
-    expect(screen.queryByPlaceholderText("검색...")).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("검색...")).toBeInTheDocument();
     expect(container.querySelector('[data-component="expandable-search-overlay"]')).toHaveClass(
       "bg-[linear-gradient(to_right,rgb(255_255_255_/_0)_0%,rgb(255_255_255)_10%,rgb(255_255_255)_100%)]",
-      "w-[20cqw]",
-      "min-w-[7rem]",
-      "max-w-[12rem]",
     );
     expect(container.querySelector('[data-component="expandable-search-overlay"]')).not.toHaveClass("shadow-v3");
+    expect(container.querySelector('[data-component="expandable-search-overlay"]')).toHaveStyle({
+      width: "7rem",
+    });
     expect(screen.getByRole("button", { name: "검색 닫기" })).toHaveClass(
       "transition-transform",
       "duration-200",
@@ -78,6 +84,7 @@ describe("ListPanel", () => {
     expect(container.querySelector('input[type="text"]')).toHaveClass(
       "flex-1",
       "border-0",
+      "expandable-search-overlay-input",
     );
   });
 });

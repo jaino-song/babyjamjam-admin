@@ -65,7 +65,7 @@ function clearDocumentListCacheForTokens(authToken: string, accessToken: string)
 
 /**
  * GET /api/eformsign/documents
- * Unified endpoint to fetch all eformsign documents (in-progress, completed, rejected)
+ * Unified endpoint to fetch all eformsign documents (in-progress, completed, expired)
  *
  * Query params:
  * - limit: number of documents to fetch (default: 100)
@@ -91,6 +91,8 @@ export async function GET(request: NextRequest) {
     const backendPathByType: Record<string, string> = {
         "in-progress": "/api/documents/in-progress",
         completed: "/api/documents/completed",
+        expired: "/api/documents/rejected",
+        // Deprecated alias for old callers. New UI filters use "expired".
         rejected: "/api/documents/rejected",
     };
 

@@ -204,7 +204,6 @@ export function ListPanel({
                 value={searchValue!}
                 onChange={onSearchChange!}
                 placeholder={searchPlaceholder}
-                expandedWidth="w-[20cqw] min-w-[7rem] max-w-[12rem]"
                 className={tabsVariant === "inline" ? "pb-[calc(8px*var(--v3-ui-scale,1))]" : undefined}
                 disabled={disabled}
                 overlay={tabsVariant === "inline"}

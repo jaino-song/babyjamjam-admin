@@ -8,12 +8,18 @@ import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { renderTemplate } from "@/lib/template-utils";
 import { AutoFillMsgCard } from "../templates/AutoFillMsgCard";
 import { NameInput } from "./form-components/NameInput";
+import { TemplateFieldGridItem } from "./form-components/TemplateFieldGrid";
+import {
+  TemplateMessageFormFrame,
+  type TemplateMessageFormLayout,
+} from "./form-components/TemplateMessageFormLayout";
 
 interface ThanksMessageFormProps {
   onPreviewMessageChange?: (message: string) => void;
+  renderLayout?: TemplateMessageFormLayout;
 }
 
-export const ThanksMessageForm = ({ onPreviewMessageChange }: ThanksMessageFormProps) => {
+export const ThanksMessageForm = ({ onPreviewMessageChange, renderLayout }: ThanksMessageFormProps) => {
   const locale = useLocale();
   const [messageOverride, setMessageOverride] = useState<string | null>(null);
   const { name, setName } = useFormStore();
@@ -39,36 +45,43 @@ export const ThanksMessageForm = ({ onPreviewMessageChange }: ThanksMessageFormP
     }
   }, [generatedMessage, onPreviewMessageChange]);
 
-  return (
-    <div
-      data-component="messages-thanks-form"
-      className="flex flex-col animate-fade-in"
-    >
-      <div className="flex flex-col gap-4">
-          <NameInput
-            name={name}
-            setName={(value) => {
-              setName(value);
-              setMessageOverride(null);
-            }}
-            label={t(locale, "thanks-msg.name-label")}
-            placeholder={t(locale, "thanks-msg.name-placeholder")}
-          />
+  const fields = renderLayout ? null : (
+    <TemplateFieldGridItem>
+      <NameInput
+        name={name}
+        setName={(value) => {
+          setName(value);
+          setMessageOverride(null);
+        }}
+        label={t(locale, "thanks-msg.name-label")}
+        placeholder={t(locale, "thanks-msg.name-placeholder")}
+      />
+    </TemplateFieldGridItem>
+  );
 
-        <AutoFillMsgCard
-          title={t(locale, "common.generated-message-title")}
-          copyButtonText={t(locale, "common.copy-button")}
-          message={generatedMessage}
-          bodyDescription={systemTemplate?.description || "감사 메시지를 검토하고 수신자 기준으로 다듬을 수 있습니다."}
-          metaItems={[
-            { label: "템플릿 유형", value: "감사 메시지" },
-            { label: t(locale, "thanks-msg.name-label"), value: name.trim() || "-" },
-          ]}
-          variableItems={variableItems}
-          onMessageChange={setMessageOverride}
-          handleCopy={handleCopy}
-        />
-      </div>
-    </div>
+  const messageCard = (
+    <AutoFillMsgCard
+      title={t(locale, "common.generated-message-title")}
+      copyButtonText={t(locale, "common.copy-button")}
+      message={generatedMessage}
+      bodyDescription={systemTemplate?.description || "감사 메시지를 검토하고 수신자 기준으로 다듬을 수 있습니다."}
+      metaItems={[
+        { label: "템플릿 유형", value: "감사 메시지" },
+        { label: t(locale, "thanks-msg.name-label"), value: name.trim() || "-" },
+      ]}
+      variableItems={variableItems}
+      onMessageChange={setMessageOverride}
+      handleCopy={handleCopy}
+    />
+  );
+
+  return (
+    <TemplateMessageFormFrame
+      dataComponent="messages-thanks-form"
+      fields={fields}
+      messageCard={messageCard}
+      requiresRecipientName
+      renderLayout={renderLayout}
+    />
   );
 };

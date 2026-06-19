@@ -1,7 +1,7 @@
 "use client";
 
-import { redirect } from "next/navigation";
-import { useMemo, useState } from "react";
+import { redirect, useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   fetchDashboardClientPage,
@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import {
   StatsBar,
   SplitLayout,
+  DetailEmptyState,
   DetailPanel,
   DetailTabs,
   DetailTabPanels,
@@ -21,6 +22,7 @@ import {
   InfoRow,
   StatusBadge,
   RecentActivitiesPanel,
+  getRecentActivityAvatarClass,
   type ActionRequiredItem,
   type StatusType,
 } from "@/components/app/v3";
@@ -46,23 +48,10 @@ import { Block } from "@/components/app/v3/Block";
 
 const DASHBOARD_STAT_KEYS = [
   { icon: Users, valueKey: "activeClients" as const, label: "서비스 진행 중", colorIndex: 0, counter: "명" },
-  { icon: Calendar, valueKey: "upcomingThisMonth" as const, label: "이번달 시작 예정", colorIndex: 1, counter: "건" },
+  { icon: Calendar, valueKey: "upcomingSoon" as const, label: "곧 시작 예정", colorIndex: 1, counter: "건" },
   { icon: FileSignature, valueKey: "contractsPendingSignature" as const, label: "문서 서명 대기 중", colorIndex: 2, counter: "건" },
   { icon: Send, valueKey: "contractsNotSent" as const, label: "문서 발송 대기 중", colorIndex: 3, counter: "건" },
 ];
-
-const getAvatarGradient = (name: string) => {
-  const charCode = name.charCodeAt(0);
-  const gradients = [
-    "bg-gradient-to-br from-[hsl(214,100%,34%)] to-[hsl(214,100%,28%)]",
-    "bg-gradient-to-br from-[hsl(137,34%,31%)] to-[hsl(137,34%,25%)]",
-    "bg-gradient-to-br from-[hsl(355,36%,45%)] to-[hsl(355,36%,38%)]",
-    "bg-gradient-to-br from-[hsl(34,100%,55%)] to-[hsl(34,100%,45%)]",
-    "bg-gradient-to-br from-[hsl(175,60%,40%)] to-[hsl(175,60%,30%)]",
-    "bg-gradient-to-br from-[hsl(270,60%,55%)] to-[hsl(270,60%,45%)]",
-  ];
-  return gradients[charCode % gradients.length];
-};
 
 const mapServiceStatusToV3 = (status: string | null): StatusType => {
   switch (status) {
@@ -127,7 +116,17 @@ const getDocumentStatusLabel = (status: Client["documentStatus"], locale: Return
   return labelMap[status];
 };
 
+function isToday(dateStr: string): boolean {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(dateStr);
+  target.setHours(0, 0, 0, 0);
+  return target.getTime() === today.getTime();
+}
+
 export default function DashboardPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const {
     data: overview,
     isLoading: overviewLoading,
@@ -140,8 +139,16 @@ export default function DashboardPage() {
   const [activeDetailTab, setActiveDetailTab] = useState("basic");
   const [extraClientPages, setExtraClientPages] = useState<Client[][]>([]);
   const [isFetchingNextClients, setIsFetchingNextClients] = useState(false);
+  const dashboardClientIdParam = searchParams.get("clientId");
+  const dashboardClientId = useMemo(() => {
+    if (!dashboardClientIdParam) {
+      return null;
+    }
 
-  const stats = overview?.stats;
+    const numericId = Number(dashboardClientIdParam);
+    return Number.isInteger(numericId) && numericId > 0 ? numericId : null;
+  }, [dashboardClientIdParam]);
+
   const initialClientsPage = overview?.clients;
 
   const clients = useMemo(() => {
@@ -153,7 +160,27 @@ export default function DashboardPage() {
     initialClientsPage && 1 + extraClientPages.length < initialClientsPage.totalPages
   );
 
-  const fetchNextClients = async () => {
+  const updateDashboardClientQuery = useCallback((clientId: number | null) => {
+    const currentClientId = searchParams.get("clientId");
+    if (
+      (clientId === null && currentClientId === null) ||
+      (clientId !== null && currentClientId === String(clientId))
+    ) {
+      return;
+    }
+
+    const params = new URLSearchParams(searchParams.toString());
+    if (clientId === null) {
+      params.delete("clientId");
+    } else {
+      params.set("clientId", String(clientId));
+    }
+
+    const nextQuery = params.toString();
+    router.replace(nextQuery ? `/dashboard?${nextQuery}` : "/dashboard", { scroll: false });
+  }, [router, searchParams]);
+
+  const fetchNextClients = useCallback(async () => {
     if (!initialClientsPage || isFetchingNextClients || !hasMoreClients) return;
 
     setIsFetchingNextClients(true);
@@ -164,12 +191,60 @@ export default function DashboardPage() {
     } finally {
       setIsFetchingNextClients(false);
     }
-  };
+  }, [extraClientPages.length, hasMoreClients, initialClientsPage, isFetchingNextClients]);
 
-  const refetchClients = async () => {
+  const refetchClients = useCallback(async () => {
     setExtraClientPages([]);
     await refetchOverview();
-  };
+  }, [refetchOverview]);
+
+  const handleSelectClient = useCallback((client: Client) => {
+    setSelectedClient(client);
+    updateDashboardClientQuery(client.id);
+  }, [updateDashboardClientQuery]);
+
+  const handleClearSelectedClient = useCallback(() => {
+    setSelectedClient(null);
+    updateDashboardClientQuery(null);
+  }, [updateDashboardClientQuery]);
+
+  useEffect(() => {
+    if (!dashboardClientIdParam) {
+      return;
+    }
+
+    if (dashboardClientId === null) {
+      updateDashboardClientQuery(null);
+      return;
+    }
+
+    const matchingClient = clients.find((client) => client.id === dashboardClientId);
+    if (matchingClient) {
+      setSelectedClient((current) => (
+        current?.id === matchingClient.id ? current : matchingClient
+      ));
+      return;
+    }
+
+    if (!overviewLoading && hasMoreClients && !isFetchingNextClients) {
+      void fetchNextClients();
+      return;
+    }
+
+    if (!overviewLoading && !overviewError && !hasMoreClients && !isFetchingNextClients) {
+      updateDashboardClientQuery(null);
+    }
+  }, [
+    clients,
+    dashboardClientId,
+    dashboardClientIdParam,
+    fetchNextClients,
+    hasMoreClients,
+    isFetchingNextClients,
+    overviewError,
+    overviewLoading,
+    updateDashboardClientQuery,
+  ]);
 
   const actionRequiredClients = useMemo(() => {
     return clients
@@ -206,10 +281,42 @@ export default function DashboardPage() {
       .sort((a, b) => new Date(a.startDate!).getTime() - new Date(b.startDate!).getTime());
   }, [clients]);
 
+  const visibleUpcomingClients = useMemo(() => {
+    return upcomingClients.filter((client) => !client.startDate || !isToday(client.startDate));
+  }, [upcomingClients]);
+
+  const dashboardStats = useMemo(() => {
+    return {
+      activeClients: clients.filter((client) => client.serviceStatus === "active").length,
+      upcomingSoon: visibleUpcomingClients.length,
+      contractsPendingSignature: actionRequiredClients.filter((item) => item.reason === "이용자 완료 필요").length,
+      contractsNotSent: actionRequiredClients.filter((item) => item.reason === "발송 필요").length,
+    };
+  }, [actionRequiredClients, clients, visibleUpcomingClients]);
+
   const selectedClientData = useMemo(() => {
     if (!selectedClient) return null;
     return clients.find((client) => client.id === selectedClient.id) ?? selectedClient;
   }, [clients, selectedClient]);
+
+  const selectedClientAvatarClass = useMemo(() => {
+    if (!selectedClientData) {
+      return "";
+    }
+
+    const actionItem = actionRequiredClients.find(
+      (item) => item.client.id === selectedClientData.id,
+    );
+    const isUpcoming = visibleUpcomingClients.some(
+      (client) => client.id === selectedClientData.id,
+    );
+
+    return getRecentActivityAvatarClass({
+      name: selectedClientData.name,
+      actionPriority: actionItem?.priority,
+      isUpcoming,
+    });
+  }, [actionRequiredClients, selectedClientData, visibleUpcomingClients]);
 
   const selectedClientContractInfo = useMemo(() => {
     if (!selectedClientData) {
@@ -252,7 +359,7 @@ export default function DashboardPage() {
           isLoading={overviewLoading}
           items={DASHBOARD_STAT_KEYS.map((s) => ({
             icon: s.icon,
-            value: stats?.[s.valueKey] ?? 0,
+            value: dashboardStats[s.valueKey],
             label: s.label,
             counter: s.counter,
             colorIndex: s.colorIndex,
@@ -266,17 +373,17 @@ export default function DashboardPage() {
       >
         <SplitLayout
           hasSelection={!!selectedClientData}
-          onBack={() => setSelectedClient(null)}
+          onBack={handleClearSelectedClient}
         >
           <Block name="dashboard-activities-panel" className="h-full min-h-0">
             <RecentActivitiesPanel
               actionRequiredItems={actionRequiredClients}
-              upcomingItems={upcomingClients}
+              upcomingItems={visibleUpcomingClients}
               isLoading={overviewLoading}
               isError={overviewError}
               onRetry={() => refetchClients()}
               selectedId={selectedClientData?.id}
-              onSelect={setSelectedClient}
+              onSelect={handleSelectClient}
               hasMore={hasMoreClients}
               onLoadMore={() => void fetchNextClients()}
               isFetchingMore={isFetchingNextClients}
@@ -290,7 +397,7 @@ export default function DashboardPage() {
                   data-component="dashboard-detail-avatar"
                   className={cn(
                     "w-16 h-16 rounded-[20px] flex items-center justify-center text-xl font-bold text-white shadow-lg shrink-0",
-                    getAvatarGradient(selectedClientData.name)
+                    selectedClientAvatarClass
                   )}
                 >
                   {selectedClientData.name.charAt(0)}
@@ -339,7 +446,7 @@ export default function DashboardPage() {
                   tabs={[
                     { key: "basic", label: "기본 정보" },
                     { key: "contracts", label: "계약서 정보" },
-                    { key: "alimtalk", label: "알림톡 발송 현황" },
+                    { key: "alimtalk", label: "메시지 발송 현황" },
                   ]}
                   activeTab={activeDetailTab}
                   onTabChange={setActiveDetailTab}
@@ -394,33 +501,35 @@ export default function DashboardPage() {
                         </InfoCard>
                       </div>
                     ) : (
-                      <div data-component="dashboard-detail-contracts-empty" className="text-center py-12 text-v3-text-muted text-[0.85rem]">
-                        계약서 정보가 없습니다
-                      </div>
+                      <DetailEmptyState
+                        name="dashboard-detail-contracts-empty"
+                        message="계약서 정보가 없습니다"
+                      />
                     ),
                   },
                   {
                     key: "alimtalk",
                     children: (
-                      <div data-component="dashboard-detail-alimtalk-empty" className="text-center py-12 text-v3-text-muted text-[0.85rem]">
-                        알림톡 발송 현황이 없습니다
-                      </div>
+                      <DetailEmptyState
+                        name="dashboard-detail-alimtalk-empty"
+                        message="메시지 발송 현황이 없습니다"
+                      />
                     ),
                   },
                 ]}
               />
             </DetailPanel>
           ) : (
-            <Block
-              name="dashboard-detail-empty"
-              className="bg-white rounded-[28px] shadow-v3 flex items-center justify-center h-full"
+            <DetailPanel
+              emptyState={
+                <DetailEmptyState
+                  name="dashboard-detail-empty"
+                  message="항목을 선택하면 상세 정보가 표시됩니다"
+                />
+              }
             >
-              <div data-component="dashboard-detail-empty-message" className="text-center text-v3-text-muted">
-                <p className="text-[0.8rem] font-semibold">
-                  항목을 선택하면 상세 정보가 표시됩니다
-                </p>
-              </div>
-            </Block>
+              {null}
+            </DetailPanel>
           )}
         </SplitLayout>
       </Block>

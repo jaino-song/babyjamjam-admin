@@ -1,11 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { FolderOpen, FileText, Image as ImageIcon, File, Upload, Loader2, Calendar, Tag, MoreVertical, Pencil, Trash2, Eye } from "lucide-react";
-import { StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton, AnimatedSlotList, EmptyState, PageSection, DetailSkeleton, ListEmptyState } from "@/components/app/v3";
+import { FolderOpen, FileText, Image as ImageIcon, File, Upload, Loader2, Tag, MoreVertical, Pencil, Trash2, Eye } from "lucide-react";
+import { StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton, AnimatedSlotList, AnimatedSlotListItemContent, EmptyState, PageSection, DetailSkeleton, ListEmptyState } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
-import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -18,8 +17,6 @@ import { AddCategoryModal } from "@/components/app/documents/add-category-modal"
 import { formatDate } from "@/components/app/documents/document-list";
 import { isHangulDocument } from "@/components/app/documents/document-preview-utils";
 import { toast } from "@/hooks/use-toast";
-
-const RECENT_WINDOW_START = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
 export default function FilesPage() {
   const [activeFilter, setActiveFilter] = useState<string>("all");
@@ -63,10 +60,7 @@ export default function FilesPage() {
 
   const stats = useMemo(() => {
     const total = documents.length;
-    const recentCount = documents.filter(d => {
-      return new Date(d.createdAt).getTime() > RECENT_WINDOW_START;
-    }).length;
-    return { total, categoryCount: categories.length, recentCount };
+    return { total, categoryCount: categories.length };
   }, [documents, categories]);
 
   const selectedDocument = useMemo(() => {
@@ -145,7 +139,6 @@ export default function FilesPage() {
         items={[
           { icon: FolderOpen, value: stats.total, label: "전체 파일", counter: "건" },
           { icon: Tag, value: stats.categoryCount, label: "카테고리", counter: "개", colorIndex: 1 },
-          { icon: Calendar, value: stats.recentCount, label: "최근 7일", counter: "건", colorIndex: 2 },
         ]}
       />
 
@@ -176,15 +169,13 @@ export default function FilesPage() {
               isLoading={isLoading}
               loadingCount={4}
               className="space-y-2"
-              slotClassName={({ item, isLoading: slotLoading }) => {
+              itemVariant="card"
+              getSlotState={({ item, isLoading: slotLoading }) => {
                 const isActive = !slotLoading && item && selectedDocument?.id === item.id;
-                return cn(
-                  "flex items-center gap-3 p-3 rounded-[14px] transition-all duration-200 bg-white border-2 border-transparent",
-                  !slotLoading && "cursor-pointer",
-                  isActive
-                    ? "bg-v3-primary-light border-2 border-v3-primary"
-                    : !slotLoading && "hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
-                );
+                return {
+                  isActive: Boolean(isActive),
+                  isInteractive: !slotLoading && Boolean(item),
+                };
               }}
               onSlotClick={(doc) => setSelectedDocId(doc.id)}
               render={({ item: doc, isLoading: slotLoading }) => {
@@ -204,16 +195,18 @@ export default function FilesPage() {
                 }
                 if (!doc) return null;
                 return (
-                  <>
-                    <div data-component="files-list-item-icon" className="w-9 h-9 rounded-[10px] bg-v3-primary-light flex items-center justify-center shrink-0">
-                      {getFileIcon(doc)}
-                    </div>
-                    <div data-component="files-list-item-content" className="flex-1 min-w-0">
-                      <p className="text-[0.8rem] font-semibold text-v3-dark truncate">{doc.name}</p>
-                      <p className="text-[0.7rem] text-v3-text-muted truncate">{getCategoryLabel(doc.categoryId)}</p>
-                    </div>
-                    <span className="text-[0.65rem] text-v3-text-muted whitespace-nowrap">{formatDate(doc.createdAt)}</span>
-                  </>
+                  <AnimatedSlotListItemContent
+                    dataComponent="files-list-item"
+                    icon={getFileIcon(doc)}
+                    iconContainerClassName="bg-v3-primary-light"
+                    title={doc.name}
+                    subtitle={getCategoryLabel(doc.categoryId)}
+                    status={
+                      <span className="whitespace-nowrap text-[calc(10.4px*var(--v3-ui-scale,1))] text-v3-text-muted">
+                        {formatDate(doc.createdAt)}
+                      </span>
+                    }
+                  />
                 );
               }}
             />
@@ -231,6 +224,7 @@ export default function FilesPage() {
           />
         ) : selectedDocument ? (
           <FileDetail
+            key={selectedDocument.id}
             document={selectedDocument}
             getCategoryLabel={getCategoryLabel}
             onPreview={() => setPreviewDoc(selectedDocument)}

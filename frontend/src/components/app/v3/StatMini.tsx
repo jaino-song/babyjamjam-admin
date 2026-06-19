@@ -37,7 +37,7 @@ export function StatMini({
     <div
       data-component="stat-mini"
       className={cn(
-        "flex w-[calc(176px*var(--v3-ui-scale,1))] items-center justify-start gap-[calc(16px*var(--v3-ui-scale,1))] rounded-[20px] bg-white p-[calc(16px*var(--v3-ui-scale,1))] shadow-v3 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform hover:-translate-y-1 hover:shadow-v3-hover",
+        "flex w-[calc(176px*var(--v3-ui-scale,1))] items-center justify-start gap-[calc(16px*var(--v3-ui-scale,1))] rounded-[20px] bg-white p-[calc(16px*var(--v3-ui-scale,1))] shadow-v3",
         // Component-level animation so stats behave identically across pages.
         "animate-v3-pop-up"
       )}

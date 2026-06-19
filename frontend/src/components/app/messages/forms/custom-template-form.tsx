@@ -9,13 +9,19 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { AutoFillMsgCard } from "../templates/AutoFillMsgCard";
 import { DynamicInput } from "./form-components/dynamic-input";
+import { TemplateFieldGridItem } from "./form-components/TemplateFieldGrid";
+import {
+    TemplateMessageFormFrame,
+    type TemplateMessageFormLayout,
+} from "./form-components/TemplateMessageFormLayout";
 
 interface CustomTemplateFormProps {
     template: MessageTemplate;
     onPreviewMessageChange?: (message: string) => void;
+    renderLayout?: TemplateMessageFormLayout;
 }
 
-export const CustomTemplateForm = ({ template, onPreviewMessageChange }: CustomTemplateFormProps) => {
+export const CustomTemplateForm = ({ template, onPreviewMessageChange, renderLayout }: CustomTemplateFormProps) => {
     const locale = useLocale();
     const formStore = useFormStore();
     const { variableValues, setVariableValue } = useTemplateStore();
@@ -105,39 +111,51 @@ export const CustomTemplateForm = ({ template, onPreviewMessageChange }: CustomT
         }
     }, [generatedMessage, onPreviewMessageChange]);
 
-    return (
-        <div
-            data-component="messages-custom-template-form"
-            className="flex flex-col animate-fade-in"
-        >
-            <div className="flex flex-col gap-4">
-                <div className="flex flex-col gap-6">
-                    {template.variables.map((variable) => (
-                        <DynamicInput
-                            key={variable.key}
-                            variable={variable}
-                            value={getVariableValue(variable.key)}
-                            onChange={(value) => handleVariableChange(variable.key, value)}
-                        />
-                    ))}
-                </div>
+    const visibleVariables = renderLayout
+        ? template.variables.filter((variable) => variable.key !== "name" && variable.key !== "phone")
+        : template.variables;
+    const requiresRecipientName = template.variables.some((variable) => variable.key === "name");
 
-                <AutoFillMsgCard
-                    title={t(locale, "common.generated-message-title")}
-                    copyButtonText={t(locale, "common.copy-button")}
-                    message={generatedMessage}
-                    bodyDescription={`${template.name} 템플릿의 본문과 변수를 함께 검토할 수 있습니다.`}
-                    metaItems={[
-                        { label: "템플릿 유형", value: "사용자 템플릿" },
-                        { label: "템플릿 이름", value: template.name },
-                        { label: "활성 변수", value: `${variableItems.length}개` },
-                    ]}
-                    variableItems={variableItems}
-                    variableEmptyText="입력된 변수 값이 없습니다."
-                    onMessageChange={setMessageOverride}
-                    handleCopy={handleCopy}
-                />
-            </div>
-        </div>
+    const fields = (
+        <>
+            {visibleVariables.map((variable) => (
+                <TemplateFieldGridItem key={variable.key}>
+                    <DynamicInput
+                        variable={variable}
+                        value={getVariableValue(variable.key)}
+                        onChange={(value) => handleVariableChange(variable.key, value)}
+                        forceRequired={Boolean(renderLayout)}
+                    />
+                </TemplateFieldGridItem>
+            ))}
+        </>
+    );
+
+    const messageCard = (
+        <AutoFillMsgCard
+            title={t(locale, "common.generated-message-title")}
+            copyButtonText={t(locale, "common.copy-button")}
+            message={generatedMessage}
+            bodyDescription={`${template.name} 템플릿의 본문과 변수를 함께 검토할 수 있습니다.`}
+            metaItems={[
+                { label: "템플릿 유형", value: "사용자 템플릿" },
+                { label: "템플릿 이름", value: template.name },
+                { label: "활성 변수", value: `${variableItems.length}개` },
+            ]}
+            variableItems={variableItems}
+            variableEmptyText="입력된 변수 값이 없습니다."
+            onMessageChange={setMessageOverride}
+            handleCopy={handleCopy}
+        />
+    );
+
+    return (
+        <TemplateMessageFormFrame
+            dataComponent="messages-custom-template-form"
+            fields={fields}
+            messageCard={messageCard}
+            requiresRecipientName={requiresRecipientName}
+            renderLayout={renderLayout}
+        />
     );
 };

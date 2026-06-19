@@ -26,6 +26,7 @@ export const TextareaInput = ({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
+        required={required}
         rows={4}
       />
     </div>

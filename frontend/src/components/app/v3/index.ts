@@ -25,9 +25,15 @@ export { DetailEmptyState } from './DetailEmptyState';
 export { SplitLayout, useSplitLayoutNav, useSplitLayoutSelection } from './SplitLayout';
 export type { SplitLayoutMode } from './SplitLayout';
 export { AnimatedSlotList } from './AnimatedSlotList';
+export { AnimatedSlotListItemContent } from './AnimatedSlotListItemContent';
+export type { AnimatedSlotListItemContentProps } from './AnimatedSlotListItemContent';
 export { HeaderActionButton } from './HeaderActionButton';
 export type { HeaderActionButtonProps } from './HeaderActionButton';
-export { RecentActivitiesPanel } from './RecentActivitiesPanel';
+export {
+  RecentActivitiesPanel,
+  getRecentActivityActionVisual,
+  getRecentActivityAvatarClass,
+} from './RecentActivitiesPanel';
 export type { ActionRequiredItem, RecentActivitiesPanelProps } from './RecentActivitiesPanel';
 export { SteppedWizard } from './SteppedWizard';
 export type { WizardStep, SteppedWizardProps } from './SteppedWizard';

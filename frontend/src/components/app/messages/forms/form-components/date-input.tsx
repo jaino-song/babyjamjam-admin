@@ -24,6 +24,7 @@ export const DateInput = ({
         variant="v3"
         type="date"
         value={value}
+        required={required}
         onChange={(e) => onChange(e.target.value)}
       />
     </div>

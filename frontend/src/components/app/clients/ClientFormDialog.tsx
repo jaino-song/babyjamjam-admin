@@ -1167,7 +1167,9 @@ function ClientFormContent({
         <SteppedWizardPanelContent
             ref={contentRef}
             dataComponent="clients-form-panel-content"
-            stepContentClassName="justify-between gap-4"
+            flattenStepContent
+            className="py-0"
+            stepContentClassName="justify-start gap-4"
             feedback={formError}
         >
             {panelFormSteps[activeStep]}

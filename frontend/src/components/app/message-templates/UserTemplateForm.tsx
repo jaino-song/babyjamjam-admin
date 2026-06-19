@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { MessageTemplate } from "@/features/message-templates";
 import { AutoFillMsgCard } from "../messages/templates/AutoFillMsgCard";
+import { TemplateFieldGrid, TemplateFieldGridItem } from "../messages/forms/form-components/TemplateFieldGrid";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 
@@ -51,9 +52,9 @@ export function UserTemplateForm({ template }: UserTemplateFormProps) {
 
     return (
         <div className="flex flex-col gap-5" data-component="messages-user-template-form">
-            <div className="flex flex-col gap-4">
+            <TemplateFieldGrid>
                 {template.variables.map((variable) => (
-                    <div key={variable.key} className="flex flex-col gap-2">
+                    <TemplateFieldGridItem key={variable.key}>
                         <Label htmlFor={`var-${variable.key}`}>
                             {variable.label}
                             {variable.required && <span className="text-destructive ml-1">*</span>}
@@ -63,9 +64,9 @@ export function UserTemplateForm({ template }: UserTemplateFormProps) {
                             value={values[variable.key] || ""}
                             onChange={(e) => handleValueChange(variable.key, e.target.value)}
                         />
-                    </div>
+                    </TemplateFieldGridItem>
                 ))}
-            </div>
+            </TemplateFieldGrid>
 
             {template.variables.length === 0 && (
                 <p className="text-sm text-muted-foreground">

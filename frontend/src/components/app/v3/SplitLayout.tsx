@@ -395,6 +395,7 @@ export function SplitLayout({
                   "min-w-0 min-h-0 flex flex-col",
                   "data-[mode=compact]:h-full data-[mode=compact]:shrink-0 data-[mode=compact]:overflow-y-auto",
                   columns === 3 && isCompact && "w-full flex-shrink-0",
+                  mode === "desktop" && columns === 2 && index === 1 && hasSelection && "animate-v3-slide-up",
                 )}
                 data-mode={mode}
                 style={panelStyle}

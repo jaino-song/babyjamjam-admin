@@ -19,6 +19,7 @@ import {
   DetailPanel,
   DetailSkeleton,
   AnimatedSlotList,
+  AnimatedSlotListItemContent,
   HeaderActionButton,
   ListEmptyState,
   SteppedWizardPanelFooter,
@@ -440,15 +441,6 @@ export function TriggerRulesManager({ dataComponentPrefix = "alimtalk" }: { data
           <ListPanel
             title={isLoading ? "" : "발송 규칙"}
             subtitle={isLoading ? undefined : "메시지 자동 발송 규칙을 설정할 수 있어요"}
-            overlay={
-              !isTriggerRulesLocked && !isLoading && listItems.length === 0 ? (
-                <ListEmptyState
-                  name={component("trigger-rules-empty")}
-                  message={statusFilter === "active" ? "활성화된 발송 규칙이 없습니다." : "비활성화된 발송 규칙이 없습니다."}
-                  className="flex-none min-h-0"
-                />
-              ) : null
-            }
             tabs={RULE_STATUS_TABS.map((tab) => ({ ...tab }))}
             activeTab={statusFilter}
             onTabChange={isTriggerRulesLocked ? undefined : (value) => setStatusFilter(value as RuleStatusFilter)}
@@ -477,14 +469,10 @@ export function TriggerRulesManager({ dataComponentPrefix = "alimtalk" }: { data
                   isLoading={isLoading}
                   loadingCount={5}
                   className="space-y-2"
-                  slotClassName={({ item, isLoading: slotLoading }) =>
-                    cn(
-                      "flex items-center gap-3 rounded-[18px] border-2 p-3 text-left transition-all duration-200",
-                      !slotLoading && item?.id === effectiveSelectedRuleId
-                        ? "border-v3-primary bg-v3-primary-light"
-                        : "border-transparent bg-white hover:border-v3-primary/30 hover:bg-v3-primary-light/50",
-                    )
-                  }
+                  getSlotState={({ item, isLoading: slotLoading }) => ({
+                    isActive: !slotLoading && item?.id === effectiveSelectedRuleId,
+                    isInteractive: !slotLoading && Boolean(item),
+                  })}
                   onSlotClick={(item) => handleRuleSelect(item.id)}
                   render={({ item, isLoading: slotLoading }) => {
                     if (slotLoading) {
@@ -502,32 +490,34 @@ export function TriggerRulesManager({ dataComponentPrefix = "alimtalk" }: { data
                     }
 
                     if (!item) return null;
-                    const Icon = item.icon;
 
                     return (
-                      <>
-                        <div data-component={component("trigger-rule-icon")} className="flex h-10 w-10 items-center justify-center rounded-[14px] bg-v3-dim-white text-v3-text-muted">
-                          <Icon className="h-4 w-4" />
-                        </div>
-                        <div data-component={component("trigger-rule-copy")} className="min-w-0 flex-1 pr-2">
-                          <p className="truncate text-[0.82rem] font-semibold text-v3-dark">{item.title}</p>
-                          <p className="mt-1 truncate text-[0.72rem] text-v3-text-muted">{item.subtitle}</p>
-                        </div>
-                        <Switch
-                          aria-label={`${item.title} 활성화`}
-                          checked={item.active}
-                          disabled={isTriggerRulesLocked || updateMutation.isPending}
-                          onClick={(event) => event.stopPropagation()}
-                          onCheckedChange={(checked) => {
-                            void handleRuleActiveToggle(item.rule, checked);
-                          }}
-                          className="ml-auto shrink-0"
-                        />
-                      </>
+                      <AnimatedSlotListItemContent
+                        dataComponent={component("trigger-rule")}
+                        icon={item.icon}
+                        title={item.title}
+                        subtitle={item.subtitle}
+                        status={
+                          <Switch
+                            aria-label={`${item.title} 활성화`}
+                            checked={item.active}
+                            disabled={isTriggerRulesLocked || updateMutation.isPending}
+                            onClick={(event) => event.stopPropagation()}
+                            onCheckedChange={(checked) => {
+                              void handleRuleActiveToggle(item.rule, checked);
+                            }}
+                            className="ml-auto shrink-0"
+                          />
+                        }
+                      />
                     );
                   }}
                 />
               </div>
+            ) : !isTriggerRulesLocked ? (
+              <ListEmptyState
+                message={statusFilter === "active" ? "활성화된 발송 규칙이 없습니다." : "비활성화된 발송 규칙이 없습니다."}
+              />
             ) : null}
           </ListPanel>
 

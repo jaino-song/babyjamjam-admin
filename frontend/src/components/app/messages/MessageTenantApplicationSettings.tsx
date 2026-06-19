@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import {
   AnimatedSlotList,
+  AnimatedSlotListItemContent,
   DetailEmptyState,
   DetailPanel,
   ListEmptyState,
@@ -23,7 +24,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { settingsApi } from "@/services/api";
 
-const UNIFIED_SENDER_PHONE = "1661-2386";
+const UNIFIED_SENDER_PHONE = "010-9641-1878";
 
 const ALIGO_POLICY_ITEMS = [
   {
@@ -142,9 +143,7 @@ export function MessageTenantApplicationSettings() {
           }
         >
           <ListEmptyState
-            name="messages-settings-list-empty"
             message={emptyListMessage}
-            className="flex-none"
           />
         </ListPanel>
 
@@ -179,31 +178,25 @@ export function MessageTenantApplicationSettings() {
           items={listItems}
           isLoading={false}
           className="space-y-2"
-          slotClassName={() =>
-            "flex items-center gap-3 rounded-[18px] border-2 border-v3-primary bg-v3-primary-light p-3 text-left transition-all duration-200"
-          }
+          getSlotState={({ item }) => ({
+            isActive: Boolean(item),
+          })}
           render={({ item }) => {
             if (!item) return null;
-            const Icon = item.icon;
 
             return (
-              <>
-                <div
-                  data-component="messages-settings-tenant-list-icon"
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] bg-white text-v3-primary shadow-sm"
-                >
-                  <Icon className="h-4.5 w-4.5" />
-                </div>
-                <div data-component="messages-settings-tenant-list-copy" className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="truncate text-[0.82rem] font-semibold text-v3-dark">{item.title}</p>
-                    <span className="inline-flex items-center rounded-full bg-white/85 px-2 py-0.5 text-[0.68rem] font-semibold text-v3-primary">
-                      {item.statusLabel}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-[0.72rem] leading-5 text-v3-text-muted">{item.subtitle}</p>
-                </div>
-              </>
+              <AnimatedSlotListItemContent
+                dataComponent="messages-settings-tenant-list"
+                icon={item.icon}
+                iconContainerClassName="bg-white text-v3-primary"
+                title={item.title}
+                subtitle={item.subtitle}
+                status={
+                  <span className="inline-flex items-center rounded-full bg-white/85 px-2 py-0.5 text-[0.68rem] font-semibold text-v3-primary">
+                    {item.statusLabel}
+                  </span>
+                }
+              />
             );
           }}
         />

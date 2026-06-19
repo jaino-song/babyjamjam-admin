@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { ArrowLeft, FileText, Loader2, Plus, Users } from "lucide-react";
+import { ArrowLeft, FileText, Loader2, Plus } from "lucide-react";
 import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
 import { useMessageTemplate, useUpdateMessageTemplate } from "@/hooks/use-message-templates";
 import {
   AnimatedSlotList,
+  AnimatedSlotListItemContent,
+  DetailEmptyState,
   DetailPanel,
   HeaderActionButton,
   ListEmptyState,
@@ -70,12 +72,10 @@ function BranchTemplateDetail({ templateId }: { templateId: string }) {
 
   if (!template) {
     return (
-      <div
-        data-component="messages-templates-user-error"
-        className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-[0.8rem] text-v3-text-muted"
-      >
-        지점 템플릿을 불러올 수 없습니다.
-      </div>
+      <DetailEmptyState
+        name="messages-templates-user-error"
+        message="지점 템플릿을 불러올 수 없습니다."
+      />
     );
   }
 
@@ -183,21 +183,16 @@ export default function TemplatesPage() {
             </div>
           }
         >
-          <div data-component="messages-templates-list" className="space-y-2 pb-2">
-            {isLoadingBranchTemplates || branchItems.length > 0 ? (
+          {isLoadingBranchTemplates || branchItems.length > 0 ? (
+            <div data-component="messages-templates-list" className="space-y-2 pb-2">
               <AnimatedSlotList<TemplateListItem>
                 items={branchItems}
                 isLoading={isLoadingBranchTemplates}
                 className="space-y-2"
-                slotClassName={({ item, isLoading }) =>
-                  cn(
-                    "flex items-center gap-3 rounded-[16px] border-2 p-3 text-left transition-all duration-200",
-                    !isLoading && item?.id === activeTemplateId
-                      ? "border-v3-primary bg-v3-primary-light"
-                      : "border-transparent bg-white",
-                    !isLoading && "cursor-pointer hover:border-v3-primary/30 hover:bg-v3-primary-light/50",
-                  )
-                }
+                getSlotState={({ item, isLoading }) => ({
+                  isActive: !isLoading && item?.id === activeTemplateId,
+                  isInteractive: !isLoading && Boolean(item),
+                })}
                 onSlotClick={(item) => handleTemplateSelect(item.id)}
                 render={({ item, isLoading: isSlotLoading }) => {
                   if (isSlotLoading) {
@@ -221,53 +216,29 @@ export default function TemplatesPage() {
                   }
 
                   if (!item) return null;
-                  const Icon = item.icon;
 
                   return (
-                    <>
-                      <div
-                        data-component="messages-templates-list-item-icon"
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] bg-v3-dim-white text-v3-text-muted"
-                      >
-                        <Icon className="h-4 w-4" />
-                      </div>
-                      <div data-component="messages-templates-list-item-text" className="min-w-0 flex-1">
-                        <span className="block truncate text-[0.8rem] font-semibold text-v3-dark">
-                          {item.label}
-                        </span>
-                        {item.subtitle ? (
-                          <span className="text-[0.7rem] text-v3-text-muted">{item.subtitle}</span>
-                        ) : null}
-                      </div>
-                    </>
+                    <AnimatedSlotListItemContent
+                      dataComponent="messages-templates-list-item"
+                      icon={item.icon}
+                      title={item.label}
+                      subtitle={item.subtitle}
+                    />
                   );
                 }}
               />
-            ) : null}
-            {!isLoadingBranchTemplates && branchItems.length === 0 ? (
-              <ListEmptyState name="messages-templates-list-empty" message="등록된 지점 템플릿이 없습니다." />
-            ) : null}
-          </div>
+            </div>
+          ) : (
+            <ListEmptyState message="등록된 지점 템플릿이 없습니다." />
+          )}
         </ListPanel>
 
         <DetailPanel>
           {!activeTemplateId ? (
-            <div
-              data-component="messages-templates-detail-empty"
-              className="flex min-h-[320px] items-center justify-center"
-            >
-              <div
-                data-component="messages-templates-detail-empty-copy"
-                className="text-center text-v3-text-muted"
-              >
-                <Users
-                  data-component="messages-templates-detail-empty-icon"
-                  className="mx-auto mb-3 h-12 w-12 opacity-30"
-                  aria-hidden="true"
-                />
-                <p className="text-[0.85rem]">지점 템플릿을 선택하면 상세 정보가 표시됩니다.</p>
-              </div>
-            </div>
+            <DetailEmptyState
+              name="messages-templates-detail-empty"
+              message="지점 템플릿을 선택하면 상세 정보가 표시됩니다."
+            />
           ) : null}
 
           {branchTemplateId ? <BranchTemplateDetail key={branchTemplateId} templateId={branchTemplateId} /> : null}

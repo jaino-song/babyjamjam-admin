@@ -6,6 +6,11 @@ import { BRANCH_REPOSITORY, IBranchRepository } from "domain/repositories/branch
 
 const TARGET_ROLES = ['admin', 'manager', 'user'];
 const DAYS_THRESHOLD = 7;
+const NOTIFICATION_LOGIN_URL = "https://staff.babyjamjam.com/login";
+const NOTIFICATION_EMAIL_CONTEXT = {
+    ctaUrl: NOTIFICATION_LOGIN_URL,
+    ctaLabel: "로그인해서 확인하기",
+};
 
 @Injectable()
 export class PwaNotificationSchedulerService {
@@ -53,8 +58,9 @@ export class PwaNotificationSchedulerService {
             const result = await this.notificationService.sendToRoles(
                 TARGET_ROLES,
                 "서비스 시작 예정",
-                `일주일 내로 시작되는 서비스 ${clients.length}건을 확인해 보세요`,
+                `현재 7일 내로 시작이 예정된 서비스가 ${clients.length}건 있어요. 로그인해서 확인해 보세요.`,
                 { url: "/clients/filtered?filter=starting-soon" },
+                NOTIFICATION_EMAIL_CONTEXT,
             );
 
             this.logger.log(`[PWA Scheduler] Upcoming services notification: ${result.sent} sent, ${result.failed} failed`);
@@ -78,8 +84,9 @@ export class PwaNotificationSchedulerService {
             const result = await this.notificationService.sendToRoles(
                 TARGET_ROLES,
                 "서비스 종료 예정",
-                `일주일 내로 종료되는 서비스 ${clients.length}건을 확인해 보세요`,
+                `현재 7일 내로 종료가 예정된 서비스가 ${clients.length}건 있어요. 필요한 후속 조치가 있는지 로그인해서 확인해 보세요.`,
                 { url: "/clients/filtered?filter=ending-soon" },
+                NOTIFICATION_EMAIL_CONTEXT,
             );
 
             this.logger.log(`[PWA Scheduler] Ending services notification: ${result.sent} sent, ${result.failed} failed`);
@@ -103,8 +110,9 @@ export class PwaNotificationSchedulerService {
             const result = await this.notificationService.sendToRoles(
                 TARGET_ROLES,
                 "⚠️ 계약서 미완료",
-                `서비스 시작 예정이지만 계약서가 미완료된 클라이언트 ${clients.length}건이 있습니다`,
+                `서비스 시작이 예정되어 있지만 아직 완료되지 않은 계약서가 ${clients.length}건 있어요. 고객 응대 전에 계약서 상태를 로그인해서 확인해 보세요.`,
                 { url: "/clients/filtered?filter=incomplete-contracts" },
+                NOTIFICATION_EMAIL_CONTEXT,
             );
 
             this.logger.log(`[PWA Scheduler] Incomplete contracts notification: ${result.sent} sent, ${result.failed} failed`);
@@ -129,8 +137,9 @@ export class PwaNotificationSchedulerService {
                 await this.notificationService.sendToRoles(
                     TARGET_ROLES,
                     "📄 계약서 미발송",
-                    `${client.name} 님에게 계약서가 발송되지 않았습니다. 계약서를 발송해 주세요.`,
+                    `${client.name} 님에게 아직 계약서가 발송되지 않았어요. 서비스 일정 전에 계약서를 발송할 수 있도록 로그인해서 확인해 보세요.`,
                     { url: `/clients?id=${client.id}` },
+                    NOTIFICATION_EMAIL_CONTEXT,
                 );
             }
 
@@ -139,4 +148,5 @@ export class PwaNotificationSchedulerService {
             this.logger.error("[PWA Scheduler] Failed to send contracts not sent notification", error);
         }
     }
+
 }

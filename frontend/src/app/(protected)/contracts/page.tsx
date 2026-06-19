@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
+import { useRouter, useSearchParams } from "next/navigation";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import {
   FileText,
@@ -150,7 +151,7 @@ const TAB_ITEMS = [
   { label: "전체", value: "all" },
   { label: "대기", value: "in-progress" },
   { label: "완료", value: "completed" },
-  { label: "기간 만료", value: "rejected" },
+  { label: "기간 만료", value: "expired" },
 ];
 
 const DETAIL_TABS = [
@@ -204,11 +205,11 @@ function formatDateTime(timestamp: number): string {
   });
 }
 
-function mapCategoryToStatusType(category: "completed" | "rejected" | "in-progress"): StatusType {
+function mapCategoryToStatusType(category: "completed" | "expired" | "in-progress"): StatusType {
   switch (category) {
     case "completed":
       return "signed";
-    case "rejected":
+    case "expired":
       return "expired";
     case "in-progress":
       return "pending";
@@ -216,7 +217,7 @@ function mapCategoryToStatusType(category: "completed" | "rejected" | "in-progre
 }
 
 function getSignatureProgress(
-  category: "completed" | "rejected" | "in-progress",
+  category: "completed" | "expired" | "in-progress",
   hasOpenedDocument: boolean,
   isReviewNeeded: boolean
 ) {
@@ -423,6 +424,8 @@ const NAV_SECTIONS = [
 type SectionId = (typeof NAV_SECTIONS)[number]["id"];
 
 export default function ContractsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [activeSection, setActiveSection] = useState<SectionId>("maternity");
   const [activeTab, setActiveTab] = useState<string>("all");
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
@@ -530,7 +533,7 @@ export default function ContractsPage() {
         continue;
       }
 
-      if (cat === "rejected") {
+      if (cat === "expired") {
         if (normalizedStatus === "080") {
           expired++;
         }
@@ -572,6 +575,14 @@ export default function ContractsPage() {
     setContractCreationActiveStep(0);
     setIsCreating(true);
   }, []);
+
+  useEffect(() => {
+    if (searchParams.get("create") !== "1") return;
+
+    setActiveSection("maternity");
+    handleStartContractCreation();
+    router.replace("/contracts", { scroll: false });
+  }, [handleStartContractCreation, router, searchParams]);
 
   const handleCloseContractCreation = useCallback(() => {
     setIsCreating(false);
@@ -704,16 +715,14 @@ export default function ContractsPage() {
                 loadingCount={6}
                 className="space-y-2"
                 getItemKey={(doc) => doc.id}
-                slotClassName={({ item, isLoading }) => {
+                itemVariant="card"
+                getSlotState={({ item, isLoading }) => {
                   const isRefreshing = Boolean(item && pendingDocumentIds.has(item.id));
                   const isActive = !isLoading && item && selectedDocument?.id === item.id;
-                  return cn(
-                    "flex items-center gap-[calc(12px*var(--v3-ui-scale,1))] rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--v3-ui-scale,1))] transition-all duration-200",
-                    !isLoading && !isRefreshing && "cursor-pointer",
-                    isActive
-                      ? "bg-v3-primary-light border-2 border-v3-primary"
-                      : !isLoading && !isRefreshing && "hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
-                  );
+                  return {
+                    isActive: Boolean(isActive),
+                    isInteractive: !isLoading && !isRefreshing && Boolean(item),
+                  };
                 }}
                 onSlotClick={(doc) => { setIsCreating(false); setSelectedDocId(doc.id); }}
                 // Load more props
@@ -1439,7 +1448,7 @@ function ContractDetail({
       text: "계약서가 완료되었습니다",
       time: formatDateTime(detailedDocument.updated_date),
     });
-  } else if (category === "rejected") {
+  } else if (category === "expired") {
     activityItems.push({
       icon: AlertTriangle,
       iconVariant: "danger",

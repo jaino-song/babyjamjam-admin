@@ -33,6 +33,7 @@ import {
     InfoRow,
     HeaderActionButton,
     AnimatedSlotList,
+    AnimatedSlotListItemContent,
     EmptyState,
     PageSection,
     ListEmptyState,
@@ -45,7 +46,6 @@ import {
     DropdownMenuItem,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { cn } from "@/lib/utils";
 import { formatWorkAreaLabel } from "@/components/app/employees/employee-form.constants";
 import { getEmployeeGradeBadgeStyle, normalizeEmployeeGrade } from "@/features/employees/grade";
 
@@ -225,15 +225,12 @@ export default function EmployeesPage() {
                             isLoading={isLoading}
                             loadingCount={6}
                             className="space-y-2"
-                            slotClassName={({ item, isLoading: slotLoading }) => {
+                            getSlotState={({ item, isLoading: slotLoading }) => {
                                 const isActive = !slotLoading && item && selectedEmployee?.id === item.id;
-                                return cn(
-                                    "flex items-center gap-3 p-4 rounded-[18px] transition-all duration-200 border-2 border-transparent",
-                                    !slotLoading && "cursor-pointer",
-                                    isActive
-                                        ? "bg-v3-primary-light border-v3-primary"
-                                        : !slotLoading && "hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
-                                );
+                                return {
+                                    isActive: Boolean(isActive),
+                                    isInteractive: !slotLoading && Boolean(item),
+                                };
                             }}
                             onSlotClick={(employee) => handleSelectEmployee(employee)}
                             hasMore={hasNextPage}
@@ -258,29 +255,20 @@ export default function EmployeesPage() {
                                 if (!employee) return null;
 
                                 return (
-                                    <>
-                                        <div data-component="employees-list-item-avatar" className="w-11 h-11 rounded-[14px] bg-gradient-to-br from-v3-primary to-purple-500 flex items-center justify-center shrink-0 shadow-md">
-                                            <UserCheck className="w-5 h-5 shrink-0 transition-colors text-white" aria-hidden="true" />
-                                        </div>
-
-                                        <div data-component="employees-list-item-info" className="flex-1 min-w-0">
-                                            <div data-component="employees-list-item-name-row" className="flex items-center gap-2 mb-0.5">
-                                                <span className="font-bold text-[0.8rem] text-v3-dark truncate">
-                                                    {employee.name}
-                                                </span>
-                                            </div>
-                                            <div data-component="employees-list-item-meta-row" className="flex items-center gap-3 text-[0.65rem] text-v3-text-muted">
-                                                <span className="flex items-center gap-1 truncate">
-                                                    <Phone className="w-3 h-3" />
-                                                    {formatPhoneNumber(employee.phone)}
-                                                </span>
-                                            </div>
-                                        </div>
-
-                                        <div data-component="employees-list-item-status" className="shrink-0">
-                                            {getOpenToNextWorkBadge(employee.openToNextWork)}
-                                        </div>
-                                    </>
+                                    <AnimatedSlotListItemContent
+                                        dataComponent="employees-list-item"
+                                        icon={UserCheck}
+                                        iconContainerClassName="bg-gradient-to-br from-v3-primary to-purple-500 text-white"
+                                        iconClassName="text-white"
+                                        title={employee.name}
+                                        subtitle={
+                                            <span className="flex items-center gap-1 truncate">
+                                                <Phone className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(12px*var(--v3-ui-scale,1))]" />
+                                                {formatPhoneNumber(employee.phone)}
+                                            </span>
+                                        }
+                                        status={getOpenToNextWorkBadge(employee.openToNextWork)}
+                                    />
                                 );
                             }}
                         />

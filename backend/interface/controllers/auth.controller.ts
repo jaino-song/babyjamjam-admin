@@ -1,7 +1,7 @@
-import { BadRequestException, Body, Controller, Get, Headers, Ip, Post, Query, Req, Request, Res, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Headers, Ip, Post, Query, Req, Request, Res, UseGuards } from "@nestjs/common";
 import { Response, Request as ExpressRequest } from "express";
 import { AuthGuard } from "@nestjs/passport";
-import { AuthService } from "../../application/services/auth.service";
+import { AuthService, NO_ACCESSIBLE_BRANCH_MESSAGE, type KakaoUserValidationResult } from "../../application/services/auth.service";
 import { JwtGuard } from "../../infrastructure/auth/jwt.guard";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
 import { TokenExchangeDto } from "interface/dto/token-exchange.dto";
@@ -79,7 +79,18 @@ export class AuthController {
         const frontendURL = this.resolveFrontendURL(loginState.client);
 
         // Normal login/registration flow
-        const result = await this.authService.validateKakaoUser(req.user);
+        let result: KakaoUserValidationResult;
+        try {
+            result = await this.authService.validateKakaoUser(req.user);
+        } catch (error) {
+            if (error instanceof ForbiddenException && error.message === NO_ACCESSIBLE_BRANCH_MESSAGE) {
+                const query = new URLSearchParams({ error: NO_ACCESSIBLE_BRANCH_MESSAGE });
+                return res.redirect(`${frontendURL}/callback?${query.toString()}`);
+            }
+
+            throw error;
+        }
+
         const code = ("onboardingRequired" in result && result.onboardingRequired)
             ? result.onboardingKind === "kakao_signup"
                 ? await this.authService.createPendingSignupCode(result.pendingSignupData)

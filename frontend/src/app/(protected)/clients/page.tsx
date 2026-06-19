@@ -54,8 +54,10 @@ import {
     InfoRow,
     StatusBadge,
     AnimatedSlotList,
+    AnimatedSlotListItemContent,
     HeaderActionButton,
     EmptyState,
+    DetailEmptyState,
     PageSection,
     ListEmptyState,
     DetailTabPanels,
@@ -213,9 +215,10 @@ function ClientMessageHistoryList({
 }) {
     if (!hasClientPhone) {
         return (
-            <div data-component="clients-detail-messages-empty" className="text-center py-12 text-v3-text-muted text-[0.85rem]">
-                고객 전화번호가 등록되어 있지 않습니다
-            </div>
+            <DetailEmptyState
+                name="clients-detail-messages-empty"
+                message="고객 전화번호가 등록되어 있지 않습니다"
+            />
         );
     }
 
@@ -254,9 +257,10 @@ function ClientMessageHistoryList({
 
     if (records.length === 0) {
         return (
-            <div data-component="clients-detail-messages-empty" className="text-center py-12 text-v3-text-muted text-[0.85rem]">
-                메시지 발송 내역이 없습니다
-            </div>
+            <DetailEmptyState
+                name="clients-detail-messages-empty"
+                message="메시지 발송 내역이 없습니다"
+            />
         );
     }
 
@@ -291,34 +295,30 @@ function ClientMessageHistoryList({
                                 : "border-transparent hover:border-v3-primary/30 hover:bg-v3-primary-light/50"
                         )}
                     >
-                        <div data-component="clients-detail-messages-list-item-icon" className="flex h-[calc(44px*var(--v3-ui-scale,1))] w-[calc(44px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[14px] bg-v3-dim-white text-v3-primary shadow-md">
-                            <ItemIcon className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
-                        </div>
-
-                        <div data-component="clients-detail-messages-list-item-copy" className="min-w-0 flex-1">
-                            <p className="truncate text-[calc(16px*var(--v3-ui-scale,1))] font-bold text-v3-dark">
-                                {normalizedRecord.title}
-                            </p>
-                            <p className="mt-[calc(2px*var(--v3-ui-scale,1))] truncate text-[calc(14px*var(--v3-ui-scale,1))] text-v3-text-muted">
-                                {normalizedRecord.messagePreview}
-                            </p>
-                        </div>
-
-                        <div
-                            data-component="clients-detail-messages-list-item-meta"
-                            className="ml-auto flex shrink-0 flex-col items-end justify-end gap-1 text-right"
-                        >
-                            <span
-                                data-component="clients-detail-messages-list-item-status"
-                                className={cn(
-                                    "inline-flex shrink-0 items-center justify-center overflow-hidden rounded-[50px] border px-[calc(12px*var(--v3-ui-scale,1))] py-[calc(4px*var(--v3-ui-scale,1))] text-[calc(10.4px*var(--v3-ui-scale,1))] font-semibold whitespace-nowrap transition-colors",
-                                    statusMeta.tone,
-                                    statusBorderClassName
-                                )}
-                            >
-                                {CLIENT_MESSAGE_HISTORY_LIST_STATUS_LABELS[normalizedRecord.status]}
-                            </span>
-                        </div>
+                        <AnimatedSlotListItemContent
+                            dataComponent="clients-detail-messages-list-item"
+                            icon={ItemIcon}
+                            iconContainerClassName="text-v3-primary"
+                            title={normalizedRecord.title}
+                            subtitle={normalizedRecord.messagePreview}
+                            status={
+                                <div
+                                    data-component="clients-detail-messages-list-item-meta"
+                                    className="flex shrink-0 flex-col items-end justify-end gap-1 text-right"
+                                >
+                                    <span
+                                        data-component="clients-detail-messages-list-item-status"
+                                        className={cn(
+                                            "inline-flex shrink-0 items-center justify-center overflow-hidden rounded-[50px] border px-[calc(12px*var(--v3-ui-scale,1))] py-[calc(4px*var(--v3-ui-scale,1))] text-[calc(10.4px*var(--v3-ui-scale,1))] font-semibold whitespace-nowrap transition-colors",
+                                            statusMeta.tone,
+                                            statusBorderClassName
+                                        )}
+                                    >
+                                        {CLIENT_MESSAGE_HISTORY_LIST_STATUS_LABELS[normalizedRecord.status]}
+                                    </span>
+                                </div>
+                            }
+                        />
                     </button>
                 );
             })}
@@ -422,42 +422,38 @@ function ClientAutomationSection() {
                             isLoading={false}
                             className="space-y-2"
                             getItemKey={(item) => item.id}
-                            slotClassName={({ item }) =>
-                                cn(
-                                    "flex min-h-[calc(94px*var(--v3-ui-scale,1))] items-center gap-[calc(12px*var(--v3-ui-scale,1))] rounded-[18px] border-2 p-[calc(16px*var(--v3-ui-scale,1))] text-left transition-all duration-200 cursor-pointer",
-                                    item?.id === selectedAutomationId
-                                        ? "border-v3-primary bg-v3-primary-light"
-                                        : "border-transparent bg-white hover:border-v3-primary/30 hover:bg-v3-primary-light/50",
-                                )
-                            }
+                            itemVariant="card"
+                            getSlotState={({ item }) => ({
+                                isActive: item?.id === selectedAutomationId,
+                                isInteractive: Boolean(item),
+                            })}
                             onSlotClick={(item) => setSelectedAutomationId(item.id)}
                             render={({ item }) => {
                                 if (!item) return null;
-                                const Icon = item.icon;
 
                                 return (
-                                    <>
-                                        <div data-component="clients-automation-item-icon" className="flex h-[calc(44px*var(--v3-ui-scale,1))] w-[calc(44px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[14px] bg-v3-dim-white text-v3-primary shadow-md">
-                                            <Icon className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
-                                        </div>
-                                        <div data-component="clients-automation-item-copy" className="min-w-0 flex-1">
-                                            <p className="truncate text-[calc(13.6px*var(--v3-ui-scale,1))] font-bold text-v3-dark">{item.title}</p>
-                                            <p className="mt-[calc(2px*var(--v3-ui-scale,1))] truncate text-[calc(11.2px*var(--v3-ui-scale,1))] text-v3-text-muted">{item.subtitle}</p>
-                                        </div>
-                                        <Switch
-                                            data-component="clients-automation-item-toggle"
-                                            aria-label={`${item.title} 사용`}
-                                            checked={automationEnabledById[item.id]}
-                                            onClick={(event) => event.stopPropagation()}
-                                            onCheckedChange={(checked) =>
-                                                setAutomationEnabledById((current) => ({
-                                                    ...current,
-                                                    [item.id]: checked,
-                                                }))
-                                            }
-                                            className="ml-auto shrink-0"
-                                        />
-                                    </>
+                                    <AnimatedSlotListItemContent
+                                        dataComponent="clients-automation-item"
+                                        icon={item.icon}
+                                        iconContainerClassName="text-v3-primary"
+                                        title={item.title}
+                                        subtitle={item.subtitle}
+                                        status={(
+                                            <Switch
+                                                data-component="clients-automation-item-toggle"
+                                                aria-label={`${item.title} 사용`}
+                                                checked={automationEnabledById[item.id]}
+                                                onClick={(event) => event.stopPropagation()}
+                                                onCheckedChange={(checked) =>
+                                                    setAutomationEnabledById((current) => ({
+                                                        ...current,
+                                                        [item.id]: checked,
+                                                    }))
+                                                }
+                                                className="ml-auto shrink-0"
+                                            />
+                                        )}
+                                    />
                                 );
                             }}
                         />
@@ -840,100 +836,77 @@ export default function ClientsPage() {
 	                            onClick={handleAddNew}
 	                            data-testid="add-client-button"
 	                            data-component="clients-header-add"
+	                            className={
+	                                shouldShowClientFormPanel
+	                                    ? "bg-v3-primary text-white hover:bg-v3-primary"
+	                                    : undefined
+	                            }
 	                        />
 	                    }
 	                >
-	                    <div data-component="clients-list-content" className="space-y-2">
 	                    {!isLoading && filteredClients.length === 0 ? (
-	                            <ListEmptyState message={t(locale, "clients.no-data")} />
-	                        ) : (
-	                            <>
-	                                <AnimatedSlotList<Client>
+	                        <ListEmptyState message={t(locale, "clients.no-data")} />
+	                    ) : (
+	                        <div data-component="clients-list-content" className="space-y-2">
+	                            <AnimatedSlotList<Client>
 	                                    items={filteredClients}
 	                                    isLoading={isLoading}
 	                                    loadingCount={10}
 	                                    className="space-y-2"
-	                                    slotClassName={({ item, isLoading }) =>
-	                                        cn(
-	                                            "flex min-h-[calc(94px*var(--v3-ui-scale,1))] cursor-pointer items-center gap-[calc(12px*var(--v3-ui-scale,1))] rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--v3-ui-scale,1))] transition-all duration-200",
-	                                            !isLoading &&
-                                                item &&
-                                                (activeSelectedClient?.id === item.id
-	                                                    ? "border-v3-primary bg-v3-primary-light"
-	                                                    : "hover:bg-v3-primary-light/50 hover:border-v3-primary/30")
-	                                        )
-	                                    }
+	                                    itemVariant="card"
+	                                    getSlotState={({ item, isLoading }) => ({
+	                                        isActive: !isLoading && item?.id === activeSelectedClient?.id,
+	                                        isInteractive: !isLoading && Boolean(item),
+	                                    })}
 	                                    onSlotClick={(client) => handleSelectClient(client)}
 	                                    render={({ item, isLoading }) => {
 	                                        const client = item;
-	                                        return (
-	                                            <>
-	                                                {isLoading ? (
+	                                        if (isLoading) {
+	                                            return (
+	                                                <>
 	                                                    <div data-component="clients-list-item-avatar-skeleton" className="flex h-[calc(44px*var(--v3-ui-scale,1))] w-[calc(44px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[14px] bg-v3-dim-white shadow-md">
 	                                                        <Skeleton className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))] rounded-md bg-white/70" />
 	                                                    </div>
-	                                                ) : (
-	                                                    client && (
-                                                        <div
-                                                            data-component="clients-list-item-avatar"
-                                                            className={cn(
-                                                                "flex h-[calc(44px*var(--v3-ui-scale,1))] w-[calc(44px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[14px] shadow-md",
-                                                                getAvatarGradient(client.name)
-                                                            )}
-                                                        >
-                                                            <Users className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))] shrink-0 transition-colors text-white" aria-hidden="true" />
-                                                        </div>
-	                                                    )
+	                                                    <div data-component="clients-list-item-info-skeleton" className="flex-1 min-w-0">
+	                                                        <Skeleton className="h-[calc(16px*var(--v3-ui-scale,1))] w-[calc(112px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
+	                                                        <Skeleton className="mt-[calc(6px*var(--v3-ui-scale,1))] h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(192px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
+	                                                    </div>
+	                                                    <Skeleton className="h-[calc(24px*var(--v3-ui-scale,1))] w-[calc(56px*var(--v3-ui-scale,1))] rounded-full bg-v3-dim-white" />
+	                                                </>
+	                                            );
+	                                        }
+
+	                                        if (!client) return null;
+
+	                                        return (
+	                                            <AnimatedSlotListItemContent
+	                                                dataComponent="clients-list-item"
+	                                                icon={Users}
+	                                                iconContainerClassName={cn(getAvatarGradient(client.name), "text-white")}
+	                                                iconClassName="text-white"
+	                                                title={client.name}
+	                                                subtitle={
+	                                                    <>
+	                                                        {client.phone ? <span>{client.phone}</span> : null}
+	                                                        {client.address ? (
+	                                                            <span className="truncate">
+	                                                                {client.address.split(" ")[1] || client.address}
+	                                                            </span>
+	                                                        ) : null}
+	                                                    </>
+	                                                }
+	                                                status={(
+	                                                    <StatusBadge
+	                                                        status={mapServiceStatusToV3(client.serviceStatus)}
+	                                                        label={getStatusLabel(client.serviceStatus)}
+	                                                    />
 	                                                )}
-
-	                                                <div data-component="clients-list-item-info" className="flex-1 min-w-0">
-	                                                    <div data-component="clients-list-item-name-row" className="mb-[calc(2px*var(--v3-ui-scale,1))] flex items-center gap-[calc(8px*var(--v3-ui-scale,1))]">
-	                                                        {isLoading ? (
-	                                                            <>
-	                                                                <Skeleton className="h-[calc(16px*var(--v3-ui-scale,1))] w-[calc(112px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
-	                                                            </>
-	                                                        ) : (
-	                                                            <>
-	                                                                <span className="truncate text-[calc(16px*var(--v3-ui-scale,1))] font-bold text-v3-dark">
-	                                                                    {client?.name}
-	                                                                </span>
-                                                            </>
-                                                        )}
-                                                    </div>
-
-	                                                    {isLoading ? (
-	                                                        <Skeleton className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(192px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
-	                                                    ) : (
-	                                                        <div data-component="clients-list-item-meta-row" className="flex items-center gap-[calc(8px*var(--v3-ui-scale,1))] truncate text-[calc(14px*var(--v3-ui-scale,1))] text-v3-text-muted">
-	                                                            {client?.phone && <span>{client.phone}</span>}
-	                                                            {client?.address && (
-	                                                                <span className="truncate">
-	                                                                    {client.address.split(" ")[1] || client.address}
-	                                                                </span>
-	                                                            )}
-	                                                        </div>
-	                                                    )}
-	                                                </div>
-
-	                                                <div data-component="clients-list-item-status" className="shrink-0">
-	                                                    {isLoading ? (
-	                                                        <Skeleton className="h-[calc(24px*var(--v3-ui-scale,1))] w-[calc(56px*var(--v3-ui-scale,1))] rounded-full bg-v3-dim-white" />
-	                                                    ) : (
-	                                                        client && (
-	                                                            <StatusBadge
-	                                                                status={mapServiceStatusToV3(client.serviceStatus)}
-	                                                                label={getStatusLabel(client.serviceStatus)}
-	                                                            />
-	                                                        )
-	                                                    )}
-	                                                </div>
-	                                            </>
+	                                            />
 	                                        );
 	                                    }}
 	                                />
-	                            </>
-	                        )}
-	                    </div>
+	                        </div>
+	                    )}
 	                </ListPanel>
 
                 {shouldShowClientFormPanel ? (
@@ -1042,145 +1015,121 @@ export default function ClientsPage() {
                                 />
                             }
                         >
-                            <div
-                                data-component="clients-detail-content"
-                                data-active-tab={activeDetailTab}
-                                className="overflow-hidden"
-                            >
-                                <div
-                                    data-component="clients-detail-content-track"
-                                    className="flex transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform motion-reduce:transition-none"
-                                    style={{ transform: `translateX(-${activeDetailTabIndex * 100}%)` }}
-                                >
-                                    <section
-                                        data-component="clients-detail-content-panel"
-                                        data-panel="basic"
-                                        aria-hidden={activeDetailTab !== "basic"}
-                                        className={cn(
-                                            "w-full min-w-0 shrink-0",
-                                            activeDetailTab !== "basic" && "pointer-events-none",
-                                            !visibleDetailTabs.includes("basic") && "max-h-0 overflow-hidden"
-                                        )}
-                                    >
-                                        <div data-component="clients-detail-basic-grid" className="grid grid-cols-2 gap-4">
-                                            <InfoCard title="고객 정보" className="col-start-1 row-start-1 row-end-3">
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.name")}
-                                                    value={activeSelectedClient.name}
-                                                />
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.birthday")}
-                                                    value={activeSelectedClient.birthday || "-"}
-                                                />
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.due-date")}
-                                                    value={formatDate(activeSelectedClient.dueDate)}
-                                                />
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.phone")}
-                                                    value={activeSelectedClient.phone || "-"}
-                                                />
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.address")}
-                                                    value={activeSelectedClient.address || "-"}
-                                                />
-                                            </InfoCard>
+                            <DetailTabPanels
+                                activeTab={activeDetailTab}
+                                dataComponent="clients-detail-content"
+                                panelDataComponent="clients-detail-content-panel"
+                                panels={[
+                                    {
+                                        key: "basic",
+                                        children: (
+                                            <div data-component="clients-detail-basic-grid" className="grid grid-cols-2 gap-4">
+                                                <InfoCard title="고객 정보" className="col-start-1 row-start-1 row-end-3">
+                                                    <InfoRow
+                                                        label={t(locale, "clients.form.name")}
+                                                        value={activeSelectedClient.name}
+                                                    />
+                                                    <InfoRow
+                                                        label={t(locale, "clients.form.birthday")}
+                                                        value={activeSelectedClient.birthday || "-"}
+                                                    />
+                                                    <InfoRow
+                                                        label={t(locale, "clients.form.due-date")}
+                                                        value={formatDate(activeSelectedClient.dueDate)}
+                                                    />
+                                                    <InfoRow
+                                                        label={t(locale, "clients.form.phone")}
+                                                        value={activeSelectedClient.phone || "-"}
+                                                    />
+                                                    <InfoRow
+                                                        label={t(locale, "clients.form.address")}
+                                                        value={activeSelectedClient.address || "-"}
+                                                    />
+                                                </InfoCard>
 
-                                            <InfoCard title="담당 관리사" className="col-start-1 row-start-3 row-end-5">
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.primary-employee")}
-                                                    value={
-                                                        activeSelectedClient.primaryEmployee?.name ??
-                                                        "-"
-                                                    }
-                                                />
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.secondary-employee")}
-                                                    value={
-                                                        activeSelectedClient.secondaryEmployee
-                                                            ?.name ?? "-"
-                                                    }
-                                                />
-                                            </InfoCard>
+                                                <InfoCard title="담당 관리사" className="col-start-1 row-start-3 row-end-5">
+                                                    <InfoRow
+                                                        label={t(locale, "clients.form.primary-employee")}
+                                                        value={
+                                                            activeSelectedClient.primaryEmployee?.name ??
+                                                            "-"
+                                                        }
+                                                    />
+                                                    <InfoRow
+                                                        label={t(locale, "clients.form.secondary-employee")}
+                                                        value={
+                                                            activeSelectedClient.secondaryEmployee
+                                                                ?.name ?? "-"
+                                                        }
+                                                    />
+                                                </InfoCard>
 
-                                            <InfoCard title="서비스 정보" className="col-start-2 row-start-1 row-end-5">
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.voucher-type")}
-                                                    value={activeSelectedClient.type || "-"}
-                                                />
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.duration")}
-                                                    value={
-                                                        activeSelectedClient.duration
-                                                            ? `${activeSelectedClient.duration}일`
-                                                            : "-"
-                                                    }
-                                                />
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.start-date")}
-                                                    value={formatDate(activeSelectedClient.startDate)}
-                                                />
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.end-date")}
-                                                    value={formatDate(activeSelectedClient.endDate)}
-                                                />
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.full-price")}
-                                                    value={formatPrice(
-                                                        activeSelectedClient.fullPrice
-                                                    )}
-                                                />
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.grant")}
-                                                    value={formatPrice(activeSelectedClient.grant)}
-                                                />
-                                                <InfoRow
-                                                    label={t(locale, "clients.form.actual-price")}
-                                                    value={formatPrice(
-                                                        activeSelectedClient.actualPrice
-                                                    )}
-                                                />
-                                            </InfoCard>
-                                        </div>
-                                    </section>
-
-                                    <section
-                                        data-component="clients-detail-content-panel"
-                                        data-panel="contracts"
-                                        aria-hidden={activeDetailTab !== "contracts"}
-                                        className={cn(
-                                            "w-full min-w-0 shrink-0",
-                                            activeDetailTab !== "contracts" && "pointer-events-none",
-                                            !visibleDetailTabs.includes("contracts") && "max-h-0 overflow-hidden"
-                                        )}
-                                    >
-                                        <div data-component="clients-detail-contracts-empty" className="text-center py-12 text-v3-text-muted text-[0.85rem]">
-                                            계약서 정보가 없습니다
-                                        </div>
-                                    </section>
-
-                                    <section
-                                        data-component="clients-detail-content-panel"
-                                        data-panel="alimtalk"
-                                        aria-hidden={activeDetailTab !== "alimtalk"}
-                                        className={cn(
-                                            "w-full min-w-0 shrink-0",
-                                            activeDetailTab !== "alimtalk" && "pointer-events-none",
-                                            !visibleDetailTabs.includes("alimtalk") && "max-h-0 overflow-hidden"
-                                        )}
-                                    >
-                                        <ClientMessageHistoryList
-                                            records={activeClientMessageHistory}
-                                            hasClientPhone={activeSelectedClientPhoneKey.length > 0}
-                                            isLoading={isMessageHistoryLoading}
-                                            isError={isMessageHistoryError}
-                                            clientName={activeSelectedClient.name}
-                                            selectedRecordId={selectedMessageHistoryId}
-                                            onSelectRecord={handleSelectClientMessageHistoryRecord}
-                                        />
-                                    </section>
-                                </div>
-                            </div>
+                                                <InfoCard title="서비스 정보" className="col-start-2 row-start-1 row-end-5">
+                                                    <InfoRow
+                                                        label={t(locale, "clients.form.voucher-type")}
+                                                        value={activeSelectedClient.type || "-"}
+                                                    />
+                                                    <InfoRow
+                                                        label={t(locale, "clients.form.duration")}
+                                                        value={
+                                                            activeSelectedClient.duration
+                                                                ? `${activeSelectedClient.duration}일`
+                                                                : "-"
+                                                        }
+                                                    />
+                                                    <InfoRow
+                                                        label={t(locale, "clients.form.start-date")}
+                                                        value={formatDate(activeSelectedClient.startDate)}
+                                                    />
+                                                    <InfoRow
+                                                        label={t(locale, "clients.form.end-date")}
+                                                        value={formatDate(activeSelectedClient.endDate)}
+                                                    />
+                                                    <InfoRow
+                                                        label={t(locale, "clients.form.full-price")}
+                                                        value={formatPrice(
+                                                            activeSelectedClient.fullPrice
+                                                        )}
+                                                    />
+                                                    <InfoRow
+                                                        label={t(locale, "clients.form.grant")}
+                                                        value={formatPrice(activeSelectedClient.grant)}
+                                                    />
+                                                    <InfoRow
+                                                        label={t(locale, "clients.form.actual-price")}
+                                                        value={formatPrice(
+                                                            activeSelectedClient.actualPrice
+                                                        )}
+                                                    />
+                                                </InfoCard>
+                                            </div>
+                                        ),
+                                    },
+                                    {
+                                        key: "contracts",
+                                        children: (
+                                            <DetailEmptyState
+                                                name="clients-detail-contracts-empty"
+                                                message="계약서 정보가 없습니다"
+                                            />
+                                        ),
+                                    },
+                                    {
+                                        key: "alimtalk",
+                                        children: (
+                                            <ClientMessageHistoryList
+                                                records={activeClientMessageHistory}
+                                                hasClientPhone={activeSelectedClientPhoneKey.length > 0}
+                                                isLoading={isMessageHistoryLoading}
+                                                isError={isMessageHistoryError}
+                                                clientName={activeSelectedClient.name}
+                                                selectedRecordId={selectedMessageHistoryId}
+                                                onSelectRecord={handleSelectClientMessageHistoryRecord}
+                                            />
+                                        ),
+                                    },
+                                ]}
+                            />
                             </DetailPanel>
                         </ClientMessageDetailSlide>
                     </div>

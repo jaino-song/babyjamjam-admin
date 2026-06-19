@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -28,15 +28,55 @@ export function ExpandableSearch({
   closeLabel = "검색 닫기",
 }: ExpandableSearchProps) {
   const [expanded, setExpanded] = useState(false);
+  const [overlayExpandedWidth, setOverlayExpandedWidth] = useState("7rem");
+  const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const resolveOverlayExpandedWidth = useCallback(() => {
+    const container = rootRef.current?.closest<HTMLElement>('[data-component="list-panel-tabs"]');
+    const containerWidth = container?.getBoundingClientRect().width ?? 0;
+
+    if (!containerWidth) return "7rem";
+
+    const rootFontSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    const minimumWidth = 7 * rootFontSize;
+    const preferredWidth = containerWidth * 0.2;
+    const maximumWidth = containerWidth * 0.3;
+    const effectiveMinimumWidth = Math.min(minimumWidth, maximumWidth);
+    const resolvedWidth = Math.min(Math.max(preferredWidth, effectiveMinimumWidth), maximumWidth);
+
+    return `${resolvedWidth}px`;
+  }, []);
+
+  useEffect(() => {
+    if (!overlay || !expanded) return;
+
+    const container = rootRef.current?.closest<HTMLElement>('[data-component="list-panel-tabs"]');
+
+    if (!container || typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(() => {
+      setOverlayExpandedWidth(resolveOverlayExpandedWidth());
+    });
+
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [expanded, overlay, resolveOverlayExpandedWidth]);
 
   const handleToggle = () => {
     if (disabled) return;
-    setExpanded((prev) => {
-      if (!prev) setTimeout(() => inputRef.current?.focus(), 50);
-      else onChange("");
-      return !prev;
-    });
+
+    if (!expanded) {
+      if (overlay) {
+        setOverlayExpandedWidth(resolveOverlayExpandedWidth());
+      }
+      setExpanded(true);
+      setTimeout(() => inputRef.current?.focus(), 50);
+      return;
+    }
+
+    onChange("");
+    setExpanded(false);
   };
 
   const handleBlur = () => {
@@ -46,15 +86,22 @@ export function ExpandableSearch({
   if (overlay) {
     return (
       <div
+        ref={rootRef}
         data-component="expandable-search"
         className={cn("relative z-20 flex h-[calc(40px*var(--v3-ui-scale,1))] w-[calc(32px*var(--v3-ui-scale,1))] shrink-0 items-start justify-end overflow-visible", className)}
       >
         <div
           data-component="expandable-search-overlay"
+          data-expanded={expanded ? "true" : "false"}
+          style={{
+            width: expanded
+              ? overlayExpandedWidth
+              : "calc(32px * var(--v3-ui-scale, 1))",
+          }}
           className={cn(
-            "absolute right-0 top-0 flex h-[calc(40px*var(--v3-ui-scale,1))] items-start justify-start rounded-[12px] bg-transparent transition-[width,background] duration-200",
+            "expandable-search-overlay-surface absolute right-0 top-0 flex h-[calc(40px*var(--v3-ui-scale,1))] items-start justify-start overflow-hidden rounded-[12px] bg-transparent",
             expanded
-              ? cn(expandedWidth, "bg-[linear-gradient(to_right,rgb(255_255_255_/_0)_0%,rgb(255_255_255)_10%,rgb(255_255_255)_100%)]")
+              ? "bg-[linear-gradient(to_right,rgb(255_255_255_/_0)_0%,rgb(255_255_255)_10%,rgb(255_255_255)_100%)]"
               : "w-[calc(32px*var(--v3-ui-scale,1))]"
           )}
         >
@@ -78,9 +125,14 @@ export function ExpandableSearch({
             onChange={(e) => onChange(e.target.value)}
             onBlur={handleBlur}
             disabled={disabled}
+            placeholder={expanded ? placeholder : undefined}
+            style={{
+              opacity: expanded ? 1 : 0,
+              paddingInline: expanded ? "calc(8px * var(--v3-ui-scale, 1))" : 0,
+              pointerEvents: expanded ? "auto" : "none",
+            }}
             className={cn(
-              "h-[calc(32px*var(--v3-ui-scale,1))] min-w-0 flex-1 border-0 bg-transparent text-[calc(12.8px*var(--v3-ui-scale,1))] text-v3-dark shadow-none outline-none caret-v3-primary transition-[opacity,padding] duration-200 focus:outline-none focus:ring-0",
-              expanded ? "px-[calc(8px*var(--v3-ui-scale,1))] opacity-100" : "w-0 px-0 opacity-0 pointer-events-none",
+              "expandable-search-overlay-input h-[calc(32px*var(--v3-ui-scale,1))] min-w-0 flex-1 border-0 bg-transparent text-[calc(12.8px*var(--v3-ui-scale,1))] text-v3-dark shadow-none outline-none caret-v3-primary placeholder:text-v3-text-muted/50 focus:outline-none focus:ring-0",
               disabled && "cursor-not-allowed text-v3-text-muted",
             )}
           />

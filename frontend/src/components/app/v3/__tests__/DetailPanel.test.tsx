@@ -53,7 +53,9 @@ describe("DetailPanel", () => {
 
     expect(container.querySelector('[data-component="detail-panel-overlay"]')).toBeInTheDocument();
     expect(screen.getByText("항목을 선택하면 상세 정보가 표시됩니다.")).toBeInTheDocument();
-    expect(container.querySelector('[data-component="detail-panel-empty"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-component="detail-panel-empty"]')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component="list-empty-state-copy"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-component="detail-panel-empty-copy"]')).not.toBeInTheDocument();
   });
 
   it("returns to the list from the compact back button", () => {

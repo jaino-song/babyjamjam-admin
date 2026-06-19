@@ -1367,19 +1367,22 @@ export const ContractCreationForm = ({
 
   const footer = (
     <SteppedWizardPanelFooter className={footerClassName}>
-      {hasProcessingSuccess ? (
-        <div aria-hidden="true" />
-      ) : (
-        <Button
-          type="button"
-          variant="ghost"
-          onClick={handleCancel}
-          disabled={hasCreationSession && !hasProcessingFailure}
-        >
-          취소
-        </Button>
-      )}
-      <div className="flex items-center gap-2">
+      <div className="flex flex-1 items-center justify-start">
+        {hasProcessingSuccess ? (
+          <div aria-hidden="true" />
+        ) : (
+          <Button
+            type="button"
+            variant="ghost"
+            width="md"
+            onClick={handleCancel}
+            disabled={hasCreationSession && !hasProcessingFailure}
+          >
+            취소
+          </Button>
+        )}
+      </div>
+      <div className="flex flex-1 items-center justify-end gap-2">
         {activeStep > 0 && !isProcessingStep && (
           <Button
             type="button"
@@ -1395,11 +1398,17 @@ export const ContractCreationForm = ({
           <Button
             type="button"
             data-testid="contract-creation-next"
+            width="md"
             onClick={() => handleStepChange(activeStep + 1)}
             disabled={!isCurrentStepValid}
           >
-            다음
-            <ChevronRight className="h-4 w-4" />
+            <span
+              data-component="contract-creation-next-content"
+              className="grid w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center"
+            >
+              <span className="col-start-2">다음</span>
+              <ChevronRight className="col-start-3 ml-2 h-4 w-4 justify-self-start" />
+            </span>
           </Button>
         ) : activeStep === CONTRACT_INFO_STEP_INDEX ? (
           <Button

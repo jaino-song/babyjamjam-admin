@@ -32,6 +32,7 @@ export const NumberInput = ({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
+        required={required}
         min={min}
         max={max}
       />

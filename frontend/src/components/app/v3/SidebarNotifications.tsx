@@ -124,6 +124,7 @@ export function SidebarNotifications() {
         name: alert.name,
         createdAt: alert.createdAt,
         message,
+        url: `/dashboard?clientId=${alert.id}`,
         timeLabel: formatNotificationTime(alert.createdAt),
         unread: true,
         tone: alert.priority === 1 ? "warning" : "default",

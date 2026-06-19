@@ -7,6 +7,15 @@ export interface EmailOptions {
     text?: string;
 }
 
+export interface NotificationEmailOptions {
+    to: string;
+    name: string | null;
+    title: string;
+    body: string;
+    ctaUrl: string;
+    ctaLabel: string;
+}
+
 export interface EmailPort {
     /**
      * Send an email
@@ -38,4 +47,10 @@ export interface EmailPort {
         name: string | null,
         resetUrl: string,
     ): Promise<string>;
+
+    /**
+     * Send a templated notification email
+     * @param options Notification email options including template variables
+     */
+    sendNotificationEmail(options: NotificationEmailOptions): Promise<string>;
 }

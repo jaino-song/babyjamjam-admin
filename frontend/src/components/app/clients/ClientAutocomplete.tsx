@@ -7,6 +7,7 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import type { Client } from "@/lib/client/types";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
+import { formatKoreanPhoneNumber, normalizeKoreanPhoneLookupKey } from "@/lib/phone";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { cn } from "@/lib/utils";
 
@@ -42,6 +43,8 @@ interface ClientAutocompleteProps {
     onManualEntry?: () => void;
     manualValue?: string;
     onManualValueChange?: (value: string) => void;
+    displayValueMode?: "name" | "phone";
+    searchMode?: "all" | "phone";
 }
 
 export function ClientAutocomplete({
@@ -57,6 +60,8 @@ export function ClientAutocomplete({
     onManualEntry,
     manualValue,
     onManualValueChange,
+    displayValueMode = "name",
+    searchMode = "all",
 }: ClientAutocompleteProps) {
     const locale = useLocale();
     const { data: clients, isLoading } = useAllClients();
@@ -82,24 +87,58 @@ export function ClientAutocomplete({
         return clients.find((client) => client.id === value) || null;
     }, [value, clients]);
 
-    const commandInputValue = selectedClient?.name || (allowsInlineManualValue ? manualValue ?? "" : inputValue);
+    const getClientDisplayValue = (client: Client | null) => {
+        if (!client) return "";
+        return displayValueMode === "phone" ? formatKoreanPhoneNumber(client.phone ?? "") : client.name;
+    };
+
+    const selectedClientDisplayValue = getClientDisplayValue(selectedClient);
+    const manualDisplayValue =
+        displayValueMode === "phone" ? formatKoreanPhoneNumber(manualValue ?? "") : manualValue ?? "";
+    const inputDisplayValue =
+        displayValueMode === "phone" ? formatKoreanPhoneNumber(inputValue) : inputValue;
+    const commandInputValue = selectedClientDisplayValue || (allowsInlineManualValue ? manualDisplayValue : inputDisplayValue);
 
     // Filter clients based on input - Korean IME compatible
     const filteredClients = useMemo(() => {
         if (!commandInputValue.trim()) return [];
+        const phoneQuery = normalizeKoreanPhoneLookupKey(commandInputValue);
+
         return availableClients.filter(
-            (client) =>
-                // 초성 search only for name (e.g., ㄱ → 김현아)
-                matchesKoreanSearch(client.name, commandInputValue) ||
-                // Phone: simple substring match (no 초성)
-                (client.phone && client.phone.includes(commandInputValue)) ||
-                // Address: simple substring match (no 초성 to avoid false positives)
-                (client.address && client.address.toLowerCase().includes(commandInputValue.toLowerCase()))
+            (client) => {
+                const clientPhone = normalizeKoreanPhoneLookupKey(client.phone ?? "");
+                const matchesPhone = phoneQuery.length > 0 && clientPhone.includes(phoneQuery);
+
+                if (searchMode === "phone") {
+                    return matchesPhone;
+                }
+
+                return (
+                    // 초성 search only for name (e.g., ㄱ → 김현아)
+                    matchesKoreanSearch(client.name, commandInputValue) ||
+                    // Phone: simple substring match (no 초성)
+                    matchesPhone ||
+                    // Address: simple substring match (no 초성 to avoid false positives)
+                    (client.address && client.address.toLowerCase().includes(commandInputValue.toLowerCase()))
+                );
+            }
         );
-    }, [availableClients, commandInputValue]);
+    }, [availableClients, commandInputValue, searchMode]);
+
+    const exactPhoneMatch = useMemo(() => {
+        if (searchMode !== "phone") return null;
+        const phoneQuery = normalizeKoreanPhoneLookupKey(commandInputValue);
+        if (!phoneQuery) return null;
+
+        return (
+            filteredClients.find(
+                (client) => normalizeKoreanPhoneLookupKey(client.phone ?? "") === phoneQuery,
+            ) ?? null
+        );
+    }, [commandInputValue, filteredClients, searchMode]);
 
     const handleSelect = (client: Client) => {
-        setInputValue(client.name);
+        setInputValue(getClientDisplayValue(client));
         onChange(client.id, client);
         setIsOpen(false);
     };
@@ -133,26 +172,40 @@ export function ClientAutocomplete({
     const commitInlineManualValue = () => {
         if (!allowsInlineManualValue || !commandInputValue.trim()) return;
 
+        if (exactPhoneMatch) {
+            handleSelect(exactPhoneMatch);
+            return;
+        }
+
         if (value !== null) {
             onChange(null, null);
         }
-        onManualValueChange?.(commandInputValue);
+        onManualValueChange?.(
+            displayValueMode === "phone" ? formatKoreanPhoneNumber(commandInputValue) : commandInputValue,
+        );
         setIsOpen(false);
         setTimeout(() => triggerRef.current?.focus(), 0);
     };
 
     const handleInputValueChange = (nextValue: string) => {
-        setInputValue(nextValue);
+        const nextDisplayValue =
+            displayValueMode === "phone" ? formatKoreanPhoneNumber(nextValue) : nextValue;
 
-        if (selectedClient && nextValue !== selectedClient.name) {
+        setInputValue(nextDisplayValue);
+
+        if (selectedClient && nextDisplayValue !== selectedClientDisplayValue) {
             onChange(null, null);
         }
-        onManualValueChange?.(nextValue);
+        onManualValueChange?.(nextDisplayValue);
     };
 
-    const displayValue = selectedClient?.name || (allowsInlineManualValue ? manualValue ?? "" : "");
+    const displayValue = selectedClientDisplayValue || (allowsInlineManualValue ? manualDisplayValue : "");
     const hasDisplayValue = displayValue.trim().length > 0;
-    const clearLabel = selectedClient ? "고객 선택 해제" : "고객 이름 입력 지우기";
+    const clearLabel = selectedClient
+        ? "고객 선택 해제"
+        : displayValueMode === "phone"
+            ? "고객 연락처 입력 지우기"
+            : "고객 이름 입력 지우기";
     const searchPlaceholder = placeholder ?? t(locale, "contract-msg.client-search-placeholder");
 
     return (
@@ -288,7 +341,9 @@ export function ClientAutocomplete({
                                                 )}
                                             </div>
                                             <span className="text-xs text-muted-foreground ml-6 group-hover:text-white">
-                                                {client.phone || "-"}{" "}
+                                                {displayValueMode === "phone"
+                                                    ? formatKoreanPhoneNumber(client.phone ?? "") || "-"
+                                                    : client.phone || "-"}{" "}
                                                 {client.address && `· ${client.address}`}
                                             </span>
                                         </CommandItem>

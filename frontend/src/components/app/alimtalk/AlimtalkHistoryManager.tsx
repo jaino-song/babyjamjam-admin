@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   AnimatedSlotList,
+  AnimatedSlotListItemContent,
   DetailEmptyState,
   DetailPanel,
   InfoCard,
@@ -331,15 +332,6 @@ export function AlimtalkHistoryManager() {
         <ListPanel
           title="발송 기록"
           subtitle="발송된 알림톡 기록을 볼 수 있어요."
-          overlay={
-            !isLoading && filteredRecords.length === 0 ? (
-              <ListEmptyState
-                name="alimtalk-history-list-empty"
-                message={emptyStateMessage}
-                className="flex-none min-h-0"
-              />
-            ) : null
-          }
           tabs={HISTORY_LIST_TABS}
           activeTab={statusFilter}
           onTabChange={(value) => {
@@ -373,15 +365,10 @@ export function AlimtalkHistoryManager() {
               isLoading={isLoading}
               loadingCount={5}
               className="space-y-2"
-              slotClassName={({ item, isLoading: slotLoading }) => {
-                return cn(
-                  "flex items-center gap-2.5 rounded-[16px] border-2 border-transparent bg-white p-3 text-left transition-all duration-200",
-                  !slotLoading && "cursor-pointer",
-                  !slotLoading && item?.id === selectedRecord?.id
-                    ? "border-v3-primary bg-v3-primary-light"
-                    : !slotLoading && "hover:border-v3-primary/30 hover:bg-v3-primary-light/50",
-                );
-              }}
+              getSlotState={({ item, isLoading: slotLoading }) => ({
+                isActive: !slotLoading && item?.id === selectedRecord?.id,
+                isInteractive: !slotLoading && Boolean(item),
+              })}
               onSlotClick={(record) => setSelectedRecordId(record.id)}
               render={({ item: record, isLoading: slotLoading }) => {
                 if (slotLoading) {
@@ -411,40 +398,30 @@ export function AlimtalkHistoryManager() {
                 const statusMeta = getStatusMeta(record.status);
 
                 return (
-                  <>
-                    <div
-                      data-component="alimtalk-history-list-item-icon"
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] bg-v3-dim-white text-v3-primary"
-                    >
-                      <EventIcon className="h-4 w-4" />
-                    </div>
-
-                    <div
-                      data-component="alimtalk-history-list-item-copy"
-                      className="min-w-0 flex-1"
-                    >
-                      <p className="truncate text-[0.82rem] font-semibold text-v3-dark">
-                        {getRecordTitle(record)}
-                      </p>
-                      <p className="mt-0.5 truncate text-[0.72rem] text-v3-text-muted">
-                        {(record.recipientName ?? "-")} · {record.receiver} · {formatCompactDateTime(getRecordTimestamp(record))}
-                      </p>
-                    </div>
-
-                    <span
-                      data-component="alimtalk-history-list-item-status"
-                      className={cn(
-                        "inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[0.64rem] font-semibold",
-                        statusMeta.tone
-                      )}
-                    >
-                      {statusMeta.label}
-                    </span>
-                  </>
+                  <AnimatedSlotListItemContent
+                    dataComponent="alimtalk-history-list-item"
+                    icon={EventIcon}
+                    iconContainerClassName="text-v3-primary"
+                    title={getRecordTitle(record)}
+                    subtitle={`${record.recipientName ?? "-"} · ${record.receiver} · ${formatCompactDateTime(getRecordTimestamp(record))}`}
+                    status={
+                      <span
+                        data-component="alimtalk-history-list-item-status"
+                        className={cn(
+                          "inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[0.64rem] font-semibold",
+                          statusMeta.tone
+                        )}
+                      >
+                        {statusMeta.label}
+                      </span>
+                    }
+                  />
                 );
               }}
             />
-          ) : null}
+          ) : (
+            <ListEmptyState message={emptyStateMessage} />
+          )}
         </ListPanel>
 
         {isLoading ? (

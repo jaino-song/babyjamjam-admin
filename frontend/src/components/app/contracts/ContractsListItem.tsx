@@ -3,7 +3,7 @@
 import { memo } from "react";
 import { Calendar, CircleCheck, FileSignature } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { StatusBadge, type StatusType } from "@/components/app/v3";
+import { AnimatedSlotListItemContent, StatusBadge, type StatusType } from "@/components/app/v3";
 import { cn } from "@/lib/utils";
 import { getStatusCategory, mapDocStatusLabel } from "@/lib/eformsign/status-codes";
 import type { EformsignDocument } from "@/lib/eformsign/types";
@@ -16,12 +16,12 @@ interface ContractsListItemProps {
 }
 
 function mapCategoryToStatusType(
-  category: "completed" | "rejected" | "in-progress"
+  category: "completed" | "expired" | "in-progress"
 ): StatusType {
   switch (category) {
     case "completed":
       return "signed";
-    case "rejected":
+    case "expired":
       return "expired";
     default:
       return "pending";
@@ -75,53 +75,31 @@ function ContractsListItemComponent({
     category === "completed" ? formatDate(document.updated_date) : null;
 
   return (
-    <>
-      <div
-        data-component="contracts-list-item-icon"
-        className={cn(
-          "flex h-[calc(44px*var(--v3-ui-scale,1))] w-[calc(44px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[14px] shadow-md",
-          category === "completed"
-            ? "bg-v3-green-light"
-            : category === "rejected"
-              ? "bg-v3-burgundy-light"
-              : isReviewNeeded
-                ? "bg-v3-primary-light"
-                : "bg-v3-orange-light"
-        )}
-      >
-        <FileSignature
-          className={cn(
-            "h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]",
-            category === "completed"
-              ? "text-v3-green"
-              : category === "rejected"
-                ? "text-v3-burgundy"
-                : isReviewNeeded
-                  ? "text-v3-primary"
-                  : "text-v3-orange"
-          )}
-        />
-      </div>
-
-      <div data-component="contracts-list-item-content" className="flex-1 min-w-0">
-        <div
-          data-component="contracts-list-item-title-row"
-          className="mb-[calc(2px*var(--v3-ui-scale,1))] flex items-center gap-[calc(8px*var(--v3-ui-scale,1))]"
-        >
-          <span className="truncate text-[calc(13.6px*var(--v3-ui-scale,1))] font-bold text-v3-dark">
-            {customerName}
-          </span>
-        </div>
-        <div
-          data-component="contracts-list-item-subtitle"
-          className="flex items-center gap-[calc(8px*var(--v3-ui-scale,1))] truncate text-[calc(11.2px*var(--v3-ui-scale,1))] text-v3-text-muted"
-        >
-          {document.document_name}
-        </div>
-        <div
-          data-component="contracts-list-item-meta"
-          className="mt-[calc(6px*var(--v3-ui-scale,1))] flex items-center gap-[calc(12px*var(--v3-ui-scale,1))] overflow-hidden whitespace-nowrap text-[calc(10.4px*var(--v3-ui-scale,1))] leading-none text-v3-text-muted"
-        >
+    <AnimatedSlotListItemContent
+      dataComponent="contracts-list-item"
+      icon={FileSignature}
+      iconContainerClassName={cn(
+        category === "completed"
+          ? "bg-v3-green-light"
+          : category === "expired"
+            ? "bg-v3-burgundy-light"
+            : isReviewNeeded
+              ? "bg-v3-primary-light"
+              : "bg-v3-orange-light"
+      )}
+      iconClassName={cn(
+        category === "completed"
+          ? "text-v3-green"
+          : category === "expired"
+            ? "text-v3-burgundy"
+            : isReviewNeeded
+              ? "text-v3-primary"
+              : "text-v3-orange"
+      )}
+      title={customerName ?? "-"}
+      subtitle={document.document_name}
+      meta={
+        <>
           <span className="flex min-w-0 shrink-0 items-center gap-[calc(4px*var(--v3-ui-scale,1))]">
             <Calendar className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(12px*var(--v3-ui-scale,1))] shrink-0" />
             발송 {sentDate}
@@ -132,13 +110,10 @@ function ContractsListItemComponent({
               완료 {signedDate}
             </span>
           )}
-        </div>
-      </div>
-
-      <div data-component="contracts-list-item-status" className="shrink-0">
-        <StatusBadge status={statusType} label={statusLabel} />
-      </div>
-    </>
+        </>
+      }
+      status={<StatusBadge status={statusType} label={statusLabel} />}
+    />
   );
 }
 

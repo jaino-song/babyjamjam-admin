@@ -13,6 +13,16 @@ type ResponseMode =
   | { kind: "raw" }
   | { kind: "filtered"; filterType: Exclude<DocumentFilterType, null> };
 
+function normalizeFilterScope(value: unknown): Exclude<DocumentFilterType, null> | null {
+  if (value === "completed" || value === "in-progress" || value === "expired") {
+    return value;
+  }
+  if (value === "rejected") {
+    return "expired";
+  }
+  return null;
+}
+
 function isDocumentsResponse(value: unknown): value is EformsignDocumentsResponse {
   return (
     typeof value === "object" &&
@@ -28,19 +38,16 @@ function getResponseMode(queryKey: EformsignQueryKey): ResponseMode | null {
     return { kind: "raw" };
   }
 
-  if (
-    scope === "completed" ||
-    scope === "in-progress" ||
-    scope === "rejected"
-  ) {
-    return { kind: "filtered", filterType: scope };
+  const directFilter = normalizeFilterScope(scope);
+  if (directFilter) {
+    return { kind: "filtered", filterType: directFilter };
   }
 
-  if (
-    scope === "documentsByType" &&
-    (maybeFilter === "completed" || maybeFilter === "in-progress" || maybeFilter === "rejected")
-  ) {
-    return { kind: "filtered", filterType: maybeFilter };
+  if (scope === "documentsByType") {
+    const nestedFilter = normalizeFilterScope(maybeFilter);
+    if (nestedFilter) {
+      return { kind: "filtered", filterType: nestedFilter };
+    }
   }
 
   return null;

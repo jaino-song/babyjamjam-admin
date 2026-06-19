@@ -120,7 +120,7 @@ export default async function InquiriesDetailPage() {
       <Block name="stats-inquiries-daily">
         <div
           data-component="stats-inquiries-daily-card"
-          className="bg-white rounded-[28px] shadow-v3 p-6"
+          className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-4">
             <h3 className="text-[0.95rem] font-bold text-v3-text">일별 상담 신청 (최근 30일)</h3>
@@ -170,7 +170,7 @@ export default async function InquiriesDetailPage() {
         {/* Hourly today */}
         <div
           data-component="stats-inquiries-hourly-card"
-          className="bg-white rounded-[28px] shadow-v3 p-6"
+          className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
             <h3 className="text-[0.95rem] font-bold text-v3-text">오늘 시간대별</h3>
@@ -219,7 +219,7 @@ export default async function InquiriesDetailPage() {
         {isOwner && (
           <div
             data-component="stats-inquiries-branch-card"
-            className="bg-white rounded-[28px] shadow-v3 p-6"
+            className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
           >
             <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
               <h3 className="text-[0.95rem] font-bold text-v3-text">지점별 분포 (7일)</h3>
@@ -258,7 +258,7 @@ export default async function InquiriesDetailPage() {
       <Block name="stats-inquiries-recent">
         <div
           data-component="stats-inquiries-recent-card"
-          className="bg-white rounded-[28px] shadow-v3 p-6"
+          className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
             <h3 className="text-[0.95rem] font-bold text-v3-text">최근 상담 신청</h3>

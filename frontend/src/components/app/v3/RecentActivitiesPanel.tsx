@@ -11,6 +11,7 @@ import {
 } from "@/lib/client/action-required";
 import { cn } from "@/lib/utils";
 import { AnimatedSlotList } from "./AnimatedSlotList";
+import { AnimatedSlotListItemContent } from "./AnimatedSlotListItemContent";
 import { useScrollActivity } from "./useScrollActivity";
 import type { Client } from "@/lib/client/types";
 
@@ -78,6 +79,12 @@ const PRIORITY_COLORS: Record<
   },
 };
 
+export function getRecentActivityActionVisual(
+  priority: ActionRequiredStatus["priority"] = 3,
+) {
+  return PRIORITY_COLORS[priority] ?? PRIORITY_COLORS[3];
+}
+
 const AVATAR_GRADIENTS = [
   "bg-gradient-to-br from-[hsl(214,100%,34%)] to-[hsl(214,100%,28%)]",
   "bg-gradient-to-br from-[hsl(137,34%,31%)] to-[hsl(137,34%,25%)]",
@@ -89,6 +96,26 @@ const AVATAR_GRADIENTS = [
 
 function getAvatarGradient(name: string) {
   return AVATAR_GRADIENTS[name.charCodeAt(0) % AVATAR_GRADIENTS.length];
+}
+
+export function getRecentActivityAvatarClass({
+  name,
+  actionPriority,
+  isUpcoming = false,
+}: {
+  name: string;
+  actionPriority?: ActionRequiredStatus["priority"];
+  isUpcoming?: boolean;
+}) {
+  if (actionPriority) {
+    return getRecentActivityActionVisual(actionPriority).iconBg;
+  }
+
+  if (isUpcoming) {
+    return getRecentActivityActionVisual(3).iconBg;
+  }
+
+  return getAvatarGradient(name);
 }
 
 function getRelativeDate(dateStr: string): string {
@@ -378,14 +405,11 @@ export function RecentActivitiesPanel({
               itemDataComponent="dashboard-split-list-item"
               getItemKey={(item) => item.key}
               onSlotClick={(item) => onSelect(item.client)}
-              slotClassName={({ item, isLoading: loading }) =>
-                cn(
-                  "flex items-center gap-3 p-4 rounded-[18px] transition-all duration-200 bg-white border-2 border-transparent",
-                  !loading && item && selectedId === item.client.id
-                    ? "bg-v3-primary-light border-2 border-v3-primary"
-                    : !loading && "cursor-pointer hover:bg-v3-primary-light/50 hover:border-v3-primary/30",
-                )
-              }
+              itemVariant="card"
+              getSlotState={({ item, isLoading: loading }) => ({
+                isActive: !loading && item?.client.id === selectedId,
+                isInteractive: !loading && Boolean(item),
+              })}
               render={({ index, item, isLoading: loading }) => {
                 if (loading) {
                   const iconBgClass =
@@ -417,25 +441,22 @@ export function RecentActivitiesPanel({
                 }
 
                 if (item.actionReason) {
-                  const colors = PRIORITY_COLORS[item.actionPriority ?? 3] || PRIORITY_COLORS[3];
+                  const colors = getRecentActivityActionVisual(item.actionPriority);
                   const badgeVariant =
                     item.actionPriority === 1 ? "danger" : item.actionPriority === 2 ? "warning" : "primary";
 
                   return (
-                    <>
-                      <div
-                        className={cn(
-                          "w-11 h-11 rounded-[14px] flex items-center justify-center font-bold text-sm text-white shrink-0 shadow-md",
-                          colors.iconBg,
-                        )}
-                      >
-                        {item.client.name.charAt(0)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-0.5">
-                          <span className="font-bold text-[0.85rem] text-v3-dark truncate">
-                            {item.client.name}
-                          </span>
+                    <AnimatedSlotListItemContent
+                      dataComponent="dashboard-split-list-item-content"
+                      icon={item.client.name.charAt(0)}
+                      iconContainerClassName={cn(colors.iconBg, "text-white")}
+                      iconClassName="text-white"
+                      title={item.client.name}
+                      subtitle={`${item.client.type || "일반"} · ${item.client.primaryEmployee?.name || "-"}${
+                        item.isUpcoming && item.client.startDate ? ` · ${getRelativeDate(item.client.startDate)}` : ""
+                      }`}
+                      status={
+                        <div className="flex shrink-0 flex-wrap justify-end gap-1">
                           <StatusPill variant={badgeVariant} size="sm">
                             {item.actionReason}
                           </StatusPill>
@@ -445,40 +466,33 @@ export function RecentActivitiesPanel({
                             </StatusPill>
                           ) : null}
                         </div>
-                        <p className="text-[0.7rem] text-v3-text-muted truncate">
-                          {item.client.type || "일반"} · {item.client.primaryEmployee?.name || "-"}
-                          {item.isUpcoming && item.client.startDate ? ` · ${getRelativeDate(item.client.startDate)}` : ""}
-                        </p>
-                      </div>
-                    </>
+                      }
+                    />
                   );
                 }
 
                 return (
-                  <>
-                    <div
-                      className={cn(
-                        "w-11 h-11 rounded-[14px] flex items-center justify-center font-bold text-sm text-white shrink-0 shadow-md",
-                        getAvatarGradient(item.client.name),
-                      )}
-                    >
-                      {item.client.name.charAt(0)}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span className="font-bold text-[0.85rem] text-v3-dark truncate">
-                          {item.client.name}
-                        </span>
-                        <StatusPill variant="primary" size="sm">
-                          곧 시작
-                        </StatusPill>
-                      </div>
-                      <p className="text-[0.7rem] text-v3-text-muted truncate">
-                        {item.client.type || "일반"} · {item.client.primaryEmployee?.name || "-"} ·{" "}
-                        {item.client.startDate ? getRelativeDate(item.client.startDate) : "-"}
-                      </p>
-                    </div>
-                  </>
+                  <AnimatedSlotListItemContent
+                    dataComponent="dashboard-split-list-item-content"
+                    icon={item.client.name.charAt(0)}
+                    iconContainerClassName={cn(
+                      getRecentActivityAvatarClass({
+                        name: item.client.name,
+                        isUpcoming: item.isUpcoming,
+                      }),
+                      "text-white"
+                    )}
+                    iconClassName="text-white"
+                    title={item.client.name}
+                    subtitle={`${item.client.type || "일반"} · ${item.client.primaryEmployee?.name || "-"} · ${
+                      item.client.startDate ? getRelativeDate(item.client.startDate) : "-"
+                    }`}
+                    status={
+                      <StatusPill variant="primary" size="sm">
+                        곧 시작
+                      </StatusPill>
+                    }
+                  />
                 );
               }}
             />

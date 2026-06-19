@@ -42,6 +42,11 @@ const buttonVariants = cva(
         lg: "h-12 px-8 text-base",
         icon: "h-10 w-10 p-0",
       },
+      width: {
+        sm: "w-1/4",
+        md: "w-1/2",
+        lg: "w-full",
+      },
     },
     defaultVariants: {
       variant: "positive",
@@ -57,7 +62,7 @@ export interface ButtonProps
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
+  ({ className, variant, size, width, asChild = false, ...props }, ref) => {
     const resolvedVariant = variant ?? "positive";
     const resolvedSize = size ?? "default";
 
@@ -67,7 +72,8 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
           data-size={resolvedSize}
           data-slot="button"
           data-variant={resolvedVariant}
-          className={cn(buttonVariants({ variant, size, className }))}
+          data-width={width}
+          className={cn(buttonVariants({ variant, size, width, className }))}
           // React 19 type compatibility: Radix Slot ref types conflict with React's ref types
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           ref={ref as any}
@@ -80,7 +86,8 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         data-size={resolvedSize}
         data-slot="button"
         data-variant={resolvedVariant}
-        className={cn(buttonVariants({ variant, size, className }))}
+        data-width={width}
+        className={cn(buttonVariants({ variant, size, width, className }))}
         ref={ref}
         {...props}
       />
