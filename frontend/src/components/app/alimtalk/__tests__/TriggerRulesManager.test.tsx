@@ -218,9 +218,43 @@ describe("TriggerRulesManager", () => {
     window.dispatchEvent(new Event("resize"));
 
     expect(
-      await screen.findByText("왼쪽 목록에서 규칙을 선택하거나 새 규칙을 만들어 주세요."),
+      await screen.findByText("왼쪽 목록에서 알림톡 규칙을 선택하거나 새 규칙을 만들어 주세요."),
     ).toBeInTheDocument();
     expect(screen.queryByText("규칙 활성화")).not.toBeInTheDocument();
     expect(container.querySelector('[data-component="split-layout"]')).toHaveAttribute("data-has-selection", "false");
+  });
+
+  it("renders SMS-specific copy and hides non-SMS rules in the message automation channel", () => {
+    mockSettingsQueries({ providerEnabled: false, senderApproved: true });
+
+    const { container } = render(<TriggerRulesManager dataComponentPrefix="message" channel="sms" />);
+
+    expect(screen.getByText("SMS 발송 규칙")).toBeInTheDocument();
+    expect(screen.getByText("SMS 재시도 규칙")).toBeInTheDocument();
+    expect(screen.getByText("SMS 전송 실패 시 5분 후 자동 재시도하며, 최초 발송 이후 최대 2번까지 다시 시도합니다.")).toBeInTheDocument();
+    expect(screen.queryByText("서비스 시작 안내")).not.toBeInTheDocument();
+
+    const retrySwitch = screen.getByRole("switch", { name: "SMS 재시도 규칙 활성화" });
+    expect(retrySwitch).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "비활성화" }));
+
+    expect(screen.queryByText("SMS 재시도 규칙")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "활성화" }));
+    fireEvent.click(screen.getByRole("switch", { name: "SMS 재시도 규칙 활성화" }));
+
+    expect(screen.queryByRole("switch", { name: "SMS 재시도 규칙 활성화" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "비활성화" }));
+
+    expect(screen.getByText("SMS 재시도 규칙")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "SMS 재시도 규칙 활성화" })).toHaveAttribute("aria-checked", "false");
+
+    fireEvent.click(screen.getByText("SMS 재시도 규칙"));
+
+    expect(container.querySelector('[data-component="split-layout"]')).toHaveAttribute("data-has-selection", "true");
+    expect(screen.getByText("재시도 횟수")).toBeInTheDocument();
+    expect(screen.getByText("재시도 간격")).toBeInTheDocument();
   });
 });

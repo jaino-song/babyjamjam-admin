@@ -94,6 +94,29 @@ beforeEach(() => {
 });
 
 describe("AlimtalkHistoryManager", () => {
+  it("filters sms delivery records out of the alimtalk history list", () => {
+    mockedUseAlimtalkHistory.mockReturnValue({
+      data: [
+        historyRecord,
+        {
+          ...historyRecord,
+          id: 102,
+          provider: "aligo_sms",
+          templateKey: "SERVICE_INFO",
+          ruleName: "SMS 서비스 안내",
+          recipientName: "박문자",
+          receiver: "010-9999-0000",
+        },
+      ],
+      isLoading: false,
+    } as unknown as ReturnType<typeof useAlimtalkHistory>);
+
+    render(<AlimtalkHistoryManager />);
+
+    expect(screen.getByText("인사(소개)")).toBeInTheDocument();
+    expect(screen.queryByText("SMS 서비스 안내")).not.toBeInTheDocument();
+  });
+
   it("does not preselect the first history item in compact split layout", async () => {
     const { container } = render(<AlimtalkHistoryManager />);
 

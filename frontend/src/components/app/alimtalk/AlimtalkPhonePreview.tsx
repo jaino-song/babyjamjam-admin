@@ -35,10 +35,10 @@ export function AlimtalkPhonePreview({
   const hasContent = content.trim().length > 0;
 
   return (
-    <div data-component={resolvedPanelDataComponent} className={cn("flex justify-center py-2", className)}>
-      <div data-component={component("preview-phone")} className="w-[320px] shrink-0">
-        <div data-component={component("preview-shell")} className="overflow-hidden rounded-[44px] border-[3px] border-gray-800 bg-gray-800 shadow-2xl">
-          <div data-component={component("preview-statusbar")} className="flex items-center justify-between bg-gray-800 px-6 pt-3 pb-2">
+    <div data-component={resolvedPanelDataComponent} className={cn("flex min-h-0 justify-center py-2", className)}>
+      <div data-component={component("preview-phone")} className="flex h-full min-h-0 w-[320px] shrink-0">
+        <div data-component={component("preview-shell")} className="flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-[44px] border-[3px] border-gray-800 bg-gray-800">
+          <div data-component={component("preview-statusbar")} className="flex shrink-0 items-center justify-between bg-gray-800 px-6 pt-3 pb-2">
             <span className="text-[0.65rem] font-medium text-gray-400">{timeText}</span>
             <div data-component={component("preview-status-icons")} className="flex items-center gap-1.5">
               <Signal className="h-3 w-3 text-gray-400" />
@@ -47,7 +47,7 @@ export function AlimtalkPhonePreview({
             </div>
           </div>
 
-          <div data-component={component("preview-header")} className="flex items-center gap-2 bg-[#B2C7D9] px-3 py-2">
+          <div data-component={component("preview-header")} className="flex shrink-0 items-center gap-2 bg-[#B2C7D9] px-3 py-2">
             <ChevronLeft className="h-5 w-5 text-gray-700" />
             <div data-component={component("preview-header-title")} className="flex min-w-0 flex-1 items-center gap-2">
               <div data-component={component("preview-header-avatar")} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#FAE100]">
@@ -57,7 +57,7 @@ export function AlimtalkPhonePreview({
             </div>
           </div>
 
-          <div data-component={component("preview-body")} className="custom-scrollbar min-h-[520px] max-h-[520px] overflow-y-auto bg-[#B2C7D9] px-3 py-4">
+          <div data-component={component("preview-body")} className="custom-scrollbar min-h-0 flex-1 overflow-y-auto bg-[#B2C7D9] px-3 py-4">
             {hasContent ? (
               <div data-component={component("preview-message-row")} className="flex items-end gap-1.5">
                 <div data-component={component("preview-message-avatar")} className="flex h-9 w-9 shrink-0 self-start items-center justify-center rounded-full bg-[#FAE100]">
@@ -92,7 +92,7 @@ export function AlimtalkPhonePreview({
                 </div>
               </div>
             ) : (
-              <div data-component={component("preview-empty")} className="flex h-full min-h-[460px] items-center justify-center">
+              <div data-component={component("preview-empty")} className="flex h-full min-h-0 items-center justify-center">
                 <div data-component={component("preview-empty-content")} className="text-center">
                   <MessageCircle className="mx-auto mb-2 h-8 w-8 text-gray-500/40" />
                   <p className="text-[0.72rem] text-gray-600/70">
@@ -105,7 +105,7 @@ export function AlimtalkPhonePreview({
             )}
           </div>
 
-          <div data-component={component("preview-inputbar")} className="flex items-center gap-2 bg-[#EFF2F6] px-3 py-2.5">
+          <div data-component={component("preview-inputbar")} className="flex shrink-0 items-center gap-2 bg-[#EFF2F6] px-3 py-2.5">
             <div data-component={component("preview-input")} className="flex-1 rounded-full bg-white px-3.5 py-2 text-[0.7rem] text-gray-400">
               메시지 입력
             </div>
@@ -114,7 +114,7 @@ export function AlimtalkPhonePreview({
             </div>
           </div>
 
-          <div data-component={component("preview-homebar")} className="flex h-5 items-center justify-center bg-gray-800">
+          <div data-component={component("preview-homebar")} className="flex h-5 shrink-0 items-center justify-center bg-gray-800">
             <div data-component={component("preview-homebar-indicator")} className="h-1 w-28 rounded-full bg-gray-600" />
           </div>
         </div>

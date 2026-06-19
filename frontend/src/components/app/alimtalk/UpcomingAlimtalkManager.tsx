@@ -22,6 +22,7 @@ import {
 } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useUpcomingAlimtalkJobs } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
+import { isUpcomingJobInChannel } from "@/features/alimtalk-triggers/channel";
 import type {
   TriggerEventType,
   TriggerRecipientType,
@@ -211,9 +212,13 @@ export function UpcomingAlimtalkManager() {
   const isMobile = useIsMobile();
 
   const { data: upcomingJobs = [], isLoading } = useUpcomingAlimtalkJobs();
+  const alimtalkUpcomingJobs = useMemo(
+    () => upcomingJobs.filter((job) => isUpcomingJobInChannel(job, "alimtalk")),
+    [upcomingJobs],
+  );
 
   const filteredJobs = useMemo(() => {
-    return upcomingJobs.filter((job) => {
+    return alimtalkUpcomingJobs.filter((job) => {
       if (listFilter === "customer" && job.recipientType !== "CLIENT") {
         return false;
       }
@@ -224,7 +229,7 @@ export function UpcomingAlimtalkManager() {
 
       return matchesJobSearch(job, deferredSearchQuery);
     });
-  }, [deferredSearchQuery, listFilter, upcomingJobs]);
+  }, [alimtalkUpcomingJobs, deferredSearchQuery, listFilter]);
 
   const hasSearchQuery = deferredSearchQuery.trim().length > 0;
   const hasListFilters = listFilter !== "all" || hasSearchQuery;
@@ -281,7 +286,7 @@ export function UpcomingAlimtalkManager() {
                 data-component="alimtalk-upcoming-list-badge"
                 className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary"
               >
-                {(hasListFilters ? filteredJobs.length : upcomingJobs.length)}개
+                {(hasListFilters ? filteredJobs.length : alimtalkUpcomingJobs.length)}개
               </span>
             )
           }

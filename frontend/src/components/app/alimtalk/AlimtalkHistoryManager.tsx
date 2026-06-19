@@ -26,6 +26,7 @@ import {
 } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAlimtalkHistory } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
+import { isHistoryRecordInChannel } from "@/features/alimtalk-triggers/channel";
 import type {
   AlimtalkHistoryRecord,
   AlimtalkHistoryStatus,
@@ -291,13 +292,17 @@ export function AlimtalkHistoryManager() {
   const deferredSearchQuery = useDeferredValue(searchQuery);
 
   const { data: historyRecords = [], isLoading } = useAlimtalkHistory();
+  const alimtalkHistoryRecords = useMemo(
+    () => historyRecords.filter((record) => isHistoryRecordInChannel(record, "alimtalk")),
+    [historyRecords],
+  );
 
   const filteredRecords = useMemo(() => {
-    return historyRecords.filter((record) => {
+    return alimtalkHistoryRecords.filter((record) => {
       const matchesStatus = statusFilter === "all" || record.status === statusFilter;
       return matchesStatus && matchesHistorySearch(record, deferredSearchQuery);
     });
-  }, [deferredSearchQuery, historyRecords, statusFilter]);
+  }, [alimtalkHistoryRecords, deferredSearchQuery, statusFilter]);
   const historyRecordIds = useMemo(() => filteredRecords.map((record) => record.id), [filteredRecords]);
   const {
     selectedId: selectedRecordId,

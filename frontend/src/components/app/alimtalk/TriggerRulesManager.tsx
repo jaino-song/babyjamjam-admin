@@ -6,7 +6,6 @@ import {
   BellRing,
   CalendarClock,
   CalendarRange,
-  ChevronDown,
   Plus,
   Save,
   Trash2,
@@ -22,12 +21,16 @@ import {
   AnimatedSlotListItemContent,
   HeaderActionButton,
   ListEmptyState,
+  SteppedWizardPanelContent,
   SteppedWizardPanelFooter,
+  DetailTabs,
+  DetailTabPanels,
   type SplitLayoutMode,
 } from "@/components/app/v3";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TitleSelectMolecule } from "@/components/ui/title-select-molecule";
+import { TitleTextInputMolecule } from "@/components/ui/title-text-input-molecule";
 import { cn } from "@/lib/utils";
 import { settingsApi, type AlimtalkProvider } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
@@ -38,21 +41,33 @@ import {
   useUpdateAlimtalkTriggerRule,
   useDeleteAlimtalkTriggerRule,
 } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
+import {
+  isTriggerRuleInChannel,
+  isTriggerTemplateInChannel,
+  type TriggerMessageChannel,
+} from "@/features/alimtalk-triggers/channel";
+import { useSystemTemplate } from "@/features/system-templates/hooks";
+import { serviceInfoMsgTemplate } from "@/components/app/messages/templates/messageTemplate/serviceInfoMsg";
+import { AlimtalkPhonePreview } from "./AlimtalkPhonePreview";
 import type {
   AlimtalkTriggerRule,
   CreateAlimtalkTriggerRuleDto,
   TriggerEventType,
   TriggerOffsetType,
   TriggerRecipientType,
-  TriggerTemplateCatalogItem,
+  TriggerTemplateKey,
 } from "@/features/alimtalk-triggers/types";
+
+const RETRY_POLICY_SELECTION_ID = "retry-policy";
 
 type RuleSelection = string | "new" | null;
 type RuleStatusFilter = "active" | "inactive";
+type TriggerRuleDetailTab = "settings" | "preview";
 
 type RuleFormState = CreateAlimtalkTriggerRuleDto;
 
-type RuleListItem = {
+type TriggerRuleListItem = {
+  kind: "trigger-rule";
   id: string;
   title: string;
   subtitle: string;
@@ -61,48 +76,16 @@ type RuleListItem = {
   rule: AlimtalkTriggerRule;
 };
 
-const INPUT_CLASS =
-  "mt-1.5 w-full rounded-[14px] border border-v3-border bg-white px-3.5 py-2.5 text-[0.8rem] text-v3-dark placeholder:text-v3-text-muted/60 focus:outline-none focus:ring-2 focus:ring-v3-primary/25 focus:border-v3-primary transition-colors";
-
-type TriggerRuleSelectOption<TValue extends string> = {
-  label: string;
-  value: TValue;
+type RetryPolicyListItem = {
+  kind: "retry-policy";
+  id: typeof RETRY_POLICY_SELECTION_ID;
+  title: string;
+  subtitle: string;
+  active: boolean;
+  icon: typeof CalendarClock;
 };
 
-function TriggerRuleSelect<TValue extends string>({
-  id,
-  value,
-  options,
-  onValueChange,
-  dataComponent,
-}: {
-  id: string;
-  value: TValue;
-  options: Array<TriggerRuleSelectOption<TValue>>;
-  onValueChange: (value: TValue) => void;
-  dataComponent: string;
-}) {
-  return (
-    <div data-component={dataComponent} className="relative mt-1.5">
-      <select
-        id={id}
-        value={value}
-        onChange={(event) => onValueChange(event.target.value as TValue)}
-        className={cn(INPUT_CLASS, "mt-0 appearance-none pr-10")}
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDown
-        aria-hidden="true"
-        className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-v3-text-muted"
-      />
-    </div>
-  );
-}
+type RuleListItem = TriggerRuleListItem | RetryPolicyListItem;
 
 const EVENT_OPTIONS: Array<{ value: TriggerEventType; label: string; icon: typeof BellRing }> = [
   { value: "CLIENT_CREATED", label: "고객 등록", icon: UserPlus },
@@ -149,16 +132,104 @@ const DEFAULT_FORM_STATE: RuleFormState = {
   templateKey: "CLIENT_WELCOME",
 };
 
+function getDefaultFormState(channel: TriggerMessageChannel): RuleFormState {
+  if (channel === "sms") {
+    return {
+      name: "",
+      isActive: true,
+      eventType: "SERVICE_START",
+      offsetType: "BEFORE_DAYS",
+      offsetDays: 7,
+      recipientType: "CLIENT",
+      templateKey: "SERVICE_INFO",
+    };
+  }
+
+  return DEFAULT_FORM_STATE;
+}
+
 const RULE_STATUS_TABS = [
   { label: "활성화", value: "active" },
   { label: "비활성화", value: "inactive" },
 ] as const;
 
+const CHANNEL_COPY: Record<
+  TriggerMessageChannel,
+  {
+    listTitle: string;
+    listSubtitle: string;
+    detailSubtitle: string;
+    emptySelection: string;
+    retryTitle: string;
+    retryDescription: string;
+  }
+> = {
+  sms: {
+    listTitle: "SMS 발송 규칙",
+    listSubtitle: "SMS 자동 발송 규칙을 설정할 수 있어요",
+    detailSubtitle: "이벤트 시점, 수신자, SMS 템플릿을 조합해 자동 발송 동작을 정의합니다.",
+    emptySelection: "왼쪽 목록에서 SMS 규칙을 선택하거나 새 규칙을 만들어 주세요.",
+    retryTitle: "SMS 재시도 규칙",
+    retryDescription: "SMS 전송 실패 시 5분 후 자동 재시도하며, 최초 발송 이후 최대 2번까지 다시 시도합니다.",
+  },
+  alimtalk: {
+    listTitle: "알림톡 발송 규칙",
+    listSubtitle: "알림톡 자동 발송 규칙을 설정할 수 있어요",
+    detailSubtitle: "이벤트 시점, 수신자, 알림톡 템플릿을 조합해 자동 발송 동작을 정의합니다.",
+    emptySelection: "왼쪽 목록에서 알림톡 규칙을 선택하거나 새 규칙을 만들어 주세요.",
+    retryTitle: "알림톡 재시도 규칙",
+    retryDescription: "알림톡 전송 실패 시 5분 후 자동 재시도하며, 최초 발송 이후 최대 2번까지 다시 시도합니다.",
+  },
+};
+
+const TRIGGER_RULE_DETAIL_TABS = [
+  { key: "settings", label: "규칙 설정" },
+  { key: "preview", label: "미리보기" },
+] satisfies Array<{ key: TriggerRuleDetailTab; label: string }>;
+
 const TRIGGER_RULE_APPROVAL_MESSAGE =
   "메시지 발송 승인 후에 설정 가능합니다. 설정에서 메시지 발송 기능을 신청해 주세요.";
 
-function toFormState(rule: AlimtalkTriggerRule | null): RuleFormState {
-  if (!rule) return DEFAULT_FORM_STATE;
+const TRIGGER_TEMPLATE_MESSAGE_FALLBACKS: Record<TriggerTemplateKey, string> = {
+  CLIENT_WELCOME: `[아이미래 인천]
+#{고객명}님, 등록이 완료되었습니다.
+
+등록일: #{등록일}
+서비스: #{서비스타입}
+
+문의사항은 채널톡으로 연락주세요.`,
+  SERVICE_START_REMINDER: `[아이미래 인천]
+#{고객명}님, #{발송기준}입니다.
+
+서비스 시작일: #{서비스시작일}
+
+준비사항이나 문의사항이 있으시면 연락주세요.`,
+  SERVICE_INFO: serviceInfoMsgTemplate({ name: "{{name}}" }),
+  SERVICE_END_REMINDER: `[아이미래 인천]
+#{고객명}님, #{발송기준}입니다.
+
+서비스 종료일: #{서비스종료일}
+
+필요한 사항이 있으면 언제든지 연락주세요.`,
+  EMPLOYEE_ASSIGNED: `[아이미래 인천]
+#{직원명}님, 새로운 배정이 등록되었습니다.
+
+고객명: #{고객명}
+서비스 시작일: #{서비스시작일}
+
+세부 내용을 확인해 주세요.`,
+};
+
+function getEventOptionsForChannel(channel: TriggerMessageChannel) {
+  if (channel === "sms") {
+    return EVENT_OPTIONS.filter((option) => option.value === "SERVICE_START");
+  }
+
+  return EVENT_OPTIONS;
+}
+
+function toFormState(rule: AlimtalkTriggerRule | null, channel: TriggerMessageChannel = "alimtalk"): RuleFormState {
+  if (!rule) return getDefaultFormState(channel);
   return {
     name: rule.name,
     isActive: rule.isActive,
@@ -213,15 +284,25 @@ function TriggerRulesDetailSkeleton({ dataComponentPrefix = "alimtalk" }: { data
   );
 }
 
-export function TriggerRulesManager({ dataComponentPrefix = "alimtalk" }: { dataComponentPrefix?: string } = {}) {
+export function TriggerRulesManager({
+  dataComponentPrefix = "alimtalk",
+  channel = dataComponentPrefix === "message" ? "sms" : "alimtalk",
+}: {
+  dataComponentPrefix?: string;
+  channel?: TriggerMessageChannel;
+} = {}) {
   const { toast } = useToast();
   const [selectedRuleId, setSelectedRuleId] = useState<RuleSelection>(null);
   const [isRuleDetailDismissed, setIsRuleDetailDismissed] = useState(false);
   const [splitLayoutMode, setSplitLayoutMode] = useState<SplitLayoutMode | null>(null);
   const [statusFilter, setStatusFilter] = useState<RuleStatusFilter>("active");
-  const [formState, setFormState] = useState<RuleFormState>(DEFAULT_FORM_STATE);
+  const [activeDetailTab, setActiveDetailTab] = useState<TriggerRuleDetailTab>("settings");
+  const [formState, setFormState] = useState<RuleFormState>(() => getDefaultFormState(channel));
+  const [isRetryPolicyEnabled, setIsRetryPolicyEnabled] = useState(true);
   const component = (suffix: string) => `${dataComponentPrefix}-${suffix}`;
   const isCompactSplitLayout = splitLayoutMode === "compact";
+  const copy = CHANNEL_COPY[channel];
+  const eventOptions = useMemo(() => getEventOptionsForChannel(channel), [channel]);
 
   const { data: rulesData = [], isLoading } = useAlimtalkTriggerRules();
   const createMutation = useCreateAlimtalkTriggerRule();
@@ -240,12 +321,13 @@ export function TriggerRulesManager({ dataComponentPrefix = "alimtalk" }: { data
   });
   const isTriggerRulesLocked = !isSenderApprovalLoading && senderApproval?.isApproved === false;
   const effectiveSelectedRuleId = isTriggerRulesLocked ? null : selectedRuleId;
+  const isRetryPolicySelected = effectiveSelectedRuleId === RETRY_POLICY_SELECTION_ID;
 
   const resolvedProvider: Exclude<AlimtalkProvider, "none"> =
     providerSettings?.provider === "channeltalk" ? "channeltalk" : "aligo";
 
   const selectedRule =
-    effectiveSelectedRuleId && effectiveSelectedRuleId !== "new"
+    effectiveSelectedRuleId && effectiveSelectedRuleId !== "new" && effectiveSelectedRuleId !== RETRY_POLICY_SELECTION_ID
       ? rules.find((rule) => rule.id === effectiveSelectedRuleId) ?? null
       : null;
 
@@ -254,21 +336,40 @@ export function TriggerRulesManager({ dataComponentPrefix = "alimtalk" }: { data
     eventType: formState.eventType,
     recipientType: formState.recipientType,
   });
+  const selectedSystemTemplateKey = formState.templateKey === "SERVICE_INFO" ? formState.templateKey : "";
+  const { data: selectedSystemTemplate } = useSystemTemplate(selectedSystemTemplateKey);
 
-  const availableTemplates = useMemo(() => templateQuery.data ?? [], [templateQuery.data]);
+  const availableTemplates = useMemo(
+    () => (templateQuery.data ?? []).filter((template) => isTriggerTemplateInChannel(template.key, channel)),
+    [channel, templateQuery.data],
+  );
+  const selectedTemplate = useMemo(() => {
+    return availableTemplates.find((template) => template.key === formState.templateKey) ?? null;
+  }, [availableTemplates, formState.templateKey]);
+  const selectedTemplateMessage = selectedSystemTemplate?.content?.trim()
+    ? selectedSystemTemplate.content
+    : TRIGGER_TEMPLATE_MESSAGE_FALLBACKS[formState.templateKey];
+  const shouldShowRetryPolicy = isRetryPolicyEnabled === (statusFilter === "active");
   const filteredRules = useMemo(() => {
-    return rules.filter((rule) => rule.isActive === (statusFilter === "active"));
-  }, [rules, statusFilter]);
+    return rules.filter((rule) =>
+      rule.isActive === (statusFilter === "active") &&
+      isTriggerRuleInChannel(rule, channel)
+    );
+  }, [channel, rules, statusFilter]);
 
   useEffect(() => {
     if (isTriggerRulesLocked) return;
 
     if (selectedRuleId === "new") return;
+    if (selectedRuleId === RETRY_POLICY_SELECTION_ID) {
+      if (shouldShowRetryPolicy) return;
+      setSelectedRuleId(splitLayoutMode === "desktop" && !isRuleDetailDismissed ? (filteredRules[0]?.id ?? null) : null);
+      return;
+    }
     if (selectedRuleId === null && filteredRules.length > 0) {
       if (splitLayoutMode === null) return;
       if (isCompactSplitLayout) return;
       if (isRuleDetailDismissed) return;
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedRuleId(filteredRules[0].id);
       return;
     }
@@ -284,21 +385,34 @@ export function TriggerRulesManager({ dataComponentPrefix = "alimtalk" }: { data
     if (!existsInFilteredRules) {
       setSelectedRuleId(splitLayoutMode === "desktop" && !isRuleDetailDismissed ? (filteredRules[0]?.id ?? null) : null);
     }
-  }, [filteredRules, isCompactSplitLayout, isRuleDetailDismissed, isTriggerRulesLocked, rules, selectedRuleId, splitLayoutMode]);
+  }, [
+    filteredRules,
+    isCompactSplitLayout,
+    isRuleDetailDismissed,
+    isTriggerRulesLocked,
+    rules,
+    selectedRuleId,
+    shouldShowRetryPolicy,
+    splitLayoutMode,
+  ]);
 
   useEffect(() => {
+    if (effectiveSelectedRuleId === RETRY_POLICY_SELECTION_ID) return;
     if (effectiveSelectedRuleId === "new") {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setFormState(DEFAULT_FORM_STATE);
+      setFormState(getDefaultFormState(channel));
       return;
     }
-    setFormState(toFormState(selectedRule));
-  }, [effectiveSelectedRuleId, selectedRule]);
+    setFormState(toFormState(selectedRule, channel));
+  }, [channel, effectiveSelectedRuleId, selectedRule]);
 
   useEffect(() => {
+    if (!eventOptions.some((option) => option.value === formState.eventType)) {
+      setFormState(getDefaultFormState(channel));
+      return;
+    }
+
     const allowedRecipients = RECIPIENT_OPTIONS[formState.eventType];
     if (!allowedRecipients.some((option) => option.value === formState.recipientType)) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setFormState((current) => ({
         ...current,
         recipientType: allowedRecipients[0].value,
@@ -313,12 +427,11 @@ export function TriggerRulesManager({ dataComponentPrefix = "alimtalk" }: { data
         offsetDays: 0,
       }));
     }
-  }, [formState.eventType, formState.recipientType, formState.offsetType]);
+  }, [channel, eventOptions, formState.eventType, formState.recipientType, formState.offsetType]);
 
   useEffect(() => {
     if (availableTemplates.length === 0) return;
     if (!availableTemplates.some((template) => template.key === formState.templateKey)) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setFormState((current) => ({
         ...current,
         templateKey: availableTemplates[0].key,
@@ -327,27 +440,37 @@ export function TriggerRulesManager({ dataComponentPrefix = "alimtalk" }: { data
   }, [availableTemplates, formState.templateKey]);
 
   const listItems = useMemo<RuleListItem[]>(() => {
-    return filteredRules.map((rule) => ({
-      id: rule.id,
-      title: rule.name,
-      subtitle: getRuleSummary(toFormState(rule)),
-      active: rule.isActive,
-      icon: getRuleIcon(rule.eventType),
-      rule,
-    }));
-  }, [filteredRules]);
+    const retryPolicyItem: RetryPolicyListItem = {
+      kind: "retry-policy",
+      id: RETRY_POLICY_SELECTION_ID,
+      title: copy.retryTitle,
+      subtitle: copy.retryDescription,
+      active: isRetryPolicyEnabled,
+      icon: CalendarClock,
+    };
 
-  const currentTemplate = useMemo<TriggerTemplateCatalogItem | null>(() => {
-    return availableTemplates.find((template) => template.key === formState.templateKey) ?? null;
-  }, [availableTemplates, formState.templateKey]);
+    return [
+      ...(shouldShowRetryPolicy ? [retryPolicyItem] : []),
+      ...filteredRules.map((rule): TriggerRuleListItem => ({
+        kind: "trigger-rule",
+        id: rule.id,
+        title: rule.name,
+        subtitle: getRuleSummary(toFormState(rule, channel)),
+        active: rule.isActive,
+        icon: getRuleIcon(rule.eventType),
+        rule,
+      })),
+    ];
+  }, [channel, copy.retryDescription, copy.retryTitle, filteredRules, isRetryPolicyEnabled, shouldShowRetryPolicy]);
 
   const hasChanges = useMemo(() => {
+    if (effectiveSelectedRuleId === RETRY_POLICY_SELECTION_ID) return false;
     if (effectiveSelectedRuleId === "new") {
       return !!formState.name.trim();
     }
     if (!selectedRule) return false;
-    return JSON.stringify(normalizeDto(formState)) !== JSON.stringify(normalizeDto(toFormState(selectedRule)));
-  }, [effectiveSelectedRuleId, formState, selectedRule]);
+    return JSON.stringify(normalizeDto(formState)) !== JSON.stringify(normalizeDto(toFormState(selectedRule, channel)));
+  }, [channel, effectiveSelectedRuleId, formState, selectedRule]);
 
   const isSaving = createMutation.isPending || updateMutation.isPending;
 
@@ -356,7 +479,7 @@ export function TriggerRulesManager({ dataComponentPrefix = "alimtalk" }: { data
     setIsRuleDetailDismissed(false);
     setStatusFilter("active");
     setSelectedRuleId("new");
-    setFormState(DEFAULT_FORM_STATE);
+    setFormState(getDefaultFormState(channel));
   };
 
   const handleRuleSelect = (ruleId: string) => {
@@ -364,11 +487,20 @@ export function TriggerRulesManager({ dataComponentPrefix = "alimtalk" }: { data
     setSelectedRuleId(ruleId);
   };
 
+  const handleRetryPolicySelect = () => {
+    setIsRuleDetailDismissed(false);
+    setSelectedRuleId(RETRY_POLICY_SELECTION_ID);
+  };
+
+  const handleRetryPolicyToggle = (checked: boolean) => {
+    setIsRetryPolicyEnabled(checked);
+  };
+
   const handleRuleActiveToggle = async (rule: AlimtalkTriggerRule, checked: boolean) => {
     if (isTriggerRulesLocked) return;
 
     const dto = normalizeDto({
-      ...toFormState(rule),
+      ...toFormState(rule, channel),
       isActive: checked,
     });
 
@@ -439,8 +571,8 @@ export function TriggerRulesManager({ dataComponentPrefix = "alimtalk" }: { data
           onModeChange={setSplitLayoutMode}
         >
           <ListPanel
-            title={isLoading ? "" : "발송 규칙"}
-            subtitle={isLoading ? undefined : "메시지 자동 발송 규칙을 설정할 수 있어요"}
+            title={isLoading ? "" : copy.listTitle}
+            subtitle={isLoading ? undefined : copy.listSubtitle}
             tabs={RULE_STATUS_TABS.map((tab) => ({ ...tab }))}
             activeTab={statusFilter}
             onTabChange={isTriggerRulesLocked ? undefined : (value) => setStatusFilter(value as RuleStatusFilter)}
@@ -462,63 +594,93 @@ export function TriggerRulesManager({ dataComponentPrefix = "alimtalk" }: { data
               />
             )}
           >
-            {(isLoading || listItems.length > 0) ? (
-              <div data-component={component("trigger-rules-list")} className="space-y-2 pb-2">
-                <AnimatedSlotList<RuleListItem>
-                  items={listItems}
-                  isLoading={isLoading}
-                  loadingCount={5}
-                  className="space-y-2"
-                  getSlotState={({ item, isLoading: slotLoading }) => ({
-                    isActive: !slotLoading && item?.id === effectiveSelectedRuleId,
-                    isInteractive: !slotLoading && Boolean(item),
-                  })}
-                  onSlotClick={(item) => handleRuleSelect(item.id)}
-                  render={({ item, isLoading: slotLoading }) => {
-                    if (slotLoading) {
-                      return (
-                        <>
-                          <div data-component={component("trigger-rule-skeleton-icon")} className="flex h-10 w-10 items-center justify-center rounded-[14px] bg-v3-dim-white">
-                            <Skeleton className="h-4 w-4 rounded-md bg-white/70" />
-                          </div>
-                          <div data-component={component("trigger-rule-skeleton-text")} className="min-w-0 flex-1">
-                            <Skeleton className="h-4 w-32 bg-v3-dim-white" />
-                            <Skeleton className="mt-2 h-3 w-44 bg-v3-dim-white" />
-                          </div>
-                        </>
-                      );
-                    }
+            <>
+              {(isLoading || listItems.length > 0) ? (
+                <div data-component={component("trigger-rules-list")} className="space-y-2 pb-2">
+                  <AnimatedSlotList<RuleListItem>
+                    items={listItems}
+                    isLoading={isLoading}
+                    loadingCount={5}
+                    className="space-y-2"
+                    getSlotState={({ item, isLoading: slotLoading }) => ({
+                      isActive: !slotLoading && item?.id === effectiveSelectedRuleId,
+                      isInteractive: !slotLoading && Boolean(item),
+                    })}
+                    onSlotClick={(item) => {
+                      if (item.kind === "retry-policy") {
+                        handleRetryPolicySelect();
+                        return;
+                      }
 
-                    if (!item) return null;
+                      handleRuleSelect(item.id);
+                    }}
+                    getItemKey={(item) => item.id}
+                    render={({ item, isLoading: slotLoading }) => {
+                      if (slotLoading) {
+                        return (
+                          <>
+                            <div data-component={component("trigger-rule-skeleton-icon")} className="flex h-10 w-10 items-center justify-center rounded-[14px] bg-v3-dim-white">
+                              <Skeleton className="h-4 w-4 rounded-md bg-white/70" />
+                            </div>
+                            <div data-component={component("trigger-rule-skeleton-text")} className="min-w-0 flex-1">
+                              <Skeleton className="h-4 w-32 bg-v3-dim-white" />
+                              <Skeleton className="mt-2 h-3 w-44 bg-v3-dim-white" />
+                            </div>
+                          </>
+                        );
+                      }
 
-                    return (
-                      <AnimatedSlotListItemContent
-                        dataComponent={component("trigger-rule")}
-                        icon={item.icon}
-                        title={item.title}
-                        subtitle={item.subtitle}
-                        status={
-                          <Switch
-                            aria-label={`${item.title} 활성화`}
-                            checked={item.active}
-                            disabled={isTriggerRulesLocked || updateMutation.isPending}
-                            onClick={(event) => event.stopPropagation()}
-                            onCheckedChange={(checked) => {
-                              void handleRuleActiveToggle(item.rule, checked);
-                            }}
-                            className="ml-auto shrink-0"
+                      if (!item) return null;
+
+                      if (item.kind === "retry-policy") {
+                        return (
+                          <AnimatedSlotListItemContent
+                            dataComponent={component("trigger-rules-retry-policy")}
+                            icon={item.icon}
+                            title={item.title}
+                            subtitle={item.subtitle}
+                            status={
+                              <Switch
+                                aria-label={`${item.title} 활성화`}
+                                checked={item.active}
+                                onClick={(event) => event.stopPropagation()}
+                                onCheckedChange={handleRetryPolicyToggle}
+                                className="ml-auto shrink-0"
+                              />
+                            }
                           />
-                        }
-                      />
-                    );
-                  }}
+                        );
+                      }
+
+                      return (
+                        <AnimatedSlotListItemContent
+                          dataComponent={component("trigger-rule")}
+                          icon={item.icon}
+                          title={item.title}
+                          subtitle={item.subtitle}
+                          status={
+                            <Switch
+                              aria-label={`${item.title} 활성화`}
+                              checked={item.active}
+                              disabled={isTriggerRulesLocked || updateMutation.isPending}
+                              onClick={(event) => event.stopPropagation()}
+                              onCheckedChange={(checked) => {
+                                void handleRuleActiveToggle(item.rule, checked);
+                              }}
+                              className="ml-auto shrink-0"
+                            />
+                          }
+                        />
+                      );
+                    }}
+                  />
+                </div>
+              ) : !isTriggerRulesLocked ? (
+                <ListEmptyState
+                  message={statusFilter === "active" ? "활성화된 발송 규칙이 없습니다." : "비활성화된 발송 규칙이 없습니다."}
                 />
-              </div>
-            ) : !isTriggerRulesLocked ? (
-              <ListEmptyState
-                message={statusFilter === "active" ? "활성화된 발송 규칙이 없습니다." : "비활성화된 발송 규칙이 없습니다."}
-              />
-            ) : null}
+              ) : null}
+            </>
           </ListPanel>
 
           {isLoading ? (
@@ -542,17 +704,68 @@ export function TriggerRulesManager({ dataComponentPrefix = "alimtalk" }: { data
                 <ListEmptyState
                   name={component("trigger-rules-detail-empty")}
                   icon={BellRing}
-                  message="왼쪽 목록에서 규칙을 선택하거나 새 규칙을 만들어 주세요."
+                  message={copy.emptySelection}
                   className="flex-none min-h-0"
                 />
               )}
             >
               {null}
             </DetailPanel>
+          ) : isRetryPolicySelected ? (
+            <DetailPanel
+              title={copy.retryTitle}
+              subtitle={copy.retryDescription}
+            >
+              <SteppedWizardPanelContent
+                dataComponent={component("trigger-rules-retry-policy-form")}
+                flattenStepContent
+                className="py-0"
+                stepContentClassName="justify-start gap-4"
+              >
+                <div
+                  data-component={component("trigger-rules-retry-policy-toggle")}
+                  className="flex items-center justify-between gap-4 rounded-[18px] bg-v3-dim-white p-4"
+                >
+                  <div className="min-w-0">
+                    <p className="text-[0.84rem] font-bold text-v3-dark">재시도 활성화</p>
+                    <p className="mt-1 text-[0.72rem] leading-5 text-v3-text-muted">
+                      전송 실패 시 자동으로 다시 발송합니다.
+                    </p>
+                  </div>
+                  <Switch
+                    aria-label={`${copy.retryTitle} 상세 활성화`}
+                    checked={isRetryPolicyEnabled}
+                    onCheckedChange={handleRetryPolicyToggle}
+                    className="shrink-0"
+                  />
+                </div>
+
+                <div
+                  data-component={component("trigger-rules-retry-policy-values")}
+                  className="grid gap-4 sm:grid-cols-2"
+                >
+                  <div className="rounded-[18px] bg-v3-dim-white p-4">
+                    <p className="text-[0.72rem] font-semibold text-v3-text-muted">재시도 횟수</p>
+                    <p className="mt-1 text-[0.92rem] font-bold text-v3-dark">최대 2회</p>
+                  </div>
+                  <div className="rounded-[18px] bg-v3-dim-white p-4">
+                    <p className="text-[0.72rem] font-semibold text-v3-text-muted">재시도 간격</p>
+                    <p className="mt-1 text-[0.92rem] font-bold text-v3-dark">실패 후 5분</p>
+                  </div>
+                </div>
+              </SteppedWizardPanelContent>
+            </DetailPanel>
           ) : (
             <DetailPanel
               title={effectiveSelectedRuleId === "new" ? "새 발송 규칙" : selectedRule?.name ?? "발송 규칙"}
-              subtitle="이벤트 시점, 수신자, 템플릿을 조합해 자동 발송 동작을 정의합니다."
+              subtitle={copy.detailSubtitle}
+              tabs={
+                <DetailTabs
+                  tabs={TRIGGER_RULE_DETAIL_TABS}
+                  activeTab={activeDetailTab}
+                  onTabChange={(key) => setActiveDetailTab(key as TriggerRuleDetailTab)}
+                />
+              }
               footer={
                 <SteppedWizardPanelFooter dataComponent={component("trigger-rules-actions")}>
                   {selectedRule ? (
@@ -587,144 +800,160 @@ export function TriggerRulesManager({ dataComponentPrefix = "alimtalk" }: { data
                 </SteppedWizardPanelFooter>
               }
             >
-              <div data-component={component("trigger-rules-form")} className="space-y-6">
-                  <div data-component={component("trigger-rules-grid")} className="grid gap-4 md:grid-cols-2">
-                    <div data-component={component("trigger-rules-name")}>
-                      <Label htmlFor="trigger-rule-name" className="text-[0.78rem] font-semibold">규칙 이름</Label>
-                      <input
-                        id="trigger-rule-name"
-                        value={formState.name}
-                        onChange={(event) => setFormState((current) => ({ ...current, name: event.target.value }))}
-                        placeholder="예: 서비스 시작 7일 전 고객 안내"
-                        className={INPUT_CLASS}
-                      />
-                    </div>
+              <DetailTabPanels
+                activeTab={activeDetailTab}
+                dataComponent={component("trigger-rules-detail-tabpanes")}
+                panelDataComponent={
+                  dataComponentPrefix === "message" ? "messages-template-detail-pane" : component("template-detail-pane")
+                }
+                className="flex min-h-0 flex-1"
+                trackClassName="min-h-0 flex-1"
+                panelClassName="h-full min-h-0"
+                panels={[
+                  {
+                    key: "settings",
+                    children: (
+                      <SteppedWizardPanelContent
+                        dataComponent={component("trigger-rules-form")}
+                        flattenStepContent
+                        className="py-0"
+                        stepContentClassName="justify-start gap-4"
+                      >
+                        <TitleTextInputMolecule
+                          id="trigger-rule-name"
+                          label="규칙 이름"
+                          value={formState.name}
+                          onValueChange={(value) =>
+                            setFormState((current) => ({ ...current, name: value }))
+                          }
+                          placeholder="예: 서비스 시작 7일 전 고객 안내"
+                          dataComponent={component("trigger-rules-name")}
+                        />
 
-                    <div data-component={component("trigger-rules-event")}>
-                      <Label htmlFor="trigger-rule-event" className="text-[0.78rem] font-semibold">이벤트 기준</Label>
-                      <TriggerRuleSelect
-                        id="trigger-rule-event"
-                        value={formState.eventType}
-                        options={EVENT_OPTIONS}
-                        dataComponent={component("trigger-rules-event-select-wrap")}
-                        onValueChange={(nextEventType) => {
-                          const nextRecipient = RECIPIENT_OPTIONS[nextEventType][0].value;
-                          const nextOffset = OFFSET_OPTIONS[nextEventType][0].value;
-                          setFormState((current) => ({
-                            ...current,
-                            eventType: nextEventType,
-                            recipientType: nextRecipient,
-                            offsetType: nextOffset,
-                            offsetDays: nextOffset === "BEFORE_DAYS" || nextOffset === "AFTER_DAYS" ? 1 : 0,
-                          }));
-                        }}
-                      />
-                    </div>
+                        <TitleSelectMolecule
+                          id="trigger-rule-event"
+                          label="이벤트 기준"
+                          value={formState.eventType}
+                          options={eventOptions.map((option) => ({
+                            label: option.label,
+                            value: option.value,
+                          }))}
+                          onValueChange={(value) => {
+                            const nextEventType = value as TriggerEventType;
+                            const nextRecipient = RECIPIENT_OPTIONS[nextEventType][0].value;
+                            const nextOffset = OFFSET_OPTIONS[nextEventType][0].value;
 
-                    <div data-component={component("trigger-rules-offset")}>
-                      <Label htmlFor="trigger-rule-offset" className="text-[0.78rem] font-semibold">발송 시점</Label>
-                      <TriggerRuleSelect
-                        id="trigger-rule-offset"
-                        value={formState.offsetType}
-                        options={OFFSET_OPTIONS[formState.eventType]}
-                        dataComponent={component("trigger-rules-offset-select-wrap")}
-                        onValueChange={(nextOffsetType) => {
-                          setFormState((current) => ({
-                            ...current,
-                            offsetType: nextOffsetType,
-                            offsetDays:
-                              nextOffsetType === "BEFORE_DAYS" || nextOffsetType === "AFTER_DAYS"
-                                ? Math.max(current.offsetDays || 1, 1)
-                                : 0,
-                          }));
-                        }}
-                      />
-                    </div>
+                            setFormState((current) => ({
+                              ...current,
+                              eventType: nextEventType,
+                              recipientType: nextRecipient,
+                              offsetType: nextOffset,
+                              offsetDays: nextOffset === "BEFORE_DAYS" || nextOffset === "AFTER_DAYS" ? 1 : 0,
+                            }));
+                          }}
+                          dataComponent={component("trigger-rules-event")}
+                          triggerDataComponent={component("trigger-rules-event-select")}
+                        />
 
-                    <div data-component={component("trigger-rules-recipient")}>
-                      <Label htmlFor="trigger-rule-recipient" className="text-[0.78rem] font-semibold">수신 대상</Label>
-                      <TriggerRuleSelect
-                        id="trigger-rule-recipient"
-                        value={formState.recipientType}
-                        options={RECIPIENT_OPTIONS[formState.eventType]}
-                        dataComponent={component("trigger-rules-recipient-select-wrap")}
-                        onValueChange={(recipientType) =>
-                          setFormState((current) => ({
-                            ...current,
-                            recipientType,
-                          }))
-                        }
-                      />
-                    </div>
-                  </div>
+                        <TitleSelectMolecule
+                          id="trigger-rule-offset"
+                          label="발송 시점"
+                          value={formState.offsetType}
+                          options={OFFSET_OPTIONS[formState.eventType]}
+                          onValueChange={(value) => {
+                            const nextOffsetType = value as TriggerOffsetType;
 
-                  {(formState.offsetType === "BEFORE_DAYS" || formState.offsetType === "AFTER_DAYS") && (
-                    <div data-component={component("trigger-rules-offset-days")} className="max-w-[220px]">
-                      <Label htmlFor="trigger-rule-offset-days" className="text-[0.78rem] font-semibold">기준 일수</Label>
-                      <input
-                        id="trigger-rule-offset-days"
-                        type="number"
-                        min={1}
-                        value={formState.offsetDays || 1}
-                        onChange={(event) =>
-                          setFormState((current) => ({
-                            ...current,
-                            offsetDays: Math.max(Number(event.target.value || 1), 1),
-                          }))
-                        }
-                        className={INPUT_CLASS}
-                      />
-                    </div>
-                  )}
+                            setFormState((current) => ({
+                              ...current,
+                              offsetType: nextOffsetType,
+                              offsetDays:
+                                nextOffsetType === "BEFORE_DAYS" || nextOffsetType === "AFTER_DAYS"
+                                  ? Math.max(current.offsetDays || 1, 1)
+                                  : 0,
+                            }));
+                          }}
+                          dataComponent={component("trigger-rules-offset")}
+                          triggerDataComponent={component("trigger-rules-offset-select")}
+                        />
 
-                  <div data-component={component("trigger-rules-template")}>
-                    <Label htmlFor="trigger-rule-template" className="text-[0.78rem] font-semibold">발송 템플릿</Label>
-                    <TriggerRuleSelect
-                      id="trigger-rule-template"
-                      value={formState.templateKey}
-                      options={availableTemplates.map((template) => ({
-                        label: template.name,
-                        value: template.key,
-                      }))}
-                      dataComponent={component("trigger-rules-template-select-wrap")}
-                      onValueChange={(templateKey) =>
-                        setFormState((current) => ({
-                          ...current,
-                          templateKey,
-                        }))
-                      }
-                    />
-                    {currentTemplate && (
-                      <div data-component={component("trigger-rules-template-copy")} className="mt-3 rounded-[18px] border border-v3-border bg-v3-dim-white/40 p-4">
-                        <p className="text-[0.8rem] font-semibold text-v3-dark">{currentTemplate.name}</p>
-                        <p className="mt-1 text-[0.72rem] text-v3-text-muted">{currentTemplate.description}</p>
-                        {currentTemplate.requiredVariables.length > 0 && (
-                          <div data-component={component("trigger-rules-template-vars")} className="mt-3 flex flex-wrap gap-1.5">
-                            {currentTemplate.requiredVariables.map((variable) => (
-                              <span
-                                key={variable.key}
-                                className="rounded-full border border-v3-border bg-white px-2.5 py-1 text-[0.68rem] font-medium text-v3-text-muted"
-                              >
-                                {variable.label}
-                              </span>
-                            ))}
-                          </div>
+                        <TitleSelectMolecule
+                          id="trigger-rule-recipient"
+                          label="수신 대상"
+                          value={formState.recipientType}
+                          options={RECIPIENT_OPTIONS[formState.eventType]}
+                          onValueChange={(value) =>
+                            setFormState((current) => ({
+                              ...current,
+                              recipientType: value as TriggerRecipientType,
+                            }))
+                          }
+                          dataComponent={component("trigger-rules-recipient")}
+                          triggerDataComponent={component("trigger-rules-recipient-select")}
+                        />
+
+                        {(formState.offsetType === "BEFORE_DAYS" ||
+                          formState.offsetType === "AFTER_DAYS") && (
+                          <TitleTextInputMolecule
+                            id="trigger-rule-offset-days"
+                            label="기준 일수"
+                            type="number"
+                            min={1}
+                            value={formState.offsetDays || 1}
+                            onValueChange={(value) =>
+                              setFormState((current) => ({
+                                ...current,
+                                offsetDays: Math.max(Number(value || 1), 1),
+                              }))
+                            }
+                            dataComponent={component("trigger-rules-offset-days")}
+                          />
                         )}
-                      </div>
-                    )}
-                  </div>
 
-                  <div data-component={component("trigger-rules-preview")} className="rounded-[20px] border border-v3-border bg-gradient-to-br from-v3-primary-light/70 to-white p-5">
-                    <p className="text-[0.78rem] font-semibold text-v3-dark">규칙 미리보기</p>
-                    <p className="mt-2 text-[0.82rem] leading-relaxed text-v3-text">
-                      {formState.name.trim() || "이름 없는 규칙"}:
-                      <span className="ml-1 text-v3-text-muted">{getRuleSummary(formState)}</span>
-                    </p>
-                    <p className="mt-2 text-[0.72rem] text-v3-text-muted">
-                      선택한 템플릿은 현재 제공자 <span className="font-semibold text-v3-dark">{resolvedProvider}</span> 기준으로 필터링됩니다.
-                    </p>
-                  </div>
-                </div>
+                        <TitleSelectMolecule
+                          id="trigger-rule-template"
+                          label="발송 템플릿"
+                          value={formState.templateKey}
+                          options={availableTemplates.map((template) => ({
+                            label: template.name,
+                            value: template.key,
+                          }))}
+                          onValueChange={(value) =>
+                            setFormState((current) => ({
+                              ...current,
+                              templateKey: value as TriggerTemplateKey,
+                            }))
+                          }
+                          dataComponent={component("trigger-rules-template")}
+                          triggerDataComponent={component("trigger-rules-template-select")}
+                        />
+                      </SteppedWizardPanelContent>
+                    ),
+                  },
+                  {
+                    key: "preview",
+                    className: "flex min-h-0 justify-center",
+                    children: (
+                      <AlimtalkPhonePreview
+                        className="h-full min-h-0 overflow-hidden py-0"
+                        content={selectedTemplateMessage}
+                        templateName={selectedTemplate?.name ?? "발송 템플릿"}
+                        headline={selectedTemplate?.name ?? "발송 템플릿"}
+                        subtitle={
+                          selectedTemplate?.description ??
+                          selectedSystemTemplate?.description ??
+                          "선택한 발송 템플릿 미리보기입니다."
+                        }
+                        dataComponentPrefix={dataComponentPrefix === "message" ? "message" : dataComponentPrefix}
+                        panelDataComponent={
+                          dataComponentPrefix === "message"
+                            ? "messages-template-preview-phone-panel"
+                            : component("template-preview-phone-panel")
+                        }
+                      />
+                    ),
+                  },
+                ]}
+              />
             </DetailPanel>
           )}
         </SplitLayout>

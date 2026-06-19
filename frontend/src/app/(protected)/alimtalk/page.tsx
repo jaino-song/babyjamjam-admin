@@ -1785,7 +1785,7 @@ export default function AlimtalkPage() {
 
           {activeSection === "triggers" ? (
             <section data-component="alimtalk-triggers" className="h-full min-h-0">
-              <TriggerRulesManager />
+              <TriggerRulesManager channel="alimtalk" />
             </section>
           ) : null}
 
