@@ -5,6 +5,7 @@ import { ALIGO_API_PORT, IAligoApiPort } from "domain/ports/aligo-api.port";
 import { ALIGO_TEMPLATES } from "application/dto/aligo";
 import { AligoTemplateKey } from "application/dto/aligo/alimtalk-template.dto";
 import { AligoService } from "application/services/aligo.service";
+import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { maskPhone } from "application/utils/mask";
 import { AlimtalkLogEntity, SMS_DELIVERY_RETRY_DELAY_MS } from "domain/entities/alimtalk-log.entity";
 import { SchedulerExecutionGuard } from "./scheduler-execution.guard";
@@ -33,6 +34,7 @@ export class AlimtalkRetrySchedulerService {
         @Inject(ALIGO_API_PORT)
         private readonly aligoApi: IAligoApiPort,
         private readonly aligoService: AligoService,
+        private readonly messageSenderApprovalService: MessageSenderApprovalService,
     ) {}
 
     @Cron("*/5 * * * *", { timeZone: "Asia/Seoul" })
@@ -96,9 +98,39 @@ export class AlimtalkRetrySchedulerService {
     }
 
     private async retrySmsLog(log: AlimtalkLogEntity): Promise<void> {
+        // FIX 3: Enforce per-tenant sender-approval gate before re-sending.
+        if (log.branchId) {
+            try {
+                await this.messageSenderApprovalService.ensureApproved(log.branchId);
+            } catch (approvalError) {
+                const reason = approvalError instanceof Error ? approvalError.message : String(approvalError);
+                this.logger.warn(`[Retry] SMS blocked by approval gate for log ${log.id} (branchId=${log.branchId}): ${reason}`);
+                // Permanently fail — do not schedule another retry.
+                log.status = "failed";
+                log.errorMessage = reason;
+                log.attempts += 1;
+                log.lastAttemptAt = new Date(Date.now());
+                log.nextRetryAt = null;
+                await this.logRepository.update(log);
+                return;
+            }
+        }
+
         try {
-            const scheduledDate = this.stringVariable(log, "scheduledDate");
-            const scheduledTime = this.stringVariable(log, "scheduledTime");
+            const rawScheduledDate = this.stringVariable(log, "scheduledDate");
+            const rawScheduledTime = this.stringVariable(log, "scheduledTime");
+
+            // FIX 1: If the originally-scheduled instant is now in the past, drop the
+            // schedule fields so the retry sends immediately instead of re-submitting a
+            // past reservation that Aligo would reject.
+            const scheduleInstantMs = rawScheduledDate && rawScheduledTime
+                ? this.parseKstScheduleMs(rawScheduledDate, rawScheduledTime)
+                : null;
+            const isScheduledInFuture = scheduleInstantMs !== null && scheduleInstantMs > Date.now();
+
+            const scheduledDate = isScheduledInFuture ? rawScheduledDate : undefined;
+            const scheduledTime = isScheduledInFuture ? rawScheduledTime : undefined;
+
             const result = await this.aligoService.sendSms({
                 senderPhone: this.stringVariable(log, "senderPhone"),
                 receiver: log.receiver,
@@ -118,7 +150,18 @@ export class AlimtalkRetrySchedulerService {
                 return;
             }
 
-            log.markSent(result.response.msg_id ? String(result.response.msg_id) : undefined);
+            // FIX 2: A still-future scheduled send accepted by Aligo is re-queued, not
+            // yet delivered — record it as 'pending' (matching recordSmsLog in the
+            // controller). Only mark 'sent' for immediate sends.
+            if (isScheduledInFuture) {
+                log.status = "pending";
+                log.aligoMid = result.response.msg_id ? String(result.response.msg_id) : null;
+                log.lastAttemptAt = new Date(Date.now());
+                log.nextRetryAt = null;
+                log.attempts += 1;
+            } else {
+                log.markSent(result.response.msg_id ? String(result.response.msg_id) : undefined);
+            }
             await this.logRepository.update(log);
             this.logger.log(`[Retry] Successfully resent SMS ${log.templateKey} to ${maskPhone(log.receiver)}`);
         } catch (error) {
@@ -126,6 +169,19 @@ export class AlimtalkRetrySchedulerService {
             await this.logRepository.update(log);
             this.logger.warn(`[Retry] Failed SMS attempt ${log.attempts} for log ${log.id}: ${error}`);
         }
+    }
+
+    /**
+     * Parse a KST scheduled instant from Aligo's stored YYYYMMDD + HHMM format.
+     * Mirrors the controller's parseKstSchedule approach.
+     * Returns NaN-safe milliseconds (returns null if parsing fails).
+     */
+    private parseKstScheduleMs(date: string, time: string): number | null {
+        // date = YYYYMMDD, time = HHMM → "YYYY-MM-DDThh:mm:00+09:00"
+        const isoDate = `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`;
+        const isoTime = `${time.slice(0, 2)}:${time.slice(2, 4)}`;
+        const ms = new Date(`${isoDate}T${isoTime}:00+09:00`).getTime();
+        return Number.isNaN(ms) ? null : ms;
     }
 
     private markSmsRetryFailed(log: AlimtalkLogEntity, errorMessage: string): void {
