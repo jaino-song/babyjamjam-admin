@@ -36,6 +36,26 @@ const REQUESTED_DOCUMENT_STATUS_TYPES = new Set(["030", "060", "070"]);
 // - 090: revoked (철회됨)
 // - 099: deleted (삭제됨)
 export type DocumentStatusType = 'created' | 'opened' | 'completed' | 'requested' | 'rejected' | 'revoked' | 'deleted' | null;
+export type ClientBadgeKey = "contract_required" | "breast_pump" | "service_status" | "care_center";
+export type ClientBadgeTone = "danger" | "success" | "primary" | "warning" | "neutral";
+export type ClientBadgeStatus =
+    | "active"
+    | "pending"
+    | "review"
+    | "terminated"
+    | "expired"
+    | "completed"
+    | "signed"
+    | "breastPump"
+    | "careCenter";
+
+export interface ClientBadge {
+    key: ClientBadgeKey;
+    status: ClientBadgeStatus;
+    label: string;
+    tone: ClientBadgeTone;
+    priority: number;
+}
 
 // Response type that includes employee information
 export interface ClientWithEmployees {
@@ -61,6 +81,7 @@ export interface ClientWithEmployees {
     areaId: string | null;
     hasSigned: boolean;
     documentStatus: DocumentStatusType;
+    badges: ClientBadge[];
     primaryEmployee: { id: number; name: string } | null;
     secondaryEmployee: { id: number; name: string } | null;
 }
@@ -121,6 +142,77 @@ export class ClientService {
                 `serviceStatus must be one of: ${SERVICE_STATUS_VALUES.join(", ")}`
             );
         }
+    }
+
+    private mapServiceStatusToBadge(status: string | null): {
+        status: ClientBadgeStatus;
+        label: string;
+        tone: ClientBadgeTone;
+    } {
+        switch (status) {
+            case SERVICE_STATUS.ACTIVE:
+                return { status: "active", label: "진행중", tone: "success" };
+            case SERVICE_STATUS.WAITING:
+                return { status: "pending", label: "대기", tone: "warning" };
+            case SERVICE_STATUS.REPLACEMENT_REQUESTED:
+                return { status: "terminated", label: "교체 요청", tone: "danger" };
+            case SERVICE_STATUS.TERMINATED:
+                return { status: "terminated", label: "중단", tone: "danger" };
+            case SERVICE_STATUS.COMPLETED:
+                return { status: "completed", label: "완료", tone: "neutral" };
+            default:
+                return { status: "pending", label: "-", tone: "warning" };
+        }
+    }
+
+    private buildClientBadges(params: {
+        serviceStatus: string | null;
+        documentStatus: DocumentStatusType;
+        breastPump: boolean;
+        careCenter: boolean | null;
+    }): ClientBadge[] {
+        const badges: ClientBadge[] = [];
+
+        if (params.serviceStatus === SERVICE_STATUS.ACTIVE && params.documentStatus !== "completed") {
+            badges.push({
+                key: "contract_required",
+                status: "terminated",
+                label: "계약서 필요",
+                tone: "danger",
+                priority: 10,
+            });
+        }
+
+        if (params.breastPump) {
+            badges.push({
+                key: "breast_pump",
+                status: "breastPump",
+                label: "유축기 대여",
+                tone: "danger",
+                priority: 20,
+            });
+        }
+
+        const serviceBadge = this.mapServiceStatusToBadge(params.serviceStatus);
+        badges.push({
+            key: "service_status",
+            status: serviceBadge.status,
+            label: serviceBadge.label,
+            tone: serviceBadge.tone,
+            priority: 30,
+        });
+
+        if (params.careCenter) {
+            badges.push({
+                key: "care_center",
+                status: "careCenter",
+                label: "조리원 이용",
+                tone: "primary",
+                priority: 40,
+            });
+        }
+
+        return badges.sort((left, right) => left.priority - right.priority);
     }
 
     private async assertAllowedClientArea(branchid: string, areaId: string | null | undefined): Promise<void> {
@@ -357,6 +449,13 @@ export class ClientService {
             if (client.serviceStatus !== computedStatus) {
                 clientsNeedingUpdate.push({ id: client.id, newStatus: computedStatus });
             }
+            const documentStatus = this.mapStatusTypeToDocumentStatus(docStatusMap.get(client.eDocId ?? ''));
+            const badges = this.buildClientBadges({
+                serviceStatus: computedStatus,
+                documentStatus,
+                breastPump: client.breastPump,
+                careCenter: client.careCenter,
+            });
 
                 return {
                     id: client.id,
@@ -380,7 +479,8 @@ export class ClientService {
                     eDocId: client.eDocId,
                     areaId: client.areaId,
                     hasSigned: client.eDocId !== null,
-                    documentStatus: this.mapStatusTypeToDocumentStatus(docStatusMap.get(client.eDocId ?? '')),
+                    documentStatus,
+                    badges,
                     primaryEmployee: schedule?.primaryEmployee
                         ? { id: schedule.primaryEmployee.id, name: schedule.primaryEmployee.name }
                         : null,

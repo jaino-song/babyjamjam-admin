@@ -4,13 +4,13 @@ import { MessageSenderApprovalService } from "application/services/message-sende
 import { SystemTemplateService } from "application/services/system-template.service";
 import { maskPhone } from "application/utils/mask";
 import { SystemTemplateKey, SYSTEM_TEMPLATE_REGISTRY } from "domain/constants/system-template-registry";
+import { SMS_DELIVERY_RETRY_DELAY_MS } from "domain/entities/alimtalk-log.entity";
 import { ClientEntity } from "domain/entities/client.entity";
 import { PhoneNumber } from "domain/value-objects/phone-number.vo";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 const CLIENT_GREETING_SMS_TEMPLATE_KEY = "client_greeting_sms";
 const CLIENT_GREETING_SMS_TITLE = "인사 메시지";
-const CLIENT_GREETING_SMS_RETRY_DELAY_MS = 60 * 60 * 1000;
 
 @Injectable()
 export class ClientGreetingSmsAutomationService {
@@ -158,6 +158,6 @@ export class ClientGreetingSmsAutomationService {
     }
 
     private nextRetryAt(): Date {
-        return new Date(Date.now() + CLIENT_GREETING_SMS_RETRY_DELAY_MS);
+        return new Date(Date.now() + SMS_DELIVERY_RETRY_DELAY_MS);
     }
 }
