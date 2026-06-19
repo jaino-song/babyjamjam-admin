@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { FolderOpen, FileText, Image as ImageIcon, File, Upload, Loader2, Tag, MoreVertical, Pencil, Trash2, Eye } from "lucide-react";
+import { FolderOpen, FileText, Image as ImageIcon, File, Upload, CloudUpload, Loader2, Tag, MoreVertical, Pencil, Trash2, Eye } from "lucide-react";
 import { StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton, AnimatedSlotList, AnimatedSlotListItemContent, EmptyState, PageSection, DetailSkeleton, ListEmptyState } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
@@ -18,6 +18,12 @@ import { formatDate } from "@/components/app/documents/document-list";
 import { isHangulDocument } from "@/components/app/documents/document-preview-utils";
 import { toast } from "@/hooks/use-toast";
 
+const FILES_UPLOAD_FORM_ID = "files-upload-form";
+const EMPTY_UPLOAD_STATE = {
+  hasSelectedFile: false,
+  canSubmit: false,
+};
+
 export default function FilesPage() {
   const [activeFilter, setActiveFilter] = useState<string>("all");
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
@@ -29,6 +35,7 @@ export default function FilesPage() {
   const [deleteDoc, setDeleteDoc] = useState<Document | null>(null);
   const [isAddCategoryOpen, setIsAddCategoryOpen] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadDropzoneState, setUploadDropzoneState] = useState(EMPTY_UPLOAD_STATE);
 
   const { data: documents = [], isLoading, error } = useDocuments();
   const { data: categories = [] } = useDocumentCategories();
@@ -84,9 +91,19 @@ export default function FilesPage() {
       setUploadProgress(0);
       await uploadMutation.mutateAsync({ ...params, onProgress: (p: number) => setUploadProgress(p) });
       setIsUploadOpen(false);
+      setUploadDropzoneState(EMPTY_UPLOAD_STATE);
       toast({ title: "성공", description: "문서가 업로드되었습니다.", variant: "default" });
     } catch {
       toast({ title: "오류", description: "문서 업로드에 실패했습니다.", variant: "destructive" });
+    }
+  };
+
+  const handleUploadOpenChange = (open: boolean) => {
+    if (uploadMutation.isPending) return;
+
+    setIsUploadOpen(open);
+    if (!open) {
+      setUploadDropzoneState(EMPTY_UPLOAD_STATE);
     }
   };
 
@@ -236,31 +253,52 @@ export default function FilesPage() {
         )}
       </SplitLayout>
 
-      <Dialog open={isUploadOpen} onOpenChange={(open: boolean) => !uploadMutation.isPending && setIsUploadOpen(open)}>
+      <Dialog open={isUploadOpen} onOpenChange={handleUploadOpenChange}>
         <DialogContent
           data-component="files-upload-dialog"
-          showCloseButton={!uploadMutation.isPending}
+          showCloseButton={false}
           className="flex max-h-[90vh] w-[min(720px,calc(100vw-1.5rem))] max-w-[720px] flex-col overflow-hidden rounded-[28px] border-none bg-v3-dim-white p-0 shadow-[0_20px_60px_hsla(214,50%,20%,0.15)] gap-0"
         >
           <DialogHeader className="shrink-0 border-b border-v3-border bg-white p-6 text-left">
-            <div data-component="files-upload-dialog-heading" className="min-w-0 pr-12">
-              <span className="mb-3 inline-flex items-center rounded-full bg-v3-primary-light px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-v3-primary shadow-sm">
-                Document Upload
-              </span>
+            <div data-component="files-upload-dialog-heading" className="flex min-w-0 flex-col items-start gap-2 pr-12">
               <DialogTitle className="flex items-center gap-2 text-[1.35rem] font-bold tracking-[-0.02em] text-v3-dark">
                 <Upload className="h-5 w-5 text-v3-primary" />
                 파일 업로드
               </DialogTitle>
-              <DialogDescription className="mt-2 pt-0 text-[0.82rem] leading-6 text-v3-text-muted">
-                PNG, JPG, PDF, HWP/HWPX 문서를 업로드하고 카테고리와 태그까지 한 번에 정리합니다.
-              </DialogDescription>
             </div>
           </DialogHeader>
           <div data-component="files-upload-content" className="min-h-0 flex-1 overflow-y-auto bg-white px-6 py-6">
-            <DocumentDropzone onUpload={handleUpload} isLoading={uploadMutation.isPending} uploadProgress={uploadProgress} />
+            <DocumentDropzone
+              formId={FILES_UPLOAD_FORM_ID}
+              showInlineSubmitButton={false}
+              onUploadStateChange={setUploadDropzoneState}
+              onUpload={handleUpload}
+              isLoading={uploadMutation.isPending}
+              uploadProgress={uploadProgress}
+            />
           </div>
-          <DialogFooter className="shrink-0 border-t border-v3-border bg-white px-6 py-4">
-            <Button variant="outline" onClick={() => setIsUploadOpen(false)} disabled={uploadMutation.isPending}>취소</Button>
+          <DialogFooter className="shrink-0 border-t border-v3-border bg-white px-6 py-4 sm:justify-between">
+            <Button variant="outline" onClick={() => handleUploadOpenChange(false)} disabled={uploadMutation.isPending}>취소</Button>
+            {uploadDropzoneState.hasSelectedFile && (
+              <Button
+                type="submit"
+                form={FILES_UPLOAD_FORM_ID}
+                variant="positive"
+                disabled={!uploadDropzoneState.canSubmit}
+              >
+                {uploadMutation.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    업로드 중...
+                  </>
+                ) : (
+                  <>
+                    <CloudUpload className="h-4 w-4" />
+                    문서 업로드
+                  </>
+                )}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
