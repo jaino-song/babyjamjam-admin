@@ -170,6 +170,9 @@ export function AnimatedSlotList<T>({
           );
         }
 
+        const handleClick =
+          !isSlotLoading && item && onSlotClick ? () => onSlotClick(item, index) : undefined;
+
         return (
           <div
             key={slotKey}
@@ -181,9 +184,19 @@ export function AnimatedSlotList<T>({
               shouldHide && "hidden"
             )}
             style={shouldAnimateSlot ? { animationDelay } : undefined}
-            onClick={
-              !isSlotLoading && item && onSlotClick ? () => onSlotClick(item, index) : undefined
-            }
+            onClick={handleClick}
+            {...(isInteractive && handleClick
+              ? {
+                  role: "button" as const,
+                  tabIndex: 0,
+                  onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      if (event.key === " ") event.preventDefault();
+                      handleClick();
+                    }
+                  },
+                }
+              : {})}
           >
             {render({ index, item, isLoading: isSlotLoading })}
           </div>
