@@ -51,6 +51,11 @@ interface RecipientQueueItem {
   message: string;
 }
 
+interface DuplicateSendMatch {
+  recipient: RecipientQueueItem;
+  record: AlimtalkHistoryRecord;
+}
+
 interface TemplateSendFormProps {
   templateId: string;
   templateName: string;
@@ -155,7 +160,7 @@ export function TemplateSendForm({
   const [isSending, setIsSending] = useState(false);
   const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
   const [feedback, setFeedback] = useState<{ tone: "success" | "error"; message: string } | null>(null);
-  const [duplicateSendCandidate, setDuplicateSendCandidate] = useState<AlimtalkHistoryRecord | null>(null);
+  const [duplicateSendCandidates, setDuplicateSendCandidates] = useState<DuplicateSendMatch[] | null>(null);
   const [recipientQueue, setRecipientQueue] = useState<RecipientQueueItem[]>([]);
   const { data: historyData = [], refetch: refetchHistory } = useMessageDeliveryHistory();
   const {
@@ -252,13 +257,24 @@ export function TemplateSendForm({
     if (!currentQueueItem) return;
 
     setRecipientQueue((currentQueue) => {
-      if (currentQueue.some((item) => item.phone === currentQueueItem.phone)) {
-        return currentQueue;
+      const existingIndex = currentQueue.findIndex((item) => item.phone === currentQueueItem.phone);
+
+      if (existingIndex === -1) {
+        return [...currentQueue, currentQueueItem];
       }
 
-      return [...currentQueue, currentQueueItem];
+      // For requiresRecipientName templates, update the queued entry in place so
+      // a name correction always propagates (instead of being silently dropped).
+      // For phone-only templates, the phone is the full identity — skip as before.
+      if (requiresRecipientName) {
+        const updated = [...currentQueue];
+        updated[existingIndex] = currentQueueItem;
+        return updated;
+      }
+
+      return currentQueue;
     });
-  }, [currentQueueItem]);
+  }, [currentQueueItem, requiresRecipientName]);
 
   useEffect(() => {
     onSubmitStateChange?.({
@@ -399,72 +415,88 @@ export function TemplateSendForm({
 
     setIsSending(true);
     setFeedback(null);
-    setDuplicateSendCandidate(null);
+    setDuplicateSendCandidates(null);
 
-    try {
-      const responses = await Promise.all(
-        recipients.map((recipient) => (
-          messageDeliveryApi.sendSms({
-            receiver: recipient.formattedPhone,
-            message: recipient.message,
-            msgType: "AUTO",
-            triggerType: "immediate",
-            ...(recipient.clientId ? { clientId: recipient.clientId } : {}),
-            ...(requiresRecipientName && recipient.name ? { recipientName: recipient.name } : {}),
-            ...(getTextByteLength(recipient.message) > SMS_BYTE_LIMIT ? { title: getLmsTitle(templateName) } : {}),
-          })
-        )),
-      );
+    const settled = await Promise.allSettled(
+      recipients.map((recipient) => (
+        messageDeliveryApi.sendSms({
+          receiver: recipient.formattedPhone,
+          message: recipient.message,
+          msgType: "AUTO",
+          triggerType: "immediate",
+          ...(recipient.clientId ? { clientId: recipient.clientId } : {}),
+          ...(requiresRecipientName && recipient.name ? { recipientName: recipient.name } : {}),
+          ...(getTextByteLength(recipient.message) > SMS_BYTE_LIMIT ? { title: getLmsTitle(templateName) } : {}),
+        })
+      )),
+    );
 
-      const failedResponse = responses.find((response) => (
-        response.result &&
-        (response.result.resultCode !== 1 || (response.result.errorCount ?? 0) > 0)
-      ));
+    const succeededRecipients: RecipientQueueItem[] = [];
+    const failedRecipients: RecipientQueueItem[] = [];
 
-      if (failedResponse) {
-        throw new Error(failedResponse.result?.message ?? "발송에 실패했습니다.");
+    settled.forEach((result, index) => {
+      const recipient = recipients[index];
+      if (
+        result.status === "fulfilled" &&
+        result.value.result.resultCode === 1 &&
+        (result.value.result.errorCount ?? 0) === 0
+      ) {
+        succeededRecipients.push(recipient);
+      } else {
+        failedRecipients.push(recipient);
       }
+    });
 
+    setIsSending(false);
+
+    if (failedRecipients.length === 0) {
+      // All succeeded — existing happy path.
       setFeedback({ tone: "success", message: `${recipients.length}건의 메시지 발송 요청이 접수되었습니다.` });
       setRecipientQueue([]);
       handleClearRecipient({ clearFeedback: false });
-    } catch (error) {
-      setFeedback({
-        tone: "error",
-        message: error instanceof Error ? error.message : "발송에 실패했습니다.",
-      });
-    } finally {
-      setIsSending(false);
+    } else {
+      // Remove only the successfully-sent recipients so a retry re-sends only failures.
+      const succeededPhones = new Set(succeededRecipients.map((r) => r.phone));
+      setRecipientQueue((currentQueue) =>
+        currentQueue.filter((item) => !succeededPhones.has(item.phone)),
+      );
+
+      if (succeededRecipients.length === 0) {
+        setFeedback({ tone: "error", message: `${failedRecipients.length}건 발송에 실패했습니다.` });
+      } else {
+        setFeedback({
+          tone: "error",
+          message: `${succeededRecipients.length}건 발송 완료, ${failedRecipients.length}건 실패. 실패한 수신자에게 재발송해 주세요.`,
+        });
+      }
     }
   };
 
-  const findDuplicateBeforeSend = async (recipients: RecipientQueueItem[]) => {
+  const findDuplicateBeforeSend = async (recipients: RecipientQueueItem[]): Promise<DuplicateSendMatch[]> => {
     setIsCheckingDuplicate(true);
     try {
       const result = await refetchHistory();
       const latestHistory = filterHistoryRecordsByChannel(result.data ?? historyData, "sms");
 
+      const matches: DuplicateSendMatch[] = [];
       for (const recipient of recipients) {
-        const duplicate = findRecentDuplicateSend(latestHistory, {
+        const record = findRecentDuplicateSend(latestHistory, {
           receiver: recipient.formattedPhone,
           message: recipient.message,
         });
-
-        if (duplicate) return duplicate;
+        if (record) matches.push({ recipient, record });
       }
-
-      return null;
+      return matches;
     } catch {
+      const matches: DuplicateSendMatch[] = [];
       for (const recipient of recipients) {
-        const duplicate = findRecentDuplicateSend(smsHistoryData, {
+        const record = findRecentDuplicateSend(smsHistoryData, {
           receiver: recipient.formattedPhone,
           message: recipient.message,
         });
-
-        if (duplicate) return duplicate;
+        if (record) matches.push({ recipient, record });
       }
-
-      return null;
+      return matches;
     } finally {
       setIsCheckingDuplicate(false);
     }
@@ -484,10 +516,10 @@ export function TemplateSendForm({
       return;
     }
 
-    const duplicate = await findDuplicateBeforeSend(recipients);
-    if (duplicate) {
+    const duplicates = await findDuplicateBeforeSend(recipients);
+    if (duplicates.length > 0) {
       setFeedback(null);
-      setDuplicateSendCandidate(duplicate);
+      setDuplicateSendCandidates(duplicates);
       return;
     }
 
@@ -593,10 +625,10 @@ export function TemplateSendForm({
       ) : null}
 
       <Dialog
-        open={Boolean(duplicateSendCandidate)}
+        open={Boolean(duplicateSendCandidates && duplicateSendCandidates.length > 0)}
         onOpenChange={(open) => {
           if (!open) {
-            setDuplicateSendCandidate(null);
+            setDuplicateSendCandidates(null);
           }
         }}
       >
@@ -610,20 +642,39 @@ export function TemplateSendForm({
           >
             <DialogTitle>중복 전송 확인</DialogTitle>
             <DialogDescription className="pt-0">
-              최근 같은 내용의 메시지를 보낸 기록이 있습니다. 동일한 메시지를 재전송 할까요?
+              {duplicateSendCandidates && duplicateSendCandidates.length > 1
+                ? `최근 같은 내용의 메시지를 보낸 기록이 ${duplicateSendCandidates.length}건 있습니다. 동일한 메시지를 재전송 할까요?`
+                : "최근 같은 내용의 메시지를 보낸 기록이 있습니다. 동일한 메시지를 재전송 할까요?"}
             </DialogDescription>
           </DialogHeader>
 
           <main data-component="messages-duplicate-send-confirm-main">
-            {duplicateSendCandidate ? (
+            {duplicateSendCandidates && duplicateSendCandidates.length > 0 ? (
               <div
-                data-component="messages-duplicate-send-confirm-recent"
-                className="rounded-[16px] bg-v3-dim-white px-4 py-3"
+                data-component="messages-duplicate-send-confirm-list"
+                className="flex flex-col gap-2"
               >
-                <span className="flex min-w-0 shrink-0 items-center gap-[calc(4px*var(--v3-ui-scale,1))] text-[0.78rem] font-semibold text-v3-text-muted">
-                  <Calendar className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(12px*var(--v3-ui-scale,1))] shrink-0" />
-                  최근 전송 {formatDuplicateSentAt(getHistoryTimestamp(duplicateSendCandidate))}
-                </span>
+                {duplicateSendCandidates.map((match) => (
+                  <div
+                    key={match.recipient.phone}
+                    data-component="messages-duplicate-send-confirm-recent"
+                    className="rounded-[16px] bg-v3-dim-white px-4 py-3"
+                  >
+                    {shouldShowRecipientNameInPill && match.recipient.name ? (
+                      <p className="mb-1 text-[0.78rem] font-semibold text-v3-dark truncate">
+                        {match.recipient.name} · {match.recipient.formattedPhone}
+                      </p>
+                    ) : (
+                      <p className="mb-1 text-[0.78rem] font-semibold text-v3-dark truncate">
+                        {match.recipient.formattedPhone}
+                      </p>
+                    )}
+                    <span className="flex min-w-0 shrink-0 items-center gap-[calc(4px*var(--v3-ui-scale,1))] text-[0.78rem] font-semibold text-v3-text-muted">
+                      <Calendar className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(12px*var(--v3-ui-scale,1))] shrink-0" />
+                      최근 전송 {formatDuplicateSentAt(getHistoryTimestamp(match.record))}
+                    </span>
+                  </div>
+                ))}
               </div>
             ) : null}
           </main>
@@ -637,7 +688,7 @@ export function TemplateSendForm({
               variant="neutral"
               width="sm"
               className="transition-none hover:translate-y-0 hover:border-v3-border hover:bg-white hover:text-v3-text-muted"
-              onClick={() => setDuplicateSendCandidate(null)}
+              onClick={() => setDuplicateSendCandidates(null)}
             >
               취소
             </Button>
