@@ -125,6 +125,10 @@ describe("OwnerAdminConsole", () => {
     await waitFor(() => {
       expect(screen.getAllByText("강남점").length).toBeGreaterThan(0);
     });
+    // Select the 강남점 list item to open its detail panel (auto-selection now
+    // requires desktop viewport; in tests splitLayoutMode stays null so we must
+    // click explicitly).
+    fireEvent.click(screen.getByRole("button", { name: /강남점/ }));
     fireEvent.click(screen.getByRole("button", { name: "승인" }));
 
     expect(approveMutate).toHaveBeenCalledWith("branch-real-gangnam");
