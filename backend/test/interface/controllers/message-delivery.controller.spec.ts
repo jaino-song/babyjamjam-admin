@@ -221,6 +221,46 @@ describe("MessageDeliveryController", () => {
         });
     });
 
+    it("should not schedule auto-retry on partial-success batches (would duplicate to already-delivered recipients)", async () => {
+        jest.spyOn(Date, "now").mockReturnValue(new Date("2026-06-05T09:20:00.000Z").getTime());
+        aligoService.sendSms.mockResolvedValue({
+            request: {
+                senderPhone: "0212345678",
+                receiver: "01012345678,01099999999",
+                msgType: "SMS",
+                testModeYn: "N",
+            },
+            response: {
+                result_code: 1,
+                message: "일부 수신번호 형식이 올바르지 않습니다.",
+                success_cnt: 1,
+                error_cnt: 1,
+                msg_type: "SMS",
+            },
+        });
+
+        await expect(
+            controller.sendSms(
+                { branchId: "org-1" },
+                {
+                    receiver: "01012345678,01099999999",
+                    message: "테스트 발송 본문",
+                    title: "안내",
+                    triggerType: "immediate",
+                    msgType: "AUTO",
+                },
+            ),
+        ).rejects.toThrow(BadGatewayException);
+
+        expect(prismaService.alimtalk_log.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({
+                status: "failed",
+                nextRetryAt: null,
+                errorMessage: expect.stringContaining("부분 발송"),
+            }),
+        });
+    });
+
     it("should record a failed log and reject when Aligo rejects the SMS request before returning a result body", async () => {
         jest.spyOn(Date, "now").mockReturnValue(new Date("2026-06-05T09:20:00.000Z").getTime());
         aligoService.sendSms.mockRejectedValue(

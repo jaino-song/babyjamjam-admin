@@ -228,10 +228,12 @@ export class CallInboxService {
         draft: { callRecordId: string },
         dto: { fields: Record<string, unknown>; suppressGreetingSms?: boolean },
     ) {
-        // optimistic lock BEFORE side effects: only one caller flips PENDING→CONFIRMING
+        // optimistic lock BEFORE side effects: only one caller flips PENDING→CONFIRMING.
+        // confirmingStartedAt anchors the stuck-CONFIRMING sweep so a slow confirm
+        // running shortly after a long-pending draft cannot be reverted mid-flight.
         const locked = await this.prismaService.client_draft.updateMany({
             where: { id, status: "PENDING" },
-            data: { status: "CONFIRMING" },
+            data: { status: "CONFIRMING", confirmingStartedAt: new Date() },
         });
         if (locked.count === 0) {
             throw new ConflictException("Draft already reviewed");
@@ -266,7 +268,7 @@ export class CallInboxService {
 
             await this.prismaService.client_draft.update({
                 where: { id },
-                data: { status: "CONFIRMED", clientId: client.id, reviewedById: userId, reviewedAt: new Date() },
+                data: { status: "CONFIRMED", clientId: client.id, reviewedById: userId, reviewedAt: new Date(), confirmingStartedAt: null },
             });
             await this.prismaService.call_record.update({
                 where: { id: draft.callRecordId },
@@ -284,14 +286,14 @@ export class CallInboxService {
                 await this.prismaService.client_draft
                     .update({
                         where: { id },
-                        data: { status: "CONFIRMED", clientId: createdClientId, reviewedById: userId, reviewedAt: new Date() },
+                        data: { status: "CONFIRMED", clientId: createdClientId, reviewedById: userId, reviewedAt: new Date(), confirmingStartedAt: null },
                     })
                     .catch(() => undefined);
                 return { clientId: createdClientId };
             }
             // create itself failed: roll the lock back so staff can fix input and retry
             await this.prismaService.client_draft
-                .update({ where: { id }, data: { status: "PENDING" } })
+                .update({ where: { id }, data: { status: "PENDING", confirmingStartedAt: null } })
                 .catch(() => undefined);
             throw error;
         }
@@ -341,10 +343,13 @@ export class CallInboxService {
             throw new BadRequestException("No valid fields remain after allowlist filtering");
         }
 
-        // c. optimistic lock PENDING → CONFIRMING
+        // c. optimistic lock PENDING → CONFIRMING.
+        // confirmingStartedAt anchors the stuck-CONFIRMING sweep against this transition,
+        // not the draft's createdAt, so an in-flight confirm cannot be reverted by the
+        // sweep just because the draft has been sitting around for a while.
         const locked = await this.prismaService.client_draft.updateMany({
             where: { id, status: "PENDING" },
-            data: { status: "CONFIRMING" },
+            data: { status: "CONFIRMING", confirmingStartedAt: new Date() },
         });
         if (locked.count === 0) {
             throw new ConflictException("Draft already reviewed");
@@ -359,7 +364,7 @@ export class CallInboxService {
             // e. mark CONFIRMED
             await this.prismaService.client_draft.update({
                 where: { id },
-                data: { status: "CONFIRMED", reviewedById: userId, reviewedAt: new Date() },
+                data: { status: "CONFIRMED", reviewedById: userId, reviewedAt: new Date(), confirmingStartedAt: null },
             });
             return { clientId };
         } catch (error) {
@@ -371,14 +376,14 @@ export class CallInboxService {
                 await this.prismaService.client_draft
                     .update({
                         where: { id },
-                        data: { status: "CONFIRMED", reviewedById: userId, reviewedAt: new Date() },
+                        data: { status: "CONFIRMED", reviewedById: userId, reviewedAt: new Date(), confirmingStartedAt: null },
                     })
                     .catch(() => undefined);
                 return { clientId };
             }
             // update itself failed — roll back lock
             await this.prismaService.client_draft
-                .update({ where: { id }, data: { status: "PENDING" } })
+                .update({ where: { id }, data: { status: "PENDING", confirmingStartedAt: null } })
                 .catch(() => undefined);
             throw error;
         }

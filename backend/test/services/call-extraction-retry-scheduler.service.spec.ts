@@ -42,8 +42,14 @@ describe("CallExtractionRetrySchedulerService", () => {
         await scheduler.retryFailedExtractions();
         expect(processingService.processCallRecord).not.toHaveBeenCalled();
         expect(prisma.client_draft.updateMany).toHaveBeenCalledWith({
-            where: { status: "CONFIRMING", createdAt: { lt: expect.any(Date) } },
-            data: { status: "PENDING" },
+            where: {
+                status: "CONFIRMING",
+                OR: [
+                    { confirmingStartedAt: { lt: expect.any(Date) } },
+                    { confirmingStartedAt: null, createdAt: { lt: expect.any(Date) } },
+                ],
+            },
+            data: { status: "PENDING", confirmingStartedAt: null },
         });
     });
 
@@ -69,8 +75,14 @@ describe("CallExtractionRetrySchedulerService", () => {
         await scheduler.retryFailedExtractions();
 
         expect(prisma.client_draft.updateMany).toHaveBeenCalledWith({
-            where: { status: "CONFIRMING", createdAt: { lt: expect.any(Date) } },
-            data: { status: "PENDING" },
+            where: {
+                status: "CONFIRMING",
+                OR: [
+                    { confirmingStartedAt: { lt: expect.any(Date) } },
+                    { confirmingStartedAt: null, createdAt: { lt: expect.any(Date) } },
+                ],
+            },
+            data: { status: "PENDING", confirmingStartedAt: null },
         });
     });
 });

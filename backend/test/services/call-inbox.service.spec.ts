@@ -73,7 +73,7 @@ describe("CallInboxService", () => {
         ).rejects.toThrow("areaId invalid");
         expect(prisma.client_draft.update).toHaveBeenCalledWith({
             where: { id: "draft-1" },
-            data: { status: "PENDING" },
+            data: { status: "PENDING", confirmingStartedAt: null },
         });
     });
 
@@ -184,7 +184,7 @@ describe("CallInboxService", () => {
         ).rejects.toThrow("serviceStatus invalid");
         expect(prisma.client_draft.update).toHaveBeenCalledWith({
             where: { id: "draft-1" },
-            data: { status: "PENDING" },
+            data: { status: "PENDING", confirmingStartedAt: null },
         });
     });
 
