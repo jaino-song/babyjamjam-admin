@@ -24,8 +24,10 @@ export function V3MobileHeader() {
       className="existing-navbar fixed top-0 left-1/2 z-40 w-full max-w-[430px] -translate-x-1/2"
     >
       <div className="navbar-identity" data-component="mobile-header-identity">
-        <span className="navbar-user">{userLabel}</span>
-        <span className="navbar-branch">{branchLabel}</span>
+        <div className="navbar-text" data-component="mobile-header-text">
+          <span className="navbar-user">{userLabel}</span>
+          <span className="navbar-branch">{branchLabel}</span>
+        </div>
       </div>
       <div className="navbar-icons" data-component="mobile-header-icons">
         <NotificationBell className="!h-[38px] !w-[38px] !rounded-xl bg-transparent hover:bg-transparent hover:scale-100 active:scale-100 text-v3-text" />

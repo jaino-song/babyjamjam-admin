@@ -15,7 +15,7 @@
 /* ===== Existing top navbar (user identity + bell) ===== */
 .existing-navbar {
   height: 64px;
-  background: white;
+  background: hsl(var(--v3-primary));
   border-bottom: 1px solid hsl(var(--v3-border));
   padding: 0 14px;
   display: flex;
@@ -31,20 +31,22 @@
   height: 100%;
   min-width: 0;
 }
+.navbar-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 .navbar-user {
   font-size: 1rem;
   font-weight: 700;
-  color: hsl(var(--v3-dark));
+  color: white;
   line-height: 1.1;
   white-space: nowrap;
 }
 .navbar-branch {
-  position: absolute;
-  top: calc(50% + 11px);
-  left: 0;
   font-size: 0.6rem;
   font-weight: 600;
-  color: hsl(var(--v3-text-muted));
+  color: white;
   line-height: 1;
   white-space: nowrap;
 }
@@ -52,6 +54,11 @@
   display: flex;
   gap: 4px;
   align-items: center;
+}
+/* Bell icon sits on the primary navbar — force it white here only
+   (NotificationBell is shared; root/Header.tsx renders it on a light bg). */
+.existing-navbar .navbar-icons svg {
+  color: white;
 }
 .navbar-icon-btn {
   width: 38px;
@@ -1200,15 +1207,8 @@ body:has([data-component="notification-settings"]) [data-component^="mobile-bott
   text-decoration: none;
 }
 
-body.mobile-all-route [data-component="mobile-bottom-nav-chat"],
-body:has([data-component="all-page"]) [data-component="mobile-bottom-nav-chat"],
-body:has([data-component="notification-settings"]) [data-component="mobile-bottom-nav-chat"] {
-  color: hsl(var(--v3-primary)) !important;
-}
-
 body:has([data-component="all-page"]) [data-component="mobile-bottom-nav-all"] {
-  background: hsl(var(--v3-primary)) !important;
-  color: white !important;
+  background: transparent !important;
 }
 
 body.mobile-all-route [data-component^="mobile-bottom-nav-"] svg,
@@ -2273,8 +2273,7 @@ body:has([data-component="clients"]) [data-component="mobile-bottom-nav"] span {
 }
 
 body:has([data-component="clients"]) [data-component="mobile-bottom-nav-clients"] {
-  background: hsl(var(--v3-primary));
-  color: white;
+  background: transparent;
 }
 
 body:has([data-component="clients"] .nav-stack.show-detail) [data-component="mobile-bottom-nav"] {
@@ -2604,6 +2603,11 @@ body:has([data-component="employees"]) {
   color: hsl(var(--v3-text));
   font-family: "NanumSquare Neo", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, sans-serif;
   line-height: normal;
+  /* Lock the shell to the viewport so the page itself never scrolls — only the
+     inner [data-component="mobile-employees-content"] list scrolls (parity with
+     the dashboard, redesign.css:155). The app-root/app-providers/main locks
+     below already exist; the body overflow lock was the missing piece. */
+  overflow: hidden;
 }
 
 body:has([data-component="employees"]) [data-component="app-root"] {
@@ -4522,7 +4526,6 @@ body.mobile-contracts-route [data-component="mobile-bottom-nav"] span {
 
 body.mobile-contracts-route [data-component="mobile-bottom-nav-contracts"] {
   background: transparent;
-  color: white;
 }
 
 /* Mobile: app-root keeps the shared 390px viewport limit without the phone-frame bezel. */
@@ -4632,6 +4635,37 @@ body.mobile-contracts-route [data-component="mobile-contracts-detail-page"] {
 
 body.mobile-contracts-route [data-component="mobile-contracts-stack"].show-detail .nav-page.list {
   transform: translateX(0) !important;
+}
+
+/* Lock the app shell to the viewport on the clients route (parity with the
+   dashboard, redesign.css:155-212) so the page itself never scrolls — only the
+   inner [data-component="mobile-clients-content"] list scrolls. */
+body.mobile-clients-route,
+body:has([data-component="clients"]) {
+  overflow: hidden;
+}
+
+body.mobile-clients-route [data-component="app-root"],
+body:has([data-component="clients"]) [data-component="app-root"] {
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+}
+
+@media (min-width: 768px) {
+  body.mobile-clients-route [data-component="app-root"],
+  body:has([data-component="clients"]) [data-component="app-root"] {
+    height: min(100dvh, 844px);
+    max-height: 844px;
+  }
+}
+
+body.mobile-clients-route [data-component="app-root"] [data-component="app-providers"],
+body:has([data-component="clients"]) [data-component="app-root"] [data-component="app-providers"] {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 body.mobile-clients-route [data-component="main-content"],
@@ -4980,13 +5014,8 @@ body.mobile-contracts-route [data-component^="mobile-bottom-nav-"] {
   text-decoration: none;
 }
 
-body.mobile-contracts-route [data-component="mobile-bottom-nav-chat"] {
-  color: hsl(var(--v3-primary)) !important;
-}
-
 body.mobile-contracts-route [data-component="mobile-bottom-nav-contracts"] {
   background: transparent !important;
-  color: white !important;
 }
 
 body.mobile-contracts-route [data-component^="mobile-bottom-nav-"] svg {
@@ -5405,6 +5434,18 @@ body.mobile-prices-route .section-block:first-child .section-header {
 body.mobile-prices-route .section-header {
   top: 40px;
   z-index: 1;
+}
+
+/* When a variant filter is active (전체 → A/B/C/D형), the centered
+   .section-header-variant is not rendered (prices/page.tsx:292), so its ~40px
+   sticky slot disappears. Without this rule .section-header keeps top: 40px and
+   sticks 40px below the filter row, leaving a visible gap. Detect a filtered
+   variant-block (one with no variant header inside) and stick its type header
+   flush to the top, right under the filter row. */
+body.mobile-prices-route
+  .variant-block:not(:has(.section-header-variant))
+  .section-header {
+  top: 0;
 }
 
 body.mobile-prices-route .section-block {
@@ -5841,13 +5882,8 @@ body:has([data-component="contracts"]) [data-component^="mobile-bottom-nav-"] {
   text-decoration: none;
 }
 
-body:has([data-component="contracts"]) [data-component="mobile-bottom-nav-chat"] {
-  color: hsl(var(--v3-primary)) !important;
-}
-
 body:has([data-component="contracts"]) [data-component="mobile-bottom-nav-contracts"] {
   background: transparent !important;
-  color: white !important;
 }
 
 body:has([data-component="contracts"]) [data-component^="mobile-bottom-nav-"] svg {
@@ -6092,13 +6128,6 @@ body.mobile-contracts-route nav[data-component="mobile-bottom-nav"] [data-compon
 
 nav[data-component="mobile-bottom-nav"] a[aria-current="page"][data-component^="mobile-bottom-nav-"] {
   background: transparent !important;
-  color: white !important;
-}
-
-body:has([data-component="contracts"]) nav[data-component="mobile-bottom-nav"] a[aria-current="page"][data-component="mobile-bottom-nav-contracts"],
-body.mobile-contracts-route nav[data-component="mobile-bottom-nav"] a[aria-current="page"][data-component="mobile-bottom-nav-contracts"] {
-  background: transparent !important;
-  color: white !important;
 }
 
 body:has([data-component="contracts"]) [data-component="mobile-contracts-content"],
@@ -6205,4 +6234,48 @@ body:has([data-component="contracts"]) [data-component="app-providers"] {
     max-width: none;
     box-sizing: border-box;
   }
+}
+
+body nav[data-component="mobile-bottom-nav"] a[data-component^="mobile-bottom-nav-"]:not([data-visual-active="true"]) {
+  background: transparent !important;
+  color: var(--color-gray-500, #6b7280) !important;
+}
+
+body nav[data-component="mobile-bottom-nav"] a[data-visual-active="true"] {
+  background: transparent !important;
+  color: #fff !important;
+}
+
+/* ===== Detail-sheet routes: lock the app shell to the viewport =====
+   These list routes share the inner main-content lock and each have an inner
+   .shell-content scroller (overflow-y: auto), but were missing the outer
+   body/app-root/app-providers locks the dashboard has (redesign.css:155-212).
+   Without them the page itself scrolls. Completing the locks fixes the page to
+   the viewport while only the inner list scrolls — parity with /dashboard,
+   /clients, /employees. */
+body:has([data-component="consultations"]),
+body:has([data-component="contracts"]),
+body:has([data-component="files"]),
+body:has([data-component="messages"]),
+body:has([data-component="prices-page"]) {
+  overflow: hidden;
+}
+
+body:has([data-component="consultations"]) [data-component="app-root"],
+body:has([data-component="contracts"]) [data-component="app-root"],
+body:has([data-component="files"]) [data-component="app-root"],
+body:has([data-component="messages"]) [data-component="app-root"],
+body:has([data-component="prices-page"]) [data-component="app-root"] {
+  overflow: hidden;
+}
+
+body:has([data-component="consultations"]) [data-component="app-root"] [data-component="app-providers"],
+body:has([data-component="contracts"]) [data-component="app-root"] [data-component="app-providers"],
+body:has([data-component="files"]) [data-component="app-root"] [data-component="app-providers"],
+body:has([data-component="messages"]) [data-component="app-root"] [data-component="app-providers"],
+body:has([data-component="prices-page"]) [data-component="app-root"] [data-component="app-providers"] {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
