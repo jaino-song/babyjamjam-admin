@@ -131,9 +131,20 @@ export class MessageDeliveryController {
         triggerType: string,
     ) {
         const isAccepted = this.isAcceptedSmsResult(result);
+        const isPartial = this.isPartialSuccessSmsResult(result);
         const status = isAccepted
             ? triggerType === "scheduled" ? "pending" : "sent"
             : "failed";
+        // Aligo's response gives success_cnt / error_cnt but no per-recipient breakdown,
+        // so on a partial-success batch we cannot identify which numbers failed. Retrying
+        // the original comma-joined receiver list would resend to the already-delivered
+        // recipients and produce duplicates, so we disable auto-retry for partial successes
+        // and surface a failed log to staff for manual handling.
+        const errorMessage = isAccepted
+            ? null
+            : isPartial
+                ? `부분 발송 (성공 ${Number(result.response.success_cnt ?? 0)}건 / 실패 ${Number(result.response.error_cnt ?? 0)}건). 실패 수신자를 식별할 수 없어 자동 재전송을 중단했습니다. 실패자에게 수동으로 재발송해 주세요.`
+                : result.response.message;
         await this.prisma.alimtalk_log.create({
             data: {
                 branchId: branchId || null,
@@ -153,10 +164,10 @@ export class MessageDeliveryController {
                 },
                 status,
                 aligoMid: result.response.msg_id ? String(result.response.msg_id) : null,
-                errorMessage: isAccepted ? null : result.response.message,
+                errorMessage,
                 attempts: 1,
                 lastAttemptAt: new Date(),
-                nextRetryAt: isAccepted ? null : this.nextRetryAt(),
+                nextRetryAt: isAccepted || isPartial ? null : this.nextRetryAt(),
             },
         });
     }
@@ -207,6 +218,15 @@ export class MessageDeliveryController {
             resultCode === 1 &&
             errorCount === 0
         );
+    }
+
+    private isPartialSuccessSmsResult(
+        result: Awaited<ReturnType<AligoService["sendSms"]>>,
+    ) {
+        const resultCode = Number(result.response.result_code);
+        const errorCount = Number(result.response.error_cnt ?? 0);
+        const successCount = Number(result.response.success_cnt ?? 0);
+        return resultCode === 1 && errorCount > 0 && successCount > 0;
     }
 
     private countSmsRecipients(receiver: string): number {
