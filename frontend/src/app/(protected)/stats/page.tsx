@@ -22,7 +22,7 @@ import { MiniBars } from "./_components/MiniBars";
 import { FunnelBars } from "./_components/FunnelBars";
 
 export const metadata = {
-  title: "통계 · 아가잼잼 Staff",
+  title: "통계 · 아가잼잼 관리자",
 };
 
 // Revalidate the entire page every 60 seconds (matches our 1-minute cache spec)

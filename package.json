@@ -1,5 +1,5 @@
 {
-  "name": "imirae-incheon",
+  "name": "babyjamjam-admin-workspace",
   "private": true,
   "packageManager": "pnpm@10.33.0",
   "engines": {
@@ -8,12 +8,12 @@
   },
   "scripts": {
     "preinstall": "npx only-allow pnpm",
-    "dev:fe": "pnpm --filter babyjamjam-staff dev",
-    "dev:be": "pnpm --filter babyjamjam-staff-backend start:dev",
-    "dev:mobile": "pnpm --filter babyjamjam-admin dev",
-    "build:fe": "pnpm --filter babyjamjam-staff build",
-    "build:be": "pnpm --filter babyjamjam-staff-backend build",
-    "build:mobile": "pnpm --filter babyjamjam-admin build",
+    "dev:fe": "pnpm --filter ./frontend dev",
+    "dev:be": "pnpm --filter ./backend start:dev",
+    "dev:mobile": "pnpm --filter ./mobile dev",
+    "build:fe": "pnpm --filter ./frontend build",
+    "build:be": "pnpm --filter ./backend build",
+    "build:mobile": "pnpm --filter ./mobile build",
     "test": "pnpm -r --workspace-concurrency=1 test",
     "build": "pnpm -r --workspace-concurrency=1 build",
     "lint": "pnpm -r --workspace-concurrency=1 --if-present run lint"

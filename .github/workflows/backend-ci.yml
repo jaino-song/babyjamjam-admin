@@ -58,13 +58,13 @@ jobs:
 
       # Fail fast on the cheapest, most deterministic gate first.
       - name: Type check
-        run: pnpm --filter babyjamjam-staff-backend run type-check
+        run: pnpm --filter ./backend run type-check
 
       - name: Lint
-        run: pnpm --filter babyjamjam-staff-backend run lint
+        run: pnpm --filter ./backend run lint
 
       - name: Unit tests
-        run: pnpm --filter babyjamjam-staff-backend test
+        run: pnpm --filter ./backend test
         env:
           CI: true
 
@@ -73,7 +73,7 @@ jobs:
       # result against the schema — exit 2 on drift.
       - name: Migrations drift guard
         run: >-
-          pnpm --filter babyjamjam-staff-backend exec prisma migrate diff
+          pnpm --filter ./backend exec prisma migrate diff
           --from-migrations prisma/migrations
           --to-schema-datamodel prisma/schema.prisma
           --shadow-database-url "postgresql://postgres@localhost:5432/postgres"

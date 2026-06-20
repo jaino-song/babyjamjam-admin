@@ -1,4 +1,4 @@
-# 아가잼잼 관리자 (babyjamjam-admin)
+# 아가잼잼 모바일 관리자 (babyjamjam-admin-mobile)
 
 Mobile-first admin dashboard for 아가잼잼 baby care service management.
 

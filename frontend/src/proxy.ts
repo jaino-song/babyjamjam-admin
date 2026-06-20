@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { jwtDecode } from "jwt-decode";
 
+import { getMobileGatewayRedirectUrl } from "@/lib/gateway/mobile-redirect";
+
 interface TokenPayload {
   sub: string;
   role: string | null;
@@ -37,6 +39,14 @@ const AUTH_ONLY_ROUTES = [
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const mobileRedirectUrl = getMobileGatewayRedirectUrl(
+    request.nextUrl,
+    request.headers.get("user-agent")
+  );
+
+  if (mobileRedirectUrl) {
+    return NextResponse.redirect(mobileRedirectUrl);
+  }
 
   // Skip public routes ("/" needs exact match — startsWith would match every path)
   if (pathname === "/" || PUBLIC_ROUTES.some((route) => pathname.startsWith(route))) {
