@@ -58,7 +58,7 @@ export function StatMini({
       </div>
       {isLoading ? (
         <div className="space-y-[calc(8px*var(--v3-ui-scale,1))]">
-          <Skeleton className="h-[calc(28px*var(--v3-ui-scale,1))] w-[calc(64px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
+          <Skeleton className="h-[calc(33px*var(--v3-ui-scale,1))] w-[calc(64px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
           <Skeleton className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(80px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
         </div>
       ) : (

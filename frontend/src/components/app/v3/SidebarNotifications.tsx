@@ -276,7 +276,7 @@ export function SidebarNotifications() {
                           title={item.name}
                           subtitle={item.message}
                           status={
-                            <div className="flex shrink-0 flex-col items-end justify-center gap-[calc(4px*var(--v3-ui-scale,1))]">
+                            <div className="relative flex shrink-0 items-center justify-center">
                               {item.actionReason ? (
                                 <StatusPill
                                   variant={getNotificationStatusVariant(item.actionPriority)}
@@ -285,7 +285,7 @@ export function SidebarNotifications() {
                                   {item.actionReason}
                                 </StatusPill>
                               ) : null}
-                              <span className="inline-flex items-center whitespace-nowrap text-[calc(10.4px*var(--v3-ui-scale,1))] font-medium text-v3-text-muted">
+                              <span className="absolute left-1/2 top-full mt-[calc(4px*var(--v3-ui-scale,1))] inline-flex -translate-x-1/2 items-center whitespace-nowrap text-center text-[calc(10.4px*var(--v3-ui-scale,1))] font-medium text-v3-text-muted">
                                 {item.timeLabel}
                               </span>
                             </div>
