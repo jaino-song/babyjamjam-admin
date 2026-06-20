@@ -83,12 +83,22 @@ export class CallExtractionRetrySchedulerService {
             // Under the confirm flow's ordering, clientId+CONFIRMED land in one atomic update,
             // so a swept draft never has a client silently attached; re-confirm shows the
             // phoneMatchesExistingClient warning if a client did get created.
+            //
+            // Compare against confirmingStartedAt (set on PENDING→CONFIRMING) rather than
+            // createdAt — otherwise an in-flight confirm on a draft created hours ago would
+            // be immediately eligible for revert, racing the live confirm and allowing
+            // duplicate client-change application. Pre-migration CONFIRMING rows
+            // (confirmingStartedAt IS NULL) fall back to createdAt so they aren't stranded.
+            const staleThreshold = new Date(Date.now() - STUCK_CONFIRMING_MS);
             const sweptDrafts = await this.prismaService.client_draft.updateMany({
                 where: {
                     status: "CONFIRMING",
-                    createdAt: { lt: new Date(Date.now() - STUCK_CONFIRMING_MS) },
+                    OR: [
+                        { confirmingStartedAt: { lt: staleThreshold } },
+                        { confirmingStartedAt: null, createdAt: { lt: staleThreshold } },
+                    ],
                 },
-                data: { status: "PENDING" },
+                data: { status: "PENDING", confirmingStartedAt: null },
             });
             if (sweptDrafts.count > 0) {
                 this.logger.warn(
