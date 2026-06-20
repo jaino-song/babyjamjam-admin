@@ -75,8 +75,8 @@ export const DynamicSelect = ({
         {label}
         {required && <span className="text-destructive ml-1">*</span>}
       </Label>
-      <Select value={value} onValueChange={onChange} disabled={isLoading}>
-        <SelectTrigger className="bg-background">
+      <Select value={value} onValueChange={onChange} disabled={isLoading} required={required}>
+        <SelectTrigger>
           {isLoading ? (
             <div className="flex items-center gap-2">
               <Loader2 className="h-4 w-4 animate-spin" />

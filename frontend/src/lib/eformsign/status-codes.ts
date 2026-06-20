@@ -18,8 +18,8 @@ export const COMPLETED_CODES = [
   "092", // 대면서명 완료
 ] as const;
 
-// 거부/반려/취소 (Rejected/Cancelled) codes
-export const REJECTED_CODES = [
+// 기간 만료/반려/취소 bucket codes
+export const EXPIRED_CODES = [
   "011", // doc_reject_approval: 문서 결재 반려
   "021", // doc_reject_reception: 문서 내부자 반려
   "031", // doc_reject_outsider: 문서 외부자 반려
@@ -68,7 +68,7 @@ export function mapDocStatusLabel(currentStatus: {
 }
 
 // Filter types for API calls
-export type DocumentFilterType = "in-progress" | "completed" | "rejected" | null;
+export type DocumentFilterType = "in-progress" | "completed" | "expired" | null;
 
 const STATUS_NAME_TO_CODE: Record<string, string> = {
   doc_tempsave: "001",
@@ -117,14 +117,14 @@ export function normalizeStatusCode(code: string | undefined | null): string {
 /**
  * Get document status category from status code
  */
-export function getStatusCategory(statusCode: string | undefined | null): "completed" | "rejected" | "in-progress" {
+export function getStatusCategory(statusCode: string | undefined | null): "completed" | "expired" | "in-progress" {
   const normalized = normalizeStatusCode(statusCode);
   
   if (COMPLETED_CODES.includes(normalized as typeof COMPLETED_CODES[number])) {
     return "completed";
   }
-  if (REJECTED_CODES.includes(normalized as typeof REJECTED_CODES[number])) {
-    return "rejected";
+  if (EXPIRED_CODES.includes(normalized as typeof EXPIRED_CODES[number])) {
+    return "expired";
   }
   return "in-progress";
 }
@@ -138,7 +138,7 @@ export function mapStatusToLabel(statusCode: string | undefined | null): Documen
   switch (category) {
     case "completed":
       return "완료";
-    case "rejected":
+    case "expired":
       return "기간 만료";
     default:
       return "대기";
@@ -162,7 +162,7 @@ export function getStatusColor(status: string): BadgeVariant {
   if (lowerStatus.includes("대기") || lowerStatus.includes("pending") || lowerStatus.includes("진행")) {
     return "warning";
   }
-  if (lowerStatus.includes("기간 만료") || lowerStatus.includes("거부") || lowerStatus.includes("reject")) {
+  if (lowerStatus.includes("기간 만료") || lowerStatus.includes("거부") || lowerStatus.includes("reject") || lowerStatus.includes("expired")) {
     return "destructive";
   }
   if (lowerStatus.includes("전체") || lowerStatus.includes("all")) {

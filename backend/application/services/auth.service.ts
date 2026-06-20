@@ -10,6 +10,8 @@ import { getAuthTokenExpiresIn } from "./auth-token-policy";
 import { maskEmail } from "application/utils/mask";
 import { isVisibleStaffBranchSlug } from "domain/constants/branch-routing.constants";
 
+export const NO_ACCESSIBLE_BRANCH_MESSAGE = "접근 가능한 지점이 없습니다. 관리자에게 문의해 주세요.";
+
 export interface KakaoData {
     kakaoId: string;
     email?: string;
@@ -230,19 +232,6 @@ export class AuthService {
             },
         }));
 
-        const pendingAccountOnboardingProfile = user.role === "owner"
-            ? null
-            : this.getPendingAccountOnboardingProfile(user, userOrgs);
-
-        if (pendingAccountOnboardingProfile) {
-            return {
-                onboardingRequired: true,
-                onboardingKind: "account_completion",
-                userId: user.id,
-                prefill: pendingAccountOnboardingProfile,
-            };
-        }
-
         if (user.role === 'owner') {
             const payload = {
                 sub: user.id,
@@ -267,6 +256,21 @@ export class AuthService {
                 accessToken,
                 refreshToken,
                 requiresBranchSelection: true,
+            };
+        }
+
+        if (userOrgs.length === 0) {
+            throw new ForbiddenException(NO_ACCESSIBLE_BRANCH_MESSAGE);
+        }
+
+        const pendingAccountOnboardingProfile = this.getPendingAccountOnboardingProfile(user, userOrgs);
+
+        if (pendingAccountOnboardingProfile) {
+            return {
+                onboardingRequired: true,
+                onboardingKind: "account_completion",
+                userId: user.id,
+                prefill: pendingAccountOnboardingProfile,
             };
         }
 

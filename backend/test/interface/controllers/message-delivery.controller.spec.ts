@@ -177,6 +177,7 @@ describe("MessageDeliveryController", () => {
     });
 
     it("should record failed logs and reject when Aligo does not accept the SMS request", async () => {
+        jest.spyOn(Date, "now").mockReturnValue(new Date("2026-06-05T09:20:00.000Z").getTime());
         aligoService.sendSms.mockResolvedValue({
             request: {
                 senderPhone: "0212345678",
@@ -215,11 +216,13 @@ describe("MessageDeliveryController", () => {
                 status: "failed",
                 errorMessage: "수신번호 형식이 올바르지 않습니다.",
                 attempts: 1,
+                nextRetryAt: new Date("2026-06-05T09:25:00.000Z"),
             }),
         });
     });
 
     it("should record a failed log and reject when Aligo rejects the SMS request before returning a result body", async () => {
+        jest.spyOn(Date, "now").mockReturnValue(new Date("2026-06-05T09:20:00.000Z").getTime());
         aligoService.sendSms.mockRejectedValue(
             new Error("Aligo SMS API error (403): 등록되지 않은 IP 입니다."),
         );
@@ -248,6 +251,7 @@ describe("MessageDeliveryController", () => {
                 aligoMid: null,
                 errorMessage: "Aligo SMS API error (403): 등록되지 않은 IP 입니다.",
                 attempts: 1,
+                nextRetryAt: new Date("2026-06-05T09:25:00.000Z"),
             }),
         });
     });

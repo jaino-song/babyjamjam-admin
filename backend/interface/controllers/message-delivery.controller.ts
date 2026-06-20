@@ -13,6 +13,7 @@ import { AligoService } from "application/services/aligo.service";
 import { SendSmsMessageDto } from "interface/dto/message-delivery.dto";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { SMS_DELIVERY_RETRY_DELAY_MS } from "domain/entities/alimtalk-log.entity";
 
 const ALIGO_SCHEDULE_MIN_LEAD_MS = 10 * 60 * 1000;
 
@@ -148,12 +149,14 @@ export class MessageDeliveryController {
                     msgType: result.request.msgType,
                     scheduledDate: result.request.scheduledDate ?? null,
                     scheduledTime: result.request.scheduledTime ?? null,
+                    testMode: result.request.testModeYn === "Y" ? "true" : "false",
                 },
                 status,
                 aligoMid: result.response.msg_id ? String(result.response.msg_id) : null,
                 errorMessage: isAccepted ? null : result.response.message,
                 attempts: 1,
                 lastAttemptAt: new Date(),
+                nextRetryAt: isAccepted ? null : this.nextRetryAt(),
             },
         });
     }
@@ -182,6 +185,7 @@ export class MessageDeliveryController {
                     msgType: dto.msgType ?? null,
                     scheduledDate: scheduledDate ?? null,
                     scheduledTime: scheduledTime ?? null,
+                    testMode: dto.testMode ? "true" : "false",
                     providerError: errorMessage,
                 },
                 status: "failed",
@@ -189,6 +193,7 @@ export class MessageDeliveryController {
                 errorMessage,
                 attempts: 1,
                 lastAttemptAt: new Date(),
+                nextRetryAt: this.nextRetryAt(),
             },
         });
     }
@@ -241,5 +246,9 @@ export class MessageDeliveryController {
         }
         const message = String(error ?? "").trim();
         return message || "문자 발송 요청이 실패했습니다.";
+    }
+
+    private nextRetryAt(): Date {
+        return new Date(Date.now() + SMS_DELIVERY_RETRY_DELAY_MS);
     }
 }

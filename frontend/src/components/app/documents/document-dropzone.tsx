@@ -8,31 +8,34 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { TitleSelectMolecule } from "@/components/ui/title-select-molecule";
+import { TitleTextareaMolecule } from "@/components/ui/title-textarea-molecule";
+import { TitleTextInputMolecule } from "@/components/ui/title-text-input-molecule";
+import { TitleDescChildrenMolecule } from "@/components/app/ui/TitleDescChildrenMolecule";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  TemplateFieldGrid,
+  TemplateFieldGridItem,
+} from "@/components/app/messages/forms/form-components/TemplateFieldGrid";
 import { cn } from "@/lib/utils";
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
 const HANGUL_DOCUMENT_EXTENSIONS = new Set(["hwp", "hwpx"]);
-const LABEL_CLASS_NAME =
+const DOCUMENT_FIELD_LABEL_CLASS_NAME =
   "text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-v3-text-muted";
-const V3_TEXTAREA_CLASS_NAME =
-  "min-h-[104px] rounded-[16px] border-[1.5px] border-v3-border bg-white px-4 py-3 text-[0.85rem] text-v3-dark shadow-none transition-all focus-visible:border-v3-primary focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]";
-const V3_SELECT_TRIGGER_CLASS_NAME =
-  "h-12 w-full";
-const V3_SELECT_CONTENT_CLASS_NAME =
-  "rounded-[22px]";
-const V3_SELECT_ITEM_CLASS_NAME = "rounded-[16px]";
+const DOCUMENT_UPLOAD_CARD_CLASS_NAME = "rounded-[20px] bg-v3-dim-white p-5";
+const DOCUMENT_TEXTAREA_CLASS_NAME =
+  "min-h-[calc(72px*var(--v3-ui-scale,1))] rounded-[16px] border-[1.5px] border-v3-border bg-white px-4 py-3 text-[0.85rem] text-v3-dark shadow-none transition-all focus-visible:border-v3-primary focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]";
+const UPLOAD_FORMAT_LABELS = ["PNG", "JPG", "PDF", "HWP", "HWPX"];
+const FILE_FORMAT_LABEL_OVERRIDES: Record<string, string> = {
+  jpeg: "JPG",
+};
+
+export interface DocumentDropzoneUploadState {
+  hasSelectedFile: boolean;
+  canSubmit: boolean;
+}
 
 interface DocumentDropzoneProps {
   onUpload: (params: {
@@ -44,12 +47,18 @@ interface DocumentDropzoneProps {
   }) => Promise<void>;
   isLoading?: boolean;
   uploadProgress?: number;
+  formId?: string;
+  showInlineSubmitButton?: boolean;
+  onUploadStateChange?: (state: DocumentDropzoneUploadState) => void;
 }
 
 export function DocumentDropzone({
   onUpload,
   isLoading = false,
   uploadProgress = 0,
+  formId,
+  showInlineSubmitButton = true,
+  onUploadStateChange,
 }: DocumentDropzoneProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -178,8 +187,19 @@ export function DocumentDropzone({
     setTags(tags.filter((tag) => tag !== tagToDelete));
   };
 
-  const handleSubmit = async () => {
-    if (!selectedFile || !name || !category) return;
+  const hasSelectedFile = selectedFile !== null;
+  const canSubmit = Boolean(selectedFile && name && category && !isLoading);
+
+  useEffect(() => {
+    onUploadStateChange?.({
+      hasSelectedFile,
+      canSubmit,
+    });
+  }, [canSubmit, hasSelectedFile, onUploadStateChange]);
+
+  const handleSubmit = async (event?: React.FormEvent<HTMLFormElement>) => {
+    event?.preventDefault();
+    if (!selectedFile || !name || !category || isLoading) return;
 
     await onUpload({
       file: selectedFile,
@@ -201,20 +221,21 @@ export function DocumentDropzone({
     return extension ? HANGUL_DOCUMENT_EXTENSIONS.has(extension) : false;
   };
 
-  const getSelectedFileLabel = () => {
-    if (isSelectedHangulFile()) {
-      return "한글 문서";
+  const getSelectedFileFormatLabel = () => {
+    if (!selectedFile) return "FILE";
+
+    const extensionStart = selectedFile.name.lastIndexOf(".");
+    if (extensionStart >= 0 && extensionStart < selectedFile.name.length - 1) {
+      const extension = selectedFile.name.slice(extensionStart + 1).toLowerCase();
+      return FILE_FORMAT_LABEL_OVERRIDES[extension] ?? extension.toUpperCase();
     }
 
-    if (selectedFile?.type === "application/pdf") {
-      return "PDF 문서";
+    const mimeSubtype = selectedFile.type.split("/").at(1);
+    if (mimeSubtype) {
+      return FILE_FORMAT_LABEL_OVERRIDES[mimeSubtype] ?? mimeSubtype.toUpperCase();
     }
 
-    if (selectedFile?.type.startsWith("image/")) {
-      return "이미지 파일";
-    }
-
-    return "첨부 파일";
+    return "FILE";
   };
 
   const getSelectedFileTone = () => {
@@ -282,7 +303,7 @@ export function DocumentDropzone({
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
           className={cn(
-            "block overflow-hidden rounded-[24px] border-[1.5px] border-dashed px-6 py-8 text-center transition-all duration-200",
+            "flex flex-col items-center justify-center gap-4 overflow-hidden rounded-[24px] border-[1.5px] border-dashed px-6 py-8 text-center transition-all duration-200",
             isDragOver
               ? "border-v3-primary bg-white shadow-[0_16px_40px_hsla(214,50%,20%,0.08)]"
               : "border-v3-border bg-white",
@@ -298,24 +319,26 @@ export function DocumentDropzone({
             className="sr-only"
           />
 
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-[0_12px_30px_hsla(214,50%,20%,0.10)]">
-            <CloudUpload className="h-8 w-8 text-v3-primary" />
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-v3-primary shadow-[0_12px_30px_hsla(214,50%,20%,0.10)]">
+            <CloudUpload className="h-8 w-8 text-white" />
           </div>
-          <div className="mt-4">
+          <div className="flex flex-col items-center gap-2">
             <p className="text-[1rem] font-bold tracking-[-0.02em] text-v3-dark">
               파일을 끌어다 놓거나 클릭해 선택하세요
             </p>
-            <p className="mt-2 text-[0.8rem] leading-6 text-v3-text-muted">
-              PDF, HWP/HWPX, 이미지, 압축 파일 등 다양한 형식을 바로 업로드할 수 있습니다.
-            </p>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {UPLOAD_FORMAT_LABELS.map((format) => (
+                <Badge
+                  key={format}
+                  variant="outline"
+                  className="border-v3-primary/20 bg-v3-primary-light px-3 py-1 text-[0.68rem] font-semibold text-v3-primary"
+                >
+                  {format}
+                </Badge>
+              ))}
+            </div>
           </div>
-          <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-            <Badge
-              variant="outline"
-              className="border-v3-border bg-white/90 px-3 py-1 text-[0.68rem] font-semibold text-v3-text-muted"
-            >
-              형식 제한 없음
-            </Badge>
+          <div className="flex flex-wrap items-center justify-center gap-2">
             <Badge
               variant="outline"
               className="border-v3-border bg-white/90 px-3 py-1 text-[0.68rem] font-semibold text-v3-text-muted"
@@ -326,7 +349,7 @@ export function DocumentDropzone({
         </label>
       ) : (
         <div className="space-y-5">
-          <section className="rounded-[24px] border border-v3-border/70 bg-white p-5">
+          <section className={DOCUMENT_UPLOAD_CARD_CLASS_NAME}>
             <div className="flex items-start gap-4">
               {previewUrl ? (
                 <Image
@@ -357,7 +380,7 @@ export function DocumentDropzone({
                       selectedFileTone.badge
                     )}
                   >
-                    {getSelectedFileLabel()}
+                    {getSelectedFileFormatLabel()}
                   </Badge>
                   <span className="text-[0.72rem] font-medium text-v3-text-muted">
                     {formatFileSize(selectedFile.size)}
@@ -376,148 +399,162 @@ export function DocumentDropzone({
                 size="icon"
                 onClick={handleRemoveFile}
                 disabled={isLoading}
-                className="h-10 w-10 shrink-0 rounded-full border border-v3-border bg-white text-v3-text-muted hover:bg-white hover:text-v3-dark"
+                className="h-10 w-10 shrink-0 rounded-full border-0 bg-transparent p-0 text-v3-text-muted shadow-none hover:bg-transparent hover:text-v3-dark"
               >
                 <X className="h-4 w-4" />
               </Button>
             </div>
           </section>
 
-          <section className="rounded-[24px] border border-v3-border/70 bg-white p-5">
-            <div>
-              <p className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-v3-primary">
-                {t(locale, "documents.upload-details-title")}
-              </p>
-              <p className="mt-1 text-[0.8rem] text-v3-text-muted">
-                문서 제목, 카테고리, 태그, 설명을 입력해 업로드 기준 정보를 함께 저장합니다.
-              </p>
-            </div>
-
-            <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="doc-name" className={LABEL_CLASS_NAME}>
-                  문서 제목 <span className="ml-1 text-v3-burgundy">*</span>
-                </Label>
-                <Input
-                  id="doc-name"
-                  variant="v3"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  disabled={isLoading}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label className={LABEL_CLASS_NAME}>
-                  카테고리 <span className="ml-1 text-v3-burgundy">*</span>
-                </Label>
-                <Select
-                  value={category}
-                  onValueChange={setCategory}
-                  disabled={isLoading}
-                >
-                  <SelectTrigger className={V3_SELECT_TRIGGER_CLASS_NAME}>
-                    <SelectValue placeholder="카테고리 선택" />
-                  </SelectTrigger>
-                  <SelectContent className={V3_SELECT_CONTENT_CLASS_NAME}>
-                    {categories.map((option) => (
-                      <SelectItem
-                        key={option.id}
-                        value={option.id}
-                        className={V3_SELECT_ITEM_CLASS_NAME}
-                      >
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2 sm:col-span-2">
-                <Label htmlFor="doc-tags" className={LABEL_CLASS_NAME}>
-                  태그
-                </Label>
-                <Input
-                  id="doc-tags"
-                  variant="v3"
-                  value={tagInput}
-                  onChange={(e) => setTagInput(e.target.value)}
-                  onKeyDown={handleAddTag}
-                  placeholder="태그를 입력하고 Enter를 눌러 추가"
-                  disabled={isLoading}
-                />
-                <p className="text-[0.75rem] leading-5 text-v3-text-muted">
-                  검색에 자주 쓰는 키워드를 등록해 두면 문서를 더 빨리 찾을 수 있습니다.
-                </p>
-                {tags.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {tags.map((tag) => (
-                      <button
-                        key={tag}
-                        type="button"
-                        onClick={() => !isLoading && handleDeleteTag(tag)}
-                        className="inline-flex items-center gap-1 rounded-full border border-v3-primary/20 bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary transition-colors hover:border-v3-primary/40 hover:bg-v3-primary-light/80"
-                      >
-                        #{tag}
-                        <X className="h-3 w-3" />
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-2 sm:col-span-2">
-                <Label htmlFor="doc-description" className={LABEL_CLASS_NAME}>
-                  설명
-                </Label>
-                <Textarea
-                  id="doc-description"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  rows={4}
-                  disabled={isLoading}
-                  className={V3_TEXTAREA_CLASS_NAME}
-                />
-              </div>
-            </div>
-
-            {isLoading && (
-              <div className="mt-5 rounded-[18px] bg-v3-dim-white px-4 py-4">
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="text-[0.8rem] font-semibold text-v3-dark">
-                    업로드 중...
-                  </span>
-                  <span className="text-[0.78rem] font-semibold text-v3-primary">
-                    {Math.round(uploadProgress)}%
-                  </span>
-                </div>
-                <Progress
-                  value={uploadProgress}
-                  className="h-2.5 bg-v3-primary-light/70"
-                />
-              </div>
-            )}
-
-            <Button
-              onClick={handleSubmit}
-              disabled={!name || !category || isLoading}
-              variant="positive"
-              size="lg"
-              className="mt-5 w-full"
+          <form
+            id={formId}
+            className="contents"
+            data-component="contracts-document-upload-form"
+            onSubmit={handleSubmit}
+          >
+            <TitleDescChildrenMolecule
+              title={t(locale, "documents.upload-details-title")}
+              description="문서 제목, 카테고리, 태그, 설명을 입력해 업로드 기준 정보를 함께 저장합니다."
+              className={DOCUMENT_UPLOAD_CARD_CLASS_NAME}
+              bodyClassName="space-y-5"
+              data-component="contracts-document-upload-details"
             >
-              {isLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                  업로드 중...
-                </>
-              ) : (
-                <>
-                  <CloudUpload className="mr-2 h-5 w-5" />
-                  문서 업로드
-                </>
+              <TemplateFieldGrid
+                dataComponent="contracts-document-upload-details-grid"
+                layout="stack"
+              >
+                <TemplateFieldGridItem dataComponent="contracts-document-upload-name-field">
+                  <TitleTextInputMolecule
+                    id="doc-name"
+                    label="문서 제목"
+                    value={name}
+                    onValueChange={setName}
+                    disabled={isLoading}
+                    required
+                    labelClassName={DOCUMENT_FIELD_LABEL_CLASS_NAME}
+                    dataComponent="contracts-document-upload-name-molecule"
+                    inputDataComponent="contracts-document-upload-name-input"
+                  />
+                </TemplateFieldGridItem>
+
+                <TemplateFieldGridItem dataComponent="contracts-document-upload-category-field">
+                  <TitleSelectMolecule
+                    id="doc-category"
+                    label="카테고리"
+                    value={category}
+                    onValueChange={setCategory}
+                    placeholder="카테고리 선택"
+                    options={categories.map((option) => ({
+                      value: option.id,
+                      label: option.label,
+                    }))}
+                    disabled={isLoading}
+                    required
+                    labelClassName={DOCUMENT_FIELD_LABEL_CLASS_NAME}
+                    dataComponent="contracts-document-upload-category-molecule"
+                    triggerDataComponent="contracts-document-upload-category-trigger"
+                    contentDataComponent="contracts-document-upload-category-options"
+                    optionDataComponent="contracts-document-upload-category-option"
+                  />
+                </TemplateFieldGridItem>
+
+                <TemplateFieldGridItem
+                  className="sm:col-span-2"
+                  dataComponent="contracts-document-upload-tags-field"
+                >
+                  <TitleTextInputMolecule
+                    id="doc-tags"
+                    label="태그"
+                    value={tagInput}
+                    onValueChange={setTagInput}
+                    onKeyDown={handleAddTag}
+                    placeholder="태그를 입력하고 Enter를 눌러 추가"
+                    disabled={isLoading}
+                    helperText="검색에 자주 쓰는 키워드를 등록해 두면 문서를 더 빨리 찾을 수 있습니다."
+                    helperTextClassName="text-[0.75rem] leading-5 text-v3-text-muted"
+                    labelClassName={DOCUMENT_FIELD_LABEL_CLASS_NAME}
+                    dataComponent="contracts-document-upload-tags-molecule"
+                    inputDataComponent="contracts-document-upload-tags-input"
+                  />
+                  {tags.length > 0 && (
+                    <div
+                      className="flex flex-wrap gap-2"
+                      data-component="contracts-document-upload-tags-list"
+                    >
+                      {tags.map((tag) => (
+                        <button
+                          key={tag}
+                          type="button"
+                          onClick={() => !isLoading && handleDeleteTag(tag)}
+                          className="inline-flex items-center gap-1 rounded-full border border-v3-primary/20 bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary transition-colors hover:border-v3-primary/40 hover:bg-v3-primary-light/80"
+                        >
+                          #{tag}
+                          <X className="h-3 w-3" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </TemplateFieldGridItem>
+
+                <TemplateFieldGridItem
+                  className="sm:col-span-2"
+                  dataComponent="contracts-document-upload-description-field"
+                >
+                  <TitleTextareaMolecule
+                    id="doc-description"
+                  label="설명"
+                  value={description}
+                  onValueChange={setDescription}
+                    rows={2}
+                  disabled={isLoading}
+                    labelClassName={DOCUMENT_FIELD_LABEL_CLASS_NAME}
+                    textareaClassName={DOCUMENT_TEXTAREA_CLASS_NAME}
+                    dataComponent="contracts-document-upload-description-molecule"
+                    textareaDataComponent="contracts-document-upload-description-textarea"
+                  />
+                </TemplateFieldGridItem>
+              </TemplateFieldGrid>
+
+              {isLoading && (
+                <div className="rounded-[18px] bg-v3-dim-white px-4 py-4">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-[0.8rem] font-semibold text-v3-dark">
+                      업로드 중...
+                    </span>
+                    <span className="text-[0.78rem] font-semibold text-v3-primary">
+                      {Math.round(uploadProgress)}%
+                    </span>
+                  </div>
+                  <Progress
+                    value={uploadProgress}
+                    className="h-2.5 bg-v3-primary-light/70"
+                  />
+                </div>
               )}
-            </Button>
-          </section>
+
+              {showInlineSubmitButton && (
+                <Button
+                  type="submit"
+                  disabled={!canSubmit}
+                  variant="positive"
+                  size="lg"
+                  className="w-full"
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                      업로드 중...
+                    </>
+                  ) : (
+                    <>
+                      <CloudUpload className="mr-2 h-5 w-5" />
+                      문서 업로드
+                    </>
+                  )}
+                </Button>
+              )}
+            </TitleDescChildrenMolecule>
+          </form>
         </div>
       )}
     </div>

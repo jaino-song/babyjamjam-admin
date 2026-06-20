@@ -1,132 +1,52 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { FileCheck, Send } from "lucide-react";
-import { format, parseISO } from "date-fns";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { ClientAutocomplete } from "../clients/ClientAutocomplete";
-import { useFormStore } from "@/stores/form-store";
-import type { Client } from "@/lib/client/types";
-
-function formatDueDate(dateStr: string | null): string {
-    if (!dateStr) return "";
-    try {
-        const date = parseISO(dateStr);
-        return format(date, "yyyy년 MM월 dd일");
-    } catch {
-        return dateStr;
-    }
-}
+import { useState } from "react";
+import {
+  CONTRACT_CREATION_STEPPER_STEPS,
+  ContractCreationForm,
+} from "@/components/app/contracts/ContractCreationForm";
+import { SteppedWizardStepper } from "@/components/app/v3";
 
 interface ContractSendWizardProps {
-    onComplete?: () => void;
+  onComplete?: () => void;
 }
 
 export default function ContractSendWizard({ onComplete }: ContractSendWizardProps) {
-    const router = useRouter();
-    const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
-    const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [activeStep, setActiveStep] = useState(0);
 
-    const {
-        setClientId,
-        setName,
-        setPhone,
-        setBirthday,
-        setAddress,
-        setDueDate,
-        setIsManualEntry,
-    } = useFormStore();
+  return (
+    <div data-component="chat-wizard-contract-send" className="flex min-h-[560px] flex-col">
+      <div className="mb-4">
+        <h3 className="mb-1 text-base font-bold">
+          계약서 전송
+        </h3>
+        <p className="text-sm text-muted-foreground">
+          계약서를 보낼 산모와 계약 정보를 입력해주세요.
+        </p>
+      </div>
 
-    const handleClientChange = useCallback((clientId: number | null, client: Client | null) => {
-        setSelectedClientId(clientId);
-        setSelectedClient(client);
-    }, []);
-
-    const handleSendContract = useCallback(() => {
-        if (!selectedClient) return;
-
-        setClientId(selectedClient.id);
-        setName(selectedClient.name);
-        setPhone(selectedClient.phone || "");
-        setBirthday(selectedClient.birthday || "");
-        setAddress(selectedClient.address || "");
-        setDueDate(selectedClient.dueDate || "");
-        setIsManualEntry(false);
-
-        router.push("/messages");
-        onComplete?.();
-    }, [selectedClient, setClientId, setName, setPhone, setBirthday, setAddress, setDueDate, setIsManualEntry, router, onComplete]);
-
-    return (
-        <div data-component="chat-wizard-contract-send" className="min-h-[300px] flex flex-col">
-            <div className="mb-4">
-                <h3 className="text-base font-bold mb-1">
-                    계약서 전송
-                </h3>
-                <p className="text-sm text-muted-foreground">
-                    계약서를 보낼 산모를 선택해주세요.
-                </p>
+      <div data-component="chat-wizard-contract-send-body" className="flex min-h-0 flex-1 flex-col">
+        <ContractCreationForm
+          activeStep={activeStep}
+          onActiveStepChange={setActiveStep}
+          onClose={() => setActiveStep(0)}
+          onSuccess={onComplete}
+          contentClassName="h-auto flex-1 px-0 py-0"
+          stepContentClassName="p-0"
+          footerClassName="border-t-0 px-0 pb-0 pt-4"
+          renderLayout={({ content, footer }) => (
+            <div className="flex min-h-0 flex-1 flex-col gap-4">
+              <SteppedWizardStepper
+                steps={CONTRACT_CREATION_STEPPER_STEPS}
+                currentStep={activeStep}
+                className="shrink-0"
+              />
+              {content}
+              {footer}
             </div>
-
-            <div data-component="chat-wizard-contract-send-body" className="flex flex-col gap-6 flex-1">
-                <ClientAutocomplete
-                    value={selectedClientId}
-                    onChange={handleClientChange}
-                    label="산모 선택"
-                    required
-                />
-
-                <div>
-                    <div
-                        className="flex flex-col gap-3 pl-4 border-l-[3px] mb-6"
-                        style={{
-                            borderColor: selectedClient
-                                ? "hsl(var(--primary))"
-                                : "hsl(var(--muted-foreground) / 0.3)"
-                        }}
-                    >
-                        <div className="flex items-center gap-2 min-h-[24px]">
-                            {selectedClient && (
-                                <>
-                                    <span className="text-base font-semibold">
-                                        {selectedClient.name}
-                                    </span>
-                                    {selectedClient.hasSigned && (
-                                        <Badge
-                                            variant="outline"
-                                            className="text-success border-success h-5 text-[0.7rem]"
-                                        >
-                                            <FileCheck className="w-3.5 h-3.5 mr-1" />
-                                            계약 완료
-                                        </Badge>
-                                    )}
-                                </>
-                            )}
-                        </div>
-                        <p className="text-sm text-muted-foreground">
-                            <strong>연락처:</strong> {selectedClient?.phone || ""}
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                            <strong>주소:</strong> {selectedClient?.address || ""}
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                            <strong>출산예정일:</strong> {formatDueDate(selectedClient?.dueDate ?? null)}
-                        </p>
-                    </div>
-
-                    <Button
-                        onClick={handleSendContract}
-                        className="w-full"
-                        size="lg"
-                        disabled={!selectedClient}
-                    >
-                        <Send className="w-4 h-4 mr-2" />
-                        계약서 전송하러 가기
-                    </Button>
-                </div>
-            </div>
-        </div>
-    );
+          )}
+        />
+      </div>
+    </div>
+  );
 }

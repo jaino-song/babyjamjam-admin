@@ -55,6 +55,11 @@ export class AlimtalkLogMapper {
             messageBody: entity.messageBody,
             variables: entity.variables as Prisma.InputJsonValue,
             status: entity.status,
+            aligoMid: entity.aligoMid,
+            errorMessage: entity.errorMessage,
+            attempts: entity.attempts,
+            lastAttemptAt: entity.lastAttemptAt,
+            nextRetryAt: entity.nextRetryAt,
         };
     }
 

@@ -26,7 +26,10 @@ export function StatsHero({
   dataComponent = "stats-hero",
 }: StatsHeroProps) {
   return (
-    <div data-component={dataComponent} className="space-y-3">
+    <div
+      data-component={dataComponent}
+      className="animate-v3-slide-up space-y-3"
+    >
       {backHref && backLabel ? (
         <Link
           href={backHref}

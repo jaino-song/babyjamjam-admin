@@ -1,9 +1,29 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { FileStoragePort } from '../../domain/ports/file-storage.port';
+import {
+  FileStorageObjectNotFoundError,
+  FileStoragePort,
+} from '../../domain/ports/file-storage.port';
 
 const DEFAULT_SIGNED_URL_TTL_SECONDS = 300;
+
+type StorageErrorLike = {
+  message?: unknown;
+  status?: unknown;
+  statusCode?: unknown;
+};
+
+function isStorageObjectNotFoundError(error: StorageErrorLike): boolean {
+  const message =
+    typeof error.message === 'string' ? error.message.toLowerCase() : '';
+  const status = error.status ?? error.statusCode;
+
+  return (
+    message.includes('object not found') ||
+    (message.includes('not found') && String(status) === '404')
+  );
+}
 
 export class StorageSignedUrlError extends Error {
   constructor(path: string, message: string) {
@@ -117,6 +137,10 @@ export class SupabaseStorageAdapter implements FileStoragePort, OnModuleInit {
       .createSignedUrl(path, ttlSeconds);
 
     if (error) {
+      if (isStorageObjectNotFoundError(error)) {
+        throw new FileStorageObjectNotFoundError(path, 'signed-url');
+      }
+
       throw new StorageSignedUrlError(path, error.message);
     }
 
@@ -135,7 +159,15 @@ export class SupabaseStorageAdapter implements FileStoragePort, OnModuleInit {
     const { data, error } = await supabase.storage
       .from(this.bucketName)
       .download(path);
-    if (error) throw new Error(`Failed to download: ${error.message}`);
+
+    if (error) {
+      if (isStorageObjectNotFoundError(error)) {
+        throw new FileStorageObjectNotFoundError(path, 'download');
+      }
+
+      throw new Error(`Failed to download: ${error.message}`);
+    }
+
     return Buffer.from(await data.arrayBuffer());
   }
 

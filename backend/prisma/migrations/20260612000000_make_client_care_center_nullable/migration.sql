@@ -1,0 +1,1 @@
+ALTER TABLE "client" ALTER COLUMN "care_center" DROP NOT NULL;

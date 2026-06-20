@@ -145,7 +145,7 @@ describe("ClientGreetingSmsAutomationService", () => {
                 aligoMid: null,
                 errorMessage: "Aligo SMS API error (403): 등록되지 않은 IP 입니다.",
                 attempts: 1,
-                nextRetryAt: new Date("2026-06-05T10:20:00.000Z"),
+                nextRetryAt: new Date("2026-06-05T09:25:00.000Z"),
             }),
         });
     });

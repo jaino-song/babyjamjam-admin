@@ -21,6 +21,22 @@ let failedQueue: Array<{
     reject: (reason?: unknown) => void;
 }> = [];
 
+const EFORMSIGN_REFRESH_PATHS = [
+    "/access-token",
+    "/refresh-access-token",
+] as const;
+
+const EFORMSIGN_REQUEST_PATHS = [
+    "/eformsign/",
+    "/api/eformsign/",
+    "/generate-document",
+    "/api/generate-document",
+    "/generate-staff-document",
+    "/api/generate-staff-document",
+    "/generate-signature",
+    "/api/generate-signature",
+] as const;
+
 const processQueue = (error: AxiosError | null = null) => {
     failedQueue.forEach((prom) => {
         if (error) {
@@ -31,6 +47,43 @@ const processQueue = (error: AxiosError | null = null) => {
     });
     failedQueue = [];
 };
+
+function getRequestPath(config: AxiosRequestConfig | undefined): string {
+    const url = config?.url ?? "";
+    if (!url) return "";
+
+    try {
+        return new URL(url, typeof window !== "undefined" ? window.location.origin : "http://localhost").pathname;
+    } catch {
+        return url;
+    }
+}
+
+function isEformsignRefreshPath(pathname: string): boolean {
+    return EFORMSIGN_REFRESH_PATHS.some((path) => pathname === path || pathname.endsWith(path));
+}
+
+function isEformsignRequestPath(pathname: string): boolean {
+    return EFORMSIGN_REQUEST_PATHS.some((path) => pathname === path || pathname.startsWith(path));
+}
+
+function isAppAuthRequiredError(error: AxiosError): boolean {
+    const data = error.response?.data;
+    if (!data || typeof data !== "object") return false;
+    const message = (data as { error?: unknown; message?: unknown }).error
+        ?? (data as { error?: unknown; message?: unknown }).message;
+    return typeof message === "string" && message.includes("Authentication required");
+}
+
+function redirectToLoginOnce() {
+    if (typeof window === "undefined" || isRedirectingToLogin) return;
+    const currentPath = window.location.pathname;
+    const isAuthPage = isPublicAuthPath(currentPath);
+    if (isAuthPage) return;
+
+    isRedirectingToLogin = true;
+    window.location.href = "/login";
+}
 
 api.interceptors.request.use(
     (config: InternalAxiosRequestConfig) => {
@@ -61,23 +114,21 @@ api.interceptors.response.use(
 
         // 401 Unauthorized - handle eformsign token refresh only for eformsign-related endpoints
         if (err.response?.status === 401 && originalRequest && !originalRequest._retry) {
-            const url = originalRequest.url || '';
-            
-            // Only handle eformsign-related endpoints with token refresh
-            const isEformsignEndpoint = url.includes('/documents') || 
-                url.includes('/access-token') || 
-                url.includes('/refresh-access-token') ||
-                url.includes('/generate-document') ||
-                url.includes('/generate-staff-document') ||
-                url.includes('/generate-signature');
+            const requestPath = getRequestPath(originalRequest);
+            const isEformsignEndpoint = isEformsignRequestPath(requestPath);
             
             // Don't retry token refresh endpoints themselves
-            if (url.includes('access-token') || url.includes('refresh-access-token')) {
+            if (isEformsignRefreshPath(requestPath)) {
                 return Promise.reject(err);
             }
 
             // For eformsign endpoints, try token refresh
             if (isEformsignEndpoint) {
+                if (isAppAuthRequiredError(err)) {
+                    redirectToLoginOnce();
+                    return Promise.reject(err);
+                }
+
                 if (isRefreshing) {
                     return new Promise((resolve, reject) => {
                         failedQueue.push({ resolve, reject });
@@ -111,14 +162,7 @@ api.interceptors.response.use(
             
             // For non-eformsign 401 errors (main auth failure), redirect to login
             // But don't redirect if already on an auth page (login, register, etc.)
-            if (typeof window !== 'undefined' && !isRedirectingToLogin) {
-                const currentPath = window.location.pathname;
-                const isAuthPage = isPublicAuthPath(currentPath);
-                if (!isAuthPage) {
-                    isRedirectingToLogin = true;
-                    window.location.href = '/login';
-                }
-            }
+            redirectToLoginOnce();
             return Promise.reject(err);
         }
 

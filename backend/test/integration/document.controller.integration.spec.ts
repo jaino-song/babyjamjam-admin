@@ -2,7 +2,11 @@ import { ExecutionContext, ForbiddenException, INestApplication, ValidationPipe 
 import { Test, TestingModule } from "@nestjs/testing";
 import { DocumentService } from "application/services/document.service";
 import { DocumentEntity } from "domain/entities/document.entity";
-import { FILE_STORAGE_PORT, FileStoragePort } from "domain/ports/file-storage.port";
+import {
+    FILE_STORAGE_PORT,
+    FileStorageObjectNotFoundError,
+    FileStoragePort,
+} from "domain/ports/file-storage.port";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { TenantGuard } from "infrastructure/tenant";
 import { DocumentController } from "interface/controllers/document.controller";
@@ -204,6 +208,26 @@ describe("DocumentController (Integration)", () => {
         );
     });
 
+    it("should return document list metadata without signing storage URLs", async () => {
+        documentService.findAll.mockResolvedValue([
+            createDocumentEntity("branch-1", null),
+        ]);
+        fileStorage.createSignedUrl.mockRejectedValue(new Error("storage unavailable"));
+
+        const response = await request(app.getHttpServer()).get("/documents");
+
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual([
+            expect.objectContaining({
+                id: "doc-1",
+                storagePath: "documents/contract.pdf",
+                storageUrl: null,
+            }),
+        ]);
+        expect(documentService.findAll).toHaveBeenCalledWith("branch-1");
+        expect(fileStorage.createSignedUrl).not.toHaveBeenCalled();
+    });
+
     it("should sign stored document paths when returning a document detail", async () => {
         documentService.findById.mockResolvedValue(
             createDocumentEntity("branch-1", "https://public.example.test/contract.pdf"),
@@ -215,5 +239,27 @@ describe("DocumentController (Integration)", () => {
         expect(response.status).toBe(200);
         expect(response.body.storageUrl).toBe("https://example.test/signed-contract.pdf");
         expect(fileStorage.createSignedUrl).toHaveBeenCalledWith("documents/contract.pdf");
+    });
+
+    it("should return not found when a document detail file is missing from storage", async () => {
+        documentService.findById.mockResolvedValue(createDocumentEntity("branch-1", null));
+        fileStorage.createSignedUrl.mockRejectedValue(
+            new FileStorageObjectNotFoundError("documents/contract.pdf", "signed-url"),
+        );
+
+        const response = await request(app.getHttpServer()).get("/documents/doc-1");
+
+        expect(response.status).toBe(404);
+        expect(response.body.message).toBe("Document file not found");
+    });
+
+    it("should return not found when a document file is missing from storage", async () => {
+        documentService.findById.mockResolvedValue(createDocumentEntity("branch-1", null));
+        fileStorage.download.mockRejectedValue(new Error("Failed to download: Object not found"));
+
+        const response = await request(app.getHttpServer()).get("/documents/doc-1/download");
+
+        expect(response.status).toBe(404);
+        expect(response.body.message).toBe("Document file not found");
     });
 });

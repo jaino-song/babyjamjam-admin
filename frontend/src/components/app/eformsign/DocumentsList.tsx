@@ -25,7 +25,7 @@ const STATUS_OPTIONS: FilterOption[] = [
   { label: "전체", value: null, color: getStatusColor("전체") },
   { label: "대기", value: "in-progress", color: getStatusColor("대기") },
   { label: "완료", value: "completed", color: getStatusColor("완료") },
-  { label: "기간 만료", value: "rejected", color: getStatusColor("기간 만료") },
+  { label: "기간 만료", value: "expired", color: getStatusColor("기간 만료") },
 ];
 
 // Customer names to filter out (internal/test accounts)
@@ -37,7 +37,7 @@ const transformDocument = (doc: EformsignDocument): EformsignDocumentView | null
 
   // Get customer name from multiple possible sources:
   // 1. step_recipients[0].name (when document is in-progress)
-  // 2. last_editor.name (when document is completed/rejected)
+  // 2. last_editor.name (when document is completed/expired)
   // 3. creator.name (fallback)
   let customerName: string | null = null;
 

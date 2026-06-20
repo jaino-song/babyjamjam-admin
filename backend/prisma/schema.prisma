@@ -87,7 +87,7 @@ model client {
   actualPrice          String?             @map("actual_price")
   startDate            DateTime?           @map("start_date") @db.Date
   endDate              DateTime?           @map("end_date") @db.Date
-  careCenter           Boolean             @map("care_center")
+  careCenter           Boolean?            @map("care_center")
   voucherClient        Boolean             @map("voucher_client")
   birthday             String?             @db.VarChar(6)
   breastPump           Boolean             @default(false) @map("breast_pump")
@@ -105,6 +105,7 @@ model client {
   callRecords          call_record[]
   clientDrafts         client_draft[]
 
+  @@unique([branchId, phone], map: "client_branch_phone_key")
   @@index([areaId], map: "idx_client_area")
   @@index([branchId], map: "idx_client_branch")
   @@index([createdAt], map: "idx_client_created_at")

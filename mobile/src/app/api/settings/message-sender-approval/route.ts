@@ -11,7 +11,7 @@ import {
 } from "@/lib/api/route-utils";
 
 // The approval request no longer carries a sender number — all messages send
-// from the unified, pre-registered 1661-2386 number. Accept an empty body;
+// from the unified, pre-registered 010-9641-1878 number. Accept an empty body;
 // passthrough preserves any forward-compatible fields.
 const requestMessageSenderApprovalSchema = z.object({}).passthrough();
 

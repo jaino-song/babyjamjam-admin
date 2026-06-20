@@ -4,6 +4,25 @@ export function normalizePhoneDigits(value: string, maxLength = 11): string {
   return value.replace(/\D/g, "").slice(0, maxLength);
 }
 
+export function normalizeKoreanPhoneLookupKey(value: string): string {
+  const digits = value.replace(/\D/g, "");
+
+  if (!digits) {
+    return "";
+  }
+
+  if (digits.startsWith("82")) {
+    const domesticDigits = digits.slice(2);
+    return normalizePhoneDigits(domesticDigits.startsWith("0") ? domesticDigits : `0${domesticDigits}`);
+  }
+
+  if (/^1\d{9}$/.test(digits)) {
+    return `0${digits}`;
+  }
+
+  return normalizePhoneDigits(value);
+}
+
 export function isValidKoreanPhoneNumber(value: string): boolean {
   const digits = normalizePhoneDigits(value);
 

@@ -8,7 +8,7 @@ describe("NotificationService", () => {
         UserEntity.reconstitute(
             id,
             null,
-            null,
+            `${id}@example.com`,
             `사용자 ${id}`,
             null,
             "user",
@@ -35,7 +35,10 @@ describe("NotificationService", () => {
         update: jest.fn(),
         delete: jest.fn(),
     };
-    const emailPort = { send: jest.fn() };
+    const emailPort = {
+        send: jest.fn(),
+        sendNotificationEmail: jest.fn(),
+    };
     const systemSettingService = { getUserEmailNotificationsEnabled: jest.fn() };
 
     let service: NotificationService;
@@ -118,5 +121,89 @@ describe("NotificationService", () => {
             branchId,
             expect.objectContaining({ userId: "user-2" }),
         );
+    });
+
+    it("should throttle role notification emails instead of sending every email at once", async () => {
+        jest.useFakeTimers();
+
+        const emailResolvers: Array<() => void> = [];
+        userRepository.findByRoles.mockResolvedValue([
+            createUser("user-1"),
+            createUser("user-2"),
+            createUser("user-3"),
+        ]);
+        userRepository.findById.mockImplementation((userId: string) =>
+            Promise.resolve(createUser(userId))
+        );
+        systemSettingService.getUserEmailNotificationsEnabled.mockResolvedValue(true);
+        sendNotificationUsecase.sendToUsers.mockResolvedValue({ sent: 3, failed: 0 });
+        emailPort.send.mockImplementation(() =>
+            new Promise((resolve) => {
+                emailResolvers.push(() => resolve("email-id"));
+            })
+        );
+
+        const sendPromise = service.sendToRoles(
+            ["admin", "manager", "user"],
+            "서비스 종료 예정",
+            "일주일 내로 종료되는 서비스 3건을 확인해 보세요",
+        );
+
+        try {
+            for (let i = 0; i < 10; i++) {
+                await jest.advanceTimersByTimeAsync(0);
+            }
+
+            expect(emailPort.send).toHaveBeenCalledTimes(1);
+            emailResolvers.shift()?.();
+            await Promise.resolve();
+
+            await jest.advanceTimersByTimeAsync(500);
+            expect(emailPort.send).toHaveBeenCalledTimes(1);
+
+            await jest.advanceTimersByTimeAsync(100);
+            expect(emailPort.send).toHaveBeenCalledTimes(2);
+            emailResolvers.shift()?.();
+            await Promise.resolve();
+
+            await jest.advanceTimersByTimeAsync(600);
+            expect(emailPort.send).toHaveBeenCalledTimes(3);
+            emailResolvers.shift()?.();
+            await expect(sendPromise).resolves.toEqual({ sent: 3, failed: 0 });
+            expect(emailPort.send).toHaveBeenCalledTimes(3);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("should send templated notification emails with dynamic body and CTA label", async () => {
+        userRepository.findByRoles.mockResolvedValue([createUser("user-1")]);
+        userRepository.findById.mockResolvedValue(createUser("user-1"));
+        systemSettingService.getUserEmailNotificationsEnabled.mockResolvedValue(true);
+        sendNotificationUsecase.sendToUsers.mockResolvedValue({ sent: 1, failed: 0 });
+        emailPort.sendNotificationEmail.mockResolvedValue("template-email-id");
+
+        await expect(
+            service.sendToRoles(
+                ["admin", "manager", "user"],
+                "서비스 시작 예정",
+                "일주일 내로 시작되는 서비스 6건을 확인해 보세요",
+                { url: "/clients/filtered?filter=starting-soon" },
+                {
+                    ctaUrl: "https://example.com/login",
+                    ctaLabel: "로그인해서 확인하기",
+                },
+            )
+        ).resolves.toEqual({ sent: 1, failed: 0 });
+
+        expect(emailPort.sendNotificationEmail).toHaveBeenCalledWith({
+            to: "user-1@example.com",
+            name: "사용자 user-1",
+            title: "서비스 시작 예정",
+            body: "일주일 내로 시작되는 서비스 6건을 확인해 보세요",
+            ctaUrl: "https://example.com/login",
+            ctaLabel: "로그인해서 확인하기",
+        });
+        expect(emailPort.send).not.toHaveBeenCalled();
     });
 });

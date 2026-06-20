@@ -8,6 +8,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { SurfaceFrame } from "@/components/ui/surface-frame";
 import { FooterNavigation } from "@/components/ui/footer-navigation";
 import { cn } from "@/lib/utils";
+import { SteppedWizardStepper } from "./SteppedWizardStepper";
 
 export interface WizardStep {
   label: string;
@@ -49,52 +50,12 @@ function DesktopStepIndicator({
   currentStep: number;
 }) {
   return (
-    <div
-      data-component="stepped-wizard-stepper-desktop"
-      className="hidden md:flex min-h-[2.4rem] items-center justify-center gap-0 overflow-visible py-1"
-    >
-      {steps.map((step, idx) => {
-        const isCompleted = idx < currentStep;
-        const isCurrent = idx === currentStep;
-
-        return (
-          <div key={idx} data-component="stepped-wizard-stepper-desktop-item" className="contents">
-            <div
-              data-component="stepped-wizard-stepper-desktop-step"
-              className={cn(
-                "flex items-center overflow-visible py-0.5",
-              )}
-            >
-              <div
-                data-component="stepped-wizard-stepper-desktop-circle"
-                className={cn(
-                  "flex h-7 w-7 items-center justify-center rounded-full text-[0.68rem] font-bold transition-all duration-300 will-change-transform",
-                  isCompleted && "bg-v3-primary text-white shadow-[0_2px_8px_hsla(214,100%,34%,0.2)]",
-                  isCurrent && "scale-110 bg-v3-primary text-white shadow-[0_2px_12px_hsla(214,100%,34%,0.3)]",
-                  !isCompleted && !isCurrent && "border-2 border-v3-border bg-v3-dim-white text-v3-text-muted"
-                )}
-              >
-                {isCompleted ? (
-                  <Check className="w-3.5 h-3.5" strokeWidth={3} />
-                ) : (
-                  idx + 1
-                )}
-              </div>
-            </div>
-
-            {idx < steps.length - 1 && (
-              <div
-                data-component="stepped-wizard-stepper-desktop-connector"
-                className={cn(
-                  "mx-1.5 h-0.5 w-10 rounded-full",
-                  idx < currentStep ? "bg-v3-primary" : "bg-v3-border"
-                )}
-              />
-            )}
-          </div>
-        );
-      })}
-    </div>
+    <SteppedWizardStepper
+      steps={steps}
+      currentStep={currentStep}
+      showLabels={false}
+      className="hidden md:flex"
+    />
   );
 }
 

@@ -22,13 +22,18 @@ import {
 import { ContentPaper } from "@/components/app/root/content-paper";
 import {
   DetailPanel,
+  DetailEmptyState,
+  DetailTabPanels,
   DetailTabs,
   HeaderActionButton,
+  AnimatedSlotList,
+  AnimatedSlotListItemContent,
   ListEmptyState,
   ListPanel,
   PageSection,
   SectionNav,
   SplitLayout,
+  useSplitLayoutSelection,
 } from "@/components/app/v3";
 import { Button } from "@/components/ui/button";
 import {
@@ -53,7 +58,7 @@ const NAV_SECTIONS = [
   { id: "overview", label: "발송 예정", icon: Send },
   { id: "history", label: "발송 기록", icon: History },
   { id: "templates", label: "템플릿", icon: FileText },
-  { id: "triggers", label: "발송 트리거 설정", icon: Workflow },
+  { id: "triggers", label: "자동화", icon: Workflow },
   { id: "settings", label: "설정", icon: Settings },
 ] as const;
 
@@ -1541,7 +1546,6 @@ function TemplatesSection() {
   const [customTemplates, setCustomTemplates] = useState<TemplateRecord[]>(CUSTOM_TEMPLATES);
   const [mode, setMode] = useState<TemplateMode>("browse");
   const [activeGroup, setActiveGroup] = useState<TemplateGroup>("builtin");
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(BUILTIN_TEMPLATES[0]?.id ?? "");
   const [activeDetailTab, setActiveDetailTab] = useState<TemplateDetailTab>("details");
   const [mobilePanel, setMobilePanel] = useState(0);
 
@@ -1554,6 +1558,12 @@ function TemplatesSection() {
     () => [...BUILTIN_TEMPLATES, ...customTemplates],
     [customTemplates]
   );
+  const visibleTemplateIds = useMemo(() => visibleTemplates.map((template) => template.id), [visibleTemplates]);
+  const {
+    selectedId: selectedTemplateId,
+    setSelectedId: setSelectedTemplateId,
+    setSplitLayoutMode,
+  } = useSplitLayoutSelection(visibleTemplateIds);
 
   const selectedTemplate = useMemo(
     () => templateLibrary.find((template) => template.id === selectedTemplateId) ?? null,
@@ -1564,23 +1574,23 @@ function TemplatesSection() {
     if (value !== "builtin" && value !== "custom") return;
 
     const nextGroup = value as TemplateGroup;
-    const nextTemplates = nextGroup === "builtin" ? BUILTIN_TEMPLATES : customTemplates;
 
     setActiveGroup(nextGroup);
     setSelectedTemplateId((previous) => {
+      if (!previous) return null;
       const previousTemplate = templateLibrary.find((template) => template.id === previous);
       if (previousTemplate?.group === nextGroup) return previous;
-      return nextTemplates[0]?.id ?? "";
+      return null;
     });
     setActiveDetailTab("details");
     setMobilePanel(0);
-  }, [customTemplates, templateLibrary]);
+  }, [setSelectedTemplateId, templateLibrary]);
 
   const handleSelectTemplate = useCallback((templateId: string) => {
     setSelectedTemplateId(templateId);
     setActiveDetailTab("details");
     setMobilePanel(1);
-  }, []);
+  }, [setSelectedTemplateId]);
 
   const handleCreatedTemplate = useCallback((template: TemplateRecord) => {
     setCustomTemplates((previous) => [template, ...previous]);
@@ -1589,7 +1599,7 @@ function TemplatesSection() {
     setActiveDetailTab("details");
     setMobilePanel(0);
     setMode("browse");
-  }, []);
+  }, [setSelectedTemplateId]);
 
   if (mode === "create") {
     return <TemplateCreator onBack={() => setMode("browse")} onCreated={handleCreatedTemplate} />;
@@ -1600,7 +1610,13 @@ function TemplatesSection() {
       data-component="alimtalk-templates-browser"
       className="h-full min-h-0"
     >
-      <SplitLayout columns={2} activePanel={mobilePanel} hasSelection={!!selectedTemplate} onBack={() => setMobilePanel(0)}>
+      <SplitLayout
+        columns={2}
+        activePanel={mobilePanel}
+        hasSelection={!!selectedTemplate}
+        onBack={() => setMobilePanel(0)}
+        onModeChange={setSplitLayoutMode}
+      >
         <ListPanel
           title="알림톡 템플릿"
           tabs={TEMPLATE_GROUP_TABS.map((tab) => ({ value: tab.value, label: tab.label }))}
@@ -1608,62 +1624,60 @@ function TemplatesSection() {
           onTabChange={handleGroupChange}
           headerActions={<HeaderActionButton icon={Plus} label="새 템플릿" onClick={() => setMode("create")} />}
         >
-          <div data-component="alimtalk-templates-list" className="space-y-2 pb-2">
-            {visibleTemplates.length === 0 ? (
-              <ListEmptyState
-                name="alimtalk-templates-empty"
-                message="등록된 템플릿이 없습니다."
-              />
-            ) : (
-              visibleTemplates.map((template) => {
-                const isSelected = template.id === selectedTemplateId;
+          {visibleTemplates.length === 0 ? (
+            <ListEmptyState message="등록된 템플릿이 없습니다." />
+          ) : (
+            <div data-component="alimtalk-templates-list" className="space-y-2 pb-2">
+              <AnimatedSlotList<TemplateRecord>
+                items={visibleTemplates}
+                isLoading={false}
+                className="space-y-2"
+                getItemKey={(template) => template.id}
+                getSlotState={({ item }) => ({
+                  isActive: item?.id === selectedTemplateId,
+                  isInteractive: Boolean(item),
+                })}
+                onSlotClick={(template) => handleSelectTemplate(template.id)}
+                render={({ item: template }) => {
+                  if (!template) return null;
 
-                return (
-                  <button
-                    key={template.id}
-                    type="button"
-                    onClick={() => handleSelectTemplate(template.id)}
-                    className={cn(
-                      "w-full rounded-[18px] border p-4 text-left transition-all duration-200",
-                      isSelected
-                        ? "border-v3-primary bg-[hsl(var(--v3-primary-light))] shadow-[0_12px_32px_hsla(214,50%,20%,0.08)]"
-                        : "border-v3-border bg-white hover:border-v3-primary/30 hover:bg-v3-primary-light/40"
-                    )}
-                  >
-                    <div data-component="alimtalk-templates-item" className="flex items-start gap-3">
-                      <div data-component="alimtalk-templates-item-icon" className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/10 shrink-0">
-                        <FileText className="h-4 w-4 text-violet-500" />
-                      </div>
-                      <div data-component="alimtalk-templates-item-content" className="min-w-0 flex-1">
-                        <div data-component="alimtalk-templates-item-header" className="flex items-center justify-between gap-3">
-                          <p className="truncate text-[0.82rem] font-semibold text-v3-dark">{template.name}</p>
-                          <span
-                            className={cn(
-                              "shrink-0 rounded-full px-2.5 py-1 text-[0.65rem] font-semibold",
-                              template.status === "승인완료"
-                                ? "bg-emerald-500/10 text-emerald-600"
-                                : "bg-amber-500/10 text-amber-600"
-                            )}
-                          >
-                            {template.status}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-[0.73rem] text-v3-text-muted">{template.description}</p>
-                        <div data-component="alimtalk-templates-item-tags" className="mt-3 flex flex-wrap gap-2">
+                  return (
+                    <AnimatedSlotListItemContent
+                      dataComponent="alimtalk-templates-item"
+                      icon={FileText}
+                      iconContainerClassName="bg-violet-500/10"
+                      iconClassName="text-violet-500"
+                      title={template.name}
+                      subtitle={template.description}
+                      status={
+                        <span
+                          className={cn(
+                            "shrink-0 rounded-full px-2.5 py-1 text-[0.65rem] font-semibold",
+                            template.status === "승인완료"
+                              ? "bg-emerald-500/10 text-emerald-600"
+                              : "bg-amber-500/10 text-amber-600"
+                          )}
+                        >
+                          {template.status}
+                        </span>
+                      }
+                      meta={
+                        <>
                           <span className="rounded-full bg-v3-dim-white px-2.5 py-1 text-[0.68rem] font-medium text-v3-text-muted">
                             {getTplTypeLabel(template.tplType)}
                           </span>
                           <span className="rounded-full bg-v3-dim-white px-2.5 py-1 text-[0.68rem] font-medium text-v3-text-muted">
                             {getTplEmTypeLabel(template.tplEmType)}
                           </span>
-                        </div>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })
-            )}
-          </div>
+                        </>
+                      }
+                      metaClassName="flex-wrap whitespace-normal"
+                    />
+                  );
+                }}
+              />
+            </div>
+          )}
         </ListPanel>
 
         <DetailPanel
@@ -1701,25 +1715,40 @@ function TemplatesSection() {
           }
         >
           {!selectedTemplate ? (
-            <div data-component="alimtalk-templates-detail-empty" className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-sm text-v3-text-muted">
-              왼쪽 목록에서 템플릿을 선택해 주세요.
-            </div>
-          ) : activeDetailTab === "details" ? (
-            <TemplateDetails template={selectedTemplate} />
+            <DetailEmptyState
+              name="alimtalk-templates-detail-empty"
+              message="왼쪽 목록에서 템플릿을 선택해 주세요."
+            />
           ) : (
-            <div data-component="alimtalk-templates-preview-panel" className="flex justify-center py-2">
-              <TemplatePhonePreview
-                tplType={selectedTemplate.tplType}
-                tplEmType={selectedTemplate.tplEmType}
-                title={selectedTemplate.title}
-                subtitle={selectedTemplate.subtitle}
-                content={selectedTemplate.content}
-                extra={selectedTemplate.extra}
-                advert={selectedTemplate.advert}
-                imagePreviewUrl={selectedTemplate.imagePreviewUrl}
-                buttons={selectedTemplate.buttons}
-              />
-            </div>
+            <DetailTabPanels
+              activeTab={activeDetailTab}
+              dataComponent="alimtalk-templates-detail-content"
+              panelDataComponent="alimtalk-templates-detail-tab-panel"
+              panels={[
+                {
+                  key: "details",
+                  children: <TemplateDetails template={selectedTemplate} />,
+                },
+                {
+                  key: "preview",
+                  children: (
+                    <div data-component="alimtalk-templates-preview-panel" className="flex justify-center py-2">
+                      <TemplatePhonePreview
+                        tplType={selectedTemplate.tplType}
+                        tplEmType={selectedTemplate.tplEmType}
+                        title={selectedTemplate.title}
+                        subtitle={selectedTemplate.subtitle}
+                        content={selectedTemplate.content}
+                        extra={selectedTemplate.extra}
+                        advert={selectedTemplate.advert}
+                        imagePreviewUrl={selectedTemplate.imagePreviewUrl}
+                        buttons={selectedTemplate.buttons}
+                      />
+                    </div>
+                  ),
+                },
+              ]}
+            />
           )}
         </DetailPanel>
       </SplitLayout>
@@ -1756,7 +1785,7 @@ export default function AlimtalkPage() {
 
           {activeSection === "triggers" ? (
             <section data-component="alimtalk-triggers" className="h-full min-h-0">
-              <TriggerRulesManager />
+              <TriggerRulesManager channel="alimtalk" />
             </section>
           ) : null}
 

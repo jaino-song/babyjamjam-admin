@@ -57,7 +57,7 @@ export function AssistantMessage({
                 if (contractSendDone) {
                     return (
                         <div data-component="chat-wizard-contract-send-success" className="py-1">
-                            계약서 전송 화면으로 이동했습니다.
+                            계약서 전송이 완료되었습니다.
                         </div>
                     );
                 }

@@ -22,7 +22,7 @@ import styles from "./page.module.css";
 const MESSAGE_SENDER_APPROVAL_QUERY_KEY = ["settings", "message-sender-approval"] as const;
 const ALIGO_JOIN_URL = "https://smartsms.aligo.in/join.html";
 const ALIGO_API_SPEC_URL = "https://smartsms.aligo.in/admin/api/spec.html";
-const UNIFIED_SENDER_PHONE = "1661-2386";
+const UNIFIED_SENDER_PHONE = "010-9641-1878";
 
 interface AgreementItem {
   id: "aligoTerms" | "privacyThirdParty" | "senderNumber";

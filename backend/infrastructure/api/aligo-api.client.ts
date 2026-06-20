@@ -15,7 +15,7 @@ import {
 } from "domain/ports/aligo-sms-api.port";
 import { maskPhone } from "application/utils/mask";
 
-export const DEFAULT_ALIGO_SENDER_PHONE = "1661-2386";
+export const DEFAULT_ALIGO_SENDER_PHONE = "010-9641-1878";
 
 @Injectable()
 export class AligoApiClient implements IAligoApiPort, IAligoSmsApiPort {

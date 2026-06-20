@@ -1296,7 +1296,7 @@ export const mockVoucherPriceInfos: VoucherPriceInfo[] = [
 // EFORMSIGN DOC (Electronic Document)
 // ============================================================================
 
-export type EformsignStatusType = '060' | '050' | '080'; // pending, completed, rejected
+export type EformsignStatusType = '060' | '050' | '080'; // pending, completed, expired
 export type EformsignStepType = '05' | '06'; // participant, reviewer
 
 export interface EformsignDoc {

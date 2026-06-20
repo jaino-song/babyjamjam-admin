@@ -14,7 +14,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import type { MessageSenderApprovalResponse } from "@/services/api";
 
-const UNIFIED_SENDER_PHONE = "1661-2386";
+const UNIFIED_SENDER_PHONE = "010-9641-1878";
 
 interface MessageSenderApprovalSettingsProps {
   approval?: MessageSenderApprovalResponse;

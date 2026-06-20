@@ -1,4 +1,4 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { AuthService, type KakaoData } from "application/services/auth.service";
 import { AuthTokenEntity } from "domain/entities/auth-token.entity";
@@ -42,6 +42,7 @@ describe("AuthService Kakao onboarding", () => {
         send: jest.fn().mockResolvedValue("mock-message-id"),
         sendVerificationEmail: jest.fn().mockResolvedValue("mock-verification-id"),
         sendPasswordResetEmail: jest.fn().mockResolvedValue("mock-reset-id"),
+        sendNotificationEmail: jest.fn().mockResolvedValue("mock-notification-id"),
     });
 
     const createMockAuthTokenRepository = (): jest.Mocked<IAuthTokenRepository> => ({
@@ -110,7 +111,9 @@ describe("AuthService Kakao onboarding", () => {
         });
     });
 
-    it("returns account onboarding for existing Kakao users with missing required info", async () => {
+    it("blocks login for existing Kakao users with no accessible branch", async () => {
+        // No accessible branch => blocked (even with an otherwise-incomplete profile);
+        // self-onboarding is only reachable for users who already have a branch.
         prisma.user.findFirst.mockResolvedValue({
             ...existingUser,
             phone: null,
@@ -119,18 +122,7 @@ describe("AuthService Kakao onboarding", () => {
         } as never);
         prisma.user_branch.findMany.mockResolvedValue([] as never);
 
-        const result = await service.validateKakaoUser(kakaoData);
-
-        expect(result).toEqual({
-            onboardingRequired: true,
-            onboardingKind: "account_completion",
-            userId: "user-1",
-            prefill: {
-                email: kakaoData.email,
-                name: kakaoData.name,
-                profileImage: kakaoData.profileImage,
-            },
-        });
+        await expect(service.validateKakaoUser(kakaoData)).rejects.toThrow(ForbiddenException);
     });
 
     it("exchanges a pending signup auth code into a persisted pending signup token", async () => {
@@ -320,7 +312,7 @@ describe("AuthService Kakao onboarding", () => {
         expect(prisma.user.create).not.toHaveBeenCalled();
     });
 
-    it("returns account onboarding for existing email users with missing required info", async () => {
+    it("blocks login for existing email users with no accessible branch", async () => {
         jest.spyOn(service, "verifyPassword").mockResolvedValue(true);
 
         prisma.user.findUnique.mockResolvedValue({
@@ -336,17 +328,7 @@ describe("AuthService Kakao onboarding", () => {
         } as never);
         prisma.user_branch.findMany.mockResolvedValue([] as never);
 
-        const result = await service.validateEmailPassword("legacy@example.com", "Password1!");
-
-        expect(result).toEqual({
-            onboardingRequired: true,
-            onboardingKind: "account_completion",
-            userId: "user-3",
-            prefill: {
-                email: "legacy@example.com",
-                name: "Legacy User",
-            },
-        });
+        await expect(service.validateEmailPassword("legacy@example.com", "Password1!")).rejects.toThrow(ForbiddenException);
     });
 
     it("completes account onboarding for existing users and updates membership role", async () => {

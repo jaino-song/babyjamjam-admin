@@ -46,7 +46,7 @@ export function KpiCard({
   return (
     <div
       data-component={dataComponent}
-      className="bg-white rounded-2xl shadow-v3 p-4.5 px-5 py-5"
+      className="animate-v3-slide-up bg-white rounded-2xl shadow-v3 p-4.5 px-5 py-5"
     >
       <div className="flex items-center gap-2 mb-3">
         {Icon ? (

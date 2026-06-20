@@ -1,9 +1,17 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { SplitLayout, ListPanel, DetailPanel, AnimatedSlotList, ListEmptyState } from "@/components/app/v3";
+import {
+  AnimatedSlotList,
+  AnimatedSlotListItemContent,
+  DetailEmptyState,
+  DetailPanel,
+  ListEmptyState,
+  ListPanel,
+  SplitLayout,
+  useSplitLayoutSelection,
+} from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
 import {
   MessageCircle,
   CalendarCheck,
@@ -76,7 +84,6 @@ const TEMPLATE_DETAILS: Record<AlimtalkTemplateType, { title: string; content: s
 };
 
 export default function AlimtalkTemplatesPage() {
-  const [selectedValue, setSelectedValue] = useState<string | null>("builtin:greeting");
   const [activeGroup, setActiveGroup] = useState<TemplateGroup>("builtin");
   const [mobilePanel, setMobilePanel] = useState(0);
 
@@ -95,6 +102,12 @@ export default function AlimtalkTemplatesPage() {
   );
 
   const visibleItems = activeGroup === "builtin" ? BUILTIN_TEMPLATES : userTemplateItems;
+  const visibleItemIds = useMemo(() => visibleItems.map((item) => item.id), [visibleItems]);
+  const {
+    selectedId: selectedValue,
+    setSelectedId: setSelectedValue,
+    setSplitLayoutMode,
+  } = useSplitLayoutSelection(visibleItemIds);
   const isListLoading = activeGroup === "user" && isLoadingUserTemplates;
 
   const handleGroupChange = useCallback(
@@ -107,21 +120,21 @@ export default function AlimtalkTemplatesPage() {
       setSelectedValue((previous) => {
         if (nextGroup === "builtin") {
           if (previous?.startsWith("builtin:")) return previous;
-          return BUILTIN_TEMPLATES[0]?.id ?? null;
+          return null;
         }
 
         if (previous?.startsWith("user:")) return previous;
-        return userTemplateItems[0]?.id ?? null;
+        return null;
       });
     },
-    [userTemplateItems]
+    [setSelectedValue]
   );
 
   const handleTemplateSelect = useCallback((id: string) => {
     setSelectedValue(id);
     setActiveGroup(id.startsWith("user:") ? "user" : "builtin");
     setMobilePanel(1);
-  }, []);
+  }, [setSelectedValue]);
 
   const isBuiltin = selectedValue?.startsWith("builtin:") ?? false;
   const builtinType = isBuiltin && selectedValue ? (selectedValue.replace("builtin:", "") as AlimtalkTemplateType) : null;
@@ -134,6 +147,7 @@ export default function AlimtalkTemplatesPage() {
         activePanel={mobilePanel}
         hasSelection={!!selectedValue}
         onBack={() => setMobilePanel(0)}
+        onModeChange={setSplitLayoutMode}
       >
         <ListPanel
           title="알림톡 템플릿"
@@ -141,27 +155,19 @@ export default function AlimtalkTemplatesPage() {
           activeTab={activeGroup}
           onTabChange={handleGroupChange}
         >
-          <div data-component="alimtalk-templates-list-content" className="space-y-2 pb-2">
-            {!isListLoading && visibleItems.length === 0 ? (
-              <ListEmptyState
-                name="alimtalk-templates-list-empty"
-                message="등록된 사용자 템플릿이 없습니다."
-              />
-            ) : (
+          {!isListLoading && visibleItems.length === 0 ? (
+            <ListEmptyState message="등록된 사용자 템플릿이 없습니다." />
+          ) : (
+            <div data-component="alimtalk-templates-list-content" className="space-y-2 pb-2">
               <AnimatedSlotList<TemplateListItem>
                 items={visibleItems}
                 isLoading={isListLoading}
                 loadingCount={6}
                 className="space-y-2"
-                slotClassName={({ item, isLoading }) =>
-                  cn(
-                    "flex items-center gap-3 p-3 rounded-[16px] border-2 text-left transition-all duration-200",
-                    !isLoading && item?.id === selectedValue
-                      ? "bg-v3-primary-light border-v3-primary"
-                      : "bg-white border-transparent",
-                    !isLoading && "cursor-pointer hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
-                  )
-                }
+                getSlotState={({ item, isLoading }) => ({
+                  isActive: !isLoading && item?.id === selectedValue,
+                  isInteractive: !isLoading && Boolean(item),
+                })}
                 onSlotClick={(item) => handleTemplateSelect(item.id)}
                 render={({ item, isLoading: isSlotLoading }) => {
                   if (isSlotLoading) {
@@ -179,30 +185,27 @@ export default function AlimtalkTemplatesPage() {
                   }
 
                   if (!item) return null;
-                  const Icon = item.icon;
 
                   return (
-                    <>
-                      <div data-component="alimtalk-templates-list-item-icon" className="w-9 h-9 rounded-[12px] bg-v3-dim-white text-v3-text-muted flex items-center justify-center shrink-0">
-                        <Icon className="w-4 h-4" />
-                      </div>
-                      <div data-component="alimtalk-templates-list-item-text" className="flex-1 min-w-0">
-                        <span className="text-[0.8rem] font-semibold text-v3-dark truncate block">{item.label}</span>
-                        <span className="text-[0.7rem] text-v3-text-muted truncate block">{item.description}</span>
-                      </div>
-                    </>
+                    <AnimatedSlotListItemContent
+                      dataComponent="alimtalk-templates-list-item"
+                      icon={item.icon}
+                      title={item.label}
+                      subtitle={item.description}
+                    />
                   );
                 }}
               />
-            )}
-          </div>
+            </div>
+          )}
         </ListPanel>
 
         <DetailPanel>
           {!selectedValue && (
-            <div data-component="alimtalk-templates-detail-select-empty" className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-sm text-v3-text-muted">
-              왼쪽 목록에서 템플릿을 선택해 주세요.
-            </div>
+            <DetailEmptyState
+              name="alimtalk-templates-detail-select-empty"
+              message="왼쪽 목록에서 템플릿을 선택해 주세요."
+            />
           )}
 
           {templateDetail && (
@@ -241,9 +244,10 @@ export default function AlimtalkTemplatesPage() {
           )}
 
           {!templateDetail && selectedValue && (
-            <div data-component="alimtalk-templates-detail-empty" className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-sm text-v3-text-muted">
-              선택한 템플릿 정보를 불러오지 못했습니다.
-            </div>
+            <DetailEmptyState
+              name="alimtalk-templates-detail-empty"
+              message="선택한 템플릿 정보를 불러오지 못했습니다."
+            />
           )}
         </DetailPanel>
 

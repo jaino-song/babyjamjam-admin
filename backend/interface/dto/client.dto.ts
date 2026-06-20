@@ -49,8 +49,9 @@ export class CreateClientDto {
     @IsDateString()
     endDate?: string | null;
 
+    @IsOptional()
     @IsBoolean()
-    careCenter!: boolean;
+    careCenter?: boolean | null;
 
     @IsBoolean()
     voucherClient!: boolean;
@@ -134,7 +135,7 @@ export class UpdateClientDto {
 
     @IsOptional()
     @IsBoolean()
-    careCenter?: boolean;
+    careCenter?: boolean | null;
 
     @IsOptional()
     @IsBoolean()

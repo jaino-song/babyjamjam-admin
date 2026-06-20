@@ -12,14 +12,15 @@ interface SplitLayoutProps {
   children: React.ReactNode;
   hasSelection?: boolean;
   onBack?: () => void;
+  onModeChange?: (mode: SplitLayoutMode) => void;
   columns?: 2 | 3;
   activePanel?: number;
 }
 
-type SplitLayoutMode = "desktop" | "compact";
-const COMPACT_BREAKPOINT = 1600;
+export type SplitLayoutMode = "desktop" | "compact";
+const COMPACT_BREAKPOINT = 1280;
 const COMPACT_PANEL_GAP = 16;
-const PANEL_MOUNT_ANIMATION_MS = 550;
+type SplitLayoutSelectionId = string | number;
 
 interface CompactMetrics {
   listWidth: number;
@@ -28,15 +29,93 @@ interface CompactMetrics {
   viewportWidth: number;
 }
 
+interface SplitLayoutSelectionOptions {
+  autoSelectFirstOnDesktop?: boolean;
+  clearAutoSelectionOnCompact?: boolean;
+}
+
 function getDesktopGridClass(columns: 2 | 3): string {
   if (columns === 3) return "grid-cols-1 lg:grid-cols-3";
   return "grid-cols-[400px_minmax(0,1fr)]";
+}
+
+export function useSplitLayoutSelection<TId extends SplitLayoutSelectionId>(
+  itemIds: readonly TId[],
+  {
+    autoSelectFirstOnDesktop = true,
+    clearAutoSelectionOnCompact = true,
+  }: SplitLayoutSelectionOptions = {}
+) {
+  const [selectedId, setSelectedIdState] = useState<TId | null>(null);
+  const [splitLayoutMode, setSplitLayoutMode] = useState<SplitLayoutMode | null>(null);
+  const autoSelectedIdRef = useRef<TId | null>(null);
+  const isCompactSplitLayout = splitLayoutMode === "compact";
+
+  const setSelectedId = useCallback((nextSelectedId: React.SetStateAction<TId | null>) => {
+    autoSelectedIdRef.current = null;
+    setSelectedIdState(nextSelectedId);
+  }, []);
+
+  useEffect(() => {
+    if (itemIds.length === 0) {
+      if (selectedId !== null) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setSelectedIdState(null);
+        autoSelectedIdRef.current = null;
+      }
+      return;
+    }
+
+    const selectedExists = selectedId !== null && itemIds.includes(selectedId);
+
+    if (selectedId !== null && !selectedExists) {
+      setSelectedIdState(null);
+      autoSelectedIdRef.current = null;
+      return;
+    }
+
+    if (splitLayoutMode === null) return;
+
+    if (isCompactSplitLayout) {
+      if (
+        clearAutoSelectionOnCompact &&
+        selectedId !== null &&
+        autoSelectedIdRef.current === selectedId
+      ) {
+        setSelectedIdState(null);
+        autoSelectedIdRef.current = null;
+      }
+      return;
+    }
+
+    if (autoSelectFirstOnDesktop && selectedId === null) {
+      const firstId = itemIds[0] ?? null;
+      autoSelectedIdRef.current = firstId;
+      setSelectedIdState(firstId);
+    }
+  }, [
+    autoSelectFirstOnDesktop,
+    clearAutoSelectionOnCompact,
+    isCompactSplitLayout,
+    itemIds,
+    selectedId,
+    splitLayoutMode,
+  ]);
+
+  return {
+    selectedId,
+    setSelectedId,
+    splitLayoutMode,
+    setSplitLayoutMode,
+    isCompactSplitLayout,
+  };
 }
 
 export function SplitLayout({
   children,
   hasSelection = false,
   onBack,
+  onModeChange,
   columns = 2,
   activePanel = 0,
 }: SplitLayoutProps) {
@@ -45,7 +124,6 @@ export function SplitLayout({
   const compactSlideFrameRef = useRef<number | null>(null);
   const [mode, setMode] = useState<SplitLayoutMode>("desktop");
   const [isCompactSlideEnabled, setIsCompactSlideEnabled] = useState(false);
-  const [isPanelMountAnimationActive, setIsPanelMountAnimationActive] = useState(true);
   const [compactMetrics, setCompactMetrics] = useState<CompactMetrics>({
     listWidth: 0,
     detailWidth: 0,
@@ -56,9 +134,6 @@ export function SplitLayout({
   const childArray = React.Children.toArray(children);
   const isDynamicSplit = columns === 2 && childArray.length >= 2;
   const isCompact = mode === "compact";
-  const didMountWithSelectionRef = useRef(hasSelection);
-  const shouldAnimatePanelMount =
-    isPanelMountAnimationActive && (didMountWithSelectionRef.current || !hasSelection);
 
   const goToList = useCallback(() => {
     onBack?.();
@@ -126,6 +201,7 @@ export function SplitLayout({
       setMode(nextMode);
       setRelatedMode(nextMode);
       scheduleCompactSlideEnable(nextMode);
+      onModeChange?.(nextMode);
       return;
     }
 
@@ -218,7 +294,7 @@ export function SplitLayout({
       });
     }
 
-    const nextMode = window.innerWidth <= COMPACT_BREAKPOINT
+    const nextMode = window.innerWidth < COMPACT_BREAKPOINT
       ? "compact"
       : "desktop";
 
@@ -231,19 +307,12 @@ export function SplitLayout({
     setMode(nextMode);
     setRelatedMode(nextMode);
     scheduleCompactSlideEnable(nextMode);
-  }, [isDynamicSplit, isMobileViewport, scheduleCompactSlideEnable, setRelatedMode]);
+    onModeChange?.(nextMode);
+  }, [isDynamicSplit, isMobileViewport, onModeChange, scheduleCompactSlideEnable, setRelatedMode]);
 
   useLayoutEffect(() => {
     return () => cancelCompactSlideFrame();
   }, [cancelCompactSlideFrame]);
-
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      setIsPanelMountAnimationActive(false);
-    }, PANEL_MOUNT_ANIMATION_MS);
-
-    return () => window.clearTimeout(timeoutId);
-  }, []);
 
   useLayoutEffect(() => {
     measureAndApplyMode();
@@ -283,8 +352,9 @@ export function SplitLayout({
         data-mode={mode}
         className={cn(
           "flex-1 h-full min-w-0 min-h-0",
-          "grid gap-4",
+          "grid gap-[calc(16px*var(--v3-ui-scale,1))]",
           getDesktopGridClass(columns),
+          "animate-v3-slide-up",
           "data-[mode=compact]:block data-[mode=compact]:relative data-[mode=compact]:w-full data-[mode=compact]:overflow-hidden data-[mode=compact]:rounded-[28px]",
         )}
         style={compactStyle}
@@ -323,9 +393,9 @@ export function SplitLayout({
                 data-panel={panelName}
                 className={cn(
                   "min-w-0 min-h-0 flex flex-col",
-                  shouldAnimatePanelMount && "animate-v3-slide-up",
                   "data-[mode=compact]:h-full data-[mode=compact]:shrink-0 data-[mode=compact]:overflow-y-auto",
                   columns === 3 && isCompact && "w-full flex-shrink-0",
+                  mode === "desktop" && columns === 2 && index === 1 && hasSelection && "animate-v3-slide-up",
                 )}
                 data-mode={mode}
                 style={panelStyle}

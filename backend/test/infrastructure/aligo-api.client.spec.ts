@@ -291,7 +291,7 @@ describe("AligoApiClient", () => {
             ).rejects.toThrow("Aligo SMS API error (502): Bad Gateway");
         });
 
-        it("defaults the sender to 1661-2386 (digits) when ALIGO_SENDER_PHONE is unset", async () => {
+        it("defaults the sender to 010-9641-1878 (digits) when ALIGO_SENDER_PHONE is unset", async () => {
             const defaultClient = new AligoApiClient(
                 createMockConfigService({ ALIGO_SENDER_PHONE: undefined }),
             );
@@ -306,7 +306,7 @@ describe("AligoApiClient", () => {
             });
 
             const body = mockFetch.mock.calls[0][1].body as FormData;
-            expect(body.get("sender")).toBe("16612386");
+            expect(body.get("sender")).toBe("01096411878");
         });
     });
 

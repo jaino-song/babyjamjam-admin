@@ -5,7 +5,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const statusBadgeVariants = cva(
-  "inline-flex items-center justify-center rounded-[50px] border px-3 py-1 text-[0.65rem] font-semibold leading-none whitespace-nowrap shrink-0 transition-colors overflow-hidden gap-1 [&>svg]:size-3 [&>svg]:pointer-events-none",
+  "inline-flex items-center justify-center overflow-hidden rounded-[50px] border px-[calc(12px*var(--v3-ui-scale,1))] py-[calc(4px*var(--v3-ui-scale,1))] text-[calc(10.4px*var(--v3-ui-scale,1))] font-semibold leading-none whitespace-nowrap shrink-0 transition-colors gap-[calc(4px*var(--v3-ui-scale,1))] [&>svg]:size-[calc(12px*var(--v3-ui-scale,1))] [&>svg]:pointer-events-none",
   {
     variants: {
       variant: {
@@ -35,9 +35,9 @@ const statusBadgeVariants = cva(
         default: "bg-[hsl(220,20%,97%)] border-[hsl(220,20%,90%)] text-v3-text-muted",
       },
       size: {
-        sm: "px-3 py-1 text-[0.65rem]",
-        default: "px-3 py-1 text-[0.65rem]",
-        lg: "px-3.5 py-1.5 text-[0.75rem]",
+        sm: "px-[calc(12px*var(--v3-ui-scale,1))] py-[calc(4px*var(--v3-ui-scale,1))] text-[calc(10.4px*var(--v3-ui-scale,1))]",
+        default: "px-[calc(12px*var(--v3-ui-scale,1))] py-[calc(4px*var(--v3-ui-scale,1))] text-[calc(10.4px*var(--v3-ui-scale,1))]",
+        lg: "px-[calc(14px*var(--v3-ui-scale,1))] py-[calc(6px*var(--v3-ui-scale,1))] text-[calc(12px*var(--v3-ui-scale,1))]",
       },
     },
     defaultVariants: {

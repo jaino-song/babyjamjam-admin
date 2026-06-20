@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
-import { Plus, Upload, FileText, Image as ImageIcon, File, Loader2 } from "lucide-react";
+import { Plus, Upload, CloudUpload, FileText, Image as ImageIcon, File, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
@@ -32,6 +32,12 @@ import {
 } from "@/hooks/use-documents";
 import { useDocumentCategories, useCreateDocumentCategory, DocumentCategory } from "@/hooks/use-document-categories";
 import { DataTable, type DataTableColumn } from "@/components/app/ui/datatable";
+
+const DOCUMENTS_TABLE_UPLOAD_FORM_ID = "documents-table-upload-form";
+const EMPTY_UPLOAD_STATE = {
+    hasSelectedFile: false,
+    canSubmit: false,
+};
 
 // Custom hook to detect mobile breakpoint (replaces MUI's useMediaQuery)
 function useIsMobile() {
@@ -75,6 +81,7 @@ export function DocumentsTable() {
     const [editDoc, setEditDoc] = useState<Document | null>(null);
     const [deleteDoc, setDeleteDoc] = useState<Document | null>(null);
     const [uploadProgress, setUploadProgress] = useState(0);
+    const [uploadDropzoneState, setUploadDropzoneState] = useState(EMPTY_UPLOAD_STATE);
 
     const { data: documents = [], isLoading, error } = useDocuments(
         filterCategory ?? undefined
@@ -109,10 +116,20 @@ export function DocumentsTable() {
                 onProgress: (progress) => setUploadProgress(progress),
             });
             setIsUploadOpen(false);
+            setUploadDropzoneState(EMPTY_UPLOAD_STATE);
             showToast(t(locale, "documents.upload-success"), "default");
         } catch (err) {
             console.error(err);
             showToast("문서 업로드에 실패했습니다.", "destructive");
+        }
+    };
+
+    const handleUploadOpenChange = (open: boolean) => {
+        if (uploadMutation.isPending) return;
+
+        setIsUploadOpen(open);
+        if (!open) {
+            setUploadDropzoneState(EMPTY_UPLOAD_STATE);
         }
     };
 
@@ -330,7 +347,7 @@ export function DocumentsTable() {
             {/* Upload Dialog */}
             <Dialog
                 open={isUploadOpen}
-                onOpenChange={(open: boolean) => !uploadMutation.isPending && setIsUploadOpen(open)}
+                onOpenChange={handleUploadOpenChange}
             >
                 <DialogContent className="sm:max-w-[600px]">
                     <DialogHeader>
@@ -344,19 +361,42 @@ export function DocumentsTable() {
                     </DialogHeader>
                     <div className="mt-2">
                         <DocumentDropzone
+                            formId={DOCUMENTS_TABLE_UPLOAD_FORM_ID}
+                            showInlineSubmitButton={false}
+                            onUploadStateChange={setUploadDropzoneState}
                             onUpload={handleUpload}
                             isLoading={uploadMutation.isPending}
                             uploadProgress={uploadProgress}
                         />
                     </div>
-                    <DialogFooter>
+                    <DialogFooter className="sm:justify-between">
                         <Button
                             variant="outline"
-                            onClick={() => setIsUploadOpen(false)}
+                            onClick={() => handleUploadOpenChange(false)}
                             disabled={uploadMutation.isPending}
                         >
                             {t(locale, "common.cancel")}
                         </Button>
+                        {uploadDropzoneState.hasSelectedFile && (
+                            <Button
+                                type="submit"
+                                form={DOCUMENTS_TABLE_UPLOAD_FORM_ID}
+                                variant="positive"
+                                disabled={!uploadDropzoneState.canSubmit}
+                            >
+                                {uploadMutation.isPending ? (
+                                    <>
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                        업로드 중...
+                                    </>
+                                ) : (
+                                    <>
+                                        <CloudUpload className="h-4 w-4" />
+                                        문서 업로드
+                                    </>
+                                )}
+                            </Button>
+                        )}
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

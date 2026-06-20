@@ -22,14 +22,14 @@ export function SectionNav({ items, activeId, onSelect, footer }: SectionNavProp
     <nav
       data-component="section-nav"
       data-mode="desktop"
-      className="w-full lg:w-[220px] shrink-0 self-start animate-v3-slide-up"
+      className="w-full shrink-0 self-start animate-v3-slide-up lg:w-max"
     >
       <div
         data-component="section-nav-desktop"
         data-mode="desktop"
-        className="hidden lg:block sticky top-24"
+        className="sticky top-[calc(96px*var(--v3-ui-scale,1))] hidden lg:block"
       >
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-[calc(4px*var(--v3-ui-scale,1))]">
           {items.map((item) => {
             const Icon = item.icon;
             const isActive = activeId === item.id;
@@ -38,7 +38,7 @@ export function SectionNav({ items, activeId, onSelect, footer }: SectionNavProp
                 key={item.id}
                 onClick={() => !item.disabled && onSelect(item.id)}
                 disabled={item.disabled}
-                className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 text-left ${
+                className={`flex items-center gap-[calc(12px*var(--v3-ui-scale,1))] whitespace-nowrap rounded-xl px-[calc(16px*var(--v3-ui-scale,1))] py-[calc(10px*var(--v3-ui-scale,1))] text-left text-[calc(14px*var(--v3-ui-scale,1))] font-medium transition-all duration-200 ${
                   item.disabled
                     ? "text-[hsl(var(--v3-text-muted))]/40 cursor-not-allowed"
                     : isActive
@@ -46,21 +46,21 @@ export function SectionNav({ items, activeId, onSelect, footer }: SectionNavProp
                       : "text-[hsl(var(--v3-text-muted))] hover:bg-[hsl(var(--v3-bg))]"
                 }`}
               >
-                <Icon className="w-4 h-4" />
+                <Icon className="h-[calc(16px*var(--v3-ui-scale,1))] w-[calc(16px*var(--v3-ui-scale,1))]" />
                 {item.label}
               </button>
             );
           })}
         </div>
-        {footer && <div className="mt-4 flex flex-col gap-2">{footer}</div>}
+        {footer && <div className="mt-[calc(16px*var(--v3-ui-scale,1))] flex flex-col gap-[calc(8px*var(--v3-ui-scale,1))]">{footer}</div>}
       </div>
 
       <div
         data-component="section-nav-mobile"
         data-mode="desktop"
-        className="lg:hidden overflow-x-auto scrollbar-hide -mx-4 px-4"
+        className="-mx-[calc(16px*var(--v3-ui-scale,1))] overflow-x-auto px-[calc(16px*var(--v3-ui-scale,1))] scrollbar-hide lg:hidden"
       >
-        <div className="flex gap-2 pb-2">
+        <div className="flex gap-[calc(8px*var(--v3-ui-scale,1))] pb-[calc(8px*var(--v3-ui-scale,1))]">
           {items.map((item) => {
             const Icon = item.icon;
             const isActive = activeId === item.id;
@@ -69,7 +69,7 @@ export function SectionNav({ items, activeId, onSelect, footer }: SectionNavProp
                 key={item.id}
                 onClick={() => !item.disabled && onSelect(item.id)}
                 disabled={item.disabled}
-                className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all duration-200 ${
+                className={`flex items-center gap-[calc(8px*var(--v3-ui-scale,1))] rounded-full px-[calc(16px*var(--v3-ui-scale,1))] py-[calc(8px*var(--v3-ui-scale,1))] text-[calc(14px*var(--v3-ui-scale,1))] font-medium whitespace-nowrap transition-all duration-200 ${
                   item.disabled
                     ? "text-[hsl(var(--v3-text-muted))]/40 cursor-not-allowed bg-[hsl(var(--v3-bg))]"
                     : isActive
@@ -77,7 +77,7 @@ export function SectionNav({ items, activeId, onSelect, footer }: SectionNavProp
                       : "text-[hsl(var(--v3-text-muted))] bg-[hsl(var(--v3-bg))]"
                 }`}
               >
-                <Icon className="w-4 h-4" />
+                <Icon className="h-[calc(16px*var(--v3-ui-scale,1))] w-[calc(16px*var(--v3-ui-scale,1))]" />
                 {item.label}
               </button>
             );

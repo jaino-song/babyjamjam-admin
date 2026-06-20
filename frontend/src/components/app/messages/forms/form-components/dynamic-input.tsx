@@ -11,16 +11,18 @@ interface DynamicInputProps {
     variable: TemplateVariable;
     value: string;
     onChange: (value: string) => void;
+    forceRequired?: boolean;
 }
 
-export const DynamicInput = ({ variable, value, onChange }: DynamicInputProps) => {
+export const DynamicInput = ({ variable, value, onChange, forceRequired = false }: DynamicInputProps) => {
     const { type, label, placeholder, required, optionType, options, dataSource } = variable;
+    const fieldRequired = forceRequired || required;
 
     let content;
 
     switch (type) {
         case "date":
-            content = <DateInput value={value} onChange={onChange} label={label} required={required} />;
+            content = <DateInput value={value} onChange={onChange} label={label} required={fieldRequired} />;
             break;
         case "number":
             content = (
@@ -29,14 +31,14 @@ export const DynamicInput = ({ variable, value, onChange }: DynamicInputProps) =
                     onChange={onChange} 
                     label={label} 
                     placeholder={placeholder} 
-                    required={required} 
+                    required={fieldRequired}
                     min={variable.min} 
                     max={variable.max} 
                 />
             );
             break;
         case "textarea":
-            content = <TextareaInput value={value} onChange={onChange} label={label} placeholder={placeholder} required={required} />;
+            content = <TextareaInput value={value} onChange={onChange} label={label} placeholder={placeholder} required={fieldRequired} />;
             break;
         case "select":
             content = (
@@ -44,7 +46,7 @@ export const DynamicInput = ({ variable, value, onChange }: DynamicInputProps) =
                     value={value} 
                     onChange={onChange} 
                     label={label} 
-                    required={required} 
+                    required={fieldRequired}
                     optionType={optionType} 
                     options={options} 
                     dataSourceId={dataSource} 
@@ -52,11 +54,11 @@ export const DynamicInput = ({ variable, value, onChange }: DynamicInputProps) =
             );
             break;
         case "phone":
-            content = <ContactInput phone={value} setPhone={onChange} label={label} placeholder={placeholder || ""} />;
+            content = <ContactInput phone={value} setPhone={onChange} label={label} placeholder={placeholder || ""} required={fieldRequired} />;
             break;
         case "text":
             if (variable.key === "name") {
-                content = <NameInput name={value} setName={onChange} label={label} placeholder={placeholder || ""} />;
+                content = <NameInput name={value} setName={onChange} label={label} placeholder={placeholder || ""} required={fieldRequired} />;
             } else {
                 content = (
                     <TitleTextInputMolecule
@@ -64,7 +66,7 @@ export const DynamicInput = ({ variable, value, onChange }: DynamicInputProps) =
                         value={value}
                         onValueChange={onChange}
                         placeholder={placeholder}
-                        required={required}
+                        required={fieldRequired}
                         dataComponent="messages-form-dynamic-text-input"
                     />
                 );
@@ -77,15 +79,11 @@ export const DynamicInput = ({ variable, value, onChange }: DynamicInputProps) =
                     value={value}
                     onValueChange={onChange}
                     placeholder={placeholder}
-                    required={required}
+                    required={fieldRequired}
                     dataComponent="messages-form-default-text-input"
                 />
             );
     }
 
-    return (
-        <div data-component="messages-form-dynamic-input">
-            {content}
-        </div>
-    );
+    return content;
 };

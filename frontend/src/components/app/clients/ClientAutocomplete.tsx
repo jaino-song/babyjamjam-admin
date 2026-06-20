@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
-import { UserPlus, FileCheck, ChevronsUpDown, Check, X, Loader2 } from "lucide-react";
+import { useState, useMemo, useRef } from "react";
+import { UserPlus, FileCheck, ChevronsUpDown, Check, X, Loader2, Play } from "lucide-react";
 import { useAllClients } from "@/hooks/useClients";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import type { Client } from "@/lib/client/types";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
+import { formatKoreanPhoneNumber, normalizeKoreanPhoneLookupKey } from "@/lib/phone";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +28,7 @@ import {
 } from "@/components/ui/command";
 import { Label } from "@/components/ui/label";
 import { StatusBadge } from "@/components/app/ui/status-badge";
+import { V3_INPUT_CONTROL_CLASS_NAME } from "@/components/ui/input";
 
 interface ClientAutocompleteProps {
     value: number | null;
@@ -35,9 +37,14 @@ interface ClientAutocompleteProps {
     required?: boolean;
     error?: boolean;
     helperText?: string;
+    placeholder?: string;
     excludeIds?: number[];
     allowManualEntry?: boolean;
     onManualEntry?: () => void;
+    manualValue?: string;
+    onManualValueChange?: (value: string) => void;
+    displayValueMode?: "name" | "phone";
+    searchMode?: "all" | "phone";
 }
 
 export function ClientAutocomplete({
@@ -47,13 +54,19 @@ export function ClientAutocomplete({
     required = false,
     error = false,
     helperText,
+    placeholder,
     excludeIds = [],
     allowManualEntry = false,
     onManualEntry,
+    manualValue,
+    onManualValueChange,
+    displayValueMode = "name",
+    searchMode = "all",
 }: ClientAutocompleteProps) {
     const locale = useLocale();
     const { data: clients, isLoading } = useAllClients();
     const setPrefillName = useClientDialogStore((state) => state.setPrefillName);
+    const allowsInlineManualValue = typeof onManualValueChange === "function";
 
     // Track input value for display synchronization
     const [inputValue, setInputValue] = useState("");
@@ -74,49 +87,80 @@ export function ClientAutocomplete({
         return clients.find((client) => client.id === value) || null;
     }, [value, clients]);
 
-    // Sync inputValue when selectedClient changes (e.g., after creating a new client)
-    useEffect(() => {
-        queueMicrotask(() => {
-            if (selectedClient) {
-                setInputValue(selectedClient.name);
-            } else if (value === null) {
-                setInputValue("");
-            }
-        });
-    }, [selectedClient, value]);
+    const getClientDisplayValue = (client: Client | null) => {
+        if (!client) return "";
+        return displayValueMode === "phone" ? formatKoreanPhoneNumber(client.phone ?? "") : client.name;
+    };
+
+    const selectedClientDisplayValue = getClientDisplayValue(selectedClient);
+    const manualDisplayValue =
+        displayValueMode === "phone" ? formatKoreanPhoneNumber(manualValue ?? "") : manualValue ?? "";
+    const inputDisplayValue =
+        displayValueMode === "phone" ? formatKoreanPhoneNumber(inputValue) : inputValue;
+    const commandInputValue = selectedClientDisplayValue || (allowsInlineManualValue ? manualDisplayValue : inputDisplayValue);
 
     // Filter clients based on input - Korean IME compatible
     const filteredClients = useMemo(() => {
-        if (!inputValue.trim()) return [];
+        if (!commandInputValue.trim()) return [];
+        const phoneQuery = normalizeKoreanPhoneLookupKey(commandInputValue);
+
         return availableClients.filter(
-            (client) =>
-                // 초성 search only for name (e.g., ㄱ → 김현아)
-                matchesKoreanSearch(client.name, inputValue) ||
-                // Phone: simple substring match (no 초성)
-                (client.phone && client.phone.includes(inputValue)) ||
-                // Address: simple substring match (no 초성 to avoid false positives)
-                (client.address && client.address.toLowerCase().includes(inputValue.toLowerCase()))
+            (client) => {
+                const clientPhone = normalizeKoreanPhoneLookupKey(client.phone ?? "");
+                const matchesPhone = phoneQuery.length > 0 && clientPhone.includes(phoneQuery);
+
+                if (searchMode === "phone") {
+                    return matchesPhone;
+                }
+
+                return (
+                    // 초성 search only for name (e.g., ㄱ → 김현아)
+                    matchesKoreanSearch(client.name, commandInputValue) ||
+                    // Phone: simple substring match (no 초성)
+                    matchesPhone ||
+                    // Address: simple substring match (no 초성 to avoid false positives)
+                    (client.address && client.address.toLowerCase().includes(commandInputValue.toLowerCase()))
+                );
+            }
         );
-    }, [availableClients, inputValue]);
+    }, [availableClients, commandInputValue, searchMode]);
+
+    const exactPhoneMatch = useMemo(() => {
+        if (searchMode !== "phone") return null;
+        const phoneQuery = normalizeKoreanPhoneLookupKey(commandInputValue);
+        if (!phoneQuery) return null;
+
+        return (
+            filteredClients.find(
+                (client) => normalizeKoreanPhoneLookupKey(client.phone ?? "") === phoneQuery,
+            ) ?? null
+        );
+    }, [commandInputValue, filteredClients, searchMode]);
 
     const handleSelect = (client: Client) => {
-        setInputValue(client.name);
+        setInputValue(getClientDisplayValue(client));
         onChange(client.id, client);
         setIsOpen(false);
     };
 
-    const handleClear = (e: React.MouseEvent) => {
-        e.stopPropagation();
+    const clearSelection = () => {
         setInputValue("");
+        onManualValueChange?.("");
         onChange(null, null);
         // Focus back to trigger for better UX
         setTimeout(() => triggerRef.current?.focus(), 0);
     };
 
+    const handleClear = (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        clearSelection();
+    };
+
     const handleManualEntry = () => {
         setIsOpen(false);
         // Save the typed name to the store so ClientFormDialog can prefill it
-        setPrefillName(inputValue);
+        setPrefillName(commandInputValue);
         // Use setTimeout to ensure dropdown is fully closed before opening dialog
         setTimeout(() => {
             if (onManualEntry) {
@@ -125,6 +169,45 @@ export function ClientAutocomplete({
         }, 100);
     };
 
+    const commitInlineManualValue = () => {
+        if (!allowsInlineManualValue || !commandInputValue.trim()) return;
+
+        if (exactPhoneMatch) {
+            handleSelect(exactPhoneMatch);
+            return;
+        }
+
+        if (value !== null) {
+            onChange(null, null);
+        }
+        onManualValueChange?.(
+            displayValueMode === "phone" ? formatKoreanPhoneNumber(commandInputValue) : commandInputValue,
+        );
+        setIsOpen(false);
+        setTimeout(() => triggerRef.current?.focus(), 0);
+    };
+
+    const handleInputValueChange = (nextValue: string) => {
+        const nextDisplayValue =
+            displayValueMode === "phone" ? formatKoreanPhoneNumber(nextValue) : nextValue;
+
+        setInputValue(nextDisplayValue);
+
+        if (selectedClient && nextDisplayValue !== selectedClientDisplayValue) {
+            onChange(null, null);
+        }
+        onManualValueChange?.(nextDisplayValue);
+    };
+
+    const displayValue = selectedClientDisplayValue || (allowsInlineManualValue ? manualDisplayValue : "");
+    const hasDisplayValue = displayValue.trim().length > 0;
+    const clearLabel = selectedClient
+        ? "고객 선택 해제"
+        : displayValueMode === "phone"
+            ? "고객 연락처 입력 지우기"
+            : "고객 이름 입력 지우기";
+    const searchPlaceholder = placeholder ?? t(locale, "contract-msg.client-search-placeholder");
+
     return (
         <div data-component="clients-autocomplete" className="space-y-2">
             <Label className={cn(error && "text-destructive")}>
@@ -132,38 +215,56 @@ export function ClientAutocomplete({
                 {required && <span className="text-destructive ml-1">*</span>}
             </Label>
             <Popover open={isOpen} onOpenChange={setIsOpen}>
-                <PopoverTrigger asChild>
-                    <Button
-                        ref={triggerRef}
-                        variant="outline"
-                        role="combobox"
-                        aria-expanded={isOpen}
-                        data-component="clients-autocomplete-input"
-                        className={cn(
-                            "w-full justify-between font-normal",
-                            selectedClient ? "text-v3-dark" : "text-muted-foreground",
-                            error && "border-destructive focus:ring-destructive"
-                        )}
-                    >
-                        <span className="truncate">
-                            {selectedClient
-                                ? selectedClient.name
-                                : t(locale, "contract-msg.client-search-placeholder")}
-                        </span>
-                        <div className="flex items-center gap-1 shrink-0">
-                            {isLoading && (
-                                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                <div className="relative">
+                    <PopoverTrigger asChild>
+                        <Button
+                            ref={triggerRef}
+                            variant="outline"
+                            role="combobox"
+                            aria-expanded={isOpen}
+                            data-component="clients-autocomplete-input"
+                            className={cn(
+                                V3_INPUT_CONTROL_CLASS_NAME,
+                                "w-full justify-between font-normal hover:bg-white",
+                                hasDisplayValue
+                                    ? "text-v3-dark hover:text-v3-dark"
+                                    : "text-muted-foreground hover:text-muted-foreground",
+                                error && "border-destructive focus:ring-destructive"
                             )}
-                            {selectedClient && !isLoading && (
-                                <X
-                                    className="h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
-                                    onClick={handleClear}
-                                />
-                            )}
-                            <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
-                        </div>
-                    </Button>
-                </PopoverTrigger>
+                        >
+                            <span className="min-w-0 flex-1 truncate text-left">
+                                {hasDisplayValue ? displayValue : searchPlaceholder}
+                            </span>
+                            <div className="flex shrink-0 items-center gap-1">
+                                {isLoading && (
+                                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                                )}
+                                {hasDisplayValue && !isLoading && (
+                                    <span
+                                        role="button"
+                                        tabIndex={0}
+                                        aria-label={clearLabel}
+                                        className="flex h-5 w-5 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
+                                        onPointerDown={(event) => {
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                        }}
+                                        onClick={handleClear}
+                                        onKeyDown={(event) => {
+                                            if (event.key !== "Enter" && event.key !== " ") return;
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                            clearSelection();
+                                        }}
+                                    >
+                                        <X className="h-4 w-4" aria-hidden="true" />
+                                    </span>
+                                )}
+                                <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
+                            </div>
+                        </Button>
+                    </PopoverTrigger>
+                </div>
                 <PopoverContent
                     data-component="clients-autocomplete-dropdown"
                     className="w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-[22px] border-none bg-white p-0 text-v3-dark shadow-[0_0_0_2px_hsla(214,30%,40%,0.12),0_0_12px_hsla(214,30%,40%,0.05)]"
@@ -171,9 +272,36 @@ export function ClientAutocomplete({
                 >
                     <Command shouldFilter={false}>
                         <CommandInput
-                            placeholder={t(locale, "contract-msg.client-search-placeholder")}
-                            value={inputValue}
-                            onValueChange={setInputValue}
+                            placeholder={searchPlaceholder}
+                            value={commandInputValue}
+                            onValueChange={handleInputValueChange}
+                            onKeyDown={(event) => {
+                                if (
+                                    event.key !== "Enter" ||
+                                    event.nativeEvent.isComposing ||
+                                    !allowsInlineManualValue
+                                ) {
+                                    return;
+                                }
+
+                                event.preventDefault();
+                                event.stopPropagation();
+                                commitInlineManualValue();
+                            }}
+                            endElement={
+                                allowsInlineManualValue ? (
+                                    <button
+                                        type="button"
+                                        aria-label="수동 입력으로 진행"
+                                        title="수동 입력으로 진행"
+                                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-transparent text-v3-primary transition-colors hover:text-v3-primary/80 disabled:cursor-not-allowed disabled:opacity-40"
+                                        disabled={!commandInputValue.trim()}
+                                        onClick={commitInlineManualValue}
+                                    >
+                                        <Play className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
+                                    </button>
+                                ) : undefined
+                            }
                         />
                         <CommandList>
                             {isLoading ? (
@@ -213,7 +341,9 @@ export function ClientAutocomplete({
                                                 )}
                                             </div>
                                             <span className="text-xs text-muted-foreground ml-6 group-hover:text-white">
-                                                {client.phone || "-"}{" "}
+                                                {displayValueMode === "phone"
+                                                    ? formatKoreanPhoneNumber(client.phone ?? "") || "-"
+                                                    : client.phone || "-"}{" "}
                                                 {client.address && `· ${client.address}`}
                                             </span>
                                         </CommandItem>
