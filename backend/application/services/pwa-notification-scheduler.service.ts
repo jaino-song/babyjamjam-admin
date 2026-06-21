@@ -6,9 +6,21 @@ import { BRANCH_REPOSITORY, IBranchRepository } from "domain/repositories/branch
 
 const TARGET_ROLES = ['admin', 'manager', 'user'];
 const DAYS_THRESHOLD = 7;
-const NOTIFICATION_LOGIN_URL = "https://staff.babyjamjam.com/login";
+
+// Resolve the login URL from the same per-env vars auth.controller's resolveFrontendURL uses,
+// so the email CTA stays in sync with the deployed frontend domain. Fallback covers test/dev
+// runs where the env vars are not set; production picks up PRODUCTION_FRONTEND_URL.
+function resolveNotificationLoginUrl(): string {
+    const nodeEnv = process.env['NODE_ENV'];
+    const base = nodeEnv === "production" ? process.env['PRODUCTION_FRONTEND_URL']
+        : nodeEnv === "preview" ? process.env['PREVIEW_FRONTEND_URL']
+        : process.env['DEVELOPMENT_FRONTEND_URL'];
+    const normalized = (base ?? "https://admin.babyjamjam.com").trim().replace(/\/+$/, "");
+    return `${normalized}/login`;
+}
+
 const NOTIFICATION_EMAIL_CONTEXT = {
-    ctaUrl: NOTIFICATION_LOGIN_URL,
+    ctaUrl: resolveNotificationLoginUrl(),
     ctaLabel: "로그인해서 확인하기",
 };
 

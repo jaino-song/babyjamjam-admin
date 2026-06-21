@@ -5,7 +5,7 @@ import { IClientRepository } from "domain/repositories/client.repository.interfa
 
 describe("PwaNotificationSchedulerService", () => {
     const emailTemplateContext = {
-        ctaUrl: "https://staff.babyjamjam.com/login",
+        ctaUrl: "https://admin.babyjamjam.com/login",
         ctaLabel: "로그인해서 확인하기",
     };
     const notificationService = {
