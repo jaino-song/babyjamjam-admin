@@ -7,6 +7,27 @@ export interface EmployeeSummary {
 // Document status type for eformsign documents
 export type DocumentStatus = 'created' | 'opened' | 'completed' | 'requested' | 'rejected' | 'revoked' | 'deleted' | null;
 
+export type ClientBadgeKey = "contract_required" | "breast_pump" | "service_status" | "care_center";
+export type ClientBadgeTone = "danger" | "success" | "primary" | "warning" | "neutral";
+export type ClientBadgeStatus =
+    | "active"
+    | "pending"
+    | "review"
+    | "terminated"
+    | "expired"
+    | "completed"
+    | "signed"
+    | "breastPump"
+    | "careCenter";
+
+export interface ClientBadge {
+    key: ClientBadgeKey;
+    status: ClientBadgeStatus;
+    label: string;
+    tone: ClientBadgeTone;
+    priority: number;
+}
+
 // Client entity types
 export interface Client {
     id: number;
@@ -25,13 +46,15 @@ export interface Client {
     actualPrice: string | null;
     startDate: string | null;
     endDate: string | null;
-    careCenter: boolean;
+    careCenter: boolean | null;
     voucherClient: boolean;
     breastPump: boolean;
     serviceStatus: ServiceStatus | null;      // Renamed from contractStatus
     eDocId: string | null;
+    areaId?: string | null;
     hasSigned: boolean;
     documentStatus: DocumentStatus;    // eformsign document status: created/opened/completed
+    badges?: ClientBadge[];
 }
 
 // Create client DTO - Frontend sends employeeId, backend converts to scheduleId
@@ -50,10 +73,11 @@ export interface CreateClientDto {
     actualPrice?: string | null;
     startDate?: string | null;
     endDate?: string | null;
-    careCenter: boolean;
+    careCenter: boolean | null;
     voucherClient: boolean;
     breastPump: boolean;
     serviceStatus?: ServiceStatus | null;
+    areaId?: string | null;
 }
 
 // Update client DTO - Frontend sends employeeId, backend converts to scheduleId
@@ -72,7 +96,8 @@ export interface UpdateClientDto {
     actualPrice?: string | null;
     startDate?: string | null;
     endDate?: string | null;
-    careCenter?: boolean;
+    careCenter?: boolean | null;
+    areaId?: string | null;
     voucherClient?: boolean;
     breastPump?: boolean;
     serviceStatus?: ServiceStatus | null;

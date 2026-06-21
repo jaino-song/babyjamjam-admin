@@ -10,6 +10,7 @@ import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { cn } from "@/lib/utils";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { V3_INPUT_CONTROL_CLASS_NAME } from "@/components/ui/input";
 import {
     Popover,
     PopoverContent,
@@ -36,6 +37,9 @@ interface EmployeeAutocompleteProps {
     excludeIds?: number[];
     allowManualEntry?: boolean;
     onManualEntry?: (inputValue?: string) => void;
+    allowManualInput?: boolean;
+    manualValue?: string;
+    onManualInputChange?: (value: string) => void;
 }
 
 export function EmployeeAutocomplete({
@@ -48,6 +52,9 @@ export function EmployeeAutocomplete({
     excludeIds = [],
     allowManualEntry = false,
     onManualEntry,
+    allowManualInput = false,
+    manualValue = "",
+    onManualInputChange,
     "data-testid": dataTestId,
 }: EmployeeAutocompleteProps) {
     const locale = useLocale();
@@ -81,16 +88,39 @@ export function EmployeeAutocomplete({
         );
     }, [availableEmployees, inputValue]);
 
+    const manualDisplayValue = manualValue.trim();
+    const hasDisplayValue = Boolean(selectedEmployee || manualDisplayValue);
+
+    const handleOpenChange = (open: boolean) => {
+        setIsOpen(open);
+        if (open && !selectedEmployee) {
+            setInputValue(manualValue);
+        }
+    };
+
+    const handleInputValueChange = (value: string) => {
+        setInputValue(value);
+        if (allowManualInput && !selectedEmployee) {
+            onManualInputChange?.(value);
+        }
+    };
+
     const handleSelect = (employee: Employee) => {
         onChange(employee.id, employee);
         setIsOpen(false);
         setInputValue("");
     };
 
-    const handleClear = (e: React.MouseEvent) => {
-        e.stopPropagation();
+    const clearSelection = () => {
         onChange(null, null);
+        onManualInputChange?.("");
         setInputValue("");
+    };
+
+    const handleClear = (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        clearSelection();
     };
 
     const handleManualEntry = () => {
@@ -115,39 +145,61 @@ export function EmployeeAutocomplete({
                     {required && <span className="text-destructive ml-1">*</span>}
                 </Label>
             )}
-            <Popover open={isOpen} onOpenChange={setIsOpen}>
-                <PopoverTrigger asChild>
-                    <Button
-                        ref={triggerRef}
-                        variant="outline"
-                        role="combobox"
-                        aria-expanded={isOpen}
-                        data-component="employee-autocomplete-input"
-                        className={cn(
-                            "w-full justify-between font-normal",
-                            selectedEmployee ? "text-v3-dark" : "text-muted-foreground",
-                            error && "border-destructive focus:ring-destructive",
-                        )}
-                    >
-                        <span className="truncate">
-                            {selectedEmployee
-                                ? selectedEmployee.name
-                                : t(locale, "clients.form.employee-search-placeholder")}
-                        </span>
-                        <div className="flex items-center gap-1 shrink-0">
-                            {isLoading && (
-                                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            <Popover open={isOpen} onOpenChange={handleOpenChange}>
+                <div className="relative">
+                    <PopoverTrigger asChild>
+                        <Button
+                            ref={triggerRef}
+                            variant="outline"
+                            role="combobox"
+                            aria-expanded={isOpen}
+                            data-component="employee-autocomplete-input"
+                            className={cn(
+                                V3_INPUT_CONTROL_CLASS_NAME,
+                                "w-full justify-between font-normal hover:bg-white",
+                                hasDisplayValue
+                                    ? "text-v3-dark hover:text-v3-dark"
+                                    : "text-muted-foreground hover:text-muted-foreground",
+                                error && "border-destructive focus:ring-destructive",
                             )}
-                            {selectedEmployee && !isLoading && (
-                                <X
-                                    className="h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
-                                    onClick={handleClear}
-                                />
-                            )}
-                            <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
-                        </div>
-                    </Button>
-                </PopoverTrigger>
+                        >
+                            <span className="min-w-0 flex-1 truncate text-left">
+                                {selectedEmployee
+                                    ? selectedEmployee.name
+                                    : manualDisplayValue
+                                      ? manualDisplayValue
+                                    : t(locale, "clients.form.employee-search-placeholder")}
+                            </span>
+                            <div className="flex shrink-0 items-center gap-1">
+                                {isLoading && (
+                                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                                )}
+                                {selectedEmployee && !isLoading && (
+                                    <span
+                                        role="button"
+                                        tabIndex={0}
+                                        aria-label="제공인력 선택 해제"
+                                        className="flex h-5 w-5 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
+                                        onPointerDown={(event) => {
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                        }}
+                                        onClick={handleClear}
+                                        onKeyDown={(event) => {
+                                            if (event.key !== "Enter" && event.key !== " ") return;
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                            clearSelection();
+                                        }}
+                                    >
+                                        <X className="h-4 w-4" aria-hidden="true" />
+                                    </span>
+                                )}
+                                <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
+                            </div>
+                        </Button>
+                    </PopoverTrigger>
+                </div>
                 <PopoverContent
                     data-component="employee-autocomplete-dropdown"
                     className="w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-[22px] border-none bg-white p-0 text-v3-dark shadow-[0_0_0_2px_hsla(214,30%,40%,0.12),0_0_12px_hsla(214,30%,40%,0.05)]"
@@ -157,7 +209,7 @@ export function EmployeeAutocomplete({
                         <CommandInput
                             placeholder={t(locale, "clients.form.employee-search-placeholder")}
                             value={inputValue}
-                            onValueChange={setInputValue}
+                            onValueChange={handleInputValueChange}
                         />
                         <CommandList>
                             {isLoading ? (

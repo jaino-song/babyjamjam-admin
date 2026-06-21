@@ -19,7 +19,7 @@ interface StatsBarProps {
 
 export function StatsBar({ items, isLoading = false, name = "stats" }: StatsBarProps) {
   return (
-    <div data-component={`${name}-stats`} className="flex flex-wrap gap-4">
+    <div data-component={`${name}-stats`} className="flex flex-wrap gap-[calc(16px*var(--v3-ui-scale,1))]">
       {items.map((item, idx) => (
         <StatMini
           key={item.label}

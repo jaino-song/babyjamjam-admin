@@ -1,8 +1,11 @@
 "use client";
 
 import { useState, useMemo, useCallback } from "react";
+import { CreditCard } from "lucide-react";
+
 import { useAllVoucherPriceInfos, useVoucherYears } from "@/hooks";
 import { ContentPaper } from "@/components/app/root/content-paper";
+import { CompactDateSelect } from "@/components/app/v3";
 import { CardHeader } from "@/components/ui/card";
 import {
   Table,
@@ -12,17 +15,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { CreditCard } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 function formatTypeLabel(typeCode: string | null): string {
@@ -209,22 +204,17 @@ export function VoucherPriceTable() {
           </div>
           <div className="flex shrink-0 items-center gap-1.5 xl:gap-2">
             <Label htmlFor="price-table-year" className="text-xs whitespace-nowrap xl:text-sm">연도</Label>
-            <Select
+            <CompactDateSelect
+              id="price-table-year"
               value={String(selectedYear)}
               onValueChange={(v) => setSelectedYear(Number(v))}
               disabled={isYearsLoading}
-            >
-              <SelectTrigger id="price-table-year" className="h-8 w-[100px] px-3 text-[0.76rem] xl:h-10 xl:w-[108px] xl:px-4 xl:text-[0.85rem]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {yearOptions.map((year) => (
-                  <SelectItem key={year} value={String(year)}>
-                    {year}년
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              options={yearOptions.map((year) => ({
+                label: `${year}년`,
+                value: String(year),
+              }))}
+              triggerClassName="xl:text-[0.85rem]"
+            />
           </div>
         </CardHeader>
       )}

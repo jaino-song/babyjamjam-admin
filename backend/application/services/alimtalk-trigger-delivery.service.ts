@@ -13,7 +13,11 @@ import {
     AlimtalkTriggerTemplateKey,
 } from "domain/constants/alimtalk-trigger-catalog";
 import { AlimtalkTriggerJobEntity } from "domain/entities/alimtalk-trigger-job.entity";
-import { AlimtalkLogEntity, AlimtalkLogStatus } from "domain/entities/alimtalk-log.entity";
+import {
+    AlimtalkLogEntity,
+    AlimtalkLogStatus,
+    SMS_DELIVERY_RETRY_DELAY_MS,
+} from "domain/entities/alimtalk-log.entity";
 import {
     ALIMTALK_LOG_REPOSITORY,
     IAlimtalkLogRepository,
@@ -43,10 +47,10 @@ export class AlimtalkTriggerDeliveryService {
             return false;
         }
 
-        const senderPhone = await this.messageSenderApprovalService.ensureApproved(job.branchId);
+        await this.messageSenderApprovalService.ensureApproved(job.branchId);
 
         if (job.templateKey === AlimtalkTriggerTemplateKey.SERVICE_INFO) {
-            return this.sendServiceInfoSmsJob(job, senderPhone);
+            return this.sendServiceInfoSmsJob(job);
         }
 
         const provider = await this.systemSettingService.getAlimtalkProvider();
@@ -93,7 +97,6 @@ export class AlimtalkTriggerDeliveryService {
 
     private async sendServiceInfoSmsJob(
         job: AlimtalkTriggerJobEntity,
-        senderPhone: string,
     ): Promise<boolean> {
         const payload = job.payload;
         const message = await this.resolveServiceInfoSmsMessage(payload.templateVariables);
@@ -101,7 +104,6 @@ export class AlimtalkTriggerDeliveryService {
 
         try {
             const result = await this.aligoService.sendSms({
-                senderPhone,
                 receiver,
                 message,
                 recipientName: payload.recipientName,
@@ -113,7 +115,6 @@ export class AlimtalkTriggerDeliveryService {
                 job,
                 message,
                 receiver: result.request.receiver,
-                senderPhone,
                 status: isAccepted ? "sent" : "failed",
                 aligoMid: result.response.msg_id ? String(result.response.msg_id) : null,
                 errorMessage: isAccepted ? null : result.response.message,
@@ -126,7 +127,6 @@ export class AlimtalkTriggerDeliveryService {
                 job,
                 message,
                 receiver,
-                senderPhone,
                 status: "failed",
                 aligoMid: null,
                 errorMessage,
@@ -165,7 +165,6 @@ export class AlimtalkTriggerDeliveryService {
         job: AlimtalkTriggerJobEntity;
         message: string;
         receiver: string;
-        senderPhone: string;
         status: AlimtalkLogStatus;
         aligoMid: string | null;
         errorMessage: string | null;
@@ -190,14 +189,15 @@ export class AlimtalkTriggerDeliveryService {
                     title: SERVICE_INFO_SMS_TITLE,
                     triggerType: "service_start_before_7_days",
                     msgType: params.msgType,
-                    senderPhone: params.senderPhone,
                 },
                 params.status,
                 params.aligoMid,
                 params.errorMessage,
                 1,
                 now,
-                null,
+                params.status === "failed"
+                    ? new Date(now.getTime() + SMS_DELIVERY_RETRY_DELAY_MS)
+                    : null,
                 now,
                 now,
             ),

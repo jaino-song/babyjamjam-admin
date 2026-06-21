@@ -1,5 +1,5 @@
-import { AlimtalkAutomationPage } from "@/components/app/mobile-redesign/AlimtalkAutomationPage";
+import { MessagesAutomationPage } from "@/components/app/mobile-redesign/MessagesAutomationPage";
 
 export default function AlimtalkPage() {
-  return <AlimtalkAutomationPage />;
+  return <MessagesAutomationPage />;
 }

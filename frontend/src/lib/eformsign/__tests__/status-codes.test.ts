@@ -10,6 +10,6 @@ describe("status code aliases", () => {
   it("maps named statuses to the right category", () => {
     expect(getStatusCategory("doc_complete")).toBe("completed");
     expect(getStatusCategory("doc_request_participant")).toBe("in-progress");
-    expect(getStatusCategory("doc_expired")).toBe("rejected");
+    expect(getStatusCategory("doc_expired")).toBe("expired");
   });
 });

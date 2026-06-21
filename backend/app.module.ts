@@ -25,6 +25,7 @@ import { TenantModule } from "./infrastructure/tenant/tenant.module";
 import { NotificationModule } from "module/notification.module";
 import { AIChatModule } from "module/ai-chat.module";
 import { MessageDeliveryModule } from "module/message-delivery.module";
+import { CallInboxModule } from "module/call-inbox.module";
 import { ConsultationInquiryModule } from "module/consultation-inquiry.module";
 import { SystemAdminModule } from "module/system-admin.module";
 import { getJwtSecret } from "./infrastructure/auth/jwt-secret";
@@ -70,6 +71,7 @@ const ENV_FILE_PATHS = [
         NotificationModule,
         AIChatModule,
         MessageDeliveryModule,
+        CallInboxModule,
         ConsultationInquiryModule,
         SystemAdminModule,
     ],

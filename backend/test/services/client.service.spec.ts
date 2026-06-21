@@ -56,6 +56,9 @@ describe("ClientService", () => {
         eformsign_doc: {
             findMany: jest.fn().mockResolvedValue([]),
         },
+        area: {
+            findFirst: jest.fn().mockResolvedValue({ id: "incheon" }),
+        },
     });
 
     const createMockAlimtalkService = () => ({
@@ -80,6 +83,7 @@ describe("ClientService", () => {
         findEndingWithinDays: jest.fn().mockResolvedValue([]),
         findWithIncompleteContractsStartingWithinDays: jest.fn().mockResolvedValue([]),
         findWithoutContractSentStartingWithinDays: jest.fn().mockResolvedValue([]),
+        findByPhone: jest.fn().mockResolvedValue(null),
     });
 
     const createClientEntity = (): ClientEntity => new ClientEntity(
@@ -227,6 +231,40 @@ describe("ClientService", () => {
             });
         });
 
+        it("should allow an areaId when the area belongs to the branch", async () => {
+            // Arrange
+            const mockClient = createClientEntity();
+            createClientUsecase.execute.mockResolvedValue(mockClient);
+
+            const params = {
+                name: "New Client",
+                phone: "010-1234-5678",
+                careCenter: null,
+                voucherClient: true,
+                breastPump: false,
+                areaId: "incheon",
+            };
+
+            // Act
+            await service.create(branchId, params);
+
+            // Assert
+            expect(prismaService.area.findFirst).toHaveBeenCalledWith({
+                where: {
+                    id: "incheon",
+                    OR: [{ branchId }, { branchId: null }],
+                },
+                select: { id: true },
+            });
+            expect(createClientUsecase.execute).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({
+                    areaId: "incheon",
+                    careCenter: null,
+                }),
+            );
+        });
+
         it("should trigger the new client greeting SMS automation after client creation", async () => {
             // Arrange
             const mockClient = createClientEntity();
@@ -301,6 +339,57 @@ describe("ClientService", () => {
                         secondaryEmployeeId: 6,
                     }),
                 });
+            });
+        });
+
+        describe("phone deduplication (reuse-existing)", () => {
+            it("reuses the existing client when a client with the same normalized phone already exists in the branch", async () => {
+                // Arrange
+                const existingClient = createClientEntity();
+                clientRepository.findByPhone.mockResolvedValue(existingClient);
+
+                const params = {
+                    name: "New Client",
+                    phone: "010-1234-5678",
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                };
+
+                // Act
+                const result = await service.create(branchId, params);
+
+                // Assert: returns the existing client unchanged
+                expect(result).toBe(existingClient);
+                // Assert: no new client was created
+                expect(createClientUsecase.execute).not.toHaveBeenCalled();
+                expect(clientRepository.create).not.toHaveBeenCalled();
+                // Assert: no side-effects fired
+                expect(alimtalkService.sendClientCreatedAlimtalk).not.toHaveBeenCalled();
+                expect(clientGreetingSmsAutomationService.sendClientGreetingSms).not.toHaveBeenCalled();
+                expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
+            });
+
+            it("creates a new client when no client with that phone exists in the branch", async () => {
+                // Arrange — findByPhone returns null (no duplicate)
+                clientRepository.findByPhone.mockResolvedValue(null);
+                const mockClient = createClientEntity();
+                createClientUsecase.execute.mockResolvedValue(mockClient);
+
+                const params = {
+                    name: "New Client",
+                    phone: "010-9999-0000",
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                };
+
+                // Act
+                const result = await service.create(branchId, params);
+
+                // Assert: normal create path ran
+                expect(createClientUsecase.execute).toHaveBeenCalledTimes(1);
+                expect(result).toBe(mockClient);
             });
         });
     });
@@ -449,8 +538,8 @@ describe("ClientService", () => {
 
                 findClientByIdUsecase.execute.mockResolvedValue(existingClient);
                 // Current schedule has secondary employee
-                prismaService.employee_schedule.findFirst.mockResolvedValue({ 
-                    id: 15, 
+                prismaService.employee_schedule.findFirst.mockResolvedValue({
+                    id: 15,
                     clientId: 1,
                     primaryEmployeeId: 5,
                     secondaryEmployeeId: 6,
@@ -474,6 +563,64 @@ describe("ClientService", () => {
                         secondaryEmployeeId: null,
                     }),
                 });
+            });
+        });
+
+        describe("phone collision guard", () => {
+            it("rejects updating a client's phone to one already used by another client in the branch", async () => {
+                // Arrange
+                const existingClient = createClientEntity(); // id = 1
+                findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+
+                // Another client (id = 2) already holds that phone
+                const otherClient = new ClientEntity(
+                    2, "Other Client", "Other Address", "010-1234-5678",
+                    "A형", 15, "100000", "50000", "50000",
+                    new Date("2024-01-01"), new Date("2024-06-01"),
+                    false, true, "900101", "pending", false, null,
+                );
+                clientRepository.findByPhone.mockResolvedValue(otherClient);
+
+                // Act & Assert
+                await expect(
+                    service.update(branchId, 1, { phone: "010-1234-5678" }),
+                ).rejects.toThrow(expect.objectContaining({ status: 409 }));
+
+                // No DB writes should have occurred
+                expect(updateClientUsecase.execute).not.toHaveBeenCalled();
+                expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
+            });
+
+            it("allows update when the matching client is the same record (self)", async () => {
+                // Arrange
+                const existingClient = createClientEntity(); // id = 1
+                findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+                updateClientUsecase.execute.mockResolvedValue(existingClient);
+
+                // findByPhone returns the same client (id = 1) — keeping own phone
+                clientRepository.findByPhone.mockResolvedValue(existingClient);
+
+                // Act
+                await service.update(branchId, 1, { phone: "010-1234-5678" });
+
+                // Assert: update proceeded
+                expect(updateClientUsecase.execute).toHaveBeenCalledTimes(1);
+            });
+
+            it("allows update when no other client has that phone", async () => {
+                // Arrange
+                const existingClient = createClientEntity();
+                findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+                updateClientUsecase.execute.mockResolvedValue(existingClient);
+
+                // findByPhone returns null — no collision
+                clientRepository.findByPhone.mockResolvedValue(null);
+
+                // Act
+                await service.update(branchId, 1, { phone: "010-9999-0000" });
+
+                // Assert: update proceeded
+                expect(updateClientUsecase.execute).toHaveBeenCalledTimes(1);
             });
         });
     });

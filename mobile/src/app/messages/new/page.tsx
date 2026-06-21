@@ -779,7 +779,6 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
         receiver: receiverPayload,
         message,
         triggerType: "immediate",
-        channel: "sms",
         msgType: "AUTO",
       };
       if (payloadClientId !== null) payload.clientId = payloadClientId;

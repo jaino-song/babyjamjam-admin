@@ -1,6 +1,12 @@
 import { ConfigService } from "@nestjs/config";
 
 import {
+    CallExtractionInput,
+    CallExtractionPort,
+    CallExtractionResult,
+} from "domain/ports/call-extraction.port";
+import { GeminiCallExtractionAdapter } from "infrastructure/api/gemini-call-extraction.adapter";
+import {
     AligoAlimtalkResponse,
     AligoCreateTemplateParams,
     AligoSendAlimtalkParams,
@@ -574,4 +580,26 @@ export function createGeminiGateway(configService: ConfigService): IGeminiGatewa
     }
 
     return new GeminiChatGateway(configService);
+}
+
+export class StubCallExtractionAdapter implements CallExtractionPort {
+    async extract(_input: CallExtractionInput): Promise<CallExtractionResult> {
+        return {
+            category: "NEW_CONSULTATION",
+            callerName: "김서연",
+            callerPhoneCandidates: ["010-4821-7763"],
+            requestSummary: "산후도우미 신규 문의 (E2E stub)",
+            proposals: [
+                { field: "name", value: "김서연", evidence: "stub", confidence: "high" },
+                { field: "dueDate", value: "2026-07-15", evidence: "stub", confidence: "high" },
+            ],
+        };
+    }
+}
+
+export function createCallExtractionAdapter(configService: ConfigService): CallExtractionPort {
+    if (areE2EVendorStubsEnabled(configService)) {
+        return new StubCallExtractionAdapter();
+    }
+    return new GeminiCallExtractionAdapter(configService);
 }

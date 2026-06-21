@@ -47,6 +47,7 @@ export const TitleTextInputMolecule = React.forwardRef<
       labelRowClassName,
       labelClassName,
       labelTrailing,
+      variant = "v3",
       className,
       dataComponent = "messages-form-title-text-input-molecule",
       inputDataComponent,
@@ -90,6 +91,7 @@ export const TitleTextInputMolecule = React.forwardRef<
           ref={ref}
           id={fieldId}
           value={value}
+          variant={variant}
           required={required}
           error={error}
           data-component={inputDataComponent}
@@ -98,7 +100,7 @@ export const TitleTextInputMolecule = React.forwardRef<
             onChange?.(event);
             onValueChange?.(event.target.value);
           }}
-          className={cn("bg-background", className, inputClassName)}
+          className={cn(className, inputClassName)}
         />
         {helperText ? (
           <p

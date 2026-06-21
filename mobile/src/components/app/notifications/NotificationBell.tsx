@@ -370,7 +370,7 @@ export function NotificationBell({ className }: { className?: string }) {
                     sideOffset={8}
                     avoidCollisions={true}
                     collisionPadding={16}
-                    className="!w-[80vw] sm:!w-[360px] max-h-[480px] p-0 overflow-hidden"
+                    className="!w-[80vw] sm:!w-[360px] max-h-[480px] min-h-[240px] p-0 overflow-hidden"
                     data-component="notification-bell-popover"
                     data-testid="notification-popover"
                 >

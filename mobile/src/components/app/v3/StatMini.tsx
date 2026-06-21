@@ -37,7 +37,7 @@ export function StatMini({
     <div
       data-component="stat-mini"
       className={cn(
-        "flex-1 bg-white rounded-2xl shadow-v3 hover:shadow-v3-hover hover:-translate-y-1.5 transition-[transform,box-shadow] duration-300 ease-[cubic-bezier(0.33,1,0.68,1)] p-4 will-change-transform flex gap-4 items-center justify-start",
+        "flex flex-1 items-center justify-start gap-4 rounded-2xl bg-white p-4 shadow-v3 transition-[transform,box-shadow] duration-300 ease-[cubic-bezier(0.33,1,0.68,1)] will-change-transform hover:-translate-y-1.5 hover:shadow-v3-hover",
         // Component-level animation so stats behave identically across pages.
         "animate-v3-pop-up"
       )}
@@ -58,7 +58,7 @@ export function StatMini({
       </div>
       {isLoading ? (
         <div className="space-y-2">
-          <Skeleton className="h-7 w-16 bg-v3-dim-white" />
+          <Skeleton className="h-[29px] w-16 bg-v3-dim-white" />
           <Skeleton className="h-3 w-20 bg-v3-dim-white" />
         </div>
       ) : (

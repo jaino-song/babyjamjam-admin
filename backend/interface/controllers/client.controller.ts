@@ -25,7 +25,7 @@ export class ClientController {
             actualPrice: dto.actualPrice ?? null,
             startDate: dto.startDate ?? null,
             endDate: dto.endDate ?? null,
-            careCenter: dto.careCenter,
+            careCenter: dto.careCenter ?? null,
             voucherClient: dto.voucherClient,
             birthday: dto.birthday ?? null,
             dueDate: dto.dueDate ?? null,

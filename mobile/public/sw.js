@@ -9,7 +9,7 @@
 
 // Cache version - increment to force update
 const CACHE_VERSION = 'v4';
-const CACHE_NAME = `babyjamjam-admin-${CACHE_VERSION}`;
+const CACHE_NAME = `babyjamjam-admin-mobile-${CACHE_VERSION}`;
 
 // Assets to precache during install
 const PRECACHE_ASSETS = [
@@ -59,8 +59,8 @@ self.addEventListener('activate', (event) => {
         caches.keys().then((cacheNames) => {
             return Promise.all(
                 cacheNames
-                    // Old imirae-prefixed caches are still evicted post-rebrand.
-                    .filter((name) => (name.startsWith('babyjamjam-admin-') || name.startsWith('imirae-back-office-')) && name !== CACHE_NAME)
+                    // Old admin- and imirae-prefixed caches are still evicted post-rebrand.
+                    .filter((name) => (name.startsWith('babyjamjam-admin-mobile-') || name.startsWith('babyjamjam-admin-') || name.startsWith('imirae-back-office-')) && name !== CACHE_NAME)
                     .map((name) => caches.delete(name))
             );
         }).then(() => {

@@ -110,7 +110,7 @@ export default async function FunnelDetailPage() {
       <Block name="stats-funnel-pages">
         <div
           data-component="stats-funnel-pages-card"
-          className="bg-white rounded-[28px] shadow-v3 p-6 overflow-hidden"
+          className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6 overflow-hidden"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
             <h3 className="text-[0.95rem] font-bold text-v3-text">페이지별 상세 (지난 7일)</h3>
@@ -186,7 +186,7 @@ export default async function FunnelDetailPage() {
       >
         <div
           data-component="stats-funnel-entry-card"
-          className="bg-white rounded-[28px] shadow-v3 p-6"
+          className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
             <h3 className="text-[0.95rem] font-bold text-v3-text">주요 시작 페이지</h3>
@@ -231,7 +231,7 @@ export default async function FunnelDetailPage() {
 
         <div
           data-component="stats-funnel-exit-card"
-          className="bg-white rounded-[28px] shadow-v3 p-6"
+          className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
             <h3 className="text-[0.95rem] font-bold text-v3-text">주요 종료 페이지</h3>
@@ -279,7 +279,7 @@ export default async function FunnelDetailPage() {
       <Block name="stats-funnel-transitions">
         <div
           data-component="stats-funnel-transitions-card"
-          className="bg-white rounded-[28px] shadow-v3 p-6"
+          className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
             <h3 className="text-[0.95rem] font-bold text-v3-text">주요 페이지 이동 경로</h3>
@@ -338,7 +338,7 @@ export default async function FunnelDetailPage() {
       <Block name="stats-funnel-conversion">
         <div
           data-component="stats-funnel-conversion-card"
-          className="bg-white rounded-[28px] shadow-v3 p-6"
+          className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-4">
             <h3 className="text-[0.95rem] font-bold text-v3-text">

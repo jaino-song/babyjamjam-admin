@@ -9,7 +9,6 @@ export interface SystemAdminBranchUserDto {
 }
 
 export interface SystemAdminBranchMessageSenderApprovalDto {
-    senderPhone: string | null;
     approvalStatus: MessageSenderApprovalStatus;
     requestedAt: string | null;
     approvedAt: string | null;

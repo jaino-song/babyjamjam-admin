@@ -1,34 +1,35 @@
 "use client";
 
-import { redirect } from "next/navigation";
-import { useMemo, useState } from "react";
+import { redirect, useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   fetchDashboardClientPage,
   useDashboardOverview,
 } from "@/hooks/useDashboardStats";
 import { Client } from "@/lib/client/types";
+import { getClientBadgeAvatarClassName, getClientBadges } from "@/lib/client/badges";
 import { getActionRequiredStatus } from "@/lib/client/action-required";
 import { useInitialUser } from "@/providers/UserProvider";
 import { cn } from "@/lib/utils";
 import {
   StatsBar,
   SplitLayout,
+  DetailEmptyState,
   DetailPanel,
   DetailTabs,
+  DetailTabPanels,
   InfoCard,
   InfoRow,
   StatusBadge,
   RecentActivitiesPanel,
   type ActionRequiredItem,
-  type StatusType,
 } from "@/components/app/v3";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import {
   Users,
   Calendar,
-  FileSignature,
   Send,
   MoreVertical,
   ExternalLink,
@@ -45,40 +46,9 @@ import { Block } from "@/components/app/v3/Block";
 
 const DASHBOARD_STAT_KEYS = [
   { icon: Users, valueKey: "activeClients" as const, label: "서비스 진행 중", colorIndex: 0, counter: "명" },
-  { icon: Calendar, valueKey: "upcomingThisMonth" as const, label: "이번달 시작 예정", colorIndex: 1, counter: "건" },
-  { icon: FileSignature, valueKey: "contractsPendingSignature" as const, label: "문서 서명 대기 중", colorIndex: 2, counter: "건" },
-  { icon: Send, valueKey: "contractsNotSent" as const, label: "문서 발송 대기 중", colorIndex: 3, counter: "건" },
+  { icon: Calendar, valueKey: "upcomingSoon" as const, label: "곧 시작 예정", colorIndex: 1, counter: "건" },
+  { icon: Send, valueKey: "contractsRequired" as const, label: "계약서 필요", colorIndex: 3, counter: "건" },
 ];
-
-const getAvatarGradient = (name: string) => {
-  const charCode = name.charCodeAt(0);
-  const gradients = [
-    "bg-gradient-to-br from-[hsl(214,100%,34%)] to-[hsl(214,100%,28%)]",
-    "bg-gradient-to-br from-[hsl(137,34%,31%)] to-[hsl(137,34%,25%)]",
-    "bg-gradient-to-br from-[hsl(355,36%,45%)] to-[hsl(355,36%,38%)]",
-    "bg-gradient-to-br from-[hsl(34,100%,55%)] to-[hsl(34,100%,45%)]",
-    "bg-gradient-to-br from-[hsl(175,60%,40%)] to-[hsl(175,60%,30%)]",
-    "bg-gradient-to-br from-[hsl(270,60%,55%)] to-[hsl(270,60%,45%)]",
-  ];
-  return gradients[charCode % gradients.length];
-};
-
-const mapServiceStatusToV3 = (status: string | null): StatusType => {
-  switch (status) {
-    case "active":
-      return "active";
-    case "waiting":
-      return "pending";
-    case "replacement_requested":
-      return "terminated";
-    case "terminated":
-      return "terminated";
-    case "completed":
-      return "completed";
-    default:
-      return "pending";
-  }
-};
 
 const formatDate = (dateStr: string | null): string => {
   if (!dateStr) return "-";
@@ -91,23 +61,6 @@ const formatPrice = (price: string | null): string => {
   const num = parseInt(cleaned, 10);
   if (isNaN(num)) return "-";
   return `${num.toLocaleString("ko-KR")}원`;
-};
-
-const getStatusLabel = (status: string | null): string => {
-  switch (status) {
-    case "active":
-      return "진행중";
-    case "waiting":
-      return "대기";
-    case "replacement_requested":
-      return "교체 요청";
-    case "completed":
-      return "완료";
-    case "terminated":
-      return "중단";
-    default:
-      return "-";
-  }
 };
 
 const getDocumentStatusLabel = (status: Client["documentStatus"], locale: ReturnType<typeof useLocale>) => {
@@ -126,7 +79,17 @@ const getDocumentStatusLabel = (status: Client["documentStatus"], locale: Return
   return labelMap[status];
 };
 
+function isToday(dateStr: string): boolean {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(dateStr);
+  target.setHours(0, 0, 0, 0);
+  return target.getTime() === today.getTime();
+}
+
 export default function DashboardPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const {
     data: overview,
     isLoading: overviewLoading,
@@ -139,8 +102,16 @@ export default function DashboardPage() {
   const [activeDetailTab, setActiveDetailTab] = useState("basic");
   const [extraClientPages, setExtraClientPages] = useState<Client[][]>([]);
   const [isFetchingNextClients, setIsFetchingNextClients] = useState(false);
+  const dashboardClientIdParam = searchParams.get("clientId");
+  const dashboardClientId = useMemo(() => {
+    if (!dashboardClientIdParam) {
+      return null;
+    }
 
-  const stats = overview?.stats;
+    const numericId = Number(dashboardClientIdParam);
+    return Number.isInteger(numericId) && numericId > 0 ? numericId : null;
+  }, [dashboardClientIdParam]);
+
   const initialClientsPage = overview?.clients;
 
   const clients = useMemo(() => {
@@ -152,7 +123,27 @@ export default function DashboardPage() {
     initialClientsPage && 1 + extraClientPages.length < initialClientsPage.totalPages
   );
 
-  const fetchNextClients = async () => {
+  const updateDashboardClientQuery = useCallback((clientId: number | null) => {
+    const currentClientId = searchParams.get("clientId");
+    if (
+      (clientId === null && currentClientId === null) ||
+      (clientId !== null && currentClientId === String(clientId))
+    ) {
+      return;
+    }
+
+    const params = new URLSearchParams(searchParams.toString());
+    if (clientId === null) {
+      params.delete("clientId");
+    } else {
+      params.set("clientId", String(clientId));
+    }
+
+    const nextQuery = params.toString();
+    router.replace(nextQuery ? `/dashboard?${nextQuery}` : "/dashboard", { scroll: false });
+  }, [router, searchParams]);
+
+  const fetchNextClients = useCallback(async () => {
     if (!initialClientsPage || isFetchingNextClients || !hasMoreClients) return;
 
     setIsFetchingNextClients(true);
@@ -163,12 +154,60 @@ export default function DashboardPage() {
     } finally {
       setIsFetchingNextClients(false);
     }
-  };
+  }, [extraClientPages.length, hasMoreClients, initialClientsPage, isFetchingNextClients]);
 
-  const refetchClients = async () => {
+  const refetchClients = useCallback(async () => {
     setExtraClientPages([]);
     await refetchOverview();
-  };
+  }, [refetchOverview]);
+
+  const handleSelectClient = useCallback((client: Client) => {
+    setSelectedClient(client);
+    updateDashboardClientQuery(client.id);
+  }, [updateDashboardClientQuery]);
+
+  const handleClearSelectedClient = useCallback(() => {
+    setSelectedClient(null);
+    updateDashboardClientQuery(null);
+  }, [updateDashboardClientQuery]);
+
+  useEffect(() => {
+    if (!dashboardClientIdParam) {
+      return;
+    }
+
+    if (dashboardClientId === null) {
+      updateDashboardClientQuery(null);
+      return;
+    }
+
+    const matchingClient = clients.find((client) => client.id === dashboardClientId);
+    if (matchingClient) {
+      setSelectedClient((current) => (
+        current?.id === matchingClient.id ? current : matchingClient
+      ));
+      return;
+    }
+
+    if (!overviewLoading && hasMoreClients && !isFetchingNextClients) {
+      void fetchNextClients();
+      return;
+    }
+
+    if (!overviewLoading && !overviewError && !hasMoreClients && !isFetchingNextClients) {
+      updateDashboardClientQuery(null);
+    }
+  }, [
+    clients,
+    dashboardClientId,
+    dashboardClientIdParam,
+    fetchNextClients,
+    hasMoreClients,
+    isFetchingNextClients,
+    overviewError,
+    overviewLoading,
+    updateDashboardClientQuery,
+  ]);
 
   const actionRequiredClients = useMemo(() => {
     return clients
@@ -205,10 +244,32 @@ export default function DashboardPage() {
       .sort((a, b) => new Date(a.startDate!).getTime() - new Date(b.startDate!).getTime());
   }, [clients]);
 
+  const visibleUpcomingClients = useMemo(() => {
+    return upcomingClients.filter((client) => !client.startDate || !isToday(client.startDate));
+  }, [upcomingClients]);
+
+  const dashboardStats = useMemo(() => {
+    return {
+      activeClients: clients.filter((client) => client.serviceStatus === "active").length,
+      upcomingSoon: visibleUpcomingClients.length,
+      contractsRequired: actionRequiredClients.filter((item) => (
+        item.reason === "이용자 완료 필요" || item.reason === "발송 필요"
+      )).length,
+    };
+  }, [actionRequiredClients, clients, visibleUpcomingClients]);
+
   const selectedClientData = useMemo(() => {
     if (!selectedClient) return null;
     return clients.find((client) => client.id === selectedClient.id) ?? selectedClient;
   }, [clients, selectedClient]);
+
+  const selectedClientBadges = useMemo(() => {
+    return getClientBadges(selectedClientData);
+  }, [selectedClientData]);
+
+  const selectedClientAvatarClass = useMemo(() => {
+    return getClientBadgeAvatarClassName(selectedClientBadges[0]);
+  }, [selectedClientBadges]);
 
   const selectedClientContractInfo = useMemo(() => {
     if (!selectedClientData) {
@@ -251,7 +312,7 @@ export default function DashboardPage() {
           isLoading={overviewLoading}
           items={DASHBOARD_STAT_KEYS.map((s) => ({
             icon: s.icon,
-            value: stats?.[s.valueKey] ?? 0,
+            value: dashboardStats[s.valueKey],
             label: s.label,
             counter: s.counter,
             colorIndex: s.colorIndex,
@@ -265,17 +326,17 @@ export default function DashboardPage() {
       >
         <SplitLayout
           hasSelection={!!selectedClientData}
-          onBack={() => setSelectedClient(null)}
+          onBack={handleClearSelectedClient}
         >
           <Block name="dashboard-activities-panel" className="h-full min-h-0">
             <RecentActivitiesPanel
               actionRequiredItems={actionRequiredClients}
-              upcomingItems={upcomingClients}
+              upcomingItems={visibleUpcomingClients}
               isLoading={overviewLoading}
               isError={overviewError}
               onRetry={() => refetchClients()}
               selectedId={selectedClientData?.id}
-              onSelect={setSelectedClient}
+              onSelect={handleSelectClient}
               hasMore={hasMoreClients}
               onLoadMore={() => void fetchNextClients()}
               isFetchingMore={isFetchingNextClients}
@@ -288,26 +349,23 @@ export default function DashboardPage() {
                 <div
                   data-component="dashboard-detail-avatar"
                   className={cn(
-                    "w-16 h-16 rounded-[20px] flex items-center justify-center text-xl font-bold text-white shadow-lg shrink-0",
-                    getAvatarGradient(selectedClientData.name)
+                    "w-16 h-16 rounded-[20px] flex items-center justify-center shadow-lg shrink-0",
+                    selectedClientAvatarClass
                   )}
                 >
-                  {selectedClientData.name.charAt(0)}
+                  <Users className="w-7 h-7 shrink-0 transition-colors text-current" aria-hidden="true" />
                 </div>
               }
               title={selectedClientData.name}
               badges={
                 <>
-                  <StatusBadge
-                    status={mapServiceStatusToV3(selectedClientData.serviceStatus)}
-                    label={getStatusLabel(selectedClientData.serviceStatus)}
-                  />
-                  {selectedClientData.breastPump && (
-                    <StatusBadge status="breastPump" />
-                  )}
-                  {selectedClientData.careCenter && (
-                    <StatusBadge status="careCenter" />
-                  )}
+                  {selectedClientBadges.map((badge) => (
+                    <StatusBadge
+                      key={badge.key}
+                      status={badge.status}
+                      label={badge.label}
+                    />
+                  ))}
                 </>
               }
               subtitle={
@@ -338,78 +396,90 @@ export default function DashboardPage() {
                   tabs={[
                     { key: "basic", label: "기본 정보" },
                     { key: "contracts", label: "계약서 정보" },
-                    { key: "alimtalk", label: "알림톡 발송 현황" },
+                    { key: "alimtalk", label: "메시지 발송 현황" },
                   ]}
                   activeTab={activeDetailTab}
                   onTabChange={setActiveDetailTab}
                 />
               }
             >
-              <div data-component="dashboard-detail-content" className="space-y-4">
-                {activeDetailTab === "basic" && (
-                  <div data-component="dashboard-detail-basic-grid" className="grid grid-cols-2 gap-4">
-                    <InfoCard title={t(locale, "clients.form.customer-info") || "고객 정보"} className="col-start-1 row-start-1 row-end-3">
-                      <InfoRow label={t(locale, "clients.form.name")} value={selectedClientData.name} />
-                      <InfoRow label={t(locale, "clients.form.birthday")} value={selectedClientData.birthday || "-"} />
-                      <InfoRow label={t(locale, "clients.form.due-date")} value={formatDate(selectedClientData.dueDate)} />
-                      <InfoRow label={t(locale, "clients.form.phone")} value={selectedClientData.phone || "-"} />
-                      <InfoRow label={t(locale, "clients.form.address")} value={selectedClientData.address || "-"} />
-                    </InfoCard>
+              <DetailTabPanels
+                activeTab={activeDetailTab}
+                dataComponent="dashboard-detail-content"
+                panelDataComponent="dashboard-detail-content-panel"
+                panels={[
+                  {
+                    key: "basic",
+                    children: (
+                      <div data-component="dashboard-detail-basic-grid" className="grid grid-cols-2 gap-4">
+                        <InfoCard title={t(locale, "clients.form.customer-info") || "고객 정보"} className="col-start-1 row-start-1 row-end-3">
+                          <InfoRow label={t(locale, "clients.form.name")} value={selectedClientData.name} />
+                          <InfoRow label={t(locale, "clients.form.birthday")} value={selectedClientData.birthday || "-"} />
+                          <InfoRow label={t(locale, "clients.form.due-date")} value={formatDate(selectedClientData.dueDate)} />
+                          <InfoRow label={t(locale, "clients.form.phone")} value={selectedClientData.phone || "-"} />
+                          <InfoRow label={t(locale, "clients.form.address")} value={selectedClientData.address || "-"} />
+                        </InfoCard>
 
-                    <InfoCard title={t(locale, "clients.form.assigned-employee") || "담당 관리사"} className="col-start-1 row-start-3 row-end-5">
-                      <InfoRow label={t(locale, "clients.form.primary-employee")} value={selectedClientData.primaryEmployee?.name ?? "-"} />
-                      <InfoRow label={t(locale, "clients.form.secondary-employee")} value={selectedClientData.secondaryEmployee?.name ?? "-"} />
-                    </InfoCard>
+                        <InfoCard title={t(locale, "clients.form.assigned-employee") || "담당 관리사"} className="col-start-1 row-start-3 row-end-5">
+                          <InfoRow label={t(locale, "clients.form.primary-employee")} value={selectedClientData.primaryEmployee?.name ?? "-"} />
+                          <InfoRow label={t(locale, "clients.form.secondary-employee")} value={selectedClientData.secondaryEmployee?.name ?? "-"} />
+                        </InfoCard>
 
-                    <InfoCard title={t(locale, "clients.form.service-info") || "서비스 정보"} className="col-start-2 row-start-1 row-end-5">
-                      <InfoRow label={t(locale, "clients.form.voucher-type")} value={selectedClientData.type || "-"} />
-                      <InfoRow label={t(locale, "clients.form.duration")} value={selectedClientData.duration ? `${selectedClientData.duration}일` : "-"} />
-                      <InfoRow label={t(locale, "clients.form.start-date")} value={formatDate(selectedClientData.startDate)} />
-                      <InfoRow label={t(locale, "clients.form.end-date")} value={formatDate(selectedClientData.endDate)} />
-                      <InfoRow label={t(locale, "clients.form.full-price")} value={formatPrice(selectedClientData.fullPrice)} />
-                      <InfoRow label={t(locale, "clients.form.grant")} value={formatPrice(selectedClientData.grant)} />
-                      <InfoRow label={t(locale, "clients.form.actual-price")} value={formatPrice(selectedClientData.actualPrice)} />
-                    </InfoCard>
-                  </div>
-                )}
-
-                {activeDetailTab === "contracts" && (
-                  selectedClientContractInfo ? (
-                    <div data-component="dashboard-detail-contracts-grid" className="grid grid-cols-2 gap-4">
-                      <InfoCard title="계약서 정보" className="col-span-2">
-                        <InfoRow label="계약서명" value={selectedClientContractInfo.contractName} />
-                        <InfoRow label="계약서 ID" value={selectedClientContractInfo.documentId} />
-                        <InfoRow label="문서 상태" value={selectedClientContractInfo.documentStatus} />
-                        <InfoRow label="발송일" value={selectedClientContractInfo.sentDate} />
-                        <InfoRow label="계약 기간" value={selectedClientContractInfo.contractPeriod} />
-                        <InfoRow label="계약 금액" value={selectedClientContractInfo.contractAmount} />
-                      </InfoCard>
-                    </div>
-                  ) : (
-                    <div data-component="dashboard-detail-contracts-empty" className="text-center py-12 text-v3-text-muted text-[0.85rem]">
-                      계약서 정보가 없습니다
-                    </div>
-                  )
-                )}
-
-                {activeDetailTab === "alimtalk" && (
-                  <div data-component="dashboard-detail-alimtalk-empty" className="text-center py-12 text-v3-text-muted text-[0.85rem]">
-                    알림톡 발송 현황이 없습니다
-                  </div>
-                )}
-              </div>
+                        <InfoCard title={t(locale, "clients.form.service-info") || "서비스 정보"} className="col-start-2 row-start-1 row-end-5">
+                          <InfoRow label={t(locale, "clients.form.voucher-type")} value={selectedClientData.type || "-"} />
+                          <InfoRow label={t(locale, "clients.form.duration")} value={selectedClientData.duration ? `${selectedClientData.duration}일` : "-"} />
+                          <InfoRow label={t(locale, "clients.form.start-date")} value={formatDate(selectedClientData.startDate)} />
+                          <InfoRow label={t(locale, "clients.form.end-date")} value={formatDate(selectedClientData.endDate)} />
+                          <InfoRow label={t(locale, "clients.form.full-price")} value={formatPrice(selectedClientData.fullPrice)} />
+                          <InfoRow label={t(locale, "clients.form.grant")} value={formatPrice(selectedClientData.grant)} />
+                          <InfoRow label={t(locale, "clients.form.actual-price")} value={formatPrice(selectedClientData.actualPrice)} />
+                        </InfoCard>
+                      </div>
+                    ),
+                  },
+                  {
+                    key: "contracts",
+                    children: selectedClientContractInfo ? (
+                      <div data-component="dashboard-detail-contracts-grid" className="grid grid-cols-2 gap-4">
+                        <InfoCard title="계약서 정보" className="col-span-2">
+                          <InfoRow label="계약서명" value={selectedClientContractInfo.contractName} />
+                          <InfoRow label="계약서 ID" value={selectedClientContractInfo.documentId} />
+                          <InfoRow label="문서 상태" value={selectedClientContractInfo.documentStatus} />
+                          <InfoRow label="발송일" value={selectedClientContractInfo.sentDate} />
+                          <InfoRow label="계약 기간" value={selectedClientContractInfo.contractPeriod} />
+                          <InfoRow label="계약 금액" value={selectedClientContractInfo.contractAmount} />
+                        </InfoCard>
+                      </div>
+                    ) : (
+                      <DetailEmptyState
+                        name="dashboard-detail-contracts-empty"
+                        message="계약서 정보가 없습니다"
+                      />
+                    ),
+                  },
+                  {
+                    key: "alimtalk",
+                    children: (
+                      <DetailEmptyState
+                        name="dashboard-detail-alimtalk-empty"
+                        message="메시지 발송 현황이 없습니다"
+                      />
+                    ),
+                  },
+                ]}
+              />
             </DetailPanel>
           ) : (
-            <Block
-              name="dashboard-detail-empty"
-              className="bg-white rounded-[28px] shadow-v3 flex items-center justify-center h-full"
+            <DetailPanel
+              emptyState={
+                <DetailEmptyState
+                  name="dashboard-detail-empty"
+                  message="항목을 선택하면 상세 정보가 표시됩니다"
+                />
+              }
             >
-              <div data-component="dashboard-detail-empty-message" className="text-center text-v3-text-muted">
-                <p className="text-[0.8rem] font-semibold">
-                  항목을 선택하면 상세 정보가 표시됩니다
-                </p>
-              </div>
-            </Block>
+              {null}
+            </DetailPanel>
           )}
         </SplitLayout>
       </Block>

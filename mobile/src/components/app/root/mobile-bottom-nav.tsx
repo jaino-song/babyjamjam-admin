@@ -1,9 +1,9 @@
 "use client";
 
-import { type CSSProperties, useState } from "react";
+import { type CSSProperties, useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { Home, User, FileText, Sparkles, Menu } from "lucide-react";
+import { Home, User, FileText, Phone, Menu } from "lucide-react";
 import { useReducedMotion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { isLayoutExcluded } from "@/lib/constants/v3-layout";
@@ -16,7 +16,7 @@ const NAV_ITEMS: Array<{
 }> = [
   { href: "/dashboard", label: "홈", icon: Home, kind: "normal" },
   { href: "/clients", label: "고객", icon: User, kind: "normal" },
-  { href: "/chat", label: "어시스턴트", icon: Sparkles, kind: "chat" },
+  { href: "/calls", label: "통화요약", icon: Phone, kind: "chat" },
   { href: "/contracts", label: "계약", icon: FileText, kind: "normal" },
   { href: "/all", label: "전체", icon: Menu, kind: "normal" },
 ];
@@ -28,7 +28,7 @@ interface PressedNavItem {
 
 function isNavItemActive(href: string, pathname: string): boolean {
   if (href === "/dashboard") return pathname === "/dashboard";
-  if (href === "/chat") return pathname === "/chat";
+  if (href === "/calls") return pathname.startsWith("/calls");
   if (href === "/all") return pathname === "/all";
   return pathname.startsWith(href);
 }
@@ -38,6 +38,23 @@ export function MobileBottomNav() {
   const safePathname = pathname ?? "";
   const prefersReducedMotion = useReducedMotion();
   const [pressedItem, setPressedItem] = useState<PressedNavItem | null>(null);
+  const [pendingCount, setPendingCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const response = await fetch("/api/client-drafts/count?status=PENDING");
+        if (!response.ok) return;
+        const data = (await response.json()) as { count?: number };
+        if (!cancelled) setPendingCount(data.count ?? 0);
+      } catch {
+        /* nav badge is best-effort */
+      }
+    };
+    void load();
+    const timer = setInterval(load, 60_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, []);
   const activeIndex = safePathname
     ? NAV_ITEMS.findIndex((item) => isNavItemActive(item.href, safePathname))
     : -1;
@@ -52,7 +69,7 @@ export function MobileBottomNav() {
     return activeIndex >= 0 ? activeIndex : ALL_NAV_INDEX;
   })();
 
-  const isChatRoute = safePathname === "/chat";
+  const isChatRoute = safePathname.startsWith("/calls");
   const navGapPx = 2;
   const navPaddingPx = 5;
   const indicatorVisible = activeItem !== null || pressedHref !== null;
@@ -131,10 +148,20 @@ export function MobileBottomNav() {
               isIndicated ? "text-white" : "text-gray-500"
             )}
           >
-            <Icon
-              className="h-5 w-5 shrink-0"
-              strokeWidth={2.5}
-            />
+            <span className="relative">
+              <Icon
+                className="h-5 w-5 shrink-0"
+                strokeWidth={2.5}
+              />
+              {item.href === "/calls" && pendingCount > 0 && (
+                <span
+                  data-component="mobile-bottom-nav-calls-badge"
+                  className="absolute -top-1 -right-2 min-w-[16px] rounded-full bg-red-500 px-1 text-center text-[10px] font-bold leading-4 text-white"
+                >
+                  {pendingCount > 9 ? "9+" : pendingCount}
+                </span>
+              )}
+            </span>
             <span className="text-[10px] font-medium leading-none">
               {item.label}
             </span>

@@ -6,14 +6,25 @@ import { useFormStore } from "@/stores/form-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { renderTemplate } from "@/lib/template-utils";
-import { GeneratedMsg } from "../templates/GeneratedMsg";
+import { AutoFillMsgCard } from "../templates/AutoFillMsgCard";
 import { NameInput } from "./form-components/NameInput";
+import { TemplateFieldGridItem } from "./form-components/TemplateFieldGrid";
+import {
+  TemplateMessageFormFrame,
+  type TemplateMessageFormLayout,
+} from "./form-components/TemplateMessageFormLayout";
 
 interface SurveyMessageFormProps {
   onPreviewMessageChange?: (message: string) => void;
+  renderLayout?: TemplateMessageFormLayout;
+  showMessageSide?: boolean;
 }
 
-export const SurveyMessageForm = ({ onPreviewMessageChange }: SurveyMessageFormProps) => {
+export const SurveyMessageForm = ({
+  onPreviewMessageChange,
+  renderLayout,
+  showMessageSide = true,
+}: SurveyMessageFormProps) => {
   const locale = useLocale();
   const [messageOverride, setMessageOverride] = useState<string | null>(null);
   const { name, setName } = useFormStore();
@@ -39,36 +50,44 @@ export const SurveyMessageForm = ({ onPreviewMessageChange }: SurveyMessageFormP
     }
   }, [generatedMessage, onPreviewMessageChange]);
 
-  return (
-    <div
-      data-component="messages-survey-form"
-      className="flex flex-col animate-fade-in"
-    >
-      <div className="flex flex-col gap-4">
-          <NameInput
-            name={name}
-            setName={(value) => {
-              setName(value);
-              setMessageOverride(null);
-            }}
-            label={t(locale, "survey-msg.name-label")}
-            placeholder={t(locale, "survey-msg.name-placeholder")}
-          />
+  const fields = renderLayout ? null : (
+    <TemplateFieldGridItem>
+      <NameInput
+        name={name}
+        setName={(value) => {
+          setName(value);
+          setMessageOverride(null);
+        }}
+        label={t(locale, "survey-msg.name-label")}
+        placeholder={t(locale, "survey-msg.name-placeholder")}
+      />
+    </TemplateFieldGridItem>
+  );
 
-        <GeneratedMsg
-          title={t(locale, "common.generated-message-title")}
-          copyButtonText={t(locale, "common.copy-button")}
-          message={generatedMessage}
-          bodyDescription={systemTemplate?.description || "설문 안내 문구를 검토하고 수신자별 안내를 조정할 수 있습니다."}
-          metaItems={[
-            { label: "템플릿 유형", value: "설문" },
-            { label: t(locale, "survey-msg.name-label"), value: name.trim() || "-" },
-          ]}
-          variableItems={variableItems}
-          onMessageChange={setMessageOverride}
-          handleCopy={handleCopy}
-        />
-      </div>
-    </div>
+  const messageCard = (
+    <AutoFillMsgCard
+      title={t(locale, "common.generated-message-title")}
+      copyButtonText={t(locale, "common.copy-button")}
+      message={generatedMessage}
+      bodyDescription={systemTemplate?.description || "설문 안내 문구를 검토하고 수신자별 안내를 조정할 수 있습니다."}
+      metaItems={[
+        { label: "템플릿 유형", value: "설문" },
+        { label: t(locale, "survey-msg.name-label"), value: name.trim() || "-" },
+      ]}
+      variableItems={variableItems}
+      onMessageChange={setMessageOverride}
+      handleCopy={handleCopy}
+      showSide={showMessageSide}
+    />
+  );
+
+  return (
+    <TemplateMessageFormFrame
+      dataComponent="messages-survey-form"
+      fields={fields}
+      messageCard={messageCard}
+      requiresRecipientName
+      renderLayout={renderLayout}
+    />
   );
 };

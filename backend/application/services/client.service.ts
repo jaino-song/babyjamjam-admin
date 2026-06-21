@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, Inject, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, Inject, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { normalizePhone } from "application/utils/normalize-phone";
 import {
     CreateClientUsecase,
     DeleteClientUsecase,
@@ -8,7 +9,7 @@ import {
     UpdateClientUsecase,
 } from "application/usecases/client";
 import { ClientEntity } from "domain/entities/client.entity";
-import { CLIENT_REPOSITORY, IClientRepository, PaginatedResult } from "domain/repositories/client.repository.interface";
+import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { computeServiceStatus, isServiceStatus, SERVICE_STATUS, SERVICE_STATUS_VALUES, ServiceStatusType } from "domain/value-objects/service-status.vo";
 import { AlimtalkService } from "./alimtalk.service";
@@ -36,6 +37,26 @@ const REQUESTED_DOCUMENT_STATUS_TYPES = new Set(["030", "060", "070"]);
 // - 090: revoked (철회됨)
 // - 099: deleted (삭제됨)
 export type DocumentStatusType = 'created' | 'opened' | 'completed' | 'requested' | 'rejected' | 'revoked' | 'deleted' | null;
+export type ClientBadgeKey = "contract_required" | "breast_pump" | "service_status" | "care_center";
+export type ClientBadgeTone = "danger" | "success" | "primary" | "warning" | "neutral";
+export type ClientBadgeStatus =
+    | "active"
+    | "pending"
+    | "review"
+    | "terminated"
+    | "expired"
+    | "completed"
+    | "signed"
+    | "breastPump"
+    | "careCenter";
+
+export interface ClientBadge {
+    key: ClientBadgeKey;
+    status: ClientBadgeStatus;
+    label: string;
+    tone: ClientBadgeTone;
+    priority: number;
+}
 
 // Response type that includes employee information
 export interface ClientWithEmployees {
@@ -51,7 +72,7 @@ export interface ClientWithEmployees {
     actualPrice: string | null;
     startDate: Date | null;
     endDate: Date | null;
-    careCenter: boolean;
+    careCenter: boolean | null;
     voucherClient: boolean;
     birthday: string | null;
     dueDate: Date | null;
@@ -61,6 +82,7 @@ export interface ClientWithEmployees {
     areaId: string | null;
     hasSigned: boolean;
     documentStatus: DocumentStatusType;
+    badges: ClientBadge[];
     primaryEmployee: { id: number; name: string } | null;
     secondaryEmployee: { id: number; name: string } | null;
 }
@@ -123,24 +145,93 @@ export class ClientService {
         }
     }
 
+    private mapServiceStatusToBadge(status: string | null): {
+        status: ClientBadgeStatus;
+        label: string;
+        tone: ClientBadgeTone;
+    } {
+        switch (status) {
+            case SERVICE_STATUS.ACTIVE:
+                return { status: "active", label: "진행중", tone: "success" };
+            case SERVICE_STATUS.WAITING:
+                return { status: "pending", label: "대기", tone: "warning" };
+            case SERVICE_STATUS.REPLACEMENT_REQUESTED:
+                return { status: "terminated", label: "교체 요청", tone: "danger" };
+            case SERVICE_STATUS.TERMINATED:
+                return { status: "terminated", label: "중단", tone: "danger" };
+            case SERVICE_STATUS.COMPLETED:
+                return { status: "completed", label: "완료", tone: "neutral" };
+            default:
+                return { status: "pending", label: "-", tone: "warning" };
+        }
+    }
+
+    private buildClientBadges(params: {
+        serviceStatus: string | null;
+        documentStatus: DocumentStatusType;
+        breastPump: boolean;
+        careCenter: boolean | null;
+    }): ClientBadge[] {
+        const badges: ClientBadge[] = [];
+
+        if (params.serviceStatus === SERVICE_STATUS.ACTIVE && params.documentStatus !== "completed") {
+            badges.push({
+                key: "contract_required",
+                status: "terminated",
+                label: "계약서 필요",
+                tone: "danger",
+                priority: 10,
+            });
+        }
+
+        if (params.breastPump) {
+            badges.push({
+                key: "breast_pump",
+                status: "breastPump",
+                label: "유축기 대여",
+                tone: "danger",
+                priority: 20,
+            });
+        }
+
+        const serviceBadge = this.mapServiceStatusToBadge(params.serviceStatus);
+        badges.push({
+            key: "service_status",
+            status: serviceBadge.status,
+            label: serviceBadge.label,
+            tone: serviceBadge.tone,
+            priority: 30,
+        });
+
+        if (params.careCenter) {
+            badges.push({
+                key: "care_center",
+                status: "careCenter",
+                label: "조리원 이용",
+                tone: "primary",
+                priority: 40,
+            });
+        }
+
+        return badges.sort((left, right) => left.priority - right.priority);
+    }
+
     private async assertAllowedClientArea(branchid: string, areaId: string | null | undefined): Promise<void> {
         if (!areaId) return;
 
         const areaScope = branchid
             ? [{ branchId: branchid }, { branchId: null }]
             : [{ branchId: null }];
-        const bankAccountInfo = await this.prismaService.bank_account_info.findFirst({
+        const area = await this.prismaService.area.findFirst({
             where: {
-                areaId,
-                area: {
-                    OR: areaScope,
-                },
+                id: areaId,
+                OR: areaScope,
             },
-            select: { areaId: true },
+            select: { id: true },
         });
 
-        if (!bankAccountInfo) {
-            throw new BadRequestException("areaId must reference an available bank account");
+        if (!area) {
+            throw new BadRequestException("areaId must reference an available area");
         }
     }
 
@@ -157,7 +248,7 @@ export class ClientService {
         actualPrice?: string | null;
         startDate?: string | null;
         endDate?: string | null;
-        careCenter: boolean;
+        careCenter: boolean | null;
         voucherClient: boolean;
         birthday?: string | null;
         dueDate?: string | null;
@@ -172,6 +263,15 @@ export class ClientService {
         const dueDate = params.dueDate ? new Date(params.dueDate) : null;
         this.assertAllowedServiceStatus(params.serviceStatus);
         await this.assertAllowedClientArea(branchid, params.areaId);
+
+        const normalizedPhone = normalizePhone(params.phone ?? null);
+        if (normalizedPhone) {
+            const existing = await this.clientRepository.findByPhone(branchid, normalizedPhone);
+            if (existing) {
+                this.logger.log(`[Client] Reusing existing client ${existing.id} for duplicate phone in branch ${branchid}`);
+                return existing;
+            }
+        }
 
         // First create the client
         const client = await this.createClientUsecase.execute(branchid, {
@@ -359,6 +459,13 @@ export class ClientService {
             if (client.serviceStatus !== computedStatus) {
                 clientsNeedingUpdate.push({ id: client.id, newStatus: computedStatus });
             }
+            const documentStatus = this.mapStatusTypeToDocumentStatus(docStatusMap.get(client.eDocId ?? ''));
+            const badges = this.buildClientBadges({
+                serviceStatus: computedStatus,
+                documentStatus,
+                breastPump: client.breastPump,
+                careCenter: client.careCenter,
+            });
 
                 return {
                     id: client.id,
@@ -382,7 +489,8 @@ export class ClientService {
                     eDocId: client.eDocId,
                     areaId: client.areaId,
                     hasSigned: client.eDocId !== null,
-                    documentStatus: this.mapStatusTypeToDocumentStatus(docStatusMap.get(client.eDocId ?? '')),
+                    documentStatus,
+                    badges,
                     primaryEmployee: schedule?.primaryEmployee
                         ? { id: schedule.primaryEmployee.id, name: schedule.primaryEmployee.name }
                         : null,
@@ -453,7 +561,7 @@ export class ClientService {
         actualPrice?: string | null;
         startDate?: string | null;
         endDate?: string | null;
-        careCenter?: boolean;
+        careCenter?: boolean | null;
         voucherClient?: boolean;
         birthday?: string | null;
         dueDate?: string | null;
@@ -469,6 +577,14 @@ export class ClientService {
         }
         this.assertAllowedServiceStatus(params.serviceStatus);
         await this.assertAllowedClientArea(branchid, params.areaId);
+
+        const normalizedPhone = normalizePhone(params.phone ?? null);
+        if (normalizedPhone) {
+            const clientWithPhone = await this.clientRepository.findByPhone(branchid, normalizedPhone);
+            if (clientWithPhone && clientWithPhone.id !== id) {
+                throw new ConflictException({ statusCode: 409, code: "P2002", error: "Conflict", field: "phone" });
+            }
+        }
 
         const startDate = params.startDate ? new Date(params.startDate) : existingClient.startDate ?? new Date();
         const endDate = params.endDate ? new Date(params.endDate) : existingClient.endDate ?? new Date(startDate.getTime() + 365 * 24 * 60 * 60 * 1000);

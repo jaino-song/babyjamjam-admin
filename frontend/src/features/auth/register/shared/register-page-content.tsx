@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { motion } from "framer-motion";
-import { Check, CheckCircle, ChevronLeft, ChevronRight, Link2 } from "lucide-react";
+import { Check, CheckCircle, Link2 } from "lucide-react";
 
 import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { FormField } from "@/components/auth/form-field";
@@ -469,13 +469,11 @@ export function RegisterPageContent({ variant }: RegisterPageContentProps) {
                 className={cn(
                   secondaryButtonClassName,
                   currentStep < REGISTER_STEP_TOTAL - 1 && desktopStepNavigationWidthClassName,
-                  currentStep === 0 && "pointer-events-none opacity-0",
                 )}
-                    onClick={handlePreviousStep}
-                    disabled={isLoading || currentStep === 0}
+                    onClick={currentStep === 0 ? goToLogin : handlePreviousStep}
+                    disabled={isLoading}
                   >
-                    <ChevronLeft className="h-4 w-4" />
-                    이전
+                    {currentStep === 0 ? "취소" : "이전"}
                   </Button>
 
                 <Button
@@ -492,10 +490,7 @@ export function RegisterPageContent({ variant }: RegisterPageContentProps) {
                     disabled={isLoading || isCurrentStepActionDisabled}
                   >
                     {currentStep < REGISTER_STEP_TOTAL - 1 ? (
-                      <>
-                        다음
-                        <ChevronRight className="h-4 w-4" />
-                      </>
+                      "다음"
                     ) : isLoading ? (
                       <Spinner size="sm" />
                     ) : (

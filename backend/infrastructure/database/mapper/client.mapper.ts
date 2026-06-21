@@ -12,7 +12,7 @@ type ClientRow = {
     actualPrice: string | null;
     startDate: Date | null;
     endDate: Date | null;
-    careCenter: boolean;
+    careCenter: boolean | null;
     voucherClient: boolean;
     birthday: string | null;
     dueDate?: Date | null;

@@ -1,9 +1,9 @@
 "use client";
 
-import { useRef, useState, type ChangeEvent } from "react";
-import { Plus, Search } from "lucide-react";
+import { Plus } from "lucide-react";
+
+import { ExpandableSearch } from "@/components/app/v3/ExpandableSearch";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -24,24 +24,6 @@ export function DataTableToolbar({
   filterAddAction,
   actions,
 }: DataTableToolbarProps) {
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-
-  const handleSearchIconClick = () => {
-    setIsSearchOpen(true);
-    setTimeout(() => searchInputRef.current?.focus(), 0);
-  };
-
-  const handleSearchBlur = () => {
-    if (!searchQuery.trim()) {
-      setIsSearchOpen(false);
-    }
-  };
-
-  const handleSearchChange = (event: ChangeEvent<HTMLInputElement>) => {
-    onSearchChange(event.target.value);
-  };
-
   const handleFilterSelect = (value: string) => {
     // Convert "all" back to null for the parent component
     onFilterChange?.(value === "all" ? null : value);
@@ -54,27 +36,15 @@ export function DataTableToolbar({
     >
       {/* Search */}
       {searchEnabled && (
-        isSearchOpen ? (
-          <Input
-            ref={searchInputRef}
-            placeholder={searchPlaceholder}
-            value={searchQuery}
-            onChange={handleSearchChange}
-            onBlur={handleSearchBlur}
-            autoFocus
-            className="w-[100px] h-10 transition-all"
-          />
-        ) : (
-          <Button
-            variant="outline"
-            size="icon"
-            className="h-10 w-[100px]"
-            onClick={handleSearchIconClick}
-            aria-label="search"
-          >
-            <Search className="h-4 w-4" />
-          </Button>
-        )
+        <ExpandableSearch
+          value={searchQuery}
+          onChange={onSearchChange}
+          placeholder={searchPlaceholder}
+          expandedWidth="w-[100px]"
+          className="h-10 items-center"
+          openLabel="search"
+          closeLabel="search"
+        />
       )}
 
       {/* Filter */}

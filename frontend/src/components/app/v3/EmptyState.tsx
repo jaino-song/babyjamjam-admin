@@ -1,5 +1,8 @@
 import type { LucideIcon } from "lucide-react";
 
+import { DetailPanel } from "./DetailPanel";
+import { ListEmptyState } from "./ListEmptyState";
+
 export interface EmptyStateProps {
   icon?: LucideIcon;
   message: string;
@@ -9,14 +12,17 @@ export interface EmptyStateProps {
 
 export function EmptyState({ icon: Icon, message, name, className }: EmptyStateProps) {
   return (
-    <div
-      data-component={name}
-      className={`bg-white rounded-[28px] shadow-v3 flex items-center justify-center h-full min-h-0 ${className ?? ""}`}
+    <DetailPanel
+      emptyState={
+        <ListEmptyState
+          name={name}
+          icon={Icon}
+          message={message}
+          className={className}
+        />
+      }
     >
-      <div className="text-center text-v3-text-muted">
-        {Icon && <Icon className="w-12 h-12 mx-auto mb-3 opacity-30" />}
-        <p className="text-[0.8rem]">{message}</p>
-      </div>
-    </div>
+      {null}
+    </DetailPanel>
   );
 }

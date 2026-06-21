@@ -1,13 +1,13 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
 import voucherOptions from "../templates/json/voucher.json";
-import { GeneratedMsg } from "../templates/GeneratedMsg";
+import { AutoFillMsgCard } from "../templates/AutoFillMsgCard";
 import bankAccountJSON from "../templates/json/bank-account.json";
 import { priceInfoMsgTemplate } from "../templates/messageTemplate/priceInfoMsg";
 import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
 import { useLocale } from "@/providers/LocaleProvider";
-import { useBankAccountInfos, useVoucherPriceInfos } from "@/hooks";
+import { useBankAccountInfos, useVoucherPriceInfos, type VoucherPriceInfo } from "@/hooks";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { renderTemplate } from "@/lib/template-utils";
 import { NameInput } from "./form-components/NameInput";
@@ -25,6 +25,11 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { TemplateFieldGridItem } from "./form-components/TemplateFieldGrid";
+import {
+  TemplateMessageFormFrame,
+  type TemplateMessageFormLayout,
+} from "./form-components/TemplateMessageFormLayout";
 
 interface PriceInfoFormData {
   name: string;
@@ -53,11 +58,44 @@ function formatPrice(price: string): string {
   return num.toLocaleString("ko-KR");
 }
 
-interface PriceInfoMessageFormProps {
-  onPreviewMessageChange?: (message: string) => void;
+function getWeeksFromDuration(duration: string) {
+  const days = Number(duration);
+  return Number.isFinite(days) ? Math.floor(days / 5) : 0;
 }
 
-export const PriceInfoMessageForm = ({ onPreviewMessageChange }: PriceInfoMessageFormProps) => {
+function getVoucherDerivedFields(selectedVoucher: VoucherPriceInfo) {
+  const duration = selectedVoucher.duration;
+
+  return {
+    duration,
+    weeks: getWeeksFromDuration(duration),
+    voucherId: selectedVoucher.id,
+    fullPrice: selectedVoucher.fullPrice?.toString() ?? "",
+    grant: selectedVoucher.grant?.toString() ?? "",
+    actualPrice: selectedVoucher.actualPrice?.toString() ?? "",
+  };
+}
+
+interface PriceInfoMessageFormProps {
+  onPreviewMessageChange?: (message: string) => void;
+  renderLayout?: TemplateMessageFormLayout;
+  showMessageSide?: boolean;
+}
+
+function RequiredLabel({ children }: { children: ReactNode }) {
+  return (
+    <Label>
+      {children}
+      <span className="text-destructive ml-1">*</span>
+    </Label>
+  );
+}
+
+export const PriceInfoMessageForm = ({
+  onPreviewMessageChange,
+  renderLayout,
+  showMessageSide = true,
+}: PriceInfoMessageFormProps) => {
   const locale = useLocale();
   const [messageOverride, setMessageOverride] = useState<string | null>(null);
   const [durationTooltipOpen, setDurationTooltipOpen] = useState<boolean>(false);
@@ -71,7 +109,24 @@ export const PriceInfoMessageForm = ({ onPreviewMessageChange }: PriceInfoMessag
   const { data: systemTemplate } = useSystemTemplate("PRICE_INFO");
  
   // Subscribe to Zustand store
-  const { name, voucherType, voucherDuration, voucherYear, setName, setVoucherType, setVoucherDuration, setFullPrice, setActualPrice, setGrant, setVoucherYear } = useFormStore();
+  const {
+    name,
+    voucherType,
+    voucherDuration,
+    voucherYear,
+    fullPrice,
+    grant,
+    actualPrice,
+    area,
+    setName,
+    setVoucherType,
+    setVoucherDuration,
+    setFullPrice,
+    setActualPrice,
+    setGrant,
+    setVoucherYear,
+    setArea,
+  } = useFormStore();
 
   const [formData, setFormData] = useState<PriceInfoFormData>({
     name: name,
@@ -79,10 +134,10 @@ export const PriceInfoMessageForm = ({ onPreviewMessageChange }: PriceInfoMessag
     duration: voucherDuration,
     type: voucherType,
     voucherId: null,
-    fullPrice: "",
-    grant: "",
-    actualPrice: "",
-    area: "",
+    fullPrice,
+    grant,
+    actualPrice,
+    area,
     bankName: "",
     accNum: "",
   });
@@ -93,11 +148,16 @@ export const PriceInfoMessageForm = ({ onPreviewMessageChange }: PriceInfoMessag
       setFormData(prev => ({
         ...prev,
         name: name,
+        weeks: voucherDuration ? getWeeksFromDuration(voucherDuration) : 0,
         duration: voucherDuration,
         type: voucherType,
+        fullPrice,
+        grant,
+        actualPrice,
+        area,
       }));
     });
-  }, [name, voucherType, voucherDuration]);
+  }, [name, voucherType, voucherDuration, fullPrice, grant, actualPrice, area]);
 
   // Bank account info query
   const { data: bankAccountInfos = [] } = useBankAccountInfos();
@@ -113,30 +173,33 @@ export const PriceInfoMessageForm = ({ onPreviewMessageChange }: PriceInfoMessag
       weeks: 0,
       duration: "",
       voucherId: null,
+      fullPrice: "",
+      grant: "",
+      actualPrice: "",
     }));
     setMessageOverride(null);
     setVoucherType(value); // Update Zustand store
     setVoucherDuration(""); // Reset duration in store when type changes
+    setFullPrice("");
+    setGrant("");
+    setActualPrice("");
   };
 
   const handleDurationChange = (duration: string) => {
     const selectedVoucher = voucherPriceInfos.find(v => v.duration === duration);
     if (selectedVoucher) {
+      const derivedFields = getVoucherDerivedFields(selectedVoucher);
+
       setFormData(prev => ({
         ...prev,
-        duration: duration,
-        weeks: Math.floor(Number(selectedVoucher.duration) / 5),
-        voucherId: selectedVoucher.id,
-        fullPrice: selectedVoucher.fullPrice?.toString() ?? "",
-        grant: selectedVoucher.grant?.toString() ?? "",
-        actualPrice: selectedVoucher.actualPrice?.toString() ?? "",
+        ...derivedFields,
       }));
       setMessageOverride(null);
       // Update Zustand store
-      setVoucherDuration(duration);
-      setFullPrice(selectedVoucher.fullPrice?.toString() ?? "");
-      setGrant(selectedVoucher.grant?.toString() ?? "");
-      setActualPrice(selectedVoucher.actualPrice?.toString() ?? "");
+      setVoucherDuration(derivedFields.duration);
+      setFullPrice(derivedFields.fullPrice);
+      setGrant(derivedFields.grant);
+      setActualPrice(derivedFields.actualPrice);
     }
   };
 
@@ -148,7 +211,61 @@ export const PriceInfoMessageForm = ({ onPreviewMessageChange }: PriceInfoMessag
       accNum: bankAccountInfos.find(b => b.area === value)?.accNum ?? "",
     }));
     setMessageOverride(null);
+    setArea(value ?? "");
   };
+
+  useEffect(() => {
+    if (!formData.duration) return;
+
+    const selectedVoucher = voucherPriceInfos.find(v => v.duration === formData.duration);
+    if (!selectedVoucher) return;
+
+    const derivedFields = getVoucherDerivedFields(selectedVoucher);
+
+    queueMicrotask(() => {
+      setFormData(prev => {
+        if (
+          prev.weeks === derivedFields.weeks &&
+          prev.voucherId === derivedFields.voucherId &&
+          prev.fullPrice === derivedFields.fullPrice &&
+          prev.grant === derivedFields.grant &&
+          prev.actualPrice === derivedFields.actualPrice
+        ) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          ...derivedFields,
+        };
+      });
+
+      setFullPrice(derivedFields.fullPrice);
+      setGrant(derivedFields.grant);
+      setActualPrice(derivedFields.actualPrice);
+    });
+  }, [formData.duration, voucherPriceInfos, setFullPrice, setGrant, setActualPrice]);
+
+  useEffect(() => {
+    if (!formData.area) return;
+
+    const bankAccountInfo = bankAccountInfos.find(b => b.area === formData.area);
+    if (!bankAccountInfo) return;
+
+    queueMicrotask(() => {
+      setFormData(prev => {
+        if (prev.bankName === bankAccountInfo.bankName && prev.accNum === bankAccountInfo.accNum) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          bankName: bankAccountInfo.bankName,
+          accNum: bankAccountInfo.accNum,
+        };
+      });
+    });
+  }, [bankAccountInfos, formData.area]);
 
   const handleDurationTooltipOpen = (open: boolean) => {
     if (!formData.type && open) {
@@ -202,6 +319,7 @@ export const PriceInfoMessageForm = ({ onPreviewMessageChange }: PriceInfoMessag
   const priceVariableItems = [
     { token: "{{name}}", label: t(locale, "price-info-msg.name-label"), value: formData.name || "-" },
     { token: "{{type}}", label: t(locale, "price-info-msg.voucher-type-label"), value: formData.type || "-" },
+    { token: "{{weeks}}", label: t(locale, "price-info-msg.weeks-label"), value: formData.weeks ? `${formData.weeks}주` : "-" },
     { token: "{{duration}}", label: t(locale, "price-info-msg.duration-label"), value: formData.duration ? `${formData.duration}일` : "-" },
     { token: "{{fullPrice}}", label: t(locale, "price-info-msg.full-price-label"), value: formData.fullPrice ? `${formatPrice(formData.fullPrice)}${t(locale, "common.currency-symbol")}` : "-" },
     { token: "{{grant}}", label: t(locale, "price-info-msg.grant-price-label"), value: formData.grant ? `${formatPrice(formData.grant)}${t(locale, "common.currency-symbol")}` : "-" },
@@ -216,154 +334,164 @@ export const PriceInfoMessageForm = ({ onPreviewMessageChange }: PriceInfoMessag
     }
   }, [generatedMessage, onPreviewMessageChange]);
 
+  const fields = (
+    <>
+      {renderLayout ? null : (
+        <TemplateFieldGridItem>
+          <NameInput
+            name={name}
+            setName={(value) => {
+              setName(value);
+              setMessageOverride(null);
+            }}
+            label={t(locale, "price-info-msg.name-label")}
+            placeholder={t(locale, "price-info-msg.name-placeholder")}
+            required
+          />
+        </TemplateFieldGridItem>
+      )}
+      <TemplateFieldGridItem>
+        <RequiredLabel>
+          {isVoucherPriceInfosLoading
+            ? t(locale, "common.loading")
+            : t(locale, "price-info-msg.voucher-type-label")}
+        </RequiredLabel>
+        <Select
+          value={formData.type}
+          onValueChange={handleVoucherTypeChange}
+          disabled={isVoucherPriceInfosLoading}
+          required
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder={t(locale, "price-info-msg.voucher-type-label")} />
+          </SelectTrigger>
+          <SelectContent>
+            {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
+              <div key={groupName}>
+                <div className="px-2 py-1.5 text-sm font-semibold text-muted-foreground">
+                  {groupName}
+                </div>
+                {Object.entries(types).map(([typeValue, typeData]) => (
+                  <SelectItem key={typeValue} value={typeValue} className="pl-6">
+                    {typeData.label}
+                  </SelectItem>
+                ))}
+              </div>
+            ))}
+          </SelectContent>
+        </Select>
+      </TemplateFieldGridItem>
+
+      <TemplateFieldGridItem>
+        <RequiredLabel>{t(locale, "price-info-msg.duration-label")}</RequiredLabel>
+        <TooltipProvider delayDuration={0}>
+          <Tooltip open={durationTooltipOpen} onOpenChange={handleDurationTooltipOpen}>
+            <TooltipTrigger asChild>
+              <div tabIndex={!formData.type ? 0 : -1}>
+                <Select
+                  value={formData.duration || undefined}
+                  onValueChange={handleDurationChange}
+                  disabled={!formData.type || voucherPriceInfos.length === 0}
+                  required
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder={t(locale, "price-info-msg.duration-label")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {voucherPriceInfos.map((v) => (
+                      <SelectItem key={v.id} value={v.duration}>
+                        {v.duration}일
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>바우처 유형을 선택하세요</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      </TemplateFieldGridItem>
+
+      <TemplateFieldGridItem>
+        <RequiredLabel>{t(locale, "price-info-msg.area-label")}</RequiredLabel>
+        <Select value={formData.area || undefined} onValueChange={handleAreaChange} required>
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder={t(locale, "price-info-msg.area-label")} />
+          </SelectTrigger>
+          <SelectContent>
+            {Object.values(bankAccountInfos).map((bankAccountInfo: BankAccountInfo) => (
+              <SelectItem key={bankAccountInfo.area} value={bankAccountInfo.area}>
+                {bankAccountJSON[bankAccountInfo.area as keyof typeof bankAccountJSON].area}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </TemplateFieldGridItem>
+
+      <TemplateFieldGridItem>
+        <RequiredLabel>
+          {t(locale, "price-info-msg.voucher-year-label")}
+        </RequiredLabel>
+        <Select
+          value={String(voucherYear)}
+          onValueChange={(value: string) => {
+            setVoucherYear(Number(value));
+            setFormData((prev) => ({
+              ...prev,
+              weeks: 0,
+              duration: "",
+              voucherId: null,
+              fullPrice: "",
+              grant: "",
+              actualPrice: "",
+            }));
+            setMessageOverride(null);
+            setVoucherDuration("");
+            setFullPrice("");
+            setGrant("");
+            setActualPrice("");
+          }}
+          required
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder={t(locale, "price-info-msg.voucher-year-label")} />
+          </SelectTrigger>
+          <SelectContent>
+            {[voucherYear - 1, voucherYear, voucherYear + 1].map((year) => (
+              <SelectItem key={year} value={String(year)}>
+                {year}년
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </TemplateFieldGridItem>
+
+    </>
+  );
+
+  const messageCard = (
+    <AutoFillMsgCard
+      title={t(locale, "common.generated-message-title")}
+      copyButtonText={t(locale, "common.copy-button")}
+      message={generatedMessage}
+      bodyDescription={systemTemplate?.description || "요금 안내 문구와 가격 변수를 한눈에 검토할 수 있습니다."}
+      metaItems={priceMetaItems}
+      variableItems={priceVariableItems}
+      onMessageChange={setMessageOverride}
+      handleCopy={handleCopy}
+      showSide={showMessageSide}
+    />
+  );
+
   return (
-    <div
-      data-component="messages-price-info-form"
-      className="flex flex-col gap-4 animate-fade-in"
-    >
-          <div className="grid grid-cols-16 gap-4">
-            <div className="col-span-10">
-              <NameInput
-                name={name}
-                setName={(value) => {
-                  setName(value);
-                  setMessageOverride(null);
-                }}
-                label={t(locale, "price-info-msg.name-label")}
-                placeholder={t(locale, "price-info-msg.name-placeholder")}
-              />
-            </div>
-            <div className="space-y-2 col-span-6">
-              <Label>{t(locale, "price-info-msg.voucher-year-label")}</Label>
-              <Select
-                value={String(voucherYear)}
-                onValueChange={(value: string) => {
-                  setVoucherYear(Number(value));
-                  setFormData((prev) => ({ ...prev, duration: "", voucherId: null }));
-                  setMessageOverride(null);
-                  setVoucherDuration("");
-                }}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder={t(locale, "price-info-msg.voucher-year-label")} />
-                </SelectTrigger>
-                <SelectContent>
-                  {[voucherYear - 1, voucherYear, voucherYear + 1].map((year) => (
-                    <SelectItem key={year} value={String(year)}>
-                      {year}년
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2 col-span-5">
-              <Label>{t(locale, "price-info-msg.duration-label")}</Label>
-              <TooltipProvider delayDuration={0}>
-                <Tooltip open={durationTooltipOpen} onOpenChange={handleDurationTooltipOpen}>
-                  <TooltipTrigger asChild>
-                    <div tabIndex={!formData.type ? 0 : -1}>
-                      <Select
-                        value={formData.duration || undefined}
-                        onValueChange={handleDurationChange}
-                        disabled={!formData.type || voucherPriceInfos.length === 0}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder={t(locale, "price-info-msg.duration-label")} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {voucherPriceInfos.map((v) => (
-                            <SelectItem key={v.id} value={v.duration}>
-                              {v.duration}일
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>바우처 유형을 선택하세요</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
-
-            <div className="space-y-2 col-span-5">
-              <Label>{t(locale, "price-info-msg.area-label")}</Label>
-              <Select value={formData.area || undefined} onValueChange={handleAreaChange}>
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder={t(locale, "price-info-msg.area-label")} />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.values(bankAccountInfos).map((bankAccountInfo: BankAccountInfo) => (
-                    <SelectItem key={bankAccountInfo.area} value={bankAccountInfo.area}>
-                      {bankAccountJSON[bankAccountInfo.area as keyof typeof bankAccountJSON].area}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2 col-span-6">
-              <Label>
-                {isVoucherPriceInfosLoading
-                  ? t(locale, "common.loading")
-                  : t(locale, "price-info-msg.voucher-type-label")}
-              </Label>
-              <Select
-                value={formData.type}
-                onValueChange={handleVoucherTypeChange}
-                disabled={isVoucherPriceInfosLoading}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder={t(locale, "price-info-msg.voucher-type-label")} />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
-                    <div key={groupName}>
-                      <div className="px-2 py-1.5 text-sm font-semibold text-muted-foreground">
-                        {groupName}
-                      </div>
-                      {Object.entries(types).map(([typeValue, typeData]) => (
-                        <SelectItem key={typeValue} value={typeValue} className="pl-6">
-                          {typeData.label}
-                        </SelectItem>
-                      ))}
-                    </div>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          {/* Price Info */}
-          {formData.fullPrice && formData.grant && formData.actualPrice && (
-            <div className="flex flex-col gap-2">
-              <p className="text-sm font-medium">
-                {t(locale, "price-info-msg.full-price-label")}: {formatPrice(formData.fullPrice)}
-                {t(locale, "common.currency-symbol")}
-              </p>
-              <p className="text-sm font-medium">
-                {t(locale, "price-info-msg.grant-price-label")}: {formatPrice(formData.grant)}
-                {t(locale, "common.currency-symbol")}
-              </p>
-              <p className="text-sm font-medium">
-                {t(locale, "price-info-msg.actual-price-label")}: {formatPrice(formData.actualPrice)}
-                {t(locale, "common.currency-symbol")}
-              </p>
-            </div>
-          )}
-
-        <GeneratedMsg
-          title={t(locale, "common.generated-message-title")}
-          copyButtonText={t(locale, "common.copy-button")}
-          message={generatedMessage}
-          bodyDescription={systemTemplate?.description || "요금 안내 문구와 가격 변수를 한눈에 검토할 수 있습니다."}
-          metaItems={priceMetaItems}
-          variableItems={priceVariableItems}
-          onMessageChange={setMessageOverride}
-          handleCopy={handleCopy}
-        />
-    </div>
+    <TemplateMessageFormFrame
+      dataComponent="messages-price-info-form"
+      fields={fields}
+      messageCard={messageCard}
+      requiresRecipientName
+      renderLayout={renderLayout}
+    />
   );
 };

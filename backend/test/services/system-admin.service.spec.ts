@@ -66,7 +66,6 @@ describe("SystemAdminService", () => {
         isActive: true,
         createdAt: new Date("2026-01-01T00:00:00.000Z"),
         updatedAt: new Date("2026-02-01T00:00:00.000Z"),
-        smsSenderPhone: "1577-0000",
         smsSenderApprovalStatus: "pending",
         smsSenderApprovalRequestedAt: new Date("2026-03-01T00:00:00.000Z"),
         smsSenderApprovalApprovedAt: null,
@@ -278,7 +277,6 @@ describe("SystemAdminService", () => {
                 updatedAt: "2026-02-01T00:00:00.000Z",
                 owner: ownerOf(),
                 messageSenderApproval: {
-                    senderPhone: "1577-0000",
                     approvalStatus: "pending",
                     requestedAt: "2026-03-01T00:00:00.000Z",
                     approvedAt: null,
@@ -298,7 +296,6 @@ describe("SystemAdminService", () => {
                     isActive: null, // defaults to false
                     createdAt: null,
                     updatedAt: null,
-                    smsSenderPhone: null,
                     smsSenderApprovalStatus: null,
                     smsSenderApprovalRequestedAt: null,
                     smsSenderApprovalApprovedAt: null,
@@ -318,7 +315,6 @@ describe("SystemAdminService", () => {
                 createdAt: null,
                 updatedAt: null,
                 messageSenderApproval: {
-                    senderPhone: null,
                     approvalStatus: "not_requested",
                     requestedAt: null,
                     approvedAt: null,

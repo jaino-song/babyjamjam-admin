@@ -20,16 +20,20 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import {
+  DetailEmptyState,
   DetailPanel,
   DetailSkeleton,
   InfoCard,
   InfoRow,
+  AnimatedSlotList,
+  AnimatedSlotListItemContent,
   ListEmptyState,
   ListPanel,
   PageSection,
   SectionNav,
   SplitLayout,
   StatsBar,
+  type SplitLayoutMode,
   type StatsBarItem,
 } from "@/components/app/v3";
 import { NotificationTestSection } from "@/components/app/settings/NotificationTestSection";
@@ -1129,7 +1133,6 @@ function buildBranchRecords(branches: readonly SystemAdminBranchRequest[]): Admi
             detailRows: [
               { label: "기관명", value: branch.name },
               { label: "요청 기능", value: "SMS/LMS 발송" },
-              { label: "발신번호", value: branch.messageSenderApproval.senderPhone ?? "-" },
               { label: "상태", value: "접수 대기" },
             ],
             action: {
@@ -1260,7 +1263,7 @@ function createInitialViewState(
     acc[section.id] = {
       tab: "all",
       search: "",
-      selectedRecordId: section.records[0]?.id ?? null,
+      selectedRecordId: null,
     };
 
     return acc;
@@ -1271,23 +1274,25 @@ function resolveSelectedRecordId(
   section: AdminSection,
   nextTab: string,
   nextSearch: string,
-  preferredSelectedRecordId: string | null
+  preferredSelectedRecordId: string | null,
+  shouldAutoSelectFirst: boolean
 ) {
-  if (preferredSelectedRecordId === null) {
-    return null;
-  }
-
   const visibleRecords = filterSectionRecords(section, nextTab, nextSearch);
+
+  if (preferredSelectedRecordId === null) {
+    return shouldAutoSelectFirst ? (visibleRecords[0]?.id ?? null) : null;
+  }
 
   if (visibleRecords.some((record) => record.id === preferredSelectedRecordId)) {
     return preferredSelectedRecordId;
   }
 
-  return visibleRecords[0]?.id ?? null;
+  return shouldAutoSelectFirst ? (visibleRecords[0]?.id ?? null) : null;
 }
 
 export function OwnerAdminConsole() {
   const [activeSectionId, setActiveSectionId] = useState<AdminSectionId>("signups");
+  const [splitLayoutMode, setSplitLayoutMode] = useState<SplitLayoutMode | null>(null);
   const queryClient = useQueryClient();
   const {
     data: systemAdminUsers = [],
@@ -1347,14 +1352,18 @@ export function OwnerAdminConsole() {
   const filteredRecords = useMemo(() => {
     return filterSectionRecords(activeSection, activeViewState.tab, deferredSearchQuery);
   }, [activeSection, activeViewState.tab, deferredSearchQuery]);
+  const shouldAutoSelectFirstRecord = splitLayoutMode === "desktop";
   const resolvedSelectedRecordId =
     activeViewState.selectedRecordId === null
-      ? null
+      ? shouldAutoSelectFirstRecord
+        ? (filteredRecords[0]?.id ?? null)
+        : null
       : resolveSelectedRecordId(
           activeSection,
           activeViewState.tab,
           deferredSearchQuery,
-          activeViewState.selectedRecordId
+          activeViewState.selectedRecordId,
+          shouldAutoSelectFirstRecord
         );
 
   const selectedRecord = useMemo(
@@ -1393,6 +1402,7 @@ export function OwnerAdminConsole() {
         <div className="min-h-0 flex-1">
           <SplitLayout
             hasSelection={!!selectedRecord}
+            onModeChange={setSplitLayoutMode}
             onBack={() =>
               updateActiveSectionState((current) => ({
                 ...current,
@@ -1415,7 +1425,8 @@ export function OwnerAdminConsole() {
                           activeSection,
                           nextTab,
                           current.search,
-                          current.selectedRecordId
+                          current.selectedRecordId,
+                          shouldAutoSelectFirstRecord
                         ),
                       }))
                   : undefined
@@ -1429,43 +1440,53 @@ export function OwnerAdminConsole() {
                     activeSection,
                     current.tab,
                     nextSearch,
-                    current.selectedRecordId
+                    current.selectedRecordId,
+                    shouldAutoSelectFirstRecord
                   ),
                 }))
               }
               searchPlaceholder={activeSection.searchPlaceholder}
             >
-              {isAccountsSectionLoading ? (
-                <div data-component="system-admin-accounts-list-skeleton" className="space-y-2 pb-4">
-                  {Array.from({ length: 5 }).map((_, index) => (
-                    <div
-                      key={index}
-                      data-component="system-admin-accounts-list-skeleton-item"
-                      className="min-h-[76px] rounded-[18px] border-2 border-transparent bg-white p-4"
-                    >
-                      <div className="flex min-h-11 items-center gap-3">
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-v3-dim-white">
-                          <Skeleton className="h-4 w-4 rounded-md bg-white/70" />
-                        </div>
-                        <div className="min-w-0 flex-1 space-y-2">
-                          <Skeleton className="h-4 w-28 bg-v3-dim-white" />
-                          <Skeleton className="h-3 w-44 bg-v3-dim-white" />
-                        </div>
-                        <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white" />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : filteredRecords.length === 0 ? (
+              {!isAccountsSectionLoading && filteredRecords.length === 0 ? (
                 <ListEmptyState
-                  name="system-admin-list-empty"
-                  icon={activeSection.icon}
                   message={activeSection.emptyMessage}
                 />
               ) : (
-                <div className="space-y-2 pb-4">
-                  {filteredRecords.map((record, index) => {
-                    const isActive = record.id === selectedRecord?.id;
+                <AnimatedSlotList<AdminRecord>
+                  items={filteredRecords}
+                  isLoading={isAccountsSectionLoading}
+                  loadingCount={5}
+                  className="space-y-2"
+                  itemDataComponent="system-admin-list-item"
+                  getItemKey={(record) => record.id}
+                  getSlotState={({ item, isLoading: slotLoading }) => ({
+                    isActive: !slotLoading && item?.id === selectedRecord?.id,
+                    isInteractive: !slotLoading && Boolean(item),
+                  })}
+                  onSlotClick={(record) =>
+                    updateActiveSectionState((current) => ({
+                      ...current,
+                      selectedRecordId: record.id,
+                    }))
+                  }
+                  render={({ item: record, isLoading: slotLoading }) => {
+                    if (slotLoading) {
+                      return (
+                        <div data-component="system-admin-accounts-list-skeleton-row" className="flex min-h-11 items-center gap-3">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-v3-dim-white">
+                            <Skeleton className="h-4 w-4 rounded-md bg-white/70" />
+                          </div>
+                          <div className="min-w-0 flex-1 space-y-2">
+                            <Skeleton className="h-4 w-28 bg-v3-dim-white" />
+                            <Skeleton className="h-3 w-44 bg-v3-dim-white" />
+                          </div>
+                          <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white" />
+                        </div>
+                      );
+                    }
+
+                    if (!record) return null;
+
                     const isUserAvatarSection = usesUserAvatar(activeSection.id);
                     const ListIcon = isUserAvatarSection ? UserKey : activeSection.id === "branches" ? Building2 : STATUS_ICON[record.statusVariant];
                     const rolePillLabel = activeSection.id === "accounts" ? record.listStatusLabel : null;
@@ -1480,60 +1501,38 @@ export function OwnerAdminConsole() {
                     const branchHiddenPillCount = isBranchSection && branchRequestCount > 1 ? branchRequestCount - 1 : 0;
                     const hasBranchAsidePill = isBranchSection && activeViewState.tab !== "all" && branchRequestCount > 0;
                     const hasSingleAsidePill = !isBranchSection && listPillItems.length === 1;
+                    const hasInlinePills = !isBranchSection && !hasSingleAsidePill && listPillItems.length > 0;
 
                     return (
-                      <button
-                        key={record.id}
-                        type="button"
-                        data-component="system-admin-list-item"
-                        onClick={() =>
-                          updateActiveSectionState((current) => ({
-                            ...current,
-                            selectedRecordId: record.id,
-                          }))
+                      <AnimatedSlotListItemContent
+                        dataComponent="system-admin-list-item"
+                        icon={ListIcon}
+                        iconContainerClassName={cn(CATEGORY_BADGE_STYLE[record.category]?.icon ?? activeTheme.accentIcon)}
+                        title={record.listTitle ?? record.title}
+                        subtitle={listSubtitle}
+                        meta={
+                          listSummary || hasInlinePills ? (
+                            <>
+                              {listSummary ? (
+                                <span className="min-w-0 truncate text-v3-text">{listSummary}</span>
+                              ) : null}
+                              {hasInlinePills
+                                ? listPillItems.map((pill) => (
+                                    <TagPill
+                                      key={pill.label}
+                                      variant={pill.variant}
+                                    >
+                                      {pill.label}
+                                    </TagPill>
+                                  ))
+                                : null}
+                            </>
+                          ) : undefined
                         }
-                        style={{ animationDelay: `${index * 0.04}s` }}
-                        className={cn(
-                          "animate-v3-pop-up w-full min-h-[76px] rounded-[18px] border-2 border-transparent bg-white p-4 text-left transition-all duration-200",
-                          "hover:bg-v3-primary-light/50 hover:border-v3-primary/30",
-                          isActive && "border-v3-primary bg-v3-primary-light"
-                        )}
-                      >
-                        <div className="flex min-h-11 items-center gap-3">
-                          <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px]", CATEGORY_BADGE_STYLE[record.category]?.icon ?? activeTheme.accentIcon)}>
-                            <ListIcon className="h-4 w-4" />
-                          </div>
-
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-[0.85rem] font-semibold text-v3-dark">
-                              {record.listTitle ?? record.title}
-                            </p>
-                            {listSubtitle ? (
-                              <p className="mt-0.5 truncate text-[0.7rem] text-v3-text-muted">
-                                {listSubtitle}
-                              </p>
-                            ) : null}
-                            {listSummary ? (
-                              <p className="mt-1.5 min-w-0 truncate text-[0.74rem] text-v3-text">
-                                {listSummary}
-                              </p>
-                            ) : null}
-                            {!isBranchSection && !hasSingleAsidePill && listPillItems.length > 0 ? (
-                              <div className="mt-2 flex flex-wrap items-center gap-1">
-                                {listPillItems.map((pill) => (
-                                  <TagPill
-                                    key={pill.label}
-                                    variant={pill.variant}
-                                  >
-                                    {pill.label}
-                                  </TagPill>
-                                ))}
-                              </div>
-                            ) : null}
-                          </div>
-
-                          {hasBranchAsidePill ? (
-                            <div className="ml-auto flex shrink-0 items-center gap-1 self-center whitespace-nowrap pl-2">
+                        metaClassName="flex-wrap gap-1 whitespace-normal"
+                        status={
+                          hasBranchAsidePill ? (
+                            <div className="flex shrink-0 items-center gap-1 self-center whitespace-nowrap">
                               <TagPill variant={listPillItems[0].variant}>
                                 {listPillItems[0].label}
                               </TagPill>
@@ -1544,17 +1543,17 @@ export function OwnerAdminConsole() {
                               ) : null}
                             </div>
                           ) : hasSingleAsidePill ? (
-                            <div className="ml-auto flex shrink-0 items-center self-center">
+                            <div className="flex shrink-0 items-center self-center">
                               <TagPill variant={listPillItems[0].variant}>
                                 {listPillItems[0].label}
                               </TagPill>
                             </div>
-                          ) : null}
-                        </div>
-                      </button>
+                          ) : undefined
+                        }
+                      />
                     );
-                  })}
-                </div>
+                  }}
+                />
               )}
             </ListPanel>
 
@@ -1763,12 +1762,12 @@ export function OwnerAdminConsole() {
                 title={activeSection.listTitle}
                 subtitle={activeSection.detailEmptyMessage}
                 overlay={
-                  <div data-component="system-admin-detail-empty" className="flex items-center justify-center flex-none min-h-0">
-                    <div className="text-center text-v3-text-muted">
-                      <activeSection.icon className="mx-auto mb-3 h-12 w-12 opacity-30" />
-                      <p className="text-[0.85rem]">{activeSection.detailEmptyMessage}</p>
-                    </div>
-                  </div>
+                  <DetailEmptyState
+                    name="system-admin-detail-empty"
+                    icon={activeSection.icon}
+                    message={activeSection.detailEmptyMessage}
+                    className="flex-none min-h-0"
+                  />
                 }
               >
                 {null}

@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>통화요약 (Call Inbox) — 전체 워크플로</title>
+<style>
+  :root {
+    --ink:#1f2430; --sub:#697086; --line:#dcdfe6; --bg:#f5f6f8; --card:#fff;
+    --incheon:#0c8599; --incheon-bg:#e6f7f9;
+    --bucheon:#e8590c; --bucheon-bg:#fdf0e7;
+    --backend:#343a8f; --backend-bg:#eef0fc;
+    --staff:#2b6fdb; --staff-bg:#eaf2fe;
+    --token:#b54708; --token-bg:#fff3cd;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Apple SD Gothic Neo","Pretendard",sans-serif;background:var(--bg);color:var(--ink);padding:36px;line-height:1.5}
+  h1{font-size:21px;margin-bottom:4px}
+  .sub{color:var(--sub);font-size:13px;margin-bottom:26px}
+  h2{font-size:15px;margin:34px 0 12px;display:flex;align-items:center;gap:8px}
+  h2 .n{background:var(--ink);color:#fff;border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:12px}
+  .zone{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;max-width:980px}
+  .zone-title{font-size:12px;font-weight:800;color:var(--sub);letter-spacing:.4px;margin-bottom:10px}
+  .arrow{max-width:980px;text-align:center;color:var(--sub);font-size:12px;padding:6px 0}
+  .arrow b{font-size:15px;display:block}
+  .lanes{display:flex;gap:14px;flex-wrap:wrap}
+  .lane{flex:1;min-width:280px;border-radius:12px;padding:12px;border:2px solid}
+  .lane.incheon{border-color:var(--incheon);background:var(--incheon-bg)}
+  .lane.bucheon{border-color:var(--bucheon);background:var(--bucheon-bg)}
+  .lane h3{font-size:13px;margin-bottom:8px}
+  .lane.incheon h3{color:var(--incheon)} .lane.bucheon h3{color:var(--bucheon)}
+  .step{background:#fff;border:1px solid var(--line);border-radius:9px;padding:8px 10px;font-size:12.5px;margin-bottom:6px;position:relative}
+  .step small{display:block;color:var(--sub);font-size:11px}
+  .down{ text-align:center;color:var(--sub);font-size:12px;margin:2px 0 6px}
+  .token{display:inline-block;background:var(--token-bg);border:1.5px dashed var(--token);color:var(--token);font-weight:700;border-radius:7px;padding:2px 7px;font-size:11.5px;font-family:ui-monospace,monospace}
+  .keybox{max-width:980px;background:var(--token-bg);border:2px solid var(--token);border-radius:12px;padding:14px 18px;margin-top:14px;font-size:13.5px}
+  .keybox b{color:var(--token)}
+  .backendzone{border:2px solid var(--backend);background:var(--backend-bg)}
+  .staffzone{border:2px solid var(--staff);background:var(--staff-bg)}
+  .flowrow{display:flex;gap:10px;flex-wrap:wrap;align-items:stretch}
+  .fbox{flex:1;min-width:150px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:12.5px;text-align:center}
+  .fbox b{display:block;font-size:13px;margin-bottom:3px}
+  .fbox small{color:var(--sub);font-size:11px;line-height:1.4;display:block}
+  .fsep{display:flex;align-items:center;color:var(--sub);font-weight:700}
+  .branch3{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+  .b3{flex:1;min-width:200px;border-radius:10px;padding:10px;font-size:12.5px;background:#fff;border-left:5px solid}
+  .b3.new{border-color:#0ca678} .b3.chg{border-color:#e8590c} .b3.etc{border-color:#868e96}
+  .b3 b{display:block;margin-bottom:3px}
+  .b3 small{color:var(--sub)}
+  .cards3{display:flex;gap:14px;flex-wrap:wrap;max-width:980px}
+  .card3{flex:1;min-width:250px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .card3 .num{width:26px;height:26px;border-radius:50%;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;margin-bottom:8px}
+  .card3 b{font-size:13.5px}
+  .card3 p{font-size:12.5px;color:var(--sub);margin-top:5px}
+  .card3 code{background:#f1f3f5;border-radius:5px;padding:1px 5px;font-size:11px}
+  .note{font-size:12px;color:var(--sub);margin-top:8px;max-width:980px}
+  .pill{display:inline-block;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:700;color:#fff}
+  .pill.ok{background:#0ca678}.pill.warn{background:#e8590c}.pill.dim{background:#868e96}
+</style>
+</head>
+<body>
+
+<h1>📞 통화요약 (Call Inbox) — 전체 워크플로</h1>
+<p class="sub">통화 녹음이 고객 등록까지 흘러가는 길과, "지점 구분이 어디서 일어나는지"를 한눈에.</p>
+
+<!-- ════════ 1. 지점 → Drive → n8n ════════ -->
+<h2><span class="n">1</span> 지점마다 하나의 레인: 폴더 + 토큰이 한 쌍</h2>
+<div class="zone">
+  <div class="zone-title">파일은 지점별 레인을 따라 흐릅니다 — 레인을 섞을 방법이 없습니다</div>
+  <div class="lanes">
+
+    <div class="lane incheon">
+      <h3>🟦 인천점 레인</h3>
+      <div class="step">📱 지점 직원 폰: 통화 자동 녹음
+        <small>녹음 앱이 Drive 폴더로 자동 업로드</small></div>
+      <div class="down">▼</div>
+      <div class="step">📁 Drive 폴더 「Call Recordings — 인천점」
+        <small>운영자 Google 계정에 <b>공유만</b> — 지점 Google 연동 없음</small></div>
+      <div class="down">▼</div>
+      <div class="step">🔄 n8n 워크플로 <b>인천점 복제본</b>
+        <small>① 새 파일 감지 → ② Gemini 전사+용어교정(2단계) → ③ JSON 변환</small>
+        <small style="margin-top:4px">④ 전송 시 <span class="token">인천점 토큰 cit_Ks-…</span> 을 머리에 붙임</small></div>
+    </div>
+
+    <div class="lane bucheon">
+      <h3>🟧 부천점 레인 (미래에 추가될 예)</h3>
+      <div class="step">📱 부천점 폰 → 자동 업로드</div>
+      <div class="down">▼</div>
+      <div class="step">📁 「Call Recordings — 부천점」<small>역시 운영자 계정에 공유</small></div>
+      <div class="down">▼</div>
+      <div class="step">🔄 n8n 워크플로 <b>부천점 복제본</b>
+        <small>같은 템플릿, 다른 두 칸: 폴더 ID + <span class="token">부천점 토큰 cit_Xy…</span></small></div>
+    </div>
+
+  </div>
+</div>
+
+<div class="keybox">
+  🔑 <b>지점 구분의 핵심 = 토큰.</b> 녹음 파일에도, 파일명에도, 전송 내용(payload)에도 지점 정보는 <b>없습니다</b>.
+  워크플로 복제본이 들고 있는 <span class="token">cit_ 토큰</span>이 곧 지점입니다.
+  백엔드는 토큰만 보고 지점을 판별하므로, 잘못 설정된(또는 유출된) 워크플로도 <b>자기 지점 안에만</b> 쓸 수 있습니다.
+  지점 연결 해제 = 토큰 1개 폐기(revoke).
+</div>
+
+<div class="arrow"><b>▼</b> POST api.babyjamjam.com/webhooks/call-transcripts (Authorization: Bearer cit_…)</div>
+
+<!-- ════════ 2. Backend ════════ -->
+<h2><span class="n">2</span> 백엔드: 토큰 → 지점 도장 → 자동 분석</h2>
+<div class="zone backendzone">
+  <div class="zone-title" style="color:var(--backend)">api.babyjamjam.com (Railway)</div>
+  <div class="flowrow">
+    <div class="fbox"><b>🔐 토큰 검사</b><small>토큰 해시 조회 → <b>branchId 도장</b><br>모르는/폐기된 토큰 → 401 거절</small></div>
+    <div class="fsep">→</div>
+    <div class="fbox"><b>🧾 중복 방지</b><small>같은 Drive 파일 ID 재전송<br>→ 무시 (n8n 재시도 안전)</small></div>
+    <div class="fsep">→</div>
+    <div class="fbox"><b>💾 통화 기록 저장</b><small>call_record (지점 도장 포함)<br>스크립트·요약 보존</small></div>
+    <div class="fsep">→</div>
+    <div class="fbox"><b>🤖 Gemini 분석</b><small>통화 분류 + 고객정보 추출<br>(이름·연락처·출산예정일·기간…)<br>실패 시 10분마다 자동 재시도</small></div>
+  </div>
+
+  <div class="branch3">
+    <div class="b3 new"><b><span class="pill ok">신규 상담</span> 새 고객 문의</b>
+      고객 드래프트(NEW_CLIENT) 생성 → 검토 대기줄에 등장<small><br>추출 필드마다 근거 인용 + 확신도 표시</small></div>
+    <div class="b3 chg"><b><span class="pill warn">변경 요청</span> 기존 고객 요청</b>
+      전화번호로 기존 고객 자동 매칭 → 변경 드래프트(CLIENT_UPDATE)<small><br>Phase 1: 열람·폐기 가능, 원탭 적용은 Phase 2</small></div>
+    <div class="b3 etc"><b><span class="pill dim">기타</span> 주차·제휴·스팸 등</b>
+      기록만 남김 (통화 기록 탭에서 검색·열람)<small><br>드래프트 없음 — 검토줄을 어지럽히지 않음</small></div>
+  </div>
+</div>
+
+<div class="arrow"><b>▼</b> 직원이 앱을 열면</div>
+
+<!-- ════════ 3. Staff ════════ -->
+<h2><span class="n">3</span> 직원 검토: 사람이 확인하기 전엔 아무 일도 안 일어남</h2>
+<div class="zone staffzone">
+  <div class="zone-title" style="color:var(--staff)">m.staff 모바일 — 하단 탭 「통화요약」 (대기 건수 배지)</div>
+  <div class="flowrow">
+    <div class="fbox"><b>📥 검토 대기</b><small>신규상담/변경요청 카드<br>⚠ 확신도 낮음 · 중복 가능 표시</small></div>
+    <div class="fsep">→</div>
+    <div class="fbox"><b>✏️ 확인·수정</b><small>추출값이 미리 채워진 폼<br>🎙 근거 인용 탭 → 스크립트 해당 발화로 이동</small></div>
+    <div class="fsep">→</div>
+    <div class="fbox"><b>✅ [고객 등록]</b><small>기존 고객 생성 경로 그대로<br><b>인사 문자도 이 순간에만 발송</b></small></div>
+    <div class="fsep">또는</div>
+    <div class="fbox"><b>🗑 [폐기]</b><small>오인식·관계없는 통화<br>기록은 통화 기록 탭에 남음</small></div>
+  </div>
+  <p class="note">같은 드래프트를 두 명이 동시에 등록해도 한 명만 성공(다른 한 명은 409) — 중복 고객 생성 차단.</p>
+</div>
+
+<!-- ════════ 4. Onboarding ════════ -->
+<h2><span class="n">4</span> 새 지점 연결 = 코드 없이 3가지만</h2>
+<div class="cards3">
+  <div class="card3"><div class="num">1</div><b>토큰 발급 (백엔드)</b>
+    <p><code>POST /branches/:id/call-ingest-tokens</code> → <code>cit_…</code> 평문은 딱 한 번 표시. 이 토큰이 그 지점의 신분증.</p></div>
+  <div class="card3"><div class="num">2</div><b>폴더 공유 (Google Drive)</b>
+    <p>지점 전용 녹음 폴더를 만들어 <b>운영자 Google 계정에 공유</b>. 지점 폰의 자동업로드 앱이 이 폴더를 향하게 설정. 지점 측 Google 연동/로그인 불필요.</p></div>
+  <div class="card3"><div class="num">3</div><b>워크플로 복제 (n8n)</b>
+    <p>템플릿(<code>docs/n8n/…template.json</code>) 가져오기 → 폴더 ID와 토큰 두 칸만 교체 → 활성화. 테스트 녹음 1개 떨어뜨려 통화요약에 뜨는지 확인.</p></div>
+</div>
+<p class="note">해제는 역순 한 칸: 토큰 폐기(revoke) 하나로 그 지점 유입이 즉시 차단됩니다.</p>
+
+</body>
+</html>

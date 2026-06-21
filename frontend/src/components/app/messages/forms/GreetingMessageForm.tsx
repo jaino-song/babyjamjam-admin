@@ -5,14 +5,24 @@ import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { renderTemplate } from "@/lib/template-utils";
-import { GeneratedMsg } from "../templates/GeneratedMsg";
+import { AutoFillMsgCard } from "../templates/AutoFillMsgCard";
+import {
+  TemplateMessageFormFrame,
+  type TemplateMessageFormLayout,
+} from "./form-components/TemplateMessageFormLayout";
 
 
 interface GreetingMessageFormProps {
   onPreviewMessageChange?: (message: string) => void;
+  renderLayout?: TemplateMessageFormLayout;
+  showMessageSide?: boolean;
 }
 
-export const GreetingMessageForm = ({ onPreviewMessageChange }: GreetingMessageFormProps) => {
+export const GreetingMessageForm = ({
+  onPreviewMessageChange,
+  renderLayout,
+  showMessageSide = true,
+}: GreetingMessageFormProps) => {
   const locale = useLocale();
   const [generatedMessage, setGeneratedMessage] = useState("");
   const [isDirty, setIsDirty] = useState(false);
@@ -33,27 +43,29 @@ export const GreetingMessageForm = ({ onPreviewMessageChange }: GreetingMessageF
     alert(t(locale, "common.copy-success-message"));
   };
 
+  const messageCard = displayMessage ? (
+    <AutoFillMsgCard
+      title={t(locale, "common.generated-message-title")}
+      copyButtonText={t(locale, "common.copy-button")}
+      message={displayMessage}
+      bodyDescription={systemTemplate?.description || "기본 인사 메시지를 검토하고 바로 수정할 수 있습니다."}
+      onMessageChange={(message) => {
+        setIsDirty(true);
+        setGeneratedMessage(message);
+      }}
+      handleCopy={handleCopy}
+      showSide={showMessageSide}
+    />
+  ) : null;
+
   return (
-    <div
-      data-component="messages-greeting-form"
-      className="flex w-full flex-col animate-fade-in"
-    >
-      <div className="flex flex-col">
-        {/* generated message */}
-        {displayMessage && (
-          <GeneratedMsg
-            title={t(locale, "common.generated-message-title")}
-            copyButtonText={t(locale, "common.copy-button")}
-            message={displayMessage}
-            bodyDescription={systemTemplate?.description || "기본 인사 메시지를 검토하고 바로 수정할 수 있습니다."}
-            onMessageChange={(message) => {
-              setIsDirty(true);
-              setGeneratedMessage(message);
-            }}
-            handleCopy={handleCopy}
-          />
-        )}
-      </div>
-    </div>
+    <TemplateMessageFormFrame
+      dataComponent="messages-greeting-form"
+      className="w-full"
+      fields={null}
+      messageCard={messageCard}
+      requiresRecipientName={false}
+      renderLayout={renderLayout}
+    />
   );
 };

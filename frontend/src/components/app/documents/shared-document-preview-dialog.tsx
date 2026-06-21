@@ -52,6 +52,8 @@ interface PointerPosition {
   y: number;
 }
 
+type PreviewAvailabilityStatus = "idle" | "checking" | "ready" | "missing" | "error";
+
 function clampZoomPercent(value: number): number {
   return Math.min(MAX_ZOOM_PERCENT, Math.max(MIN_ZOOM_PERCENT, value));
 }
@@ -153,9 +155,12 @@ export function SharedDocumentPreviewDialog({
   const isImage = previewKind === "image";
   const isHwp = previewKind === "hwp";
   const isZoomablePreview = isPdf || isImage || isHwp;
+  const [previewAvailabilityStatus, setPreviewAvailabilityStatus] =
+    useState<PreviewAvailabilityStatus>("idle");
   const zoomScale = zoomPercent / 100;
   const pageWidth = Math.max(previewWidth, 320) * zoomScale;
   const zoomPercentRef = useRef(DEFAULT_ZOOM_PERCENT);
+  const isPreviewReady = !isZoomablePreview || previewAvailabilityStatus === "ready";
 
   const applyPinchZoomDelta = (event: Pick<WheelEvent, "deltaMode" | "deltaY">) => {
     pinchWheelRemainderRef.current += normalizeWheelDeltaY(event);
@@ -198,6 +203,76 @@ export function SharedDocumentPreviewDialog({
       observer.disconnect();
     };
   }, [isHwp, isPdf, open]);
+
+  useEffect(() => {
+    let isActive = true;
+    const setPreviewAvailabilityStatusSoon = (status: PreviewAvailabilityStatus) => {
+      queueMicrotask(() => {
+        if (isActive) {
+          setPreviewAvailabilityStatus(status);
+        }
+      });
+    };
+    const resetNumPagesSoon = () => {
+      queueMicrotask(() => {
+        if (isActive) {
+          setNumPages(0);
+        }
+      });
+    };
+
+    if (!open || !isZoomablePreview) {
+      setPreviewAvailabilityStatusSoon("idle");
+      return () => {
+        isActive = false;
+      };
+    }
+
+    const controller = new AbortController();
+    const signal = controller.signal;
+    setPreviewAvailabilityStatusSoon("checking");
+    resetNumPagesSoon();
+
+    void fetch(previewUrl, {
+      method: "HEAD",
+      credentials: "include",
+      cache: "no-store",
+      signal,
+    })
+      .then((response) => {
+        if (signal.aborted) {
+          return;
+        }
+
+        if (response.status === 404) {
+          setPreviewAvailabilityStatus("missing");
+          return;
+        }
+
+        if (!response.ok) {
+          setPreviewAvailabilityStatus("error");
+          return;
+        }
+
+        setPreviewAvailabilityStatus("ready");
+      })
+      .catch((error: unknown) => {
+        if (signal.aborted) {
+          return;
+        }
+
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+
+        setPreviewAvailabilityStatus("error");
+      });
+
+    return () => {
+      isActive = false;
+      controller.abort();
+    };
+  }, [isZoomablePreview, open, previewUrl]);
 
   useEffect(() => {
     zoomPercentRef.current = zoomPercent;
@@ -323,6 +398,7 @@ export function SharedDocumentPreviewDialog({
     setZoomPercent(DEFAULT_ZOOM_PERCENT);
     pinchWheelRemainderRef.current = 0;
     setNumPages(0);
+    setPreviewAvailabilityStatus("idle");
     onClose();
   };
 
@@ -359,12 +435,39 @@ export function SharedDocumentPreviewDialog({
     window.document.body.removeChild(link);
   };
 
+  const renderPreviewAvailabilityMessage = () => {
+    const isChecking =
+      previewAvailabilityStatus === "idle" || previewAvailabilityStatus === "checking";
+    const message =
+      previewAvailabilityStatus === "missing"
+        ? "원본 파일을 찾을 수 없습니다. 파일을 다시 업로드해 주세요."
+        : previewAvailabilityStatus === "error"
+          ? "미리보기를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."
+          : "미리보기 파일을 확인하는 중입니다";
+
+    return (
+      <div className="flex h-full flex-1 items-center justify-center px-6" aria-live="polite">
+        <div
+          className={cn(
+            "flex items-center gap-3 rounded-2xl bg-white px-5 py-4 text-sm font-medium shadow-sm",
+            previewAvailabilityStatus === "missing" || previewAvailabilityStatus === "error"
+              ? "text-v3-burgundy"
+              : "text-v3-text"
+          )}
+        >
+          {isChecking && <Spinner size="sm" className="text-v3-primary" />}
+          {message}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && handleClose()}>
       <DialogContent
         ref={previewDialogContentRef}
         data-component="contracts-document-preview"
-        className={cn("h-[90vh] max-h-[90vh] max-w-4xl flex-col p-0", contentClassName)}
+        className={cn("!flex h-[90vh] max-h-[90vh] max-w-4xl flex-col !overflow-hidden p-0", contentClassName)}
         showCloseButton={false}
       >
         <DialogHeader
@@ -414,7 +517,9 @@ export function SharedDocumentPreviewDialog({
             ref={previewCanvasRef}
             className="relative flex min-h-[400px] flex-1 flex-col overflow-hidden bg-muted/50"
           >
-            {isPdf && (
+            {isZoomablePreview && !isPreviewReady && renderPreviewAvailabilityMessage()}
+
+            {isPdf && isPreviewReady && (
               <div ref={previewViewportRef} className="h-full overflow-auto px-6 py-6">
                 <PdfDocument
                   key={previewKey}
@@ -455,7 +560,7 @@ export function SharedDocumentPreviewDialog({
               </div>
             )}
 
-            {isImage && (
+            {isImage && isPreviewReady && (
               <div className="flex h-full w-full items-center justify-center overflow-auto p-6">
                 <Image
                   src={previewUrl}
@@ -472,7 +577,7 @@ export function SharedDocumentPreviewDialog({
               </div>
             )}
 
-            {isHwp && (
+            {isHwp && isPreviewReady && (
               <div ref={previewViewportRef} className="h-full overflow-auto px-6 py-6">
                 <HwpDocumentPreview
                   key={previewKey}
@@ -497,7 +602,7 @@ export function SharedDocumentPreviewDialog({
               </div>
             )}
 
-            {isZoomablePreview && (
+            {isZoomablePreview && isPreviewReady && (
               <div className="absolute bottom-4 right-4 z-10 flex items-center gap-3 rounded-[18px] border border-border bg-white/95 px-4 py-3 shadow-[0_16px_40px_rgba(15,23,42,0.12)] backdrop-blur-sm">
                 <div className="min-w-[3rem] text-right text-xs font-semibold text-v3-text-muted">
                   확대
@@ -525,13 +630,13 @@ export function SharedDocumentPreviewDialog({
           className="justify-end border-t border-border px-6 py-4"
         >
           {!isHwp && (
-            <Button variant="ghost" onClick={handlePrint}>
+            <Button variant="ghost" onClick={handlePrint} disabled={isZoomablePreview && !isPreviewReady}>
               <Printer className="mr-2 h-4 w-4" />
               인쇄
             </Button>
           )}
           {downloadUrl && (
-            <Button onClick={handleDownload}>
+            <Button onClick={handleDownload} disabled={isZoomablePreview && !isPreviewReady}>
               <Download className="mr-2 h-4 w-4" />
               다운로드
             </Button>

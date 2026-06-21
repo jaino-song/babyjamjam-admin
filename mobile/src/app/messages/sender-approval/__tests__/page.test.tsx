@@ -75,8 +75,6 @@ describe("MessageSenderApprovalPage", () => {
     mockToast.mockClear();
     mockRequestMessageSenderApproval.mockReset();
     mockGetMessageSenderApproval.mockResolvedValue({
-      senderPhone: null,
-      senderPhoneFormatted: null,
       approvalStatus: "not_requested",
       isApproved: false,
       canRequest: true,
@@ -84,8 +82,6 @@ describe("MessageSenderApprovalPage", () => {
       approvedAt: null,
     });
     mockRequestMessageSenderApproval.mockResolvedValue({
-      senderPhone: "01012345678",
-      senderPhoneFormatted: "010-1234-5678",
       approvalStatus: "pending",
       isApproved: false,
       canRequest: true,
@@ -94,31 +90,16 @@ describe("MessageSenderApprovalPage", () => {
     });
   });
 
-  it("formats the sender phone input with hyphens while ignoring non-digits", async () => {
+  it("shows a completion toast and routes to /all after agreeing and submitting", async () => {
     renderPage();
 
-    const input = screen.getByLabelText(/발신 전화번호/);
+    const termsCheckbox = screen.getByLabelText(/알리고 문자 서비스 이용약관/);
 
     await waitFor(() => {
-      expect(input).not.toBeDisabled();
+      expect(termsCheckbox).not.toBeDisabled();
     });
 
-    fireEvent.change(input, { target: { value: "010-1234-abcd5678" } });
-
-    expect(input).toHaveValue("010-1234-5678");
-  });
-
-  it("shows a completion toast and routes to /all after submitting the approval request", async () => {
-    renderPage();
-
-    const input = screen.getByLabelText(/발신 전화번호/);
-
-    await waitFor(() => {
-      expect(input).not.toBeDisabled();
-    });
-
-    fireEvent.change(input, { target: { value: "01012345678" } });
-    fireEvent.click(screen.getByLabelText(/알리고 문자 서비스 이용약관/));
+    fireEvent.click(termsCheckbox);
     fireEvent.click(screen.getByLabelText(/개인정보를 제3자에게 제공/));
     fireEvent.click(screen.getByLabelText(/사전 등록된 번호만 사용할 수 있음/));
     fireEvent.click(screen.getByRole("button", { name: /신청하기/ }));
@@ -126,15 +107,12 @@ describe("MessageSenderApprovalPage", () => {
     await waitFor(() => {
       expect(mockRequestMessageSenderApproval).toHaveBeenCalled();
     });
-    expect(mockRequestMessageSenderApproval.mock.calls[0][0]).toBe("01012345678");
     expect(mockToast).toHaveBeenCalledWith({ description: "신청이 완료되었습니다." });
     expect(mockReplace).toHaveBeenCalledWith("/all");
   });
 
   it("blocks the sender approval form with a pending approval modal", async () => {
     mockGetMessageSenderApproval.mockResolvedValue({
-      senderPhone: "01012345678",
-      senderPhoneFormatted: "010-1234-5678",
       approvalStatus: "pending",
       isApproved: false,
       canRequest: true,

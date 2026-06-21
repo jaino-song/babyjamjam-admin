@@ -216,7 +216,6 @@ describe("SystemSettingController (Integration)", () => {
         it("should approve a pending message sender request as owner", async () => {
             const approvedAt = new Date("2026-06-05T00:00:00.000Z");
             messageSenderApprovalService.approvePendingRequest.mockResolvedValue({
-                senderPhone: "01012345678",
                 approvalStatus: "approved",
                 requestedAt: new Date("2026-06-04T09:00:00.000Z"),
                 approvedAt,
@@ -231,7 +230,6 @@ describe("SystemSettingController (Integration)", () => {
                 userId: expect.any(String),
             });
             expect(response.body).toMatchObject({
-                senderPhone: "01012345678",
                 approvalStatus: "approved",
                 isApproved: true,
                 approvedAt: approvedAt.toISOString(),

@@ -20,7 +20,7 @@
  *
  * RUN (with PROD credentials in env — e.g. a Railway one-off shell):
  *   SUPABASE_URL=... SUPABASE_SERVICE_KEY=... \
- *     pnpm --filter babyjamjam-staff-backend exec ts-node scripts/flip-documents-bucket-private.ts
+ *     pnpm --filter ./backend exec ts-node scripts/flip-documents-bucket-private.ts
  *
  * To also null legacy DB URLs, add DATABASE_URL and FLIP_NULL_LEGACY_STORAGE_URL=1.
  * To revert the bucket to public, add BUCKET_PUBLIC=1.

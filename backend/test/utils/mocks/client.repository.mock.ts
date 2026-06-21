@@ -220,4 +220,8 @@ export class MockClientRepository implements IClientRepository {
             return isStartingSoon && noContractSent;
         });
     }
+
+    async findByPhone(_branchid: string, _normalizedPhone: string): Promise<ClientEntity | null> {
+        return null;
+    }
 }

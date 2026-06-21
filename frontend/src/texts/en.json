@@ -7,7 +7,7 @@
     "unknown": "User"
   },
   "common": {
-    "title": "BabyJamJam Staff",
+    "title": "BabyJamJam Admin",
     "subtitle": "Analog to Digital",
     "start": "Get Started",
     "welcome": "Welcome",
@@ -155,6 +155,7 @@
     "voucher-year-label": "Year",
     "voucher-type-label": "Voucher Type",
     "area-label": "Area",
+    "weeks-label": "Service Weeks",
     "duration-label": "Service Duration",
     "duration-placeholder": "Days",
     "full-price-label": "Total Service Amount",

@@ -43,15 +43,15 @@ jobs:
 
       # Fail fast on the cheapest, most deterministic gate first.
       - name: Type check
-        run: pnpm --filter babyjamjam-staff run type-check
+        run: pnpm --filter ./frontend run type-check
 
       - name: Lint
-        run: pnpm --filter babyjamjam-staff run lint
+        run: pnpm --filter ./frontend run lint
 
       - name: Unit tests
-        run: pnpm --filter babyjamjam-staff test
+        run: pnpm --filter ./frontend test
         env:
           CI: true
 
       - name: Build
-        run: pnpm --filter babyjamjam-staff run build
+        run: pnpm --filter ./frontend run build

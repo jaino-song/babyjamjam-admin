@@ -26,7 +26,6 @@ export function LoginPageMobile() {
     emailVerificationRequired,
     isResendingVerification,
     kakaoLoginUrl,
-    googleLoginUrl,
     setAutoLogin,
     setRememberId,
     handleChange,
@@ -40,14 +39,6 @@ export function LoginPageMobile() {
       window.location.href = kakaoLoginUrl;
     },
     disabled: isLoading,
-  };
-
-  const googleButton = {
-    title: t(locale, "login.google-login"),
-    onClick: () => {
-      window.location.href = googleLoginUrl;
-    },
-    disabled: true,
   };
 
   return (
@@ -177,7 +168,7 @@ export function LoginPageMobile() {
           </div>
         </div>
 
-        <MobileOAuthButtons kakaoButton={kakaoButton} googleButton={googleButton} />
+        <MobileOAuthButtons kakaoButton={kakaoButton} />
 
         <AuthInlineLink
           dataComponent="login-forgot"

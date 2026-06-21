@@ -1,30 +1,55 @@
 "use client";
 
-import { useCallback, useDeferredValue, useMemo, useState } from "react";
+import {
+  cloneElement,
+  isValidElement,
+  useCallback,
+  useDeferredValue,
+  useMemo,
+  useState,
+  type ReactElement,
+} from "react";
 import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import type { SystemTemplateKey } from "@/features/system-templates/types";
 import {
-  useAlimtalkHistory,
-  useUpcomingAlimtalkJobs,
+  useAlimtalkHistory as useMessageDeliveryHistory,
+  useUpcomingAlimtalkJobs as useUpcomingMessageJobs,
 } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
+import {
+  isHistoryRecordInChannel,
+  isUpcomingJobInChannel,
+} from "@/features/alimtalk-triggers/channel";
+import { useAllClients } from "@/features/clients/hooks/use-clients";
 import { useToast } from "@/hooks/use-toast";
 import type {
-  AlimtalkHistoryRecord as ApiAlimtalkHistoryRecord,
   TriggerEventType,
   TriggerRecipientType,
-  TriggerTemplateKey,
   UpcomingAlimtalkJob,
 } from "@/features/alimtalk-triggers/types";
 import { messageDeliveryApi } from "@/services/api";
 import { CustomTemplateForm } from "@/components/app/messages/forms/custom-template-form";
-import { useIsMobile } from "@/hooks/useIsMobile";
+import {
+  getMessageHistoryEmptyStateCopy,
+  getMessageHistoryTemplateLabel as getHistoryTemplateLabel,
+  matchesMessageHistoryQuery as matchesHistoryQuery,
+  MessageHistoryDetailPanel,
+  MESSAGE_HISTORY_FILTER_META,
+  MESSAGE_HISTORY_TABS,
+  normalizeMessageHistoryRecord as normalizeHistoryRecord,
+  formatMessageHistoryDate as formatHistoryDate,
+  type MessageHistoryFilter,
+  type MessageHistoryRecord,
+} from "@/components/app/messages/MessageHistoryDetailPanel";
 import {
   AnimatedSlotList,
+  AnimatedSlotListItemContent,
+  CompactDateSelect,
   DetailEmptyState,
   DetailPanel,
+  DetailTabPanels,
   DetailTabs,
   HeaderActionButton,
   ListEmptyState,
@@ -32,9 +57,13 @@ import {
   PageSection,
   SectionNav,
   SplitLayout,
+  useSplitLayoutSelection,
 } from "@/components/app/v3";
 import { AlimtalkPhonePreview } from "@/components/app/alimtalk/AlimtalkPhonePreview";
-import { Button } from "@/components/ui/button";
+import {
+  AutoFillMsgCardSide,
+  type AutoFillMsgCardVariableItem,
+} from "@/components/app/messages/templates/AutoFillMsgCard";
 import {
   Select,
   SelectContent,
@@ -43,15 +72,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { StatusBadge } from "@/components/app/ui/status-badge";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
+import { findMessageHistoryClient } from "@/lib/message-history/client-match";
 import { cn } from "@/lib/utils";
 import {
-  AlertCircle,
   Bell,
   Briefcase,
   CalendarClock,
-  CalendarRange,
-  CheckCircle2,
   ClipboardList,
   Clock3,
   CreditCard,
@@ -60,11 +88,12 @@ import {
   Heart,
   History,
   Info,
+  Loader2,
   MessageCircle,
   Plus,
   RotateCcw,
+  Send,
   Settings2,
-  UserPlus,
   Users,
   Workflow,
 } from "lucide-react";
@@ -75,8 +104,14 @@ import { ReminderMessageForm } from "@/components/app/messages/forms/ReminderMes
 import { ThanksMessageForm } from "@/components/app/messages/forms/ThanksMessageForm";
 import { SurveyMessageForm } from "@/components/app/messages/forms/SurveyMessageForm";
 import { InfoMessageForm } from "@/components/app/messages/forms/InfoMessageForm";
+import {
+  TemplateSendForm,
+  type TemplateSendFormSubmitState,
+} from "@/components/app/messages/forms/TemplateSendForm";
+import type { TemplateMessageFormLayout } from "@/components/app/messages/forms/form-components/TemplateMessageFormLayout";
 import { MessageTenantApplicationSettings } from "@/components/app/messages/MessageTenantApplicationSettings";
 import { TriggerRulesManager } from "@/components/app/alimtalk/TriggerRulesManager";
+import { Button } from "@/components/ui/button";
 
 type BuiltinTemplateType = "greeting" | "service-info" | "price-info" | "reminder" | "thanks" | "survey" | "info";
 type TemplateFilter = "builtin" | "branch";
@@ -124,35 +159,28 @@ const TEMPLATE_FILTERS: Array<{ value: TemplateFilter; label: string }> = [
 ];
 
 const MESSAGE_SECTIONS = [
+  { id: "send", label: "전송하기", icon: Send },
   { id: "scheduled", label: "발송 예정", icon: Clock3 },
   { id: "history", label: "발송 기록", icon: History },
   { id: "templates", label: "템플릿", icon: FileText },
-  { id: "triggers", label: "발송 트리거 설정", icon: Workflow },
+  { id: "triggers", label: "자동화", icon: Workflow },
   { id: "settings", label: "설정", icon: Settings2 },
 ] as const;
 
 type MessageSectionId = (typeof MESSAGE_SECTIONS)[number]["id"];
-type PlaceholderSectionId = Exclude<MessageSectionId, "templates" | "triggers" | "history">;
+type PlaceholderSectionId = Exclude<MessageSectionId, "send" | "templates" | "triggers" | "history">;
 
-type MessageHistoryStatus = "sent" | "failed" | "pending";
-type MessageHistoryFilter = "all" | MessageHistoryStatus;
+const TEMPLATE_SEND_FORM_ID = "messages-template-send-form-active";
+
+function getMessageHistoryListStatusMeta(status: MessageHistoryRecord["status"]) {
+  return status === "sent"
+    ? { label: "성공", variant: "success" as const }
+    : { label: "실패", variant: "danger" as const };
+}
+
 type MessageHistoryRelativeDateFilter = "all" | "1d" | "7d" | "30d";
 type ScheduledPreviewFilter = "all" | "customer" | "staff";
 type TemplateDetailTab = "details" | "preview";
-
-interface MessageHistoryRecord {
-  id: number;
-  title: string;
-  templateLabel: string;
-  recipientName: string;
-  recipientPhone: string;
-  channelLabel: string;
-  sentAt: string;
-  status: MessageHistoryStatus;
-  messagePreview: string;
-  failureReason?: string;
-  icon: typeof MessageCircle;
-}
 
 const PLACEHOLDER_COPY: Record<
   PlaceholderSectionId,
@@ -262,85 +290,6 @@ const PLACEHOLDER_COPY: Record<
   },
 };
 
-const MESSAGE_HISTORY_STATUS_META: Record<
-  MessageHistoryStatus,
-  { label: string; icon: typeof CheckCircle2; tone: string }
-> = {
-  sent: {
-    label: "발송 성공",
-    icon: CheckCircle2,
-    tone: "bg-emerald-50 text-emerald-600",
-  },
-  failed: {
-    label: "발송 실패",
-    icon: AlertCircle,
-    tone: "bg-red-50 text-red-600",
-  },
-  pending: {
-    label: "재시도 대기",
-    icon: Clock3,
-    tone: "bg-amber-50 text-amber-600",
-  },
-};
-
-const MESSAGE_HISTORY_FILTER_META: Record<
-  MessageHistoryFilter,
-  {
-    label: string;
-    icon: typeof History;
-    badgeTone: string;
-    activeClassName: string;
-    indicatorClassName: string;
-  }
-> = {
-  all: {
-    label: "전체",
-    icon: History,
-    badgeTone: "bg-v3-primary-light text-v3-primary",
-    activeClassName: "text-v3-primary",
-    indicatorClassName: "bg-v3-primary",
-  },
-  sent: {
-    label: "성공",
-    icon: CheckCircle2,
-    badgeTone: "bg-emerald-50 text-emerald-600",
-    activeClassName: "text-emerald-600",
-    indicatorClassName: "bg-emerald-500",
-  },
-  pending: {
-    label: "대기",
-    icon: Clock3,
-    badgeTone: "bg-amber-50 text-amber-600",
-    activeClassName: "text-amber-600",
-    indicatorClassName: "bg-amber-500",
-  },
-  failed: {
-    label: "실패",
-    icon: AlertCircle,
-    badgeTone: "bg-red-50 text-red-600",
-    activeClassName: "text-red-600",
-    indicatorClassName: "bg-red-500",
-  },
-};
-
-const MESSAGE_HISTORY_TABS: {
-  value: MessageHistoryFilter;
-  label: string;
-  activeClassName: string;
-  indicatorClassName: string;
-}[] = (
-  ["all", "sent", "pending", "failed"] as const
-).map((value) => {
-  const meta = MESSAGE_HISTORY_FILTER_META[value];
-
-  return {
-    value,
-    label: meta.label,
-    activeClassName: meta.activeClassName,
-    indicatorClassName: meta.indicatorClassName,
-  };
-});
-
 const MESSAGE_HISTORY_RELATIVE_DATE_OPTIONS: {
   value: MessageHistoryRelativeDateFilter;
   label: string;
@@ -350,6 +299,11 @@ const MESSAGE_HISTORY_RELATIVE_DATE_OPTIONS: {
   { value: "7d", label: "1주일 전" },
   { value: "30d", label: "한달 전" },
 ];
+
+const MESSAGE_HISTORY_MONTH_OPTIONS = Array.from({ length: 12 }, (_, index) => {
+  const value = String(index + 1).padStart(2, "0");
+  return { value, label: `${index + 1}월` };
+});
 
 const SCHEDULED_PREVIEW_TABS: {
   value: ScheduledPreviewFilter;
@@ -417,21 +371,6 @@ const BUILTIN_TEMPLATE_PREVIEW_META: Record<
 };
 
 
-const HISTORY_EVENT_ICON_BY_TYPE: Record<TriggerEventType, typeof MessageCircle> = {
-  CLIENT_CREATED: UserPlus,
-  SERVICE_START: CalendarClock,
-  SERVICE_END: CalendarRange,
-  EMPLOYEE_ASSIGNED: Users,
-};
-
-const HISTORY_TEMPLATE_LABELS: Record<TriggerTemplateKey, string> = {
-  CLIENT_WELCOME: "고객 등록 안내",
-  SERVICE_START_REMINDER: "서비스 시작 리마인드",
-  SERVICE_INFO: "서비스 안내",
-  SERVICE_END_REMINDER: "서비스 종료 안내",
-  EMPLOYEE_ASSIGNED: "직원 배정 완료",
-};
-
 const SCHEDULED_EVENT_LABELS: Record<TriggerEventType, string> = {
   CLIENT_CREATED: "고객 등록",
   SERVICE_START: "서비스 시작",
@@ -449,41 +388,6 @@ const SCHEDULED_VARIABLE_LABELS: Record<string, string> = {
   serviceType: "서비스 유형",
   timingText: "발송 문구",
 };
-
-function getMessageHistoryEmptyStateCopy(filter: MessageHistoryFilter, hasSearchQuery: boolean) {
-  const copyByFilter: Record<MessageHistoryFilter, { title: string; description: string }> = {
-    all: {
-      title: "발송 기록이 없습니다.",
-      description: hasSearchQuery
-        ? "검색어를 바꾸거나 필터를 초기화해 주세요."
-        : "아직 확인할 발송 기록이 없습니다.",
-    },
-    sent: {
-      title: "성공 발송 기록이 없습니다.",
-      description: hasSearchQuery
-        ? "검색어를 바꾸거나 다른 탭을 선택해 주세요."
-        : "정상 발송된 메시지가 아직 없습니다.",
-    },
-    pending: {
-      title: "재시도 대기 기록이 없습니다.",
-      description: hasSearchQuery
-        ? "검색어를 바꾸거나 다른 탭을 선택해 주세요."
-        : "실패 후 재시도 대기 중인 메시지가 없습니다.",
-    },
-    failed: {
-      title: "실패 발송 기록이 없습니다.",
-      description: hasSearchQuery
-        ? "검색어를 바꾸거나 다른 탭을 선택해 주세요."
-        : "발송 실패로 남아 있는 메시지가 없습니다.",
-    },
-  };
-
-  return copyByFilter[filter];
-}
-
-function getHistoryTemplateLabel(templateKey: string) {
-  return HISTORY_TEMPLATE_LABELS[templateKey as TriggerTemplateKey] ?? templateKey;
-}
 
 function getScheduledRecipientBadge(recipientType: TriggerRecipientType) {
   return recipientType === "CLIENT" ? "고객" : "직원";
@@ -543,31 +447,13 @@ function matchesScheduledJobQuery(job: UpcomingAlimtalkJob, query: string) {
   ].some((field) => field && matchesKoreanSearch(field, trimmedQuery));
 }
 
-function normalizeHistoryRecord(record: ApiAlimtalkHistoryRecord): MessageHistoryRecord {
-  const sentAt = record.lastAttemptAt ?? record.updatedAt ?? record.createdAt;
-  const status: MessageHistoryStatus =
-    record.status === "sent" || record.status === "pending" || record.status === "failed"
-      ? record.status
-      : "failed";
-
-  return {
-    id: record.id,
-    title: record.ruleName ?? getHistoryTemplateLabel(record.templateKey),
-    templateLabel: getHistoryTemplateLabel(record.templateKey),
-    recipientName: record.recipientName ?? record.clientName ?? record.employeeName ?? "-",
-    recipientPhone: record.receiver,
-    channelLabel: record.provider,
-    sentAt,
-    status,
-    messagePreview: record.messageBody,
-    failureReason: record.errorMessage ?? undefined,
-    icon: record.eventType ? HISTORY_EVENT_ICON_BY_TYPE[record.eventType] : MessageCircle,
-  };
-}
-
 const FormComponents: Record<
   BuiltinTemplateType,
-  React.ComponentType<{ onPreviewMessageChange?: (message: string) => void }>
+  React.ComponentType<{
+    onPreviewMessageChange?: (message: string) => void;
+    renderLayout?: TemplateMessageFormLayout;
+    showMessageSide?: boolean;
+  }>
 > = {
   greeting: GreetingMessageForm,
   "service-info": ServiceInfoMessageForm,
@@ -583,10 +469,14 @@ function MessageScheduledSection() {
   const [scheduledFilter, setScheduledFilter] = useState<ScheduledPreviewFilter>("all");
   const [scheduledSearchValue, setScheduledSearchValue] = useState("");
   const deferredScheduledSearchValue = useDeferredValue(scheduledSearchValue);
-  const { data: upcomingJobs = [], isLoading } = useUpcomingAlimtalkJobs();
+  const { data: upcomingJobs = [], isLoading } = useUpcomingMessageJobs();
+  const smsUpcomingJobs = useMemo(
+    () => upcomingJobs.filter((job) => isUpcomingJobInChannel(job, "sms")),
+    [upcomingJobs],
+  );
 
   const filteredJobs = useMemo(() => {
-    return upcomingJobs
+    return smsUpcomingJobs
       .filter((job) => {
         const matchesRecipientType =
           scheduledFilter === "all" ||
@@ -601,7 +491,7 @@ function MessageScheduledSection() {
         return matchesScheduledJobQuery(job, deferredScheduledSearchValue);
       })
       .sort((left, right) => new Date(left.scheduledFor).getTime() - new Date(right.scheduledFor).getTime());
-  }, [deferredScheduledSearchValue, scheduledFilter, upcomingJobs]);
+  }, [deferredScheduledSearchValue, scheduledFilter, smsUpcomingJobs]);
 
   const selectedJob = useMemo(() => {
     if (!selectedJobId) return null;
@@ -636,19 +526,8 @@ function MessageScheduledSection() {
               data-component="messages-scheduled-list-badge"
               className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary"
             >
-              {(hasScheduledFilters ? filteredJobs.length : upcomingJobs.length)}개
+              {(hasScheduledFilters ? filteredJobs.length : smsUpcomingJobs.length)}개
             </span>
-          }
-          overlay={
-            !isLoading && filteredJobs.length === 0 ? (
-              <ListEmptyState
-                name="messages-scheduled-list-empty"
-                message={
-                  hasScheduledFilters ? "조건에 맞는 예약 발송 항목이 없습니다." : "발송 예정 항목이 없습니다."
-                }
-                className="flex-none min-h-0"
-              />
-            ) : null
           }
         >
           {(isLoading || filteredJobs.length > 0) ? (
@@ -659,88 +538,57 @@ function MessageScheduledSection() {
                 loadingCount={5}
                 className="space-y-2"
                 itemDataComponent="messages-scheduled-list-item"
-                slotClassName={({ item, isLoading: slotLoading }) =>
-                  cn(
-                    "rounded-[18px] border-2 p-4 text-left transition-all duration-200",
-                    !slotLoading && item?.id === selectedJobId
-                      ? "border-v3-primary bg-v3-primary-light"
-                      : "border-v3-border/70 bg-white hover:border-v3-primary/30 hover:bg-v3-primary-light/40",
-                    !slotLoading && "cursor-pointer",
-                  )
-                }
+                getSlotState={({ item, isLoading: slotLoading }) => ({
+                  isActive: !slotLoading && item?.id === selectedJobId,
+                  isInteractive: !slotLoading && Boolean(item),
+                })}
                 onSlotClick={(item) => setSelectedJobId(item.id)}
-                render={({ item, isLoading: slotLoading }) => {
-                  if (slotLoading) {
-                    return (
-                      <div data-component="messages-scheduled-list-item-body" className="flex items-start gap-3">
-                        <div
-                          data-component="messages-scheduled-list-item-icon"
-                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-v3-dim-white text-v3-primary"
-                        >
-                          <Skeleton className="h-4 w-4 rounded-md bg-white/80" />
-                        </div>
-                        <div
-                          data-component="messages-scheduled-list-item-copy"
-                          className="min-w-0 flex-1 space-y-2"
-                        >
-                          <Skeleton className="h-4 w-28 bg-v3-dim-white" />
-                          <Skeleton className="h-3 w-40 bg-v3-dim-white" />
-                        </div>
-                      </div>
-                    );
-                  }
-
+                render={({ item }) => {
                   if (!item) return null;
 
                   return (
-                    <div data-component="messages-scheduled-list-item-body" className="flex items-start gap-3">
-                      <div
-                        data-component="messages-scheduled-list-item-icon"
-                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-v3-dim-white text-v3-primary"
-                      >
-                        <Clock3 className="h-4 w-4" />
-                      </div>
-                      <div data-component="messages-scheduled-list-item-copy" className="min-w-0 flex-1">
-                        <div
-                          data-component="messages-scheduled-list-item-meta"
-                          className="flex items-center gap-2"
+                    <AnimatedSlotListItemContent
+                      dataComponent="messages-scheduled-list-item"
+                      icon={Clock3}
+                      iconContainerClassName="text-v3-primary"
+                      title={item.payload.recipientName || "-"}
+                      subtitle={`${getHistoryTemplateLabel(item.templateKey)} · ${formatScheduledPreviewDate(item.scheduledFor)}`}
+                      status={
+                        <span
+                          data-component="messages-scheduled-list-item-badge"
+                          className="inline-flex shrink-0 items-center rounded-full bg-white/85 px-2 py-0.5 text-[0.66rem] font-semibold text-v3-primary"
                         >
-                          <p className="truncate text-[0.82rem] font-semibold text-v3-dark">
-                            {item.payload.recipientName || "-"}
-                          </p>
-                          <span
-                            data-component="messages-scheduled-list-item-badge"
-                            className="inline-flex shrink-0 items-center rounded-full bg-white/85 px-2 py-0.5 text-[0.66rem] font-semibold text-v3-primary"
-                          >
-                            {getScheduledRecipientBadge(item.recipientType)}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-[0.74rem] leading-5 text-v3-text-muted">
-                          {`${getHistoryTemplateLabel(item.templateKey)} · ${formatScheduledPreviewDate(item.scheduledFor)}`}
-                        </p>
-                      </div>
-                    </div>
+                          {getScheduledRecipientBadge(item.recipientType)}
+                        </span>
+                      }
+                    />
                   );
                 }}
               />
             </div>
-          ) : null}
+          ) : (
+            <ListEmptyState
+              message={
+                hasScheduledFilters ? "조건에 맞는 예약 발송 항목이 없습니다." : "발송 예정 항목이 없습니다."
+              }
+            />
+          )}
         </ListPanel>
 
         <DetailPanel
-          avatar={
+          avatar={selectedJob ? (
             <div
               data-component="messages-scheduled-detail-avatar"
               className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
             >
               <Clock3 className="h-5 w-5" />
             </div>
-          }
-          title={selectedJob ? `${selectedJob.payload.recipientName || "수신자"} 예약 발송` : "발송 상세"}
+          ) : undefined}
+          title={selectedJob ? `${selectedJob.payload.recipientName || "수신자"} 예약 발송` : undefined}
           subtitle={
             selectedJob
               ? `${getHistoryTemplateLabel(selectedJob.templateKey)} · ${selectedJobPhone}`
-              : "발송 예정 메시지를 선택하면 상세 정보가 표시됩니다."
+              : undefined
           }
           badges={
             selectedJob ? (
@@ -1021,17 +869,6 @@ function MessageSectionPlaceholder({ sectionId }: { sectionId: PlaceholderSectio
               {(isScheduledSection ? filteredPreviewItems.length : copy.items.length)}개
             </span>
           }
-          overlay={
-            filteredPreviewItems.length === 0 ? (
-              <ListEmptyState
-                name="messages-section-placeholder-list-empty"
-                message={
-                  hasScheduledFilters ? "조건에 맞는 예약 발송 항목이 없습니다." : "발송 예정 항목이 없습니다."
-                }
-                className="flex-none min-h-0"
-              />
-            ) : null
-          }
         >
           {filteredPreviewItems.length > 0 ? (
             <div data-component="messages-section-placeholder-list" className="space-y-3 pb-2">
@@ -1040,15 +877,10 @@ function MessageSectionPlaceholder({ sectionId }: { sectionId: PlaceholderSectio
                 isLoading={false}
                 className="space-y-2"
                 itemDataComponent="messages-section-placeholder-list-item"
-                slotClassName={({ item }) =>
-                  cn(
-                    "rounded-[18px] border-2 p-4 text-left transition-all duration-200",
-                    item?.id === selectedPreviewId
-                      ? "border-v3-primary bg-v3-primary-light"
-                      : "border-v3-border/70 bg-white hover:border-v3-primary/30 hover:bg-v3-primary-light/40",
-                    "cursor-pointer"
-                  )
-                }
+                getSlotState={({ item }) => ({
+                  isActive: item?.id === selectedPreviewId,
+                  isInteractive: Boolean(item),
+                })}
                 onSlotClick={(item) => {
                   setSelectedPreviewId(item.id);
                 }}
@@ -1062,50 +894,45 @@ function MessageSectionPlaceholder({ sectionId }: { sectionId: PlaceholderSectio
                     : item.summary;
 
                   return (
-                    <div data-component="messages-section-placeholder-list-item-body" className="flex items-start gap-3">
-                      <div
-                        data-component="messages-section-placeholder-list-item-icon"
-                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-v3-dim-white text-v3-primary"
-                      >
-                        <Icon className="h-4 w-4" />
-                      </div>
-                      <div
-                        data-component="messages-section-placeholder-list-item-copy"
-                        className="min-w-0 flex-1"
-                      >
-                        <div
-                          data-component="messages-section-placeholder-list-item-meta"
-                          className="flex items-center gap-2"
+                    <AnimatedSlotListItemContent
+                      dataComponent="messages-section-placeholder-list-item"
+                      icon={Icon}
+                      iconContainerClassName="text-v3-primary"
+                      title={title}
+                      subtitle={summary}
+                      status={
+                        <span
+                          data-component="messages-section-placeholder-list-item-badge"
+                          className="inline-flex shrink-0 items-center rounded-full bg-white/85 px-2 py-0.5 text-[0.66rem] font-semibold text-v3-primary"
                         >
-                          <p className="truncate text-[0.82rem] font-semibold text-v3-dark">{title}</p>
-                          <span
-                            data-component="messages-section-placeholder-list-item-badge"
-                            className="inline-flex shrink-0 items-center rounded-full bg-white/85 px-2 py-0.5 text-[0.66rem] font-semibold text-v3-primary"
-                          >
-                            {badge}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-[0.74rem] leading-5 text-v3-text-muted">{summary}</p>
-                      </div>
-                    </div>
+                          {badge}
+                        </span>
+                      }
+                    />
                   );
                 }}
               />
             </div>
-          ) : null}
+          ) : (
+            <ListEmptyState
+              message={
+                hasScheduledFilters ? "조건에 맞는 예약 발송 항목이 없습니다." : "발송 예정 항목이 없습니다."
+              }
+            />
+          )}
         </ListPanel>
 
         <DetailPanel
-          avatar={
+          avatar={!isScheduledSection || selectedPreview ? (
             <div
               data-component="messages-section-placeholder-detail-avatar"
               className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
             >
               <Icon className="h-5 w-5" />
             </div>
-          }
-          title={selectedPreview?.detailTitle ?? `${section.label} 상세`}
-          subtitle={detailSubtitle}
+          ) : undefined}
+          title={selectedPreview?.detailTitle ?? (isScheduledSection ? undefined : `${section.label} 상세`)}
+          subtitle={isScheduledSection && !selectedPreview ? undefined : detailSubtitle}
           badges={
             isScheduledSection && selectedPreview ? (
               <span
@@ -1308,32 +1135,10 @@ function MessageSectionPlaceholder({ sectionId }: { sectionId: PlaceholderSectio
               </div>
             )
           ) : isScheduledSection ? null : (
-            <div data-component="messages-section-placeholder-detail-empty" className="space-y-4">
-              <div
-                data-component="messages-section-placeholder-detail-empty-grid"
-                className="grid gap-3 sm:grid-cols-2"
-              >
-                {copy.items.slice(0, 2).map((item) => (
-                  <div
-                    key={item.id}
-                    data-component="messages-section-placeholder-detail-empty-grid-item"
-                    className="rounded-[18px] border border-dashed border-v3-border bg-white px-4 py-4"
-                  >
-                    <p className="text-[0.76rem] font-semibold text-v3-dark">{item.label}</p>
-                    <p className="mt-1 text-[0.74rem] leading-5 text-v3-text-muted">{item.summary}</p>
-                  </div>
-                ))}
-              </div>
-
-              <div
-                data-component="messages-section-placeholder-detail-empty-note"
-                className="rounded-[20px] border border-dashed border-v3-border bg-white/90 p-5"
-              >
-                <p className="text-[0.78rem] leading-6 text-v3-text-muted">
-                  목록 패널과 상세 패널이 연결된 상태로 준비되어 있으므로, 실제 데이터 목록 컴포넌트를 붙이면 이 구조를 그대로 확장할 수 있습니다.
-                </p>
-              </div>
-            </div>
+            <DetailEmptyState
+              name="messages-section-placeholder-detail-empty"
+              message={detailSubtitle}
+            />
           )}
         </DetailPanel>
       </SplitLayout>
@@ -1341,44 +1146,20 @@ function MessageSectionPlaceholder({ sectionId }: { sectionId: PlaceholderSectio
   );
 }
 
-function formatHistoryDate(dateString: string) {
-  return new Date(dateString).toLocaleString("ko-KR", {
-    month: "numeric",
-    day: "numeric",
-    weekday: "short",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
+function matchesHistoryDateParts(sentAt: string, yearFilter: string, monthFilter: string) {
+  if (!yearFilter && !monthFilter) return true;
 
-function matchesHistoryQuery(record: MessageHistoryRecord, query: string) {
-  const trimmedQuery = query.trim().toLowerCase();
-  if (!trimmedQuery) return true;
-
-  const digitQuery = trimmedQuery.replace(/\D/g, "");
-  const recipientDigits = record.recipientPhone.replace(/\D/g, "");
-  if (digitQuery && recipientDigits.includes(digitQuery)) {
-    return true;
-  }
-
-  return [
-    record.title,
-    record.templateLabel,
-    record.recipientName,
-    record.recipientPhone,
-    record.channelLabel,
-    record.messagePreview,
-    record.failureReason ?? "",
-  ].some((field) => field.toLowerCase().includes(trimmedQuery));
-}
-
-function matchesHistoryDate(sentAt: string, dateFilter: string) {
   const targetDate = new Date(sentAt);
   if (Number.isNaN(targetDate.getTime())) return true;
-  const y = targetDate.getFullYear();
-  const m = String(targetDate.getMonth() + 1).padStart(2, "0");
-  const d = String(targetDate.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}` === dateFilter;
+
+  const matchesYear = !yearFilter || String(targetDate.getFullYear()) === yearFilter;
+  const matchesMonth = !monthFilter || String(targetDate.getMonth() + 1).padStart(2, "0") === monthFilter;
+
+  return matchesYear && matchesMonth;
+}
+
+function normalizeDatePart(value: string, emptyValue: string) {
+  return value === emptyValue ? "" : value;
 }
 
 function matchesHistoryRelativeDate(sentAt: string, relativeDateFilter: MessageHistoryRelativeDateFilter) {
@@ -1399,30 +1180,78 @@ function MessageHistorySection() {
   const [searchValue, setSearchValue] = useState("");
   const [statusFilter, setStatusFilter] = useState<MessageHistoryFilter>("all");
   const [relativeDateFilter, setRelativeDateFilter] = useState<MessageHistoryRelativeDateFilter>("all");
-  const [dateFilter, setDateFilter] = useState<string>("");
+  const [dateYear, setDateYear] = useState("");
+  const [dateMonth, setDateMonth] = useState("");
   const [isRetrying, setIsRetrying] = useState(false);
   const deferredSearchValue = useDeferredValue(searchValue);
-  const { data: historyData = [], isLoading, isError } = useAlimtalkHistory();
+  const { data: historyData = [], isLoading, isError } = useMessageDeliveryHistory();
+  const { data: clients = [] } = useAllClients();
   const { toast } = useToast();
+  const smsHistoryData = useMemo(
+    () => historyData.filter((record) => isHistoryRecordInChannel(record, "sms")),
+    [historyData],
+  );
   const historyRecords = useMemo(
-    () => historyData.map((record) => normalizeHistoryRecord(record)),
-    [historyData]
+    () =>
+      smsHistoryData.map((record) => {
+        const matchedClient = findMessageHistoryClient(record, clients);
+        const matchedClientName = matchedClient?.name.trim() ?? "";
+        const normalizedRecord = normalizeHistoryRecord(record, {
+          recipientNameFallback: matchedClientName,
+          recipientListLabelFallback: matchedClientName,
+        });
+
+        if (!matchedClientName) return normalizedRecord;
+
+        return {
+          ...normalizedRecord,
+          recipientName: matchedClientName,
+          recipientListLabel: matchedClientName,
+        };
+      }),
+    [clients, smsHistoryData]
   );
-  const [selectedRecordId, setSelectedRecordId] = useState<number | null>(
-    historyRecords[0]?.id ?? null
-  );
-  const isMobile = useIsMobile();
+  const hasDatePartFilter = Boolean(dateYear || dateMonth);
+  const historyYearOptions = useMemo(() => {
+    const years = new Set<number>();
+    const currentYear = new Date().getFullYear();
+
+    historyRecords.forEach((record) => {
+      const sentDate = new Date(record.sentAt);
+      if (!Number.isNaN(sentDate.getTime())) {
+        years.add(sentDate.getFullYear());
+      }
+    });
+
+    for (let year = currentYear; year >= currentYear - 5; year -= 1) {
+      years.add(year);
+    }
+
+    return Array.from(years).sort((a, b) => b - a);
+  }, [historyRecords]);
+  const handleDateYearChange = useCallback((value: string) => {
+    setDateYear(normalizeDatePart(value, "year"));
+  }, []);
+  const handleDateMonthChange = useCallback((value: string) => {
+    setDateMonth(normalizeDatePart(value, "month"));
+  }, []);
 
   const filteredRecords = useMemo(
     () =>
       historyRecords.filter((record) => {
         const matchesStatus = statusFilter === "all" || record.status === statusFilter;
         const matchesRelativeDate = matchesHistoryRelativeDate(record.sentAt, relativeDateFilter);
-        const matchesDate = !dateFilter || matchesHistoryDate(record.sentAt, dateFilter);
+        const matchesDate = matchesHistoryDateParts(record.sentAt, dateYear, dateMonth);
         return matchesStatus && matchesRelativeDate && matchesDate && matchesHistoryQuery(record, deferredSearchValue);
       }),
-    [dateFilter, deferredSearchValue, historyRecords, relativeDateFilter, statusFilter]
+    [dateMonth, dateYear, deferredSearchValue, historyRecords, relativeDateFilter, statusFilter]
   );
+  const historyRecordIds = useMemo(() => filteredRecords.map((record) => record.id), [filteredRecords]);
+  const {
+    selectedId: selectedRecordId,
+    setSelectedId: setSelectedRecordId,
+    setSplitLayoutMode,
+  } = useSplitLayoutSelection(historyRecordIds);
 
   const emptyStateCopy = getMessageHistoryEmptyStateCopy(
     statusFilter,
@@ -1431,23 +1260,9 @@ function MessageHistorySection() {
   const activeFilterMeta = MESSAGE_HISTORY_FILTER_META[statusFilter];
 
   const selectedRecord = useMemo(() => {
-    if (filteredRecords.length === 0) {
-      return null;
-    }
-
-    if (selectedRecordId !== null) {
-      const matchedRecord = filteredRecords.find((record) => record.id === selectedRecordId);
-      if (matchedRecord) {
-        return matchedRecord;
-      }
-    }
-
-    if (isMobile) {
-      return null;
-    }
-
-    return filteredRecords[0];
-  }, [filteredRecords, isMobile, selectedRecordId]);
+    if (selectedRecordId === null) return null;
+    return filteredRecords.find((record) => record.id === selectedRecordId) ?? null;
+  }, [filteredRecords, selectedRecordId]);
 
   const canRetry = !!selectedRecord && selectedRecord.status !== "sent";
 
@@ -1475,19 +1290,14 @@ function MessageHistorySection() {
   }, [selectedRecord, toast]);
 
   return (
-    <SplitLayout hasSelection={!!selectedRecord} onBack={() => setSelectedRecordId(null)}>
+    <SplitLayout
+      hasSelection={!!selectedRecord}
+      onBack={() => setSelectedRecordId(null)}
+      onModeChange={setSplitLayoutMode}
+    >
       <ListPanel
         title="발송 기록"
         subtitle="발송된 메시지 기록을 볼 수 있어요."
-        overlay={
-          !isLoading && filteredRecords.length === 0 ? (
-            <ListEmptyState
-              name="messages-history-list-empty"
-              message={emptyStateCopy.title}
-              className="flex-none min-h-0"
-            />
-          ) : null
-        }
         tabs={MESSAGE_HISTORY_TABS}
         activeTab={statusFilter}
         onTabChange={(value) => {
@@ -1511,7 +1321,7 @@ function MessageHistorySection() {
         }
         subHeader={
           !isError ? (
-            <div data-component="messages-history-list-filters" className="flex items-center gap-2">
+            <div data-component="messages-history-list-filters" className="flex items-center justify-between gap-2">
               <div data-component="messages-history-list-filter-relative" className="w-[110px] shrink-0">
                 <Select value={relativeDateFilter} onValueChange={(value) => setRelativeDateFilter(value as MessageHistoryRelativeDateFilter)}>
                   <SelectTrigger
@@ -1530,25 +1340,53 @@ function MessageHistorySection() {
                   </SelectContent>
                 </Select>
               </div>
-              <input
+              <div
                 data-component="messages-history-list-filter-date"
-                type="date"
-                value={dateFilter}
-                onChange={(e) => setDateFilter(e.target.value)}
-                className="h-8 flex-1 rounded-[10px] border border-v3-border bg-white px-3 text-[0.76rem] text-v3-dark shadow-xs outline-none focus:border-v3-primary focus:ring-1 focus:ring-v3-primary/30"
-              />
-              {(dateFilter || relativeDateFilter !== "all") && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDateFilter("");
-                    setRelativeDateFilter("all");
-                  }}
-                  className="shrink-0 rounded-[8px] px-2 py-1 text-[0.72rem] font-medium text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-dark"
-                >
-                  초기화
-                </button>
-              )}
+                className="ml-auto flex flex-1 items-center justify-end gap-1.5"
+              >
+                {(hasDatePartFilter || relativeDateFilter !== "all") && (
+                  <button
+                    type="button"
+                    aria-label="필터 초기화"
+                    title="필터 초기화"
+                    data-component="messages-history-list-filter-reset"
+                    onClick={() => {
+                      setDateYear("");
+                      setDateMonth("");
+                      setRelativeDateFilter("all");
+                    }}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-white text-v3-text-muted transition-colors hover:bg-v3-dim-white hover:text-v3-dark"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                )}
+                <CompactDateSelect
+                  value={dateYear || "year"}
+                  onValueChange={handleDateYearChange}
+                  placeholder="연"
+                  dataComponent="messages-history-list-filter-date-year"
+                  contentDataComponent="messages-history-list-filter-date-year-content"
+                  options={[
+                    { label: "연", value: "year" },
+                    ...historyYearOptions.map((year) => ({
+                      label: `${year}년`,
+                      value: String(year),
+                    })),
+                  ]}
+                />
+
+                <CompactDateSelect
+                  value={dateMonth || "month"}
+                  onValueChange={handleDateMonthChange}
+                  placeholder="월"
+                  dataComponent="messages-history-list-filter-date-month"
+                  contentDataComponent="messages-history-list-filter-date-month-content"
+                  options={[
+                    { label: "월", value: "month" },
+                    ...MESSAGE_HISTORY_MONTH_OPTIONS,
+                  ]}
+                />
+              </div>
             </div>
           ) : undefined
         }
@@ -1562,7 +1400,7 @@ function MessageHistorySection() {
             <p className="mt-1 text-[0.8rem] text-red-600">잠시 후 다시 시도해 주세요.</p>
           </div>
         ) : !isLoading && filteredRecords.length === 0 ? (
-          null
+          <ListEmptyState message={emptyStateCopy.title} />
         ) : (
           <>
             <AnimatedSlotList<MessageHistoryRecord>
@@ -1570,15 +1408,12 @@ function MessageHistorySection() {
               isLoading={isLoading}
               loadingCount={4}
               className="space-y-2"
-              slotClassName={({ item, isLoading: slotLoading }) => {
+              getSlotState={({ item, isLoading: slotLoading }) => {
                 const isActive = !slotLoading && item && item.id === selectedRecord?.id;
-                return cn(
-                  "flex items-center gap-2.5 rounded-[16px] border-2 border-transparent bg-white p-3 text-left transition-all duration-200",
-                  !slotLoading && "cursor-pointer",
-                  isActive
-                    ? "border-v3-primary bg-v3-primary-light"
-                    : !slotLoading && "hover:border-v3-primary/30 hover:bg-v3-primary-light/50"
-                );
+                return {
+                  isActive: Boolean(isActive),
+                  isInteractive: !slotLoading && Boolean(item),
+                };
               }}
               onSlotClick={(record) => setSelectedRecordId(record.id)}
               render={({ item: record, isLoading: slotLoading }) => {
@@ -1600,35 +1435,37 @@ function MessageHistorySection() {
                 }
 
                 if (!record) return null;
-                const statusMeta = MESSAGE_HISTORY_STATUS_META[record.status];
+                const statusMeta = getMessageHistoryListStatusMeta(record.status);
                 const ItemIcon = record.icon;
 
                 return (
-                  <>
-                    <div
-                      data-component="messages-history-list-item-icon"
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] bg-v3-dim-white text-v3-primary"
-                    >
-                      <ItemIcon className="h-4 w-4" />
-                    </div>
-
-                    <div data-component="messages-history-list-item-copy" className="min-w-0 flex-1">
-                      <p className="truncate text-[0.82rem] font-semibold text-v3-dark">{record.title}</p>
-                      <p className="mt-0.5 truncate text-[0.72rem] text-v3-text-muted">
-                        {record.recipientName} · {record.recipientPhone} · {formatHistoryDate(record.sentAt)}
-                      </p>
-                    </div>
-
-                    <span
-                      data-component="messages-history-list-item-status"
-                      className={cn(
-                        "inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[0.64rem] font-semibold",
-                        statusMeta.tone
-                      )}
-                    >
-                      {statusMeta.label}
-                    </span>
-                  </>
+                  <AnimatedSlotListItemContent
+                    dataComponent="messages-history-list-item"
+                    icon={ItemIcon}
+                    iconContainerClassName="text-v3-primary"
+                    title={record.title}
+                    subtitle={record.recipientListLabel}
+                    status={
+                      <div
+                        data-component="messages-history-list-item-meta"
+                        className="flex shrink-0 flex-col items-end justify-end gap-1 text-right"
+                      >
+                        <StatusBadge
+                          data-component="messages-history-list-item-status"
+                          variant={statusMeta.variant}
+                          size="sm"
+                        >
+                          {statusMeta.label}
+                        </StatusBadge>
+                        <span
+                          data-component="messages-history-list-item-date"
+                          className="whitespace-nowrap text-[0.68rem] text-v3-text-muted"
+                        >
+                          {formatHistoryDate(record.sentAt)}
+                        </span>
+                      </div>
+                    }
+                  />
                 );
               }}
             />
@@ -1636,118 +1473,24 @@ function MessageHistorySection() {
         )}
       </ListPanel>
 
-      <DetailPanel
-        overlay={
-          !selectedRecord ? (
-            <ListEmptyState
-              name="messages-history-detail-empty"
-              icon={Users}
-              message="발송 기록을 선택하면 상세 정보가 표시됩니다."
-              className="flex-none min-h-0"
-            />
-          ) : null
-        }
-        avatar={
-          <div
-            data-component="messages-history-detail-avatar"
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
-          >
-            <History className="h-5 w-5" />
-          </div>
-        }
-        title={selectedRecord?.title ?? "발송 상세"}
-        subtitle={
-          selectedRecord
-            ? `${selectedRecord.channelLabel} · ${formatHistoryDate(selectedRecord.sentAt)}`
-            : "왼쪽 목록에서 발송 기록을 선택해 주세요."
-        }
-        badges={
-          selectedRecord ? (
-            <span
-              data-component="messages-history-detail-status"
-              className={cn(
-                "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[0.68rem] font-semibold",
-                MESSAGE_HISTORY_STATUS_META[selectedRecord.status].tone
-              )}
-            >
-              {(() => {
-                const StatusIcon = MESSAGE_HISTORY_STATUS_META[selectedRecord.status].icon;
-                return <StatusIcon className="h-3.5 w-3.5" />;
-              })()}
-              {MESSAGE_HISTORY_STATUS_META[selectedRecord.status].label}
-            </span>
-          ) : null
-        }
-        trailing={
-          canRetry ? (
-            <Button
-              data-component="messages-history-detail-retry"
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={handleRetry}
-              disabled={isRetrying}
-              className="rounded-full"
-            >
-              <RotateCcw className={cn("h-3.5 w-3.5", isRetrying && "animate-spin")} />
-              {isRetrying ? "재시도 중" : "재발송"}
-            </Button>
-          ) : null
-        }
-      >
-        {!selectedRecord ? null : (
-          <div data-component="messages-history-detail-content" className="space-y-4">
-            <div
-              data-component="messages-history-detail-preview-card"
-              className="rounded-[18px] border border-v3-border bg-v3-dim-white/30 p-4"
-            >
-              <p className="text-[0.75rem] font-semibold text-v3-text-muted">메시지 내용</p>
-              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-v3-dark">{selectedRecord.messagePreview}</p>
-            </div>
-
-            <div data-component="messages-history-detail-meta-grid" className="grid gap-3 sm:grid-cols-2">
-              <div
-                data-component="messages-history-detail-meta-recipient"
-                className="rounded-[16px] border border-v3-border bg-white p-4"
-              >
-                <p className="text-[0.72rem] font-semibold text-v3-text-muted">수신자</p>
-                <p className="mt-2 text-sm font-semibold text-v3-dark">{selectedRecord.recipientName}</p>
-                <p className="mt-1 text-[0.8rem] text-v3-text-muted">{selectedRecord.recipientPhone}</p>
-              </div>
-
-              <div
-                data-component="messages-history-detail-meta-template"
-                className="rounded-[16px] border border-v3-border bg-white p-4"
-              >
-                <p className="text-[0.72rem] font-semibold text-v3-text-muted">템플릿</p>
-                <p className="mt-2 text-sm font-semibold text-v3-dark">{selectedRecord.templateLabel}</p>
-                <p className="mt-1 text-[0.8rem] text-v3-text-muted">채널: {selectedRecord.channelLabel}</p>
-              </div>
-            </div>
-
-            {selectedRecord.failureReason ? (
-              <div
-                data-component="messages-history-detail-error"
-                className="rounded-[16px] border border-red-200 bg-red-50 p-4"
-              >
-                <p className="text-[0.72rem] font-semibold text-red-600">실패 사유</p>
-                <p className="mt-2 text-sm text-red-700">{selectedRecord.failureReason}</p>
-              </div>
-            ) : null}
-          </div>
-        )}
-      </DetailPanel>
+      <MessageHistoryDetailPanel
+        selectedRecord={selectedRecord}
+        canRetry={canRetry}
+        isRetrying={isRetrying}
+        onRetry={handleRetry}
+      />
     </SplitLayout>
   );
 }
 
 export default function MessagesPage() {
   const locale = useLocale();
-  const [activeSection, setActiveSection] = useState<MessageSectionId>("templates");
+  const [activeSection, setActiveSection] = useState<MessageSectionId>("send");
   const [templateFilter, setTemplateFilter] = useState<TemplateFilter>("builtin");
-  const [selectedValue, setSelectedValue] = useState<string | null>("builtin:greeting");
   const [templateDetailTab, setTemplateDetailTab] = useState<TemplateDetailTab>("details");
   const [templatePreviewOverride, setTemplatePreviewOverride] = useState<string | null>(null);
+  const [templateSendSubmitState, setTemplateSendSubmitState] =
+    useState<TemplateSendFormSubmitState | null>(null);
 
   const { data: userTemplatesData, isLoading: isLoadingUserTemplates } = useMessageTemplates(1, 100);
   const userTemplates = useMemo(() => userTemplatesData ?? [], [userTemplatesData]);
@@ -1764,13 +1507,19 @@ export default function MessagesPage() {
     () => (templateFilter === "builtin" ? BUILTIN_TEMPLATES : userTemplateItems),
     [templateFilter, userTemplateItems]
   );
+  const templateItemIds = useMemo(() => visibleItems.map((item) => item.id), [visibleItems]);
+  const {
+    selectedId: selectedValue,
+    setSelectedId: setSelectedValue,
+    setSplitLayoutMode: setTemplateSplitLayoutMode,
+  } = useSplitLayoutSelection(templateItemIds);
   const isTemplateListLoading = templateFilter === "branch" && isLoadingUserTemplates;
 
   const handleTemplateSelect = useCallback((id: string) => {
     setSelectedValue(id);
     setTemplateDetailTab("details");
     setTemplatePreviewOverride(null);
-  }, []);
+  }, [setSelectedValue]);
 
   const handleTemplateFilterChange = useCallback(
     (nextFilter: TemplateFilter) => {
@@ -1784,18 +1533,15 @@ export default function MessagesPage() {
           return current;
         }
 
-        return nextItems[0]?.id ?? null;
+        return null;
       });
     },
-    [userTemplateItems]
+    [setSelectedValue, userTemplateItems]
   );
 
   const activeTemplateId = useMemo(() => {
-    if (!selectedValue) {
-      return null;
-    }
-
-    return visibleItems.find((item) => item.id === selectedValue)?.id ?? visibleItems[0]?.id ?? null;
+    if (!selectedValue) return null;
+    return visibleItems.find((item) => item.id === selectedValue)?.id ?? null;
   }, [selectedValue, visibleItems]);
 
   const isBuiltin = activeTemplateId?.startsWith("builtin:") ?? false;
@@ -1823,6 +1569,140 @@ export default function MessagesPage() {
     "";
   const templatePreviewHeadline = selectedUserTemplate ? selectedTemplateTitle : builtinPreviewMeta?.headline;
   const templatePreviewSubtitle = selectedUserTemplate ? "지점 템플릿" : builtinPreviewMeta?.subtitle;
+  const templatePreviewGeneratedTitle = t(locale, "common.generated-message-title");
+  const templatePreviewMetaItems = useMemo(
+    () => [
+      { label: "구성 영역", value: templatePreviewGeneratedTitle },
+      { label: "메시지 길이", value: `${templatePreviewMessage.length}자` },
+      {
+        label: "문단 수",
+        value: `${templatePreviewMessage.split("\n").filter((line) => line.trim().length > 0).length}개`,
+      },
+      { label: "편집 상태", value: "수정 가능" },
+    ],
+    [templatePreviewGeneratedTitle, templatePreviewMessage],
+  );
+  const templatePreviewVariableItems = useMemo<AutoFillMsgCardVariableItem[]>(() => {
+    if (selectedUserTemplate?.variables.length) {
+      return selectedUserTemplate.variables.map((variable) => ({
+        token: `{{${variable.key}}}`,
+        label: variable.label,
+        value: "-",
+      }));
+    }
+
+    const tokenPattern = /{{\s*([^{}]+?)\s*}}|#\{([^{}]+?)\}/g;
+    const seenTokens = new Set<string>();
+    const items: AutoFillMsgCardVariableItem[] = [];
+    let match = tokenPattern.exec(templatePreviewMessage);
+
+    while (match) {
+      const token = match[0];
+      const label = match[1] ?? match[2] ?? token;
+
+      if (!seenTokens.has(token)) {
+        seenTokens.add(token);
+        items.push({
+          token,
+          label,
+          value: "-",
+        });
+      }
+
+      match = tokenPattern.exec(templatePreviewMessage);
+    }
+
+    return items;
+  }, [selectedUserTemplate, templatePreviewMessage]);
+  const sendTemplateFormLayout: TemplateMessageFormLayout = ({
+    fields,
+    messageCard,
+    requiresRecipientName,
+  }) => {
+    const flattenedMessageCard = isValidElement(messageCard)
+      ? cloneElement(messageCard as ReactElement<{ layout?: "flat" }>, { layout: "flat" })
+      : messageCard;
+
+    return (
+      <div
+        data-component="messages-template-send-layout"
+        className="grid h-full min-h-0 items-stretch gap-4 xl:grid-cols-[minmax(14rem,0.85fr)_minmax(0,1.45fr)]"
+      >
+        <TemplateSendForm
+          key={activeTemplateId}
+          templateId={activeTemplateId ?? selectedTemplateTitle}
+          templateName={selectedTemplateTitle}
+          message={templatePreviewMessage}
+          requiresRecipientName={requiresRecipientName}
+          className="h-full"
+          formId={TEMPLATE_SEND_FORM_ID}
+          showSubmitButton={false}
+          onSubmitStateChange={setTemplateSendSubmitState}
+        >
+          {fields}
+        </TemplateSendForm>
+        {flattenedMessageCard}
+      </div>
+    );
+  };
+  const selectedTemplateRenderLayout =
+    activeSection === "send" ? sendTemplateFormLayout : undefined;
+  const selectedTemplateHeaderTrailing = activeTemplateId ? (
+    <>
+      {selectedUserTemplate ? (
+        <div
+          data-component="messages-template-detail-summary"
+          className="inline-flex items-center gap-1 rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary"
+        >
+          <FileText className="h-3.5 w-3.5" />
+          {`${selectedUserTemplate.variables.length}개 변수`}
+        </div>
+      ) : null}
+
+      {activeSection === "send" ? (
+        <Button
+          type="submit"
+          form={templateSendSubmitState?.formId ?? TEMPLATE_SEND_FORM_ID}
+          disabled={!templateSendSubmitState || templateSendSubmitState.isSubmitDisabled}
+          className="shrink-0"
+        >
+          {templateSendSubmitState?.isSending ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <Send className="h-4 w-4" aria-hidden="true" />
+          )}
+          {templateSendSubmitState?.isSending ? "발송 중..." : "즉시 발송"}
+        </Button>
+      ) : null}
+    </>
+  ) : undefined;
+  const selectedTemplateFormContent = (
+    <>
+      {SelectedBuiltinForm ? (
+        <SelectedBuiltinForm
+          onPreviewMessageChange={(message) => setTemplatePreviewOverride(message)}
+          renderLayout={selectedTemplateRenderLayout}
+          showMessageSide={false}
+        />
+      ) : null}
+
+      {selectedUserTemplate ? (
+        <CustomTemplateForm
+          template={selectedUserTemplate as never}
+          onPreviewMessageChange={(message) => setTemplatePreviewOverride(message)}
+          renderLayout={selectedTemplateRenderLayout}
+          showMessageSide={false}
+        />
+      ) : null}
+
+      {!SelectedBuiltinForm && !selectedUserTemplate ? (
+        <DetailEmptyState
+          name="messages-template-missing"
+          message="선택한 템플릿 정보를 불러오지 못했습니다."
+        />
+      ) : null}
+    </>
+  );
 
   return (
     <PageSection name="messages">
@@ -1841,10 +1721,14 @@ export default function MessagesPage() {
             <section data-component="messages-scheduled-section" className="flex min-h-0 flex-1 flex-col">
               <MessageScheduledSection />
             </section>
-          ) : activeSection === "templates" ? (
-            <section data-component="messages-templates-section" className="flex min-h-0 flex-1 flex-col">
+          ) : activeSection === "send" || activeSection === "templates" ? (
+            <section
+              data-component={activeSection === "send" ? "messages-send-section" : "messages-templates-section"}
+              className="flex min-h-0 flex-1 flex-col"
+            >
               <SplitLayout
                 hasSelection={!!activeTemplateId}
+                onModeChange={setTemplateSplitLayoutMode}
                 onBack={() => {
                   setSelectedValue(null);
                   setTemplateDetailTab("details");
@@ -1874,21 +1758,16 @@ export default function MessagesPage() {
                     ) : undefined
                   }
                 >
-                  <div data-component="messages-templates-list" className="space-y-2 pb-2">
-                    {isTemplateListLoading || visibleItems.length > 0 ? (
+                  {isTemplateListLoading || visibleItems.length > 0 ? (
+                    <div data-component="messages-templates-list" className="space-y-2 pb-2">
                       <AnimatedSlotList<TemplateListItem>
                         items={visibleItems}
                         isLoading={isTemplateListLoading}
                         className="space-y-2"
-                        slotClassName={({ item, isLoading }) =>
-                          cn(
-                            "flex items-center gap-3 rounded-[16px] border-2 p-3 text-left transition-all duration-200",
-                            !isLoading && item?.id === activeTemplateId
-                              ? "border-v3-primary bg-v3-primary-light"
-                              : "border-transparent bg-white",
-                            !isLoading && "cursor-pointer hover:border-v3-primary/30 hover:bg-v3-primary-light/50"
-                          )
-                        }
+                        getSlotState={({ item, isLoading }) => ({
+                          isActive: !isLoading && item?.id === activeTemplateId,
+                          isInteractive: !isLoading && Boolean(item),
+                        })}
                         onSlotClick={(item) => handleTemplateSelect(item.id)}
                         render={({ item, isLoading }) => {
                           if (isLoading) {
@@ -1908,29 +1787,20 @@ export default function MessagesPage() {
                           }
 
                           if (!item) return null;
-                          const Icon = item.icon;
 
                           return (
-                            <>
-                              <div
-                                data-component="messages-template-item-icon"
-                                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] bg-v3-dim-white text-v3-text-muted"
-                              >
-                                <Icon className="h-4 w-4" />
-                              </div>
-                              <span className="truncate text-[0.8rem] font-semibold text-v3-dark">{item.label}</span>
-                            </>
+                            <AnimatedSlotListItemContent
+                              dataComponent="messages-template-item"
+                              icon={item.icon}
+                              title={item.label}
+                            />
                           );
                         }}
                       />
-                    ) : null}
-                    {templateFilter === "branch" && !isLoadingUserTemplates && visibleItems.length === 0 ? (
-                      <ListEmptyState
-                        name="messages-templates-list-empty"
-                        message="등록된 지점 템플릿이 없습니다."
-                      />
-                    ) : null}
-                  </div>
+                    </div>
+                  ) : templateFilter === "branch" && !isLoadingUserTemplates ? (
+                    <ListEmptyState message="등록된 지점 템플릿이 없습니다." />
+                  ) : null}
                 </ListPanel>
 
                 <DetailPanel
@@ -1961,17 +1831,7 @@ export default function MessagesPage() {
                       </span>
                     ) : undefined
                   }
-                  trailing={
-                    activeTemplateId && selectedUserTemplate ? (
-                      <div
-                        data-component="messages-template-detail-summary"
-                        className="inline-flex items-center gap-1 rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary"
-                      >
-                        <FileText className="h-3.5 w-3.5" />
-                        {`${selectedUserTemplate.variables.length}개 변수`}
-                      </div>
-                    ) : undefined
-                  }
+                  trailing={selectedTemplateHeaderTrailing}
                   tabs={
                     activeTemplateId ? (
                       <DetailTabs
@@ -1983,65 +1843,67 @@ export default function MessagesPage() {
                   }
                 >
                   {!activeTemplateId ? (
-                    <div
-                      data-component="messages-template-empty-selection"
-                      className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-sm text-v3-text-muted"
-                    >
-                      왼쪽 목록에서 템플릿을 선택해 주세요.
-                    </div>
+                    <DetailEmptyState
+                      name="messages-template-empty-selection"
+                      message="왼쪽 목록에서 템플릿을 선택해 주세요."
+                    />
                   ) : (
-                    <div data-component="messages-template-detail-tabpanes" className="flex min-h-0 flex-col">
-                      <div
-                        data-component="messages-template-detail-pane"
-                        className={cn(templateDetailTab === "details" ? "block" : "hidden")}
-                      >
-                        {SelectedBuiltinForm ? (
-                          <SelectedBuiltinForm
-                            onPreviewMessageChange={(message) => setTemplatePreviewOverride(message)}
-                          />
-                        ) : null}
-
-                        {selectedUserTemplate ? (
-                          <CustomTemplateForm
-                            template={selectedUserTemplate as never}
-                            onPreviewMessageChange={(message) => setTemplatePreviewOverride(message)}
-                          />
-                        ) : null}
-
-                        {!SelectedBuiltinForm && !selectedUserTemplate ? (
-                          <div
-                            data-component="messages-template-missing"
-                            className="rounded-[16px] border border-dashed border-v3-border p-8 text-center text-sm text-v3-text-muted"
-                          >
-                            선택한 템플릿 정보를 불러오지 못했습니다.
-                          </div>
-                        ) : null}
-                      </div>
-
-                      <div
-                        data-component="messages-template-preview-pane"
-                        className={cn(templateDetailTab === "preview" ? "block" : "hidden")}
-                      >
-                        <div
-                          data-component="messages-template-preview-shell"
-                          className="rounded-[20px] border border-v3-border bg-v3-dim-white/30 p-5"
-                        >
-                          <p className="text-[0.72rem] font-semibold text-v3-primary">실시간 미리보기</p>
-                          <p className="mt-2 text-[0.82rem] leading-6 text-v3-text-muted">
-                            템플릿 본문을 알림톡 화면 형태로 렌더링합니다.
-                          </p>
-                          <AlimtalkPhonePreview
-                            className="pt-5"
-                            content={templatePreviewMessage}
-                            templateName={selectedTemplateTitle}
-                            headline={templatePreviewHeadline}
-                            subtitle={templatePreviewSubtitle}
-                            dataComponentPrefix="message"
-                            panelDataComponent="messages-template-preview-phone-panel"
-                          />
-                        </div>
-                      </div>
-                    </div>
+                    <DetailTabPanels
+                      activeTab={templateDetailTab}
+                      dataComponent="messages-template-detail-tabpanes"
+                      panelDataComponent="messages-template-detail-pane"
+                      className={
+                        templateDetailTab === "preview" || activeSection === "send"
+                          ? "flex min-h-0 flex-1"
+                          : "min-h-0 shrink-0"
+                      }
+                      trackClassName={
+                        templateDetailTab === "preview" || activeSection === "send"
+                          ? "min-h-0 flex-1"
+                          : "min-h-0"
+                      }
+                      panelClassName={
+                        templateDetailTab === "preview" || activeSection === "send"
+                          ? "h-full min-h-0"
+                          : "min-h-0"
+                      }
+                      panels={[
+                        {
+                          key: "details",
+                          className: activeSection === "send"
+                            ? "min-h-0"
+                            : undefined,
+                          children: selectedTemplateFormContent,
+                        },
+                        {
+                          key: "preview",
+                          className: "flex min-h-0 justify-center overflow-y-auto",
+                          children: (
+                            <div
+                              data-component="messages-template-preview-layout"
+                              className="flex min-h-0 w-full flex-wrap items-start justify-center gap-4"
+                            >
+                              <AlimtalkPhonePreview
+                                className="h-full min-h-0 overflow-hidden py-0"
+                                content={templatePreviewMessage}
+                                templateName={selectedTemplateTitle}
+                                headline={templatePreviewHeadline}
+                                subtitle={templatePreviewSubtitle}
+                                dataComponentPrefix="message"
+                                panelDataComponent="messages-template-preview-phone-panel"
+                              />
+                              <AutoFillMsgCardSide
+                                title={templatePreviewGeneratedTitle}
+                                message={templatePreviewMessage}
+                                metaItems={templatePreviewMetaItems}
+                                variableItems={templatePreviewVariableItems}
+                                className="w-full min-w-[260px] max-w-[360px] shrink-0"
+                              />
+                            </div>
+                          ),
+                        },
+                      ]}
+                    />
                   )}
                 </DetailPanel>
               </SplitLayout>
@@ -2051,8 +1913,8 @@ export default function MessagesPage() {
               <MessageHistorySection />
             </section>
           ) : activeSection === "triggers" ? (
-            <section data-component="messages-triggers-section">
-              <TriggerRulesManager dataComponentPrefix="message" />
+            <section data-component="messages-triggers-section" className="flex h-full min-h-0 flex-1 flex-col">
+              <TriggerRulesManager dataComponentPrefix="message" channel="sms" />
             </section>
           ) : activeSection === "settings" ? (
             <section data-component="messages-settings-section" className="flex min-h-0 flex-1 flex-col">

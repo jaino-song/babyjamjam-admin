@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
     Users,
     UserCheck,
@@ -21,7 +20,10 @@ import {
     useDeleteEmployee,
 } from "@/hooks/useEmployees";
 import { useInfiniteEmployees } from "@/hooks/useInfiniteEmployees";
-import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
+import {
+    EmployeeFormDialog,
+    EmployeeFormPanel,
+} from "@/components/app/employees/EmployeeFormDialog";
 import {
     StatsBar,
     SplitLayout,
@@ -31,6 +33,7 @@ import {
     InfoRow,
     HeaderActionButton,
     AnimatedSlotList,
+    AnimatedSlotListItemContent,
     EmptyState,
     PageSection,
     ListEmptyState,
@@ -43,7 +46,6 @@ import {
     DropdownMenuItem,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { cn } from "@/lib/utils";
 import { formatWorkAreaLabel } from "@/components/app/employees/employee-form.constants";
 import { getEmployeeGradeBadgeStyle, normalizeEmployeeGrade } from "@/features/employees/grade";
 
@@ -93,9 +95,9 @@ function formatPhoneNumber(phone: string | null | undefined): string {
 }
 
 export default function EmployeesPage() {
-    const router = useRouter();
     const [search, setSearch] = useState("");
     const [filter, setFilter] = useState("all");
+    const [isCreatingEmployee, setIsCreatingEmployee] = useState(false);
     const [formDialogOpen, setFormDialogOpen] = useState(false);
     const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
     const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
@@ -120,14 +122,19 @@ export default function EmployeesPage() {
     }, [allEmployees]);
 
     const handleAddNew = () => {
-        router.push("/employees/new");
+        setEditingEmployee(null);
+        setFormDialogOpen(false);
+        setSelectedEmployee(null);
+        setIsCreatingEmployee(true);
     };
 
     const handleSelectEmployee = (employee: Employee) => {
+        setIsCreatingEmployee(false);
         setSelectedEmployee(employee);
     };
 
     const handleEdit = (employee: Employee) => {
+        setIsCreatingEmployee(false);
         setEditingEmployee(employee);
         setFormDialogOpen(true);
     };
@@ -155,6 +162,15 @@ export default function EmployeesPage() {
         setEditingEmployee(null);
     };
 
+    const handleFormPanelClose = () => {
+        setIsCreatingEmployee(false);
+    };
+
+    const handleFormPanelSuccess = (employee: Employee) => {
+        setIsCreatingEmployee(false);
+        setSelectedEmployee(employee);
+    };
+
     return (
         <PageSection name="employees">
             <StatsBar
@@ -168,7 +184,17 @@ export default function EmployeesPage() {
                 ]}
             />
 
-            <SplitLayout hasSelection={!!selectedEmployee} onBack={() => setSelectedEmployee(null)}>
+            <SplitLayout
+                hasSelection={isCreatingEmployee || !!selectedEmployee}
+                onBack={() => {
+                    if (isCreatingEmployee) {
+                        handleFormPanelClose();
+                        return;
+                    }
+
+                    setSelectedEmployee(null);
+                }}
+            >
                 <ListPanel
                     title="직원 목록"
                     tabs={filterItems}
@@ -184,6 +210,7 @@ export default function EmployeesPage() {
                             label="직원 추가"
                             onClick={handleAddNew}
                             data-component="employees-header-add"
+                            className="text-[calc(12px*var(--v3-ui-scale,1))]"
                         />
                     }
                 >
@@ -198,15 +225,12 @@ export default function EmployeesPage() {
                             isLoading={isLoading}
                             loadingCount={6}
                             className="space-y-2"
-                            slotClassName={({ item, isLoading: slotLoading }) => {
+                            getSlotState={({ item, isLoading: slotLoading }) => {
                                 const isActive = !slotLoading && item && selectedEmployee?.id === item.id;
-                                return cn(
-                                    "flex items-center gap-3 p-4 rounded-[18px] transition-all duration-200 border-2 border-transparent",
-                                    !slotLoading && "cursor-pointer",
-                                    isActive
-                                        ? "bg-v3-primary-light border-v3-primary"
-                                        : !slotLoading && "hover:bg-v3-primary-light/50 hover:border-v3-primary/30"
-                                );
+                                return {
+                                    isActive: Boolean(isActive),
+                                    isInteractive: !slotLoading && Boolean(item),
+                                };
                             }}
                             onSlotClick={(employee) => handleSelectEmployee(employee)}
                             hasMore={hasNextPage}
@@ -231,36 +255,50 @@ export default function EmployeesPage() {
                                 if (!employee) return null;
 
                                 return (
-                                    <>
-                                        <div data-component="employees-list-item-avatar" className="w-11 h-11 rounded-[14px] bg-gradient-to-br from-v3-primary to-purple-500 flex items-center justify-center shrink-0 shadow-md">
-                                            <UserCheck className="w-5 h-5 shrink-0 transition-colors text-white" aria-hidden="true" />
-                                        </div>
-
-                                        <div data-component="employees-list-item-info" className="flex-1 min-w-0">
-                                            <div data-component="employees-list-item-name-row" className="flex items-center gap-2 mb-0.5">
-                                                <span className="font-bold text-[0.8rem] text-v3-dark truncate">
-                                                    {employee.name}
-                                                </span>
-                                            </div>
-                                            <div data-component="employees-list-item-meta-row" className="flex items-center gap-3 text-[0.65rem] text-v3-text-muted">
-                                                <span className="flex items-center gap-1 truncate">
-                                                    <Phone className="w-3 h-3" />
-                                                    {formatPhoneNumber(employee.phone)}
-                                                </span>
-                                            </div>
-                                        </div>
-
-                                        <div data-component="employees-list-item-status" className="shrink-0">
-                                            {getOpenToNextWorkBadge(employee.openToNextWork)}
-                                        </div>
-                                    </>
+                                    <AnimatedSlotListItemContent
+                                        dataComponent="employees-list-item"
+                                        icon={UserCheck}
+                                        iconContainerClassName="bg-gradient-to-br from-v3-primary to-purple-500 text-white"
+                                        iconClassName="text-white"
+                                        title={employee.name}
+                                        subtitle={
+                                            <span className="flex items-center gap-1 truncate">
+                                                <Phone className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(12px*var(--v3-ui-scale,1))]" />
+                                                {formatPhoneNumber(employee.phone)}
+                                            </span>
+                                        }
+                                        status={getOpenToNextWorkBadge(employee.openToNextWork)}
+                                    />
                                 );
                             }}
                         />
                     )}
                 </ListPanel>
 
-                {selectedEmployee ? (
+                {isCreatingEmployee ? (
+                    <EmployeeFormPanel
+                        onClose={handleFormPanelClose}
+                        onSuccess={handleFormPanelSuccess}
+                        renderLayout={({ content, footer }) => (
+                            <DetailPanel
+                                compactBackLabel="직원 목록으로 돌아가기"
+                                title="직원 추가"
+                                subtitle="이름, 연락처, 등급과 근무 가능 지역을 입력합니다."
+                                avatar={
+                                    <div
+                                        data-component="employees-create-avatar"
+                                        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
+                                    >
+                                        <UserCheck className="h-5 w-5" />
+                                    </div>
+                                }
+                                footer={footer}
+                            >
+                                {content}
+                            </DetailPanel>
+                        )}
+                    />
+                ) : selectedEmployee ? (
                     <EmployeeDetail
                         employee={selectedEmployee}
                         onEdit={handleEdit}

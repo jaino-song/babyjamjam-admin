@@ -43,7 +43,7 @@ jobs:
 
       # Fail fast on the cheapest, most deterministic gate first.
       - name: Type check
-        run: pnpm --filter babyjamjam-admin run type-check
+        run: pnpm --filter ./mobile run type-check
 
       # The shared package is otherwise only type-checked transitively through
       # its consumers; an orphaned export would ship green (review finding).
@@ -51,10 +51,10 @@ jobs:
         run: pnpm --filter @babyjamjam/shared run type-check
 
       - name: Lint
-        run: pnpm --filter babyjamjam-admin run lint
+        run: pnpm --filter ./mobile run lint
 
       - name: Unit tests
-        run: pnpm --filter babyjamjam-admin test
+        run: pnpm --filter ./mobile test
         env:
           CI: true
 
@@ -64,7 +64,7 @@ jobs:
         # placeholder satisfies validation without implying a real target.
         env:
           NEXT_PUBLIC_API_BASE_URL: https://ci-build.invalid
-        run: pnpm --filter babyjamjam-admin run build
+        run: pnpm --filter ./mobile run build
 
   # Advisory on PRs: runs the real-backend suite on every pull request (and on
   # manual dispatch), reporting pass/fail as a signal. It is intentionally NOT
@@ -127,14 +127,14 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Apply database migrations
-        run: pnpm --filter babyjamjam-staff-backend run db:migrate:deploy
+        run: pnpm --filter ./backend run db:migrate:deploy
 
       - name: Seed e2e fixtures
-        run: pnpm --filter babyjamjam-staff-backend run db:seed:e2e
+        run: pnpm --filter ./backend run db:seed:e2e
 
       - name: Start backend
         run: |
-          pnpm --filter babyjamjam-staff-backend run start > /tmp/bjj-backend.log 2>&1 &
+          pnpm --filter ./backend run start > /tmp/bjj-backend.log 2>&1 &
           echo $! > /tmp/bjj-backend.pid
 
       - name: Wait for backend
@@ -151,10 +151,10 @@ jobs:
           exit 1
 
       - name: Install Playwright browsers
-        run: pnpm --filter babyjamjam-admin exec playwright install --with-deps chromium
+        run: pnpm --filter ./mobile exec playwright install --with-deps chromium
 
       - name: Playwright tests
-        run: pnpm --filter babyjamjam-admin run test:e2e
+        run: pnpm --filter ./mobile run test:e2e
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4

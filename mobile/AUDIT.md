@@ -1,4 +1,4 @@
-# SaaS-Readiness Audit — `babyjamjam-admin` (mobile)
+# SaaS-Readiness Audit — `babyjamjam-admin-mobile`
 
 - **Date:** 2026-06-03
 - **App:** `mobile/` (Next.js 16.1.6 · React 19 · TypeScript strict) — multi-tenant SaaS admin

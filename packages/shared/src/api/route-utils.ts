@@ -150,6 +150,20 @@ export function getAuthHeaders(token: string | null): Record<string, string> {
     return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+function getProxyGetParams(request: NextRequest, accessToken: string): Record<string, string> {
+    const { searchParams } = new URL(request.url);
+    const params: Record<string, string> = { accessToken };
+
+    for (const [key, value] of searchParams.entries()) {
+        if (key === "accessToken") {
+            continue;
+        }
+        params[key] = value;
+    }
+
+    return params;
+}
+
 export function backendJsonResponse(response: UpstreamResponseLike): NextResponse {
     const status = response.status ?? 200;
 
@@ -354,7 +368,7 @@ export function createRouteUtils({
 
         try {
             const response = await serverAPIClient.get(backendPath, {
-                params: { accessToken },
+                params: getProxyGetParams(request, accessToken),
                 headers: getAuthHeaders(authToken),
             });
 

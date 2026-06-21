@@ -1,21 +1,35 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Building2,
   CheckCircle2,
+  Clock3,
   ExternalLink,
+  Repeat2,
   Send,
   ShieldCheck,
 } from "lucide-react";
-import { AnimatedSlotList, DetailPanel, ListPanel } from "@/components/app/v3";
-import { TitleTextInputMolecule } from "@/components/app/messages/forms/form-components/TitleTextInputMolecule";
+import {
+  AnimatedSlotList,
+  AnimatedSlotListItemContent,
+  DetailEmptyState,
+  DetailPanel,
+  InfoCard,
+  InfoRow,
+  ListEmptyState,
+  ListPanel,
+} from "@/components/app/v3";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
-import { formatKoreanPhoneNumber, isValidKoreanPhoneNumber, normalizePhoneDigits } from "@/lib/phone";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { settingsApi } from "@/services/api";
+
+const UNIFIED_SENDER_PHONE = "010-9641-1878";
+const DUPLICATE_SEND_POLICY_ITEM_ID = "duplicate-send-confirmation";
 
 const ALIGO_POLICY_ITEMS = [
   {
@@ -46,11 +60,17 @@ type TenantApplicationListItem = {
   subtitle: string;
   statusLabel: string;
   icon: typeof Building2;
+  kind: "tenant-application" | "duplicate-send-policy";
 };
 
-function isValidSenderPhone(value: string) {
-  return isValidKoreanPhoneNumber(value);
-}
+const DUPLICATE_SEND_POLICY_ITEM: TenantApplicationListItem = {
+  id: DUPLICATE_SEND_POLICY_ITEM_ID,
+  title: "중복 전송 확인",
+  subtitle: "72시간 내 같은 번호와 같은 메시지는 전송 전 확인합니다.",
+  statusLabel: "활성",
+  icon: Repeat2,
+  kind: "duplicate-send-policy",
+};
 
 function formatRequestedAt(date: Date) {
   return new Intl.DateTimeFormat("ko-KR", {
@@ -64,37 +84,55 @@ function formatRequestedAt(date: Date) {
 export function MessageTenantApplicationSettings() {
   const { data: authUser } = useGetAuthUser();
   const { toast } = useToast();
-  const [senderPhone, setSenderPhone] = useState("");
+  const { data: messageSenderApproval, isLoading: isMessageSenderApprovalLoading } = useQuery({
+    queryKey: ["settings", "message-sender-approval"],
+    queryFn: settingsApi.getMessageSenderApproval,
+  });
   const [agreements, setAgreements] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(ALIGO_POLICY_ITEMS.map((item) => [item.id, false])),
   );
   const [requestedAt, setRequestedAt] = useState<string | null>(null);
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
 
   const tenantName = authUser?.branchName?.trim() || "현재 선택된 지점";
-  const normalizedPhone = useMemo(() => normalizePhoneDigits(senderPhone), [senderPhone]);
-  const formattedPhone = useMemo(() => formatKoreanPhoneNumber(normalizedPhone), [normalizedPhone]);
-  const phoneError =
-    normalizedPhone.length > 0 && !isValidSenderPhone(normalizedPhone)
-      ? "발신 신청에 사용할 전화번호 형식을 확인해 주세요."
-      : undefined;
   const allAgreed = ALIGO_POLICY_ITEMS.every((item) => agreements[item.id]);
-  const canSubmit = isValidSenderPhone(normalizedPhone) && allAgreed;
+  const canSubmit = allAgreed;
+  const isMessageSenderApproved = messageSenderApproval?.isApproved === true;
   const listItems = useMemo<TenantApplicationListItem[]>(
-    () => [
-      {
-        id: CURRENT_TENANT_ITEM_ID,
-        title: "메시지 발송 기능 신청",
-        subtitle: requestedAt
-          ? `신청 접수 ${requestedAt}`
-          : formattedPhone
-            ? `발신 번호 ${formattedPhone}`
-            : "발신 전화번호와 정책 동의를 확인해 주세요.",
-        statusLabel: requestedAt ? "접수됨" : canSubmit ? "준비 완료" : "작성 중",
-        icon: Building2,
-      },
-    ],
-    [canSubmit, formattedPhone, requestedAt],
+    () => {
+      if (isMessageSenderApprovalLoading) {
+        return [];
+      }
+
+      const items: TenantApplicationListItem[] = [];
+
+      if (!isMessageSenderApproved) {
+        items.push(
+        {
+          id: CURRENT_TENANT_ITEM_ID,
+          title: "메시지 발송 기능 신청",
+          subtitle: requestedAt
+            ? `신청 접수 ${requestedAt}`
+            : "알리고 정책 동의 후 신청해 주세요.",
+          statusLabel: requestedAt ? "접수됨" : canSubmit ? "준비 완료" : "작성 중",
+          icon: Building2,
+          kind: "tenant-application",
+        },
+        );
+      }
+
+      items.push(DUPLICATE_SEND_POLICY_ITEM);
+
+      return items;
+    },
+    [canSubmit, isMessageSenderApprovalLoading, isMessageSenderApproved, requestedAt],
   );
+  const fallbackSelectedItemId = isMessageSenderApproved
+    ? DUPLICATE_SEND_POLICY_ITEM_ID
+    : CURRENT_TENANT_ITEM_ID;
+  const selectedItem = listItems.find((item) => item.id === (selectedItemId ?? fallbackSelectedItemId))
+    ?? listItems[0]
+    ?? null;
 
   const toggleAgreement = (id: string, checked: boolean) => {
     setAgreements((previous) => ({
@@ -104,11 +142,6 @@ export function MessageTenantApplicationSettings() {
   };
 
   const handleSubmit = () => {
-    if (!isValidSenderPhone(normalizedPhone)) {
-      toast({ variant: "destructive", description: "발신 전화번호를 정확히 입력해 주세요." });
-      return;
-    }
-
     if (!allAgreed) {
       toast({ variant: "destructive", description: "알리고 정책 동의 항목을 모두 확인해 주세요." });
       return;
@@ -118,6 +151,45 @@ export function MessageTenantApplicationSettings() {
     setRequestedAt(formatRequestedAt(now));
     toast({ description: `${tenantName} 메시지 발송 신청이 접수되었습니다.` });
   };
+  const emptyListMessage = isMessageSenderApprovalLoading
+    ? "설정 정보를 불러오는 중입니다."
+    : "표시할 설정 항목이 없습니다.";
+  const emptyDetailMessage = isMessageSenderApprovalLoading
+    ? "설정 정보를 불러오는 중입니다."
+    : "설정 항목을 선택해 주세요.";
+
+  if (isMessageSenderApprovalLoading) {
+    return (
+      <div
+        data-component="messages-settings-layout"
+        className="grid min-h-[560px] flex-1 gap-6 lg:grid-cols-[380px_1fr]"
+      >
+        <ListPanel
+          title="설정"
+          subtitle="메시지에 관련된 설정들을 정할 수 있어요"
+          headerActions={
+            <span className="inline-flex items-center whitespace-nowrap rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary">
+              {listItems.length}개
+            </span>
+          }
+        >
+          <ListEmptyState
+            message={emptyListMessage}
+          />
+        </ListPanel>
+
+        <DetailPanel
+          title="설정"
+          subtitle="메시지에 관련된 설정들을 정할 수 있어요"
+        >
+          <DetailEmptyState
+            name="messages-settings-detail-empty"
+            message={emptyDetailMessage}
+          />
+        </DetailPanel>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -137,53 +209,106 @@ export function MessageTenantApplicationSettings() {
           items={listItems}
           isLoading={false}
           className="space-y-2"
-          slotClassName={() =>
-            "flex items-center gap-3 rounded-[18px] border-2 border-v3-primary bg-v3-primary-light p-3 text-left transition-all duration-200"
-          }
+          getSlotState={({ item }) => ({
+            isActive: item?.id === selectedItem?.id,
+            isInteractive: Boolean(item),
+          })}
+          onSlotClick={(item) => setSelectedItemId(item.id)}
           render={({ item }) => {
             if (!item) return null;
-            const Icon = item.icon;
 
             return (
-              <>
-                <div
-                  data-component="messages-settings-tenant-list-icon"
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] bg-white text-v3-primary shadow-sm"
-                >
-                  <Icon className="h-4.5 w-4.5" />
-                </div>
-                <div data-component="messages-settings-tenant-list-copy" className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="truncate text-[0.82rem] font-semibold text-v3-dark">{item.title}</p>
-                    <span className="inline-flex items-center rounded-full bg-white/85 px-2 py-0.5 text-[0.68rem] font-semibold text-v3-primary">
-                      {item.statusLabel}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-[0.72rem] leading-5 text-v3-text-muted">{item.subtitle}</p>
-                </div>
-              </>
+              <AnimatedSlotListItemContent
+                dataComponent="messages-settings-tenant-list"
+                icon={item.icon}
+                iconContainerClassName="bg-white text-v3-primary"
+                title={item.title}
+                subtitle={item.subtitle}
+                status={
+                  <span className="inline-flex items-center rounded-full bg-white/85 px-2 py-0.5 text-[0.68rem] font-semibold text-v3-primary">
+                    {item.statusLabel}
+                  </span>
+                }
+              />
             );
           }}
         />
       </ListPanel>
 
-      <DetailPanel
-        avatar={
-          <div className="flex h-12 w-12 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
-            <ShieldCheck className="h-5 w-5" />
-          </div>
-        }
-        title="메시지 발송 기능 신청"
-        subtitle="메시지 발송 기능 사용을 위해 아래의 항목들을 입력 및 동의해 주세요."
-        trailing={
-          requestedAt ? (
+      {selectedItem?.kind === "duplicate-send-policy" ? (
+        <DetailPanel
+          avatar={
+            <div className="flex h-12 w-12 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+              <Repeat2 className="h-5 w-5" />
+            </div>
+          }
+          title="중복 전송 확인"
+          subtitle="같은 번호에 같은 메시지를 짧은 시간 안에 다시 보낼 때 재확인합니다."
+          trailing={
             <span className="inline-flex items-center rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary">
-              접수 {requestedAt}
+              활성
             </span>
-          ) : undefined
-        }
-      >
-        <div data-component="messages-settings-tenant-detail">
+          }
+        >
+          <div data-component="messages-settings-duplicate-send-policy" className="space-y-4">
+            <InfoCard
+              data-component="messages-settings-duplicate-send-policy-card"
+              title="규칙"
+            >
+              <div className="-mt-1">
+                <InfoRow
+                  data-component="messages-settings-duplicate-send-policy-condition"
+                  label="조건"
+                  value="같은 번호 · 같은 메시지"
+                />
+                <InfoRow
+                  data-component="messages-settings-duplicate-send-policy-window"
+                  label="확인 범위"
+                  value="최근 72시간"
+                />
+                <InfoRow
+                  data-component="messages-settings-duplicate-send-policy-action"
+                  label="동작"
+                  value="전송 전 확인 모달"
+                />
+              </div>
+            </InfoCard>
+
+            <div
+              data-component="messages-settings-duplicate-send-policy-preview"
+              className="rounded-[18px] border border-v3-border bg-white p-4"
+            >
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] bg-v3-primary-light text-v3-primary">
+                  <Clock3 className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[0.82rem] font-semibold text-v3-dark">중복 전송 확인</p>
+                  <p className="mt-1 text-[0.74rem] leading-5 text-v3-text-muted">
+                    최근 같은 내용의 메시지를 보낸 기록이 있으면, 발송 버튼을 누른 뒤 최근 전송 시각과 함께 재전송 여부를 확인합니다.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </DetailPanel>
+      ) : (
+        <DetailPanel
+          avatar={
+            <div className="flex h-12 w-12 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+              <ShieldCheck className="h-5 w-5" />
+            </div>
+          }
+          title="메시지 발송 기능 신청"
+          subtitle="메시지 발송 기능 사용을 위해 아래의 항목들을 확인 및 동의해 주세요."
+          trailing={
+            requestedAt ? (
+              <span className="inline-flex items-center rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary">
+                접수 {requestedAt}
+              </span>
+            ) : undefined
+          }
+        >
           <div data-component="messages-settings-tenant-form" className="space-y-5 pb-2">
             <div
               data-component="messages-settings-tenant-card"
@@ -199,21 +324,14 @@ export function MessageTenantApplicationSettings() {
               </div>
             </div>
 
-            <div data-component="messages-settings-tenant-phone-field" className="space-y-2">
-              <TitleTextInputMolecule
-                label="발신 전화번호"
-                value={formattedPhone}
-                onValueChange={(value) => setSenderPhone(normalizePhoneDigits(value))}
-                placeholder="예: 0212345678"
-                required
-                error={Boolean(phoneError)}
-                helperText={phoneError}
-                containerClassName="gap-2"
-                inputClassName="h-11 rounded-[14px] border-v3-border bg-white"
-                dataComponent="messages-settings-tenant-phone-input"
-              />
-              <p className="text-[0.72rem] leading-5 text-v3-text-muted">
-                신청 후 알리고에 등록할 발신 번호를 입력해 주세요. 숫자만 입력해도 자동으로 구분자를 적용합니다.
+            <div
+              data-component="messages-settings-tenant-sender-info"
+              className="rounded-[18px] border border-v3-border bg-v3-dim-white/35 p-4"
+            >
+              <p className="text-[0.76rem] font-semibold text-v3-dark">발신번호</p>
+              <p className="mt-1 text-[1rem] font-semibold text-v3-primary">{UNIFIED_SENDER_PHONE}</p>
+              <p className="mt-1 text-[0.72rem] leading-5 text-v3-text-muted">
+                모든 메시지는 사전 등록된 대표 발신번호 {UNIFIED_SENDER_PHONE} 으로 발송됩니다. 별도의 발신번호 입력이 필요하지 않습니다.
               </p>
             </div>
 
@@ -285,8 +403,8 @@ export function MessageTenantApplicationSettings() {
               </div>
             ) : null}
           </div>
-        </div>
-      </DetailPanel>
+        </DetailPanel>
+      )}
     </div>
   );
 }

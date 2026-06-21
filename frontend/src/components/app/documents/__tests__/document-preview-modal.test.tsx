@@ -173,7 +173,7 @@ describe("DocumentPreviewModal", () => {
       />
     );
 
-    const slider = screen.getByLabelText("PDF 미리보기 확대/축소");
+    const slider = await screen.findByLabelText("PDF 미리보기 확대/축소");
     expect(slider).toHaveValue("100");
     expect(screen.getByText("100%")).toBeInTheDocument();
 
@@ -327,7 +327,7 @@ describe("DocumentPreviewModal", () => {
     }
   });
 
-  it("uses the same zoom slider pattern for image previews", () => {
+  it("uses the same zoom slider pattern for image previews", async () => {
     render(
       <DocumentPreviewModal
         open={true}
@@ -342,8 +342,8 @@ describe("DocumentPreviewModal", () => {
       />
     );
 
-    const slider = screen.getByLabelText("이미지 미리보기 확대/축소");
-    const image = screen.getByAltText("현장사진.jpg");
+    const slider = await screen.findByLabelText("이미지 미리보기 확대/축소");
+    const image = await screen.findByAltText("현장사진.jpg");
 
     expect(slider).toHaveValue("100");
     expect(image).toHaveStyle({ transform: "scale(1)" });
@@ -372,7 +372,7 @@ describe("DocumentPreviewModal", () => {
 
     expect(screen.getByText("hwp")).toBeInTheDocument();
 
-    const slider = screen.getByLabelText("한글 문서 미리보기 확대/축소");
+    const slider = await screen.findByLabelText("한글 문서 미리보기 확대/축소");
     expect(slider).toHaveValue("100");
 
     const firstHwpPage = await screen.findByTestId("hwp-page-1");

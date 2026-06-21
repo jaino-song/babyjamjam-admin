@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { ContentPaper } from "@/components/app/root/content-paper";
 import { Upload, CheckCircle, RotateCcw } from "lucide-react";
+
+import { ContentPaper } from "@/components/app/root/content-paper";
+import { CompactDateSelect } from "@/components/app/v3";
 import { ImageDropzone } from "./ImageDropzone";
 import { ParsedDataPreview } from "./ParsedDataPreview";
 import {
@@ -14,13 +16,6 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 
 type Step = "upload" | "preview" | "success";
@@ -192,21 +187,16 @@ export function VoucherPriceUploadForm() {
           {/* 연도 선택 */}
           <div className="mb-4 flex items-center gap-3">
             <Label htmlFor="year-select">적용 연도</Label>
-            <Select
+            <CompactDateSelect
+              id="year-select"
               value={String(selectedYear)}
               onValueChange={(value: string) => setSelectedYear(Number(value))}
-            >
-              <SelectTrigger id="year-select" className="w-[120px]">
-                <SelectValue placeholder="연도 선택" />
-              </SelectTrigger>
-              <SelectContent>
-                {yearOptions.map((year) => (
-                  <SelectItem key={year} value={String(year)}>
-                    {year}년
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              placeholder="연도 선택"
+              options={yearOptions.map((year) => ({
+                label: `${year}년`,
+                value: String(year),
+              }))}
+            />
             <span className="text-sm text-muted-foreground">
               선택한 연도의 요금표로 업데이트됩니다.
             </span>

@@ -13,9 +13,18 @@ import { IUserRepository, USER_REPOSITORY } from "domain/repositories/user.repos
 import { EMAIL_PORT, EmailPort } from "domain/ports/email.port";
 import { SystemSettingService } from "./system-setting.service";
 
+const EMAIL_SEND_INTERVAL_MS = 600;
+
+interface NotificationEmailTemplateContext {
+    ctaUrl: string;
+    ctaLabel: string;
+}
+
 @Injectable()
 export class NotificationService {
     private readonly logger = new Logger(NotificationService.name);
+    private emailSendQueue: Promise<void> = Promise.resolve();
+    private nextEmailSendAt = 0;
 
     constructor(
         private readonly subscribePushUsecase: SubscribePushUsecase,
@@ -40,7 +49,12 @@ export class NotificationService {
             .replace(/'/g, "&#39;");
     }
 
-    private async sendEmailNotificationToUser(userId: string, title: string, body: string) {
+    private async sendEmailNotificationToUser(
+        userId: string,
+        title: string,
+        body: string,
+        emailTemplateContext?: NotificationEmailTemplateContext,
+    ) {
         const user = await this.userRepository.findById(userId);
         if (!user?.email) {
             return;
@@ -51,22 +65,37 @@ export class NotificationService {
             return;
         }
 
+        const recipientEmail = user.email;
         const recipientName = this.escapeHtml(user.name ?? "사용자");
         const safeTitle = this.escapeHtml(title);
         const safeBody = this.escapeHtml(body).replace(/\n/g, "<br />");
 
         try {
-            await this.emailPort.send({
-                to: user.email,
-                subject: `[아가잼잼] ${title}`,
-                text: `${user.name ?? "사용자"}님, 새로운 알림이 도착했습니다.\n\n${title}\n${body}`,
-                html: `
-                  <div style="font-family: Pretendard, -apple-system, BlinkMacSystemFont, system-ui, sans-serif; line-height: 1.6; color: #17304d;">
-                    <p style="margin: 0 0 12px;">${recipientName}님, 새로운 알림이 도착했습니다.</p>
-                    <h1 style="margin: 0 0 12px; font-size: 18px; color: #12366a;">${safeTitle}</h1>
-                    <p style="margin: 0;">${safeBody}</p>
-                  </div>
-                `,
+            await this.enqueueEmailSend(async () => {
+                if (emailTemplateContext) {
+                    await this.emailPort.sendNotificationEmail({
+                        to: recipientEmail,
+                        name: recipientName,
+                        title,
+                        body: safeBody,
+                        ctaUrl: emailTemplateContext.ctaUrl,
+                        ctaLabel: emailTemplateContext.ctaLabel,
+                    });
+                    return;
+                }
+
+                await this.emailPort.send({
+                    to: recipientEmail,
+                    subject: `[아가잼잼] ${title}`,
+                    text: `${user.name ?? "사용자"}님, 새로운 알림이 도착했습니다.\n\n${title}\n${body}`,
+                    html: `
+                      <div style="font-family: Pretendard, -apple-system, BlinkMacSystemFont, system-ui, sans-serif; line-height: 1.6; color: #17304d;">
+                        <p style="margin: 0 0 12px;">${recipientName}님, 새로운 알림이 도착했습니다.</p>
+                        <h1 style="margin: 0 0 12px; font-size: 18px; color: #12366a;">${safeTitle}</h1>
+                        <p style="margin: 0;">${safeBody}</p>
+                      </div>
+                    `,
+                });
             });
         } catch (error) {
             this.logger.error(
@@ -76,8 +105,37 @@ export class NotificationService {
         }
     }
 
-    private async sendEmailNotificationsToUsers(userIds: string[], title: string, body: string) {
-        await Promise.all(userIds.map((userId) => this.sendEmailNotificationToUser(userId, title, body)));
+    private async sendEmailNotificationsToUsers(
+        userIds: string[],
+        title: string,
+        body: string,
+        emailTemplateContext?: NotificationEmailTemplateContext,
+    ) {
+        for (const userId of userIds) {
+            await this.sendEmailNotificationToUser(userId, title, body, emailTemplateContext);
+        }
+    }
+
+    private enqueueEmailSend(task: () => Promise<void>): Promise<void> {
+        const queuedSend = this.emailSendQueue.then(async () => {
+            const waitMs = Math.max(0, this.nextEmailSendAt - Date.now());
+            if (waitMs > 0) {
+                await this.delay(waitMs);
+            }
+
+            await task();
+            this.nextEmailSendAt = Date.now() + EMAIL_SEND_INTERVAL_MS;
+        });
+
+        this.emailSendQueue = queuedSend.catch(() => undefined);
+
+        return queuedSend;
+    }
+
+    private delay(ms: number): Promise<void> {
+        return new Promise((resolve) => {
+            setTimeout(resolve, ms);
+        });
     }
 
     private async hasExistingNotification(
@@ -175,6 +233,7 @@ export class NotificationService {
         title: string,
         body: string,
         data?: Record<string, unknown>,
+        emailTemplateContext?: NotificationEmailTemplateContext,
     ): Promise<{ sent: number; failed: number }> {
         const users = await this.userRepository.findByRoles(roles);
         if (users.length === 0) {
@@ -182,7 +241,7 @@ export class NotificationService {
         }
         const userIds = users.map(u => u.id);
         const result = await this.sendNotificationUsecase.sendToUsers({ userIds, title, body, data });
-        await this.sendEmailNotificationsToUsers(userIds, title, body);
+        await this.sendEmailNotificationsToUsers(userIds, title, body, emailTemplateContext);
         return result;
     }
 

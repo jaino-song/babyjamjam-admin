@@ -1,7 +1,7 @@
 {
-  "name": "아가잼잼 관리자",
-  "short_name": "아가잼잼",
-  "description": "아가잼잼 관리자",
+  "name": "아가잼잼 모바일 관리자",
+  "short_name": "아가잼잼 모바일",
+  "description": "아가잼잼 모바일 관리자",
   "start_url": "/",
   "id": "/",
   "display": "standalone",

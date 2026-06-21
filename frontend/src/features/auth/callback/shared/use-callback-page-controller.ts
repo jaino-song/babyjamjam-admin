@@ -6,6 +6,27 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { AUTH_ROUTES } from "@/lib/auth/routes";
 import { exchangeToken } from "@/app/(auth)/callback/actions";
 
+type ExchangeTokenResult = Awaited<ReturnType<typeof exchangeToken>>;
+
+const EXCHANGE_RESULT_CACHE_TTL_MS = 60_000;
+const exchangeTokenPromises = new Map<string, Promise<ExchangeTokenResult>>();
+
+function exchangeTokenOnce(code: string): Promise<ExchangeTokenResult> {
+  const existingPromise = exchangeTokenPromises.get(code);
+  if (existingPromise) {
+    return existingPromise;
+  }
+
+  const promise = exchangeToken(code).finally(() => {
+    setTimeout(() => {
+      exchangeTokenPromises.delete(code);
+    }, EXCHANGE_RESULT_CACHE_TTL_MS);
+  });
+
+  exchangeTokenPromises.set(code, promise);
+  return promise;
+}
+
 export function useCallbackPageController() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -16,6 +37,12 @@ export function useCallbackPageController() {
     let cancelled = false;
 
     const exchangeCodeForTokens = async () => {
+      const callbackError = searchParams.get("error");
+      if (callbackError) {
+        setError(callbackError);
+        return;
+      }
+
       const code = searchParams.get("code");
 
       if (!code) {
@@ -33,7 +60,7 @@ export function useCallbackPageController() {
       handledCodeRef.current = code;
 
       try {
-        const result = await exchangeToken(code);
+        const result = await exchangeTokenOnce(code);
 
         if (cancelled) {
           return;

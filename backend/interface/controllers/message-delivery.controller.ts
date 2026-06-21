@@ -13,6 +13,7 @@ import { AligoService } from "application/services/aligo.service";
 import { SendSmsMessageDto } from "interface/dto/message-delivery.dto";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { SMS_DELIVERY_RETRY_DELAY_MS } from "domain/entities/alimtalk-log.entity";
 
 const ALIGO_SCHEDULE_MIN_LEAD_MS = 10 * 60 * 1000;
 
@@ -38,9 +39,8 @@ export class MessageDeliveryController {
             `[SMS] Request received: branchId=${branchId || "unknown"}, triggerType=${triggerType}, recipientCount=${this.countSmsRecipients(dto.receiver)}`,
         );
 
-        let senderPhone: string;
         try {
-            senderPhone = await this.messageSenderApprovalService.ensureApproved(branchId);
+            await this.messageSenderApprovalService.ensureApproved(branchId);
         } catch (error) {
             this.logger.warn(
                 `[SMS] Sender approval check failed: branchId=${branchId || "unknown"}, error=${error instanceof Error ? error.message : String(error)}`,
@@ -62,7 +62,6 @@ export class MessageDeliveryController {
             ? dto.scheduledTime?.replace(":", "")
             : undefined;
         const result = await this.aligoService.sendSms({
-            senderPhone,
             receiver: dto.receiver,
             message: dto.message,
             recipientName: dto.recipientName,
@@ -132,9 +131,20 @@ export class MessageDeliveryController {
         triggerType: string,
     ) {
         const isAccepted = this.isAcceptedSmsResult(result);
+        const isPartial = this.isPartialSuccessSmsResult(result);
         const status = isAccepted
             ? triggerType === "scheduled" ? "pending" : "sent"
             : "failed";
+        // Aligo's response gives success_cnt / error_cnt but no per-recipient breakdown,
+        // so on a partial-success batch we cannot identify which numbers failed. Retrying
+        // the original comma-joined receiver list would resend to the already-delivered
+        // recipients and produce duplicates, so we disable auto-retry for partial successes
+        // and surface a failed log to staff for manual handling.
+        const errorMessage = isAccepted
+            ? null
+            : isPartial
+                ? `부분 발송 (성공 ${Number(result.response.success_cnt ?? 0)}건 / 실패 ${Number(result.response.error_cnt ?? 0)}건). 실패 수신자를 식별할 수 없어 자동 재전송을 중단했습니다. 실패자에게 수동으로 재발송해 주세요.`
+                : result.response.message;
         await this.prisma.alimtalk_log.create({
             data: {
                 branchId: branchId || null,
@@ -150,12 +160,14 @@ export class MessageDeliveryController {
                     msgType: result.request.msgType,
                     scheduledDate: result.request.scheduledDate ?? null,
                     scheduledTime: result.request.scheduledTime ?? null,
+                    testMode: result.request.testModeYn === "Y" ? "true" : "false",
                 },
                 status,
                 aligoMid: result.response.msg_id ? String(result.response.msg_id) : null,
-                errorMessage: isAccepted ? null : result.response.message,
+                errorMessage,
                 attempts: 1,
                 lastAttemptAt: new Date(),
+                nextRetryAt: isAccepted || isPartial ? null : this.nextRetryAt(),
             },
         });
     }
@@ -184,6 +196,7 @@ export class MessageDeliveryController {
                     msgType: dto.msgType ?? null,
                     scheduledDate: scheduledDate ?? null,
                     scheduledTime: scheduledTime ?? null,
+                    testMode: dto.testMode ? "true" : "false",
                     providerError: errorMessage,
                 },
                 status: "failed",
@@ -191,6 +204,7 @@ export class MessageDeliveryController {
                 errorMessage,
                 attempts: 1,
                 lastAttemptAt: new Date(),
+                nextRetryAt: this.nextRetryAt(),
             },
         });
     }
@@ -204,6 +218,15 @@ export class MessageDeliveryController {
             resultCode === 1 &&
             errorCount === 0
         );
+    }
+
+    private isPartialSuccessSmsResult(
+        result: Awaited<ReturnType<AligoService["sendSms"]>>,
+    ) {
+        const resultCode = Number(result.response.result_code);
+        const errorCount = Number(result.response.error_cnt ?? 0);
+        const successCount = Number(result.response.success_cnt ?? 0);
+        return resultCode === 1 && errorCount > 0 && successCount > 0;
     }
 
     private countSmsRecipients(receiver: string): number {
@@ -243,5 +266,9 @@ export class MessageDeliveryController {
         }
         const message = String(error ?? "").trim();
         return message || "문자 발송 요청이 실패했습니다.";
+    }
+
+    private nextRetryAt(): Date {
+        return new Date(Date.now() + SMS_DELIVERY_RETRY_DELAY_MS);
     }
 }

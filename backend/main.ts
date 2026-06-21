@@ -1,5 +1,6 @@
 import { NestFactory } from "@nestjs/core";
 import helmet from "helmet";
+import { json } from "express";
 import { AppModule } from "./app.module";
 import cookieParser from "cookie-parser";
 import { PrismaExceptionFilter } from "./infrastructure/filters/prisma-exception.filter";
@@ -33,6 +34,8 @@ async function bootstrap() {
 
     const app = await NestFactory.create(AppModule);
     app.use(helmet());
+    // 1mb: call-transcript webhook payloads (long transcripts) exceed the 100kb express default
+    app.use(json({ limit: "1mb" }));
     const expressApp = app.getHttpAdapter().getInstance();
     expressApp.set("trust proxy", 1);
     app.use(cookieParser());
@@ -46,8 +49,11 @@ async function bootstrap() {
     // CORS configuration - support production, preview, and development origins
     const allowedOrigins = [
         process.env['PRODUCTION_FRONTEND_URL'],
+        process.env['PRODUCTION_MOBILE_FRONTEND_URL'],
         process.env['PREVIEW_FRONTEND_URL'],
+        process.env['PREVIEW_MOBILE_FRONTEND_URL'],
         process.env['DEVELOPMENT_FRONTEND_URL'],
+        process.env['DEVELOPMENT_MOBILE_FRONTEND_URL'],
         "http://localhost:3000", // Fallback for local development
     ].filter((origin): origin is string => Boolean(origin)); // Remove undefined values
 

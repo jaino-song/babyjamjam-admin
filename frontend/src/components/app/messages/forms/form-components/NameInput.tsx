@@ -18,6 +18,7 @@ interface NameInputProps {
   setName: (name: string) => void;
   label: string;
   placeholder: string;
+  required?: boolean;
 }
 
 export const NameInput = ({
@@ -25,6 +26,7 @@ export const NameInput = ({
   setName,
   label,
   placeholder,
+  required = false,
 }: NameInputProps) => {
   const [error, setError] = useState(false);
 
@@ -45,6 +47,7 @@ export const NameInput = ({
       value={name}
       onValueChange={handleChange}
       placeholder={placeholder}
+      required={required}
       error={error}
       helperText={error ? "숫자나 특수문자는 입력할 수 없습니다" : undefined}
       dataComponent="messages-form-name-input"

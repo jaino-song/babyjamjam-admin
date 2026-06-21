@@ -56,7 +56,7 @@ describe("ClientGreetingSmsAutomationService", () => {
             }),
         };
         messageSenderApprovalService = {
-            ensureApproved: jest.fn().mockResolvedValue("01099998888"),
+            ensureApproved: jest.fn().mockResolvedValue(undefined),
         };
         systemTemplateService = {
             getByKey: jest.fn().mockResolvedValue({
@@ -91,7 +91,6 @@ describe("ClientGreetingSmsAutomationService", () => {
         expect(messageSenderApprovalService.ensureApproved).toHaveBeenCalledWith(branchId);
         expect(systemTemplateService.getByKey).toHaveBeenCalledWith(SystemTemplateKey.GREETING);
         expect(aligoService.sendSms).toHaveBeenCalledWith({
-            senderPhone: "01099998888",
             receiver: "01012345678",
             message: "안녕하세요 김지니 산모님",
             recipientName: "김지니",
@@ -146,7 +145,7 @@ describe("ClientGreetingSmsAutomationService", () => {
                 aligoMid: null,
                 errorMessage: "Aligo SMS API error (403): 등록되지 않은 IP 입니다.",
                 attempts: 1,
-                nextRetryAt: new Date("2026-06-05T10:20:00.000Z"),
+                nextRetryAt: new Date("2026-06-05T09:25:00.000Z"),
             }),
         });
     });

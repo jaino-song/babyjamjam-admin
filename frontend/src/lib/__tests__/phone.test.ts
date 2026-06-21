@@ -1,8 +1,21 @@
-import { formatKoreanPhoneNumber, isValidKoreanPhoneNumber, normalizePhoneDigits } from "@/lib/phone";
+import {
+  formatKoreanPhoneNumber,
+  isValidKoreanPhoneNumber,
+  normalizeKoreanPhoneLookupKey,
+  normalizePhoneDigits,
+} from "@/lib/phone";
 
 describe("normalizePhoneDigits", () => {
   it("removes non-digit characters and limits to 11 digits", () => {
     expect(normalizePhoneDigits("032-4425-992a99")).toBe("03244259929");
+  });
+});
+
+describe("normalizeKoreanPhoneLookupKey", () => {
+  it("normalizes domestic and country-code mobile formats to the same key", () => {
+    expect(normalizeKoreanPhoneLookupKey("01066211878")).toBe("01066211878");
+    expect(normalizeKoreanPhoneLookupKey("010-6621-1878")).toBe("01066211878");
+    expect(normalizeKoreanPhoneLookupKey("+82 10 6621 1878")).toBe("01066211878");
   });
 });
 

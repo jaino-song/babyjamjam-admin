@@ -4,13 +4,13 @@ import { MessageSenderApprovalService } from "application/services/message-sende
 import { SystemTemplateService } from "application/services/system-template.service";
 import { maskPhone } from "application/utils/mask";
 import { SystemTemplateKey, SYSTEM_TEMPLATE_REGISTRY } from "domain/constants/system-template-registry";
+import { SMS_DELIVERY_RETRY_DELAY_MS } from "domain/entities/alimtalk-log.entity";
 import { ClientEntity } from "domain/entities/client.entity";
 import { PhoneNumber } from "domain/value-objects/phone-number.vo";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 const CLIENT_GREETING_SMS_TEMPLATE_KEY = "client_greeting_sms";
 const CLIENT_GREETING_SMS_TITLE = "인사 메시지";
-const CLIENT_GREETING_SMS_RETRY_DELAY_MS = 60 * 60 * 1000;
 
 @Injectable()
 export class ClientGreetingSmsAutomationService {
@@ -30,11 +30,10 @@ export class ClientGreetingSmsAutomationService {
             return;
         }
 
-        const senderPhone = await this.messageSenderApprovalService.ensureApproved(branchId);
+        await this.messageSenderApprovalService.ensureApproved(branchId);
         const message = await this.resolveGreetingMessage(client);
         const receiver = phone.toString();
         const result = await this.aligoService.sendSms({
-            senderPhone,
             receiver,
             message,
             recipientName: client.name,
@@ -46,7 +45,6 @@ export class ClientGreetingSmsAutomationService {
                 client,
                 receiver,
                 message,
-                senderPhone,
                 error,
             );
             throw error;
@@ -68,7 +66,6 @@ export class ClientGreetingSmsAutomationService {
                     title: CLIENT_GREETING_SMS_TITLE,
                     triggerType: "client_created",
                     msgType: result.request.msgType,
-                    senderPhone,
                 },
                 status: isAccepted ? "sent" : "failed",
                 aligoMid: result.response.msg_id ? String(result.response.msg_id) : null,
@@ -89,7 +86,6 @@ export class ClientGreetingSmsAutomationService {
         client: ClientEntity,
         receiver: string,
         message: string,
-        senderPhone: string,
         error: unknown,
     ) {
         const errorMessage = this.formatErrorMessage(error);
@@ -108,7 +104,6 @@ export class ClientGreetingSmsAutomationService {
                     title: CLIENT_GREETING_SMS_TITLE,
                     triggerType: "client_created",
                     msgType: "AUTO",
-                    senderPhone,
                     providerError: errorMessage,
                 },
                 status: "failed",
@@ -163,6 +158,6 @@ export class ClientGreetingSmsAutomationService {
     }
 
     private nextRetryAt(): Date {
-        return new Date(Date.now() + CLIENT_GREETING_SMS_RETRY_DELAY_MS);
+        return new Date(Date.now() + SMS_DELIVERY_RETRY_DELAY_MS);
     }
 }

@@ -37,7 +37,7 @@ async function fetchAllDocuments(): Promise<EformsignDocumentsResponse> {
   return response;
 }
 
-// Hook to fetch documents by type (in-progress, completed, rejected, or all)
+// Hook to fetch documents by type (in-progress, completed, expired, or all)
 export function useEformsignDocumentsByType(isAuthenticated: boolean, type: DocumentFilterType) {
   return useQuery<EformsignDocumentsResponse>({
     queryKey: type === null 
@@ -56,8 +56,8 @@ export function useEformsignDocumentsByType(isAuthenticated: boolean, type: Docu
         case "completed":
           response = await eformsignApi.getCompletedDocuments();
           break;
-        case "rejected":
-          response = await eformsignApi.getRejectedDocuments();
+        case "expired":
+          response = await eformsignApi.getExpiredDocuments();
           break;
         default:
           throw new Error("Invalid type");

@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { useQuery } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 import { TriggerRulesManager } from "../TriggerRulesManager";
 import {
   useAlimtalkTriggerRules,
@@ -12,6 +13,50 @@ import {
 jest.mock("@tanstack/react-query", () => ({
   useQuery: jest.fn(),
 }));
+
+jest.mock("@/components/app/v3", () => {
+  const React = jest.requireActual("react");
+  const actual = jest.requireActual("@/components/app/v3");
+
+  return {
+    ...actual,
+    SplitLayout: ({
+      children,
+      hasSelection,
+      onBack,
+      onModeChange,
+    }: {
+      children: ReactNode;
+      hasSelection?: boolean;
+      onBack?: () => void;
+      onModeChange?: (mode: "desktop" | "compact") => void;
+    }) => {
+      React.useLayoutEffect(() => {
+        onModeChange?.("compact");
+      }, [onModeChange]);
+
+      return React.createElement(
+        "div",
+        {
+          "data-component": "split-layout",
+          "data-mode": "compact",
+          "data-has-selection": hasSelection ? "true" : "false",
+        },
+        hasSelection
+          ? React.createElement(
+              "button",
+              {
+                type: "button",
+                onClick: onBack,
+              },
+              "목록으로 돌아가기",
+            )
+          : null,
+        children,
+      );
+    },
+  };
+});
 
 jest.mock("@/hooks/use-toast", () => ({
   useToast: () => ({
@@ -59,8 +104,6 @@ function mockSettingsQueries({
 
     if (queryKey.includes("message-sender-approval")) {
       return useQueryResult({
-        senderPhone: senderApproved ? "01012345678" : null,
-        senderPhoneFormatted: senderApproved ? "010-1234-5678" : null,
         approvalStatus: senderApproved ? "approved" : "not_requested",
         isApproved: senderApproved,
         canRequest: !senderApproved,
@@ -78,6 +121,10 @@ function mockSettingsQueries({
 
 beforeEach(() => {
   jest.clearAllMocks();
+  Object.defineProperty(window, "innerWidth", {
+    configurable: true,
+    value: 1200,
+  });
 
   mockSettingsQueries();
 
@@ -162,5 +209,52 @@ describe("TriggerRulesManager", () => {
     expect(
       screen.queryByText("메시지 발송 승인 후에 설정 가능합니다. 설정에서 메시지 발송 기능을 신청해 주세요."),
     ).not.toBeInTheDocument();
+  });
+
+  it("does not preselect the first rule in compact split layout", async () => {
+    mockSettingsQueries({ providerEnabled: false, senderApproved: true });
+
+    const { container } = render(<TriggerRulesManager />);
+    window.dispatchEvent(new Event("resize"));
+
+    expect(
+      await screen.findByText("왼쪽 목록에서 알림톡 규칙을 선택하거나 새 규칙을 만들어 주세요."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("규칙 활성화")).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component="split-layout"]')).toHaveAttribute("data-has-selection", "false");
+  });
+
+  it("renders SMS-specific copy and hides non-SMS rules in the message automation channel", () => {
+    mockSettingsQueries({ providerEnabled: false, senderApproved: true });
+
+    const { container } = render(<TriggerRulesManager dataComponentPrefix="message" channel="sms" />);
+
+    expect(screen.getByText("SMS 발송 규칙")).toBeInTheDocument();
+    expect(screen.getByText("SMS 재시도 규칙")).toBeInTheDocument();
+    expect(screen.getByText("SMS 전송 실패 시 5분 후 자동 재시도하며, 최초 발송 이후 최대 2번까지 다시 시도합니다.")).toBeInTheDocument();
+    expect(screen.queryByText("서비스 시작 안내")).not.toBeInTheDocument();
+
+    const retrySwitch = screen.getByRole("switch", { name: "SMS 재시도 규칙 활성화" });
+    expect(retrySwitch).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "비활성화" }));
+
+    expect(screen.queryByText("SMS 재시도 규칙")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "활성화" }));
+    fireEvent.click(screen.getByRole("switch", { name: "SMS 재시도 규칙 활성화" }));
+
+    expect(screen.queryByRole("switch", { name: "SMS 재시도 규칙 활성화" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "비활성화" }));
+
+    expect(screen.getByText("SMS 재시도 규칙")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "SMS 재시도 규칙 활성화" })).toHaveAttribute("aria-checked", "false");
+
+    fireEvent.click(screen.getByText("SMS 재시도 규칙"));
+
+    expect(container.querySelector('[data-component="split-layout"]')).toHaveAttribute("data-has-selection", "true");
+    expect(screen.getByText("재시도 횟수")).toBeInTheDocument();
+    expect(screen.getByText("재시도 간격")).toBeInTheDocument();
   });
 });

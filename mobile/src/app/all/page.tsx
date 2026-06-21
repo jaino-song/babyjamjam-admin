@@ -18,7 +18,7 @@ import { useEmployees } from "@/hooks/useEmployees";
 import { useMessageTemplates } from "@/hooks/use-message-templates";
 import { useUnreadCount, usePushNotification } from "@/hooks/usePushNotification";
 import { AllSettingsRedesign } from "@/components/app/mobile-redesign/AllSettingsRedesign";
-import { UI_ONLY_AUTOMATION_TRIGGER_COUNT } from "@/components/app/mobile-redesign/AlimtalkAutomationPage";
+import { UI_ONLY_AUTOMATION_TRIGGER_COUNT } from "@/components/app/mobile-redesign/AlimtalkTriggerList";
 import type { MenuGroup } from "@/components/app/mobile-redesign/mockup-data";
 import { useAlimtalkTriggerRules } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
 

@@ -623,6 +623,15 @@
     will-change: transform;
   }
 
+  [data-component="animated-slot-list"] > * {
+    margin-bottom: 0 !important;
+  }
+
+  .animate-v3-slide-up {
+    animation-fill-mode: both;
+    will-change: transform;
+  }
+
   .scrollbar-on-scroll {
     -ms-overflow-style: none;
     scrollbar-gutter: stable;
@@ -667,12 +676,25 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .v3-slide-up-children > * {
+    .v3-slide-up-children > *,
+    .animate-v3-slide-up,
+    .animate-v3-pop-up {
       animation: none !important;
       transform: none !important;
       opacity: 1 !important;
     }
   }
+}
+
+/* Messages trigger rules must fill the same split-layout height as the templates view. */
+[data-component="messages-triggers-section"],
+[data-component="message-trigger-rules"],
+[data-component="message-trigger-rules-layout"] {
+  display: flex;
+  flex: 1 1 0%;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
 
 /* V3 split layout responsive mode. */
@@ -724,6 +746,7 @@
 
 [data-component="main-content"][data-mode="compact"] [data-component="messages-sections"],
 [data-component="main-content"][data-mode="compact"] [data-component="contracts-sections"],
+[data-component="main-content"][data-mode="compact"] [data-component="clients-sections"],
 [data-component="main-content"][data-mode="compact"] [data-component="system-admin-sections"],
 [data-component="main-content"][data-mode="compact"] [data-component="alimtalk-sections"],
 [data-component="main-content"][data-mode="compact"] [data-component="settings-sections"] {
@@ -731,10 +754,11 @@
   flex-direction: column;
 }
 
-@media (max-width: 1600px) {
+@media (max-width: 1279px) {
   [data-component="main-content"]:has(:is(
     [data-component="messages-sections"],
     [data-component="contracts-sections"],
+    [data-component="clients-sections"],
     [data-component="system-admin-sections"],
     [data-component="alimtalk-sections"],
     [data-component="settings-sections"]
@@ -745,6 +769,7 @@
   :is(
     [data-component="messages-sections"],
     [data-component="contracts-sections"],
+    [data-component="clients-sections"],
     [data-component="system-admin-sections"],
     [data-component="alimtalk-sections"],
     [data-component="settings-sections"]
@@ -756,6 +781,7 @@
   :is(
     [data-component="messages-sections"],
     [data-component="contracts-sections"],
+    [data-component="clients-sections"],
     [data-component="system-admin-sections"],
     [data-component="alimtalk-sections"],
     [data-component="settings-sections"]
@@ -766,6 +792,7 @@
   :is(
     [data-component="messages-sections"],
     [data-component="contracts-sections"],
+    [data-component="clients-sections"],
     [data-component="system-admin-sections"],
     [data-component="alimtalk-sections"],
     [data-component="settings-sections"]
@@ -776,6 +803,7 @@
   :is(
     [data-component="messages-sections"],
     [data-component="contracts-sections"],
+    [data-component="clients-sections"],
     [data-component="system-admin-sections"],
     [data-component="alimtalk-sections"],
     [data-component="settings-sections"]
@@ -786,6 +814,7 @@
   :is(
     [data-component="messages-sections"],
     [data-component="contracts-sections"],
+    [data-component="clients-sections"],
     [data-component="system-admin-sections"],
     [data-component="alimtalk-sections"],
     [data-component="settings-sections"]
@@ -801,6 +830,7 @@
   :is(
     [data-component="messages-sections"],
     [data-component="contracts-sections"],
+    [data-component="clients-sections"],
     [data-component="system-admin-sections"],
     [data-component="alimtalk-sections"],
     [data-component="settings-sections"]
@@ -813,6 +843,7 @@
   :is(
     [data-component="messages-sections"],
     [data-component="contracts-sections"],
+    [data-component="clients-sections"],
     [data-component="system-admin-sections"],
     [data-component="alimtalk-sections"],
     [data-component="settings-sections"]
@@ -823,6 +854,7 @@
   :is(
     [data-component="messages-sections"],
     [data-component="contracts-sections"],
+    [data-component="clients-sections"],
     [data-component="system-admin-sections"],
     [data-component="alimtalk-sections"],
     [data-component="settings-sections"]
@@ -836,6 +868,7 @@
   :is(
     [data-component="messages-sections"],
     [data-component="contracts-sections"],
+    [data-component="clients-sections"],
     [data-component="system-admin-sections"],
     [data-component="alimtalk-sections"],
     [data-component="settings-sections"]
@@ -843,6 +876,7 @@
   :is(
     [data-component="messages-sections"],
     [data-component="contracts-sections"],
+    [data-component="clients-sections"],
     [data-component="system-admin-sections"],
     [data-component="alimtalk-sections"],
     [data-component="settings-sections"]
@@ -863,7 +897,13 @@
   display: block !important;
 }
 
-@media (min-width: 768px) {
+@media (max-width: 1279px) {
+  [data-component="floating-quick-actions"] {
+    display: none !important;
+  }
+}
+
+@media (min-width: 1280px) {
   [data-component="floating-quick-actions"][data-mode="desktop"],
   [data-component="floating-quick-actions"][data-mode="compact"] {
     display: flex !important;
@@ -1066,6 +1106,41 @@ body {
 }
 
 /* Search expand - search input width expansion */
+.expandable-search-overlay-surface {
+  width: calc(32px * var(--v3-ui-scale, 1));
+  transition:
+    width 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    background 180ms ease-out;
+  will-change: width;
+}
+
+.expandable-search-overlay-surface[data-expanded="true"] {
+  width: 7rem;
+}
+
+.expandable-search-overlay-input {
+  opacity: 0;
+  padding-inline: 0;
+  pointer-events: none;
+  transition:
+    opacity 150ms ease-out,
+    padding-inline 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.expandable-search-overlay-surface[data-expanded="true"] .expandable-search-overlay-input {
+  opacity: 1;
+  padding-inline: calc(8px * var(--v3-ui-scale, 1));
+  pointer-events: auto;
+  transition-delay: 60ms, 0ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .expandable-search-overlay-surface,
+  .expandable-search-overlay-input {
+    transition: none !important;
+  }
+}
+
 .search-expand {
   transition: width 0.3s ease-out;
 }
