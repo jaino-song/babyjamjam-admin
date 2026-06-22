@@ -135,9 +135,11 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
                 return { success: false, error: "로그인 서버에 연결할 수 없습니다. 백엔드 서버를 확인해 주세요." };
             }
 
+            const apiMessage = axiosError.response?.data?.message;
             return {
                 success: false,
-                error: axiosError.response?.data?.message || "로그인에 실패했습니다."
+                error: apiMessage || "로그인에 실패했습니다.",
+                emailVerificationRequired: apiMessage?.includes("이메일 인증"),
             };
         }
 
