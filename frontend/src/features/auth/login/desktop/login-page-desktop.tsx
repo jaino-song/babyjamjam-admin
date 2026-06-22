@@ -1,7 +1,5 @@
 "use client";
 
-import Link from "next/link";
-
 import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { AuthPanel } from "@/components/auth/auth-panel";
 import { FormField } from "@/components/auth/form-field";
@@ -25,10 +23,12 @@ export function LoginPageDesktop() {
     serverError,
     isLoading,
     emailVerificationRequired,
+    isResendingVerification,
     setAutoLogin,
     setRememberId,
     handleChange,
     handleSubmit,
+    handleResendVerification,
     clearServerError,
   } = useLoginPageController();
 
@@ -56,12 +56,22 @@ export function LoginPageDesktop() {
             {serverError}
             {emailVerificationRequired ? (
               <div data-component="login-error-verify-email" className="mt-2">
-                <Link
-                  href="/verify-email"
-                  className="text-destructive underline hover:no-underline"
-                >
-                  인증 이메일 재발송
-                </Link>
+                {isResendingVerification ? (
+                  "재전송 중..."
+                ) : (
+                  <>
+                    이메일이 오지 않았다면{" "}
+                    <button
+                      type="button"
+                      data-component="login-resend-verification-link"
+                      onClick={handleResendVerification}
+                      className="text-destructive underline hover:no-underline"
+                    >
+                      재전송
+                    </button>
+                    을 눌러주세요.
+                  </>
+                )}
               </div>
             ) : null}
           </div>
