@@ -287,4 +287,61 @@ describe("EformsignController (Integration)", () => {
         expect(page2.body.documents).toEqual([{ id: "d3", created_date: "100" }]);
         expect(page2.body.total_rows).toBe(3);
     });
+
+    it("returns branch-scoped status signals (status-counts)", async () => {
+        eformsignDocService.findAll.mockResolvedValue([
+            { documentId: "d1" },
+            { documentId: "d2" },
+        ] as any);
+        eformsignService.getAllDocuments.mockImplementation((async (_token: string, _limit?: number, skip?: number) => {
+            if (skip === 0) {
+                return {
+                    documents: [
+                        { id: "d1", created_date: "200", current_status: { status_type: "060", step_recipients: [{ recipient_type: "01" }] }, recipients: [{ name: "송진호", recipient_type: "02" }] },
+                        { id: "other", created_date: "150", current_status: { status_type: "003", step_recipients: [] } },
+                        { id: "d2", created_date: "100", current_status: { status_type: "001", step_recipients: [{ recipient_type: "02" }] } },
+                    ],
+                    total_rows: 3,
+                    limit: 100,
+                    skip: 0,
+                };
+            }
+            return { documents: [], total_rows: 0, limit: 100, skip: skip ?? 0 };
+        }) as any);
+
+        const response = await request(app.getHttpServer())
+            .get("/api/documents/status-counts?accessToken=access-token");
+
+        expect(response.status).toBe(200);
+        // branch docs only ("other" dropped), newest-first, mapped to raw signals.
+        // The 송진호-named doc (d1) is present — names must NOT be excluded.
+        expect(response.body.documents).toEqual([
+            { status_type: "060", step_recipient_types: ["01"] },
+            { status_type: "001", step_recipient_types: ["02"] },
+        ]);
+        expect(eformsignDocService.findAll).toHaveBeenCalledWith("branch-1");
+    });
+
+    it("lets the incheon (HQ) branch see every status signal (status-counts)", async () => {
+        branchFindUnique.mockResolvedValue({ slug: "incheon" });
+        eformsignService.getAllDocuments.mockResolvedValue({
+            documents: [
+                { id: "d1", current_status: { status_type: "060", step_recipients: [{ recipient_type: "01" }] } },
+                { id: "other", current_status: { status_type: "003", step_recipients: [] } },
+            ],
+            total_rows: 2,
+            limit: 100,
+            skip: 0,
+        });
+
+        const response = await request(app.getHttpServer())
+            .get("/api/documents/status-counts?accessToken=access-token");
+
+        expect(response.status).toBe(200);
+        expect(response.body.documents).toEqual([
+            { status_type: "060", step_recipient_types: ["01"] },
+            { status_type: "003", step_recipient_types: [] },
+        ]);
+        expect(eformsignDocService.findAll).not.toHaveBeenCalled();
+    });
 });

@@ -25,6 +25,7 @@ export function useEformsignDocsLiveStream(enabled: boolean): void {
         const onChange = () => {
             queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
             queryClient.invalidateQueries({ queryKey: ["eformsign-client-names"] });
+            queryClient.invalidateQueries({ queryKey: ["eformsign-status-counts"] });
         };
 
         source.addEventListener("docs-changed", onChange);

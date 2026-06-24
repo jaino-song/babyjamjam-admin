@@ -59,6 +59,21 @@ function parseDownloadFileType(value: string | undefined): DownloadFileType {
 
 type EformsignListDoc = { id: string; created_date?: unknown; createdDate?: unknown };
 
+// StatsBar 카운터 계산에 필요한 최소 신호만 추린 형태. 버킷 분류(매핑)는
+// 프론트의 status-codes.ts(foldContractStats) 한 곳에서만 수행한다.
+type EformsignStatusSignal = { status_type: string | null; step_recipient_types: Array<string | null> };
+
+function toStatusSignal(doc: unknown): EformsignStatusSignal {
+    const currentStatus = (doc as {
+        current_status?: { status_type?: unknown; step_recipients?: Array<{ recipient_type?: unknown }> };
+    }).current_status;
+    const stepRecipients = Array.isArray(currentStatus?.step_recipients) ? currentStatus.step_recipients : [];
+    return {
+        status_type: typeof currentStatus?.status_type === "string" ? currentStatus.status_type : null,
+        step_recipient_types: stepRecipients.map((r) => (typeof r?.recipient_type === "string" ? r.recipient_type : null)),
+    };
+}
+
 @Controller("api")
 @UseGuards(JwtGuard, TenantGuard)
 export class EformsignController {
@@ -305,6 +320,35 @@ export class EformsignController {
                 limit: parsedLimit,
                 skip: parsedSkip,
             };
+        } catch (error) {
+            throwHttpOrInternalError(error);
+        }
+    }
+
+    /**
+     * 전체 탭 StatsBar 카운터용: 현재 지점(인천=회사 전체)의 문서를 한 번 모아
+     * 버킷 계산에 필요한 원시 신호(status_type + 현재 단계 수신자 타입)만 내려준다.
+     * 분류는 프론트(foldContractStats). status-counts는 documents/:documentId보다
+     * 먼저 선언되어야 정적 경로로 매칭된다.
+     */
+    @Get("documents/status-counts")
+    async getStatusCounts(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Query("accessToken") accessToken: string,
+    ) {
+        try {
+            if (!accessToken) {
+                throw new HttpException(
+                    { error: "Access token is required" },
+                    HttpStatus.BAD_REQUEST
+                );
+            }
+            const branchId = tenant.branchId ?? "";
+            // 인천점(본사)은 회사 전체 한 페이지, 그 외 지점은 보유 문서 전체를 모은다.
+            const documents = (await this.isHeadquartersBranch(branchId))
+                ? (await this.eformsignService.getAllDocuments(accessToken, 100, 0)).documents ?? []
+                : await this.collectBranchDocuments(accessToken, branchId);
+            return { documents: documents.map((doc) => toStatusSignal(doc)) };
         } catch (error) {
             throwHttpOrInternalError(error);
         }

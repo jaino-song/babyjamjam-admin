@@ -9,3 +9,10 @@ export interface EformsignDocumentView {
   created_date: number;
   status: DocumentStatusLabel;
 }
+
+// Raw per-doc signals from `GET /api/documents/status-counts` (branch-scoped,
+// HQ-aware). Folded into the StatsBar counters by `foldContractStats`. The
+// fields come from each doc's live eformsign `current_status`.
+export interface EformsignStatusCountsResponse {
+  documents: Array<{ status_type: string | null; step_recipient_types: Array<string | null> }>;
+}
