@@ -228,4 +228,63 @@ describe("EformsignController (Integration)", () => {
         expect(response.body.total_rows).toBe(3);
         expect(eformsignDocService.findAll).not.toHaveBeenCalled();
     });
+
+    it("loads branch contracts from a later company page (no early stop on an empty first page)", async () => {
+        eformsignDocService.findAll.mockResolvedValue([{ documentId: "late-doc" }] as any);
+        eformsignService.getAllDocuments.mockImplementation((async (_accessToken: string, _limit?: number, skip?: number) => {
+            if (skip === 0) {
+                // first company page holds only other branches' docs (non-empty → old code would stop here)
+                return { documents: [{ id: "other-a" }, { id: "other-b" }], total_rows: 2, limit: 100, skip: 0 };
+            }
+            if (skip === 100) {
+                return { documents: [{ id: "late-doc" }, { id: "other-c" }], total_rows: 2, limit: 100, skip: 100 };
+            }
+            return { documents: [], total_rows: 0, limit: 100, skip: skip ?? 0 };
+        }) as any);
+
+        const response = await request(app.getHttpServer())
+            .get("/api/documents?accessToken=access-token");
+
+        expect(response.status).toBe(200);
+        expect(response.body.documents).toEqual([{ id: "late-doc" }]);
+        expect(response.body.total_rows).toBe(1);
+    });
+
+    it("paginates within the branch-scoped set, newest first", async () => {
+        eformsignDocService.findAll.mockResolvedValue([
+            { documentId: "d1" },
+            { documentId: "d2" },
+            { documentId: "d3" },
+        ] as any);
+        eformsignService.getAllDocuments.mockImplementation((async (_accessToken: string, _limit?: number, skip?: number) => {
+            if (skip === 0) {
+                return {
+                    documents: [
+                        { id: "d2", created_date: "200" },
+                        { id: "other", created_date: "250" },
+                        { id: "d1", created_date: "300" },
+                        { id: "d3", created_date: "100" },
+                    ],
+                    total_rows: 4,
+                    limit: 100,
+                    skip: 0,
+                };
+            }
+            return { documents: [], total_rows: 0, limit: 100, skip: skip ?? 0 };
+        }) as any);
+
+        const page1 = await request(app.getHttpServer())
+            .get("/api/documents?accessToken=access-token&limit=2&skip=0");
+        expect(page1.status).toBe(200);
+        expect(page1.body.documents).toEqual([
+            { id: "d1", created_date: "300" },
+            { id: "d2", created_date: "200" },
+        ]);
+        expect(page1.body.total_rows).toBe(3);
+
+        const page2 = await request(app.getHttpServer())
+            .get("/api/documents?accessToken=access-token&limit=2&skip=2");
+        expect(page2.body.documents).toEqual([{ id: "d3", created_date: "100" }]);
+        expect(page2.body.total_rows).toBe(3);
+    });
 });
