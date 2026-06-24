@@ -26,7 +26,7 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { ROLES } from "@/lib/constants/roles";
 import { SidebarNotifications } from "@/components/app/v3/SidebarNotifications";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { SidebarAccountMenu } from "@/components/app/v3/SidebarAccountMenu";
 import { useConsultationInquiries } from "@/hooks/useConsultationInquiries";
 import { useV3UiScaleStyle } from "./useV3UiScale";
 
@@ -275,22 +275,16 @@ export const V3Sidebar = () => {
       </nav>
 
       <div className="mt-auto p-[calc(16px*var(--v3-ui-scale,1))]" data-component="sidebar-profile">
-        <div className="group flex cursor-pointer items-center gap-[calc(12px*var(--v3-ui-scale,1))] rounded-2xl border border-v3-border/50 bg-v3-dim-white/50 p-[calc(12px*var(--v3-ui-scale,1))] transition-all hover:bg-white hover:shadow-v3-hover">
-          <Avatar className="h-[calc(40px*var(--v3-ui-scale,1))] w-[calc(40px*var(--v3-ui-scale,1))] shrink-0 rounded-full shadow-inner">
-            <AvatarImage src={user?.profileImage || ""} alt={user?.name || "사용자"} />
-            <AvatarFallback className="bg-gradient-to-br from-v3-primary to-blue-600 text-[calc(14px*var(--v3-ui-scale,1))] font-bold text-white">
-              {initials}
-            </AvatarFallback>
-          </Avatar>
-          <div className="flex min-w-0 flex-col">
-            <span className="truncate text-[calc(13.6px*var(--v3-ui-scale,1))] font-semibold text-gray-900 transition-colors group-hover:text-v3-primary">
-              {user?.name || "GUEST"}
-            </span>
-            <span className="truncate text-[calc(11.2px*var(--v3-ui-scale,1))] text-v3-text-muted">
-              {user?.role ? t(locale, `roles.${user.role}`) || t(locale, "roles.unknown") : t(locale, "roles.unknown")}
-            </span>
-          </div>
-        </div>
+        <SidebarAccountMenu
+          name={user?.name || "GUEST"}
+          roleLabel={
+            user?.role
+              ? t(locale, `roles.${user.role}`) || t(locale, "roles.unknown")
+              : t(locale, "roles.unknown")
+          }
+          profileImage={user?.profileImage}
+          initials={initials}
+        />
       </div>
     </aside>
   );
