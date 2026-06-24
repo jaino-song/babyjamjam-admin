@@ -1,6 +1,9 @@
 import { BadRequestException, Controller, Post, Get, Delete, Body, Query, Param, HttpException, HttpStatus, UseGuards, Res } from "@nestjs/common";
 import { EformsignService } from "../../application/services/eformsign.service";
+import { EformsignDocService } from "../../application/services/eformsign-doc.service";
 import { AreaTemplateService } from "../../application/services/area-template.service";
+import { PrismaService } from "infrastructure/database/prisma.service";
+import { INCHEON_STAFF_BRANCH_SLUG } from "domain/constants/branch-routing.constants";
 import { GenerateStaffDocumentRequestDto } from "../dto/staff-document.dto";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
@@ -60,7 +63,36 @@ export class EformsignController {
     constructor(
         private readonly eformsignService: EformsignService,
         private readonly areaTemplateService: AreaTemplateService,
+        private readonly eformsignDocService: EformsignDocService,
+        private readonly prisma: PrismaService,
     ) { }
+
+    /**
+     * 현재 지점이 로컬에 적재한(=생성한) 전자서명 문서만 남긴다.
+     * 외부 eformsign API는 회사(EFORMSIGN_COMPANY_ID) 전체 문서를 반환하므로,
+     * 로컬 eformsign_doc에 현재 branchId로 기록된 documentId 집합과 교차시켜 거른다.
+     * 로컬 매핑이 없는 문서(어느 지점이 만들었는지 모르는 문서)는 제외한다.
+     * 단, 인천점(staff slug=incheon)은 본사 성격이라 필터를 우회해
+     * branchId 매핑이 없는 문서까지 전부 본다.
+     */
+    private async filterDocumentsByBranch<T extends { id: string }>(
+        branchId: string,
+        documents: T[],
+    ): Promise<T[]> {
+        if (!branchId) {
+            return [];
+        }
+        const branch = await this.prisma.branch.findUnique({
+            where: { id: branchId },
+            select: { slug: true },
+        });
+        if (branch?.slug === INCHEON_STAFF_BRANCH_SLUG) {
+            return documents;
+        }
+        const localDocs = await this.eformsignDocService.findAll(branchId);
+        const allowedIds = new Set(localDocs.map((doc) => doc.documentId));
+        return documents.filter((doc) => allowedIds.has(doc.id));
+    }
 
     @Post("generate-signature")
     async generateSignature(@Body() body: GenerateSignatureRequestDto) {
@@ -174,6 +206,7 @@ export class EformsignController {
      */
     @Get("documents")
     async getAllDocuments(
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("accessToken") accessToken: string,
         @Query("limit") limit?: string,
         @Query("skip") skip?: string,
@@ -185,12 +218,17 @@ export class EformsignController {
                     HttpStatus.BAD_REQUEST
                 );
             }
-            const documents = await this.eformsignService.getAllDocuments(
+            const result = await this.eformsignService.getAllDocuments(
                 accessToken,
                 parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 }),
                 parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
             );
-            return documents;
+            const documents = await this.filterDocumentsByBranch(tenant.branchId ?? "", result.documents);
+            return {
+                ...result,
+                documents,
+                total_rows: documents.length,
+            };
         } catch (error) {
             throwHttpOrInternalError(error);
         }
@@ -201,6 +239,7 @@ export class EformsignController {
      */
     @Get("documents/in-progress")
     async getInProgressDocuments(
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("accessToken") accessToken: string,
         @Query("limit") limit?: string,
         @Query("skip") skip?: string,
@@ -212,12 +251,13 @@ export class EformsignController {
                     HttpStatus.BAD_REQUEST
                 );
             }
-            const documents = await this.eformsignService.getInProgressDocuments(
+            const result = await this.eformsignService.getInProgressDocuments(
                 accessToken,
                 parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 }),
                 parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
             );
-            return documents;
+            const documents = await this.filterDocumentsByBranch(tenant.branchId ?? "", result.documents ?? []);
+            return { ...result, documents };
         } catch (error) {
             throwHttpOrInternalError(error);
         }
@@ -228,6 +268,7 @@ export class EformsignController {
      */
     @Get("documents/completed")
     async getCompletedDocuments(
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("accessToken") accessToken: string,
         @Query("limit") limit?: string,
         @Query("skip") skip?: string,
@@ -239,12 +280,13 @@ export class EformsignController {
                     HttpStatus.BAD_REQUEST
                 );
             }
-            const documents = await this.eformsignService.getCompletedDocuments(
+            const result = await this.eformsignService.getCompletedDocuments(
                 accessToken,
                 parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 }),
                 parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
             );
-            return documents;
+            const documents = await this.filterDocumentsByBranch(tenant.branchId ?? "", result.documents ?? []);
+            return { ...result, documents };
         } catch (error) {
             throwHttpOrInternalError(error);
         }
@@ -255,6 +297,7 @@ export class EformsignController {
      */
     @Get("documents/rejected")
     async getRejectedDocuments(
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("accessToken") accessToken: string,
         @Query("limit") limit?: string,
         @Query("skip") skip?: string,
@@ -266,12 +309,13 @@ export class EformsignController {
                     HttpStatus.BAD_REQUEST
                 );
             }
-            const documents = await this.eformsignService.getRejectedDocuments(
+            const result = await this.eformsignService.getRejectedDocuments(
                 accessToken,
                 parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 }),
                 parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
             );
-            return documents;
+            const documents = await this.filterDocumentsByBranch(tenant.branchId ?? "", result.documents ?? []);
+            return { ...result, documents };
         } catch (error) {
             throwHttpOrInternalError(error);
         }
