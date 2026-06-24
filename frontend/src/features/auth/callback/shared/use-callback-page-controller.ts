@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { AUTH_ROUTES } from "@/lib/auth/routes";
@@ -31,7 +31,6 @@ export function useCallbackPageController() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [error, setError] = useState<string | null>(null);
-  const handledCodeRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,13 +52,12 @@ export function useCallbackPageController() {
         return;
       }
 
-      if (handledCodeRef.current === code) {
-        return;
-      }
-
-      handledCodeRef.current = code;
-
       try {
+        // De-duping the single-use code is handled by exchangeTokenOnce's
+        // module-level cache. A per-render ref guard must NOT be added here: under
+        // React Strict Mode (dev) the effect runs twice, and a ref guard makes the
+        // second (live) run bail while the first (cancelled) run drops its result,
+        // leaving the page stuck on the loading spinner.
         const result = await exchangeTokenOnce(code);
 
         if (cancelled) {
