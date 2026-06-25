@@ -30,7 +30,7 @@ describe("EformsignController (Integration)", () => {
         | "getInProgressDocuments"
     >>;
     let areaTemplateService: jest.Mocked<Pick<AreaTemplateService, "findByArea">>;
-    let eformsignDocService: jest.Mocked<Pick<EformsignDocService, "findAll">>;
+    let eformsignDocService: jest.Mocked<Pick<EformsignDocService, "findAll" | "findDocumentIdsForOtherBranches">>;
     let branchFindUnique: jest.Mock;
 
     const authGuard = {
@@ -73,6 +73,7 @@ describe("EformsignController (Integration)", () => {
                     provide: EformsignDocService,
                     useValue: {
                         findAll: jest.fn(),
+                        findDocumentIdsForOtherBranches: jest.fn(),
                     },
                 },
                 {
@@ -99,6 +100,8 @@ describe("EformsignController (Integration)", () => {
         branchFindUnique = (moduleFixture.get(PrismaService) as unknown as { branch: { findUnique: jest.Mock } }).branch.findUnique;
         // default: a non-incheon branch, so per-branch filtering applies
         branchFindUnique.mockResolvedValue({ slug: "gimpo" });
+        // default: no other-branch docs (overridden in incheon/HQ tests)
+        eformsignDocService.findDocumentIdsForOtherBranches.mockResolvedValue([]);
     });
 
     afterEach(async () => {
@@ -199,22 +202,26 @@ describe("EformsignController (Integration)", () => {
         expect(eformsignDocService.findAll).toHaveBeenCalledWith("branch-1");
     });
 
-    it("lets the incheon (HQ) branch see every document, including unmapped ones", async () => {
+    it("lets the incheon (HQ) branch see its own + unmapped docs, excluding other branches'", async () => {
         branchFindUnique.mockResolvedValue({ slug: "incheon" });
-        eformsignService.getAllDocuments.mockResolvedValue({
-            documents: [
-                { id: "branch-1-doc" },
-                { id: "other-branch-doc" },
-                { id: "unmapped-doc" },
-            ],
-            total_rows: 3,
-            limit: 100,
-            skip: 0,
-        });
-        // local mapping has only one doc, but incheon must bypass and see all
-        eformsignDocService.findAll.mockResolvedValue([
-            { documentId: "branch-1-doc" },
-        ] as any);
+        // branch-1 (incheon) created branch-1-doc; other-branch-doc is owned by another
+        // branch; unmapped-doc has no local mapping. Incheon sees its own + unmapped.
+        eformsignDocService.findDocumentIdsForOtherBranches.mockResolvedValue(["other-branch-doc"]);
+        eformsignService.getAllDocuments.mockImplementation((async (_token: string, _limit?: number, skip?: number) => {
+            if (skip === 0) {
+                return {
+                    documents: [
+                        { id: "branch-1-doc" },
+                        { id: "other-branch-doc" },
+                        { id: "unmapped-doc" },
+                    ],
+                    total_rows: 3,
+                    limit: 100,
+                    skip: 0,
+                };
+            }
+            return { documents: [], total_rows: 0, limit: 100, skip: skip ?? 0 };
+        }) as any);
 
         const response = await request(app.getHttpServer())
             .get("/api/documents?accessToken=access-token");
@@ -222,10 +229,10 @@ describe("EformsignController (Integration)", () => {
         expect(response.status).toBe(200);
         expect(response.body.documents).toEqual([
             { id: "branch-1-doc" },
-            { id: "other-branch-doc" },
             { id: "unmapped-doc" },
         ]);
-        expect(response.body.total_rows).toBe(3);
+        expect(response.body.total_rows).toBe(2);
+        expect(eformsignDocService.findDocumentIdsForOtherBranches).toHaveBeenCalledWith("branch-1");
         expect(eformsignDocService.findAll).not.toHaveBeenCalled();
     });
 
@@ -322,17 +329,25 @@ describe("EformsignController (Integration)", () => {
         expect(eformsignDocService.findAll).toHaveBeenCalledWith("branch-1");
     });
 
-    it("lets the incheon (HQ) branch see every status signal (status-counts)", async () => {
+    it("excludes other branches' docs from the incheon (HQ) status signals (status-counts)", async () => {
         branchFindUnique.mockResolvedValue({ slug: "incheon" });
-        eformsignService.getAllDocuments.mockResolvedValue({
-            documents: [
-                { id: "d1", current_status: { status_type: "060", step_recipients: [{ recipient_type: "01" }] } },
-                { id: "other", current_status: { status_type: "003", step_recipients: [] } },
-            ],
-            total_rows: 2,
-            limit: 100,
-            skip: 0,
-        });
+        // "other" belongs to another branch → excluded; d1 (incheon's own) + unmapped kept.
+        eformsignDocService.findDocumentIdsForOtherBranches.mockResolvedValue(["other"]);
+        eformsignService.getAllDocuments.mockImplementation((async (_token: string, _limit?: number, skip?: number) => {
+            if (skip === 0) {
+                return {
+                    documents: [
+                        { id: "d1", current_status: { status_type: "060", step_recipients: [{ recipient_type: "01" }] } },
+                        { id: "other", current_status: { status_type: "003", step_recipients: [] } },
+                        { id: "unmapped", current_status: { status_type: "001", step_recipients: [{ recipient_type: "02" }] } },
+                    ],
+                    total_rows: 3,
+                    limit: 100,
+                    skip: 0,
+                };
+            }
+            return { documents: [], total_rows: 0, limit: 100, skip: skip ?? 0 };
+        }) as any);
 
         const response = await request(app.getHttpServer())
             .get("/api/documents/status-counts?accessToken=access-token");
@@ -340,8 +355,32 @@ describe("EformsignController (Integration)", () => {
         expect(response.status).toBe(200);
         expect(response.body.documents).toEqual([
             { status_type: "060", step_recipient_types: ["01"] },
-            { status_type: "003", step_recipient_types: [] },
+            { status_type: "001", step_recipient_types: ["02"] },
         ]);
+        expect(eformsignDocService.findDocumentIdsForOtherBranches).toHaveBeenCalledWith("branch-1");
+        expect(eformsignDocService.findAll).not.toHaveBeenCalled();
+    });
+
+    it("excludes other branches' docs from incheon (HQ) per-type lists (in-progress)", async () => {
+        branchFindUnique.mockResolvedValue({ slug: "incheon" });
+        eformsignDocService.findDocumentIdsForOtherBranches.mockResolvedValue(["other-branch-doc"]);
+        eformsignService.getInProgressDocuments.mockResolvedValue({
+            documents: [
+                { id: "branch-1-doc" },
+                { id: "other-branch-doc" },
+                { id: "unmapped-doc" },
+            ],
+        });
+
+        const response = await request(app.getHttpServer())
+            .get("/api/documents/in-progress?accessToken=access-token");
+
+        expect(response.status).toBe(200);
+        expect(response.body.documents).toEqual([
+            { id: "branch-1-doc" },
+            { id: "unmapped-doc" },
+        ]);
+        expect(eformsignDocService.findDocumentIdsForOtherBranches).toHaveBeenCalledWith("branch-1");
         expect(eformsignDocService.findAll).not.toHaveBeenCalled();
     });
 });

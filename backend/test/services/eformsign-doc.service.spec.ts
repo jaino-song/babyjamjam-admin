@@ -55,6 +55,7 @@ describe("EformsignDocService", () => {
     const findEformsignDocByDocumentIdUsecase = { execute: jest.fn() };
     const findEformsignDocsByClientIdUsecase = { execute: jest.fn() };
     const listEformsignDocsUsecase = { execute: jest.fn() };
+    const listOtherBranchDocumentIdsUsecase = { execute: jest.fn() };
     const createEformsignDocUsecase = { execute: jest.fn() };
     const updateEformsignDocStatusUsecase = { execute: jest.fn() };
     const getEformsignAccessTokenUsecase = { execute: jest.fn() };
@@ -71,6 +72,7 @@ describe("EformsignDocService", () => {
             findEformsignDocByDocumentIdUsecase as never,
             findEformsignDocsByClientIdUsecase as never,
             listEformsignDocsUsecase as never,
+            listOtherBranchDocumentIdsUsecase as never,
             createEformsignDocUsecase as never,
             updateEformsignDocStatusUsecase as never,
             getEformsignAccessTokenUsecase as never,
@@ -147,6 +149,15 @@ describe("EformsignDocService", () => {
             await expect(service.findAll(branchId)).resolves.toBe(docs);
 
             expect(listEformsignDocsUsecase.execute).toHaveBeenCalledWith(branchId);
+        });
+
+        it("findDocumentIdsForOtherBranches delegates to the list-other-branch usecase", async () => {
+            const ids = ["doc-a", "doc-b"];
+            listOtherBranchDocumentIdsUsecase.execute.mockResolvedValue(ids);
+
+            await expect(service.findDocumentIdsForOtherBranches(branchId)).resolves.toBe(ids);
+
+            expect(listOtherBranchDocumentIdsUsecase.execute).toHaveBeenCalledWith(branchId);
         });
 
         it("createAndSendContract forwards branchid and params", async () => {

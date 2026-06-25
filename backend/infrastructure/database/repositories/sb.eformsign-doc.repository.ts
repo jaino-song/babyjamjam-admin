@@ -85,6 +85,20 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         return docs.map(EformsignDocMapper.toDomain);
     }
 
+    async findDocumentIdsForOtherBranches(branchid: string): Promise<string[]> {
+        // 다른 지점이 소유한 문서의 documentId만 추린다. branchId가 null인(미적재) 문서는
+        // "지점 미지정"이라 인천(본사) 목록에 남아야 하므로 제외한다. Prisma의 `not`은
+        // null을 포함하므로 `not: null`로 비-null을 명시적으로 강제한다.
+        const docs = await this.prismaService.eformsign_doc.findMany({
+            where: {
+                branchId: { not: null },
+                NOT: { branchId: branchid },
+            },
+            select: { documentId: true },
+        });
+        return docs.map((doc) => doc.documentId);
+    }
+
     async findClientNamesByBranch(branchid: string): Promise<EformsignDocClientSummary[]> {
         const docs = await this.prismaService.eformsign_doc.findMany({
             where: { branchId: branchid },
