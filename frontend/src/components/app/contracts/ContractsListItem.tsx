@@ -12,7 +12,6 @@ interface ContractsListItemProps {
   document: EformsignDocument | null;
   customerName: string | null;
   isLoading: boolean;
-  isRefreshing: boolean;
 }
 
 function mapCategoryToStatusType(
@@ -42,9 +41,8 @@ function ContractsListItemComponent({
   document,
   customerName,
   isLoading,
-  isRefreshing,
 }: ContractsListItemProps) {
-  if (isLoading || isRefreshing || !document) {
+  if (isLoading || !document) {
     return (
       <>
         <div
@@ -122,6 +120,5 @@ export const ContractsListItem = memo(
   (previousProps, nextProps) =>
     previousProps.document === nextProps.document &&
     previousProps.customerName === nextProps.customerName &&
-    previousProps.isLoading === nextProps.isLoading &&
-    previousProps.isRefreshing === nextProps.isRefreshing
+    previousProps.isLoading === nextProps.isLoading
 );
