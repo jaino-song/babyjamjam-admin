@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { Building2 } from "lucide-react";
 import { AuthPanel } from "@/components/auth/auth-panel";
 import { Spinner } from "@/components/ui/spinner";
@@ -53,6 +54,7 @@ function SelectBranchLoadingSkeleton() {
 
 export default function SelectBranchPage() {
     const router = useRouter();
+    const queryClient = useQueryClient();
     const [branches, setBranches] = useState<Branch[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -71,13 +73,18 @@ export default function SelectBranchPage() {
                 return;
             }
 
+            // 지점 전환 시 이전 지점의 React Query 캐시(고객 목록·전자계약 등)를 모두 비운다.
+            // QueryClient는 브라우저 싱글톤이라 soft navigation(router.replace) 후에도
+            // 유지되므로, 비우지 않으면 이전 지점 데이터가 새로고침 전까지 그대로 남는다.
+            queryClient.clear();
+
             router.replace("/dashboard");
         } catch (err) {
             console.error("[Select Branch] Error selecting branch:", err);
             setError("지점 선택에 실패했습니다.");
             setSelecting(null);
         }
-    }, [router]);
+    }, [router, queryClient]);
 
     useEffect(() => {
         const fetchBranches = async () => {
