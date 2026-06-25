@@ -46,34 +46,44 @@ export interface StepperProps {
   forceCollapsed?: boolean;
 }
 
-const SIZE_MAP: Record<StepperSize, { root: string; circle: string; font: string; label: string; connector: string }> = {
+const SIZE_MAP: Record<
+  StepperSize,
+  { root: string; circle: string; font: string; label: string; connector: string; connectorOffset: string }
+> = {
+  // `connectorOffset` drops the connector line down to the circle's vertical
+  // centre (≈ half the circle height) now that labels sit in normal flow below
+  // each circle and the root is top-aligned.
   sm: {
-    root: "px-[calc(4px*var(--v3-ui-scale,1))] pt-[calc(4px*var(--v3-ui-scale,1))] pb-[calc(20px*var(--v3-ui-scale,1))]",
+    root: "px-[calc(4px*var(--v3-ui-scale,1))] py-[calc(4px*var(--v3-ui-scale,1))]",
     circle: "w-[calc(24px*var(--v3-ui-scale,1))] h-[calc(24px*var(--v3-ui-scale,1))]",
     font: "text-[calc(8.8px*var(--v3-ui-scale,1))]",
     label: "text-[calc(8px*var(--v3-ui-scale,1))]",
     connector: "min-w-[calc(40px*var(--v3-ui-scale,1))] px-[calc(6px*var(--v3-ui-scale,1))]",
+    connectorOffset: "mt-[calc(11px*var(--v3-ui-scale,1))]",
   },
   md: {
-    root: "px-[calc(4px*var(--v3-ui-scale,1))] pt-[calc(4px*var(--v3-ui-scale,1))] pb-[calc(20px*var(--v3-ui-scale,1))]",
+    root: "px-[calc(4px*var(--v3-ui-scale,1))] py-[calc(4px*var(--v3-ui-scale,1))]",
     circle: "w-[calc(32px*var(--v3-ui-scale,1))] h-[calc(32px*var(--v3-ui-scale,1))]",
     font: "text-[calc(10.4px*var(--v3-ui-scale,1))]",
     label: "text-[calc(9.6px*var(--v3-ui-scale,1))]",
     connector: "min-w-[calc(64px*var(--v3-ui-scale,1))] px-[calc(8px*var(--v3-ui-scale,1))]",
+    connectorOffset: "mt-[calc(15px*var(--v3-ui-scale,1))]",
   },
   lg: {
-    root: "px-[calc(4px*var(--v3-ui-scale,1))] pt-[calc(4px*var(--v3-ui-scale,1))] pb-[calc(20px*var(--v3-ui-scale,1))]",
+    root: "px-[calc(4px*var(--v3-ui-scale,1))] py-[calc(4px*var(--v3-ui-scale,1))]",
     circle: "w-[calc(40px*var(--v3-ui-scale,1))] h-[calc(40px*var(--v3-ui-scale,1))]",
     font: "text-[calc(12px*var(--v3-ui-scale,1))]",
     label: "text-[calc(11.2px*var(--v3-ui-scale,1))]",
     connector: "min-w-[calc(80px*var(--v3-ui-scale,1))] px-[calc(10px*var(--v3-ui-scale,1))]",
+    connectorOffset: "mt-[calc(19px*var(--v3-ui-scale,1))]",
   },
   fluid: {
-    root: "px-[calc(4px*var(--v3-ui-scale,1))] pt-[calc(4px*var(--v3-ui-scale,1))] pb-[calc(18px*var(--v3-ui-scale,1))]",
+    root: "px-[calc(4px*var(--v3-ui-scale,1))] py-[calc(4px*var(--v3-ui-scale,1))]",
     circle: "w-[calc(32px*var(--v3-ui-scale,1))] h-[calc(32px*var(--v3-ui-scale,1))]",
     font: "text-[calc(10.4px*var(--v3-ui-scale,1))]",
     label: "text-[calc(9.6px*var(--v3-ui-scale,1))]",
     connector: "min-w-[calc(64px*var(--v3-ui-scale,1))] px-[calc(8px*var(--v3-ui-scale,1))]",
+    connectorOffset: "mt-[calc(15px*var(--v3-ui-scale,1))]",
   },
 };
 
@@ -146,6 +156,10 @@ export function Stepper({
   const renderedSteps = isCollapsed
     ? getCollapsedSteps(steps, activeStep)
     : steps.map((step, originalIndex) => ({ step, originalIndex }));
+  // When collapsed past the first step, show a leading "⋯" so it's clear there
+  // are earlier (completed) steps scrolled out of view.
+  const hasPrecedingHidden =
+    isCollapsed && renderedSteps.length > 0 && renderedSteps[0].originalIndex > 0;
 
   const renderStepItems = (items: RenderedStepperStep[], exposeDataComponents: boolean) => (
     items.map(({ step, originalIndex }, visibleIndex) => {
@@ -190,7 +204,7 @@ export function Stepper({
             <span
               data-component={exposeDataComponents ? "stepper-label" : undefined}
               className={cn(
-                "absolute top-full mt-[calc(4px*var(--v3-ui-scale,1))] whitespace-nowrap",
+                "mt-[calc(4px*var(--v3-ui-scale,1))] whitespace-nowrap text-center",
                 tokens.label,
                 state === "done" ? "text-v3-primary" : "text-v3-text-muted",
               )}
@@ -205,6 +219,7 @@ export function Stepper({
               className={cn(
                 "flex flex-1 items-center select-none",
                 tokens.connector,
+                tokens.connectorOffset,
                 connectorClassName,
               )}
             >
@@ -277,15 +292,49 @@ export function Stepper({
       ref={rootRef}
       data-component="stepper"
       data-collapsed={isCollapsed ? "true" : "false"}
-      className={cn("relative flex items-center", tokens.root, className)}
+      className={cn("relative flex items-start", tokens.root, className)}
     >
+      {hasPrecedingHidden && (
+        // Leading "more" affordance — no connector to the first visible step,
+        // so it reads as "earlier steps", not another link.
+        <div
+          data-component="stepper-ellipsis"
+          title="이전 단계"
+          className="flex flex-col items-center"
+        >
+          <div
+            className={cn(
+              "flex items-center justify-center text-v3-primary",
+              tokens.circle,
+              size === "sm" && "gap-[calc(3.5px*var(--v3-ui-scale,1))]",
+              size === "md" && "gap-[calc(4px*var(--v3-ui-scale,1))]",
+              size === "lg" && "gap-[calc(5px*var(--v3-ui-scale,1))]",
+              size === "fluid" && "gap-[calc(4px*var(--v3-ui-scale,1))]",
+            )}
+          >
+            {[0, 1, 2].map((dot) => (
+              <span
+                key={dot}
+                aria-hidden="true"
+                className={cn(
+                  "rounded-full bg-current",
+                  size === "sm" && "h-[calc(4.5px*var(--v3-ui-scale,1))] w-[calc(4.5px*var(--v3-ui-scale,1))]",
+                  size === "md" && "h-[calc(6px*var(--v3-ui-scale,1))] w-[calc(6px*var(--v3-ui-scale,1))]",
+                  size === "lg" && "h-[calc(7px*var(--v3-ui-scale,1))] w-[calc(7px*var(--v3-ui-scale,1))]",
+                  size === "fluid" && "h-[calc(6px*var(--v3-ui-scale,1))] w-[calc(6px*var(--v3-ui-scale,1))]",
+                )}
+              />
+            ))}
+          </div>
+        </div>
+      )}
       {renderStepItems(renderedSteps, true)}
       {collapseOnHeaderOverflow ? (
         <div
           ref={measurementRef}
           aria-hidden="true"
           className={cn(
-            "pointer-events-none invisible fixed -left-[9999px] top-0 flex items-center",
+            "pointer-events-none invisible fixed -left-[9999px] top-0 flex items-start",
             tokens.root,
             className,
           )}

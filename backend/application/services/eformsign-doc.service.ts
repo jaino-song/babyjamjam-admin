@@ -4,6 +4,7 @@ import {
     FindEformsignDocByDocumentIdUsecase,
     FindEformsignDocsByClientIdUsecase,
     ListEformsignDocsUsecase,
+    ListOtherBranchDocumentIdsUsecase,
     GetEformsignAccessTokenUsecase,
     RefreshEformsignAccessTokenUsecase,
     FetchAllEformsignDocsFromApiUsecase,
@@ -34,6 +35,7 @@ export class EformsignDocService {
         private readonly findEformsignDocByDocumentIdUsecase: FindEformsignDocByDocumentIdUsecase,
         private readonly findEformsignDocsByClientIdUsecase: FindEformsignDocsByClientIdUsecase,
         private readonly listEformsignDocsUsecase: ListEformsignDocsUsecase,
+        private readonly listOtherBranchDocumentIdsUsecase: ListOtherBranchDocumentIdsUsecase,
         private readonly createEformsignDocUsecase: CreateEformsignDocUsecase,
         private readonly updateEformsignDocStatusUsecase: UpdateEformsignDocStatusUsecase,
         // External API use cases
@@ -84,6 +86,15 @@ export class EformsignDocService {
      */
     findAll(branchid: string): Promise<EformsignDocEntity[]> {
         return this.listEformsignDocsUsecase.execute(branchid);
+    }
+
+    /**
+     * List documentIds owned by branches OTHER than the given one
+     * (branchId set and != branchid). Lets the 인천(HQ) branch list its own +
+     * unmapped docs while excluding other branches' contracts.
+     */
+    findDocumentIdsForOtherBranches(branchid: string): Promise<string[]> {
+        return this.listOtherBranchDocumentIdsUsecase.execute(branchid);
     }
 
     // ============ External API Operations ============

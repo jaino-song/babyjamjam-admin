@@ -1,6 +1,9 @@
-import { BadRequestException, Controller, Post, Get, Delete, Body, Query, Param, HttpException, HttpStatus, UseGuards, Res } from "@nestjs/common";
-import { EformsignService } from "../../application/services/eformsign.service";
+import { BadRequestException, Controller, Post, Get, Delete, Body, Query, Param, HttpException, HttpStatus, UseGuards, Res, Logger } from "@nestjs/common";
+import { EformsignService, getDocumentCreatedTimestamp } from "../../application/services/eformsign.service";
+import { EformsignDocService } from "../../application/services/eformsign-doc.service";
 import { AreaTemplateService } from "../../application/services/area-template.service";
+import { PrismaService } from "infrastructure/database/prisma.service";
+import { INCHEON_STAFF_BRANCH_SLUG } from "domain/constants/branch-routing.constants";
 import { GenerateStaffDocumentRequestDto } from "../dto/staff-document.dto";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
@@ -54,13 +57,166 @@ function parseDownloadFileType(value: string | undefined): DownloadFileType {
     throw new BadRequestException("fileType must be document or audit_trail");
 }
 
+type EformsignListDoc = { id: string; created_date?: unknown; createdDate?: unknown };
+
+// StatsBar 카운터 계산에 필요한 최소 신호만 추린 형태. 버킷 분류(매핑)는
+// 프론트의 status-codes.ts(foldContractStats) 한 곳에서만 수행한다.
+type EformsignStatusSignal = { status_type: string | null; step_recipient_types: Array<string | null> };
+
+function toStatusSignal(doc: unknown): EformsignStatusSignal {
+    const currentStatus = (doc as {
+        current_status?: { status_type?: unknown; step_recipients?: Array<{ recipient_type?: unknown }> };
+    }).current_status;
+    const stepRecipients = Array.isArray(currentStatus?.step_recipients) ? currentStatus.step_recipients : [];
+    return {
+        status_type: typeof currentStatus?.status_type === "string" ? currentStatus.status_type : null,
+        step_recipient_types: stepRecipients.map((r) => (typeof r?.recipient_type === "string" ? r.recipient_type : null)),
+    };
+}
+
 @Controller("api")
 @UseGuards(JwtGuard, TenantGuard)
 export class EformsignController {
+    private readonly logger = new Logger(EformsignController.name);
+
     constructor(
         private readonly eformsignService: EformsignService,
         private readonly areaTemplateService: AreaTemplateService,
+        private readonly eformsignDocService: EformsignDocService,
+        private readonly prisma: PrismaService,
     ) { }
+
+    /**
+     * 인천점(staff slug=incheon)은 본사 성격이라 지점에 매여 있지 않은 문서까지 본다:
+     * 자기가 만든 문서 + 지점 매핑이 없는(branchId 미지정) 문서. 단, 다른 지점이
+     * 소유한 문서는 제외한다. 그 외 지점은 자기 지점이 만든(=로컬에 적재된) 문서만 본다.
+     */
+    private async isHeadquartersBranch(branchId: string): Promise<boolean> {
+        if (!branchId) {
+            return false;
+        }
+        const branch = await this.prisma.branch.findUnique({
+            where: { id: branchId },
+            select: { slug: true },
+        });
+        return branch?.slug === INCHEON_STAFF_BRANCH_SLUG;
+    }
+
+    /**
+     * (단일 페이지 후처리 필터) 외부 목록 한 페이지를 현재 지점 기준으로 거른다.
+     * 인천점(본사)은 "다른 지점이 소유한" 문서만 제외하고(자기 문서 + 미지정 문서는
+     * 통과) 그 외 지점은 자기 지점이 로컬에 보유한 documentId만 통과시킨다.
+     * per-type 목록 엔드포인트에서 사용.
+     */
+    private async filterDocumentsByBranch<T extends { id: string }>(
+        branchId: string,
+        documents: T[],
+    ): Promise<T[]> {
+        if (!branchId) {
+            return [];
+        }
+        if (await this.isHeadquartersBranch(branchId)) {
+            const otherBranchIds = new Set(
+                await this.eformsignDocService.findDocumentIdsForOtherBranches(branchId),
+            );
+            return documents.filter((doc) => !otherBranchIds.has(doc.id));
+        }
+        const localDocs = await this.eformsignDocService.findAll(branchId);
+        const allowedIds = new Set(localDocs.map((doc) => doc.documentId));
+        return documents.filter((doc) => allowedIds.has(doc.id));
+    }
+
+    /**
+     * 외부 회사 목록을 페이지 단위로 훑어 keep 조건을 만족하는 문서를 모아 최신순으로
+     * 돌려준다. 호출부에서 limit/skip으로 잘라 페이지네이션한다.
+     * - targetCount(기대 개수)를 주면 그만큼 모은 시점에 조기 종료한다(지점 보유분).
+     * - null이면 페이지 상한(MAX_PAGES)까지 전수 스캔한다(인천 본사: "타 지점 제외 전부").
+     */
+    private async scanCompanyDocuments(
+        accessToken: string,
+        keep: (doc: EformsignListDoc) => boolean,
+        targetCount: number | null,
+        branchId: string,
+    ): Promise<EformsignListDoc[]> {
+        const PAGE_SIZE = 100;
+        const MAX_PAGES = 10;
+        const collected = new Map<string, EformsignListDoc>();
+        let exhausted = false;
+
+        for (let page = 0; page < MAX_PAGES; page++) {
+            const result = await this.eformsignService.getAllDocuments(
+                accessToken,
+                PAGE_SIZE,
+                page * PAGE_SIZE,
+            );
+            const pageDocs: EformsignListDoc[] = result.documents ?? [];
+            if (pageDocs.length === 0) {
+                exhausted = true;
+                break;
+            }
+            for (const doc of pageDocs) {
+                if (keep(doc) && !collected.has(doc.id)) {
+                    collected.set(doc.id, doc);
+                }
+            }
+            if (targetCount !== null && collected.size >= targetCount) {
+                exhausted = true;
+                break;
+            }
+        }
+
+        if (!exhausted && targetCount !== null && collected.size < targetCount) {
+            this.logger.warn(
+                `scanCompanyDocuments hit MAX_PAGES (${MAX_PAGES}) for branch ${branchId}; ` +
+                `matched ${collected.size}/${targetCount}. Older contracts beyond the page cap may be omitted.`,
+            );
+        }
+
+        return Array.from(collected.values()).sort((a, b) => {
+            const byCreated = getDocumentCreatedTimestamp(b) - getDocumentCreatedTimestamp(a);
+            if (byCreated !== 0) {
+                return byCreated;
+            }
+            return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+        });
+    }
+
+    /**
+     * 현재 지점이 보유한 전자서명 문서 "전체"를 외부 목록에서 모아 최신순으로 돌려준다.
+     * 외부 eformsign 목록을 회사 단위로 페이지네이션하면 지점 문서가 뒤 페이지에 있을 때
+     * 빈 페이지에서 무한스크롤이 멈춰 누락되므로, 회사 페이지를 훑어 지점 문서를 모은다.
+     * 지점 보유 documentId 집합 크기를 기대 개수로 삼아 다 찾으면 조기 종료한다.
+     */
+    private async collectBranchDocuments(accessToken: string, branchId: string): Promise<EformsignListDoc[]> {
+        const localDocs = await this.eformsignDocService.findAll(branchId);
+        const allowedIds = new Set(localDocs.map((doc) => doc.documentId));
+        if (allowedIds.size === 0) {
+            return [];
+        }
+        return this.scanCompanyDocuments(
+            accessToken,
+            (doc) => allowedIds.has(doc.id),
+            allowedIds.size,
+            branchId,
+        );
+    }
+
+    /**
+     * 인천점(본사) 전용: 회사 전체 문서 중 "다른 지점이 소유한" 문서만 제외하고 모은다.
+     * 즉 인천이 만든 문서 + 지점 매핑이 없는(branchId null/미적재) 문서를 본다. 제외할
+     * 집합만 알 뿐 기대 개수를 알 수 없어, 페이지 상한까지 전수 스캔(targetCount=null)한다.
+     */
+    private async collectHeadquartersDocuments(accessToken: string, incheonBranchId: string): Promise<EformsignListDoc[]> {
+        const otherBranchIds = new Set(
+            await this.eformsignDocService.findDocumentIdsForOtherBranches(incheonBranchId),
+        );
+        return this.scanCompanyDocuments(
+            accessToken,
+            (doc) => !otherBranchIds.has(doc.id),
+            null,
+            incheonBranchId,
+        );
+    }
 
     @Post("generate-signature")
     async generateSignature(@Body() body: GenerateSignatureRequestDto) {
@@ -174,6 +330,7 @@ export class EformsignController {
      */
     @Get("documents")
     async getAllDocuments(
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("accessToken") accessToken: string,
         @Query("limit") limit?: string,
         @Query("skip") skip?: string,
@@ -185,12 +342,61 @@ export class EformsignController {
                     HttpStatus.BAD_REQUEST
                 );
             }
-            const documents = await this.eformsignService.getAllDocuments(
-                accessToken,
-                parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 }),
-                parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
-            );
-            return documents;
+            const parsedLimit = parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 });
+            const parsedSkip = parseInteger(skip, "skip", { defaultValue: 0, min: 0 });
+            const branchId = tenant.branchId ?? "";
+
+            // 인천점(본사): 회사 전체에서 다른 지점 소유분만 빼고 모은 뒤 요청 구간만 잘라 반환.
+            // (필터링 때문에 외부 페이지네이션을 그대로 흘리면 페이지 경계에 빈틈이 생긴다.)
+            if (await this.isHeadquartersBranch(branchId)) {
+                const hqDocuments = await this.collectHeadquartersDocuments(accessToken, branchId);
+                return {
+                    documents: hqDocuments.slice(parsedSkip, parsedSkip + parsedLimit),
+                    total_rows: hqDocuments.length,
+                    limit: parsedLimit,
+                    skip: parsedSkip,
+                };
+            }
+
+            // 일반 지점: 지점 보유 문서 전체를 모은 뒤 요청 구간만 잘라 반환한다.
+            // (회사 페이지를 그대로 필터하면 지점 문서가 뒤 페이지에 있을 때 무한스크롤이
+            //  빈 페이지에서 멈춰 누락되므로, 지점 단위로 페이지네이션한다.)
+            const branchDocuments = await this.collectBranchDocuments(accessToken, branchId);
+            return {
+                documents: branchDocuments.slice(parsedSkip, parsedSkip + parsedLimit),
+                total_rows: branchDocuments.length,
+                limit: parsedLimit,
+                skip: parsedSkip,
+            };
+        } catch (error) {
+            throwHttpOrInternalError(error);
+        }
+    }
+
+    /**
+     * 전체 탭 StatsBar 카운터용: 현재 지점(인천=다른 지점 제외 전체)의 문서를 한 번
+     * 모아 버킷 계산에 필요한 원시 신호(status_type + 현재 단계 수신자 타입)만 내려준다.
+     * 분류는 프론트(foldContractStats). status-counts는 documents/:documentId보다
+     * 먼저 선언되어야 정적 경로로 매칭된다.
+     */
+    @Get("documents/status-counts")
+    async getStatusCounts(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Query("accessToken") accessToken: string,
+    ) {
+        try {
+            if (!accessToken) {
+                throw new HttpException(
+                    { error: "Access token is required" },
+                    HttpStatus.BAD_REQUEST
+                );
+            }
+            const branchId = tenant.branchId ?? "";
+            // 인천점(본사)은 다른 지점 소유분 제외 전체, 그 외 지점은 보유 문서 전체를 모은다.
+            const documents = (await this.isHeadquartersBranch(branchId))
+                ? await this.collectHeadquartersDocuments(accessToken, branchId)
+                : await this.collectBranchDocuments(accessToken, branchId);
+            return { documents: documents.map((doc) => toStatusSignal(doc)) };
         } catch (error) {
             throwHttpOrInternalError(error);
         }
@@ -201,6 +407,7 @@ export class EformsignController {
      */
     @Get("documents/in-progress")
     async getInProgressDocuments(
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("accessToken") accessToken: string,
         @Query("limit") limit?: string,
         @Query("skip") skip?: string,
@@ -212,12 +419,13 @@ export class EformsignController {
                     HttpStatus.BAD_REQUEST
                 );
             }
-            const documents = await this.eformsignService.getInProgressDocuments(
+            const result = await this.eformsignService.getInProgressDocuments(
                 accessToken,
                 parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 }),
                 parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
             );
-            return documents;
+            const documents = await this.filterDocumentsByBranch(tenant.branchId ?? "", result.documents ?? []);
+            return { ...result, documents };
         } catch (error) {
             throwHttpOrInternalError(error);
         }
@@ -228,6 +436,7 @@ export class EformsignController {
      */
     @Get("documents/completed")
     async getCompletedDocuments(
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("accessToken") accessToken: string,
         @Query("limit") limit?: string,
         @Query("skip") skip?: string,
@@ -239,12 +448,13 @@ export class EformsignController {
                     HttpStatus.BAD_REQUEST
                 );
             }
-            const documents = await this.eformsignService.getCompletedDocuments(
+            const result = await this.eformsignService.getCompletedDocuments(
                 accessToken,
                 parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 }),
                 parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
             );
-            return documents;
+            const documents = await this.filterDocumentsByBranch(tenant.branchId ?? "", result.documents ?? []);
+            return { ...result, documents };
         } catch (error) {
             throwHttpOrInternalError(error);
         }
@@ -255,6 +465,7 @@ export class EformsignController {
      */
     @Get("documents/rejected")
     async getRejectedDocuments(
+        @CurrentTenant() tenant: { branchId?: string },
         @Query("accessToken") accessToken: string,
         @Query("limit") limit?: string,
         @Query("skip") skip?: string,
@@ -266,12 +477,13 @@ export class EformsignController {
                     HttpStatus.BAD_REQUEST
                 );
             }
-            const documents = await this.eformsignService.getRejectedDocuments(
+            const result = await this.eformsignService.getRejectedDocuments(
                 accessToken,
                 parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 }),
                 parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
             );
-            return documents;
+            const documents = await this.filterDocumentsByBranch(tenant.branchId ?? "", result.documents ?? []);
+            return { ...result, documents };
         } catch (error) {
             throwHttpOrInternalError(error);
         }

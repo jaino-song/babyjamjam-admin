@@ -30,6 +30,7 @@ export interface IEformsignDocRepository {
     ): Promise<EformsignDocCompletionClaimResult>;
     findByClientId(branchid: string, clientId: number): Promise<EformsignDocEntity[]>;
     findAll(branchid: string): Promise<EformsignDocEntity[]>;
+    findDocumentIdsForOtherBranches(branchid: string): Promise<string[]>;
     findClientNamesByBranch(branchid: string): Promise<EformsignDocClientSummary[]>;
     create(branchid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity>;
     update(branchid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity>;

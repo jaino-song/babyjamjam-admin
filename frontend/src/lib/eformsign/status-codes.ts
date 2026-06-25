@@ -170,3 +170,50 @@ export function getStatusColor(status: string): BadgeVariant {
   }
   return "info";
 }
+
+/** The four StatsBar counters on the contracts page. */
+export interface ContractStatsBuckets {
+  reviewNeeded: number;
+  sendRequired: number;
+  drafting: number;
+  expired: number;
+}
+
+/**
+ * Fold the raw status signals from `GET /api/documents/status-counts` into the
+ * four StatsBar buckets. This is the single source of truth for that mapping —
+ * it mirrors the per-doc rule that used to live in contracts/page.tsx:
+ *   - completed (003 등)           → counted nowhere
+ *   - expired category, only 080   → expired (반려/취소 등은 제외)
+ *   - draft (001)                  → drafting
+ *   - 그 외 in-progress            → reviewNeeded(현재 단계 수신자가 전원 내부자 "01")
+ *                                     아니면 sendRequired
+ * The reviewNeeded test reduces `mapDocStatusLabel === "검토 필요"` to the
+ * recipient check, because that branch is only reached for in-progress docs
+ * (where mapStatusToLabel already returns "대기").
+ */
+export function foldContractStats(
+  docs: ReadonlyArray<{ status_type?: string | null; step_recipient_types?: ReadonlyArray<string | null> }>,
+): ContractStatsBuckets {
+  const buckets: ContractStatsBuckets = { reviewNeeded: 0, sendRequired: 0, drafting: 0, expired: 0 };
+  for (const doc of docs) {
+    const normalized = normalizeStatusCode(doc.status_type);
+    const category = getStatusCategory(doc.status_type);
+
+    if (category === "completed") continue;
+    if (category === "expired") {
+      if (normalized === "080") buckets.expired++;
+      continue;
+    }
+    if (normalized === "001") {
+      buckets.drafting++;
+      continue;
+    }
+
+    const recipients = doc.step_recipient_types ?? [];
+    const allInternal = recipients.length > 0 && recipients.every((r) => r === "01");
+    if (allInternal) buckets.reviewNeeded++;
+    else buckets.sendRequired++;
+  }
+  return buckets;
+}

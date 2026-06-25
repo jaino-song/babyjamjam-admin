@@ -16,6 +16,7 @@ import {
     HeadlessDispatchResponse,
     HeadlessFinalizeResponse,
 } from '@babyjamjam/shared/types/eformsign';
+import type { EformsignStatusCountsResponse } from "@/lib/eformsign/types";
 import type {
     MessageDeliverySmsType,
     MessageDeliveryTriggerType,
@@ -255,6 +256,11 @@ export const eformsignApi = {
     },
     getDocumentClientNames: async (): Promise<EformsignDocClientSummary[]> => {
         const { data } = await api.get('/eformsign-docs/client-names');
+        return data;
+    },
+    // 전체 탭 StatsBar 카운터용 원시 신호. 토큰은 프록시가 서버에서 주입.
+    getDocumentStatusCounts: async (): Promise<EformsignStatusCountsResponse> => {
+        const { data } = await api.get('/eformsign/documents/status-counts');
         return data;
     },
 }
