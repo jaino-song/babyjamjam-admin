@@ -14,12 +14,12 @@ interface SidebarAccountMenuProps {
 }
 
 const ITEM_BASE =
-  "flex w-full items-center gap-[calc(12px*var(--v3-ui-scale,1))] rounded-xl border border-transparent px-[calc(10px*var(--v3-ui-scale,1))] py-[calc(9px*var(--v3-ui-scale,1))] text-left transition-colors";
+  "group flex w-full cursor-pointer items-center gap-[calc(12px*var(--v3-ui-scale,1))] rounded-xl px-[calc(10px*var(--v3-ui-scale,1))] py-[calc(9px*var(--v3-ui-scale,1))] text-left transition-colors";
 const ICON_WRAP =
   "flex h-[calc(36px*var(--v3-ui-scale,1))] w-[calc(36px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-xl";
 const ICON_SIZE = "h-[calc(18px*var(--v3-ui-scale,1))] w-[calc(18px*var(--v3-ui-scale,1))]";
 const ITEM_LABEL =
-  "truncate text-[calc(13.6px*var(--v3-ui-scale,1))] font-semibold text-gray-900";
+  "truncate text-[calc(13.6px*var(--v3-ui-scale,1))] font-semibold text-gray-900 transition-colors";
 const ITEM_SUB = "truncate text-[calc(11.2px*var(--v3-ui-scale,1))] text-v3-text-muted";
 
 /**
@@ -69,7 +69,7 @@ export function SidebarAccountMenu({
       data-component="sidebar-account-menu"
       data-state={open ? "open" : "closed"}
       className={cn(
-        "flex flex-col gap-[calc(2px*var(--v3-ui-scale,1))] rounded-2xl border p-[calc(6px*var(--v3-ui-scale,1))] transition-all",
+        "flex flex-col gap-[calc(2px*var(--v3-ui-scale,1))] rounded-2xl border transition-all",
         open
           ? "border-v3-border bg-white shadow-v3-hover"
           : "border-v3-border/50 bg-v3-dim-white/50"
@@ -91,13 +91,13 @@ export function SidebarAccountMenu({
             role="menuitem"
             tabIndex={open ? 0 : -1}
             onClick={() => navigate("/select-branch")}
-            className={cn(ITEM_BASE, "hover:border-v3-border hover:bg-v3-dim-white")}
+            className={ITEM_BASE}
           >
             <span className={cn(ICON_WRAP, "bg-v3-primary-light text-v3-primary")}>
               <Building2 className={ICON_SIZE} strokeWidth={2} />
             </span>
             <span className="flex min-w-0 flex-col">
-              <span className={ITEM_LABEL}>지점 변경</span>
+              <span className={cn(ITEM_LABEL, "group-hover:text-v3-primary")}>지점 변경</span>
               <span className={ITEM_SUB}>다른 지점으로 전환</span>
             </span>
           </button>
@@ -107,7 +107,7 @@ export function SidebarAccountMenu({
             role="menuitem"
             tabIndex={open ? 0 : -1}
             onClick={() => navigate("/logout")}
-            className={cn(ITEM_BASE, "group/logout hover:border-transparent hover:bg-v3-burgundy/10")}
+            className={cn(ITEM_BASE, "group/logout")}
           >
             <span className={cn(ICON_WRAP, "bg-v3-burgundy/10 text-v3-burgundy")}>
               <LogOut className={ICON_SIZE} strokeWidth={2} />
@@ -131,7 +131,7 @@ export function SidebarAccountMenu({
         onClick={() => setOpen((value) => !value)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="group flex w-full cursor-pointer items-center gap-[calc(12px*var(--v3-ui-scale,1))] rounded-xl border border-transparent px-[calc(10px*var(--v3-ui-scale,1))] py-[calc(9px*var(--v3-ui-scale,1))] text-left transition-colors hover:bg-white"
+        className="group flex w-full cursor-pointer items-center gap-[calc(12px*var(--v3-ui-scale,1))] rounded-xl px-[calc(10px*var(--v3-ui-scale,1))] py-[calc(9px*var(--v3-ui-scale,1))] text-left transition-colors hover:bg-white"
       >
         <Avatar className="h-[calc(40px*var(--v3-ui-scale,1))] w-[calc(40px*var(--v3-ui-scale,1))] shrink-0 rounded-full shadow-inner">
           <AvatarImage src={profileImage || ""} alt="" />
