@@ -15,6 +15,7 @@ const HEARTBEAT_TIMEOUT_MS = 70_000;
 
 const DOCS_QUERY_KEY = ["eformsign-documents"] as const;
 const CLIENT_NAMES_QUERY_KEY = ["eformsign-client-names"] as const;
+const STATUS_COUNTS_QUERY_KEY = ["eformsign-status-counts"] as const;
 
 /**
  * Subscribes to the backend's SSE stream of eformsign-docs mutations.
@@ -53,6 +54,7 @@ export function useEformsignDocsLiveStream(enabled: boolean): void {
         const invalidate = () => {
             void queryClient.invalidateQueries({ queryKey: DOCS_QUERY_KEY });
             void queryClient.invalidateQueries({ queryKey: CLIENT_NAMES_QUERY_KEY });
+            void queryClient.invalidateQueries({ queryKey: STATUS_COUNTS_QUERY_KEY });
         };
 
         const clearReconnectTimer = () => {

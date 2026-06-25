@@ -25,7 +25,7 @@ export interface EformsignTokenResponse {
 
 const ISO_END_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
-function getDocumentCreatedTimestamp(document: { created_date?: unknown; createdDate?: unknown }): number {
+export function getDocumentCreatedTimestamp(document: { created_date?: unknown; createdDate?: unknown }): number {
     const value = document.created_date ?? document.createdDate;
 
     if (value instanceof Date) {

@@ -33,7 +33,7 @@ import {
   DocumentFilterType,
   mapDocStatusLabel,
   getStatusCategory,
-  normalizeStatusCode,
+  foldContractStats,
 } from "@/lib/eformsign/status-codes";
 import {
   StatsBar,
@@ -454,19 +454,15 @@ export default function ContractsPage() {
     enabled: isAuthenticated,
     filterType,
     excludedNames: EXCLUDED_CUSTOMER_NAMES,
-    // 전체 tab populates the stats counters by iterating allDocuments. Without
-    // eager-loading, `allDocuments` only holds pages the user already
-    // scrolled into view, so the StatsBar under-reports until they scroll the
-    // full list. Per-status tabs keep normal pagination.
-    eager: filterType === null,
   });
-  const [statsDocuments, setStatsDocuments] = useState<EformsignDocument[]>([]);
-
-  useEffect(() => {
-    if (filterType === null) {
-      setStatsDocuments(allDocuments);
-    }
-  }, [allDocuments, filterType]);
+  // 전체 탭 StatsBar 카운터: 서버가 지점(인천=회사 전체) 상태 신호를 한 번 모아 내려주고
+  // foldContractStats로 접는다. 무한 스크롤 목록과 분리되어, 스크롤하지 않아도 정확하다.
+  const { data: statusCounts, isLoading: isCountsLoading } = useQuery({
+    queryKey: ["eformsign-status-counts"],
+    queryFn: () => eformsignApi.getDocumentStatusCounts(),
+    enabled: isAuthenticated,
+    staleTime: 1000 * 60 * 5,
+  });
 
   const isBootstrappingAuth = isLoadingAuth && !isAuthenticated;
   // Initial loading: first auth bootstrap or first "all" data fetch
@@ -476,8 +472,7 @@ export default function ContractsPage() {
   // Stats are derived from the "전체" tab's data and are independent of which
   // tab is currently being fetched — only show the skeleton until the very
   // first stats payload lands.
-  const isStatsLoading =
-    isBootstrappingAuth || (statsDocuments.length === 0 && filterType === null && isLoadingInfinite);
+  const isStatsLoading = isBootstrappingAuth || isCountsLoading;
 
   // documentId → clientName lookup from our DB. Required because eformsign's
   // list_document response loses outsider info once the doc progresses past
@@ -510,48 +505,10 @@ export default function ContractsPage() {
     });
   }, [infiniteDocuments, searchQuery, resolveCustomerName]);
 
-  const stats = useMemo(() => {
-    const docsForStats = statsDocuments.length > 0 ? statsDocuments : allDocuments;
-    const allDocs = docsForStats.filter((doc) => {
-      const name = getCustomerName(doc);
-      return name && !EXCLUDED_CUSTOMER_NAMES.includes(name);
-    });
-
-    let reviewNeeded = 0;
-    let sendRequired = 0;
-    let drafting = 0;
-    let expired = 0;
-
-    for (const doc of allDocs) {
-      const normalizedStatus = normalizeStatusCode(doc.current_status?.status_type);
-      const cat = getStatusCategory(doc.current_status?.status_type);
-
-      if (cat === "completed") {
-        continue;
-      }
-
-      if (cat === "expired") {
-        if (normalizedStatus === "080") {
-          expired++;
-        }
-        continue;
-      }
-
-      if (normalizedStatus === "001") {
-        drafting++;
-        continue;
-      }
-
-      if (mapDocStatusLabel(doc.current_status) === "검토 필요") {
-        reviewNeeded++;
-        continue;
-      }
-
-      sendRequired++;
-    }
-
-    return { reviewNeeded, sendRequired, drafting, expired };
-  }, [allDocuments, statsDocuments]);
+  const stats = useMemo(
+    () => foldContractStats(statusCounts?.documents ?? []),
+    [statusCounts],
+  );
 
   const selectedDocument = useMemo(() => {
     if (!selectedDocId) return null;
