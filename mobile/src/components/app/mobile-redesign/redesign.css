@@ -1890,6 +1890,70 @@ body.mobile-all-route .menu-row {
   word-break: break-all;
 }
 
+/* ===== Tappable notification rows + message-history detail (in-place drill-down) ===== */
+.doc-row-tappable {
+  cursor: pointer;
+}
+.doc-row-tappable:hover .doc-title {
+  color: hsl(var(--v3-primary));
+}
+.doc-row-tappable:focus-visible {
+  outline: 2px solid hsl(var(--v3-primary));
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+.message-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.message-detail-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: hsl(var(--v3-text-muted));
+  transition: color var(--duration-pop) var(--ease-standard);
+}
+.message-detail-back:hover {
+  color: hsl(var(--v3-primary));
+}
+.message-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.message-detail-head-text {
+  flex: 1;
+  min-width: 0;
+}
+.message-detail-title {
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: hsl(var(--v3-dark));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.message-detail-subtitle {
+  font-size: 0.68rem;
+  color: hsl(var(--v3-text-muted));
+  margin-top: 2px;
+}
+.message-detail-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: hsl(var(--v3-dark));
+}
+
 /* ===== Files page — page-files.html fidelity overrides ===== */
 [data-component="files"] {
   position: fixed;
