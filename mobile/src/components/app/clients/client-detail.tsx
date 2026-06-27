@@ -1099,7 +1099,7 @@ export function ClientDetailContent({
               statusLabel: notificationStatusLabel(selectedLog.status),
               statusTone: notificationStatusTone(selectedLog.status),
               sentAtLabel: formatNotificationTime(selectedLog.createdAt),
-              recipientName: selectedLog.recipientName?.trim() || "-",
+              recipientName: selectedLog.recipientName?.trim() || client.name,
               recipientPhone: selectedLog.receiver?.trim() || "-",
               messageBody: selectedLog.messageBody?.trim()
                 ? selectedLog.messageBody
