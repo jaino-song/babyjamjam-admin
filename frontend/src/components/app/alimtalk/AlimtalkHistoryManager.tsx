@@ -58,6 +58,7 @@ const TEMPLATE_LABELS: Record<TriggerTemplateKey, string> = {
   SERVICE_INFO: "서비스 안내",
   SERVICE_END_REMINDER: "서비스 종료 안내",
   EMPLOYEE_ASSIGNED: "직원 배정 완료",
+  CLIENT_GREETING: "인사(소개)",
 };
 
 const VARIABLE_LABELS: Record<string, string> = {

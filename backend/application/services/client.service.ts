@@ -14,7 +14,6 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { computeServiceStatus, isServiceStatus, SERVICE_STATUS, SERVICE_STATUS_VALUES, ServiceStatusType } from "domain/value-objects/service-status.vo";
 import { AlimtalkService } from "./alimtalk.service";
 import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
-import { ClientGreetingSmsAutomationService } from "./client-greeting-sms-automation.service";
 
 const FILTER_DAYS_THRESHOLD = 7;
 const ACTION_REQUIRED_SIGNATURE_THRESHOLD_DAYS = 2;
@@ -132,7 +131,6 @@ export class ClientService {
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
         @Optional() private readonly triggerService?: AlimtalkTriggerService,
-        @Optional() private readonly clientGreetingSmsAutomationService?: ClientGreetingSmsAutomationService,
     ) {}
 
     private assertAllowedServiceStatus(status: string | null | undefined): void {
@@ -317,13 +315,8 @@ export class ClientService {
             this.logger.error(`Failed to send client created alimtalk: ${error}`);
         });
         if (this.triggerService) {
-            this.triggerService.syncClientRulesForClient(branchid, client.id, true).catch((error) => {
+            this.triggerService.syncClientRulesForClient(branchid, client.id, true, params.suppressGreetingSms ?? false).catch((error) => {
                 this.logger.error(`Failed to sync client trigger rules: ${error}`);
-            });
-        }
-        if (this.clientGreetingSmsAutomationService && !params.suppressGreetingSms) {
-            this.clientGreetingSmsAutomationService.sendClientGreetingSms(branchid, client).catch((error) => {
-                this.logger.error(`Failed to send new client greeting SMS: ${error}`);
             });
         }
         if (createdScheduleId !== null) {

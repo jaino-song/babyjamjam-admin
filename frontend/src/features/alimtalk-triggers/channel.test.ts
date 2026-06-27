@@ -79,6 +79,11 @@ describe("alimtalk trigger channel helpers", () => {
     expect(isTriggerTemplateInChannel("CLIENT_WELCOME", "alimtalk")).toBe(true);
   });
 
+  it("routes CLIENT_GREETING template data to the sms channel", () => {
+    expect(isTriggerTemplateInChannel("CLIENT_GREETING", "sms")).toBe(true);
+    expect(isTriggerTemplateInChannel("CLIENT_GREETING", "alimtalk")).toBe(false);
+  });
+
   it("routes upcoming jobs by trigger template", () => {
     expect(isUpcomingJobInChannel(upcomingJob({ templateKey: "SERVICE_INFO" }), "sms")).toBe(true);
     expect(isUpcomingJobInChannel(upcomingJob({ templateKey: "CLIENT_WELCOME" }), "alimtalk")).toBe(true);

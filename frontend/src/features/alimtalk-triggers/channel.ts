@@ -7,7 +7,7 @@ import type {
 
 export type TriggerMessageChannel = "sms" | "alimtalk";
 
-export const SMS_TRIGGER_TEMPLATE_KEYS: TriggerTemplateKey[] = ["SERVICE_INFO"];
+export const SMS_TRIGGER_TEMPLATE_KEYS: TriggerTemplateKey[] = ["SERVICE_INFO", "CLIENT_GREETING"];
 export const SMS_HISTORY_PROVIDERS = ["aligo_sms"] as const;
 
 export function isSmsTriggerTemplate(templateKey: string | null | undefined) {

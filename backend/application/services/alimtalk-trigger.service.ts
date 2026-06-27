@@ -57,6 +57,16 @@ const DEFAULT_SERVICE_INFO_TRIGGER: UpsertRuleParams = {
     templateKey: AlimtalkTriggerTemplateKey.SERVICE_INFO,
 };
 
+const DEFAULT_CLIENT_GREETING_TRIGGER: UpsertRuleParams = {
+    name: "신규 고객 인사 메시지",
+    isActive: true,
+    eventType: AlimtalkTriggerEventType.CLIENT_CREATED,
+    offsetType: AlimtalkTriggerOffsetType.IMMEDIATE,
+    offsetDays: 0,
+    recipientType: AlimtalkTriggerRecipientType.CLIENT,
+    templateKey: AlimtalkTriggerTemplateKey.CLIENT_GREETING,
+};
+
 export interface UpcomingAlimtalkTriggerJobView {
     id: string;
     ruleId: string;
@@ -363,6 +373,7 @@ export class AlimtalkTriggerService {
         branchId: string,
         clientId: number,
         includePast: boolean,
+        suppressGreeting = false,
     ): Promise<void> {
         if (!(await this.hasTriggerSchema())) {
             return;
@@ -393,6 +404,9 @@ export class AlimtalkTriggerService {
 
         for (const rule of rules) {
             if (rule.eventType === AlimtalkTriggerEventType.CLIENT_CREATED && !supportsCreatedAt) {
+                continue;
+            }
+            if (rule.templateKey === AlimtalkTriggerTemplateKey.CLIENT_GREETING && suppressGreeting) {
                 continue;
             }
             const job = this.buildClientJob(rule, client);
@@ -445,30 +459,59 @@ export class AlimtalkTriggerService {
         return rules.length > 0;
     }
 
+    private async ensureDefaultTrigger(
+        branchId: string,
+        rules: AlimtalkTriggerRuleEntity[],
+        defaults: UpsertRuleParams,
+        matchTemplateKeyOnly = false,
+    ): Promise<{ rules: AlimtalkTriggerRuleEntity[]; created: AlimtalkTriggerRuleEntity | null }> {
+        // For IMMEDIATE-greeting-style defaults, ANY existing rule with the same templateKey
+        // counts as "the default already exists". Otherwise an admin-created greeting rule with
+        // a non-default offset (e.g. AFTER_DAYS) would not match the full tuple, the IMMEDIATE
+        // default would be auto-created on next panel load, and the client would get two
+        // greetings per registration.
+        const existing = matchTemplateKeyOnly
+            ? rules.find((rule) => rule.templateKey === defaults.templateKey)
+            : rules.find((rule) => (
+                rule.eventType === defaults.eventType &&
+                rule.offsetType === defaults.offsetType &&
+                rule.offsetDays === (defaults.offsetDays ?? 0) &&
+                rule.recipientType === defaults.recipientType &&
+                rule.templateKey === defaults.templateKey
+            ));
+        if (existing) return { rules, created: null };
+
+        const created = await this.ruleRepository.create(
+            branchId,
+            AlimtalkTriggerRuleEntity.create({
+                branchId,
+                ...defaults,
+            }),
+        );
+        await this.rebuildJobsForRule(branchId, created, false);
+        return { rules: [created, ...rules], created };
+    }
+
     private async ensureDefaultServiceInfoTrigger(
         branchId: string,
         rules: AlimtalkTriggerRuleEntity[],
     ): Promise<AlimtalkTriggerRuleEntity[]> {
         if (!branchId) return rules;
 
-        const existingDefault = rules.find((rule) => (
-            rule.eventType === DEFAULT_SERVICE_INFO_TRIGGER.eventType &&
-            rule.offsetType === DEFAULT_SERVICE_INFO_TRIGGER.offsetType &&
-            rule.offsetDays === DEFAULT_SERVICE_INFO_TRIGGER.offsetDays &&
-            rule.recipientType === DEFAULT_SERVICE_INFO_TRIGGER.recipientType &&
-            rule.templateKey === DEFAULT_SERVICE_INFO_TRIGGER.templateKey
-        ));
-        if (existingDefault) return rules;
-
-        const created = await this.ruleRepository.create(
+        const { rules: rulesAfterServiceInfo } = await this.ensureDefaultTrigger(
             branchId,
-            AlimtalkTriggerRuleEntity.create({
-                branchId,
-                ...DEFAULT_SERVICE_INFO_TRIGGER,
-            }),
+            rules,
+            DEFAULT_SERVICE_INFO_TRIGGER,
         );
-        await this.rebuildJobsForRule(branchId, created, false);
-        return [created, ...rules];
+
+        const { rules: finalRules } = await this.ensureDefaultTrigger(
+            branchId,
+            rulesAfterServiceInfo,
+            DEFAULT_CLIENT_GREETING_TRIGGER,
+            true,
+        );
+
+        return finalRules;
     }
 
     private async rebuildJobsForRule(
@@ -481,6 +524,8 @@ export class AlimtalkTriggerService {
         if (rule.eventType === AlimtalkTriggerEventType.EMPLOYEE_ASSIGNED) {
             return;
         }
+
+        if (rule.offsetType === AlimtalkTriggerOffsetType.IMMEDIATE) return;
 
         const supportsCreatedAt = await hasColumn(this.prisma, "client", "created_at");
         if (rule.eventType === AlimtalkTriggerEventType.CLIENT_CREATED && !supportsCreatedAt) {
@@ -511,7 +556,13 @@ export class AlimtalkTriggerService {
         includePast: boolean,
     ): Promise<void> {
         if (!job) return;
-        if (!includePast && job.scheduledFor.getTime() < Date.now()) return;
+        // IMMEDIATE / now-scheduled jobs must fire ONLY on the live create/assign path
+        // (includePast=true). On any re-sync path (includePast=false: client update,
+        // due-date scheduler, rule rebuild) a "now" job is a re-fire and must be dropped.
+        // Note the `<=`: a job scheduledFor === Date.now() is a re-fire on these paths and
+        // is dropped, preventing repeat greetings on every edit/scheduler pass. The
+        // create-time greeting is preserved because that path uses includePast=true.
+        if (!includePast && job.scheduledFor.getTime() <= Date.now()) return;
         await this.jobRepository.upsertPending(job);
     }
 
@@ -602,7 +653,7 @@ export class AlimtalkTriggerService {
 
     private buildClientTemplateVariables(
         rule: AlimtalkTriggerRuleEntity,
-        client: Pick<ClientTriggerSource, "name" | "type" | "startDate" | "endDate" | "createdAt">,
+        client: Pick<ClientTriggerSource, "name" | "phone" | "type" | "startDate" | "endDate" | "createdAt">,
     ): Record<string, string> {
         switch (rule.templateKey) {
             case AlimtalkTriggerTemplateKey.CLIENT_WELCOME:
@@ -627,6 +678,12 @@ export class AlimtalkTriggerService {
                     clientName: client.name,
                     serviceEndDate: this.formatDate(client.endDate),
                     timingText: this.describeTiming(rule, "서비스 종료"),
+                };
+            case AlimtalkTriggerTemplateKey.CLIENT_GREETING:
+                return {
+                    name: client.name,
+                    clientName: client.name,
+                    phone: client.phone ?? "",
                 };
             default:
                 return {};

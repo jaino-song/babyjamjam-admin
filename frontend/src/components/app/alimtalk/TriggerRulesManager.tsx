@@ -218,11 +218,20 @@ const TRIGGER_TEMPLATE_MESSAGE_FALLBACKS: Record<TriggerTemplateKey, string> = {
 서비스 시작일: #{서비스시작일}
 
 세부 내용을 확인해 주세요.`,
+  CLIENT_GREETING: `[아이미래 인천]
+#{고객명}님, 안녕하세요.
+
+저희 아이미래에 등록해 주셔서 감사합니다.
+앞으로 잘 부탁드립니다.
+
+문의사항이 있으시면 언제든지 연락주세요.`,
 };
 
 function getEventOptionsForChannel(channel: TriggerMessageChannel) {
   if (channel === "sms") {
-    return EVENT_OPTIONS.filter((option) => option.value === "SERVICE_START");
+    return EVENT_OPTIONS.filter(
+      (option) => option.value === "SERVICE_START" || option.value === "CLIENT_CREATED",
+    );
   }
 
   return EVENT_OPTIONS;
@@ -336,7 +345,12 @@ export function TriggerRulesManager({
     eventType: formState.eventType,
     recipientType: formState.recipientType,
   });
-  const selectedSystemTemplateKey = formState.templateKey === "SERVICE_INFO" ? formState.templateKey : "";
+  const selectedSystemTemplateKey =
+    formState.templateKey === "SERVICE_INFO"
+      ? "SERVICE_INFO"
+      : formState.templateKey === "CLIENT_GREETING"
+      ? "GREETING"
+      : "";
   const { data: selectedSystemTemplate } = useSystemTemplate(selectedSystemTemplateKey);
 
   const availableTemplates = useMemo(

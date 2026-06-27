@@ -37,7 +37,8 @@ export type AlimtalkTriggerTemplateKey =
   | "SERVICE_START_REMINDER"
   | "SERVICE_INFO"
   | "SERVICE_END_REMINDER"
-  | "EMPLOYEE_ASSIGNED";
+  | "EMPLOYEE_ASSIGNED"
+  | "CLIENT_GREETING";
 
 export type SupportedTriggerProvider = "aligo" | "channeltalk";
 export type AlimtalkProvider = SupportedTriggerProvider | "none";

@@ -8,7 +8,7 @@ import {
     UpdateClientUsecase,
 } from "../../application/usecases/client";
 import { AlimtalkService } from "../../application/services/alimtalk.service";
-import { ClientGreetingSmsAutomationService } from "../../application/services/client-greeting-sms-automation.service";
+import { AlimtalkTriggerService } from "../../application/services/alimtalk-trigger.service";
 import { ClientEntity } from "../../domain/entities/client.entity";
 import { IClientRepository } from "../../domain/repositories/client.repository.interface";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
@@ -65,8 +65,9 @@ describe("ClientService", () => {
         sendClientCreatedAlimtalk: jest.fn().mockResolvedValue(undefined),
     });
 
-    const createMockClientGreetingSmsAutomationService = () => ({
-        sendClientGreetingSms: jest.fn().mockResolvedValue(undefined),
+    const createMockTriggerService = () => ({
+        syncClientRulesForClient: jest.fn().mockResolvedValue(undefined),
+        syncEmployeeAssignmentRulesForSchedule: jest.fn().mockResolvedValue(undefined),
     });
 
     const createMockClientRepository = (): jest.Mocked<IClientRepository> => ({
@@ -117,7 +118,7 @@ describe("ClientService", () => {
     let deleteClientUsecase: ReturnType<typeof createMockDeleteClientUsecase>;
     let prismaService: ReturnType<typeof createMockPrismaService>;
     let alimtalkService: ReturnType<typeof createMockAlimtalkService>;
-    let clientGreetingSmsAutomationService: ReturnType<typeof createMockClientGreetingSmsAutomationService>;
+    let triggerService: ReturnType<typeof createMockTriggerService>;
     let clientRepository: ReturnType<typeof createMockClientRepository>;
 
     beforeEach(() => {
@@ -129,7 +130,7 @@ describe("ClientService", () => {
         deleteClientUsecase = createMockDeleteClientUsecase();
         prismaService = createMockPrismaService();
         alimtalkService = createMockAlimtalkService();
-        clientGreetingSmsAutomationService = createMockClientGreetingSmsAutomationService();
+        triggerService = createMockTriggerService();
         clientRepository = createMockClientRepository();
 
         service = new ClientService(
@@ -142,8 +143,7 @@ describe("ClientService", () => {
             prismaService as unknown as PrismaService,
             alimtalkService as unknown as AlimtalkService,
             clientRepository,
-            undefined,
-            clientGreetingSmsAutomationService as unknown as ClientGreetingSmsAutomationService,
+            triggerService as unknown as AlimtalkTriggerService,
         );
     });
 
@@ -265,7 +265,7 @@ describe("ClientService", () => {
             );
         });
 
-        it("should trigger the new client greeting SMS automation after client creation", async () => {
+        it("calls syncClientRulesForClient with suppressGreeting=false by default", async () => {
             // Arrange
             const mockClient = createClientEntity();
             createClientUsecase.execute.mockResolvedValue(mockClient);
@@ -282,13 +282,15 @@ describe("ClientService", () => {
             await service.create(branchId, params);
 
             // Assert
-            expect(clientGreetingSmsAutomationService.sendClientGreetingSms).toHaveBeenCalledWith(
+            expect(triggerService.syncClientRulesForClient).toHaveBeenCalledWith(
                 branchId,
-                mockClient,
+                mockClient.id,
+                true,
+                false,
             );
         });
 
-        it("should not trigger greeting SMS automation when suppressed by contract creation", async () => {
+        it("calls syncClientRulesForClient with suppressGreeting=true when suppressGreetingSms is set", async () => {
             // Arrange
             const mockClient = createClientEntity();
             createClientUsecase.execute.mockResolvedValue(mockClient);
@@ -306,7 +308,12 @@ describe("ClientService", () => {
             await service.create(branchId, params);
 
             // Assert
-            expect(clientGreetingSmsAutomationService.sendClientGreetingSms).not.toHaveBeenCalled();
+            expect(triggerService.syncClientRulesForClient).toHaveBeenCalledWith(
+                branchId,
+                mockClient.id,
+                true,
+                true,
+            );
         });
 
         describe("given client data with both primary and secondary employees", () => {
@@ -366,7 +373,7 @@ describe("ClientService", () => {
                 expect(clientRepository.create).not.toHaveBeenCalled();
                 // Assert: no side-effects fired
                 expect(alimtalkService.sendClientCreatedAlimtalk).not.toHaveBeenCalled();
-                expect(clientGreetingSmsAutomationService.sendClientGreetingSms).not.toHaveBeenCalled();
+                expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
             });
 

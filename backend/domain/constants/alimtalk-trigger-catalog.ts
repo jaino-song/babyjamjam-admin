@@ -24,6 +24,7 @@ export enum AlimtalkTriggerTemplateKey {
     SERVICE_INFO = "SERVICE_INFO",
     SERVICE_END_REMINDER = "SERVICE_END_REMINDER",
     EMPLOYEE_ASSIGNED = "EMPLOYEE_ASSIGNED",
+    CLIENT_GREETING = "CLIENT_GREETING",
 }
 
 export type SupportedTriggerProvider = "aligo" | "channeltalk";
@@ -160,6 +161,18 @@ export const ALIMTALK_TRIGGER_TEMPLATE_CATALOG: Record<
         providers: {
             aligo: { templateKey: "EMPLOYEE_ASSIGNED" },
             channeltalk: { templateKey: "employee_assigned" },
+        },
+    },
+    [AlimtalkTriggerTemplateKey.CLIENT_GREETING]: {
+        key: AlimtalkTriggerTemplateKey.CLIENT_GREETING,
+        name: "인사(소개)",
+        description: "신규 고객 등록 직후 발송하는 인사 메시지 (SMS)",
+        allowedEventTypes: [AlimtalkTriggerEventType.CLIENT_CREATED],
+        allowedRecipientTypes: [AlimtalkTriggerRecipientType.CLIENT],
+        requiredVariables: [],
+        providers: {
+            aligo: { templateKey: "CLIENT_GREETING" },
+            channeltalk: { templateKey: "client_greeting" },
         },
     },
 };
