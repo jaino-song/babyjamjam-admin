@@ -6,7 +6,7 @@
 
 ## Goal
 
-Close two accidental same-URL parity gaps between the **frontend** (desktop staff admin) and **mobile** (m.staff) apps. Both are **UI/client-only** changes — no backend work, and the data each needs already flows to the target app.
+Close two accidental same-URL parity gaps between the **frontend** (desktop staff admin) and **mobile** (m.staff) apps. **Neither needs backend changes.** Port 2 is mobile UI-only (data already flows to mobile). Port 1 is frontend UI **plus a new BFF route** (PDF page-extraction, ported from mobile) and the `pdf-lib` dependency.
 
 ## Non-goals
 
@@ -34,11 +34,17 @@ GET /api/eformsign/documents/{documentId}/download_files?fileType=document&page=
 
 ### Changes
 
-1. **`frontend/src/services/api.ts`** — add to `eformsignApi` (mirror mobile):
+> **Scope correction (found during planning):** frontend has **no** `/download_files` route — only `/preview` (which hardcodes `fileType` and cannot extract a page). The receipt page-extraction is a **BFF concern** (mobile does it with `pdf-lib`), so frontend must gain that route. Backend is still untouched — it returns the full PDF; the BFF extracts the page.
+
+1. **`frontend/package.json`** — add `"pdf-lib": "^1.17.1"` (matches mobile; not currently a frontend dep, not workspace-hoisted), then `pnpm install`.
+2. **Create `frontend/src/app/api/eformsign/documents/[documentId]/download_files/route.ts`** — port mobile's BFF route (`mobile/src/app/api/eformsign/documents/[documentId]/download_files/route.ts`): parse `fileType` + `page` query params, fetch the full PDF from backend `/api/documents/{id}/download_files` (mirror the `serverAPIClient` + auth-header pattern in frontend's existing `preview/route.ts`), and when `page` is set, extract that one page with `pdf-lib`'s `extractSinglePdfPage`.
+3. **`frontend/src/services/api.ts`** — add to `eformsignApi`:
    - `getDocumentDownloadUrl(documentId)` → `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document`
    - `getDocumentReceiptDownloadUrl(documentId)` → same `+ &page=7`
-2. **`frontend/src/components/app/documents/shared-document-preview-dialog.tsx`** — add optional props `receiptDownloadUrl?: string`, `receiptDownloadFileName?: string`; render a `영수증 다운로드` button beside the existing `다운로드` button (~L638) **only when `receiptDownloadUrl` is set**. Match existing button styling (`Download` icon).
-3. **`frontend/src/components/app/contracts/ContractDocumentPreviewModal.tsx`** — when the document is **completed**, pass `receiptDownloadUrl = eformsignApi.getDocumentReceiptDownloadUrl(document.id)` and `receiptDownloadFileName` = `"<document_name or id> 영수증.pdf"`. Otherwise omit (button hidden).
+4. **`frontend/src/components/app/documents/shared-document-preview-dialog.tsx`** — add optional props `receiptDownloadUrl?: string`, `receiptDownloadFileName?: string`; render a `영수증 다운로드` button beside the existing `다운로드` button (L638) **only when `receiptDownloadUrl` is set** (reuse the existing `handleDownload` link pattern; `Download` icon).
+5. **`frontend/src/components/app/contracts/ContractDocumentPreviewModal.tsx`** — build the receipt URL via `eformsignApi.getDocumentReceiptDownloadUrl(document.id)`, pass it + `receiptDownloadFileName` = `"<document_name or id> 영수증.pdf"` to the dialog **only when completed**. The modal's `document` prop may lack a status field; if so, lift the completion flag to the caller **`frontend/src/app/(protected)/contracts/page.tsx`** (`category === "completed"`, ~L1090) and pass it into the modal (invoked ~L1833).
+
+_DRY note: this duplicates mobile's extraction route. A later cleanup could move `extractSinglePdfPage` + the route into `packages/shared`; deferred here to keep the change parity-focused._
 
 ### Gating
 
@@ -46,9 +52,10 @@ Show the receipt button only when contract/document status is **completed** (mir
 
 ### Verification
 
-- Completed contract → open preview modal → `영수증 다운로드` visible → click downloads `<name> 영수증.pdf`.
+- Unit-test the new BFF route's page-extraction (`page=7` → single-page PDF; out-of-range page → 400/`RangeError`) and the `getDocumentReceiptDownloadUrl` builder.
+- Completed contract → open preview modal → `영수증 다운로드` visible → downloads `<name> 영수증.pdf` (single-page receipt).
 - Non-completed contract → receipt button absent.
-- Frontend `type-check` passes.
+- Frontend `type-check` passes; `pnpm install` resolves `pdf-lib`.
 
 ---
 
