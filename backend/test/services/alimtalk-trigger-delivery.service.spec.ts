@@ -1,5 +1,8 @@
 import { AligoService } from "application/services/aligo.service";
-import { AlimtalkTriggerDeliveryService } from "application/services/alimtalk-trigger-delivery.service";
+import {
+    AlimtalkTriggerDeliveryService,
+    SMS_TEMPLATE_DELIVERY,
+} from "application/services/alimtalk-trigger-delivery.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SystemSettingService } from "application/services/system-setting.service";
 import { SystemTemplateService } from "application/services/system-template.service";
@@ -11,6 +14,10 @@ import {
 import { AlimtalkTriggerJobEntity } from "domain/entities/alimtalk-trigger-job.entity";
 import { AlimtalkLogEntity } from "domain/entities/alimtalk-log.entity";
 import { IAlimtalkLogRepository } from "domain/repositories/alimtalk-log.repository.interface";
+// Canonical SMS template set lives in the shared package (frontend/mobile source of truth).
+// The backend duplicates the trigger enums by design, so this drift guard is the only place
+// that ties the backend SMS delivery routing back to that single source.
+import { SMS_TRIGGER_TEMPLATE_KEYS } from "../../../packages/shared/src/types/alimtalk";
 
 describe("AlimtalkTriggerDeliveryService", () => {
     const branchId = "branch-1";
@@ -225,5 +232,16 @@ describe("AlimtalkTriggerDeliveryService", () => {
             title: "인사 메시지",
             recipientName: "김산모",
         }));
+    });
+});
+
+describe("SMS delivery routing drift guard", () => {
+    it("routes exactly the shared SMS template set through SMS delivery", () => {
+        // If someone adds a template to SMS_TRIGGER_TEMPLATE_KEYS (shared) but forgets to add a
+        // delivery config here (or vice versa), the SMS form would offer a template the backend
+        // cannot deliver — this assertion fails first.
+        const deliveryKeys = Object.keys(SMS_TEMPLATE_DELIVERY).sort();
+        const sharedKeys = [...SMS_TRIGGER_TEMPLATE_KEYS].sort();
+        expect(deliveryKeys).toEqual(sharedKeys);
     });
 });

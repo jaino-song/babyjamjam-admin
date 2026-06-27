@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   BellRing,
@@ -42,8 +42,11 @@ import {
   useDeleteAlimtalkTriggerRule,
 } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
 import {
+  deriveAvailableTemplates,
+  deriveEventTypesFromTemplates,
+  deriveRecipientTypesFromTemplates,
+  getChannelTemplates,
   isTriggerRuleInChannel,
-  isTriggerTemplateInChannel,
   type TriggerMessageChannel,
 } from "@/features/alimtalk-triggers/channel";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
@@ -112,15 +115,15 @@ const OFFSET_OPTIONS: Record<TriggerEventType, Array<{ value: TriggerOffsetType;
   EMPLOYEE_ASSIGNED: [{ value: "IMMEDIATE", label: "즉시 발송" }],
 };
 
-const RECIPIENT_OPTIONS: Record<TriggerEventType, Array<{ value: TriggerRecipientType; label: string }>> = {
-  CLIENT_CREATED: [{ value: "CLIENT", label: "고객" }],
-  SERVICE_START: [{ value: "CLIENT", label: "고객" }],
-  SERVICE_END: [{ value: "CLIENT", label: "고객" }],
-  EMPLOYEE_ASSIGNED: [
-    { value: "PRIMARY_EMPLOYEE", label: "주 담당 직원" },
-    { value: "SECONDARY_EMPLOYEE", label: "보조 직원" },
-  ],
+// Recipient labels are presentation-only (the catalog carries recipient *types*, not Korean
+// labels). Which recipients are valid for an event is derived from the template catalog.
+const RECIPIENT_LABELS: Record<TriggerRecipientType, string> = {
+  CLIENT: "고객",
+  PRIMARY_EMPLOYEE: "주 담당 직원",
+  SECONDARY_EMPLOYEE: "보조 직원",
 };
+
+const RECIPIENT_TYPE_ORDER = Object.keys(RECIPIENT_LABELS) as TriggerRecipientType[];
 
 const DEFAULT_FORM_STATE: RuleFormState = {
   name: "",
@@ -227,16 +230,6 @@ const TRIGGER_TEMPLATE_MESSAGE_FALLBACKS: Record<TriggerTemplateKey, string> = {
 문의사항이 있으시면 언제든지 연락주세요.`,
 };
 
-function getEventOptionsForChannel(channel: TriggerMessageChannel) {
-  if (channel === "sms") {
-    return EVENT_OPTIONS.filter(
-      (option) => option.value === "SERVICE_START" || option.value === "CLIENT_CREATED",
-    );
-  }
-
-  return EVENT_OPTIONS;
-}
-
 function toFormState(rule: AlimtalkTriggerRule | null, channel: TriggerMessageChannel = "alimtalk"): RuleFormState {
   if (!rule) return getDefaultFormState(channel);
   return {
@@ -262,9 +255,7 @@ function normalizeDto(dto: RuleFormState): CreateAlimtalkTriggerRuleDto {
 
 function getRuleSummary(rule: RuleFormState) {
   const eventLabel = EVENT_OPTIONS.find((option) => option.value === rule.eventType)?.label ?? rule.eventType;
-  const recipientLabel =
-    RECIPIENT_OPTIONS[rule.eventType].find((option) => option.value === rule.recipientType)?.label ??
-    rule.recipientType;
+  const recipientLabel = RECIPIENT_LABELS[rule.recipientType] ?? rule.recipientType;
 
   let timingLabel = OFFSET_OPTIONS[rule.eventType].find((option) => option.value === rule.offsetType)?.label ?? rule.offsetType;
   if (rule.offsetType === "BEFORE_DAYS" || rule.offsetType === "AFTER_DAYS") {
@@ -311,7 +302,6 @@ export function TriggerRulesManager({
   const component = (suffix: string) => `${dataComponentPrefix}-${suffix}`;
   const isCompactSplitLayout = splitLayoutMode === "compact";
   const copy = CHANNEL_COPY[channel];
-  const eventOptions = useMemo(() => getEventOptionsForChannel(channel), [channel]);
 
   const { data: rulesData = [], isLoading } = useAlimtalkTriggerRules();
   const createMutation = useCreateAlimtalkTriggerRule();
@@ -340,11 +330,10 @@ export function TriggerRulesManager({
       ? rules.find((rule) => rule.id === effectiveSelectedRuleId) ?? null
       : null;
 
-  const templateQuery = useAlimtalkTriggerTemplates({
-    provider: resolvedProvider,
-    eventType: formState.eventType,
-    recipientType: formState.recipientType,
-  });
+  // Fetch ALL templates for the provider in one query (no event/recipient filter), then derive
+  // the event / recipient / template dropdowns from the catalog so future templates surface
+  // automatically. Derivation is channel-generic — it works for both the SMS and 알림톡 forms.
+  const templateQuery = useAlimtalkTriggerTemplates({ provider: resolvedProvider });
   const selectedSystemTemplateKey =
     formState.templateKey === "SERVICE_INFO"
       ? "SERVICE_INFO"
@@ -353,9 +342,36 @@ export function TriggerRulesManager({
       : "";
   const { data: selectedSystemTemplate } = useSystemTemplate(selectedSystemTemplateKey);
 
-  const availableTemplates = useMemo(
-    () => (templateQuery.data ?? []).filter((template) => isTriggerTemplateInChannel(template.key, channel)),
+  const channelTemplates = useMemo(
+    () => getChannelTemplates(templateQuery.data ?? [], channel),
     [channel, templateQuery.data],
+  );
+
+  const eventOptions = useMemo(() => {
+    const allowedEvents = new Set(deriveEventTypesFromTemplates(channelTemplates));
+    return EVENT_OPTIONS.filter((option) => allowedEvents.has(option.value));
+  }, [channelTemplates]);
+
+  const getRecipientTypesForEvent = useCallback(
+    (eventType: TriggerEventType): TriggerRecipientType[] => {
+      const allowed = new Set(deriveRecipientTypesFromTemplates(channelTemplates, eventType));
+      return RECIPIENT_TYPE_ORDER.filter((recipientType) => allowed.has(recipientType));
+    },
+    [channelTemplates],
+  );
+
+  const recipientOptions = useMemo(
+    () =>
+      getRecipientTypesForEvent(formState.eventType).map((recipientType) => ({
+        value: recipientType,
+        label: RECIPIENT_LABELS[recipientType],
+      })),
+    [getRecipientTypesForEvent, formState.eventType],
+  );
+
+  const availableTemplates = useMemo(
+    () => deriveAvailableTemplates(channelTemplates, formState.eventType, formState.recipientType),
+    [channelTemplates, formState.eventType, formState.recipientType],
   );
   const selectedTemplate = useMemo(() => {
     return availableTemplates.find((template) => template.key === formState.templateKey) ?? null;
@@ -420,16 +436,20 @@ export function TriggerRulesManager({
   }, [channel, effectiveSelectedRuleId, selectedRule]);
 
   useEffect(() => {
+    // Wait until the catalog has loaded before reconciling the form against derived options.
+    if (eventOptions.length === 0) return;
+
     if (!eventOptions.some((option) => option.value === formState.eventType)) {
       setFormState(getDefaultFormState(channel));
       return;
     }
 
-    const allowedRecipients = RECIPIENT_OPTIONS[formState.eventType];
-    if (!allowedRecipients.some((option) => option.value === formState.recipientType)) {
+    const allowedRecipients = getRecipientTypesForEvent(formState.eventType);
+    if (allowedRecipients.length > 0 && !allowedRecipients.includes(formState.recipientType)) {
+      const nextRecipient = allowedRecipients[0];
       setFormState((current) => ({
         ...current,
-        recipientType: allowedRecipients[0].value,
+        recipientType: nextRecipient,
       }));
     }
 
@@ -441,7 +461,14 @@ export function TriggerRulesManager({
         offsetDays: 0,
       }));
     }
-  }, [channel, eventOptions, formState.eventType, formState.recipientType, formState.offsetType]);
+  }, [
+    channel,
+    eventOptions,
+    getRecipientTypesForEvent,
+    formState.eventType,
+    formState.recipientType,
+    formState.offsetType,
+  ]);
 
   useEffect(() => {
     if (availableTemplates.length === 0) return;
@@ -854,7 +881,8 @@ export function TriggerRulesManager({
                           }))}
                           onValueChange={(value) => {
                             const nextEventType = value as TriggerEventType;
-                            const nextRecipient = RECIPIENT_OPTIONS[nextEventType][0].value;
+                            const nextRecipient =
+                              getRecipientTypesForEvent(nextEventType)[0] ?? formState.recipientType;
                             const nextOffset = OFFSET_OPTIONS[nextEventType][0].value;
 
                             setFormState((current) => ({
@@ -894,7 +922,7 @@ export function TriggerRulesManager({
                           id="trigger-rule-recipient"
                           label="수신 대상"
                           value={formState.recipientType}
-                          options={RECIPIENT_OPTIONS[formState.eventType]}
+                          options={recipientOptions}
                           onValueChange={(value) =>
                             setFormState((current) => ({
                               ...current,

@@ -32,7 +32,7 @@ interface SmsTemplateDeliveryConfig {
     systemTemplateKey: SystemTemplateKey;
 }
 
-const SMS_TEMPLATE_DELIVERY: Partial<Record<AlimtalkTriggerTemplateKey, SmsTemplateDeliveryConfig>> = {
+export const SMS_TEMPLATE_DELIVERY: Partial<Record<AlimtalkTriggerTemplateKey, SmsTemplateDeliveryConfig>> = {
     [AlimtalkTriggerTemplateKey.SERVICE_INFO]: {
         smsLogTemplateKey: "service_info_sms",
         automationKey: "SERVICE_INFO_SMS",

@@ -40,6 +40,20 @@ export type AlimtalkTriggerTemplateKey =
   | "EMPLOYEE_ASSIGNED"
   | "CLIENT_GREETING";
 
+// Canonical source of truth for which trigger templates are delivered over SMS (vs alimtalk).
+// Adding a new SMS template here flows it through the SMS form's data-driven dropdowns, the
+// channel filters, and the backend delivery drift guard — no hardcoded per-surface lists.
+export const SMS_TRIGGER_TEMPLATE_KEYS: AlimtalkTriggerTemplateKey[] = [
+  "SERVICE_INFO",
+  "CLIENT_GREETING",
+];
+
+export function getTriggerTemplateChannel(
+  key: AlimtalkTriggerTemplateKey,
+): "sms" | "alimtalk" {
+  return SMS_TRIGGER_TEMPLATE_KEYS.includes(key) ? "sms" : "alimtalk";
+}
+
 export type SupportedTriggerProvider = "aligo" | "channeltalk";
 export type AlimtalkProvider = SupportedTriggerProvider | "none";
 
