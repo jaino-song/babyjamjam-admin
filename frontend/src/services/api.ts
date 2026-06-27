@@ -151,6 +151,12 @@ export const eformsignApi = {
         const { data } = await api.get(`/eformsign/documents/${documentId}`);
         return data;
     },
+    // Browser-navigable BFF URLs (full /api path, used as href/download — NOT via the axios client).
+    getDocumentDownloadUrl: (documentId: string): string =>
+        `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document`,
+    // Receipt = page 7 of the document PDF, extracted by the download_files BFF route.
+    getDocumentReceiptDownloadUrl: (documentId: string): string =>
+        `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document&page=7`,
     getLocalDocumentRecord: async (documentId: string) => {
         const { data } = await api.get(`/eformsign-docs/document-id`, {
             params: { documentId },

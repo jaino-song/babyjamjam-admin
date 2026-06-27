@@ -32,6 +32,8 @@ interface SharedDocumentPreviewDialogProps {
   previewUrl: string;
   downloadUrl?: string;
   downloadFileName?: string;
+  receiptDownloadUrl?: string;
+  receiptDownloadFileName?: string;
   imageAlt?: string;
   overlayLabel?: string;
   unsupportedMessage?: ReactNode;
@@ -137,6 +139,8 @@ export function SharedDocumentPreviewDialog({
   previewUrl,
   downloadUrl,
   downloadFileName,
+  receiptDownloadUrl,
+  receiptDownloadFileName,
   imageAlt,
   overlayLabel,
   unsupportedMessage = "Preview not available for this file type",
@@ -419,20 +423,23 @@ export function SharedDocumentPreviewDialog({
     window.document.body.appendChild(iframe);
   };
 
-  const handleDownload = () => {
-    if (!downloadUrl) {
-      return;
-    }
-
+  const triggerDownload = (url: string, fileName?: string) => {
     const link = window.document.createElement("a");
-    link.href = downloadUrl;
-    if (downloadFileName) {
-      link.download = downloadFileName;
+    link.href = url;
+    if (fileName) {
+      link.download = fileName;
     }
     link.target = "_blank";
     window.document.body.appendChild(link);
     link.click();
     window.document.body.removeChild(link);
+  };
+
+  const handleDownload = () => {
+    if (!downloadUrl) {
+      return;
+    }
+    triggerDownload(downloadUrl, downloadFileName);
   };
 
   const renderPreviewAvailabilityMessage = () => {
@@ -639,6 +646,16 @@ export function SharedDocumentPreviewDialog({
             <Button onClick={handleDownload} disabled={isZoomablePreview && !isPreviewReady}>
               <Download className="mr-2 h-4 w-4" />
               다운로드
+            </Button>
+          )}
+          {receiptDownloadUrl && (
+            <Button
+              variant="outline"
+              data-component="contracts-document-preview-receipt-download"
+              onClick={() => triggerDownload(receiptDownloadUrl, receiptDownloadFileName)}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              영수증 다운로드
             </Button>
           )}
         </DialogFooter>
