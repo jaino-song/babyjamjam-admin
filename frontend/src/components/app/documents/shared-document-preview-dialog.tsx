@@ -637,25 +637,38 @@ export function SharedDocumentPreviewDialog({
           className="justify-end border-t border-border px-6 py-4"
         >
           {!isHwp && (
-            <Button variant="ghost" onClick={handlePrint} disabled={isZoomablePreview && !isPreviewReady}>
+            <Button
+              variant="positive-outline"
+              size="sm"
+              onClick={handlePrint}
+              disabled={isZoomablePreview && !isPreviewReady}
+              className="min-w-[88px] border-v3-primary"
+            >
               <Printer className="mr-2 h-4 w-4" />
               인쇄
             </Button>
           )}
-          {downloadUrl && (
-            <Button onClick={handleDownload} disabled={isZoomablePreview && !isPreviewReady}>
-              <Download className="mr-2 h-4 w-4" />
-              다운로드
-            </Button>
-          )}
           {receiptDownloadUrl && (
             <Button
-              variant="outline"
+              variant="positive-outline"
+              size="sm"
               data-component="contracts-document-preview-receipt-download"
               onClick={() => triggerDownload(receiptDownloadUrl, receiptDownloadFileName)}
+              className="min-w-[88px] border-v3-primary"
             >
               <Download className="mr-2 h-4 w-4" />
-              영수증 다운로드
+              영수증
+            </Button>
+          )}
+          {downloadUrl && (
+            <Button
+              size="sm"
+              onClick={handleDownload}
+              disabled={isZoomablePreview && !isPreviewReady}
+              className="min-w-[88px] hover:translate-y-0 hover:shadow-[0_4px_24px_hsla(214,50%,20%,0.06)]"
+            >
+              <Download className="mr-2 h-4 w-4" />
+              다운로드
             </Button>
           )}
         </DialogFooter>
