@@ -47,6 +47,41 @@ export const SMS_TEMPLATE_DELIVERY: Partial<Record<AlimtalkTriggerTemplateKey, S
         title: "인사 메시지",
         systemTemplateKey: SystemTemplateKey.GREETING,
     },
+    [AlimtalkTriggerTemplateKey.PRICE_INFO]: {
+        smsLogTemplateKey: "price_info_sms",
+        automationKey: "PRICE_INFO_SMS",
+        triggerType: "price_info",
+        title: "비용 안내",
+        systemTemplateKey: SystemTemplateKey.PRICE_INFO,
+    },
+    [AlimtalkTriggerTemplateKey.REMINDER]: {
+        smsLogTemplateKey: "reminder_sms",
+        automationKey: "REMINDER_SMS",
+        triggerType: "reminder",
+        title: "리마인드",
+        systemTemplateKey: SystemTemplateKey.REMINDER,
+    },
+    [AlimtalkTriggerTemplateKey.THANKS]: {
+        smsLogTemplateKey: "thanks_sms",
+        automationKey: "THANKS_SMS",
+        triggerType: "thanks",
+        title: "예약 완료",
+        systemTemplateKey: SystemTemplateKey.THANKS,
+    },
+    [AlimtalkTriggerTemplateKey.SURVEY]: {
+        smsLogTemplateKey: "survey_sms",
+        automationKey: "SURVEY_SMS",
+        triggerType: "survey",
+        title: "모니터링 설문",
+        systemTemplateKey: SystemTemplateKey.SURVEY,
+    },
+    [AlimtalkTriggerTemplateKey.INFO]: {
+        smsLogTemplateKey: "info_sms",
+        automationKey: "INFO_SMS",
+        triggerType: "info",
+        title: "정보 안내",
+        systemTemplateKey: SystemTemplateKey.INFO,
+    },
 };
 
 @Injectable()
