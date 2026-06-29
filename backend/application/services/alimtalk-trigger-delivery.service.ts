@@ -163,6 +163,18 @@ export class AlimtalkTriggerDeliveryService {
             clientName: payload.recipientName,
             ...payload.templateVariables,
         };
+        if (config.systemTemplateKey === SystemTemplateKey.PRICE_INFO) {
+            const requiredKeys = ["fullPrice", "actualPrice", "bankName", "accNum"];
+            const missing = requiredKeys.filter((key) => !baseVariables[key]?.trim());
+            if (missing.length > 0) {
+                job.cancel(`비용 안내 발송 건너뜀: 필수 정보 누락 (${missing.join(", ")})`);
+                this.logger.warn(
+                    `[SMS Automation] PRICE_INFO skipped for job ${job.id}: missing ${missing.join(", ")}`,
+                );
+                return false;
+            }
+        }
+
         const message = await this.resolveSmsMessage(config.systemTemplateKey, baseVariables);
         const receiver = payload.recipientPhone;
 

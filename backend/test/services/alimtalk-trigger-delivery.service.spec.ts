@@ -245,3 +245,84 @@ describe("SMS delivery routing drift guard", () => {
         expect(deliveryKeys).toEqual(sharedKeys);
     });
 });
+
+describe("PRICE_INFO data guard", () => {
+    const createPriceInfoJob = (templateVariables: Record<string, string>) =>
+        AlimtalkTriggerJobEntity.reconstitute(
+            "job-price-info",
+            "branch-1",
+            "rule-price-info",
+            "pending",
+            new Date("2026-06-30T00:00:00.000Z"),
+            null,
+            null,
+            null,
+            7,
+            null,
+            AlimtalkTriggerRecipientType.CLIENT,
+            "010-1234-5678",
+            AlimtalkTriggerTemplateKey.PRICE_INFO,
+            "rule-price-info:7",
+            {
+                clientId: 7,
+                clientName: "김지니",
+                memberId: "7",
+                recipientName: "김지니",
+                recipientPhone: "010-1234-5678",
+                templateVariables,
+            },
+            new Date("2026-06-30T00:00:00.000Z"),
+            new Date("2026-06-30T00:00:00.000Z"),
+        );
+
+    const buildService = (overrides: { aligoService: any; logRepository: any; systemTemplateService?: any }) =>
+        new AlimtalkTriggerDeliveryService(
+            { getAlimtalkProvider: jest.fn() } as unknown as SystemSettingService,
+            { ensureApproved: jest.fn().mockResolvedValue(undefined) } as unknown as MessageSenderApprovalService,
+            overrides.aligoService as unknown as AligoService,
+            (overrides.systemTemplateService ?? {
+                getByKey: jest.fn().mockResolvedValue({ content: "총 금액 {{fullPrice}}원 / {{bankName}} {{accNum}}" }),
+            }) as unknown as SystemTemplateService,
+            { execute: jest.fn() } as never,
+            { execute: jest.fn() } as never,
+            overrides.logRepository as unknown as IAlimtalkLogRepository,
+        );
+
+    it("cancels a PRICE_INFO job and does not send when price/bank data is missing", async () => {
+        const aligoService = { sendSms: jest.fn() };
+        const logRepository = { save: jest.fn() };
+        const service = buildService({ aligoService, logRepository });
+        const job = createPriceInfoJob({ name: "김지니", fullPrice: "", actualPrice: "", bankName: "", accNum: "" });
+
+        const sent = await service.sendJob(job);
+
+        expect(sent).toBe(false);
+        expect(job.status).toBe("canceled");
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+        expect(logRepository.save).not.toHaveBeenCalled();
+    });
+
+    it("sends a PRICE_INFO job when all essential data is present", async () => {
+        const aligoService = {
+            sendSms: jest.fn().mockResolvedValue({
+                request: { senderPhone: "01099998888", receiver: "01012345678", msgType: "LMS", testModeYn: "N" },
+                response: { result_code: 1, message: "성공", msg_id: 321, success_cnt: 1, error_cnt: 0, msg_type: "LMS" },
+            }),
+        };
+        const logRepository = { save: jest.fn().mockImplementation(async (log) => log) };
+        const service = buildService({ aligoService, logRepository });
+        const job = createPriceInfoJob({
+            name: "김지니",
+            fullPrice: "1200000",
+            actualPrice: "120000",
+            bankName: "국민",
+            accNum: "123-45-6789",
+        });
+
+        const sent = await service.sendJob(job);
+
+        expect(sent).toBe(true);
+        expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+        expect(logRepository.save).toHaveBeenCalledTimes(1);
+    });
+});
