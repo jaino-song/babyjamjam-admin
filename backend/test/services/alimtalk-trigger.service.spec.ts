@@ -231,6 +231,15 @@ describe("AlimtalkTriggerService", () => {
         expect(variables).toEqual({
             name: "김지니",
             clientName: "김지니",
+            phone: "010-1234-5678",
+            weeks: "0",
+            duration: "",
+            type: "A가1형",
+            fullPrice: "",
+            grant: "",
+            actualPrice: "",
+            bankName: "",
+            accNum: "",
         });
     });
 
@@ -256,6 +265,14 @@ describe("AlimtalkTriggerService", () => {
             name: "김산모",
             clientName: "김산모",
             phone: "010-9999-0000",
+            weeks: "0",
+            duration: "",
+            type: "",
+            fullPrice: "",
+            grant: "",
+            actualPrice: "",
+            bankName: "",
+            accNum: "",
         });
     });
 

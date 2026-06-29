@@ -36,6 +36,7 @@ import {
 import { AlimtalkTriggerDeliveryService } from "./alimtalk-trigger-delivery.service";
 import { hasColumn, hasTable } from "infrastructure/database/schema-capabilities";
 import { MessageSenderApprovalService } from "./message-sender-approval.service";
+import { buildSmsClientVariables } from "./sms-client-variables";
 
 interface UpsertRuleParams {
     name: string;
@@ -126,6 +127,11 @@ interface ClientTriggerSource {
     startDate: Date | null;
     endDate: Date | null;
     createdAt?: Date | null;
+    duration?: number | null;
+    fullPrice?: string | null;
+    grant?: string | null;
+    actualPrice?: string | null;
+    area?: { bankAccountInfo: { bankName: string | null; accNum: string | null } | null } | null;
 }
 
 @Injectable()
@@ -389,6 +395,11 @@ export class AlimtalkTriggerService {
                 type: true,
                 startDate: true,
                 endDate: true,
+                duration: true,
+                fullPrice: true,
+                grant: true,
+                actualPrice: true,
+                area: { select: { bankAccountInfo: { select: { bankName: true, accNum: true } } } },
                 ...(supportsCreatedAt ? { createdAt: true } : {}),
             },
         });
@@ -541,6 +552,11 @@ export class AlimtalkTriggerService {
                 type: true,
                 startDate: true,
                 endDate: true,
+                duration: true,
+                fullPrice: true,
+                grant: true,
+                actualPrice: true,
+                area: { select: { bankAccountInfo: { select: { bankName: true, accNum: true } } } },
                 ...(supportsCreatedAt ? { createdAt: true } : {}),
             },
         });
@@ -653,7 +669,7 @@ export class AlimtalkTriggerService {
 
     private buildClientTemplateVariables(
         rule: AlimtalkTriggerRuleEntity,
-        client: Pick<ClientTriggerSource, "name" | "phone" | "type" | "startDate" | "endDate" | "createdAt">,
+        client: ClientTriggerSource,
     ): Record<string, string> {
         switch (rule.templateKey) {
             case AlimtalkTriggerTemplateKey.CLIENT_WELCOME:
@@ -668,23 +684,20 @@ export class AlimtalkTriggerService {
                     serviceStartDate: this.formatDate(client.startDate),
                     timingText: this.describeTiming(rule, "서비스 시작"),
                 };
-            case AlimtalkTriggerTemplateKey.SERVICE_INFO:
-                return {
-                    name: client.name,
-                    clientName: client.name,
-                };
             case AlimtalkTriggerTemplateKey.SERVICE_END_REMINDER:
                 return {
                     clientName: client.name,
                     serviceEndDate: this.formatDate(client.endDate),
                     timingText: this.describeTiming(rule, "서비스 종료"),
                 };
+            case AlimtalkTriggerTemplateKey.SERVICE_INFO:
             case AlimtalkTriggerTemplateKey.CLIENT_GREETING:
-                return {
-                    name: client.name,
-                    clientName: client.name,
-                    phone: client.phone ?? "",
-                };
+            case AlimtalkTriggerTemplateKey.PRICE_INFO:
+            case AlimtalkTriggerTemplateKey.REMINDER:
+            case AlimtalkTriggerTemplateKey.THANKS:
+            case AlimtalkTriggerTemplateKey.SURVEY:
+            case AlimtalkTriggerTemplateKey.INFO:
+                return buildSmsClientVariables(client);
             default:
                 return {};
         }
