@@ -47,6 +47,7 @@ import {
   deriveRecipientTypesFromTemplates,
   getChannelTemplates,
   isTriggerRuleInChannel,
+  SMS_TRIGGER_TO_SYSTEM_TEMPLATE,
   type TriggerMessageChannel,
 } from "@/features/alimtalk-triggers/channel";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
@@ -228,6 +229,16 @@ const TRIGGER_TEMPLATE_MESSAGE_FALLBACKS: Record<TriggerTemplateKey, string> = {
 앞으로 잘 부탁드립니다.
 
 문의사항이 있으시면 언제든지 연락주세요.`,
+  PRICE_INFO: `[아이미래 인천]
+비용 안내드립니다. 자세한 내용은 담당자에게 문의해 주세요.`,
+  REMINDER: `[아이미래 인천]
+#{고객명}님, 일정 리마인드 안내드립니다.`,
+  THANKS: `[아이미래 인천]
+#{고객명}님, 예약이 완료되었습니다. 감사합니다.`,
+  SURVEY: `[아이미래 인천]
+#{고객명}님, 모니터링 설문 부탁드립니다.`,
+  INFO: `[아이미래 인천]
+안내드립니다.`,
 };
 
 function toFormState(rule: AlimtalkTriggerRule | null, channel: TriggerMessageChannel = "alimtalk"): RuleFormState {
@@ -334,12 +345,7 @@ export function TriggerRulesManager({
   // the event / recipient / template dropdowns from the catalog so future templates surface
   // automatically. Derivation is channel-generic — it works for both the SMS and 알림톡 forms.
   const templateQuery = useAlimtalkTriggerTemplates({ provider: resolvedProvider });
-  const selectedSystemTemplateKey =
-    formState.templateKey === "SERVICE_INFO"
-      ? "SERVICE_INFO"
-      : formState.templateKey === "CLIENT_GREETING"
-      ? "GREETING"
-      : "";
+  const selectedSystemTemplateKey = SMS_TRIGGER_TO_SYSTEM_TEMPLATE[formState.templateKey] ?? "";
   const { data: selectedSystemTemplate } = useSystemTemplate(selectedSystemTemplateKey);
 
   const channelTemplates = useMemo(

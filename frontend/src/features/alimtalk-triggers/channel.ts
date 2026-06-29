@@ -11,10 +11,11 @@ import type {
 // channel filters, and the backend delivery drift guard all agree.
 import {
   SMS_TRIGGER_TEMPLATE_KEYS,
+  SMS_TRIGGER_TO_SYSTEM_TEMPLATE,
   getTriggerTemplateChannel,
 } from "@babyjamjam/shared/types/alimtalk";
 
-export { SMS_TRIGGER_TEMPLATE_KEYS, getTriggerTemplateChannel };
+export { SMS_TRIGGER_TEMPLATE_KEYS, SMS_TRIGGER_TO_SYSTEM_TEMPLATE, getTriggerTemplateChannel };
 
 export type TriggerMessageChannel = "sms" | "alimtalk";
 
