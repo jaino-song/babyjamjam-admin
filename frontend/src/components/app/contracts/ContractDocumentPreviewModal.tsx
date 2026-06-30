@@ -6,12 +6,14 @@ import {
   SharedDocumentPreviewDialog,
   type PreviewMetaItem,
 } from "@/components/app/documents/shared-document-preview-dialog";
+import { eformsignApi } from "@/services/api";
 
 interface ContractDocumentPreviewModalProps {
   open: boolean;
   onClose: () => void;
   document: EformsignDocument | null;
   customerName?: string | null;
+  canDownloadReceipt?: boolean;
 }
 
 function formatDate(timestamp: number): string {
@@ -32,6 +34,7 @@ export function ContractDocumentPreviewModal({
   onClose,
   document,
   customerName,
+  canDownloadReceipt = false,
 }: ContractDocumentPreviewModalProps) {
   if (!document) {
     return null;
@@ -77,6 +80,10 @@ export function ContractDocumentPreviewModal({
       previewUrl={getPreviewUrl(document.id)}
       downloadUrl={getPreviewUrl(document.id, true)}
       downloadFileName={`${document.document_name || document.id}.pdf`}
+      receiptDownloadUrl={
+        canDownloadReceipt ? eformsignApi.getDocumentReceiptDownloadUrl(document.id) : undefined
+      }
+      receiptDownloadFileName={`${document.document_name || document.id} 영수증.pdf`}
       overlayLabel="PDF 미리보기"
       previewKey={document.id}
     />

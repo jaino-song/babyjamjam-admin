@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode } from "react";
+import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { CircleAlert, FileCheck2, MessageCircle, MoreVertical, SquarePen, Trash2, User } from "lucide-react";
 
 import { Client } from "@/lib/client/types";
@@ -20,6 +20,7 @@ import {
   MobileDetailPage,
   MobileDetailTabPanel,
 } from "@/components/app/mobile-redesign/detail-sheet";
+import { ClientMessageHistoryDetail } from "@/components/app/clients/client-message-history-detail";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -413,8 +414,11 @@ export interface ClientNotificationLogRecord {
   provider: string;
   templateKey: string;
   receiver: string | null;
+  recipientName: string | null;
   clientId: number | null;
   status: "pending" | "sent" | "failed" | string;
+  messageBody: string;
+  errorMessage: string | null;
   createdAt: string;
   ruleName: string | null;
   variables?: Record<string, unknown> | null;
@@ -430,15 +434,34 @@ function DetailDocRow({
   meta,
   badge,
   tone,
+  onClick,
 }: {
   icon: ReactNode;
   title: string;
   meta: ReactNode;
   badge: string;
   tone: DetailRowTone;
+  onClick?: () => void;
 }) {
+  const interactive = Boolean(onClick);
   return (
-    <div className="doc-row" data-component="mobile-clients-doc-row">
+    <div
+      className={interactive ? "doc-row doc-row-tappable" : "doc-row"}
+      data-component="mobile-clients-doc-row"
+      {...(interactive
+        ? {
+            role: "button" as const,
+            tabIndex: 0,
+            onClick,
+            onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onClick?.();
+              }
+            },
+          }
+        : {})}
+    >
       <div className={`doc-icon doc-icon-${tone}`} data-component="mobile-clients-doc-icon">
         {icon}
       </div>
@@ -568,6 +591,12 @@ export function ClientDetailContent({
   onEdit: (client: Client) => void;
   onDelete: (id: number) => void;
 }) {
+  // Keyed selection so the open message-detail auto-resets when the tab or client changes
+  // (derive-during-render — avoids a setState-in-effect).
+  const detailKey = `${activeTab}:${client.id}`;
+  const [selectedEntry, setSelectedEntry] = useState<{ key: string; log: ClientNotificationLogRecord } | null>(null);
+  const selectedLog = selectedEntry && selectedEntry.key === detailKey ? selectedEntry.log : null;
+
   const group = GROUPS.find((g) => g.match(client)) ?? GROUPS[1];
   const featureLabel = clientFeatureLabel(client);
   const featureLabelTone = clientFeatureLabelTone(client);
@@ -1062,38 +1091,60 @@ export function ClientDetailContent({
       </MobileDetailTabPanel>
 
       <MobileDetailTabPanel name="clients" tabId="alimtalk" activeTab={activeTab}>
-        <InfoCard title="발송 내역">
-          {isNotificationLogsLoading ? (
-            <div className="detail-empty-state" data-component="mobile-clients-alimtalk-loading">
-              발송 내역을 불러오는 중입니다.
-            </div>
-          ) : displayNotificationLogs.length > 0 ? (
-            displayNotificationLogs.map((log) => {
-              const tone = notificationStatusTone(log.status);
-              const channel = notificationChannelLabel(log);
-              return (
-                <DetailDocRow
-                  key={`${channel}-${log.id}`}
-                  icon={
-                    tone === "burgundy" ? (
-                      <CircleAlert size={16} strokeWidth={2.5} />
-                    ) : (
-                      <MessageCircle size={16} strokeWidth={2.5} />
-                    )
-                  }
-                  title={`${channel} · ${notificationTitle(log)}`}
-                  meta={formatNotificationTime(log.createdAt)}
-                  badge={notificationStatusLabel(log.status)}
-                  tone={tone}
-                />
-              );
-            })
-          ) : (
-            <div className="detail-empty-state" data-component="mobile-clients-alimtalk-empty">
-              발송 내역이 없습니다.
-            </div>
-          )}
-        </InfoCard>
+        {selectedLog ? (
+          <ClientMessageHistoryDetail
+            view={{
+              title: notificationTitle(selectedLog),
+              channelLabel: notificationChannelLabel(selectedLog),
+              statusLabel: notificationStatusLabel(selectedLog.status),
+              statusTone: notificationStatusTone(selectedLog.status),
+              sentAtLabel: formatNotificationTime(selectedLog.createdAt),
+              recipientName: selectedLog.recipientName?.trim() || client.name,
+              recipientPhone: selectedLog.receiver?.trim() || "-",
+              messageBody: selectedLog.messageBody?.trim()
+                ? selectedLog.messageBody
+                : "내용이 없습니다.",
+              failureReason: selectedLog.errorMessage?.trim()
+                ? selectedLog.errorMessage
+                : null,
+            }}
+            onBack={() => setSelectedEntry(null)}
+          />
+        ) : (
+          <InfoCard title="발송 내역">
+            {isNotificationLogsLoading ? (
+              <div className="detail-empty-state" data-component="mobile-clients-alimtalk-loading">
+                발송 내역을 불러오는 중입니다.
+              </div>
+            ) : displayNotificationLogs.length > 0 ? (
+              displayNotificationLogs.map((log) => {
+                const tone = notificationStatusTone(log.status);
+                const channel = notificationChannelLabel(log);
+                return (
+                  <DetailDocRow
+                    key={`${channel}-${log.id}`}
+                    icon={
+                      tone === "burgundy" ? (
+                        <CircleAlert size={16} strokeWidth={2.5} />
+                      ) : (
+                        <MessageCircle size={16} strokeWidth={2.5} />
+                      )
+                    }
+                    title={`${channel} · ${notificationTitle(log)}`}
+                    meta={formatNotificationTime(log.createdAt)}
+                    badge={notificationStatusLabel(log.status)}
+                    tone={tone}
+                    onClick={() => setSelectedEntry({ key: detailKey, log })}
+                  />
+                );
+              })
+            ) : (
+              <div className="detail-empty-state" data-component="mobile-clients-alimtalk-empty">
+                발송 내역이 없습니다.
+              </div>
+            )}
+          </InfoCard>
+        )}
       </MobileDetailTabPanel>
     </MobileDetailPage>
   );
