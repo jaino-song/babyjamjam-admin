@@ -22,6 +22,7 @@ export type EmployeeUpdateParams = {
     phone?: string;
     grade?: string;
     openToNextWork?: boolean;
+    birthday?: string;
 };
 
 @Injectable()
@@ -43,7 +44,7 @@ export class EmployeeService {
 
     create(
         branchid: string,
-        params: { name: string; workArea: string[]; phone: string; grade: string; openToNextWork: boolean; registeredDate?: string }
+        params: { name: string; workArea: string[]; phone: string; grade: string; openToNextWork: boolean; registeredDate?: string; birthday?: string }
     ): Promise<EmployeeEntity> {
         return this.createEmployeeUsecase.execute(
             branchid,
@@ -53,6 +54,7 @@ export class EmployeeService {
             normalizeEmployeeGrade(params.grade),
             params.openToNextWork,
             params.registeredDate ? new Date(params.registeredDate) : undefined,
+            params.birthday,
         );
     }
 

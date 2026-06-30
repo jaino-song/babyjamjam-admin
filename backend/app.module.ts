@@ -28,6 +28,7 @@ import { MessageDeliveryModule } from "module/message-delivery.module";
 import { CallInboxModule } from "module/call-inbox.module";
 import { ConsultationInquiryModule } from "module/consultation-inquiry.module";
 import { SystemAdminModule } from "module/system-admin.module";
+import { ServiceFeedbackModule } from "module/service-feedback.module";
 import { getJwtSecret } from "./infrastructure/auth/jwt-secret";
 
 const ENV_FILE_PATHS = [
@@ -74,6 +75,7 @@ const ENV_FILE_PATHS = [
         CallInboxModule,
         ConsultationInquiryModule,
         SystemAdminModule,
+        ServiceFeedbackModule,
     ],
     controllers: [EformsignController],
     providers: [EformsignService, JwtStrategy],

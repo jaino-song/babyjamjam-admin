@@ -14,9 +14,10 @@ import { DatabaseModule } from "infrastructure/database/database.module";
 import { EmployeeScheduleService } from "application/services/employee-schedule.service";
 import { EmployeeScheduleController } from "interface/controllers/employee-schedule.controller";
 import { AlimtalkModule } from "./alimtalk.module";
+import { ServiceFeedbackModule } from "./service-feedback.module";
 
 @Module({
-    imports: [DatabaseModule, AlimtalkModule],
+    imports: [DatabaseModule, AlimtalkModule, ServiceFeedbackModule],
     controllers: [EmployeeScheduleController],
     providers: [
         CreateEmployeeScheduleUsecase,

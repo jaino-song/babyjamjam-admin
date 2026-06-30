@@ -58,6 +58,7 @@ interface FormData {
     phone: string;
     grade: string;
     openToNextWork: boolean;
+    birthday: string;
 }
 
 const initialFormData: FormData = {
@@ -66,6 +67,7 @@ const initialFormData: FormData = {
     phone: "",
     grade: DEFAULT_EMPLOYEE_GRADE,
     openToNextWork: true,
+    birthday: "",
 };
 
 export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: EmployeeFormDialogProps) {
@@ -109,6 +111,7 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
                 phone: employee.phone,
                 grade: normalizeEmployeeGrade(employee.grade),
                 openToNextWork: employee.openToNextWork,
+                birthday: employee.birthday ?? "",
             }
             : {
                 ...initialFormData,
@@ -183,6 +186,7 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
                     phone: parsePhoneNumber(formData.phone),
                     grade: formData.grade,
                     openToNextWork: formData.openToNextWork,
+                    birthday: formData.birthday,
                 };
                 console.log("[EmployeeFormDialog] Updating employee with dto:", dto);
                 const updatedEmployee = await updateMutation.mutateAsync({ id: employee.id, dto });
@@ -205,6 +209,7 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
                     phone: parsePhoneNumber(formData.phone),
                     grade: formData.grade,
                     openToNextWork: formData.openToNextWork,
+                    birthday: formData.birthday,
                 };
                 console.log("[EmployeeFormDialog] Creating employee with dto:", dto);
                 const newEmployee = await createMutation.mutateAsync(dto);
@@ -328,6 +333,21 @@ export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: Emplo
                                     ))}
                                 </SelectContent>
                             </Select>
+                        </div>
+
+                        {/* Birthday */}
+                        <div className="space-y-2">
+                            <Label htmlFor="birthday">
+                                생년월일 (YYMMDD)
+                            </Label>
+                            <Input
+                                id="birthday"
+                                value={formData.birthday}
+                                onChange={(e) => handleChange("birthday", e.target.value)}
+                                placeholder="YYMMDD"
+                                maxLength={6}
+                                inputMode="numeric"
+                            />
                         </div>
                     </div>
 

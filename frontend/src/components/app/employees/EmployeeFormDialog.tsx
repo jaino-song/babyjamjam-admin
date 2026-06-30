@@ -65,6 +65,7 @@ interface FormData {
     phone: string;
     grade: string;
     openToNextWork: boolean;
+    birthday: string;
 }
 
 const initialFormData: FormData = {
@@ -73,6 +74,7 @@ const initialFormData: FormData = {
     phone: "",
     grade: DEFAULT_EMPLOYEE_GRADE,
     openToNextWork: true,
+    birthday: "",
 };
 
 const FIELD_GRID_CLASS_NAME = "grid grid-cols-1 gap-4 sm:grid-cols-2";
@@ -168,6 +170,7 @@ function EmployeeFormContent({
                 phone: employee.phone,
                 grade: normalizeEmployeeGrade(employee.grade),
                 openToNextWork: employee.openToNextWork,
+                birthday: employee.birthday ?? "",
             }
             : {
                 ...initialFormData,
@@ -218,6 +221,7 @@ function EmployeeFormContent({
                     phone: parsePhoneNumber(formData.phone),
                     grade: formData.grade,
                     openToNextWork: formData.openToNextWork,
+                    birthday: formData.birthday,
                 };
 
                 const updatedEmployee = await updateMutation.mutateAsync({ id: employee.id, dto });
@@ -236,6 +240,7 @@ function EmployeeFormContent({
                     phone: parsePhoneNumber(formData.phone),
                     grade: formData.grade,
                     openToNextWork: formData.openToNextWork,
+                    birthday: formData.birthday,
                 };
 
                 const newEmployee = await createMutation.mutateAsync(dto);
@@ -402,6 +407,22 @@ function EmployeeFormContent({
                             </SelectContent>
                         </Select>
                     </div>
+
+                    <div data-component="employees-form-dialog-field-birthday" className="space-y-2">
+                        <Label htmlFor="birthday" className={LABEL_CLASS_NAME}>
+                            생년월일 (YYMMDD)
+                        </Label>
+                        <Input
+                            id="birthday"
+                            variant="v3"
+                            value={formData.birthday}
+                            onChange={(e) => handleChange("birthday", e.target.value)}
+                            placeholder="YYMMDD"
+                            maxLength={6}
+                            inputMode="numeric"
+                            className={V3_INPUT_CLASS_NAME}
+                        />
+                    </div>
                 </div>
             </TitleDescChildrenMolecule>
 
@@ -537,6 +558,19 @@ function EmployeeFormContent({
                 )}
                 helperText={touched.phone && !isPhoneValid ? t(locale, "employees.form.phone-required") : undefined}
                 helperTextClassName="text-[0.75rem] font-medium text-v3-burgundy"
+            />
+
+            <TitleTextInputMolecule
+                id="employee-panel-birthday"
+                label="생년월일 (YYMMDD)"
+                value={formData.birthday}
+                onValueChange={(value) => handleChange("birthday", value)}
+                placeholder="YYMMDD"
+                maxLength={6}
+                dataComponent="employees-form-panel-birthday-field"
+                inputDataComponent="employees-form-panel-birthday-input"
+                labelClassName={PANEL_LABEL_CLASS_NAME}
+                inputClassName={cn(PANEL_INPUT_CLASS_NAME, PANEL_TEXT_INPUT_CLASS_NAME)}
             />
 
             <div className={PANEL_FIELD_CLASS_NAME} data-component="employees-form-panel-grade-field">

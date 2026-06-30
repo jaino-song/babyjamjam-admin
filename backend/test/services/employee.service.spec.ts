@@ -114,6 +114,7 @@ describe("EmployeeService", () => {
                 params.grade,
                 params.openToNextWork,
                 undefined,
+                undefined,
             );
             expect(result).toBe(mockEmployee);
         });
@@ -143,6 +144,7 @@ describe("EmployeeService", () => {
                 params.grade,
                 params.openToNextWork,
                 new Date("2024-06-15"),
+                undefined,
             );
         });
 
@@ -169,6 +171,7 @@ describe("EmployeeService", () => {
                 params.phone,
                 params.grade,
                 params.openToNextWork,
+                undefined,
                 undefined,
             );
         });
