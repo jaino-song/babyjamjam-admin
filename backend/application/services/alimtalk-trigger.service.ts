@@ -386,6 +386,9 @@ export class AlimtalkTriggerService {
         }
 
         const supportsCreatedAt = await hasColumn(this.prisma, "client", "created_at");
+        const supportsAreaId = await hasColumn(this.prisma, "client", "area_id");
+        // Prisma's type inference does not correctly narrow the `area` relation type when
+        // the select key is inside a conditional spread; cast to ClientTriggerSource explicitly.
         const client = await this.prisma.client.findFirst({
             where: { id: clientId, branchId },
             select: {
@@ -399,10 +402,10 @@ export class AlimtalkTriggerService {
                 fullPrice: true,
                 grant: true,
                 actualPrice: true,
-                area: { select: { bankAccountInfo: { select: { bankName: true, accNum: true } } } },
+                ...(supportsAreaId ? { area: { select: { bankAccountInfo: { select: { bankName: true, accNum: true } } } } } : {}),
                 ...(supportsCreatedAt ? { createdAt: true } : {}),
             },
-        });
+        }) as ClientTriggerSource | null;
         if (!client) return;
 
         const rules = await this.ruleRepository.findActiveByEventTypes(branchId, [
@@ -543,6 +546,9 @@ export class AlimtalkTriggerService {
             return;
         }
 
+        const supportsAreaId = await hasColumn(this.prisma, "client", "area_id");
+        // Prisma's type inference does not correctly narrow the `area` relation type when
+        // the select key is inside a conditional spread; cast to ClientTriggerSource[] explicitly.
         const clients = await this.prisma.client.findMany({
             where: { branchId },
             select: {
@@ -556,10 +562,10 @@ export class AlimtalkTriggerService {
                 fullPrice: true,
                 grant: true,
                 actualPrice: true,
-                area: { select: { bankAccountInfo: { select: { bankName: true, accNum: true } } } },
+                ...(supportsAreaId ? { area: { select: { bankAccountInfo: { select: { bankName: true, accNum: true } } } } } : {}),
                 ...(supportsCreatedAt ? { createdAt: true } : {}),
             },
-        });
+        }) as ClientTriggerSource[];
 
         for (const client of clients) {
             const job = this.buildClientJob(rule, client);
@@ -690,14 +696,17 @@ export class AlimtalkTriggerService {
                     serviceEndDate: this.formatDate(client.endDate),
                     timingText: this.describeTiming(rule, "서비스 종료"),
                 };
+            case AlimtalkTriggerTemplateKey.PRICE_INFO:
+                // PRICE_INFO is the only SMS template that renders price/bank fields,
+                // so it is the only one that carries them into the job payload (data minimization).
+                return buildSmsClientVariables(client);
             case AlimtalkTriggerTemplateKey.SERVICE_INFO:
             case AlimtalkTriggerTemplateKey.CLIENT_GREETING:
-            case AlimtalkTriggerTemplateKey.PRICE_INFO:
             case AlimtalkTriggerTemplateKey.REMINDER:
             case AlimtalkTriggerTemplateKey.THANKS:
             case AlimtalkTriggerTemplateKey.SURVEY:
             case AlimtalkTriggerTemplateKey.INFO:
-                return buildSmsClientVariables(client);
+                return { name: client.name, clientName: client.name, phone: client.phone ?? "" };
             default:
                 return {};
         }

@@ -26,10 +26,15 @@ describe("AlimtalkTriggerService", () => {
             client: {
                 name: string;
                 phone: string | null;
-                type: string | null;
-                startDate: Date | null;
-                endDate: Date | null;
+                type?: string | null;
+                startDate?: Date | null;
+                endDate?: Date | null;
                 createdAt?: Date | null;
+                duration?: number | null;
+                fullPrice?: string | null;
+                grant?: string | null;
+                actualPrice?: string | null;
+                area?: { bankAccountInfo: { bankName: string | null; accNum: string | null } | null } | null;
             },
         ) => Record<string, string>;
     };
@@ -232,14 +237,6 @@ describe("AlimtalkTriggerService", () => {
             name: "김지니",
             clientName: "김지니",
             phone: "010-1234-5678",
-            weeks: "0",
-            duration: "",
-            type: "A가1형",
-            fullPrice: "",
-            grant: "",
-            actualPrice: "",
-            bankName: "",
-            accNum: "",
         });
     });
 
@@ -265,14 +262,43 @@ describe("AlimtalkTriggerService", () => {
             name: "김산모",
             clientName: "김산모",
             phone: "010-9999-0000",
+        });
+    });
+
+    it("maps PRICE_INFO template variables including price/bank fields (data-minimization scoping)", () => {
+        const { internals } = createService();
+        const rule = createRule({
+            eventType: AlimtalkTriggerEventType.SERVICE_START,
+            offsetType: AlimtalkTriggerOffsetType.BEFORE_DAYS,
+            offsetDays: 7,
+            templateKey: AlimtalkTriggerTemplateKey.PRICE_INFO,
+        });
+
+        const variables = internals.buildClientTemplateVariables(rule, {
+            name: "이고객",
+            phone: "010-5555-6666",
+            type: "B형",
+            startDate: new Date("2026-07-01T00:00:00.000Z"),
+            endDate: null,
+            createdAt: null,
+            fullPrice: "3000000",
+            grant: "2000000",
+            actualPrice: "1000000",
+            area: { bankAccountInfo: { bankName: "신한은행", accNum: "110-123-456789" } },
+        });
+
+        expect(variables).toEqual({
+            name: "이고객",
+            clientName: "이고객",
+            phone: "010-5555-6666",
             weeks: "0",
             duration: "",
-            type: "",
-            fullPrice: "",
-            grant: "",
-            actualPrice: "",
-            bankName: "",
-            accNum: "",
+            type: "B형",
+            fullPrice: "3000000",
+            grant: "2000000",
+            actualPrice: "1000000",
+            bankName: "신한은행",
+            accNum: "110-123-456789",
         });
     });
 
