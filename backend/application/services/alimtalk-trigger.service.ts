@@ -156,6 +156,12 @@ export class AlimtalkTriggerService {
         return this.ensureDefaultServiceInfoTrigger(branchId, rules);
     }
 
+    async ensureDefaultRulesForBranch(branchId: string): Promise<void> {
+        if (!(await this.hasTriggerSchema())) return;
+        const rules = await this.ruleRepository.findAll(branchId);
+        await this.ensureDefaultServiceInfoTrigger(branchId, rules);
+    }
+
     async listUpcomingJobs(
         branchId: string,
         limit = 200,

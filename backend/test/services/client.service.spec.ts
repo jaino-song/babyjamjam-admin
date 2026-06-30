@@ -66,6 +66,7 @@ describe("ClientService", () => {
     });
 
     const createMockTriggerService = () => ({
+        ensureDefaultRulesForBranch: jest.fn().mockResolvedValue(undefined),
         syncClientRulesForClient: jest.fn().mockResolvedValue(undefined),
         syncEmployeeAssignmentRulesForSchedule: jest.fn().mockResolvedValue(undefined),
     });
@@ -265,7 +266,7 @@ describe("ClientService", () => {
             );
         });
 
-        it("calls syncClientRulesForClient with suppressGreeting=false by default", async () => {
+        it("calls ensureDefaultRulesForBranch then syncClientRulesForClient with suppressGreeting=false by default", async () => {
             // Arrange
             const mockClient = createClientEntity();
             createClientUsecase.execute.mockResolvedValue(mockClient);
@@ -282,6 +283,7 @@ describe("ClientService", () => {
             await service.create(branchId, params);
 
             // Assert
+            expect(triggerService.ensureDefaultRulesForBranch).toHaveBeenCalledWith(branchId);
             expect(triggerService.syncClientRulesForClient).toHaveBeenCalledWith(
                 branchId,
                 mockClient.id,
@@ -290,7 +292,7 @@ describe("ClientService", () => {
             );
         });
 
-        it("calls syncClientRulesForClient with suppressGreeting=true when suppressGreetingSms is set", async () => {
+        it("calls ensureDefaultRulesForBranch then syncClientRulesForClient with suppressGreeting=true when suppressGreetingSms is set", async () => {
             // Arrange
             const mockClient = createClientEntity();
             createClientUsecase.execute.mockResolvedValue(mockClient);
@@ -308,6 +310,7 @@ describe("ClientService", () => {
             await service.create(branchId, params);
 
             // Assert
+            expect(triggerService.ensureDefaultRulesForBranch).toHaveBeenCalledWith(branchId);
             expect(triggerService.syncClientRulesForClient).toHaveBeenCalledWith(
                 branchId,
                 mockClient.id,

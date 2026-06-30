@@ -315,9 +315,12 @@ export class ClientService {
             this.logger.error(`Failed to send client created alimtalk: ${error}`);
         });
         if (this.triggerService) {
-            this.triggerService.syncClientRulesForClient(branchid, client.id, true, params.suppressGreetingSms ?? false).catch((error) => {
-                this.logger.error(`Failed to sync client trigger rules: ${error}`);
-            });
+            this.triggerService
+                .ensureDefaultRulesForBranch(branchid)
+                .then(() => this.triggerService!.syncClientRulesForClient(branchid, client.id, true, params.suppressGreetingSms ?? false))
+                .catch((error) => {
+                    this.logger.error(`Failed to sync client trigger rules: ${error}`);
+                });
         }
         if (createdScheduleId !== null) {
             this.triggerService

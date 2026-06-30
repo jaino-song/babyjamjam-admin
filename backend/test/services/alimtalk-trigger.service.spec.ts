@@ -386,4 +386,35 @@ describe("AlimtalkTriggerService", () => {
         expect(ruleRepository.create).not.toHaveBeenCalled();
         expect(internals.rebuildJobsForRule).not.toHaveBeenCalled();
     });
+
+    it("ensureDefaultRulesForBranch creates missing default rules (same logic as listRules)", async () => {
+        const { service, internals, ruleRepository } = createService();
+        const createdGreeting = createRule({
+            id: "rule-greeting-new",
+            name: "신규 고객 인사 메시지",
+            eventType: AlimtalkTriggerEventType.CLIENT_CREATED,
+            offsetType: AlimtalkTriggerOffsetType.IMMEDIATE,
+            offsetDays: 0,
+            templateKey: AlimtalkTriggerTemplateKey.CLIENT_GREETING,
+        });
+        const createdServiceInfo = createRule({
+            id: "rule-service-info-new",
+            name: "서비스 시작 7일 전 서비스 안내",
+            eventType: AlimtalkTriggerEventType.SERVICE_START,
+            offsetType: AlimtalkTriggerOffsetType.BEFORE_DAYS,
+            offsetDays: 7,
+            templateKey: AlimtalkTriggerTemplateKey.SERVICE_INFO,
+        });
+        // No rules exist yet — both defaults must be created
+        ruleRepository.findAll.mockResolvedValue([]);
+        ruleRepository.create
+            .mockResolvedValueOnce(createdServiceInfo)
+            .mockResolvedValueOnce(createdGreeting);
+
+        await service.ensureDefaultRulesForBranch(branchId);
+
+        expect(ruleRepository.findAll).toHaveBeenCalledWith(branchId);
+        expect(ruleRepository.create).toHaveBeenCalledTimes(2);
+        expect(internals.rebuildJobsForRule).toHaveBeenCalledTimes(2);
+    });
 });
