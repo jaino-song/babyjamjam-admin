@@ -113,6 +113,12 @@ const TEMPLATE_LABEL: Record<TriggerTemplateKey, string> = {
   SERVICE_INFO: "서비스 안내",
   SERVICE_END_REMINDER: "서비스 종료 안내",
   EMPLOYEE_ASSIGNED: "제공인력 배정 안내",
+  CLIENT_GREETING: "인사(소개)",
+  PRICE_INFO: "비용 안내",
+  REMINDER: "리마인드",
+  THANKS: "예약 완료(입금 확인)",
+  SURVEY: "모니터링 설문",
+  INFO: "정보 요청",
 };
 
 function getRuleTitle(rule: AlimtalkTriggerRule) {

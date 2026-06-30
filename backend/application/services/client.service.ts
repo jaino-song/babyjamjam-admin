@@ -14,7 +14,6 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { computeServiceStatus, isServiceStatus, SERVICE_STATUS, SERVICE_STATUS_VALUES, ServiceStatusType } from "domain/value-objects/service-status.vo";
 import { AlimtalkService } from "./alimtalk.service";
 import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
-import { ClientGreetingSmsAutomationService } from "./client-greeting-sms-automation.service";
 import { EmployeeFeedbackLinkService } from "./employee-feedback-link.service";
 
 const FILTER_DAYS_THRESHOLD = 7;
@@ -133,7 +132,6 @@ export class ClientService {
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
         @Optional() private readonly triggerService?: AlimtalkTriggerService,
-        @Optional() private readonly clientGreetingSmsAutomationService?: ClientGreetingSmsAutomationService,
         @Optional() private readonly employeeFeedbackLinkService?: EmployeeFeedbackLinkService,
     ) {}
 
@@ -319,14 +317,12 @@ export class ClientService {
             this.logger.error(`Failed to send client created alimtalk: ${error}`);
         });
         if (this.triggerService) {
-            this.triggerService.syncClientRulesForClient(branchid, client.id, true).catch((error) => {
-                this.logger.error(`Failed to sync client trigger rules: ${error}`);
-            });
-        }
-        if (this.clientGreetingSmsAutomationService && !params.suppressGreetingSms) {
-            this.clientGreetingSmsAutomationService.sendClientGreetingSms(branchid, client).catch((error) => {
-                this.logger.error(`Failed to send new client greeting SMS: ${error}`);
-            });
+            this.triggerService
+                .ensureDefaultRulesForBranch(branchid)
+                .then(() => this.triggerService!.syncClientRulesForClient(branchid, client.id, true, params.suppressGreetingSms ?? false))
+                .catch((error) => {
+                    this.logger.error(`Failed to sync client trigger rules: ${error}`);
+                });
         }
         if (createdScheduleId !== null) {
             this.triggerService

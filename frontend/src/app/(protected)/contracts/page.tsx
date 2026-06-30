@@ -1835,6 +1835,7 @@ function ContractDetail({
         onClose={() => setIsPreviewOpen(false)}
         document={detailedDocument}
         customerName={customerName}
+        canDownloadReceipt={category === "completed"}
       />
     </DetailPanel>
   );

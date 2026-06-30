@@ -24,9 +24,22 @@ export enum AlimtalkTriggerTemplateKey {
     SERVICE_INFO = "SERVICE_INFO",
     SERVICE_END_REMINDER = "SERVICE_END_REMINDER",
     EMPLOYEE_ASSIGNED = "EMPLOYEE_ASSIGNED",
+    CLIENT_GREETING = "CLIENT_GREETING",
+    PRICE_INFO = "PRICE_INFO",
+    REMINDER = "REMINDER",
+    THANKS = "THANKS",
+    SURVEY = "SURVEY",
+    INFO = "INFO",
 }
 
 export type SupportedTriggerProvider = "aligo" | "channeltalk";
+
+// Free pairing: every SMS (system-template) trigger may fire on any client lifecycle event.
+const CLIENT_EVENT_TYPES = [
+    AlimtalkTriggerEventType.CLIENT_CREATED,
+    AlimtalkTriggerEventType.SERVICE_START,
+    AlimtalkTriggerEventType.SERVICE_END,
+];
 
 export interface AlimtalkTriggerTemplateVariable {
     key: string;
@@ -117,7 +130,7 @@ export const ALIMTALK_TRIGGER_TEMPLATE_CATALOG: Record<
         key: AlimtalkTriggerTemplateKey.SERVICE_INFO,
         name: "서비스 안내",
         description: "서비스 시작 전 주요 안내사항을 고객에게 SMS로 발송하는 메시지",
-        allowedEventTypes: [AlimtalkTriggerEventType.SERVICE_START],
+        allowedEventTypes: CLIENT_EVENT_TYPES,
         allowedRecipientTypes: [AlimtalkTriggerRecipientType.CLIENT],
         requiredVariables: [
             { key: "name", label: "산모님 성함" },
@@ -160,6 +173,88 @@ export const ALIMTALK_TRIGGER_TEMPLATE_CATALOG: Record<
         providers: {
             aligo: { templateKey: "EMPLOYEE_ASSIGNED" },
             channeltalk: { templateKey: "employee_assigned" },
+        },
+    },
+    [AlimtalkTriggerTemplateKey.CLIENT_GREETING]: {
+        key: AlimtalkTriggerTemplateKey.CLIENT_GREETING,
+        name: "인사(소개)",
+        description: "신규 고객 등록 직후 발송하는 인사 메시지 (SMS)",
+        allowedEventTypes: CLIENT_EVENT_TYPES,
+        allowedRecipientTypes: [AlimtalkTriggerRecipientType.CLIENT],
+        requiredVariables: [],
+        providers: {
+            aligo: { templateKey: "CLIENT_GREETING" },
+            channeltalk: { templateKey: "client_greeting" },
+        },
+    },
+    [AlimtalkTriggerTemplateKey.PRICE_INFO]: {
+        key: AlimtalkTriggerTemplateKey.PRICE_INFO,
+        name: "비용 안내",
+        description: "고객에게 비용·계좌 정보를 SMS로 발송",
+        allowedEventTypes: CLIENT_EVENT_TYPES,
+        allowedRecipientTypes: [AlimtalkTriggerRecipientType.CLIENT],
+        requiredVariables: [
+            { key: "name", label: "산모님 성함" },
+            { key: "weeks", label: "주수" },
+            { key: "duration", label: "이용일수" },
+            { key: "type", label: "바우처 유형" },
+            { key: "fullPrice", label: "총 금액" },
+            { key: "grant", label: "정부지원금" },
+            { key: "actualPrice", label: "본인부담금" },
+            { key: "bankName", label: "입금 은행" },
+            { key: "accNum", label: "계좌번호" },
+        ],
+        providers: {
+            aligo: { templateKey: "PRICE_INFO" },
+            channeltalk: { templateKey: "price_info" },
+        },
+    },
+    [AlimtalkTriggerTemplateKey.REMINDER]: {
+        key: AlimtalkTriggerTemplateKey.REMINDER,
+        name: "리마인드",
+        description: "고객에게 일정 리마인드를 SMS로 발송",
+        allowedEventTypes: CLIENT_EVENT_TYPES,
+        allowedRecipientTypes: [AlimtalkTriggerRecipientType.CLIENT],
+        requiredVariables: [{ key: "name", label: "산모님 성함" }],
+        providers: {
+            aligo: { templateKey: "REMINDER" },
+            channeltalk: { templateKey: "reminder" },
+        },
+    },
+    [AlimtalkTriggerTemplateKey.THANKS]: {
+        key: AlimtalkTriggerTemplateKey.THANKS,
+        name: "예약 완료(입금 확인)",
+        description: "고객에게 예약 완료/입금 확인 메시지를 SMS로 발송",
+        allowedEventTypes: CLIENT_EVENT_TYPES,
+        allowedRecipientTypes: [AlimtalkTriggerRecipientType.CLIENT],
+        requiredVariables: [{ key: "name", label: "산모님 성함" }],
+        providers: {
+            aligo: { templateKey: "THANKS" },
+            channeltalk: { templateKey: "thanks" },
+        },
+    },
+    [AlimtalkTriggerTemplateKey.SURVEY]: {
+        key: AlimtalkTriggerTemplateKey.SURVEY,
+        name: "모니터링 설문",
+        description: "고객에게 모니터링 설문 안내를 SMS로 발송",
+        allowedEventTypes: CLIENT_EVENT_TYPES,
+        allowedRecipientTypes: [AlimtalkTriggerRecipientType.CLIENT],
+        requiredVariables: [{ key: "name", label: "산모님 성함" }],
+        providers: {
+            aligo: { templateKey: "SURVEY" },
+            channeltalk: { templateKey: "survey" },
+        },
+    },
+    [AlimtalkTriggerTemplateKey.INFO]: {
+        key: AlimtalkTriggerTemplateKey.INFO,
+        name: "정보 요청",
+        description: "고객에게 정보 안내 메시지를 SMS로 발송",
+        allowedEventTypes: CLIENT_EVENT_TYPES,
+        allowedRecipientTypes: [AlimtalkTriggerRecipientType.CLIENT],
+        requiredVariables: [],
+        providers: {
+            aligo: { templateKey: "INFO" },
+            channeltalk: { templateKey: "info" },
         },
     },
 };

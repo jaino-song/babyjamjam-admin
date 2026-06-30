@@ -36,6 +36,7 @@ import {
 import { AlimtalkTriggerDeliveryService } from "./alimtalk-trigger-delivery.service";
 import { hasColumn, hasTable } from "infrastructure/database/schema-capabilities";
 import { MessageSenderApprovalService } from "./message-sender-approval.service";
+import { buildSmsClientVariables } from "./sms-client-variables";
 
 interface UpsertRuleParams {
     name: string;
@@ -55,6 +56,16 @@ const DEFAULT_SERVICE_INFO_TRIGGER: UpsertRuleParams = {
     offsetDays: 7,
     recipientType: AlimtalkTriggerRecipientType.CLIENT,
     templateKey: AlimtalkTriggerTemplateKey.SERVICE_INFO,
+};
+
+const DEFAULT_CLIENT_GREETING_TRIGGER: UpsertRuleParams = {
+    name: "신규 고객 인사 메시지",
+    isActive: true,
+    eventType: AlimtalkTriggerEventType.CLIENT_CREATED,
+    offsetType: AlimtalkTriggerOffsetType.IMMEDIATE,
+    offsetDays: 0,
+    recipientType: AlimtalkTriggerRecipientType.CLIENT,
+    templateKey: AlimtalkTriggerTemplateKey.CLIENT_GREETING,
 };
 
 export interface UpcomingAlimtalkTriggerJobView {
@@ -116,6 +127,11 @@ interface ClientTriggerSource {
     startDate: Date | null;
     endDate: Date | null;
     createdAt?: Date | null;
+    duration?: number | null;
+    fullPrice?: string | null;
+    grant?: string | null;
+    actualPrice?: string | null;
+    area?: { bankAccountInfo: { bankName: string | null; accNum: string | null } | null } | null;
 }
 
 @Injectable()
@@ -138,6 +154,12 @@ export class AlimtalkTriggerService {
         }
         const rules = await this.ruleRepository.findAll(branchId);
         return this.ensureDefaultServiceInfoTrigger(branchId, rules);
+    }
+
+    async ensureDefaultRulesForBranch(branchId: string): Promise<void> {
+        if (!(await this.hasTriggerSchema())) return;
+        const rules = await this.ruleRepository.findAll(branchId);
+        await this.ensureDefaultServiceInfoTrigger(branchId, rules);
     }
 
     async listUpcomingJobs(
@@ -363,12 +385,16 @@ export class AlimtalkTriggerService {
         branchId: string,
         clientId: number,
         includePast: boolean,
+        suppressGreeting = false,
     ): Promise<void> {
         if (!(await this.hasTriggerSchema())) {
             return;
         }
 
         const supportsCreatedAt = await hasColumn(this.prisma, "client", "created_at");
+        const supportsAreaId = await hasColumn(this.prisma, "client", "area_id");
+        // Prisma's type inference does not correctly narrow the `area` relation type when
+        // the select key is inside a conditional spread; cast to ClientTriggerSource explicitly.
         const client = await this.prisma.client.findFirst({
             where: { id: clientId, branchId },
             select: {
@@ -378,9 +404,14 @@ export class AlimtalkTriggerService {
                 type: true,
                 startDate: true,
                 endDate: true,
+                duration: true,
+                fullPrice: true,
+                grant: true,
+                actualPrice: true,
+                ...(supportsAreaId ? { area: { select: { bankAccountInfo: { select: { bankName: true, accNum: true } } } } } : {}),
                 ...(supportsCreatedAt ? { createdAt: true } : {}),
             },
-        });
+        }) as ClientTriggerSource | null;
         if (!client) return;
 
         const rules = await this.ruleRepository.findActiveByEventTypes(branchId, [
@@ -393,6 +424,9 @@ export class AlimtalkTriggerService {
 
         for (const rule of rules) {
             if (rule.eventType === AlimtalkTriggerEventType.CLIENT_CREATED && !supportsCreatedAt) {
+                continue;
+            }
+            if (rule.templateKey === AlimtalkTriggerTemplateKey.CLIENT_GREETING && suppressGreeting) {
                 continue;
             }
             const job = this.buildClientJob(rule, client);
@@ -445,30 +479,59 @@ export class AlimtalkTriggerService {
         return rules.length > 0;
     }
 
+    private async ensureDefaultTrigger(
+        branchId: string,
+        rules: AlimtalkTriggerRuleEntity[],
+        defaults: UpsertRuleParams,
+        matchTemplateKeyOnly = false,
+    ): Promise<{ rules: AlimtalkTriggerRuleEntity[]; created: AlimtalkTriggerRuleEntity | null }> {
+        // For IMMEDIATE-greeting-style defaults, ANY existing rule with the same templateKey
+        // counts as "the default already exists". Otherwise an admin-created greeting rule with
+        // a non-default offset (e.g. AFTER_DAYS) would not match the full tuple, the IMMEDIATE
+        // default would be auto-created on next panel load, and the client would get two
+        // greetings per registration.
+        const existing = matchTemplateKeyOnly
+            ? rules.find((rule) => rule.templateKey === defaults.templateKey)
+            : rules.find((rule) => (
+                rule.eventType === defaults.eventType &&
+                rule.offsetType === defaults.offsetType &&
+                rule.offsetDays === (defaults.offsetDays ?? 0) &&
+                rule.recipientType === defaults.recipientType &&
+                rule.templateKey === defaults.templateKey
+            ));
+        if (existing) return { rules, created: null };
+
+        const created = await this.ruleRepository.create(
+            branchId,
+            AlimtalkTriggerRuleEntity.create({
+                branchId,
+                ...defaults,
+            }),
+        );
+        await this.rebuildJobsForRule(branchId, created, false);
+        return { rules: [created, ...rules], created };
+    }
+
     private async ensureDefaultServiceInfoTrigger(
         branchId: string,
         rules: AlimtalkTriggerRuleEntity[],
     ): Promise<AlimtalkTriggerRuleEntity[]> {
         if (!branchId) return rules;
 
-        const existingDefault = rules.find((rule) => (
-            rule.eventType === DEFAULT_SERVICE_INFO_TRIGGER.eventType &&
-            rule.offsetType === DEFAULT_SERVICE_INFO_TRIGGER.offsetType &&
-            rule.offsetDays === DEFAULT_SERVICE_INFO_TRIGGER.offsetDays &&
-            rule.recipientType === DEFAULT_SERVICE_INFO_TRIGGER.recipientType &&
-            rule.templateKey === DEFAULT_SERVICE_INFO_TRIGGER.templateKey
-        ));
-        if (existingDefault) return rules;
-
-        const created = await this.ruleRepository.create(
+        const { rules: rulesAfterServiceInfo } = await this.ensureDefaultTrigger(
             branchId,
-            AlimtalkTriggerRuleEntity.create({
-                branchId,
-                ...DEFAULT_SERVICE_INFO_TRIGGER,
-            }),
+            rules,
+            DEFAULT_SERVICE_INFO_TRIGGER,
         );
-        await this.rebuildJobsForRule(branchId, created, false);
-        return [created, ...rules];
+
+        const { rules: finalRules } = await this.ensureDefaultTrigger(
+            branchId,
+            rulesAfterServiceInfo,
+            DEFAULT_CLIENT_GREETING_TRIGGER,
+            true,
+        );
+
+        return finalRules;
     }
 
     private async rebuildJobsForRule(
@@ -482,11 +545,16 @@ export class AlimtalkTriggerService {
             return;
         }
 
+        if (rule.offsetType === AlimtalkTriggerOffsetType.IMMEDIATE) return;
+
         const supportsCreatedAt = await hasColumn(this.prisma, "client", "created_at");
         if (rule.eventType === AlimtalkTriggerEventType.CLIENT_CREATED && !supportsCreatedAt) {
             return;
         }
 
+        const supportsAreaId = await hasColumn(this.prisma, "client", "area_id");
+        // Prisma's type inference does not correctly narrow the `area` relation type when
+        // the select key is inside a conditional spread; cast to ClientTriggerSource[] explicitly.
         const clients = await this.prisma.client.findMany({
             where: { branchId },
             select: {
@@ -496,9 +564,14 @@ export class AlimtalkTriggerService {
                 type: true,
                 startDate: true,
                 endDate: true,
+                duration: true,
+                fullPrice: true,
+                grant: true,
+                actualPrice: true,
+                ...(supportsAreaId ? { area: { select: { bankAccountInfo: { select: { bankName: true, accNum: true } } } } } : {}),
                 ...(supportsCreatedAt ? { createdAt: true } : {}),
             },
-        });
+        }) as ClientTriggerSource[];
 
         for (const client of clients) {
             const job = this.buildClientJob(rule, client);
@@ -511,7 +584,13 @@ export class AlimtalkTriggerService {
         includePast: boolean,
     ): Promise<void> {
         if (!job) return;
-        if (!includePast && job.scheduledFor.getTime() < Date.now()) return;
+        // IMMEDIATE / now-scheduled jobs must fire ONLY on the live create/assign path
+        // (includePast=true). On any re-sync path (includePast=false: client update,
+        // due-date scheduler, rule rebuild) a "now" job is a re-fire and must be dropped.
+        // Note the `<=`: a job scheduledFor === Date.now() is a re-fire on these paths and
+        // is dropped, preventing repeat greetings on every edit/scheduler pass. The
+        // create-time greeting is preserved because that path uses includePast=true.
+        if (!includePast && job.scheduledFor.getTime() <= Date.now()) return;
         await this.jobRepository.upsertPending(job);
     }
 
@@ -602,7 +681,7 @@ export class AlimtalkTriggerService {
 
     private buildClientTemplateVariables(
         rule: AlimtalkTriggerRuleEntity,
-        client: Pick<ClientTriggerSource, "name" | "type" | "startDate" | "endDate" | "createdAt">,
+        client: ClientTriggerSource,
     ): Record<string, string> {
         switch (rule.templateKey) {
             case AlimtalkTriggerTemplateKey.CLIENT_WELCOME:
@@ -617,17 +696,23 @@ export class AlimtalkTriggerService {
                     serviceStartDate: this.formatDate(client.startDate),
                     timingText: this.describeTiming(rule, "서비스 시작"),
                 };
-            case AlimtalkTriggerTemplateKey.SERVICE_INFO:
-                return {
-                    name: client.name,
-                    clientName: client.name,
-                };
             case AlimtalkTriggerTemplateKey.SERVICE_END_REMINDER:
                 return {
                     clientName: client.name,
                     serviceEndDate: this.formatDate(client.endDate),
                     timingText: this.describeTiming(rule, "서비스 종료"),
                 };
+            case AlimtalkTriggerTemplateKey.PRICE_INFO:
+                // PRICE_INFO is the only SMS template that renders price/bank fields,
+                // so it is the only one that carries them into the job payload (data minimization).
+                return buildSmsClientVariables(client);
+            case AlimtalkTriggerTemplateKey.SERVICE_INFO:
+            case AlimtalkTriggerTemplateKey.CLIENT_GREETING:
+            case AlimtalkTriggerTemplateKey.REMINDER:
+            case AlimtalkTriggerTemplateKey.THANKS:
+            case AlimtalkTriggerTemplateKey.SURVEY:
+            case AlimtalkTriggerTemplateKey.INFO:
+                return { name: client.name, clientName: client.name, phone: client.phone ?? "" };
             default:
                 return {};
         }
