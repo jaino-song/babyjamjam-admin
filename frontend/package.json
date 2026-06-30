@@ -54,6 +54,7 @@
     "next": "16.1.6",
     "next-intl": "^4.4.0",
     "passport-jwt": "^4.0.1",
+    "pdf-lib": "^1.17.1",
     "radix-ui": "^1.4.3",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
