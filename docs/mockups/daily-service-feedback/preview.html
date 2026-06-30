@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>제공기록지 · 미리보기 목업</title>
+<style>
+  :root{
+    --bg:#eef1f6; --card:#fff; --ink:#1c2430; --muted:#7c8798; --line:#e4e8ef;
+    --primary:#3b6fe0; --soft:#f3f6fb; --ok:#2faa6b; --lock:#9aa6b6; --warn:#c9803a;
+    --shadow:0 10px 30px rgba(28,36,48,.12);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard",Roboto,"Segoe UI",sans-serif;color:var(--ink);display:flex;flex-direction:column;align-items:center;padding:18px 12px 40px}
+  .ribbon{width:100%;max-width:440px;background:#fff7ec;border:1px solid #f0dcc0;color:var(--warn);font-size:12px;border-radius:10px;padding:7px 12px;margin-bottom:12px;text-align:center}
+  .phone{width:100%;max-width:440px;background:var(--card);border-radius:26px;box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;min-height:760px}
+  .top{background:linear-gradient(135deg,#3b6fe0,#5a86ea);color:#fff;padding:16px 18px 14px}
+  .top h1{font-size:15px;margin:0;font-weight:700;letter-spacing:-.2px}
+  .top .org{font-size:12px;opacity:.9;margin-top:3px}
+  .bar{height:5px;background:rgba(255,255,255,.28);border-radius:99px;margin-top:12px;overflow:hidden}
+  .bar > i{display:block;height:100%;background:#fff;border-radius:99px;width:5%;transition:width .35s ease}
+  .crumbs{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--muted);padding:10px 18px 0}
+  .crumbs b{color:var(--ink)}
+  .body{flex:1;padding:14px 18px 8px;overflow:auto}
+  .step-title{font-size:18px;font-weight:750;margin:6px 0 2px;letter-spacing:-.3px}
+  .step-sub{font-size:12.5px;color:var(--muted);margin-bottom:16px}
+  .field{margin-bottom:16px;padding-bottom:14px;border-bottom:1px dashed var(--line)}
+  .field:last-child{border-bottom:none}
+  .field > label{display:block;font-size:13.5px;font-weight:700;margin-bottom:8px}
+  .hint{font-size:11px;color:var(--muted);margin-top:6px}
+  input[type=text],input[type=number]{width:100%;border:1.5px solid var(--line);border-radius:12px;padding:13px 14px;font-size:15px;outline:none;background:#fff}
+  input:focus{border-color:var(--primary)}
+  textarea{width:100%;min-height:84px;border:1.5px solid var(--line);border-radius:12px;padding:13px 14px;font-size:15px;outline:none;resize:vertical}
+  .opts{display:flex;flex-wrap:wrap;gap:8px}
+  .opt{display:flex;align-items:center;gap:9px;border:1.5px solid var(--line);border-radius:11px;padding:11px 13px;cursor:pointer;user-select:none;font-size:14.5px;background:#fff}
+  .opt:hover{border-color:#c8d4ea}
+  .opt .box{width:20px;height:20px;border-radius:6px;border:2px solid #c4cdda;flex:0 0 auto;display:grid;place-items:center;font-size:12px;color:#fff}
+  .opt.sel{border-color:var(--primary);background:#f1f6ff}
+  .opt.sel .box{background:var(--primary);border-color:var(--primary)}
+  .opt.radio .box{border-radius:50%}
+  .seg-num{display:flex;align-items:center;gap:8px;border:1.5px solid var(--line);border-radius:12px;padding:8px 12px;margin-bottom:8px}
+  .seg-num span{font-size:14px;color:var(--muted);white-space:nowrap}
+  .seg-num input{border:none;text-align:right;padding:6px 2px}
+  .sign{height:128px;border:1.5px dashed #c4cdda;border-radius:12px;display:grid;place-items:center;color:var(--muted);font-size:13px;background:repeating-linear-gradient(45deg,#fafbfe,#fafbfe 10px,#f3f6fb 10px,#f3f6fb 20px)}
+  .nav{display:flex;gap:10px;padding:12px 18px 18px;border-top:1px solid var(--line);background:#fff}
+  button{font-family:inherit;font-size:15px;font-weight:700;border-radius:12px;border:none;padding:14px 16px;cursor:pointer}
+  .btn-primary{background:var(--primary);color:#fff;flex:1}
+  .btn-ghost{background:var(--soft);color:var(--ink);flex:0 0 96px}
+  .btn-submit{background:var(--ok);color:#fff;flex:1}
+  .lockmsg{font-size:12px;color:var(--lock);text-align:center;padding:6px 18px 0}
+  .days{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:6px}
+  .day{border:1.5px solid var(--line);border-radius:14px;padding:14px 8px;text-align:center;cursor:pointer;background:#fff}
+  .day .d{font-size:12px;color:var(--muted)} .day .n{font-size:20px;font-weight:800;margin-top:2px}
+  .day .st{font-size:11px;margin-top:6px;color:var(--muted)}
+  .day.done{background:#f0faf4;border-color:#bfe7cf} .day.done .st{color:var(--ok);font-weight:700}
+  .day.locked{opacity:.5;cursor:not-allowed} .day.current{border-color:var(--primary);box-shadow:0 0 0 3px #e8f0ff}
+  .pill{display:inline-block;font-size:11px;background:var(--soft);color:var(--muted);border-radius:99px;padding:3px 10px;margin-bottom:8px}
+  .section-tag{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.4px;border-radius:6px;padding:3px 8px;margin-bottom:8px}
+  .tag-mom{background:#fde9ef;color:#c2456e} .tag-baby{background:#e7f1ff;color:#3b6fe0} .tag-etc{background:#eef0f4;color:#6b7686}
+  .ro-row{display:flex;justify-content:space-between;font-size:13px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#f9fbfe}
+  .ro-row b{color:var(--ink)}
+</style>
+</head>
+<body>
+  <div class="ribbon">🅿️ 미리보기 목업 · 섹션별 페이지(산모/신생아/마무리) · “제출 후 수정 불가” 가드레일</div>
+  <div class="phone">
+    <div class="top">
+      <h1>산모·신생아 건강관리 서비스 제공기록지</h1>
+      <div class="org">제공기관 인천 아이미래로 · 제공시간 평일 09시~18시</div>
+      <div class="bar"><i id="bar"></i></div>
+    </div>
+    <div class="crumbs" id="crumbs"></div>
+    <div class="body" id="body"></div>
+    <div class="lockmsg" id="lockmsg"></div>
+    <div class="nav" id="nav"></div>
+  </div>
+<script>
+const N_DAYS = 15;
+const state = { screen:'dob', authed:false, serviceDone:false, day:1, page:0, lockedDays:new Set(), data:{} };
+
+const serviceFields = [
+  {k:'momName',label:'산모 성명',type:'text',ph:'예) 홍길동'},
+  {k:'momDob',label:'산모 생년월일 (YYMMDD)',type:'text',ph:'예) 900101'},
+  {k:'babyName',label:'신생아 성명',type:'text',ph:'예) 홍아기'},
+  {k:'babyDob',label:'신생아 출생일자 (YYMMDD)',type:'text',ph:'예) 260615'},
+  {k:'delivery',label:'분만형태',type:'radio',opts:['자연분만','제왕절개']},
+  {k:'babyWeight',label:'신생아 몸무게 (kg)',type:'text',ph:'예) 3.2'},
+];
+
+const dailyItems = [
+  {t:'① 회음절개부위 (또는 수술부위)',type:'multi',opts:['열상','혈종','불편감','이상없음']},
+  {t:'② 유방상태',type:'multi',opts:['울혈','통증','이상없음']},
+  {t:'③ 배뇨/배변',type:'multi',opts:['불편감','이상없음']},
+  {t:'④ 좌욕',type:'radio',opts:['실시','미실시']},
+  {t:'⑤ 식사/간식',type:'counts',counts:[{k:'meal',label:'식사',unit:'회'},{k:'snack',label:'간식',unit:'회'}]},
+  {t:'⑥ 체온',type:'counts',counts:[{k:'temp',label:'체온',unit:'℃'}]},
+  {t:'⑦ 수면 양상',type:'radio',opts:['잘 잠','잘 못 잠']},
+  {t:'⑧ 모유수유',type:'counts',counts:[{k:'breast',label:'횟수',unit:'회'}]},
+  {t:'⑨ 분유수유',type:'counts',counts:[{k:'formula',label:'횟수',unit:'회'},{k:'formulaMl',label:'회당',unit:'ml'}]},
+  {t:'⑩ 배변양상',type:'stool',opts:['정상변','이상변']},
+  {t:'⑪ 목욕·제대관리',type:'radio',opts:['실시','미실시']},
+  {t:'기타 서비스 (필요시 직접기재)',type:'textarea',ph:'필요 시 직접 기재'},
+  {t:'특이사항',type:'textarea',ph:'산모·신생아 상태 또는 서비스 제공·계약 관련 특이사항'},
+  {t:'결제 확인',type:'confirm',label:'결제 확인 완료 (제공인력 체크)'},
+  {t:'산모 확인서명',type:'sign'},
+];
+// grouped pages — one page per section
+const dayPages = [
+  {tag:'mom', title:'산모 기록', sub:'① ~ ⑤', items:[0,1,2,3,4]},
+  {tag:'baby',title:'신생아 기록', sub:'⑥ ~ ⑪', items:[5,6,7,8,9,10]},
+  {tag:'etc', title:'마무리 · 확인', sub:'기타 · 특이사항 · 결제 확인 · 산모 확인서명', items:[11,12,13,14]},
+];
+const secTag = s => s==='mom'?'<span class="section-tag tag-mom">산모</span>':s==='baby'?'<span class="section-tag tag-baby">신생아</span>':'<span class="section-tag tag-etc">마무리</span>';
+
+const body=document.getElementById('body'), nav=document.getElementById('nav'), bar=document.getElementById('bar'), crumbs=document.getElementById('crumbs'), lockmsg=document.getElementById('lockmsg');
+function setProgress(){ let p=5; if(state.screen==='service')p=12; else if(state.screen==='overview')p=20; else if(state.screen==='day')p=20+Math.round((state.page+1)/dayPages.length*70); else if(state.screen==='done')p=100; bar.style.width=p+'%'; }
+function setCrumbs(t){ crumbs.innerHTML=t; }
+function go(s){ state.screen=s; render(); }
+function render(){ lockmsg.textContent=''; if(state.screen==='dob')return renderDob(); if(state.screen==='service')return renderService(); if(state.screen==='overview')return renderOverview(); if(state.screen==='day')return renderDay(); if(state.screen==='done')return renderDone(); }
+
+function renderDob(){
+  setCrumbs('1단계 · <b>본인 확인</b>');
+  body.innerHTML=`<div class="pill">최초 1회 인증</div><div class="step-title">제공인력 본인 확인</div>
+    <div class="step-sub">문자로 받은 링크로 처음 접속하셨습니다. 본인 생년월일을 입력하면 서비스 기간 동안 유효한 접근 권한이 발급됩니다.</div>
+    <div class="field" style="border:none"><label>생년월일 (YYMMDD)</label>
+    <input id="dob" type="text" inputmode="numeric" maxlength="6" placeholder="예) 880312"/>
+    <div class="hint">서비스 종료일까지 유효 · 5회 실패 시 잠금 · 인력 교체 시 새 링크 발급</div></div>`;
+  nav.innerHTML=`<button class="btn-primary" onclick="doAuth()">확인하고 시작</button>`; setProgress();
+}
+function doAuth(){ const v=(document.getElementById('dob').value||'').trim(); if(v.length<6){alert('생년월일 6자리를 입력해 주세요 (목업: 아무 6자리).');return;} state.authed=true; state.screen=state.serviceDone?'overview':'service'; render(); }
+
+function renderService(){
+  setCrumbs('2단계 · <b>서비스 기본정보</b> (1회 입력)');
+  let h=`<div class="pill">서비스 전체 공통 · 최초 1회</div><div class="step-title">서비스 기본정보</div>
+    <div class="step-sub">서비스 전체에 공통이라 한 번만 입력합니다.</div>
+    <div class="ro-row"><span>제공인력</span><b>김제공 (배정 인력)</b></div>
+    <div class="ro-row"><span>제공기관</span><b>인천 아이미래로</b></div>`;
+  for(const f of serviceFields){
+    if(f.type==='radio') h+=`<div class="field"><label>${f.label}</label><div class="opts">`+f.opts.map(o=>`<div class="opt radio" onclick="pickRadio(this,'${f.k}','${o}')"><span class="box">●</span>${o}</div>`).join('')+`</div></div>`;
+    else h+=`<div class="field"><label>${f.label}</label><input type="text" placeholder="${f.ph||''}" oninput="state.data['${f.k}']=this.value" value="${state.data[f.k]||''}"/></div>`;
+  }
+  body.innerHTML=h; nav.innerHTML=`<button class="btn-ghost" onclick="go('dob')">이전</button><button class="btn-primary" onclick="serviceNext()">다음</button>`; setProgress();
+}
+function serviceNext(){ state.serviceDone=true; go('overview'); }
+
+function renderOverview(){
+  setCrumbs('3단계 · <b>일자별 기록</b>');
+  let cells='';
+  for(let d=1; d<=N_DAYS; d++){
+    const done=state.lockedDays.has(d), open=d===nextOpenDay(), cur=open&&!done;
+    const cls=done?'day done':cur?'day current':(open?'day':'day locked');
+    const st=done?'제출완료 🔒':(open?'입력 가능':'대기');
+    const click=(!done&&open)?`onclick="openDay(${d})"`:'';
+    cells+=`<div class="${cls}" ${click}><div class="d">제공 ${d}일차</div><div class="n">${d}</div><div class="st">${st}</div></div>`;
+  }
+  body.innerHTML=`<div class="pill">총 ${N_DAYS}일 · ${state.lockedDays.size}일 제출됨</div><div class="step-title">일자별 제공기록</div>
+    <div class="step-sub">날짜를 순서대로 입력합니다. 제출한 날짜는 잠기며 수정할 수 없습니다.</div><div class="days">${cells}</div>`;
+  const all=state.lockedDays.size===N_DAYS;
+  nav.innerHTML=all?`<button class="btn-submit" onclick="go('done')">서비스 종료 · eformsign 서명 요청</button>`
+    :`<button class="btn-ghost" onclick="go('service')">기본정보</button><button class="btn-primary" onclick="openDay(nextOpenDay())">${state.lockedDays.size?'다음 날짜 입력':'기록 시작'}</button>`;
+  setProgress();
+}
+function nextOpenDay(){ let d=1; while(state.lockedDays.has(d))d++; return d; }
+function openDay(d){ if(state.lockedDays.has(d)||d!==nextOpenDay())return; state.day=d; state.page=0; go('day'); }
+
+function fieldBlock(idx){
+  const it=dailyItems[idx], key=`d${state.day}_${idx}`;
+  let h=`<div class="field"><label>${it.t}</label>`;
+  if(it.type==='multi') h+=`<div class="opts">`+it.opts.map(o=>`<div class="opt ${isSel(key,o)?'sel':''}" onclick="toggleMulti('${key}','${o}',this)"><span class="box">✓</span>${o}</div>`).join('')+`</div>`;
+  else if(it.type==='radio') h+=`<div class="opts">`+it.opts.map(o=>`<div class="opt radio ${state.data[key]===o?'sel':''}" onclick="pickRadio(this,'${key}','${o}')"><span class="box">●</span>${o}</div>`).join('')+`</div>`;
+  else if(it.type==='counts') h+=it.counts.map(c=>`<div class="seg-num"><span>${c.label}</span><input type="number" inputmode="numeric" oninput="state.data['${key}_${c.k}']=this.value" value="${state.data[key+'_'+c.k]||''}"/><span>${c.unit}</span></div>`).join('');
+  else if(it.type==='stool') h+=`<div class="opts">`+it.opts.map(o=>`<div class="opt radio ${state.data[key]===o?'sel':''}" onclick="pickRadio(this,'${key}','${o}')"><span class="box">●</span>${o}</div>`).join('')+`</div><input style="margin-top:8px" type="text" placeholder="색깔 등 (이상변 시)" oninput="state.data['${key}_color']=this.value" value="${state.data[key+'_color']||''}"/>`;
+  else if(it.type==='textarea') h+=`<textarea placeholder="${it.ph||''}" oninput="state.data['${key}']=this.value">${state.data[key]||''}</textarea>`;
+  else if(it.type==='confirm') h+=`<div class="opts"><div class="opt ${state.data[key]?'sel':''}" onclick="toggleConfirm('${key}',this)"><span class="box">✓</span>${it.label}</div></div>`;
+  else if(it.type==='sign') h+=`<div class="sign">✍️ 산모 확인서명 (산모님께 화면 전달)</div>`;
+  return h+`</div>`;
+}
+function renderDay(){
+  const pg=dayPages[state.page];
+  setCrumbs(`제공 <b>${state.day}일차</b> · ${pg.title} (${state.page+1}/${dayPages.length})`);
+  let inner=secTag(pg.tag)+`<div class="step-title">${pg.title}</div><div class="step-sub">${pg.sub}</div>`;
+  for(const idx of pg.items) inner+=fieldBlock(idx);
+  body.innerHTML=inner;
+  const last=state.page===dayPages.length-1;
+  nav.innerHTML=`<button class="btn-ghost" onclick="prevPage()">이전</button>`+(last?`<button class="btn-submit" onclick="submitDay()">제출 · 잠금</button>`:`<button class="btn-primary" onclick="nextPage()">다음</button>`);
+  if(last) lockmsg.textContent='제출하면 이 날짜의 기록은 잠기며 수정할 수 없습니다.';
+  setProgress();
+}
+function isSel(key,o){ return (state.data[key]||[]).includes(o); }
+function toggleMulti(key,o,el){ const a=state.data[key]||[]; const i=a.indexOf(o); if(i>=0)a.splice(i,1); else a.push(o); state.data[key]=a; el.classList.toggle('sel'); }
+function pickRadio(el,key,o){ state.data[key]=o; [...el.parentNode.children].forEach(c=>c.classList.remove('sel')); el.classList.add('sel'); }
+function toggleConfirm(key,el){ state.data[key]=!state.data[key]; el.classList.toggle('sel'); }
+function nextPage(){ if(state.page<dayPages.length-1){state.page++;render();} }
+function prevPage(){ if(state.page>0){state.page--;render();} else go('overview'); }
+function submitDay(){ state.lockedDays.add(state.day); alert(`제공 ${state.day}일차 기록이 제출·잠금되었습니다. (수정 불가)`); go('overview'); }
+
+function renderDone(){
+  setCrumbs('완료 · <b>서명 요청</b>');
+  body.innerHTML=`<div class="pill">서비스 종료</div><div class="step-title">제공기록지 작성 완료 ✅</div>
+    <div class="step-sub">${N_DAYS}일치 기록이 모두 제출되었습니다. 전체 기록을 하나의 eformsign 문서(스냅샷)로 만들어 제공인력 휴대폰으로 서명 요청 문자를 보냅니다. 이 문서의 완료는 계약 완료로 처리되지 않습니다.</div>
+    <div class="ro-row"><span>문서</span><b>제공기록지 스냅샷 (1건)</b></div>
+    <div class="ro-row"><span>서명자</span><b>제공인력 (SMS)</b></div>
+    <div class="ro-row"><span>계약 완료 처리</span><b>안 함 (template_id 게이트)</b></div>`;
+  nav.innerHTML=`<button class="btn-ghost" onclick="go('overview')">이전</button><button class="btn-submit" onclick="alert('목업: eformsign 서명 요청 문자 발송')">서명 요청 문자 발송</button>`;
+  setProgress();
+}
+render();
+</script>
+</body>
+</html>

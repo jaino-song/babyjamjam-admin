@@ -28,6 +28,6 @@ import { createAligoPortClient } from "infrastructure/vendor-stubs/e2e-vendor-st
         SendAligoSmsUsecase,
         AligoService,
     ],
-    exports: [AligoService, SendAligoAlimtalkUsecase, ALIMTALK_LOG_REPOSITORY, ALIGO_API_PORT, ALIGO_SMS_API_PORT],
+    exports: [AligoService, SendAligoAlimtalkUsecase, SendAligoSmsUsecase, ALIMTALK_LOG_REPOSITORY, ALIGO_API_PORT, ALIGO_SMS_API_PORT],
 })
 export class AligoModule {}

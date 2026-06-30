@@ -8,6 +8,7 @@ export type UpdateEmployeeParams = {
     phone?: string;
     grade?: string;
     openToNextWork?: boolean;
+    birthday?: string;
 };
 
 @Injectable()
@@ -33,6 +34,7 @@ export class UpdateEmployeeUsecase {
             updates.phone,
             updates.grade,
             updates.openToNextWork,
+            updates.birthday,
         );
 
         return this.employeeRepository.update(branchid, employee);

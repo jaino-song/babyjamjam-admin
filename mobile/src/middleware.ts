@@ -171,6 +171,7 @@ const PUBLIC_ROUTES = [
   "/favicon.ico",
   "/manifest.json",
   "/sw.js",
+  "/feedback",
 ];
 
 const PUBLIC_API_ROUTES = [
@@ -185,6 +186,7 @@ const PUBLIC_API_ROUTES = [
   "/api/auth/token",
   "/api/auth/verify-email",
   "/api/health",
+  "/api/feedback",
 ];
 
 // Routes that require auth but NOT branch selection

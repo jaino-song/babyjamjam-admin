@@ -10,6 +10,7 @@ import {
 } from "application/usecases/employee-schedule";
 import { EmployeeScheduleEntity } from "domain/entities/employee-schedule.entity";
 import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
+import { EmployeeFeedbackLinkService } from "./employee-feedback-link.service";
 
 @Injectable()
 export class EmployeeScheduleService {
@@ -22,6 +23,7 @@ export class EmployeeScheduleService {
         private readonly updateEmployeeScheduleUsecase: UpdateEmployeeScheduleUsecase,
         private readonly deleteEmployeeScheduleUsecase: DeleteEmployeeScheduleUsecase,
         @Optional() private readonly triggerService?: AlimtalkTriggerService,
+        @Optional() private readonly employeeFeedbackLinkService?: EmployeeFeedbackLinkService,
     ) {}
 
     async create(branchid: string, params: {
@@ -45,6 +47,7 @@ export class EmployeeScheduleService {
         this.triggerService
             ?.syncEmployeeAssignmentRulesForSchedule(branchid, schedule.id, true)
             ?.catch(() => undefined);
+        this.employeeFeedbackLinkService?.issueAndSend(schedule.id)?.catch(() => undefined);
         return schedule;
     }
 

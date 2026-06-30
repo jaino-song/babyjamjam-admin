@@ -13,6 +13,7 @@ export class EmployeeEntity {
         public grade: string,
         public openToNextWork: boolean,
         public registeredDate: Date,
+        public birthday?: string,
     ) {}
 
     isOpenToNextWork(): boolean {
@@ -29,12 +30,14 @@ export class EmployeeEntity {
         phone?: string,
         grade?: string,
         openToNextWork?: boolean,
+        birthday?: string,
     ): void {
         this.name = name ?? this.name;
         this.workArea = workArea ?? this.workArea;
         this.phone = phone ?? this.phone;
         this.grade = grade ?? this.grade;
         this.openToNextWork = openToNextWork ?? this.openToNextWork;
+        this.birthday = birthday ?? this.birthday;
     }
 
     static create(
@@ -44,6 +47,7 @@ export class EmployeeEntity {
         grade: string,
         openToNextWork: boolean,
         registeredDate?: Date,
+        birthday?: string,
     ): EmployeeEntity {
         return new EmployeeEntity(
             0,
@@ -53,6 +57,7 @@ export class EmployeeEntity {
             grade,
             openToNextWork,
             registeredDate ?? new Date(),
+            birthday,
         );
     }
 
@@ -68,6 +73,7 @@ export class EmployeeEntity {
         grade: string,
         openToNextWork: boolean,
         registeredDate: Date,
+        birthday?: string,
     ): EmployeeEntity {
         return new EmployeeEntity(
             id,
@@ -77,6 +83,7 @@ export class EmployeeEntity {
             grade,
             openToNextWork,
             registeredDate,
+            birthday,
         );
     }
 }

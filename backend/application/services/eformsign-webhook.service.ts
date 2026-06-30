@@ -105,6 +105,17 @@ export class EformsignWebhookService {
         private readonly employeeRepository: IEmployeeRepository,
     ) {}
 
+    /**
+     * BJJ-247 gate: is this document the daily-feedback snapshot template?
+     * A feedback document's completion must NOT trigger contract-completion side
+     * effects (link eDocId / sync endDate / contract alimtalk). No-op (returns false)
+     * when EFORMSIGN_FEEDBACK_TEMPLATE_ID is unset, preserving existing behavior.
+     */
+    private isFeedbackTemplate(templateId?: string): boolean {
+        const feedbackTemplateId = process.env["EFORMSIGN_FEEDBACK_TEMPLATE_ID"];
+        return Boolean(feedbackTemplateId && templateId && templateId === feedbackTemplateId);
+    }
+
     async processWebhook(payload: EformsignWebhookPayloadDto): Promise<void> {
         const { event_type, webhook_id, document, ready_document_pdf, document_action } = payload;
         const documentId = document?.id ?? ready_document_pdf?.document_id ?? document_action?.document_id;
@@ -151,7 +162,7 @@ export class EformsignWebhookService {
         branchid: string,
         pdfEvent: NonNullable<EformsignWebhookPayloadDto["ready_document_pdf"]>
     ): Promise<void> {
-        const { document_id: documentId, document_status: status, workflow_seq, workflow_name } = pdfEvent;
+        const { document_id: documentId, document_status: status, template_id, workflow_seq, workflow_name } = pdfEvent;
 
         this.logger.log(`PDF ready event: ${documentId} -> status=${status}, workflow=${workflow_name}`);
 
@@ -167,7 +178,13 @@ export class EformsignWebhookService {
                 return;
             }
 
-            await this.handleCompletedDocument(branchid, documentId, workflow_name, "PDF event");
+            if (this.isFeedbackTemplate(template_id)) {
+                this.logger.log(
+                    `Document ${documentId} is a feedback snapshot (template ${template_id}); skipping contract-completion side effects (BJJ-247 gate).`
+                );
+            } else {
+                await this.handleCompletedDocument(branchid, documentId, workflow_name, "PDF event");
+            }
             this.eventBus.emit({ branchId: branchid, documentId, reason: `pdf:${status}` });
             return;
         }
@@ -240,7 +257,7 @@ export class EformsignWebhookService {
         branchid: string,
         document: NonNullable<EformsignWebhookPayloadDto["document"]>
     ): Promise<void> {
-        const { id: documentId, status, document_title, workflow_seq, workflow_name } = document;
+        const { id: documentId, status, document_title, template_id, workflow_seq, workflow_name } = document;
 
         this.logger.log(`Document event: ${documentId} -> status=${status}, title=${document_title}`);
 
@@ -282,7 +299,13 @@ export class EformsignWebhookService {
         await this.notifyReviewRequiredIfNeeded(branchid, documentId, document_title, statusType);
 
         if (status === DOCUMENT_STATUS.DOC_COMPLETE) {
-            await this.handleCompletedDocument(branchid, documentId, workflow_name, "document event");
+            if (this.isFeedbackTemplate(template_id)) {
+                this.logger.log(
+                    `Document ${documentId} is a feedback snapshot (template ${template_id}); skipping contract-completion side effects (BJJ-247 gate).`
+                );
+            } else {
+                await this.handleCompletedDocument(branchid, documentId, workflow_name, "document event");
+            }
         }
 
         this.eventBus.emit({ branchId: branchid, documentId, reason: `doc:${status}` });

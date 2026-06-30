@@ -17,9 +17,10 @@ import { AlimtalkModule } from "./alimtalk.module";
 import { AligoModule } from "./aligo.module";
 import { SystemSettingModule } from "./system-setting.module";
 import { SystemTemplateModule } from "./system-template.module";
+import { ServiceFeedbackModule } from "./service-feedback.module";
 
 @Module({
-    imports: [DatabaseModule, AlimtalkModule, AligoModule, SystemSettingModule, SystemTemplateModule],
+    imports: [DatabaseModule, AlimtalkModule, AligoModule, SystemSettingModule, SystemTemplateModule, ServiceFeedbackModule],
     controllers: [ClientController],
     providers: [
         CreateClientUsecase,
