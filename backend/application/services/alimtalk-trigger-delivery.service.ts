@@ -24,8 +24,65 @@ import {
 } from "domain/repositories/alimtalk-log.repository.interface";
 import { AligoTemplateKey } from "application/dto/aligo/alimtalk-template.dto";
 
-const SERVICE_INFO_SMS_TEMPLATE_KEY = "service_info_sms";
-const SERVICE_INFO_SMS_TITLE = "서비스 안내";
+interface SmsTemplateDeliveryConfig {
+    smsLogTemplateKey: string;
+    automationKey: string;
+    triggerType: string;
+    title: string;
+    systemTemplateKey: SystemTemplateKey;
+}
+
+export const SMS_TEMPLATE_DELIVERY: Partial<Record<AlimtalkTriggerTemplateKey, SmsTemplateDeliveryConfig>> = {
+    [AlimtalkTriggerTemplateKey.SERVICE_INFO]: {
+        smsLogTemplateKey: "service_info_sms",
+        automationKey: "SERVICE_INFO_SMS",
+        triggerType: "service_start_before_7_days",
+        title: "서비스 안내",
+        systemTemplateKey: SystemTemplateKey.SERVICE_INFO,
+    },
+    [AlimtalkTriggerTemplateKey.CLIENT_GREETING]: {
+        smsLogTemplateKey: "client_greeting_sms",
+        automationKey: "CLIENT_GREETING_SMS",
+        triggerType: "client_created",
+        title: "인사 메시지",
+        systemTemplateKey: SystemTemplateKey.GREETING,
+    },
+    [AlimtalkTriggerTemplateKey.PRICE_INFO]: {
+        smsLogTemplateKey: "price_info_sms",
+        automationKey: "PRICE_INFO_SMS",
+        triggerType: "price_info",
+        title: "비용 안내",
+        systemTemplateKey: SystemTemplateKey.PRICE_INFO,
+    },
+    [AlimtalkTriggerTemplateKey.REMINDER]: {
+        smsLogTemplateKey: "reminder_sms",
+        automationKey: "REMINDER_SMS",
+        triggerType: "reminder",
+        title: "리마인드",
+        systemTemplateKey: SystemTemplateKey.REMINDER,
+    },
+    [AlimtalkTriggerTemplateKey.THANKS]: {
+        smsLogTemplateKey: "thanks_sms",
+        automationKey: "THANKS_SMS",
+        triggerType: "thanks",
+        title: "예약 완료",
+        systemTemplateKey: SystemTemplateKey.THANKS,
+    },
+    [AlimtalkTriggerTemplateKey.SURVEY]: {
+        smsLogTemplateKey: "survey_sms",
+        automationKey: "SURVEY_SMS",
+        triggerType: "survey",
+        title: "모니터링 설문",
+        systemTemplateKey: SystemTemplateKey.SURVEY,
+    },
+    [AlimtalkTriggerTemplateKey.INFO]: {
+        smsLogTemplateKey: "info_sms",
+        automationKey: "INFO_SMS",
+        triggerType: "info",
+        title: "정보 안내",
+        systemTemplateKey: SystemTemplateKey.INFO,
+    },
+};
 
 @Injectable()
 export class AlimtalkTriggerDeliveryService {
@@ -49,8 +106,9 @@ export class AlimtalkTriggerDeliveryService {
 
         await this.messageSenderApprovalService.ensureApproved(job.branchId);
 
-        if (job.templateKey === AlimtalkTriggerTemplateKey.SERVICE_INFO) {
-            return this.sendServiceInfoSmsJob(job);
+        const smsConfig = SMS_TEMPLATE_DELIVERY[job.templateKey];
+        if (smsConfig) {
+            return this.sendSmsJob(job, smsConfig);
         }
 
         const provider = await this.systemSettingService.getAlimtalkProvider();
@@ -95,11 +153,29 @@ export class AlimtalkTriggerDeliveryService {
         return result !== null;
     }
 
-    private async sendServiceInfoSmsJob(
+    private async sendSmsJob(
         job: AlimtalkTriggerJobEntity,
+        config: SmsTemplateDeliveryConfig,
     ): Promise<boolean> {
         const payload = job.payload;
-        const message = await this.resolveServiceInfoSmsMessage(payload.templateVariables);
+        const baseVariables: Record<string, string> = {
+            name: payload.recipientName,
+            clientName: payload.recipientName,
+            ...payload.templateVariables,
+        };
+        if (config.systemTemplateKey === SystemTemplateKey.PRICE_INFO) {
+            const requiredKeys = ["fullPrice", "actualPrice", "bankName", "accNum", "duration", "type"];
+            const missing = requiredKeys.filter((key) => !baseVariables[key]?.trim());
+            if (missing.length > 0) {
+                job.cancel(`비용 안내 발송 건너뜀: 필수 정보 누락 (${missing.join(", ")})`);
+                this.logger.warn(
+                    `[SMS Automation] PRICE_INFO skipped for job ${job.id}: missing ${missing.join(", ")}`,
+                );
+                return false;
+            }
+        }
+
+        const message = await this.resolveSmsMessage(config.systemTemplateKey, baseVariables);
         const receiver = payload.recipientPhone;
 
         try {
@@ -107,51 +183,58 @@ export class AlimtalkTriggerDeliveryService {
                 receiver,
                 message,
                 recipientName: payload.recipientName,
-                title: SERVICE_INFO_SMS_TITLE,
+                title: config.title,
                 msgType: "AUTO",
             });
             const isAccepted = this.isAcceptedSmsResult(result);
-            await this.recordServiceInfoSmsLog({
+            await this.recordSmsLog({
                 job,
+                config,
                 message,
                 receiver: result.request.receiver,
                 status: isAccepted ? "sent" : "failed",
                 aligoMid: result.response.msg_id ? String(result.response.msg_id) : null,
                 errorMessage: isAccepted ? null : result.response.message,
                 msgType: result.request.msgType,
+                templateVariables: payload.templateVariables,
             });
             return isAccepted;
         } catch (error) {
             const errorMessage = this.formatErrorMessage(error);
-            await this.recordServiceInfoSmsLog({
+            await this.recordSmsLog({
                 job,
+                config,
                 message,
                 receiver,
                 status: "failed",
                 aligoMid: null,
                 errorMessage,
                 msgType: "AUTO",
+                templateVariables: payload.templateVariables,
             }).catch((logError) => {
                 this.logger.warn(
-                    `Failed to record service info SMS log: ${this.formatErrorMessage(logError)}`,
+                    `Failed to record SMS log: ${this.formatErrorMessage(logError)}`,
                 );
             });
             throw error;
         }
     }
 
-    private async resolveServiceInfoSmsMessage(variables: Record<string, string>): Promise<string> {
+    private async resolveSmsMessage(
+        systemTemplateKey: SystemTemplateKey,
+        variables: Record<string, string>,
+    ): Promise<string> {
         try {
-            const template = await this.systemTemplateService.getByKey(SystemTemplateKey.SERVICE_INFO);
+            const template = await this.systemTemplateService.getByKey(systemTemplateKey);
             return this.renderTemplate(template.content, variables);
         } catch (error) {
             this.logger.warn(
-                `[SMS Automation] Failed to load service info system template, using registry default: ${
+                `[SMS Automation] Failed to load system template ${systemTemplateKey}, using registry default: ${
                     error instanceof Error ? error.message : String(error)
                 }`,
             );
             return this.renderTemplate(
-                SYSTEM_TEMPLATE_REGISTRY[SystemTemplateKey.SERVICE_INFO].defaultContent,
+                SYSTEM_TEMPLATE_REGISTRY[systemTemplateKey].defaultContent,
                 variables,
             );
         }
@@ -161,14 +244,16 @@ export class AlimtalkTriggerDeliveryService {
         return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key) => variables[key] ?? match);
     }
 
-    private async recordServiceInfoSmsLog(params: {
+    private async recordSmsLog(params: {
         job: AlimtalkTriggerJobEntity;
+        config: SmsTemplateDeliveryConfig;
         message: string;
         receiver: string;
         status: AlimtalkLogStatus;
         aligoMid: string | null;
         errorMessage: string | null;
         msgType: string;
+        templateVariables: Record<string, string>;
     }): Promise<void> {
         const now = new Date();
         await this.logRepository.save(
@@ -176,18 +261,18 @@ export class AlimtalkTriggerDeliveryService {
                 0,
                 params.job.branchId,
                 "aligo_sms",
-                SERVICE_INFO_SMS_TEMPLATE_KEY,
+                params.config.smsLogTemplateKey,
                 params.job.id,
                 params.receiver,
                 params.job.clientId,
                 params.message,
                 {
-                    ...params.job.payload.templateVariables,
-                    automationKey: "SERVICE_INFO_SMS",
-                    systemTemplateKey: SystemTemplateKey.SERVICE_INFO,
+                    ...params.templateVariables,
+                    automationKey: params.config.automationKey,
+                    systemTemplateKey: params.config.systemTemplateKey,
                     recipientName: params.job.payload.recipientName,
-                    title: SERVICE_INFO_SMS_TITLE,
-                    triggerType: "service_start_before_7_days",
+                    title: params.config.title,
+                    triggerType: params.config.triggerType,
                     msgType: params.msgType,
                 },
                 params.status,

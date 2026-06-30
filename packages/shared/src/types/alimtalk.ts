@@ -1,3 +1,5 @@
+import type { SystemTemplateKey } from "./system-template";
+
 // Shared alimtalk contracts used by both frontend and mobile.
 //
 // The source of truth for these shapes is the backend contract surface:
@@ -37,7 +39,44 @@ export type AlimtalkTriggerTemplateKey =
   | "SERVICE_START_REMINDER"
   | "SERVICE_INFO"
   | "SERVICE_END_REMINDER"
-  | "EMPLOYEE_ASSIGNED";
+  | "EMPLOYEE_ASSIGNED"
+  | "CLIENT_GREETING"
+  | "PRICE_INFO"
+  | "REMINDER"
+  | "THANKS"
+  | "SURVEY"
+  | "INFO";
+
+// Which system template's body each SMS trigger template renders. One source of truth for
+// both the backend SMS delivery (SMS_TEMPLATE_DELIVERY.systemTemplateKey) and the form preview.
+export const SMS_TRIGGER_TO_SYSTEM_TEMPLATE: Partial<Record<AlimtalkTriggerTemplateKey, SystemTemplateKey>> = {
+  SERVICE_INFO: "SERVICE_INFO",
+  CLIENT_GREETING: "GREETING",
+  PRICE_INFO: "PRICE_INFO",
+  REMINDER: "REMINDER",
+  THANKS: "THANKS",
+  SURVEY: "SURVEY",
+  INFO: "INFO",
+};
+
+// Canonical source of truth for which trigger templates are delivered over SMS (vs alimtalk).
+// Adding a new SMS template here flows it through the SMS form's data-driven dropdowns, the
+// channel filters, and the backend delivery drift guard — no hardcoded per-surface lists.
+export const SMS_TRIGGER_TEMPLATE_KEYS: AlimtalkTriggerTemplateKey[] = [
+  "SERVICE_INFO",
+  "CLIENT_GREETING",
+  "PRICE_INFO",
+  "REMINDER",
+  "THANKS",
+  "SURVEY",
+  "INFO",
+];
+
+export function getTriggerTemplateChannel(
+  key: AlimtalkTriggerTemplateKey,
+): "sms" | "alimtalk" {
+  return SMS_TRIGGER_TEMPLATE_KEYS.includes(key) ? "sms" : "alimtalk";
+}
 
 export type SupportedTriggerProvider = "aligo" | "channeltalk";
 export type AlimtalkProvider = SupportedTriggerProvider | "none";
