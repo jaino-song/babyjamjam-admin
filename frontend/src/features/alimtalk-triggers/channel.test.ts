@@ -107,7 +107,15 @@ describe("alimtalk trigger channel helpers", () => {
   });
 
   it("sources the SMS template set and channel resolver from shared", () => {
-    expect(SMS_TRIGGER_TEMPLATE_KEYS).toEqual(["SERVICE_INFO", "CLIENT_GREETING"]);
+    expect(SMS_TRIGGER_TEMPLATE_KEYS).toEqual([
+      "SERVICE_INFO",
+      "CLIENT_GREETING",
+      "PRICE_INFO",
+      "REMINDER",
+      "THANKS",
+      "SURVEY",
+      "INFO",
+    ]);
     expect(getTriggerTemplateChannel("SERVICE_INFO")).toBe("sms");
     expect(getTriggerTemplateChannel("CLIENT_GREETING")).toBe("sms");
     expect(getTriggerTemplateChannel("CLIENT_WELCOME")).toBe("alimtalk");
