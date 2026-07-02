@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 
 import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
-import { addBusinessDaysKr, isBusinessDayKr, nextBusinessDayKr } from "@/lib/date/business-days";
+import { isBusinessDayKr, nextBusinessDayKr } from "@/lib/date/business-days";
 
 /* ───────────────────────── form definition (mirrors the 제공기록지) ───────────────────────── */
 
@@ -155,14 +155,17 @@ export default function FeedbackPage() {
     const defaultDate = useCallback(
         (d: number) => {
             const sessions = ctx?.sessions ?? [];
-            const row = sessions.find((s) => s.sessionIndex === d);
-            if (row) return row.serviceDate.slice(0, 10);
-
             const rawStart = ctx?.startDate ? ctx.startDate.slice(0, 10) : isoOf(new Date());
             const start = isBusinessDayKr(rawStart) ? rawStart : nextBusinessDayKr(rawStart);
-            if (d <= 1) return start;
-            const prev = sessions.find((s) => s.sessionIndex === d - 1);
-            return prev ? nextBusinessDayKr(prev.serviceDate.slice(0, 10)) : addBusinessDaysKr(start, d - 1);
+            // Row-first recursive chain: an existing row's date (e.g. an approved
+            // postpone) shifts every later default, not just the next session.
+            const chain = (k: number): string => {
+                const row = sessions.find((s) => s.sessionIndex === k);
+                if (row) return row.serviceDate.slice(0, 10);
+                if (k <= 1) return start;
+                return nextBusinessDayKr(chain(k - 1));
+            };
+            return chain(d);
         },
         [ctx?.sessions, ctx?.startDate],
     );
