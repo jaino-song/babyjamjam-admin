@@ -9,6 +9,7 @@ export type {
     RequestReplacementDto,
     PaginatedResponse,
     EmployeeSummary,
+    PendingScheduleChange,
     ServiceStatus,
     ContractStatus, // deprecated
 } from './types';
@@ -25,6 +26,8 @@ export {
     useTerminateService,
     useRequestReplacement,
     useCompleteReplacement,
+    useApproveScheduleChange,
+    useRejectScheduleChange,
 } from './hooks/use-clients';
 export { clientKeys } from './hooks/keys';
 

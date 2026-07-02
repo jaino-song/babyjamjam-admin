@@ -37,30 +37,7 @@ export const KR_HOLIDAYS = new Set<string>([
     "2027-12-25",
 ]);
 
-const KOREA_DATE_FORMATTER = new Intl.DateTimeFormat("en", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-});
-
-function parseIsoDate(iso: string): Date | null {
-    const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (!match) return null;
-    return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
-}
-
-function isoFromUtcDate(date: Date): string {
-    return date.toISOString().slice(0, 10);
-}
-
-export function isoDateInKorea(date = new Date()): string {
-    const parts = KOREA_DATE_FORMATTER.formatToParts(date);
-    const year = parts.find((part) => part.type === "year")?.value ?? "";
-    const month = parts.find((part) => part.type === "month")?.value ?? "";
-    const day = parts.find((part) => part.type === "day")?.value ?? "";
-    return `${year}-${month}-${day}`;
-}
+const NEXT_BUSINESS_DAY_SEARCH_LIMIT = 30;
 
 export function isBusinessDayKr(iso: string): boolean {
     if (!iso) return false;
@@ -69,56 +46,6 @@ export function isBusinessDayKr(iso: string): boolean {
     if (dow === 0 || dow === 6) return false;
     return !KR_HOLIDAYS.has(iso);
 }
-
-// 기준일 다음 날부터 목표일까지의 한국 영업일 수를 계산한다.
-// 미래 날짜는 양수, 과거 날짜는 음수로 반환한다.
-export function diffBusinessDaysKr(targetISO: string, baseISO = isoDateInKorea()): number | null {
-    const target = parseIsoDate(targetISO);
-    const base = parseIsoDate(baseISO);
-    if (!target || !base) return null;
-
-    const targetTime = target.getTime();
-    const baseTime = base.getTime();
-    if (targetTime === baseTime) return 0;
-
-    const cursor = new Date(base);
-    let count = 0;
-
-    if (targetTime > baseTime) {
-        while (cursor.getTime() < targetTime) {
-            cursor.setUTCDate(cursor.getUTCDate() + 1);
-            if (isBusinessDayKr(isoFromUtcDate(cursor))) count++;
-        }
-        return count;
-    }
-
-    while (cursor.getTime() > targetTime) {
-        if (isBusinessDayKr(isoFromUtcDate(cursor))) count++;
-        cursor.setUTCDate(cursor.getUTCDate() - 1);
-    }
-    return -count;
-}
-
-// startISO를 1일차로 카운트하되, 시작일이 비영업일이면 다음 영업일부터 1일차.
-// 반환: N번째 영업일의 ISO 문자열.
-export function calcEndDateBusinessDays(startISO: string, n: number): string {
-    if (!startISO || !Number.isFinite(n) || n <= 0) return "";
-    const startMatch = startISO.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (!startMatch) return "";
-    const cursor = new Date(startISO + "T00:00:00Z");
-    let counted = 0;
-    for (let i = 0; i < 365 && counted < n; i++) {
-        const iso = cursor.toISOString().slice(0, 10);
-        if (isBusinessDayKr(iso)) {
-            counted++;
-            if (counted === n) return iso;
-        }
-        cursor.setUTCDate(cursor.getUTCDate() + 1);
-    }
-    return "";
-}
-
-const NEXT_BUSINESS_DAY_SEARCH_LIMIT = 30;
 
 export function nextBusinessDayKr(iso: string): string {
     const cursor = new Date(iso + "T00:00:00.000Z");

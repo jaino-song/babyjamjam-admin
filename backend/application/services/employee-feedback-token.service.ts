@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { createHash, randomBytes } from "crypto";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
@@ -124,6 +125,13 @@ export class EmployeeFeedbackTokenService {
             scheduleId: record.scheduleId,
             employeeId: record.employeeId,
         };
+    }
+
+    async extendExpiryForSchedule(scheduleId: number, newExpiresAt: Date, tx?: Prisma.TransactionClient): Promise<void> {
+        await (tx ?? this.prismaService).employee_feedback_token.updateMany({
+            where: { scheduleId, active: true, revokedAt: null },
+            data: { expiresAt: newExpiresAt },
+        });
     }
 
     /** Revoke every active token for an assignment (replacement / termination). */

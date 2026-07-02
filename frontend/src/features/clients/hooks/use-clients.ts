@@ -12,6 +12,15 @@ import type {
   PaginatedResponse
 } from '../types';
 
+interface ScheduleChangeMutationVariables {
+  requestId: string;
+  clientId: number;
+}
+
+interface RejectScheduleChangeMutationVariables extends ScheduleChangeMutationVariables {
+  reason?: string;
+}
+
 /**
  * Fetch paginated clients list
  */
@@ -139,6 +148,38 @@ export function useCompleteReplacement() {
     onSuccess: (_, id) => {
       queryClient.invalidateQueries({ queryKey: clientKeys.all });
       queryClient.invalidateQueries({ queryKey: clientKeys.detail(id) });
+    },
+  });
+}
+
+/**
+ * Approve a pending schedule change request
+ */
+export function useApproveScheduleChange() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ requestId }: ScheduleChangeMutationVariables) =>
+      clientsApi.approveScheduleChange(requestId).then(r => r.data),
+    onSuccess: (_, { clientId }) => {
+      queryClient.invalidateQueries({ queryKey: clientKeys.all });
+      queryClient.invalidateQueries({ queryKey: clientKeys.detail(clientId) });
+    },
+  });
+}
+
+/**
+ * Reject a pending schedule change request
+ */
+export function useRejectScheduleChange() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ requestId, reason }: RejectScheduleChangeMutationVariables) =>
+      clientsApi.rejectScheduleChange(requestId, reason).then(r => r.data),
+    onSuccess: (_, { clientId }) => {
+      queryClient.invalidateQueries({ queryKey: clientKeys.all });
+      queryClient.invalidateQueries({ queryKey: clientKeys.detail(clientId) });
     },
   });
 }

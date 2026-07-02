@@ -11,6 +11,7 @@ import {
 } from "@nestjs/common";
 import { Request } from "express";
 import { ServiceFeedbackService } from "application/services/service-feedback.service";
+import { ScheduleChangeService } from "application/services/schedule-change.service";
 import { EmployeeFeedbackGuard } from "infrastructure/auth/employee-feedback.guard";
 import { FeedbackTokenContext } from "application/services/employee-feedback-token.service";
 import {
@@ -28,7 +29,10 @@ type FeedbackRequest = Request & { feedbackContext: FeedbackTokenContext };
  */
 @Controller("service-feedback")
 export class ServiceFeedbackController {
-    constructor(private readonly service: ServiceFeedbackService) {}
+    constructor(
+        private readonly service: ServiceFeedbackService,
+        private readonly scheduleChangeService: ScheduleChangeService,
+    ) {}
 
     @Get("link/:linkToken")
     linkStatus(@Param("linkToken") linkToken: string) {
@@ -44,6 +48,18 @@ export class ServiceFeedbackController {
     @Get("context")
     getContext(@Req() req: FeedbackRequest) {
         return this.service.getContext(req.feedbackContext);
+    }
+
+    @UseGuards(EmployeeFeedbackGuard)
+    @Get("schedule-change/preview")
+    previewScheduleChange(@Req() req: FeedbackRequest) {
+        return this.scheduleChangeService.preview(req.feedbackContext);
+    }
+
+    @UseGuards(EmployeeFeedbackGuard)
+    @Post("schedule-change")
+    createScheduleChange(@Req() req: FeedbackRequest) {
+        return this.scheduleChangeService.createRequest(req.feedbackContext);
     }
 
     @UseGuards(EmployeeFeedbackGuard)

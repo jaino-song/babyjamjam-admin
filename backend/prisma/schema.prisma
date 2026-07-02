@@ -104,6 +104,7 @@ model client {
   employeeSchedules    employee_schedule[]
   callRecords          call_record[]
   clientDrafts         client_draft[]
+  scheduleChangeRequests schedule_change_request[]
 
   @@unique([branchId, phone], map: "client_branch_phone_key")
   @@index([areaId], map: "idx_client_area")
@@ -216,6 +217,7 @@ model employee_schedule {
   feedbackTokens      employee_feedback_token[]
   serviceRecord       service_record?
   serviceRecordDays   service_record_day[]
+  scheduleChangeRequests schedule_change_request[]
 
   @@index([branchId], map: "idx_employee_schedule_branch")
 }
@@ -300,6 +302,7 @@ model branch {
   employeeFeedbackTokens       employee_feedback_token[]
   serviceRecords               service_record[]
   serviceRecordDays            service_record_day[]
+  scheduleChangeRequests       schedule_change_request[]
   owner                        user                      @relation(fields: [ownerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   userBranches                 user_branch[]
 
@@ -626,6 +629,30 @@ model service_record_day {
 
   @@unique([scheduleId, sessionIndex])
   @@index([branchId], map: "idx_service_record_day_branch")
+}
+
+model schedule_change_request {
+  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId     String            @map("branch_id") @db.Uuid
+  scheduleId   Int               @map("schedule_id")
+  clientId     Int               @map("client_id")
+  sessionIndex Int               @map("session_index")
+  fromDate     DateTime          @map("from_date") @db.Date
+  toDate       DateTime          @map("to_date") @db.Date
+  oldEndDate   DateTime          @map("old_end_date") @db.Date
+  newEndDate   DateTime          @map("new_end_date") @db.Date
+  status       String            @default("pending")
+  reason       String?
+  decidedBy    String?           @map("decided_by") @db.Uuid
+  requestedAt  DateTime          @default(now()) @map("requested_at") @db.Timestamptz(6)
+  decidedAt    DateTime?         @map("decided_at") @db.Timestamptz(6)
+  branch       branch            @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  schedule     employee_schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  client       client            @relation(fields: [clientId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([scheduleId], map: "idx_schedule_change_request_schedule")
+  @@index([clientId], map: "idx_schedule_change_request_client")
+  @@index([branchId], map: "idx_schedule_change_request_branch")
 }
 
 model call_record {

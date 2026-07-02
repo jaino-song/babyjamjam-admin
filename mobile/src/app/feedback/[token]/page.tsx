@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 
+import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
+import { isBusinessDayKr, nextBusinessDayKr } from "@/lib/date/business-days";
+
 /* ───────────────────────── form definition (mirrors the 제공기록지) ───────────────────────── */
 
 type ItemType = "multi" | "radio" | "counts" | "stool" | "textarea" | "confirm" | "sign";
@@ -57,6 +60,13 @@ interface FeedbackContext {
     startDate: string | null;
     header: Record<string, unknown> | null;
     sessions: SessionRow[];
+    pendingScheduleChange?: { id: string; sessionIndex: number; fromDate: string; toDate: string } | null;
+}
+
+interface ScheduleChangePreview {
+    sessionIndex: number;
+    fromDate: string;
+    toDate: string;
 }
 
 const HEADER_FIELDS = [
@@ -70,8 +80,11 @@ const HEADER_FIELDS = [
 /* ───────────────────────── helpers ───────────────────────── */
 
 const isoOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-const addDays = (iso: string, n: number) => { const d = new Date(iso); d.setDate(d.getDate() + n); return isoOf(d); };
 const mmdd = (iso: string) => (iso ? iso.slice(5).replace("-", ".") : "");
+const monthDayKo = (iso: string) => {
+    const [, month = "", day = ""] = iso.match(/^\d{4}-(\d{2})-(\d{2})$/) ?? [];
+    return `${Number(month)}월 ${Number(day)}일`;
+};
 
 type Screen = "loading" | "invalid" | "dob" | "service" | "overview" | "day" | "done";
 
@@ -89,6 +102,9 @@ export default function FeedbackPage() {
     const [pageIdx, setPageIdx] = useState(0);
     const [draft, setDraft] = useState<Record<string, unknown>>({});
     const [busy, setBusy] = useState(false);
+    const [scheduleChangePreview, setScheduleChangePreview] = useState<ScheduleChangePreview | null>(null);
+    const [scheduleChangeModalOpen, setScheduleChangeModalOpen] = useState(false);
+    const [scheduleChangeBusy, setScheduleChangeBusy] = useState(false);
 
     const api = useCallback(
         async (path: string, init: RequestInit = {}) => {
@@ -138,12 +154,20 @@ export default function FeedbackPage() {
     }, [lockedDays]);
     const defaultDate = useCallback(
         (d: number) => {
-            const start = ctx?.startDate ? ctx.startDate.slice(0, 10) : isoOf(new Date());
-            const prev = (ctx?.sessions ?? []).find((s) => s.sessionIndex === d - 1);
-            if (d <= 1) return start;
-            return prev ? addDays(prev.serviceDate.slice(0, 10), 1) : addDays(start, d - 1);
+            const sessions = ctx?.sessions ?? [];
+            const rawStart = ctx?.startDate ? ctx.startDate.slice(0, 10) : isoOf(new Date());
+            const start = isBusinessDayKr(rawStart) ? rawStart : nextBusinessDayKr(rawStart);
+            // Row-first recursive chain: an existing row's date (e.g. an approved
+            // postpone) shifts every later default, not just the next session.
+            const chain = (k: number): string => {
+                const row = sessions.find((s) => s.sessionIndex === k);
+                if (row) return row.serviceDate.slice(0, 10);
+                if (k <= 1) return start;
+                return nextBusinessDayKr(chain(k - 1));
+            };
+            return chain(d);
         },
-        [ctx],
+        [ctx?.sessions, ctx?.startDate],
     );
 
     async function submitDob() {
@@ -212,6 +236,45 @@ export default function FeedbackPage() {
             if (res.ok) setScreen("done");
             else alert("서명 요청 전송에 실패했습니다.");
         } finally { setBusy(false); }
+    }
+
+    async function openScheduleChangePreview() {
+        setScheduleChangeBusy(true);
+        try {
+            const res = await api("/schedule-change/preview");
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                alert(data?.error ?? data?.message ?? "일정 변경 정보를 불러오지 못했습니다.");
+                return;
+            }
+            setScheduleChangePreview(data as ScheduleChangePreview);
+            setScheduleChangeModalOpen(true);
+        } finally {
+            setScheduleChangeBusy(false);
+        }
+    }
+
+    function closeScheduleChangeModal() {
+        if (scheduleChangeBusy) return;
+        setScheduleChangeModalOpen(false);
+        setScheduleChangePreview(null);
+    }
+
+    async function submitScheduleChangeRequest() {
+        setScheduleChangeBusy(true);
+        try {
+            const res = await api("/schedule-change", { method: "POST" });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok || (res.status === 409 && data?.code === "REQUEST_ALREADY_PENDING")) {
+                setScheduleChangeModalOpen(false);
+                setScheduleChangePreview(null);
+                await loadContext();
+                return;
+            }
+            alert(data?.error ?? data?.message ?? "일정 변경 요청에 실패했습니다.");
+        } finally {
+            setScheduleChangeBusy(false);
+        }
     }
 
     /* ───────────────────────── rendering ───────────────────────── */
@@ -364,7 +427,16 @@ export default function FeedbackPage() {
                         {lockedDays.size === ctx.totalSessions ? (
                             <button className="btn submit" disabled={busy} onClick={finalize}>{busy ? "전송 중…" : "서비스 종료 · 서명 요청 보내기"}</button>
                         ) : (
-                            <button className="btn primary" onClick={() => openDay(nextOpenDay())}>{lockedDays.size ? "다음 회차 입력" : "기록 시작"}</button>
+                            <>
+                                <button className="btn primary" onClick={() => openDay(nextOpenDay())}>{lockedDays.size ? "다음 회차 입력" : "기록 시작"}</button>
+                                <button
+                                    className="btn ghost schedule-change"
+                                    disabled={scheduleChangeBusy || Boolean(ctx.pendingScheduleChange)}
+                                    onClick={openScheduleChangePreview}
+                                >
+                                    {ctx.pendingScheduleChange ? "일정 변경 요청 대기 중" : "서비스 일정 변경"}
+                                </button>
+                            </>
                         )}
                     </>
                 )}
@@ -403,6 +475,21 @@ export default function FeedbackPage() {
                     </div>
                 )}
             </div>
+            <ConfirmActionModal
+                open={scheduleChangeModalOpen && Boolean(scheduleChangePreview)}
+                title="서비스 일정을 조정할까요?"
+                description={scheduleChangePreview
+                    ? `${scheduleChangePreview.sessionIndex}회차 서비스를 ${monthDayKo(scheduleChangePreview.fromDate)} → ${monthDayKo(scheduleChangePreview.toDate)}(으)로 변경 요청합니다. 관리자 승인 후 일정과 종료일이 조정됩니다.`
+                    : ""}
+                cancelLabel="취소"
+                confirmLabel={scheduleChangeBusy ? "요청 중…" : "확인"}
+                loading={scheduleChangeBusy}
+                onOpenChange={(open) => {
+                    if (!open) closeScheduleChangeModal();
+                }}
+                onCancel={closeScheduleChangeModal}
+                onConfirm={submitScheduleChangeRequest}
+            />
         </div>
     );
 }
@@ -451,6 +538,7 @@ function Styles() {
 .efb .nav .btn{margin-top:0}
 .efb .btn.primary{background:var(--primary);color:#fff;flex:1}
 .efb .btn.ghost{background:var(--soft);color:var(--ink);flex:0 0 92px;width:auto}
+.efb .btn.ghost.schedule-change{width:100%;flex:1;margin-top:10px}
 .efb .btn.submit{background:var(--ok);color:#fff;flex:1}
 .efb .btn:disabled{opacity:.6}
 .efb .lock{font-size:12px;color:#9aa6b6;text-align:center;margin-top:10px}
