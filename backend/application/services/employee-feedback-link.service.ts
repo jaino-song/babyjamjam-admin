@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
@@ -53,87 +53,36 @@ export class EmployeeFeedbackLinkService {
     /** Mint a fresh link and schedule the SMS for the assignment's service-start day 15:00 KST. */
     async scheduleForServiceStart(scheduleId: number): Promise<void> {
         try {
-            const schedule = await this.prisma.employee_schedule.findUnique({
-                where: { id: scheduleId },
-                include: { primaryEmployee: true, client: true },
+            const { scheduledFor, employeeId, jobEnqueued } = await this.issueFeedbackLinkJob(scheduleId, {
+                scheduledFor: null,
+                recordMissingPhoneFailure: true,
             });
-            if (!schedule || !schedule.branchId) return;
-
-            await this.cancelPendingFeedbackJobs(scheduleId, "Feedback link rescheduled");
-
-            const employee = schedule.primaryEmployee;
-            if (!this.normalizePhone(employee.phone)) {
-                this.logger.warn(
-                    `Schedule ${scheduleId}: provider ${employee.id} has no phone on file; feedback link NOT sent. Set the employee's phone first.`
+            if (jobEnqueued) {
+                this.logger.log(
+                    `Feedback link SMS scheduled for provider ${employeeId} schedule ${scheduleId} at ${scheduledFor.toISOString()}`
                 );
-                await this.recordPermanentFailure({
-                    branchId: schedule.branchId,
-                    scheduleId,
-                    clientId: schedule.clientId,
-                    clientName: schedule.client?.name ?? "고객",
-                    employeeId: employee.id,
-                    employeeName: employee.name,
-                    receiver: employee.phone,
-                    reason: "제공인력 전화번호 누락",
-                });
-                return;
             }
-
-            const { linkToken } = await this.tokenService.issueLink({
-                branchId: schedule.branchId,
-                scheduleId,
-                employeeId: employee.id,
-                expectedPhone: employee.phone,
-                expiresAt: getServiceFeedbackTokenExpiresAt(schedule.endDate),
-            });
-
-            const base = this.configService
-                .get<string>("MOBILE_FEEDBACK_BASE_URL", "https://m.admin.babyjamjam.com")
-                .replace(/\/+$/, "");
-            const url = `${base}/feedback/${linkToken}`;
-            const clientName = schedule.client?.name ?? "고객";
-            const message =
-                `[아가잼잼] ${clientName}님 산모·신생아 서비스 제공기록지 작성 링크입니다.\n` +
-                `링크 접속 후 휴대폰 번호로 본인확인하고, 방문일마다 기록을 남겨주세요.\n${url}`;
-
-            const scheduledFor = getServiceFeedbackLinkScheduledFor(schedule.startDate);
-            await this.jobRepository.upsertPending(
-                AlimtalkTriggerJobEntity.create({
-                    branchId: schedule.branchId,
-                    ruleId: SERVICE_FEEDBACK_LINK_RULE_ID,
-                    scheduledFor,
-                    clientId: schedule.clientId,
-                    employeeScheduleId: scheduleId,
-                    recipientType: AlimtalkTriggerRecipientType.PRIMARY_EMPLOYEE,
-                    recipientPhone: employee.phone,
-                    templateKey: AlimtalkTriggerTemplateKey.SERVICE_FEEDBACK_LINK,
-                    dedupeKey: `${SERVICE_FEEDBACK_LINK_RULE_ID}:schedule:${scheduleId}:primary`,
-                    payload: {
-                        clientId: schedule.clientId,
-                        clientName,
-                        employeeId: employee.id,
-                        employeeName: employee.name,
-                        memberId: `employee:${employee.id}`,
-                        recipientName: employee.name,
-                        recipientPhone: employee.phone,
-                        buttonUrl: url,
-                        messageBody: message,
-                        templateVariables: {
-                            clientName,
-                            employeeName: employee.name,
-                            feedbackUrl: url,
-                            serviceStartDate: this.formatDate(schedule.startDate),
-                            serviceEndDate: this.formatDate(schedule.endDate),
-                        },
-                    },
-                }),
-            );
-            this.logger.log(
-                `Feedback link SMS scheduled for provider ${employee.id} schedule ${scheduleId} at ${scheduledFor.toISOString()}`
-            );
         } catch (error) {
+            // Missing/legacy no-branch schedules were a silent no-op before the refactor; keep them log-free.
+            if (error instanceof NotFoundException) return;
             this.logger.error(`Failed to schedule feedback link for schedule ${scheduleId}: ${error}`);
         }
+    }
+
+    /**
+     * Mint a fresh link and enqueue immediate dispatch from an admin action.
+     * Unlike the assignment hook, errors are intentionally surfaced to the caller.
+     */
+    async sendNow(scheduleId: number): Promise<{ scheduledFor: Date }> {
+        const scheduledFor = new Date();
+        const result = await this.issueFeedbackLinkJob(scheduleId, {
+            scheduledFor,
+            recordMissingPhoneFailure: false,
+        });
+        this.logger.log(
+            `Feedback link SMS manually scheduled for provider ${result.employeeId} schedule ${scheduleId} at ${result.scheduledFor.toISOString()}`
+        );
+        return { scheduledFor: result.scheduledFor };
     }
 
     /** Revoke an assignment's feedback access (replacement / termination). */
@@ -167,6 +116,102 @@ export class EmployeeFeedbackLinkService {
             job.cancel(reason);
             await this.jobRepository.update(job);
         }
+    }
+
+    private async issueFeedbackLinkJob(
+        scheduleId: number,
+        options: {
+            scheduledFor: Date | null;
+            recordMissingPhoneFailure: boolean;
+        },
+    ): Promise<{ scheduledFor: Date; employeeId: number; jobEnqueued: boolean }> {
+        const schedule = await this.prisma.employee_schedule.findUnique({
+            where: { id: scheduleId },
+            include: { primaryEmployee: true, client: true },
+        });
+        if (!schedule || !schedule.branchId) {
+            throw new NotFoundException("Assignment not found");
+        }
+
+        await this.cancelPendingFeedbackJobs(scheduleId, "Feedback link rescheduled");
+
+        const employee = schedule.primaryEmployee;
+        if (!this.normalizePhone(employee.phone)) {
+            if (!options.recordMissingPhoneFailure) {
+                throw new BadRequestException("제공인력 전화번호가 없습니다");
+            }
+
+            this.logger.warn(
+                `Schedule ${scheduleId}: provider ${employee.id} has no phone on file; feedback link NOT sent. Set the employee's phone first.`
+            );
+            await this.recordPermanentFailure({
+                branchId: schedule.branchId,
+                scheduleId,
+                clientId: schedule.clientId,
+                clientName: schedule.client?.name ?? "고객",
+                employeeId: employee.id,
+                employeeName: employee.name,
+                receiver: employee.phone,
+                reason: "제공인력 전화번호 누락",
+            });
+            return {
+                scheduledFor: options.scheduledFor ?? getServiceFeedbackLinkScheduledFor(schedule.startDate),
+                employeeId: employee.id,
+                jobEnqueued: false,
+            };
+        }
+
+        const { linkToken } = await this.tokenService.issueLink({
+            branchId: schedule.branchId,
+            scheduleId,
+            employeeId: employee.id,
+            expectedPhone: employee.phone,
+            expiresAt: getServiceFeedbackTokenExpiresAt(schedule.endDate),
+        });
+
+        const base = this.configService
+            .get<string>("MOBILE_FEEDBACK_BASE_URL", "https://m.admin.babyjamjam.com")
+            .replace(/\/+$/, "");
+        const url = `${base}/feedback/${linkToken}`;
+        const clientName = schedule.client?.name ?? "고객";
+        const message =
+            `[아가잼잼] ${clientName}님 산모·신생아 서비스 제공기록지 작성 링크입니다.\n` +
+            `링크 접속 후 휴대폰 번호로 본인확인하고, 방문일마다 기록을 남겨주세요.\n${url}`;
+
+        const scheduledFor = options.scheduledFor ?? getServiceFeedbackLinkScheduledFor(schedule.startDate);
+        await this.jobRepository.upsertPending(
+            AlimtalkTriggerJobEntity.create({
+                branchId: schedule.branchId,
+                ruleId: SERVICE_FEEDBACK_LINK_RULE_ID,
+                scheduledFor,
+                clientId: schedule.clientId,
+                employeeScheduleId: scheduleId,
+                recipientType: AlimtalkTriggerRecipientType.PRIMARY_EMPLOYEE,
+                recipientPhone: employee.phone,
+                templateKey: AlimtalkTriggerTemplateKey.SERVICE_FEEDBACK_LINK,
+                dedupeKey: `${SERVICE_FEEDBACK_LINK_RULE_ID}:schedule:${scheduleId}:primary`,
+                payload: {
+                    clientId: schedule.clientId,
+                    clientName,
+                    employeeId: employee.id,
+                    employeeName: employee.name,
+                    memberId: `employee:${employee.id}`,
+                    recipientName: employee.name,
+                    recipientPhone: employee.phone,
+                    buttonUrl: url,
+                    messageBody: message,
+                    templateVariables: {
+                        clientName,
+                        employeeName: employee.name,
+                        feedbackUrl: url,
+                        serviceStartDate: this.formatDate(schedule.startDate),
+                        serviceEndDate: this.formatDate(schedule.endDate),
+                    },
+                },
+            }),
+        );
+
+        return { scheduledFor, employeeId: employee.id, jobEnqueued: true };
     }
 
     private async recordPermanentFailure(params: {

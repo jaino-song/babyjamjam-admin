@@ -35,6 +35,7 @@ import { getClientBadgeAvatarClassName, getClientBadges } from "@/lib/client/bad
 import { useToast } from "@/hooks/use-toast";
 import { useAlimtalkHistory } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
 import type { AlimtalkHistoryRecord } from "@/features/alimtalk-triggers/types";
+import { useClientServiceRecords } from "@/features/service-records/hooks/use-service-records";
 import {
     getMessageHistoryTimestamp,
     MessageHistoryDetailPanel,
@@ -48,6 +49,7 @@ import {
     ClientFormPanel,
 } from "@/components/app/clients/ClientFormDialog";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
+import { ClientServiceRecordsTab } from "@/components/app/clients/ClientServiceRecordsTab";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
@@ -98,6 +100,7 @@ const CLIENT_DETAIL_TABS = [
     { key: "basic", label: "기본 정보" },
     { key: "contracts", label: "계약서 정보" },
     { key: "alimtalk", label: "메시지 발송 현황" },
+    { key: "service-records", label: "제공기록지" },
 ] as const;
 
 const SCHEDULE_CHANGE_DETAIL_TAB = { key: "schedule-change", label: "일정 변경" } as const;
@@ -576,6 +579,11 @@ export default function ClientsPage() {
 
         return detailTabState.key;
     }, [activeScheduleChange, activeSelectedClientId, detailTabState, hasActiveScheduleChange]);
+    const {
+        data: serviceRecordOverview,
+        isLoading: isServiceRecordsLoading,
+        isError: isServiceRecordsError,
+    } = useClientServiceRecords(activeSelectedClientId, { enabled: activeDetailTab === "service-records" });
 
     const setActiveDetailTab = (key: ClientDetailTabKey, clientId: number | null = activeSelectedClientId) => {
         setDetailTabState({ key, clientId });
@@ -1300,6 +1308,17 @@ export default function ClientsPage() {
                                                 clientName={activeSelectedClient.name}
                                                 selectedRecordId={selectedMessageHistoryId}
                                                 onSelectRecord={handleSelectClientMessageHistoryRecord}
+                                            />
+                                        ),
+                                    },
+                                    {
+                                        key: "service-records",
+                                        children: (
+                                            <ClientServiceRecordsTab
+                                                overview={serviceRecordOverview}
+                                                clientId={activeSelectedClientId}
+                                                isLoading={isServiceRecordsLoading}
+                                                isError={isServiceRecordsError}
                                             />
                                         ),
                                     },

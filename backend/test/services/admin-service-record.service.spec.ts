@@ -1,0 +1,181 @@
+import { NotFoundException } from "@nestjs/common";
+import { AdminServiceRecordService } from "application/services/admin-service-record.service";
+import { EmployeeFeedbackLinkService } from "application/services/employee-feedback-link.service";
+import {
+    SERVICE_FEEDBACK_LINK_RULE_ID,
+    SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
+} from "domain/constants/service-feedback-link-message";
+import { PrismaService } from "infrastructure/database/prisma.service";
+
+describe("AdminServiceRecordService", () => {
+    const createPrisma = () => ({
+        employee_schedule: {
+            findMany: jest.fn(),
+            findFirst: jest.fn(),
+        },
+        alimtalk_trigger_job: {
+            findMany: jest.fn(),
+        },
+        alimtalk_log: {
+            findMany: jest.fn(),
+        },
+    });
+
+    const createLinkService = () => ({
+        sendNow: jest.fn().mockResolvedValue({ scheduledFor: new Date("2026-07-03T01:00:00.000Z") }),
+    });
+
+    const createSchedule = (id: number, startDate: string) => ({
+        id,
+        branchId: "branch-1",
+        clientId: 100,
+        startDate: new Date(startDate),
+        endDate: new Date("2026-07-12T00:00:00.000Z"),
+        replaced: false,
+        primaryEmployee: {
+            id: 30 + id,
+            name: `제공${id}`,
+            phone: `010-0000-000${id}`,
+        },
+        client: {
+            id: 100,
+            name: "김산모",
+            duration: 5,
+        },
+        serviceRecord: null,
+        serviceRecordDays: [],
+        feedbackTokens: [],
+    });
+
+    it("derives link status for none, scheduled, sent, and failed assignments", async () => {
+        const prisma = createPrisma();
+        const service = new AdminServiceRecordService(
+            prisma as unknown as PrismaService,
+            createLinkService() as unknown as EmployeeFeedbackLinkService,
+        );
+        prisma.employee_schedule.findMany.mockResolvedValue([
+            createSchedule(1, "2026-07-04T00:00:00.000Z"),
+            createSchedule(2, "2026-07-03T00:00:00.000Z"),
+            createSchedule(3, "2026-07-02T00:00:00.000Z"),
+            createSchedule(4, "2026-07-01T00:00:00.000Z"),
+        ]);
+        prisma.alimtalk_trigger_job.findMany.mockResolvedValue([
+            {
+                id: "job-4",
+                branchId: "branch-1",
+                employeeScheduleId: 4,
+                ruleId: SERVICE_FEEDBACK_LINK_RULE_ID,
+                status: "sent",
+                scheduledFor: new Date("2026-07-01T06:00:00.000Z"),
+                createdAt: new Date("2026-06-30T00:00:00.000Z"),
+            },
+            {
+                id: "job-3",
+                branchId: "branch-1",
+                employeeScheduleId: 3,
+                ruleId: SERVICE_FEEDBACK_LINK_RULE_ID,
+                status: "sent",
+                scheduledFor: new Date("2026-07-02T06:00:00.000Z"),
+                createdAt: new Date("2026-07-01T00:00:00.000Z"),
+            },
+            {
+                id: "job-2",
+                branchId: "branch-1",
+                employeeScheduleId: 2,
+                ruleId: SERVICE_FEEDBACK_LINK_RULE_ID,
+                status: "pending",
+                scheduledFor: new Date("2026-07-03T06:00:00.000Z"),
+                createdAt: new Date("2026-07-02T00:00:00.000Z"),
+            },
+        ]);
+        prisma.alimtalk_log.findMany.mockResolvedValue([
+            {
+                id: 400,
+                branchId: "branch-1",
+                templateKey: SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
+                triggerJobId: "job-4",
+                clientId: 100,
+                status: "failed",
+                lastAttemptAt: new Date("2026-07-01T06:05:00.000Z"),
+                createdAt: new Date("2026-07-01T06:00:00.000Z"),
+            },
+            {
+                id: 300,
+                branchId: "branch-1",
+                templateKey: SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
+                triggerJobId: "job-3",
+                clientId: 100,
+                status: "sent",
+                lastAttemptAt: new Date("2026-07-02T06:05:00.000Z"),
+                createdAt: new Date("2026-07-02T06:00:00.000Z"),
+            },
+        ]);
+
+        const overview = await service.getClientOverview("branch-1", 100);
+        const statuses = new Map(overview.assignments.map((assignment) => [
+            assignment.scheduleId,
+            assignment.link.status,
+        ]));
+
+        expect(statuses.get(1)).toBe("none");
+        expect(statuses.get(2)).toBe("scheduled");
+        expect(statuses.get(3)).toBe("sent");
+        expect(statuses.get(4)).toBe("failed");
+        expect(overview.assignments.find((assignment) => assignment.scheduleId === 2)?.link.scheduledFor).toEqual(
+            new Date("2026-07-03T06:00:00.000Z"),
+        );
+        expect(overview.assignments.find((assignment) => assignment.scheduleId === 3)?.link.lastSentAt).toEqual(
+            new Date("2026-07-02T06:05:00.000Z"),
+        );
+        expect(overview.assignments.every((assignment) => assignment.signatureDoc === null)).toBe(true);
+    });
+
+    it("attributes phone-missing failure logs only to their own assignment", async () => {
+        const prisma = createPrisma();
+        const service = new AdminServiceRecordService(
+            prisma as unknown as PrismaService,
+            createLinkService() as unknown as EmployeeFeedbackLinkService,
+        );
+        prisma.employee_schedule.findMany.mockResolvedValue([
+            createSchedule(1, "2026-07-04T00:00:00.000Z"),
+            createSchedule(2, "2026-07-03T00:00:00.000Z"),
+        ]);
+        prisma.alimtalk_trigger_job.findMany.mockResolvedValue([]);
+        prisma.alimtalk_log.findMany.mockResolvedValue([
+            {
+                id: 500,
+                branchId: "branch-1",
+                templateKey: SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
+                triggerJobId: null,
+                clientId: 100,
+                status: "failed",
+                variables: { scheduleId: "1" },
+                lastAttemptAt: null,
+                createdAt: new Date("2026-07-01T06:00:00.000Z"),
+            },
+        ]);
+
+        const overview = await service.getClientOverview("branch-1", 100);
+        const statuses = new Map(overview.assignments.map((assignment) => [
+            assignment.scheduleId,
+            assignment.link.status,
+        ]));
+
+        expect(statuses.get(1)).toBe("failed");
+        expect(statuses.get(2)).toBe("none");
+    });
+
+    it("throws NotFoundException and does not send when schedule belongs to another branch", async () => {
+        const prisma = createPrisma();
+        const linkService = createLinkService();
+        const service = new AdminServiceRecordService(
+            prisma as unknown as PrismaService,
+            linkService as unknown as EmployeeFeedbackLinkService,
+        );
+        prisma.employee_schedule.findFirst.mockResolvedValue(null);
+
+        await expect(service.sendLinkNow("branch-1", 10)).rejects.toBeInstanceOf(NotFoundException);
+
+        expect(linkService.sendNow).not.toHaveBeenCalled();
+    });
+});
