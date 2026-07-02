@@ -17,6 +17,10 @@ import { CreateAndSendFeedbackSnapshotUsecase } from "application/usecases/eform
 
 const ORG = { name: "인천 아이미래로", hours: "평일 09시~18시" };
 
+function toIso(d: Date): string {
+    return d.toISOString().slice(0, 10);
+}
+
 /**
  * No-login 제공기록지 capture (BJJ-247). The DOB challenge is public (link token);
  * everything else runs behind EmployeeFeedbackGuard, which supplies the assignment context.
@@ -43,15 +47,21 @@ export class ServiceFeedbackService {
 
     /** Full wizard context: header + existing sessions + how many sessions are contracted. */
     async getContext(ctx: FeedbackTokenContext) {
-        const schedule = await this.prisma.employee_schedule.findUnique({
-            where: { id: ctx.scheduleId },
-            include: {
-                client: true,
-                primaryEmployee: true,
-                serviceRecord: true,
-                serviceRecordDays: { orderBy: { sessionIndex: "asc" } },
-            },
-        });
+        const [schedule, pendingScheduleChange] = await Promise.all([
+            this.prisma.employee_schedule.findUnique({
+                where: { id: ctx.scheduleId },
+                include: {
+                    client: true,
+                    primaryEmployee: true,
+                    serviceRecord: true,
+                    serviceRecordDays: { orderBy: { sessionIndex: "asc" } },
+                },
+            }),
+            this.prisma.schedule_change_request.findFirst({
+                where: { scheduleId: ctx.scheduleId, status: "pending" },
+                select: { id: true, sessionIndex: true, fromDate: true, toDate: true },
+            }),
+        ]);
         if (!schedule) throw new NotFoundException("Assignment not found");
 
         return {
@@ -62,6 +72,14 @@ export class ServiceFeedbackService {
             startDate: schedule.startDate,
             header: schedule.serviceRecord ?? null,
             sessions: schedule.serviceRecordDays,
+            pendingScheduleChange: pendingScheduleChange
+                ? {
+                    id: pendingScheduleChange.id,
+                    sessionIndex: pendingScheduleChange.sessionIndex,
+                    fromDate: toIso(pendingScheduleChange.fromDate),
+                    toDate: toIso(pendingScheduleChange.toDate),
+                }
+                : null,
         };
     }
 

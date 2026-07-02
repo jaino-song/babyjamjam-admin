@@ -56,6 +56,9 @@ describe("ClientService", () => {
         eformsign_doc: {
             findMany: jest.fn().mockResolvedValue([]),
         },
+        schedule_change_request: {
+            findMany: jest.fn().mockResolvedValue([]),
+        },
         area: {
             findFirst: jest.fn().mockResolvedValue({ id: "incheon" }),
         },

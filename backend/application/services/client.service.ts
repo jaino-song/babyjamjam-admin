@@ -58,6 +58,15 @@ export interface ClientBadge {
     priority: number;
 }
 
+export interface PendingScheduleChange {
+    id: string;
+    sessionIndex: number;
+    fromDate: string;
+    toDate: string;
+    oldEndDate: string;
+    newEndDate: string;
+}
+
 // Response type that includes employee information
 export interface ClientWithEmployees {
     id: number;
@@ -85,6 +94,7 @@ export interface ClientWithEmployees {
     badges: ClientBadge[];
     primaryEmployee: { id: number; name: string } | null;
     secondaryEmployee: { id: number; name: string } | null;
+    pendingScheduleChange?: PendingScheduleChange | null;
 }
 
 export interface PaginatedClientWithEmployees {
@@ -430,6 +440,20 @@ export class ClientService {
         // Create a map of clientId to schedule
         const scheduleMap = new Map(schedules.map(s => [s.clientId, s]));
 
+        const pendingScheduleChanges = await this.prismaService.schedule_change_request.findMany({
+            where: { clientId: { in: clientIds }, status: "pending" },
+            select: {
+                id: true,
+                clientId: true,
+                sessionIndex: true,
+                fromDate: true,
+                toDate: true,
+                oldEndDate: true,
+                newEndDate: true,
+            },
+        });
+        const pendingScheduleChangeMap = new Map(pendingScheduleChanges.map(change => [change.clientId, change]));
+
         // Batch fetch eformsign_docs for all clients with eDocId
         const eDocIds = clients.map(c => c.eDocId).filter((id): id is string => id !== null);
         const docs = eDocIds.length > 0
@@ -445,6 +469,7 @@ export class ClientService {
 
         const result = clients.map(client => {
             const schedule = scheduleMap.get(client.id);
+            const pendingScheduleChange = pendingScheduleChangeMap.get(client.id);
 
             // Compute current service status based on dates
             const computedStatus = computeServiceStatus(
@@ -494,6 +519,16 @@ export class ClientService {
                         : null,
                     secondaryEmployee: schedule?.secondaryEmployee
                         ? { id: schedule.secondaryEmployee.id, name: schedule.secondaryEmployee.name }
+                        : null,
+                    pendingScheduleChange: pendingScheduleChange
+                        ? {
+                            id: pendingScheduleChange.id,
+                            sessionIndex: pendingScheduleChange.sessionIndex,
+                            fromDate: pendingScheduleChange.fromDate.toISOString().slice(0, 10),
+                            toDate: pendingScheduleChange.toDate.toISOString().slice(0, 10),
+                            oldEndDate: pendingScheduleChange.oldEndDate.toISOString().slice(0, 10),
+                            newEndDate: pendingScheduleChange.newEndDate.toISOString().slice(0, 10),
+                        }
                         : null,
                 };
             });
