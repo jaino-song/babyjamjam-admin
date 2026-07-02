@@ -22,9 +22,17 @@ import {
     DropdownMenuItem,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useClients, useDeleteClient, useClient } from "@/hooks/useClients";
+import { Button } from "@/components/ui/button";
+import {
+    useApproveScheduleChange,
+    useClients,
+    useDeleteClient,
+    useRejectScheduleChange,
+    useClient,
+} from "@/features/clients/hooks/use-clients";
 import type { Client, ServiceStatus } from "@/lib/client/types";
 import { getClientBadgeAvatarClassName, getClientBadges } from "@/lib/client/badges";
+import { useToast } from "@/hooks/use-toast";
 import { useAlimtalkHistory } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
 import type { AlimtalkHistoryRecord } from "@/features/alimtalk-triggers/types";
 import {
@@ -92,7 +100,11 @@ const CLIENT_DETAIL_TABS = [
     { key: "alimtalk", label: "메시지 발송 현황" },
 ] as const;
 
-type ClientDetailTabKey = (typeof CLIENT_DETAIL_TABS)[number]["key"];
+const SCHEDULE_CHANGE_DETAIL_TAB = { key: "schedule-change", label: "일정 변경" } as const;
+
+type ClientDetailTabKey =
+    | (typeof CLIENT_DETAIL_TABS)[number]["key"]
+    | typeof SCHEDULE_CHANGE_DETAIL_TAB["key"];
 
 type ClientAutomationItem = {
     id: "eformsign-auto-client-registration";
@@ -123,6 +135,36 @@ const CLIENT_MESSAGE_HISTORY_LIST_STATUS_LABELS = {
 const formatDate = (dateStr: string | null): string => {
     if (!dateStr) return "-";
     return new Date(dateStr).toLocaleDateString("ko-KR");
+};
+
+const formatScheduleChangeMonthDay = (dateStr: string): string => {
+    const [, month, day] = dateStr.split("-");
+    const monthNumber = Number(month);
+    const dayNumber = Number(day);
+
+    if (!month || !day || Number.isNaN(monthNumber) || Number.isNaN(dayNumber)) {
+        return dateStr;
+    }
+
+    return `${monthNumber}월 ${dayNumber}일`;
+};
+
+const getScheduleChangeErrorCode = (error: unknown): string | null => {
+    if (!error || typeof error !== "object" || !("response" in error)) {
+        return null;
+    }
+
+    const response = error.response;
+    if (!response || typeof response !== "object" || !("data" in response)) {
+        return null;
+    }
+
+    const data = response.data;
+    if (!data || typeof data !== "object" || !("code" in data)) {
+        return null;
+    }
+
+    return typeof data.code === "string" ? data.code : null;
 };
 
 const formatPrice = (price: string | null): string => {
@@ -462,6 +504,7 @@ export default function ClientsPage() {
     const locale = useLocale();
     const router = useRouter();
     const searchParams = useSearchParams();
+    const { toast } = useToast();
     const clientIdParam = searchParams.get("id");
     const shouldOpenClientFormFromUrl = searchParams.get("openClientForm") === "1";
 
@@ -471,7 +514,10 @@ export default function ClientsPage() {
     const [editingClient, setEditingClient] = useState<Client | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
     const [activeFilter, setActiveFilter] = useState("all");
-    const [activeDetailTab, setActiveDetailTab] = useState<ClientDetailTabKey>("basic");
+    const [detailTabState, setDetailTabState] = useState<{ key: ClientDetailTabKey; clientId: number | null }>({
+        key: "basic",
+        clientId: null,
+    });
     const [activeSection, setActiveSection] = useState<ClientSectionId>("list");
     const [clientFormActiveStep, setClientFormActiveStep] = useState(0);
     const [selectedMessageHistoryId, setSelectedMessageHistoryId] = useState<number | null>(null);
@@ -484,6 +530,8 @@ export default function ClientsPage() {
 
     const { data, isLoading } = useClients(1, 50);
     const deleteClient = useDeleteClient();
+    const approveScheduleChange = useApproveScheduleChange();
+    const rejectScheduleChange = useRejectScheduleChange();
     const {
         data: messageHistoryData = [],
         isLoading: isMessageHistoryLoading,
@@ -497,6 +545,12 @@ export default function ClientsPage() {
     const activeSelectedClient = selectedClient ?? (clientIdParam ? clientFromParam ?? null : null);
     const panelFormClient = shouldOpenClientFormFromUrl ? clientDialogDraft?.client ?? null : null;
     const shouldShowClientFormPanel = isCreatingClient || shouldOpenClientFormFromUrl;
+    const activeScheduleChange = activeSelectedClient?.pendingScheduleChange ?? null;
+    const hasActiveScheduleChange = Boolean(activeScheduleChange);
+    const activeClientDetailTabs = useMemo(
+        () => hasActiveScheduleChange ? [SCHEDULE_CHANGE_DETAIL_TAB, ...CLIENT_DETAIL_TABS] : [...CLIENT_DETAIL_TABS],
+        [hasActiveScheduleChange]
+    );
     const activeSelectedClientBadges = useMemo(
         () => activeSelectedClient ? getClientBadges(activeSelectedClient) : [],
         [activeSelectedClient]
@@ -507,7 +561,28 @@ export default function ClientsPage() {
     );
     const activeSelectedClientId = activeSelectedClient?.id ?? null;
 
+    const activeDetailTab = useMemo<ClientDetailTabKey>(() => {
+        if (detailTabState.clientId !== activeSelectedClientId) {
+            if (activeScheduleChange) {
+                return "schedule-change";
+            }
+
+            return detailTabState.key === "schedule-change" ? "basic" : detailTabState.key;
+        }
+
+        if (detailTabState.key === "schedule-change" && !hasActiveScheduleChange) {
+            return "basic";
+        }
+
+        return detailTabState.key;
+    }, [activeScheduleChange, activeSelectedClientId, detailTabState, hasActiveScheduleChange]);
+
+    const setActiveDetailTab = (key: ClientDetailTabKey, clientId: number | null = activeSelectedClientId) => {
+        setDetailTabState({ key, clientId });
+    };
+
     const clients = useMemo(() => data?.data || [], [data?.data]);
+    const isScheduleChangeActionPending = approveScheduleChange.isPending || rejectScheduleChange.isPending;
 
     const activeClientMessageHistory = useMemo(
         () =>
@@ -679,6 +754,11 @@ export default function ClientsPage() {
         setIsCreatingClient(false);
         clearClientMessageHistoryDetail();
         setSelectedClient(client);
+        if (client.pendingScheduleChange) {
+            setActiveDetailTab("schedule-change", client.id);
+        } else if (activeDetailTab === "schedule-change") {
+            setActiveDetailTab("basic", client.id);
+        }
     };
 
     const handleEdit = (client: Client) => {
@@ -696,6 +776,59 @@ export default function ClientsPage() {
             } catch (err) {
                 console.error("Failed to delete client:", err);
             }
+        }
+    };
+
+    const clearSelectedClientScheduleChange = (clientId: number) => {
+        setSelectedClient((currentClient) => {
+            if (!currentClient || currentClient.id !== clientId) {
+                return currentClient;
+            }
+
+            return { ...currentClient, pendingScheduleChange: null };
+        });
+    };
+
+    const showScheduleChangeErrorToast = (error: unknown, fallbackMessage: string) => {
+        toast({
+            variant: "destructive",
+            description: getScheduleChangeErrorCode(error) === "REQUEST_STALE"
+                ? "요청이 최신 상태와 달라 만료되었습니다"
+                : fallbackMessage,
+        });
+    };
+
+    const handleApproveScheduleChange = async (client: Client) => {
+        const pendingScheduleChange = client.pendingScheduleChange;
+        if (!pendingScheduleChange) return;
+
+        try {
+            await approveScheduleChange.mutateAsync({
+                requestId: pendingScheduleChange.id,
+                clientId: client.id,
+            });
+            clearSelectedClientScheduleChange(client.id);
+            setActiveDetailTab("basic");
+            toast({ description: "일정 변경 요청을 승인했습니다." });
+        } catch (error) {
+            showScheduleChangeErrorToast(error, "일정 변경 요청 승인 중 오류가 발생했습니다.");
+        }
+    };
+
+    const handleRejectScheduleChange = async (client: Client) => {
+        const pendingScheduleChange = client.pendingScheduleChange;
+        if (!pendingScheduleChange) return;
+
+        try {
+            await rejectScheduleChange.mutateAsync({
+                requestId: pendingScheduleChange.id,
+                clientId: client.id,
+            });
+            clearSelectedClientScheduleChange(client.id);
+            setActiveDetailTab("basic");
+            toast({ description: "일정 변경 요청을 거부했습니다." });
+        } catch (error) {
+            showScheduleChangeErrorToast(error, "일정 변경 요청 거부 중 오류가 발생했습니다.");
         }
     };
 
@@ -739,7 +872,7 @@ export default function ClientsPage() {
     };
 
     const handleDetailTabChange = (nextTab: string) => {
-        const nextDetailTab = CLIENT_DETAIL_TABS.find((tab) => tab.key === nextTab)?.key;
+        const nextDetailTab = activeClientDetailTabs.find((tab) => tab.key === nextTab)?.key;
 
         if (!nextDetailTab) return;
         if (nextDetailTab === activeDetailTab) return;
@@ -974,7 +1107,7 @@ export default function ClientsPage() {
                             }
                             tabs={
                                 <DetailTabs
-                                    tabs={[...CLIENT_DETAIL_TABS]}
+                                    tabs={activeClientDetailTabs}
                                     activeTab={activeDetailTab}
                                     onTabChange={handleDetailTabChange}
                                 />
@@ -986,6 +1119,54 @@ export default function ClientsPage() {
                                 panelDataComponent="clients-detail-content-panel"
                                 className="shrink-0"
                                 panels={[
+                                    ...(activeScheduleChange
+                                        ? [
+                                            {
+                                                key: "schedule-change",
+                                                children: (
+                                                    <InfoCard
+                                                        title="서비스 일정 변경 요청이 있습니다."
+                                                        data-component="clients-detail-schedule-change-card"
+                                                    >
+                                                        <div
+                                                            data-component="clients-detail-schedule-change-content"
+                                                            className="space-y-[calc(12px*var(--v3-ui-scale,1))]"
+                                                        >
+                                                            <p className="text-[calc(14px*var(--v3-ui-scale,1))] font-semibold text-v3-dark">
+                                                                기존 날짜: {formatScheduleChangeMonthDay(activeScheduleChange.fromDate)} → 변경 날짜: {formatScheduleChangeMonthDay(activeScheduleChange.toDate)}
+                                                            </p>
+                                                            <p className="text-[calc(13px*var(--v3-ui-scale,1))] text-v3-text-muted">
+                                                                회차: {activeScheduleChange.sessionIndex}회차 · 종료일 {activeScheduleChange.oldEndDate} → {activeScheduleChange.newEndDate}
+                                                            </p>
+                                                            <div
+                                                                data-component="clients-detail-schedule-change-actions"
+                                                                className="flex justify-end gap-2"
+                                                            >
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="outline"
+                                                                    size="sm"
+                                                                    disabled={isScheduleChangeActionPending}
+                                                                    onClick={() => void handleRejectScheduleChange(activeSelectedClient)}
+                                                                >
+                                                                    거부
+                                                                </Button>
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="positive"
+                                                                    size="sm"
+                                                                    disabled={isScheduleChangeActionPending}
+                                                                    onClick={() => void handleApproveScheduleChange(activeSelectedClient)}
+                                                                >
+                                                                    승인
+                                                                </Button>
+                                                            </div>
+                                                        </div>
+                                                    </InfoCard>
+                                                ),
+                                            },
+                                        ]
+                                        : []),
                                     {
                                         key: "basic",
                                         children: (
