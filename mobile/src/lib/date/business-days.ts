@@ -117,3 +117,30 @@ export function calcEndDateBusinessDays(startISO: string, n: number): string {
     }
     return "";
 }
+
+const NEXT_BUSINESS_DAY_SEARCH_LIMIT = 30;
+
+export function nextBusinessDayKr(iso: string): string {
+    const cursor = new Date(iso + "T00:00:00.000Z");
+
+    for (let i = 0; i < NEXT_BUSINESS_DAY_SEARCH_LIMIT; i += 1) {
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+        const cursorIso = cursor.toISOString().slice(0, 10);
+        if (isBusinessDayKr(cursorIso)) return cursorIso;
+    }
+
+    throw new Error(
+        `Unable to find next Korean business day within ${NEXT_BUSINESS_DAY_SEARCH_LIMIT} days after ${iso}`,
+    );
+}
+
+export function addBusinessDaysKr(iso: string, n: number): string {
+    if (n <= 0) return iso;
+
+    let cursor = iso;
+    for (let i = 0; i < n; i += 1) {
+        cursor = nextBusinessDayKr(cursor);
+    }
+
+    return cursor;
+}
