@@ -5,8 +5,8 @@ import {
     NotFoundException,
     Optional,
 } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
+import { getServiceFeedbackTokenExpiresAt } from "domain/constants/service-feedback-link-message";
 import { addBusinessDaysKr, isBusinessDayKr, nextBusinessDayKr } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
@@ -14,9 +14,6 @@ import {
     EmployeeFeedbackTokenService,
     FeedbackTokenContext,
 } from "./employee-feedback-token.service";
-
-const DEFAULT_GRACE_DAYS = 14;
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 function toIso(d: Date): string {
     return d.toISOString().slice(0, 10);
@@ -70,7 +67,6 @@ export class ScheduleChangeService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly tokenService: EmployeeFeedbackTokenService,
-        private readonly configService: ConfigService,
         @Optional() private readonly triggerService?: AlimtalkTriggerService,
     ) {}
 
@@ -278,10 +274,9 @@ export class ScheduleChangeService {
                     data: { endDate: newEndDate },
                 });
 
-                const graceDays = Number(this.configService.get("EMPLOYEE_FEEDBACK_TOKEN_GRACE_DAYS")) || DEFAULT_GRACE_DAYS;
                 await this.tokenService.extendExpiryForSchedule(
                     request.scheduleId,
-                    new Date(newEndDate.getTime() + graceDays * DAY_MS),
+                    getServiceFeedbackTokenExpiresAt(newEndDate),
                     tx,
                 );
 

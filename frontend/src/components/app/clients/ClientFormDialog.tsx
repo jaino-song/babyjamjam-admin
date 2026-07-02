@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useVoucherPriceInfos } from "@/hooks/useVoucherData";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
@@ -17,6 +16,7 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
 import { cn } from "@/lib/utils";
+import { calcEndDateBusinessDays } from "@/lib/date/business-days";
 import voucherOptions from "../messages/templates/json/voucher.json";
 
 import {
@@ -36,15 +36,14 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { StatusBadge } from "@/components/app/ui/status-badge";
 import { Spinner } from "@/components/ui/spinner";
 import { TitleDescChildrenMolecule } from "@/components/app/ui/TitleDescChildrenMolecule";
 import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
 import { TitleTextInputMolecule } from "../messages/forms/form-components/TitleTextInputMolecule";
 import {
     SteppedWizardPanelContent,
-    SteppedWizardPanelFooter,
 } from "@/components/app/v3/SteppedWizardPanelLayout";
+import { DETAIL_PANEL_FOOTER_CLASS_NAME } from "@/components/app/v3/DetailPanel";
 
 export interface ClientFormDialogProps {
     open: boolean;
@@ -111,6 +110,44 @@ const formatDateForInput = (dateString: string | null | undefined): string => {
     const date = new Date(dateString);
     if (isNaN(date.getTime())) return "";
     return date.toISOString().split("T")[0];
+};
+
+const formatDateForCompactInput = (dateString: string | null | undefined): string => {
+    const formattedDate = formatDateForInput(dateString);
+    if (!formattedDate) return "";
+    return `${formattedDate.slice(2, 4)}${formattedDate.slice(5, 7)}${formattedDate.slice(8, 10)}`;
+};
+
+const parseCompactDateInput = (value: string): string => {
+    return value.replace(/\D/g, "").slice(0, 6);
+};
+
+const normalizeCompactDateForSubmit = (value: string): string => {
+    const compactDate = parseCompactDateInput(value);
+    if (compactDate.length !== 6) return value;
+
+    const yearPrefix = Number(compactDate.slice(0, 2)) >= 70 ? "19" : "20";
+    return `${yearPrefix}${compactDate.slice(0, 2)}-${compactDate.slice(2, 4)}-${compactDate.slice(4, 6)}`;
+};
+
+const normalizeDateForCompactState = (value: string | null | undefined): string => {
+    const compactDate = formatDateForCompactInput(value);
+    if (compactDate) return compactDate;
+    return parseCompactDateInput(value ?? "");
+};
+
+const isValidCompactDateInput = (value: string): boolean => {
+    const compactDate = parseCompactDateInput(value);
+    if (compactDate.length !== 6) return false;
+
+    const normalizedDate = normalizeCompactDateForSubmit(compactDate);
+    const date = new Date(`${normalizedDate}T00:00:00`);
+    return (
+        !Number.isNaN(date.getTime()) &&
+        date.getFullYear() === Number(normalizedDate.slice(0, 4)) &&
+        date.getMonth() + 1 === Number(normalizedDate.slice(5, 7)) &&
+        date.getDate() === Number(normalizedDate.slice(8, 10))
+    );
 };
 
 export function ClientFormPanel({
@@ -246,6 +283,28 @@ function ClientFormContent({
         }
     }, [selectedPriceInfo, pricesManuallyEdited]);
 
+    useEffect(() => {
+        queueMicrotask(() => {
+            setFormData(prev => {
+                const duration = prev.duration;
+                const startDate = prev.startDate ?? "";
+
+                if (!duration || !isValidCompactDateInput(startDate)) {
+                    return prev.endDate ? { ...prev, endDate: "" } : prev;
+                }
+
+                const startDateIso = normalizeCompactDateForSubmit(startDate);
+                const computedEndDateIso = calcEndDateBusinessDays(startDateIso, duration);
+                const computedEndDate = normalizeDateForCompactState(computedEndDateIso);
+
+                return prev.endDate === computedEndDate ? prev : {
+                    ...prev,
+                    endDate: computedEndDate,
+                };
+            });
+        });
+    }, [formData.duration, formData.startDate]);
+
     // Reset duration when type changes
     const handleTypeChange = (newType: string) => {
         setFormData(prev => ({
@@ -279,7 +338,7 @@ function ClientFormContent({
                 nextFormData = {
                     name: client.name,
                     birthday: client.birthday || "",
-                    dueDate: formatDateForInput(client.dueDate),
+                    dueDate: normalizeDateForCompactState(client.dueDate),
                     address: client.address || "",
                     phone: client.phone || "",
                     primaryEmployeeId: client.primaryEmployee?.id ?? null,
@@ -289,8 +348,8 @@ function ClientFormContent({
                     fullPrice: client.fullPrice || "",
                     grant: client.grant || "",
                     actualPrice: client.actualPrice || "",
-                    startDate: formatDateForInput(client.startDate),
-                    endDate: formatDateForInput(client.endDate),
+                    startDate: normalizeDateForCompactState(client.startDate),
+                    endDate: normalizeDateForCompactState(client.endDate),
                     careCenter: client.careCenter,
                     voucherClient: client.voucherClient,
                     breastPump: client.breastPump,
@@ -322,6 +381,13 @@ function ClientFormContent({
                 };
                 clearPrefillName();
             }
+
+            nextFormData = {
+                ...nextFormData,
+                dueDate: normalizeDateForCompactState(nextFormData.dueDate),
+                startDate: normalizeDateForCompactState(nextFormData.startDate),
+                endDate: normalizeDateForCompactState(nextFormData.endDate),
+            };
 
             if (hasReturnedEmployee && parsedEmployeeId !== null) {
                 nextFormData = {
@@ -389,6 +455,10 @@ function ClientFormContent({
             setErrorAndScroll(t(locale, "clients.form.error-due-date-required"));
             return;
         }
+        if (!isValidCompactDateInput(formData.dueDate)) {
+            setErrorAndScroll(t(locale, "clients.form.error-due-date-required"));
+            return;
+        }
         if (!formData.address?.trim()) {
             setErrorAndScroll(t(locale, "clients.form.error-address-required"));
             return;
@@ -416,19 +486,31 @@ function ClientFormContent({
             setErrorAndScroll(t(locale, "clients.form.error-start-date-required"));
             return;
         }
+        if (!isValidCompactDateInput(formData.startDate)) {
+            setErrorAndScroll(t(locale, "clients.form.error-start-date-required"));
+            return;
+        }
         if (!formData.endDate?.trim()) {
+            setErrorAndScroll(t(locale, "clients.form.error-end-date-required"));
+            return;
+        }
+        if (!isValidCompactDateInput(formData.endDate)) {
             setErrorAndScroll(t(locale, "clients.form.error-end-date-required"));
             return;
         }
 
         try {
+            const normalizedDueDate = normalizeCompactDateForSubmit(formData.dueDate);
+            const normalizedStartDate = normalizeCompactDateForSubmit(formData.startDate);
+            const normalizedEndDate = normalizeCompactDateForSubmit(formData.endDate);
+
             if (isEditMode && client) {
                 // Build update DTO, excluding null employee IDs to avoid validation errors
                 // (backend @IsOptional only skips undefined, not null)
                 const updateDto: UpdateClientDto = {
                     name: formData.name,
                     birthday: formData.birthday,
-                    dueDate: formData.dueDate || null,
+                    dueDate: normalizedDueDate || null,
                     address: formData.address,
                     phone: formData.phone,
                     // Only include employee IDs if explicitly selected (not null)
@@ -439,8 +521,8 @@ function ClientFormContent({
                     fullPrice: formData.fullPrice,
                     grant: formData.grant,
                     actualPrice: formData.actualPrice,
-                    startDate: formData.startDate || null,
-                    endDate: formData.endDate || null,
+                    startDate: normalizedStartDate || null,
+                    endDate: normalizedEndDate || null,
                     careCenter: formData.careCenter,
                     voucherClient: formData.voucherClient,
                     breastPump: formData.breastPump,
@@ -452,9 +534,10 @@ function ClientFormContent({
             } else {
                 const createDto: CreateClientDto = {
                     ...formData,
+                    dueDate: normalizedDueDate,
                     duration: formData.duration || null,
-                    startDate: formData.startDate || null,
-                    endDate: formData.endDate || null,
+                    startDate: normalizedStartDate || null,
+                    endDate: normalizedEndDate || null,
                 };
                 const newClient = await createClient.mutateAsync(createDto);
                 clearDraft();
@@ -472,7 +555,7 @@ function ClientFormContent({
     const isBasicStepValid = Boolean(
         formData.name.trim() &&
         formData.birthday?.trim() &&
-        formData.dueDate?.trim() &&
+        isValidCompactDateInput(formData.dueDate ?? "") &&
         formData.address?.trim() &&
         formData.phone?.trim()
     );
@@ -483,8 +566,8 @@ function ClientFormContent({
         formData.fullPrice?.trim()
     );
     const isContractStepValid = Boolean(
-        formData.startDate?.trim() &&
-        formData.endDate?.trim()
+        isValidCompactDateInput(formData.startDate ?? "") &&
+        isValidCompactDateInput(formData.endDate ?? "")
     );
     const stepValidation = [
         isBasicStepValid,
@@ -529,49 +612,53 @@ function ClientFormContent({
     );
     const panelFormActions = (
         <>
-            <Button variant="neutral" onClick={handleDialogClose} disabled={isSubmitting}>
-                {t(locale, "common.cancel")}
-            </Button>
-            <div className="flex items-center gap-2">
-                {activeStep > 0 && (
-                    <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => handleStepChange(activeStep - 1)}
-                        disabled={isSubmitting}
-                        data-component="clients-form-panel-prev"
-                    >
-                        <ChevronLeft className="h-4 w-4" />
-                        이전
-                    </Button>
-                )}
-                {activeStep < CLIENT_FORM_LAST_STEP_INDEX ? (
-                    <Button
-                        type="button"
-                        onClick={() => handleStepChange(activeStep + 1)}
-                        disabled={!isCurrentStepValid || isSubmitting}
-                        data-component="clients-form-panel-next"
-                    >
-                        다음
-                        <ChevronRight className="h-4 w-4" />
-                    </Button>
-                ) : (
-                    <Button
-                        type="button"
-                        onClick={handleSubmit}
-                        disabled={isSubmitting || !isFormComplete}
-                        data-component="clients-form-panel-submit"
-                    >
-                        {isSubmitting ? (
-                            <Spinner className="h-4 w-4" />
-                        ) : isEditMode ? (
-                            t(locale, "common.save")
-                        ) : (
-                            t(locale, "common.create")
-                        )}
-                    </Button>
-                )}
-            </div>
+            {activeStep === 0 && (
+                <Button variant="neutral" size="sm" width="sm" onClick={handleDialogClose} disabled={isSubmitting}>
+                    {t(locale, "common.cancel")}
+                </Button>
+            )}
+            {activeStep > 0 && (
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    width="sm"
+                    onClick={() => handleStepChange(activeStep - 1)}
+                    disabled={isSubmitting}
+                    data-component="clients-form-panel-prev"
+                >
+                    이전
+                </Button>
+            )}
+            {activeStep < CLIENT_FORM_LAST_STEP_INDEX ? (
+                <Button
+                    type="button"
+                    size="sm"
+                    width="sm"
+                    onClick={() => handleStepChange(activeStep + 1)}
+                    disabled={!isCurrentStepValid || isSubmitting}
+                    data-component="clients-form-panel-next"
+                >
+                    다음
+                </Button>
+            ) : (
+                <Button
+                    type="button"
+                    size="sm"
+                    width="sm"
+                    onClick={handleSubmit}
+                    disabled={isSubmitting || !isFormComplete}
+                    data-component="clients-form-panel-submit"
+                >
+                    {isSubmitting ? (
+                        <Spinner className="h-4 w-4" />
+                    ) : isEditMode ? (
+                        t(locale, "common.save")
+                    ) : (
+                        t(locale, "common.create")
+                    )}
+                </Button>
+            )}
         </>
     );
 
@@ -613,10 +700,13 @@ function ClientFormContent({
                     <Label htmlFor="dueDate" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.due-date")}</Label>
                     <Input
                         id="dueDate"
-                        type="date"
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="YYMMDD"
                         className={V3_INPUT_CLASS_NAME}
                         value={formData.dueDate || ""}
-                        onChange={(e) => handleChange("dueDate", e.target.value)}
+                        onChange={(e) => handleChange("dueDate", parseCompactDateInput(e.target.value))}
                     />
                 </div>
                 <div className="space-y-2">
@@ -635,6 +725,7 @@ function ClientFormContent({
                     <Input
                         id="address"
                         className={V3_INPUT_CLASS_NAME}
+                        placeholder="상세 주소"
                         value={formData.address ?? ""}
                         onChange={(e) => handleChange("address", e.target.value)}
                     />
@@ -755,14 +846,6 @@ function ClientFormContent({
                 className={SECTION_CARD_CLASS_NAME}
                 titleClassName={LABEL_CLASS_NAME}
             >
-                <div className="flex items-center gap-2">
-                    {selectedPriceInfo && !pricesManuallyEdited && (
-                        <StatusBadge variant="doc_requested" size="sm">
-                            {t(locale, "clients.form.auto-filled")}
-                        </StatusBadge>
-                    )}
-                </div>
-
                 <div className="flex flex-wrap items-end gap-4">
                     <div className="flex-1 space-y-2">
                         <Label htmlFor="fullPrice" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.full-price")}</Label>
@@ -845,20 +928,27 @@ function ClientFormContent({
                         <Label htmlFor="startDate" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.start-date")}</Label>
                         <Input
                             id="startDate"
-                            type="date"
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={6}
+                            placeholder="YYMMDD"
                             className={V3_INPUT_CLASS_NAME}
                             value={formData.startDate || ""}
-                            onChange={(e) => handleChange("startDate", e.target.value)}
+                            onChange={(e) => handleChange("startDate", parseCompactDateInput(e.target.value))}
                         />
                     </div>
                     <div className="flex-1 space-y-2">
                         <Label htmlFor="endDate" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.end-date")}</Label>
                         <Input
                             id="endDate"
-                            type="date"
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={6}
+                            placeholder="YYMMDD"
                             className={V3_INPUT_CLASS_NAME}
                             value={formData.endDate || ""}
-                            onChange={(e) => handleChange("endDate", e.target.value)}
+                            readOnly
+                            aria-readonly="true"
                         />
                     </div>
                 </div>
@@ -927,10 +1017,12 @@ function ClientFormContent({
             />
             <TitleTextInputMolecule
                 id="dueDate"
-                type="date"
                 label={t(locale, "clients.form.due-date")}
+                placeholder="YYMMDD"
+                inputMode="numeric"
                 value={formData.dueDate || ""}
-                onValueChange={(value) => handleChange("dueDate", value)}
+                onValueChange={(value) => handleChange("dueDate", parseCompactDateInput(value))}
+                maxLength={6}
                 dataComponent="clients-form-panel-due-date-input"
             />
             <TitleTextInputMolecule
@@ -945,6 +1037,7 @@ function ClientFormContent({
             <TitleTextInputMolecule
                 id="address"
                 label={t(locale, "clients.form.address")}
+                placeholder="상세 주소"
                 value={formData.address ?? ""}
                 onValueChange={(value) => handleChange("address", value)}
                 dataComponent="clients-form-panel-address-input"
@@ -1041,11 +1134,6 @@ function ClientFormContent({
                     )}
                 </div>
             </div>
-            {selectedPriceInfo && !pricesManuallyEdited ? (
-                <StatusBadge variant="doc_requested" size="sm" className="self-start">
-                    {t(locale, "clients.form.auto-filled")}
-                </StatusBadge>
-            ) : null}
             <TitleTextInputMolecule
                 id="fullPrice"
                 label={t(locale, "clients.form.full-price")}
@@ -1095,18 +1183,23 @@ function ClientFormContent({
             </div>
             <TitleTextInputMolecule
                 id="startDate"
-                type="date"
                 label={t(locale, "clients.form.start-date")}
+                placeholder="YYMMDD"
+                inputMode="numeric"
                 value={formData.startDate || ""}
-                onValueChange={(value) => handleChange("startDate", value)}
+                onValueChange={(value) => handleChange("startDate", parseCompactDateInput(value))}
+                maxLength={6}
                 dataComponent="clients-form-panel-start-date-input"
             />
             <TitleTextInputMolecule
                 id="endDate"
-                type="date"
                 label={t(locale, "clients.form.end-date")}
+                placeholder="YYMMDD"
+                inputMode="numeric"
                 value={formData.endDate || ""}
-                onValueChange={(value) => handleChange("endDate", value)}
+                maxLength={6}
+                readOnly
+                aria-readonly="true"
                 dataComponent="clients-form-panel-end-date-input"
             />
             <div className="flex flex-wrap gap-6 pt-1">
@@ -1185,11 +1278,7 @@ function ClientFormContent({
         </div>
     );
 
-    const panelFooter = (
-        <SteppedWizardPanelFooter>
-            {panelFormActions}
-        </SteppedWizardPanelFooter>
-    );
+    const panelFooter = panelFormActions;
 
     if (surface === "panel" && !open) {
         return null;
@@ -1199,7 +1288,9 @@ function ClientFormContent({
         return renderLayout ? renderLayout({ content: formContent, footer: panelFooter }) : (
             <>
                 {formContent}
-                {panelFooter}
+                <footer data-component="detail-panel-footer" className={DETAIL_PANEL_FOOTER_CLASS_NAME}>
+                    {panelFooter}
+                </footer>
             </>
         );
     }

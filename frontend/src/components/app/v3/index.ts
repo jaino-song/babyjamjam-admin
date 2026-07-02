@@ -41,10 +41,8 @@ export { SteppedWizardStepper } from './SteppedWizardStepper';
 export type { SteppedWizardStepperProps, SteppedWizardStepperStep } from './SteppedWizardStepper';
 export {
   SteppedWizardPanelContent,
-  SteppedWizardPanelFooter,
   STEPPED_WIZARD_PANEL_CONTENT_CLASS_NAME,
   STEPPED_WIZARD_PANEL_STEP_CONTENT_CLASS_NAME,
-  STEPPED_WIZARD_PANEL_FOOTER_CLASS_NAME,
 } from './SteppedWizardPanelLayout';
 export { SectionNav } from './SectionNav';
 export type { SectionNavItem } from './SectionNav';

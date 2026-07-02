@@ -357,15 +357,43 @@ export default function DashboardPage() {
                 </div>
               }
               title={selectedClientData.name}
+              badgesLeft={
+                <>
+                  {selectedClientBadges
+                    .filter((badge) => badge.key === "service_status")
+                    .map((badge) => (
+                      <StatusBadge
+                        key={badge.key}
+                        status={badge.status}
+                        label={badge.label}
+                      />
+                    ))}
+                </>
+              }
               badges={
                 <>
-                  {selectedClientBadges.map((badge) => (
-                    <StatusBadge
-                      key={badge.key}
-                      status={badge.status}
-                      label={badge.label}
-                    />
-                  ))}
+                  {selectedClientBadges
+                    .filter((badge) => badge.key !== "service_status" && badge.key !== "breast_pump")
+                    .map((badge) => (
+                      <StatusBadge
+                        key={badge.key}
+                        status={badge.status}
+                        label={badge.label}
+                      />
+                    ))}
+                </>
+              }
+              badgesRight={
+                <>
+                  {selectedClientBadges
+                    .filter((badge) => badge.key === "breast_pump")
+                    .map((badge) => (
+                      <StatusBadge
+                        key={badge.key}
+                        status={badge.status}
+                        label={badge.label}
+                      />
+                    ))}
                 </>
               }
               subtitle={

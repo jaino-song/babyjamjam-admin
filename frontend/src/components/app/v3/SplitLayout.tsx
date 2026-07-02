@@ -354,7 +354,6 @@ export function SplitLayout({
           "flex-1 h-full min-w-0 min-h-0",
           "grid gap-[calc(16px*var(--v3-ui-scale,1))]",
           getDesktopGridClass(columns),
-          "animate-v3-slide-up",
           "data-[mode=compact]:block data-[mode=compact]:relative data-[mode=compact]:w-full data-[mode=compact]:overflow-hidden data-[mode=compact]:rounded-[28px]",
         )}
         style={compactStyle}
@@ -395,7 +394,7 @@ export function SplitLayout({
                   "min-w-0 min-h-0 flex flex-col",
                   "data-[mode=compact]:h-full data-[mode=compact]:shrink-0 data-[mode=compact]:overflow-y-auto",
                   columns === 3 && isCompact && "w-full flex-shrink-0",
-                  mode === "desktop" && columns === 2 && index === 1 && hasSelection && "animate-v3-slide-up",
+                  "animate-v3-slide-up",
                 )}
                 data-mode={mode}
                 style={panelStyle}

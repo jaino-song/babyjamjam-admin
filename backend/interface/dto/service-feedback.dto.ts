@@ -1,12 +1,12 @@
 import { IsString, IsOptional, IsBoolean, IsObject, IsDateString } from "class-validator";
 
-/** DOB challenge — public endpoint, takes the link token + provider DOB. */
-export class VerifyFeedbackDobDto {
+/** Phone challenge — public endpoint, takes the link token + provider phone. */
+export class VerifyFeedbackPhoneDto {
     @IsString()
     linkToken!: string;
 
     @IsString()
-    dob!: string;
+    phone!: string;
 }
 
 /** One-time service header (top of the 제공기록지). */

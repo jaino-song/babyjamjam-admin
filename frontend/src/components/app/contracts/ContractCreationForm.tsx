@@ -2,7 +2,7 @@
 import dayjs from "dayjs";
 import "dayjs/locale/ko";
 import { useRouter } from "next/navigation";
-import { Check, ChevronLeft, ChevronRight, Send, X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
@@ -168,8 +168,8 @@ import type { Client } from "@/lib/client/types";
 import type { Employee } from "@/hooks/useEmployees";
 import {
   SteppedWizardPanelContent,
-  SteppedWizardPanelFooter,
 } from "@/components/app/v3/SteppedWizardPanelLayout";
+import { DETAIL_PANEL_FOOTER_CLASS_NAME } from "@/components/app/v3/DetailPanel";
 
 interface ContractDataDto {
   customerName: string;
@@ -231,6 +231,7 @@ const SELECT_CLS =
 export interface ContractCreationFormLayoutParts {
   content: ReactNode;
   footer: ReactNode;
+  footerClassName?: string;
 }
 
 export interface ContractCreationFormProps {
@@ -1366,100 +1367,105 @@ export const ContractCreationForm = ({
   );
 
   const footer = (
-    <SteppedWizardPanelFooter className={footerClassName}>
-      <div className="flex flex-1 items-center justify-start">
-        {hasProcessingSuccess ? (
-          <div aria-hidden="true" />
-        ) : (
-          <Button
-            type="button"
-            variant="ghost"
-            width="md"
-            onClick={handleCancel}
-            disabled={hasCreationSession && !hasProcessingFailure}
-          >
-            취소
-          </Button>
-        )}
-      </div>
-      <div className="flex flex-1 items-center justify-end gap-2">
-        {activeStep > 0 && !isProcessingStep && (
+    <>
+      {hasProcessingSuccess ? (
+        <span aria-hidden="true" className="w-1/4" />
+      ) : (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          width="sm"
+          onClick={handleCancel}
+          disabled={hasCreationSession && !hasProcessingFailure}
+        >
+          취소
+        </Button>
+      )}
+      {activeStep > 0 && !isProcessingStep && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          width="sm"
+          data-testid="contract-creation-back"
+          onClick={() => handleStepChange(activeStep - 1)}
+        >
+          이전
+        </Button>
+      )}
+      {activeStep < CONTRACT_INFO_STEP_INDEX ? (
+        <Button
+          type="button"
+          size="sm"
+          data-testid="contract-creation-next"
+          width="sm"
+          onClick={() => handleStepChange(activeStep + 1)}
+          disabled={!isCurrentStepValid}
+        >
+          다음
+        </Button>
+      ) : activeStep === CONTRACT_INFO_STEP_INDEX ? (
+        <Button
+          type="button"
+          size="sm"
+          width="sm"
+          data-testid="contract-creation-submit"
+          onClick={handleWizardComplete}
+          disabled={!isStep1Valid || !isStep2Valid || !isStep3Valid || !isStep4Valid || isSubmitting}
+        >
+          {isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}
+        </Button>
+      ) : hasProcessingSuccess ? (
+        <Button
+          type="button"
+          size="sm"
+          width="sm"
+          data-testid="contract-creation-new-send"
+          data-component="contract-creation-new-send"
+          onClick={handleStartNewContractCreation}
+        >
+          새 전자문서 발송
+        </Button>
+      ) : hasProcessingFailure ? (
+        <>
           <Button
             type="button"
             variant="outline"
-            data-testid="contract-creation-back"
-            onClick={() => handleStepChange(activeStep - 1)}
+            size="sm"
+            width="sm"
+            data-testid="contract-creation-manual"
+            onClick={handleManualContractCreation}
+            disabled={isSubmitting}
           >
-            <ChevronLeft className="h-4 w-4" />
-            이전
+            수동 입력
           </Button>
-        )}
-        {activeStep < CONTRACT_INFO_STEP_INDEX ? (
           <Button
             type="button"
-            data-testid="contract-creation-next"
-            width="md"
-            onClick={() => handleStepChange(activeStep + 1)}
-            disabled={!isCurrentStepValid}
+            size="sm"
+            width="sm"
+            data-testid="contract-creation-retry"
+            onClick={handleRetryContractCreation}
+            disabled={isSubmitting}
           >
-            <span
-              data-component="contract-creation-next-content"
-              className="grid w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center"
-            >
-              <span className="col-start-2">다음</span>
-              <ChevronRight className="col-start-3 ml-2 h-4 w-4 justify-self-start" />
-            </span>
+            {isSubmitting ? "재시도 중..." : "재시도"}
           </Button>
-        ) : activeStep === CONTRACT_INFO_STEP_INDEX ? (
-          <Button
-            type="button"
-            data-testid="contract-creation-submit"
-            onClick={handleWizardComplete}
-            disabled={!isStep1Valid || !isStep2Valid || !isStep3Valid || !isStep4Valid || isSubmitting}
-          >
-            {isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}
-          </Button>
-        ) : hasProcessingSuccess ? (
-          <Button
-            type="button"
-            data-testid="contract-creation-new-send"
-            data-component="contract-creation-new-send"
-            onClick={handleStartNewContractCreation}
-          >
-            <Send className="h-4 w-4" />
-            새 전자문서 발송
-          </Button>
-        ) : hasProcessingFailure ? (
-          <>
-            <Button
-              type="button"
-              variant="outline"
-              data-testid="contract-creation-manual"
-              onClick={handleManualContractCreation}
-              disabled={isSubmitting}
-            >
-              수동 입력
-            </Button>
-            <Button
-              type="button"
-              data-testid="contract-creation-retry"
-              onClick={handleRetryContractCreation}
-              disabled={isSubmitting}
-            >
-              {isSubmitting ? "재시도 중..." : "재시도"}
-            </Button>
-          </>
-        ) : null}
-      </div>
-    </SteppedWizardPanelFooter>
+        </>
+      ) : null}
+    </>
   );
 
   return (
     <>
-      {renderLayout ? renderLayout({ content, footer }) : (
+      {renderLayout ? renderLayout({ content, footer, footerClassName }) : (
         <>
           {content}
-          {footer}
+          <footer
+            data-component="detail-panel-footer"
+            className={cn(DETAIL_PANEL_FOOTER_CLASS_NAME, footerClassName)}
+          >
+            {footer}
+          </footer>
         </>
       )}
 

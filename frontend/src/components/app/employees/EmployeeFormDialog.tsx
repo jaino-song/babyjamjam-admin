@@ -37,8 +37,8 @@ import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
 import { TitleTextInputMolecule } from "@/components/app/messages/forms/form-components/TitleTextInputMolecule";
 import {
     SteppedWizardPanelContent,
-    SteppedWizardPanelFooter,
 } from "@/components/app/v3";
+import { DETAIL_PANEL_FOOTER_CLASS_NAME } from "@/components/app/v3/DetailPanel";
 import {
     DEFAULT_EMPLOYEE_GRADE,
     formatWorkAreaLabel,
@@ -300,34 +300,36 @@ function EmployeeFormContent({
     );
 
     const panelFooter = (
-        <SteppedWizardPanelFooter>
+        <>
             <Button
                 type="button"
                 variant="ghost"
+                size="sm"
+                width="sm"
                 onClick={handleClose}
                 disabled={isLoading}
                 data-component="employees-form-panel-cancel"
             >
                 {t(locale, "common.cancel")}
             </Button>
-            <div className="flex items-center gap-2">
-                <Button
-                    type="button"
-                    variant="positive"
-                    onClick={handleSubmit}
-                    disabled={isLoading || !isFormValid}
-                    data-component="employees-form-panel-submit"
-                >
-                    {isLoading ? (
-                        <Spinner className="h-4 w-4" />
-                    ) : isEditMode ? (
-                        t(locale, "common.save")
-                    ) : (
-                        t(locale, "common.create")
-                    )}
-                </Button>
-            </div>
-        </SteppedWizardPanelFooter>
+            <Button
+                type="button"
+                variant="positive"
+                size="sm"
+                width="sm"
+                onClick={handleSubmit}
+                disabled={isLoading || !isFormValid}
+                data-component="employees-form-panel-submit"
+            >
+                {isLoading ? (
+                    <Spinner className="h-4 w-4" />
+                ) : isEditMode ? (
+                    t(locale, "common.save")
+                ) : (
+                    t(locale, "common.create")
+                )}
+            </Button>
+        </>
     );
 
     const feedback = error ? (
@@ -670,7 +672,9 @@ function EmployeeFormContent({
                 <div data-component="employees-form-panel-content-fallback" className="min-h-0 flex-1 overflow-y-auto">
                     {panelContent}
                 </div>
-                {panelFooter}
+                <footer data-component="detail-panel-footer" className={DETAIL_PANEL_FOOTER_CLASS_NAME}>
+                    {panelFooter}
+                </footer>
             </div>
         );
     }

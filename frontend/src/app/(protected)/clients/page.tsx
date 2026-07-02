@@ -1067,15 +1067,43 @@ export default function ClientsPage() {
                                 </div>
                             }
                             title={activeSelectedClient.name}
+                            badgesLeft={
+                                <>
+                                    {activeSelectedClientBadges
+                                        .filter((badge) => badge.key === "service_status")
+                                        .map((badge) => (
+                                            <StatusBadge
+                                                key={badge.key}
+                                                status={badge.status}
+                                                label={badge.label}
+                                            />
+                                        ))}
+                                </>
+                            }
                             badges={
                                 <>
-                                    {activeSelectedClientBadges.map((badge) => (
-                                        <StatusBadge
-                                            key={badge.key}
-                                            status={badge.status}
-                                            label={badge.label}
-                                        />
-                                    ))}
+                                    {activeSelectedClientBadges
+                                        .filter((badge) => badge.key !== "service_status" && badge.key !== "breast_pump")
+                                        .map((badge) => (
+                                            <StatusBadge
+                                                key={badge.key}
+                                                status={badge.status}
+                                                label={badge.label}
+                                            />
+                                        ))}
+                                </>
+                            }
+                            badgesRight={
+                                <>
+                                    {activeSelectedClientBadges
+                                        .filter((badge) => badge.key === "breast_pump")
+                                        .map((badge) => (
+                                            <StatusBadge
+                                                key={badge.key}
+                                                status={badge.status}
+                                                label={badge.label}
+                                            />
+                                        ))}
                                 </>
                             }
                             subtitle={

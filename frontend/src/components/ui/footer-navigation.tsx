@@ -1,5 +1,4 @@
 import * as React from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button, type ButtonProps } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +14,10 @@ export interface FooterNavigationProps {
   nextLabel?: string;
   prevVariant?: ButtonProps["variant"];
   nextVariant?: ButtonProps["variant"];
+  prevSize?: ButtonProps["size"];
+  nextSize?: ButtonProps["size"];
+  prevWidth?: ButtonProps["width"];
+  nextWidth?: ButtonProps["width"];
   className?: string;
   prevClassName?: string;
   nextClassName?: string;
@@ -38,6 +41,10 @@ export function FooterNavigation({
   nextLabel = "다음",
   prevVariant = "outline",
   nextVariant = "outline",
+  prevSize = "sm",
+  nextSize = "sm",
+  prevWidth,
+  nextWidth,
   className,
   prevClassName,
   nextClassName,
@@ -65,12 +72,12 @@ export function FooterNavigation({
         data-component={prevDataComponent}
         type="button"
         variant={prevVariant}
-        size="sm"
+        size={prevSize}
+        width={prevWidth}
         onClick={onPrev}
         disabled={prevDisabled}
         className={cn(prevHidden && "pointer-events-none opacity-0", prevClassName)}
       >
-        <ChevronLeft className="h-4 w-4" />
         {prevLabel}
       </Button>
 
@@ -90,17 +97,13 @@ export function FooterNavigation({
         data-component={nextDataComponent}
         type="button"
         variant={nextVariant}
-        size="sm"
+        size={nextSize}
+        width={nextWidth}
         onClick={onNext}
         disabled={nextDisabled}
         className={cn(nextClassName)}
       >
-        {nextContent ?? (
-          <>
-            {nextLabel}
-            <ChevronRight className="h-4 w-4" />
-          </>
-        )}
+        {nextContent ?? nextLabel}
       </Button>
     </div>
   );

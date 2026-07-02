@@ -15,7 +15,7 @@ import { ScheduleChangeService } from "application/services/schedule-change.serv
 import { EmployeeFeedbackGuard } from "infrastructure/auth/employee-feedback.guard";
 import { FeedbackTokenContext } from "application/services/employee-feedback-token.service";
 import {
-    VerifyFeedbackDobDto,
+    VerifyFeedbackPhoneDto,
     SaveServiceHeaderDto,
     UpsertSessionDto,
 } from "interface/dto/service-feedback.dto";
@@ -24,7 +24,7 @@ type FeedbackRequest = Request & { feedbackContext: FeedbackTokenContext };
 
 /**
  * No-login 제공기록지 endpoints (BJJ-247).
- * `link/:token` + `verify` are public (link token + DOB). Everything else is behind
+ * `link/:token` + `verify` are public (link token + phone). Everything else is behind
  * EmployeeFeedbackGuard and reads the assignment context off the request.
  */
 @Controller("service-feedback")
@@ -40,8 +40,8 @@ export class ServiceFeedbackController {
     }
 
     @Post("verify")
-    verify(@Body() dto: VerifyFeedbackDobDto) {
-        return this.service.verify(dto.linkToken, dto.dob);
+    verify(@Body() dto: VerifyFeedbackPhoneDto) {
+        return this.service.verify(dto.linkToken, dto.phone);
     }
 
     @UseGuards(EmployeeFeedbackGuard)

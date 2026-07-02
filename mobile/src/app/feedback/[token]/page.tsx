@@ -86,7 +86,7 @@ const monthDayKo = (iso: string) => {
     return `${Number(month)}월 ${Number(day)}일`;
 };
 
-type Screen = "loading" | "invalid" | "dob" | "service" | "overview" | "day" | "done";
+type Screen = "loading" | "invalid" | "phone" | "service" | "overview" | "day" | "done";
 
 export default function FeedbackPage() {
     const params = useParams<{ token: string }>();
@@ -94,8 +94,8 @@ export default function FeedbackPage() {
 
     const [screen, setScreen] = useState<Screen>("loading");
     const [accessToken, setAccessToken] = useState<string | null>(null);
-    const [dob, setDob] = useState("");
-    const [dobError, setDobError] = useState<string | null>(null);
+    const [phone, setPhone] = useState("");
+    const [phoneError, setPhoneError] = useState<string | null>(null);
     const [ctx, setCtx] = useState<FeedbackContext | null>(null);
     const [header, setHeader] = useState<Record<string, string>>({});
     const [day, setDay] = useState(1);
@@ -129,7 +129,7 @@ export default function FeedbackPage() {
                 const res = await fetch(`/api/feedback/${token}/link`);
                 const data = await res.json();
                 if (!alive) return;
-                setScreen(data?.valid ? "dob" : "invalid");
+                setScreen(data?.valid ? "phone" : "invalid");
             } catch {
                 if (alive) setScreen("invalid");
             }
@@ -170,23 +170,23 @@ export default function FeedbackPage() {
         [ctx?.sessions, ctx?.startDate],
     );
 
-    async function submitDob() {
-        if (dob.replace(/\D/g, "").length < 6) { setDobError("생년월일 6자리를 입력해 주세요."); return; }
-        setBusy(true); setDobError(null);
+    async function submitPhone() {
+        if (phone.replace(/\D/g, "").length < 10) { setPhoneError("휴대폰 번호를 입력해 주세요."); return; }
+        setBusy(true); setPhoneError(null);
         try {
             const res = await fetch(`/api/feedback/${token}/verify`, {
-                method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dob }),
+                method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phone }),
             });
             const data = await res.json();
             if (data?.ok && data.accessToken) {
                 setAccessToken(data.accessToken);
             } else if (data?.reason === "locked") {
-                setDobError("시도 횟수를 초과했습니다. 지점에 문의해 새 링크를 받아주세요.");
+                setPhoneError("시도 횟수를 초과했습니다. 지점에 문의해 새 링크를 받아주세요.");
             } else {
-                setDobError(`생년월일이 일치하지 않습니다. (남은 시도 ${data?.attemptsLeft ?? "?"}회)`);
+                setPhoneError(`휴대폰 번호가 일치하지 않습니다. (남은 시도 ${data?.attemptsLeft ?? "?"}회)`);
             }
         } catch {
-            setDobError("확인 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
+            setPhoneError("확인 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
         } finally { setBusy(false); }
     }
     useEffect(() => { if (accessToken) loadContext(); }, [accessToken, loadContext]);
@@ -368,15 +368,15 @@ export default function FeedbackPage() {
                     </div>
                 )}
 
-                {screen === "dob" && (
+                {screen === "phone" && (
                     <>
-                        <div data-component="feedback-dob-pill" className="pill">최초 1회 인증</div>
-                        <div data-component="feedback-dob-title" className="step-title">제공인력 본인 확인</div>
-                        <p className="muted">본인 생년월일을 입력하면 서비스 기간 동안 유효한 접근 권한이 발급됩니다.</p>
-                        <label className="lab">생년월일 (YYMMDD)</label>
-                        <input className="in" inputMode="numeric" maxLength={6} placeholder="예) 880312" value={dob} onChange={(e) => setDob(e.target.value)} />
-                        {dobError && <p className="err">{dobError}</p>}
-                        <button className="btn primary" disabled={busy} onClick={submitDob}>{busy ? "확인 중…" : "확인하고 시작"}</button>
+                        <div data-component="feedback-phone-pill" className="pill">최초 1회 인증</div>
+                        <div data-component="feedback-phone-title" className="step-title">제공인력 본인 확인</div>
+                        <p className="muted">본인 휴대폰 번호를 입력하면 서비스 기간 동안 유효한 접근 권한이 발급됩니다.</p>
+                        <label className="lab">휴대폰 번호</label>
+                        <input className="in" type="tel" inputMode="numeric" autoComplete="tel" maxLength={13} placeholder="예) 01012345678" value={phone} onChange={(e) => setPhone(e.target.value)} />
+                        {phoneError && <p className="err">{phoneError}</p>}
+                        <button className="btn primary" disabled={busy} onClick={submitPhone}>{busy ? "확인 중…" : "확인하고 시작"}</button>
                     </>
                 )}
 

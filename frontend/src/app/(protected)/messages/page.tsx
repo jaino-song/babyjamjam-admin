@@ -162,7 +162,7 @@ const MESSAGE_SECTIONS = [
   { id: "send", label: "전송하기", icon: Send },
   { id: "scheduled", label: "발송 예정", icon: Clock3 },
   { id: "history", label: "발송 기록", icon: History },
-  { id: "templates", label: "템플릿", icon: FileText },
+  { id: "templates", label: "템플릿", icon: FileText, disabled: true },
   { id: "triggers", label: "자동화", icon: Workflow },
   { id: "settings", label: "설정", icon: Settings2 },
 ] as const;

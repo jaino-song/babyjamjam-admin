@@ -1,6 +1,6 @@
 import {
     EmployeeFeedbackTokenService,
-    MAX_DOB_ATTEMPTS,
+    MAX_PHONE_ATTEMPTS,
 } from "../../application/services/employee-feedback-token.service";
 
 /** Minimal in-memory fake of the prisma employee_feedback_token delegate. */
@@ -61,14 +61,14 @@ describe("EmployeeFeedbackTokenService", () => {
         return { prisma, svc };
     }
 
-    it("issues a link, then a correct DOB mints an access token that resolves to the assignment context", async () => {
+    it("issues a link, then a correct phone number mints an access token that resolves to the assignment context", async () => {
         const { svc } = setup();
         const { linkToken } = await svc.issueLink({
-            branchId: "b1", scheduleId: 10, employeeId: 7, expectedDob: "900101", expiresAt: future(),
+            branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "010-1111-2222", expiresAt: future(),
         });
 
-        // normalized DOB compare: "90-01-01" must match "900101"
-        const result = await svc.verifyDobAndMintAccess(linkToken, "90-01-01");
+        // normalized phone compare: "01011112222" must match "010-1111-2222"
+        const result = await svc.verifyPhoneAndMintAccess(linkToken, "01011112222");
         expect(result.ok).toBe(true);
 
         const accessToken = (result as { ok: true; accessToken: string }).accessToken;
@@ -76,28 +76,28 @@ describe("EmployeeFeedbackTokenService", () => {
         expect(ctx).toEqual({ tokenId: expect.any(String), branchId: "b1", scheduleId: 10, employeeId: 7 });
     });
 
-    it("rejects a wrong DOB, counts down attempts, and locks after MAX_DOB_ATTEMPTS", async () => {
+    it("rejects a wrong phone number, counts down attempts, and locks after MAX_PHONE_ATTEMPTS", async () => {
         const { svc } = setup();
         const { linkToken } = await svc.issueLink({
-            branchId: "b1", scheduleId: 10, employeeId: 7, expectedDob: "900101", expiresAt: future(),
+            branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "010-1111-2222", expiresAt: future(),
         });
 
-        for (let i = 1; i < MAX_DOB_ATTEMPTS; i++) {
-            const r = await svc.verifyDobAndMintAccess(linkToken, "000000");
-            expect(r).toMatchObject({ ok: false, reason: "wrong_dob", attemptsLeft: MAX_DOB_ATTEMPTS - i });
+        for (let i = 1; i < MAX_PHONE_ATTEMPTS; i++) {
+            const r = await svc.verifyPhoneAndMintAccess(linkToken, "01000000000");
+            expect(r).toMatchObject({ ok: false, reason: "wrong_phone", attemptsLeft: MAX_PHONE_ATTEMPTS - i });
         }
         // the MAX-th wrong attempt locks
-        expect(await svc.verifyDobAndMintAccess(linkToken, "000000")).toMatchObject({ ok: false, reason: "locked" });
-        // a correct DOB no longer works once locked
-        expect(await svc.verifyDobAndMintAccess(linkToken, "900101")).toMatchObject({ ok: false, reason: "locked" });
+        expect(await svc.verifyPhoneAndMintAccess(linkToken, "01000000000")).toMatchObject({ ok: false, reason: "locked" });
+        // a correct phone number no longer works once locked
+        expect(await svc.verifyPhoneAndMintAccess(linkToken, "010-1111-2222")).toMatchObject({ ok: false, reason: "locked" });
     });
 
     it("treats an expired token as unusable for both link resolution and access", async () => {
         const { prisma, svc } = setup();
         const { linkToken } = await svc.issueLink({
-            branchId: "b1", scheduleId: 10, employeeId: 7, expectedDob: "900101", expiresAt: future(),
+            branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "010-1111-2222", expiresAt: future(),
         });
-        const verify = await svc.verifyDobAndMintAccess(linkToken, "900101");
+        const verify = await svc.verifyPhoneAndMintAccess(linkToken, "01011112222");
         const accessToken = (verify as { ok: true; accessToken: string }).accessToken;
 
         // force expiry
@@ -110,10 +110,10 @@ describe("EmployeeFeedbackTokenService", () => {
     it("revokes by schedule (replacement/termination) so the old access stops working", async () => {
         const { svc } = setup();
         const { linkToken } = await svc.issueLink({
-            branchId: "b1", scheduleId: 10, employeeId: 7, expectedDob: "900101", expiresAt: future(),
+            branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "010-1111-2222", expiresAt: future(),
         });
         const accessToken = (
-            (await svc.verifyDobAndMintAccess(linkToken, "900101")) as { ok: true; accessToken: string }
+            (await svc.verifyPhoneAndMintAccess(linkToken, "01011112222")) as { ok: true; accessToken: string }
         ).accessToken;
 
         await svc.revokeForSchedule(10);
@@ -125,10 +125,10 @@ describe("EmployeeFeedbackTokenService", () => {
     it("re-issuing a link for the same schedule revokes the prior link", async () => {
         const { svc } = setup();
         const first = await svc.issueLink({
-            branchId: "b1", scheduleId: 10, employeeId: 7, expectedDob: "900101", expiresAt: future(),
+            branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "010-1111-2222", expiresAt: future(),
         });
         await svc.issueLink({
-            branchId: "b1", scheduleId: 10, employeeId: 8, expectedDob: "880312", expiresAt: future(),
+            branchId: "b1", scheduleId: 10, employeeId: 8, expectedPhone: "010-3333-4444", expiresAt: future(),
         });
 
         // the first (now-replaced) provider's link is dead

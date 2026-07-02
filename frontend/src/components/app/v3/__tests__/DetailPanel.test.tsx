@@ -1,10 +1,19 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { Users } from "lucide-react";
+import { DetailTabs } from "../DetailTabs";
 import { DetailEmptyState } from "../DetailEmptyState";
 import { DetailPanel } from "../DetailPanel";
 import { SplitLayoutContext } from "../SplitLayoutContext";
 
 describe("DetailPanel", () => {
+  beforeAll(() => {
+    global.ResizeObserver = class ResizeObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+  });
+
   it("renders semantic header, main, and footer regions", () => {
     const { container } = render(
       <DetailPanel title="상세" footer={<button type="button">저장</button>}>
@@ -85,5 +94,38 @@ describe("DetailPanel", () => {
 
     expect(screen.getByTestId("detail-panel-stepper")).toBeInTheDocument();
     expect(screen.getByText("전자계약서 작성")).toBeInTheDocument();
+  });
+
+  it("keeps the panel mounted while loading and skeletonizes only text chrome", () => {
+    const onTabChange = jest.fn();
+    const { container } = render(
+      <DetailPanel
+        isLoading
+        title="전자계약서 작성"
+        subtitle="고객에게 전자계약서를 발송합니다"
+        tabs={
+          <DetailTabs
+            tabs={[
+              { key: "details", label: "상세" },
+              { key: "preview", label: "미리보기" },
+            ]}
+            activeTab="details"
+            onTabChange={onTabChange}
+          />
+        }
+      >
+        <div data-testid="detail-loaded-body">본문</div>
+      </DetailPanel>,
+    );
+
+    expect(container.querySelector('[data-component="detail-panel"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-component="detail-panel-title-skeleton"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-component="detail-panel-subtitle-skeleton"]')).toBeInTheDocument();
+    expect(container.querySelectorAll('[data-component="detail-tabs-text-skeleton"]')).toHaveLength(2);
+    expect(container.querySelector('[data-component="detail-panel-scroll-content"]')).toBeEmptyDOMElement();
+    expect(screen.queryByTestId("detail-loaded-body")).not.toBeInTheDocument();
+
+    fireEvent.click(container.querySelector('[data-component="detail-tabs-button"]') as HTMLElement);
+    expect(onTabChange).not.toHaveBeenCalled();
   });
 });

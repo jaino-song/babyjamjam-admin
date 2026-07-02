@@ -11,18 +11,18 @@ export interface FeedbackTokenContext {
     employeeId: number;
 }
 
-export type VerifyDobResult =
+export type VerifyPhoneResult =
     | { ok: true; accessToken: string }
-    | { ok: false; reason: "invalid_token" | "wrong_dob" | "locked"; attemptsLeft?: number };
+    | { ok: false; reason: "invalid_token" | "wrong_phone" | "locked"; attemptsLeft?: number };
 
-/** Max DOB attempts before the link is locked (staff must re-issue). */
-export const MAX_DOB_ATTEMPTS = 5;
+/** Max phone verification attempts before the link is locked (staff must re-issue). */
+export const MAX_PHONE_ATTEMPTS = 5;
 
 /**
  * No-login per-assignment feedback access (BJJ-247).
  * Two secrets per token row:
- *   - link token: carried in the SMS URL (possession). Only reaches the DOB challenge.
- *   - access token: minted after a correct DOB (knowledge). Grants the feedback endpoints
+ *   - link token: carried in the SMS URL (possession). Only reaches the phone challenge.
+ *   - access token: minted after a correct phone number (knowledge). Grants the feedback endpoints
  *     until expiresAt (= schedule.endDate + grace buffer).
  * Both are stored only as sha256 hashes. Mirrors CallIngestTokenService.
  */
@@ -36,9 +36,9 @@ export class EmployeeFeedbackTokenService {
         return createHash("sha256").update(value).digest("hex");
     }
 
-    /** Strip everything but digits so "90-01-01" and "900101" compare equal. */
-    private normalizeDob(dob: string): string {
-        return (dob ?? "").replace(/\D/g, "");
+    /** Strip everything but digits so "010-1234-5678" and "01012345678" compare equal. */
+    private normalizePhone(phone: string): string {
+        return (phone ?? "").replace(/\D/g, "");
     }
 
     /**
@@ -49,7 +49,7 @@ export class EmployeeFeedbackTokenService {
         branchId: string;
         scheduleId: number;
         employeeId: number;
-        expectedDob: string;
+        expectedPhone: string;
         expiresAt: Date;
     }): Promise<{ linkToken: string }> {
         await this.revokeForSchedule(params.scheduleId);
@@ -61,7 +61,7 @@ export class EmployeeFeedbackTokenService {
                 scheduleId: params.scheduleId,
                 employeeId: params.employeeId,
                 linkTokenHash: this.hash(linkToken),
-                expectedDobHash: this.hash(this.normalizeDob(params.expectedDob)),
+                expectedPhoneHash: this.hash(this.normalizePhone(params.expectedPhone)),
                 expiresAt: params.expiresAt,
             },
         });
@@ -80,21 +80,21 @@ export class EmployeeFeedbackTokenService {
     }
 
     /**
-     * Verify a DOB against the link token. On success mint + persist a new access token.
-     * On failure increment attempts and lock after MAX_DOB_ATTEMPTS.
+     * Verify a phone number against the link token. On success mint + persist a new access token.
+     * On failure increment attempts and lock after MAX_PHONE_ATTEMPTS.
      */
-    async verifyDobAndMintAccess(linkToken: string, dob: string): Promise<VerifyDobResult> {
+    async verifyPhoneAndMintAccess(linkToken: string, phone: string): Promise<VerifyPhoneResult> {
         const record = await this.resolveLink(linkToken);
         if (!record) return { ok: false, reason: "invalid_token" };
-        if (record.failedAttempts >= MAX_DOB_ATTEMPTS) return { ok: false, reason: "locked" };
+        if (record.failedAttempts >= MAX_PHONE_ATTEMPTS) return { ok: false, reason: "locked" };
 
-        if (this.hash(this.normalizeDob(dob)) !== record.expectedDobHash) {
+        if (this.hash(this.normalizePhone(phone)) !== record.expectedPhoneHash) {
             const updated = await this.prismaService.employee_feedback_token.update({
                 where: { id: record.id },
                 data: { failedAttempts: { increment: 1 } },
             });
-            const attemptsLeft = Math.max(0, MAX_DOB_ATTEMPTS - updated.failedAttempts);
-            return { ok: false, reason: attemptsLeft === 0 ? "locked" : "wrong_dob", attemptsLeft };
+            const attemptsLeft = Math.max(0, MAX_PHONE_ATTEMPTS - updated.failedAttempts);
+            return { ok: false, reason: attemptsLeft === 0 ? "locked" : "wrong_phone", attemptsLeft };
         }
 
         const accessToken = `efa_${randomBytes(32).toString("base64url")}`;

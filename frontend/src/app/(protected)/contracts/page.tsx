@@ -705,7 +705,7 @@ export default function ContractsPage() {
                   onSessionStateChange={handleContractCreationSessionChange}
                   activeStep={contractCreationActiveStep}
                   onActiveStepChange={setContractCreationActiveStep}
-                  renderLayout={({ content, footer }) => (
+                  renderLayout={({ content, footer, footerClassName }) => (
                     <DetailPanel
                       title="전자계약서 작성"
                       subtitle="고객에게 전자계약서를 발송합니다"
@@ -723,6 +723,7 @@ export default function ContractsPage() {
                           currentStep={contractCreationActiveStep}
                         />
                       }
+                      footerClassName={footerClassName}
                       footer={footer}
                     >
                       {content}

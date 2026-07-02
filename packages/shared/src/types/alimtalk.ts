@@ -40,6 +40,7 @@ export type AlimtalkTriggerTemplateKey =
   | "SERVICE_INFO"
   | "SERVICE_END_REMINDER"
   | "EMPLOYEE_ASSIGNED"
+  | "SERVICE_FEEDBACK_LINK"
   | "CLIENT_GREETING"
   | "PRICE_INFO"
   | "REMINDER"
@@ -64,6 +65,7 @@ export const SMS_TRIGGER_TO_SYSTEM_TEMPLATE: Partial<Record<AlimtalkTriggerTempl
 // channel filters, and the backend delivery drift guard — no hardcoded per-surface lists.
 export const SMS_TRIGGER_TEMPLATE_KEYS: AlimtalkTriggerTemplateKey[] = [
   "SERVICE_INFO",
+  "SERVICE_FEEDBACK_LINK",
   "CLIENT_GREETING",
   "PRICE_INFO",
   "REMINDER",

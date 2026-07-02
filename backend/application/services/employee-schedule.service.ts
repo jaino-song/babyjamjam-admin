@@ -47,7 +47,7 @@ export class EmployeeScheduleService {
         this.triggerService
             ?.syncEmployeeAssignmentRulesForSchedule(branchid, schedule.id, true)
             ?.catch(() => undefined);
-        this.employeeFeedbackLinkService?.issueAndSend(schedule.id)?.catch(() => undefined);
+        this.employeeFeedbackLinkService?.scheduleForServiceStart(schedule.id)?.catch(() => undefined);
         return schedule;
     }
 
@@ -79,18 +79,24 @@ export class EmployeeScheduleService {
         );
     }
 
-    update(branchid: string, id: number, params: {
+    async update(branchid: string, id: number, params: {
         workAddress?: string;
         startDate?: string;
         endDate?: string;
         replaced?: boolean;
     }): Promise<EmployeeScheduleEntity> {
-        return this.updateEmployeeScheduleUsecase.execute(branchid, id, {
+        const schedule = await this.updateEmployeeScheduleUsecase.execute(branchid, id, {
             workAddress: params.workAddress,
             startDate: params.startDate ? new Date(params.startDate) : undefined,
             endDate: params.endDate ? new Date(params.endDate) : undefined,
             replaced: params.replaced,
         });
+        if (params.endDate) {
+            this.employeeFeedbackLinkService
+                ?.extendExpiryForEndDate(schedule.id, schedule.endDate)
+                ?.catch(() => undefined);
+        }
+        return schedule;
     }
 
     delete(branchid: string, id: number): Promise<void> {

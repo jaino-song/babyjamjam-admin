@@ -10,7 +10,12 @@ interface DetailPanelProps {
   avatar?: React.ReactNode;
   title?: React.ReactNode;
   subtitle?: React.ReactNode;
+  /** Badges rendered before the title (leftmost position) */
+  badgesLeft?: React.ReactNode;
+  /** Badges rendered after the title */
   badges?: React.ReactNode;
+  /** Badges pushed to the far right of the title row */
+  badgesRight?: React.ReactNode;
   trailing?: React.ReactNode;
   mobileActions?: React.ReactNode;
   actions?: React.ReactNode;
@@ -23,7 +28,9 @@ export function DetailPanel({
   avatar,
   title,
   subtitle,
+  badgesLeft,
   badges,
+  badgesRight,
   trailing,
   mobileActions,
   tabs,
@@ -43,7 +50,9 @@ export function DetailPanel({
           component="detail-panel"
           title={title}
           subtitle={subtitle}
+          badgesLeft={badgesLeft}
           badges={badges}
+          badgesRight={badgesRight}
           titleClassName="text-xl"
         />
       </div>

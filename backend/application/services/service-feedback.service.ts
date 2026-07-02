@@ -10,7 +10,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import {
     EmployeeFeedbackTokenService,
     FeedbackTokenContext,
-    VerifyDobResult,
+    VerifyPhoneResult,
 } from "./employee-feedback-token.service";
 import { SaveServiceHeaderDto, UpsertSessionDto } from "interface/dto/service-feedback.dto";
 import { CreateAndSendFeedbackSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-feedback-snapshot.usecase";
@@ -22,7 +22,7 @@ function toIso(d: Date): string {
 }
 
 /**
- * No-login 제공기록지 capture (BJJ-247). The DOB challenge is public (link token);
+ * No-login 제공기록지 capture (BJJ-247). The phone challenge is public (link token);
  * everything else runs behind EmployeeFeedbackGuard, which supplies the assignment context.
  */
 @Injectable()
@@ -35,14 +35,14 @@ export class ServiceFeedbackService {
         private readonly snapshotUsecase: CreateAndSendFeedbackSnapshotUsecase,
     ) {}
 
-    /** Is this SMS link still usable (before asking for the DOB)? No PII returned. */
+    /** Is this SMS link still usable (before asking for the phone number)? No PII returned. */
     async linkStatus(linkToken: string): Promise<{ valid: boolean }> {
         return { valid: Boolean(await this.tokenService.resolveLink(linkToken)) };
     }
 
-    /** DOB challenge → mint access token (or report wrong/locked). */
-    async verify(linkToken: string, dob: string): Promise<VerifyDobResult> {
-        return this.tokenService.verifyDobAndMintAccess(linkToken, dob);
+    /** Phone challenge → mint access token (or report wrong/locked). */
+    async verify(linkToken: string, phone: string): Promise<VerifyPhoneResult> {
+        return this.tokenService.verifyPhoneAndMintAccess(linkToken, phone);
     }
 
     /** Full wizard context: header + existing sessions + how many sessions are contracted. */

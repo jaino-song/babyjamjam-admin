@@ -14,6 +14,7 @@ import type {
   TriggerEventType,
   TriggerTemplateKey,
 } from "@/features/alimtalk-triggers/types";
+import { getTriggerTemplateChannel } from "@/features/alimtalk-triggers/types";
 import { fetchAllAlimtalkLogs } from "@/lib/alimtalk/logs";
 import "@/components/app/mobile-redesign/redesign.css";
 
@@ -113,6 +114,7 @@ const TEMPLATE_LABEL: Record<TriggerTemplateKey, string> = {
   SERVICE_INFO: "서비스 안내",
   SERVICE_END_REMINDER: "서비스 종료 안내",
   EMPLOYEE_ASSIGNED: "제공인력 배정 안내",
+  SERVICE_FEEDBACK_LINK: "제공기록지 작성 링크",
   CLIENT_GREETING: "인사(소개)",
   PRICE_INFO: "비용 안내",
   REMINDER: "리마인드",
@@ -145,15 +147,15 @@ function getRuleTimingLabel(rule: AlimtalkTriggerRule) {
 }
 
 function getRuleChannelLabel(rule: AlimtalkTriggerRule): BaseTriggerDisplayRow["channelLabel"] {
-  return rule.templateKey === "SERVICE_INFO" ? "SMS" : "알림톡";
+  return getTriggerTemplateChannel(rule.templateKey) === "sms" ? "SMS" : "알림톡";
 }
 
 function getRuleIcon(rule: AlimtalkTriggerRule, eventMeta: TriggerEventMeta): LucideIcon {
-  return rule.templateKey === "SERVICE_INFO" ? MessageSquareText : eventMeta.icon;
+  return getTriggerTemplateChannel(rule.templateKey) === "sms" ? MessageSquareText : eventMeta.icon;
 }
 
 function getRuleTone(rule: AlimtalkTriggerRule, eventMeta: TriggerEventMeta): TriggerEventMeta["tone"] {
-  return rule.templateKey === "SERVICE_INFO" ? "primary" : eventMeta.tone;
+  return getTriggerTemplateChannel(rule.templateKey) === "sms" ? "primary" : eventMeta.tone;
 }
 
 function isCurrentMonthLog(log: AlimtalkLogRecord) {
