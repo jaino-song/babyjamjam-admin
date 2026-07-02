@@ -5,8 +5,4 @@ export {
     type ChannelTalkEventName,
     type ClientCreatedProperties,
     type ContractSignedProperties,
-    type ContractReminderProperties,
-    type PaymentConfirmedProperties,
-    type SurveyRequestProperties,
-    type PaymentReminderProperties,
 } from "./create-event.dto";

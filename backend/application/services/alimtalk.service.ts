@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { SystemSettingService } from "application/services/system-setting.service";
-import { ChannelTalkService, ContractSignedInfo, PaymentInfo } from "application/services/channeltalk.service";
+import { ChannelTalkService, ContractSignedInfo } from "application/services/channeltalk.service";
 import { AligoService } from "application/services/aligo.service";
 import { ClientEntity } from "domain/entities/client.entity";
 import { AlimtalkProvider } from "domain/entities/system-setting.entity";
@@ -19,13 +19,6 @@ export class AlimtalkService {
         return this.systemSettingService.getAlimtalkProvider();
     }
 
-    async sendClientCreatedAlimtalk(client: ClientEntity): Promise<void> {
-        await this.routeToProvider(
-            (service) => service.sendClientCreatedAlimtalk(client),
-            "sendClientCreatedAlimtalk"
-        );
-    }
-
     async sendContractSignedAlimtalk(
         client: ClientEntity,
         contractInfo: ContractSignedInfo
@@ -33,68 +26,6 @@ export class AlimtalkService {
         await this.routeToProvider(
             (service) => service.sendContractSignedAlimtalk(client, contractInfo),
             "sendContractSignedAlimtalk"
-        );
-    }
-
-    async sendContractReminder3DaysAlimtalk(
-        client: ClientEntity,
-        serviceStartDate: string
-    ): Promise<void> {
-        await this.routeToProvider(
-            (service) => service.sendContractReminder3DaysAlimtalk(client, serviceStartDate),
-            "sendContractReminder3DaysAlimtalk"
-        );
-    }
-
-    async sendContractReminder1DayAlimtalk(
-        client: ClientEntity,
-        serviceStartDate: string
-    ): Promise<void> {
-        await this.routeToProvider(
-            (service) => service.sendContractReminder1DayAlimtalk(client, serviceStartDate),
-            "sendContractReminder1DayAlimtalk"
-        );
-    }
-
-    async sendPaymentConfirmedAlimtalk(
-        client: ClientEntity,
-        paymentInfo: PaymentInfo
-    ): Promise<void> {
-        await this.routeToProvider(
-            (service) => service.sendPaymentConfirmedAlimtalk(client, paymentInfo),
-            "sendPaymentConfirmedAlimtalk"
-        );
-    }
-
-    async sendSurveyRequestAlimtalk(
-        client: ClientEntity,
-        serviceEndDate: string,
-        employeeName: string,
-        surveyLink: string
-    ): Promise<void> {
-        await this.routeToProvider(
-            (service) => service.sendSurveyRequestAlimtalk(client, serviceEndDate, employeeName, surveyLink),
-            "sendSurveyRequestAlimtalk"
-        );
-    }
-
-    async sendPaymentReminderAlimtalk(
-        client: ClientEntity,
-        registrationDate: string,
-        daysSince: number,
-        expectedAmount?: string,
-        paymentDeadline?: string
-    ): Promise<void> {
-        await this.routeToProvider(
-            (service) =>
-                service.sendPaymentReminderAlimtalk(
-                    client,
-                    registrationDate,
-                    daysSince,
-                    expectedAmount,
-                    paymentDeadline
-                ),
-            "sendPaymentReminderAlimtalk"
         );
     }
 

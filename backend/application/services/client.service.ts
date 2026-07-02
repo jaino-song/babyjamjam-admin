@@ -12,7 +12,6 @@ import { ClientEntity } from "domain/entities/client.entity";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { computeServiceStatus, isServiceStatus, SERVICE_STATUS, SERVICE_STATUS_VALUES, ServiceStatusType } from "domain/value-objects/service-status.vo";
-import { AlimtalkService } from "./alimtalk.service";
 import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
 import { EmployeeFeedbackLinkService } from "./employee-feedback-link.service";
 
@@ -138,7 +137,6 @@ export class ClientService {
         private readonly updateClientUsecase: UpdateClientUsecase,
         private readonly deleteClientUsecase: DeleteClientUsecase,
         private readonly prismaService: PrismaService,
-        private readonly alimtalkService: AlimtalkService,
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
         @Optional() private readonly triggerService?: AlimtalkTriggerService,
@@ -323,9 +321,6 @@ export class ClientService {
             createdScheduleId = schedule.id;
         }
 
-        this.alimtalkService.sendClientCreatedAlimtalk(client).catch((error) => {
-            this.logger.error(`Failed to send client created alimtalk: ${error}`);
-        });
         if (this.triggerService) {
             this.triggerService
                 .ensureDefaultRulesForBranch(branchid)
@@ -339,6 +334,11 @@ export class ClientService {
                 ?.syncEmployeeAssignmentRulesForSchedule(branchid, createdScheduleId, true)
                 ?.catch((error) => {
                     this.logger.error(`Failed to sync employee assignment triggers: ${error}`);
+                });
+            this.employeeFeedbackLinkService
+                ?.scheduleForServiceStart(createdScheduleId)
+                ?.catch((error) => {
+                    this.logger.error(`Failed to schedule feedback link SMS: ${error}`);
                 });
         }
 
@@ -655,6 +655,7 @@ export class ClientService {
                         where: { id: currentSchedule.id },
                         data: { replaced: true, endDate: new Date() },
                     });
+                    this.employeeFeedbackLinkService?.revoke(currentSchedule.id)?.catch(() => undefined);
                 }
 
                 // Create new schedule
@@ -704,6 +705,11 @@ export class ClientService {
                 ?.syncEmployeeAssignmentRulesForSchedule(branchid, createdScheduleId, true)
                 ?.catch((error) => {
                     this.logger.error(`Failed to sync employee assignment triggers: ${error}`);
+                });
+            this.employeeFeedbackLinkService
+                ?.scheduleForServiceStart(createdScheduleId)
+                ?.catch((error) => {
+                    this.logger.error(`Failed to schedule feedback link SMS: ${error}`);
                 });
         }
         return updatedClient;
@@ -814,7 +820,6 @@ export class ClientService {
             ?.catch((error) => {
                 this.logger.error(`Failed to sync replacement assignment triggers: ${error}`);
             });
-        this.employeeFeedbackLinkService?.issueAndSend(replacementSchedule.id)?.catch(() => undefined);
 
         return updatedClient;
     }

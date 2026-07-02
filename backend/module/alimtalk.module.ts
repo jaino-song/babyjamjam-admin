@@ -5,12 +5,14 @@ import { ChannelTalkModule } from "./channeltalk.module";
 import { AligoModule } from "./aligo.module";
 import { SystemTemplateModule } from "./system-template.module";
 import { AlimtalkService } from "application/services/alimtalk.service";
-import { AlimtalkSchedulerService } from "application/services/alimtalk-scheduler.service";
-import { ChannelTalkSchedulerService } from "application/services/channeltalk-scheduler.service";
-import { AlimtalkRetrySchedulerService } from "application/services/alimtalk-retry-scheduler.service";
+import { AlimtalkRetryService } from "application/services/alimtalk-retry.service";
+import { MessageRetrySchedulerService } from "application/services/message-retry-scheduler.service";
 import { AlimtalkTriggerService } from "application/services/alimtalk-trigger.service";
 import { AlimtalkTriggerSchedulerService } from "application/services/alimtalk-trigger-scheduler.service";
 import { AlimtalkTriggerDeliveryService } from "application/services/alimtalk-trigger-delivery.service";
+import { MessageTriggerDeliveryService } from "application/services/message-trigger-delivery.service";
+import { SmsRetryService } from "application/services/sms-retry.service";
+import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
 import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interface";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { BRANCH_REPOSITORY } from "domain/repositories/branch.repository.interface";
@@ -39,14 +41,20 @@ import { AlimtalkTemplateService } from "application/services/alimtalk-template.
         { provide: ALIMTALK_TRIGGER_RULE_REPOSITORY, useClass: SbAlimtalkTriggerRuleRepository },
         { provide: ALIMTALK_TRIGGER_JOB_REPOSITORY, useClass: SbAlimtalkTriggerJobRepository },
         AlimtalkService,
-        AlimtalkSchedulerService,
-        ChannelTalkSchedulerService,
-        AlimtalkRetrySchedulerService,
+        SmsRetryService,
+        AlimtalkRetryService,
+        MessageRetrySchedulerService,
+        SmsTriggerDeliveryService,
         AlimtalkTriggerDeliveryService,
+        MessageTriggerDeliveryService,
         AlimtalkTriggerService,
         AlimtalkTriggerSchedulerService,
         AlimtalkTemplateService,
     ],
-    exports: [AlimtalkService, AlimtalkTriggerService],
+    exports: [
+        AlimtalkService,
+        AlimtalkTriggerService,
+        ALIMTALK_TRIGGER_JOB_REPOSITORY,
+    ],
 })
 export class AlimtalkModule {}

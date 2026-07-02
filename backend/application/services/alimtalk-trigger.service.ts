@@ -33,7 +33,7 @@ import {
     ALIMTALK_LOG_REPOSITORY,
     IAlimtalkLogRepository,
 } from "domain/repositories/alimtalk-log.repository.interface";
-import { AlimtalkTriggerDeliveryService } from "./alimtalk-trigger-delivery.service";
+import { MessageTriggerDeliveryService } from "./message-trigger-delivery.service";
 import { hasColumn, hasTable } from "infrastructure/database/schema-capabilities";
 import { MessageSenderApprovalService } from "./message-sender-approval.service";
 import { buildSmsClientVariables } from "./sms-client-variables";
@@ -138,7 +138,7 @@ interface ClientTriggerSource {
 export class AlimtalkTriggerService {
     constructor(
         private readonly prisma: PrismaService,
-        private readonly deliveryService: AlimtalkTriggerDeliveryService,
+        private readonly deliveryService: MessageTriggerDeliveryService,
         private readonly messageSenderApprovalService: MessageSenderApprovalService,
         @Inject(ALIMTALK_TRIGGER_RULE_REPOSITORY)
         private readonly ruleRepository: IAlimtalkTriggerRuleRepository,

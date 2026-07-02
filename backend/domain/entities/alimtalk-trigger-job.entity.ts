@@ -15,6 +15,7 @@ export interface AlimtalkTriggerJobPayload {
     recipientPhone: string;
     templateVariables: Record<string, string>;
     buttonUrl?: string | null;
+    messageBody?: string | null;
 }
 
 export class AlimtalkTriggerJobEntity {

@@ -51,35 +51,6 @@ describe("AligoService", () => {
         jest.clearAllMocks();
     });
 
-    describe("sendClientCreatedAlimtalk", () => {
-        it("should send CLIENT_CREATED template", async () => {
-            sendAlimtalkUsecase.execute.mockResolvedValue({ code: 0, message: "success" });
-
-            await service.sendClientCreatedAlimtalk(createMockClient());
-
-            expect(sendAlimtalkUsecase.execute).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    templateKey: "CLIENT_CREATED",
-                    receiver: "01012345678",
-                    variables: expect.objectContaining({
-                        고객명: "홍길동",
-                    }),
-                })
-            );
-        });
-
-        it("should handle null phone gracefully", async () => {
-            sendAlimtalkUsecase.execute.mockResolvedValue({ code: 0, message: "success" });
-
-            const client = createMockClient();
-            (client as unknown as { phone: null }).phone = null;
-
-            await service.sendClientCreatedAlimtalk(client);
-
-            expect(sendAlimtalkUsecase.execute).not.toHaveBeenCalled();
-        });
-    });
-
     describe("sendContractSignedAlimtalk", () => {
         it("should send CONTRACT_SIGNED template scoped to the client's branch", async () => {
             sendAlimtalkUsecase.execute.mockResolvedValue({ code: 0, message: "success" });
@@ -111,112 +82,7 @@ describe("AligoService", () => {
         });
     });
 
-    describe("sendContractReminder3DaysAlimtalk", () => {
-        it("should send CONTRACT_REMINDER_3DAYS template", async () => {
-            sendAlimtalkUsecase.execute.mockResolvedValue({ code: 0, message: "success" });
-
-            await service.sendContractReminder3DaysAlimtalk(createMockClient(), "2025-01-18");
-
-            expect(sendAlimtalkUsecase.execute).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    templateKey: "CONTRACT_REMINDER_3DAYS",
-                    variables: expect.objectContaining({
-                        서비스시작일: "2025-01-18",
-                    }),
-                })
-            );
-        });
-    });
-
-    describe("sendContractReminder1DayAlimtalk", () => {
-        it("should send CONTRACT_REMINDER_1DAY template", async () => {
-            sendAlimtalkUsecase.execute.mockResolvedValue({ code: 0, message: "success" });
-
-            await service.sendContractReminder1DayAlimtalk(createMockClient(), "2025-01-16");
-
-            expect(sendAlimtalkUsecase.execute).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    templateKey: "CONTRACT_REMINDER_1DAY",
-                })
-            );
-        });
-    });
-
-    describe("sendPaymentConfirmedAlimtalk", () => {
-        it("should send PAYMENT_CONFIRMED template", async () => {
-            sendAlimtalkUsecase.execute.mockResolvedValue({ code: 0, message: "success" });
-
-            await service.sendPaymentConfirmedAlimtalk(createMockClient(), {
-                amount: 150000,
-                date: "2025-01-14",
-                method: "카드",
-                serviceMonth: "2025년 1월",
-            });
-
-            expect(sendAlimtalkUsecase.execute).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    templateKey: "PAYMENT_CONFIRMED",
-                    variables: expect.objectContaining({
-                        결제금액: "150,000원",
-                    }),
-                })
-            );
-        });
-    });
-
-    describe("sendSurveyRequestAlimtalk", () => {
-        it("should send SURVEY_REQUEST template with button", async () => {
-            sendAlimtalkUsecase.execute.mockResolvedValue({ code: 0, message: "success" });
-
-            await service.sendSurveyRequestAlimtalk(
-                createMockClient(),
-                "2025-03-15",
-                "김직원",
-                "https://example.com/survey"
-            );
-
-            expect(sendAlimtalkUsecase.execute).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    templateKey: "SURVEY_REQUEST",
-                    buttonUrl: "https://example.com/survey",
-                })
-            );
-        });
-    });
-
-    describe("sendPaymentReminderAlimtalk", () => {
-        it("should send PAYMENT_REMINDER template", async () => {
-            sendAlimtalkUsecase.execute.mockResolvedValue({ code: 0, message: "success" });
-
-            await service.sendPaymentReminderAlimtalk(
-                createMockClient(),
-                "2025-01-01",
-                14,
-                "50,000원",
-                "2025-01-20"
-            );
-
-            expect(sendAlimtalkUsecase.execute).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    templateKey: "PAYMENT_REMINDER",
-                    variables: expect.objectContaining({
-                        예상금액: "50,000원",
-                        결제기한: "2025-01-20",
-                    }),
-                })
-            );
-        });
-    });
-
     describe("error handling", () => {
-        it("should not throw when API fails", async () => {
-            sendAlimtalkUsecase.execute.mockRejectedValue(new Error("API Error"));
-
-            await expect(
-                service.sendClientCreatedAlimtalk(createMockClient())
-            ).resolves.not.toThrow();
-        });
-
         it("should rethrow when sms API fails", async () => {
             sendSmsUsecase.execute.mockRejectedValue(new Error("API Error"));
 

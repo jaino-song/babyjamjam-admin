@@ -88,13 +88,12 @@ describe("SendAligoAlimtalkUsecase", () => {
                 });
 
                 await usecase.execute({
-                    templateKey: "SURVEY_REQUEST",
+                    templateKey: "CLIENT_CREATED",
                     receiver: "01012345678",
                     variables: {
                         고객명: "홍길동",
-                        서비스종료일: "2025-01-14",
-                        담당자명: "김담당",
-                        설문링크: "https://example.com/survey",
+                        등록일: "2025-01-14",
+                        서비스타입: "방문요양",
                     },
                     buttonUrl: "https://example.com/survey",
                 });

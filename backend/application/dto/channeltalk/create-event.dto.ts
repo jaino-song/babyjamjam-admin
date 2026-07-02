@@ -9,11 +9,6 @@ export const CHANNELTALK_EVENTS = {
     SERVICE_END_REMINDER: "service_end_reminder",
     EMPLOYEE_ASSIGNED: "employee_assigned",
     CONTRACT_SIGNED: "contract_signed",
-    CONTRACT_REMINDER_3DAYS: "contract_reminder_3days",
-    CONTRACT_REMINDER_1DAY: "contract_reminder_1day",
-    PAYMENT_CONFIRMED: "payment_confirmed",
-    SURVEY_REQUEST: "survey_request",
-    PAYMENT_REMINDER: "payment_reminder",
 } as const;
 
 export type ChannelTalkEventName = (typeof CHANNELTALK_EVENTS)[keyof typeof CHANNELTALK_EVENTS];
@@ -35,36 +30,6 @@ export interface ContractSignedProperties extends Record<string, unknown> {
     signedDate: string; // YYYY-MM-DD
     serviceStartDate: string; // YYYY-MM-DD
     employeeName: string;
-}
-
-export interface ContractReminderProperties extends Record<string, unknown> {
-    clientName: string;
-    serviceStartDate: string; // YYYY-MM-DD
-    daysUntilStart: number;
-    contractLink?: string;
-}
-
-export interface PaymentConfirmedProperties extends Record<string, unknown> {
-    clientName: string;
-    paymentAmount: string; // formatted: "150,000원"
-    paymentDate: string; // YYYY-MM-DD
-    paymentMethod: string;
-    serviceMonth: string; // e.g., "2024년 1월"
-}
-
-export interface SurveyRequestProperties extends Record<string, unknown> {
-    clientName: string;
-    serviceEndDate: string; // YYYY-MM-DD
-    surveyLink: string;
-    employeeName: string;
-}
-
-export interface PaymentReminderProperties extends Record<string, unknown> {
-    clientName: string;
-    registrationDate: string; // YYYY-MM-DD
-    daysSinceRegistration: number;
-    expectedAmount?: string;
-    paymentDeadline?: string;
 }
 
 /**

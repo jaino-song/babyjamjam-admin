@@ -1,19 +1,13 @@
-import { AlimtalkRetrySchedulerService } from "application/services/alimtalk-retry-scheduler.service";
+import { ForbiddenException } from "@nestjs/common";
 import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
+import { SmsRetryService } from "application/services/sms-retry.service";
 import { AlimtalkLogEntity } from "domain/entities/alimtalk-log.entity";
 import { IAlimtalkLogRepository } from "domain/repositories/alimtalk-log.repository.interface";
-import { IAligoApiPort } from "domain/ports/aligo-api.port";
-import { ForbiddenException } from "@nestjs/common";
 
-describe("AlimtalkRetrySchedulerService", () => {
+describe("SmsRetryService", () => {
     const createMockLogRepository = () => ({
-        findPendingRetries: jest.fn(),
         update: jest.fn(),
-    });
-
-    const createMockAligoApi = () => ({
-        sendAlimtalk: jest.fn(),
     });
     const createMockAligoService = () => ({
         sendSms: jest.fn(),
@@ -50,21 +44,18 @@ describe("AlimtalkRetrySchedulerService", () => {
             new Date("2026-06-05T09:20:00.000Z"),
         );
 
-    let scheduler: AlimtalkRetrySchedulerService;
+    let service: SmsRetryService;
     let logRepository: ReturnType<typeof createMockLogRepository>;
-    let aligoApi: ReturnType<typeof createMockAligoApi>;
     let aligoService: ReturnType<typeof createMockAligoService>;
     let messageSenderApprovalService: ReturnType<typeof createMockMessageSenderApprovalService>;
     let nowSpy: jest.SpyInstance<number, []>;
 
     beforeEach(() => {
         logRepository = createMockLogRepository();
-        aligoApi = createMockAligoApi();
         aligoService = createMockAligoService();
         messageSenderApprovalService = createMockMessageSenderApprovalService();
-        scheduler = new AlimtalkRetrySchedulerService(
+        service = new SmsRetryService(
             logRepository as unknown as IAlimtalkLogRepository,
-            aligoApi as unknown as IAligoApiPort,
             aligoService as unknown as AligoService,
             messageSenderApprovalService as unknown as MessageSenderApprovalService,
         );
@@ -77,43 +68,8 @@ describe("AlimtalkRetrySchedulerService", () => {
         jest.clearAllMocks();
     });
 
-    it("enters cooldown after transient prisma connectivity errors", async () => {
-        const prismaError = Object.assign(
-            new Error("Timed out fetching a new connection from the connection pool"),
-            { code: "P2024" },
-        );
-        logRepository.findPendingRetries.mockRejectedValue(prismaError);
-
-        await scheduler.retryFailedMessages();
-        await scheduler.retryFailedMessages();
-
-        expect(logRepository.findPendingRetries).toHaveBeenCalledTimes(1);
-    });
-
-    it("clears a stale lock and starts a fresh run", async () => {
-        let releaseFirstRun: (() => void) | undefined;
-        logRepository.findPendingRetries.mockImplementationOnce(
-            () =>
-                new Promise((resolve) => {
-                    releaseFirstRun = () => resolve([]);
-                }),
-        );
-        logRepository.findPendingRetries.mockResolvedValueOnce([]);
-
-        const firstRun = scheduler.retryFailedMessages();
-
-        nowSpy.mockReturnValue(16 * 60 * 1000);
-        await scheduler.retryFailedMessages();
-
-        expect(logRepository.findPendingRetries).toHaveBeenCalledTimes(2);
-
-        releaseFirstRun?.();
-        await firstRun;
-    });
-
     it("retries failed automatic SMS logs with the original sender and message", async () => {
         const log = createSmsRetryLog();
-        logRepository.findPendingRetries.mockResolvedValue([log]);
         aligoService.sendSms.mockResolvedValue({
             request: {
                 senderPhone: "0212345678",
@@ -131,7 +87,7 @@ describe("AlimtalkRetrySchedulerService", () => {
             },
         });
 
-        await scheduler.retryFailedMessages();
+        await service.retry(log);
 
         expect(aligoService.sendSms).toHaveBeenCalledWith({
             senderPhone: "0212345678",
@@ -154,12 +110,11 @@ describe("AlimtalkRetrySchedulerService", () => {
     it("schedules another five-minute retry when an automatic SMS retry is still rejected", async () => {
         nowSpy.mockReturnValue(new Date("2026-06-05T10:20:00.000Z").getTime());
         const log = createSmsRetryLog();
-        logRepository.findPendingRetries.mockResolvedValue([log]);
         aligoService.sendSms.mockRejectedValue(
             new Error("Aligo SMS API error (403): 등록되지 않은 IP 입니다."),
         );
 
-        await scheduler.retryFailedMessages();
+        await service.retry(log);
 
         expect(logRepository.update).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -173,7 +128,6 @@ describe("AlimtalkRetrySchedulerService", () => {
     });
 
     it("preserves scheduled SMS fields when retrying a scheduled delivery log", async () => {
-        // Date.now() is mocked to 0 (epoch); "20260605" 14:30 KST is far in the future.
         const log = createSmsRetryLog();
         log.variables = {
             ...log.variables,
@@ -181,7 +135,6 @@ describe("AlimtalkRetrySchedulerService", () => {
             scheduledTime: "1430",
             testMode: "true",
         };
-        logRepository.findPendingRetries.mockResolvedValue([log]);
         aligoService.sendSms.mockResolvedValue({
             request: {
                 senderPhone: "0212345678",
@@ -201,7 +154,7 @@ describe("AlimtalkRetrySchedulerService", () => {
             },
         });
 
-        await scheduler.retryFailedMessages();
+        await service.retry(log);
 
         expect(aligoService.sendSms).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -210,7 +163,6 @@ describe("AlimtalkRetrySchedulerService", () => {
                 testMode: true,
             }),
         );
-        // Still-future scheduled send: Aligo merely re-queued it, so status must be 'pending'.
         expect(logRepository.update).toHaveBeenCalledWith(
             expect.objectContaining({
                 id: 77,
@@ -221,31 +173,28 @@ describe("AlimtalkRetrySchedulerService", () => {
         );
     });
 
-    it("a still-future scheduled retry records status='pending' not 'sent'", async () => {
-        // Date.now() = 0 (epoch); future date far ahead.
+    it("records a still-future scheduled retry as pending", async () => {
         const log = createSmsRetryLog();
         log.variables = {
             ...log.variables,
             scheduledDate: "20301231",
             scheduledTime: "2359",
         };
-        logRepository.findPendingRetries.mockResolvedValue([log]);
         aligoService.sendSms.mockResolvedValue({
             request: { senderPhone: "0212345678", receiver: "01012345678", msgType: "LMS", testModeYn: "N" },
             response: { result_code: 1, message: "성공적으로 전송요청 하였습니다.", msg_id: 200, success_cnt: 1, error_cnt: 0, msg_type: "LMS" },
         });
 
-        await scheduler.retryFailedMessages();
+        await service.retry(log);
 
         expect(logRepository.update).toHaveBeenCalledWith(
             expect.objectContaining({ id: 77, status: "pending", nextRetryAt: null }),
         );
     });
 
-    it("drops schedule fields and marks 'sent' when scheduled instant is in the past", async () => {
-        // Move Date.now() to AFTER the scheduled instant so Fix 1 strips the schedule fields.
+    it("drops schedule fields and marks sent when scheduled instant is in the past", async () => {
         const pastInstantKst = new Date("2025-01-01T10:00:00+09:00").getTime();
-        nowSpy.mockReturnValue(pastInstantKst + 60_000); // 1 minute after scheduled time
+        nowSpy.mockReturnValue(pastInstantKst + 60_000);
 
         const log = createSmsRetryLog();
         log.variables = {
@@ -253,20 +202,16 @@ describe("AlimtalkRetrySchedulerService", () => {
             scheduledDate: "20250101",
             scheduledTime: "1000",
         };
-        logRepository.findPendingRetries.mockResolvedValue([log]);
         aligoService.sendSms.mockResolvedValue({
             request: { senderPhone: "0212345678", receiver: "01012345678", msgType: "LMS", testModeYn: "N" },
             response: { result_code: 1, message: "성공적으로 전송요청 하였습니다.", msg_id: 300, success_cnt: 1, error_cnt: 0, msg_type: "LMS" },
         });
 
-        await scheduler.retryFailedMessages();
+        await service.retry(log);
 
-        // Schedule fields must have been stripped from the sendSms call.
         const sendSmsCall = aligoService.sendSms.mock.calls[0][0];
         expect(sendSmsCall).not.toHaveProperty("scheduledDate");
         expect(sendSmsCall).not.toHaveProperty("scheduledTime");
-
-        // Immediate send → status='sent'.
         expect(logRepository.update).toHaveBeenCalledWith(
             expect.objectContaining({ id: 77, status: "sent", nextRetryAt: null }),
         );
@@ -274,17 +219,13 @@ describe("AlimtalkRetrySchedulerService", () => {
 
     it("permanently fails log without re-sending when branch sender approval is not granted", async () => {
         const log = createSmsRetryLog();
-        logRepository.findPendingRetries.mockResolvedValue([log]);
         messageSenderApprovalService.ensureApproved.mockRejectedValue(
             new ForbiddenException("메시지 발송 권한 승인이 필요합니다."),
         );
 
-        await scheduler.retryFailedMessages();
+        await service.retry(log);
 
-        // Must NOT have attempted to send.
         expect(aligoService.sendSms).not.toHaveBeenCalled();
-
-        // Must have persisted the permanently-failed log with no further retry.
         expect(logRepository.update).toHaveBeenCalledWith(
             expect.objectContaining({
                 id: 77,
