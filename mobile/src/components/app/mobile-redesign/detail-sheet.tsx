@@ -267,13 +267,13 @@ export function InfoRow({
   value,
   tone,
 }: {
-  label: string;
+  label?: string;
   value: ReactNode;
   tone?: InfoTone;
 }) {
   return (
-    <div className="info-row">
-      <span className="info-row-label">{label}</span>
+    <div className={cn("info-row", !label && "info-row-no-label")}>
+      {label ? <span className="info-row-label">{label}</span> : null}
       <span className={cn("info-row-value", tone && `info-row-value-${tone}`)}>{value}</span>
     </div>
   );

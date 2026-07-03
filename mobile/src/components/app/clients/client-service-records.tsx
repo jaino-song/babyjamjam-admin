@@ -15,6 +15,7 @@ import type {
 } from "@babyjamjam/shared/types/service-record";
 
 import { InfoCard, InfoRow } from "@/components/app/mobile-redesign/detail-sheet";
+import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSendServiceRecordLink } from "@/hooks/useServiceRecords";
 import { toast } from "@/hooks/use-toast";
@@ -53,6 +54,7 @@ const LINK_STATUS_TEXT_CLASS: Record<LinkBadgeTone, string> = {
     green: "info-row-value-green",
     burgundy: "info-row-value-burgundy",
 };
+const SERVICE_RECORD_SKELETON_CLASS = "service-record-skeleton-loader";
 
 export function ClientServiceRecords({
     client,
@@ -150,6 +152,7 @@ function LinkCard({
     delay: number;
 }) {
     const sendLinkMutation = useSendServiceRecordLink();
+    const [resendModalOpen, setResendModalOpen] = useState(false);
     const statusMeta = LINK_STATUS_META[assignment.link.status];
     const isResend = assignment.link.status === "sent" || assignment.link.status === "failed";
     const showSentMetadata = assignment.link.status === "sent"
@@ -161,14 +164,7 @@ function LinkCard({
         ? assignment.link.token.state === "expired" || isPastDate(expiresAt)
         : false;
 
-    const handleSend = async () => {
-        if (
-            isResend
-            && !window.confirm("재전송 시 새 링크가 발급되며 기존 링크는 사용할 수 없게 됩니다. 계속할까요?")
-        ) {
-            return;
-        }
-
+    const sendLink = async () => {
         try {
             await sendLinkMutation.mutateAsync({
                 scheduleId: assignment.scheduleId,
@@ -181,6 +177,20 @@ function LinkCard({
                 variant: "destructive",
             });
         }
+    };
+
+    const handleSendClick = () => {
+        if (isResend) {
+            setResendModalOpen(true);
+            return;
+        }
+
+        void sendLink();
+    };
+
+    const handleConfirmResend = async () => {
+        await sendLink();
+        setResendModalOpen(false);
     };
 
     return (
@@ -212,7 +222,7 @@ function LinkCard({
                         assignment.link.token?.verifiedAt ? (
                             <span className="info-row-value-primary">전화번호 인증 완료</span>
                         ) : (
-                            <span className="info-row-value-muted">미인증</span>
+                            <span className="info-row-value">미인증</span>
                         )
                     }
                 />
@@ -234,7 +244,7 @@ function LinkCard({
                         ? "mobile-clients-service-records-resend"
                         : "mobile-clients-service-records-send"}
                     disabled={sendLinkMutation.isPending}
-                    onClick={handleSend}
+                    onClick={handleSendClick}
                 >
                     {sendLinkMutation.isPending ? "발송 중..." : isResend ? "링크 재전송" : "링크 수동 전송"}
                 </button>
@@ -244,6 +254,21 @@ function LinkCard({
                     ? <>재전송 시 <b>새 링크가 발급</b>되며 기존 링크는 즉시 사용할 수 없게 됩니다.</>
                     : "서비스 시작일 오후 3시에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요."}
             </div>
+            <ConfirmActionModal
+                open={resendModalOpen}
+                title="링크를 재전송할까요?"
+                description="재전송 시 새 링크가 발급되며 기존 링크는 즉시 사용할 수 없게 됩니다."
+                cancelLabel="취소"
+                confirmLabel="재전송"
+                loading={sendLinkMutation.isPending}
+                onOpenChange={(open) => {
+                    if (!sendLinkMutation.isPending) {
+                        setResendModalOpen(open);
+                    }
+                }}
+                onCancel={() => setResendModalOpen(false)}
+                onConfirm={handleConfirmResend}
+            />
         </InfoCard>
     );
 }
@@ -294,12 +319,21 @@ function ServiceSessionsCard({
     const draftCount = assignment.sessions.filter((session) => !session.locked).length;
 
     return (
-        <InfoCard title="회차별 제공기록" delay={delay}>
-            <div className="service-record-progress-row">
-                <InfoRow
-                    label="진행 현황"
-                    value={`${lockedCount}/${slots.length} 제출완료${draftCount > 0 ? ` · 임시저장 ${draftCount}` : ""}`}
-                />
+        <div
+            className="info-card pop-up"
+            data-component="mobile-clients-service-records-session-card"
+            style={{ animationDelay: `${delay}ms` }}
+        >
+            <div
+                className="service-record-card-title-row"
+                data-component="mobile-clients-service-records-session-card-header"
+            >
+                <div className="info-card-title">회차별 제공기록</div>
+                <div className="service-record-progress-row">
+                    <InfoRow
+                        value={`${lockedCount}/${slots.length} 제출완료${draftCount > 0 ? ` · 임시저장 ${draftCount}` : ""}`}
+                    />
+                </div>
             </div>
             {slots.map((slot) => (
                 <SessionRow
@@ -308,7 +342,7 @@ function ServiceSessionsCard({
                     onSelect={() => onSelectSession(slot.sessionIndex)}
                 />
             ))}
-        </InfoCard>
+        </div>
     );
 }
 
@@ -699,11 +733,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
 }
 
-function SkeletonInfoRow({ label, valueClassName }: { label: string; valueClassName: string }) {
+function SkeletonInfoRow({
+    labelClassName,
+    valueClassName,
+}: {
+    labelClassName: string;
+    valueClassName: string;
+}) {
     return (
         <div className="info-row">
-            <span className="info-row-label">{label}</span>
-            <Skeleton className={cn("ml-auto h-3 rounded-md", valueClassName)} />
+            <Skeleton className={cn(SERVICE_RECORD_SKELETON_CLASS, "info-row-label h-3 rounded-md", labelClassName)} />
+            <Skeleton className={cn(SERVICE_RECORD_SKELETON_CLASS, "ml-auto h-3 rounded-md", valueClassName)} />
         </div>
     );
 }
@@ -712,46 +752,13 @@ function ServiceRecordsSkeleton() {
     return (
         <div className="detail-column" data-component="mobile-clients-service-records-skeleton" aria-hidden>
             <div className="info-card pop-up">
-                <div className="info-card-title">제공기록지 작성 링크</div>
-                <SkeletonInfoRow label="상태" valueClassName="w-14" />
-                <SkeletonInfoRow label="제공인력" valueClassName="w-36" />
-                <SkeletonInfoRow label="최근 발송" valueClassName="w-28" />
-                <SkeletonInfoRow label="발송 이력" valueClassName="w-10" />
-                <SkeletonInfoRow label="링크 인증" valueClassName="w-24" />
-                <SkeletonInfoRow label="링크 만료" valueClassName="w-36" />
-                <div className="detail-actions card-actions">
-                    <Skeleton className="h-11 w-full rounded-[14px]" />
-                </div>
-                <div className="link-note">
-                    <Skeleton className="mx-auto h-3 w-3/4 rounded-md" />
-                </div>
-            </div>
-
-            <div className="info-card pop-up" style={{ animationDelay: "60ms" }}>
-                <div className="info-card-title">서비스 기본정보</div>
-                <SkeletonInfoRow label="산모 성명" valueClassName="w-20" />
-                <SkeletonInfoRow label="산모 생년월일" valueClassName="w-16" />
-                <SkeletonInfoRow label="신생아 성명" valueClassName="w-20" />
-                <SkeletonInfoRow label="신생아 출생일자" valueClassName="w-16" />
-                <SkeletonInfoRow label="분만형태" valueClassName="w-16" />
-                <SkeletonInfoRow label="신생아 몸무게" valueClassName="w-12" />
-            </div>
-
-            <div className="info-card pop-up" style={{ animationDelay: "120ms" }}>
-                <div className="info-card-title">회차별 제공기록</div>
-                <div className="service-record-progress-row">
-                    <SkeletonInfoRow label="진행 현황" valueClassName="w-24" />
-                </div>
-                {[0, 1, 2].map((index) => (
-                    <div key={index} className="doc-row">
-                        <Skeleton className="h-[34px] w-[34px] shrink-0 rounded-[11px]" />
-                        <div className="doc-info">
-                            <Skeleton className="h-3.5 w-28 rounded-md" />
-                            <Skeleton className="mt-1.5 h-2.5 w-36 rounded-md" />
-                        </div>
-                        <Skeleton className="h-6 w-14 rounded-full" />
-                    </div>
-                ))}
+                <Skeleton className={cn(SERVICE_RECORD_SKELETON_CLASS, "info-card-title h-3 w-28 rounded-md")} />
+                <SkeletonInfoRow labelClassName="w-8" valueClassName="w-14" />
+                <SkeletonInfoRow labelClassName="w-14" valueClassName="w-36" />
+                <SkeletonInfoRow labelClassName="w-16" valueClassName="w-28" />
+                <SkeletonInfoRow labelClassName="w-16" valueClassName="w-10" />
+                <SkeletonInfoRow labelClassName="w-16" valueClassName="w-24" />
+                <SkeletonInfoRow labelClassName="w-16" valueClassName="w-36" />
             </div>
         </div>
     );

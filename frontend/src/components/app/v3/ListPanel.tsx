@@ -25,6 +25,8 @@ interface ListPanelProps {
   tabsVariant?: "inline" | "dropdown";
   headerPadding?: "auto" | "compact" | "default";
   overlay?: React.ReactNode;
+  /** Empty state rendered as overlay (centered in full panel height) */
+  emptyState?: React.ReactNode;
   children: React.ReactNode;
   headerActions?: React.ReactNode;
   searchValue?: string;
@@ -48,6 +50,7 @@ export function ListPanel({
   tabsVariant = "inline",
   headerPadding = "auto",
   overlay,
+  emptyState,
   children,
   headerActions,
   searchValue,
@@ -221,15 +224,24 @@ export function ListPanel({
         </div>
       ) : null}
 
-      <div
-        data-component="list-panel-content"
-        className="scrollbar-on-scroll relative flex min-h-0 flex-1 flex-col overflow-y-auto px-[calc(24px*var(--v3-ui-scale,1))] pt-[calc(12px*var(--v3-ui-scale,1))]"
-        data-scroll-active={isScrollActive ? "true" : "false"}
-        onScroll={handleScroll}
-      >
-        {showContentSkeleton ? contentSkeleton : children}
-        <div className="sticky bottom-0 h-[calc(24px*var(--v3-ui-scale,1))] shrink-0 bg-white" />
-      </div>
+      {emptyState ? (
+        <div
+          data-component="list-panel-empty-state"
+          className="absolute inset-0 z-10 flex items-center justify-center p-[calc(24px*var(--v3-ui-scale,1))]"
+        >
+          {emptyState}
+        </div>
+      ) : (
+        <div
+          data-component="list-panel-content"
+          className="scrollbar-on-scroll relative flex min-h-0 flex-1 flex-col overflow-y-auto px-[calc(24px*var(--v3-ui-scale,1))] pt-[calc(12px*var(--v3-ui-scale,1))]"
+          data-scroll-active={isScrollActive ? "true" : "false"}
+          onScroll={handleScroll}
+        >
+          {showContentSkeleton ? contentSkeleton : children}
+          <div className="sticky bottom-0 h-[calc(24px*var(--v3-ui-scale,1))] shrink-0 bg-white" />
+        </div>
+      )}
       {disabled ? (
         <div
           data-component="list-panel-disabled-overlay"

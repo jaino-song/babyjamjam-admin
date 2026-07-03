@@ -1547,6 +1547,10 @@ body.mobile-all-route .menu-row {
   color: hsl(var(--v3-dark));
   word-break: keep-all;
 }
+.info-row-no-label .info-row-value {
+  margin-left: 0;
+  text-align: left;
+}
 .info-row-value-green { color: hsl(var(--v3-green)); }
 .info-row-value-burgundy { color: hsl(var(--v3-burgundy)); }
 .info-row-value-muted { color: hsl(var(--v3-text-muted)); }
@@ -2322,6 +2326,33 @@ body:has([data-component="files"] .nav-stack.show-detail) [data-component="mobil
   text-align: center;
 }
 
+[data-component="mobile-clients-service-records"] .service-record-card-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+[data-component="mobile-clients-service-records"] .service-record-card-title-row .info-card-title {
+  flex-shrink: 0;
+  margin-bottom: 0;
+}
+
+[data-component="mobile-clients-service-records"] .service-record-card-title-row .service-record-progress-row {
+  margin-left: auto;
+}
+
+[data-component="mobile-clients-service-records"] .service-record-card-title-row .info-row {
+  border-bottom: 0;
+  padding: 0;
+}
+
+[data-component="mobile-clients-service-records"] .service-record-card-title-row .info-row-no-label .info-row-value {
+  margin-left: auto;
+  text-align: right;
+}
+
 [data-component="mobile-clients-service-records"] .service-record-progress-row .info-row-label,
 [data-component="mobile-clients-service-records"] .service-record-progress-row .info-row-value {
   font-size: 0.6rem;
@@ -2342,6 +2373,29 @@ body:has([data-component="files"] .nav-stack.show-detail) [data-component="mobil
   padding: 4px;
   font-size: 0.62rem;
   font-weight: 500;
+}
+
+[data-slot="skeleton"].service-record-skeleton-loader {
+  background:
+    linear-gradient(
+      90deg,
+      hsl(var(--v3-text-muted) / 0.42) 0%,
+      hsl(var(--v3-text-muted) / 0.2) 42%,
+      hsl(var(--v3-text-muted) / 0.42) 78%
+    );
+  background-size: 220% 100%;
+  opacity: 1;
+  animation: service-record-skeleton-shimmer 1.05s ease-in-out infinite;
+}
+
+@keyframes service-record-skeleton-shimmer {
+  0% {
+    background-position: 120% 0;
+  }
+
+  100% {
+    background-position: -120% 0;
+  }
 }
 
 body:has([data-component="clients"]) [data-component="mobile-bottom-nav"] {

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ClientServiceRecords } from "../client-service-records";
@@ -8,10 +8,12 @@ import type {
     ServiceRecordOverview,
 } from "@babyjamjam/shared/types/service-record";
 
+const mockMutateAsync = jest.fn();
+
 jest.mock("@/hooks/useServiceRecords", () => ({
     useSendServiceRecordLink: () => ({
         isPending: false,
-        mutateAsync: jest.fn(),
+        mutateAsync: mockMutateAsync,
     }),
 }));
 
@@ -73,6 +75,7 @@ function renderComponent(overview: ServiceRecordOverview) {
 describe("ClientServiceRecords", () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        mockMutateAsync.mockResolvedValue(undefined);
     });
 
     it("renders the main link states", () => {
@@ -89,6 +92,30 @@ describe("ClientServiceRecords", () => {
         expect(screen.getByText("발송 실패")).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "링크 수동 전송" })).toBeInTheDocument();
         expect(screen.getAllByRole("button", { name: "링크 재전송" })).toHaveLength(2);
+    });
+
+    it("opens a confirmation modal before resending a link", async () => {
+        const user = userEvent.setup();
+        renderComponent({
+            assignments: [
+                createAssignment(2, "sent"),
+            ],
+        });
+
+        await user.click(screen.getByRole("button", { name: "링크 재전송" }));
+
+        expect(screen.getByRole("dialog", { name: "링크를 재전송할까요?" })).toBeInTheDocument();
+        expect(screen.getByText("재전송 시 새 링크가 발급되며 기존 링크는 즉시 사용할 수 없게 됩니다.")).toBeInTheDocument();
+        expect(mockMutateAsync).not.toHaveBeenCalled();
+
+        await user.click(screen.getByRole("button", { name: "재전송" }));
+
+        await waitFor(() => {
+            expect(mockMutateAsync).toHaveBeenCalledWith({
+                scheduleId: 2,
+                clientId: 100,
+            });
+        });
     });
 
     it("opens a submitted session detail from the session list", async () => {

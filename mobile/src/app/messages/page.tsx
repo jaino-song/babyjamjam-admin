@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import { MessagesAutomationPage } from "@/components/app/mobile-redesign/MessagesAutomationPage";
 
 export default function MessagesPage() {
-  redirect("/alimtalk");
+  return <MessagesAutomationPage />;
 }
