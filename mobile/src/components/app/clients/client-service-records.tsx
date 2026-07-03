@@ -15,6 +15,7 @@ import type {
 } from "@babyjamjam/shared/types/service-record";
 
 import { InfoCard, InfoRow } from "@/components/app/mobile-redesign/detail-sheet";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useSendServiceRecordLink } from "@/hooks/useServiceRecords";
 import { toast } from "@/hooks/use-toast";
 import type { Client } from "@/lib/client/types";
@@ -72,11 +73,7 @@ export function ClientServiceRecords({
         : null;
 
     if (isLoading) {
-        return (
-            <div className="detail-empty-state" data-component="mobile-clients-service-records-loading">
-                제공기록지 정보를 불러오는 중입니다.
-            </div>
-        );
+        return <ServiceRecordsSkeleton />;
     }
 
     if (isError) {
@@ -152,7 +149,10 @@ function LinkCard({
         || assignment.link.status === "failed"
         || assignment.link.status === "canceled";
     const expiresAt = assignment.link.token?.expiresAt ?? endDateExpiry(assignment.endDate);
-    const isExpired = assignment.link.token?.state === "expired" || isPastDate(expiresAt);
+    // 토큰이 발급된 적 없는 배정(발송 전)은 예상 만료일만 보여주고 만료됨 배지는 달지 않는다.
+    const isExpired = assignment.link.token
+        ? assignment.link.token.state === "expired" || isPastDate(expiresAt)
+        : false;
 
     const handleSend = async () => {
         if (
@@ -688,4 +688,66 @@ function getErrorDescription(error: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
+}
+
+function SkeletonInfoRow({ label, valueClassName }: { label: string; valueClassName: string }) {
+    return (
+        <div className="info-row">
+            <span className="info-row-label">{label}</span>
+            <Skeleton className={cn("ml-auto h-3 rounded-md", valueClassName)} />
+        </div>
+    );
+}
+
+function ServiceRecordsSkeleton() {
+    return (
+        <div className="detail-column" data-component="mobile-clients-service-records-skeleton" aria-hidden>
+            <div className="info-card pop-up">
+                <div className="info-card-title">제공기록지 작성 링크</div>
+                <div className="info-row">
+                    <span className="info-row-label">상태</span>
+                    <Skeleton className="ml-auto h-6 w-16 rounded-full" />
+                </div>
+                <SkeletonInfoRow label="제공인력" valueClassName="w-36" />
+                <SkeletonInfoRow label="최근 발송" valueClassName="w-28" />
+                <SkeletonInfoRow label="발송 이력" valueClassName="w-10" />
+                <div className="info-row">
+                    <span className="info-row-label">링크 인증</span>
+                    <Skeleton className="ml-auto h-6 w-24 rounded-full" />
+                </div>
+                <SkeletonInfoRow label="링크 만료" valueClassName="w-36" />
+                <div className="detail-actions card-actions">
+                    <Skeleton className="h-11 w-full rounded-[14px]" />
+                </div>
+                <div className="link-note">
+                    <Skeleton className="mx-auto h-3 w-3/4 rounded-md" />
+                </div>
+            </div>
+
+            <div className="info-card pop-up" style={{ animationDelay: "60ms" }}>
+                <div className="info-card-title">서비스 기본정보</div>
+                <SkeletonInfoRow label="산모 성명" valueClassName="w-20" />
+                <SkeletonInfoRow label="산모 생년월일" valueClassName="w-16" />
+                <SkeletonInfoRow label="신생아 성명" valueClassName="w-20" />
+                <SkeletonInfoRow label="신생아 출생일자" valueClassName="w-16" />
+                <SkeletonInfoRow label="분만형태" valueClassName="w-16" />
+                <SkeletonInfoRow label="신생아 몸무게" valueClassName="w-12" />
+            </div>
+
+            <div className="info-card pop-up" style={{ animationDelay: "120ms" }}>
+                <div className="info-card-title">회차별 제공기록</div>
+                <SkeletonInfoRow label="진행 현황" valueClassName="w-24" />
+                {[0, 1, 2].map((index) => (
+                    <div key={index} className="doc-row">
+                        <Skeleton className="h-[34px] w-[34px] shrink-0 rounded-[11px]" />
+                        <div className="doc-info">
+                            <Skeleton className="h-3.5 w-28 rounded-md" />
+                            <Skeleton className="mt-1.5 h-2.5 w-36 rounded-md" />
+                        </div>
+                        <Skeleton className="h-6 w-14 rounded-full" />
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
 }
