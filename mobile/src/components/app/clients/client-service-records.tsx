@@ -210,9 +210,9 @@ function LinkCard({
                     label="링크 인증"
                     value={
                         assignment.link.token?.verifiedAt ? (
-                            <span className="badge-mini blue">전화번호 인증 완료</span>
+                            <span className="info-row-value-primary">전화번호 인증 완료</span>
                         ) : (
-                            <span className="badge-mini gray">미인증</span>
+                            <span className="info-row-value-muted">미인증</span>
                         )
                     }
                 />
@@ -715,10 +715,7 @@ function ServiceRecordsSkeleton() {
                 <SkeletonInfoRow label="제공인력" valueClassName="w-36" />
                 <SkeletonInfoRow label="최근 발송" valueClassName="w-28" />
                 <SkeletonInfoRow label="발송 이력" valueClassName="w-10" />
-                <div className="info-row">
-                    <span className="info-row-label">링크 인증</span>
-                    <Skeleton className="ml-auto h-6 w-24 rounded-full" />
-                </div>
+                <SkeletonInfoRow label="링크 인증" valueClassName="w-24" />
                 <SkeletonInfoRow label="링크 만료" valueClassName="w-36" />
                 <div className="detail-actions card-actions">
                     <Skeleton className="h-11 w-full rounded-[14px]" />
