@@ -428,7 +428,11 @@ export function RecentActivitiesPanel({
                 }
 
                 const clientBadges = getClientBadges(item.client);
-                const primaryClientBadge = clientBadges[0] ?? null;
+                const serviceStatusBadge = clientBadges.find((b) => b.key === "service_status");
+                const sortedClientBadges = serviceStatusBadge
+                  ? [serviceStatusBadge, ...clientBadges.filter((b) => b.key !== "service_status")]
+                  : clientBadges;
+                const primaryClientBadge = serviceStatusBadge ?? clientBadges[0] ?? null;
                 const subtitle = `${item.client.type || "일반"} · ${item.client.primaryEmployee?.name || "-"}${
                   item.isUpcoming && item.client.startDate ? ` · ${getRelativeDate(item.client.startDate)}` : ""
                 }`;
@@ -441,8 +445,8 @@ export function RecentActivitiesPanel({
                     title={item.client.name}
                     subtitle={subtitle}
                     status={
-                      clientBadges.length > 0
-                        ? clientBadges.map((badge) => (
+                      sortedClientBadges.length > 0
+                        ? sortedClientBadges.map((badge) => (
                             <StatusBadge
                               key={badge.key}
                               status={badge.status}
