@@ -295,10 +295,12 @@ function ServiceSessionsCard({
 
     return (
         <InfoCard title="회차별 제공기록" delay={delay}>
-            <InfoRow
-                label="진행 현황"
-                value={`${lockedCount}/${slots.length} 제출완료${draftCount > 0 ? ` · 임시저장 ${draftCount}` : ""}`}
-            />
+            <div className="service-record-progress-row">
+                <InfoRow
+                    label="진행 현황"
+                    value={`${lockedCount}/${slots.length} 제출완료${draftCount > 0 ? ` · 임시저장 ${draftCount}` : ""}`}
+                />
+            </div>
             {slots.map((slot) => (
                 <SessionRow
                     key={slot.sessionIndex}
@@ -737,7 +739,9 @@ function ServiceRecordsSkeleton() {
 
             <div className="info-card pop-up" style={{ animationDelay: "120ms" }}>
                 <div className="info-card-title">회차별 제공기록</div>
-                <SkeletonInfoRow label="진행 현황" valueClassName="w-24" />
+                <div className="service-record-progress-row">
+                    <SkeletonInfoRow label="진행 현황" valueClassName="w-24" />
+                </div>
                 {[0, 1, 2].map((index) => (
                     <div key={index} className="doc-row">
                         <Skeleton className="h-[34px] w-[34px] shrink-0 rounded-[11px]" />

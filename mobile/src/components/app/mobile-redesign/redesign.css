@@ -2322,6 +2322,13 @@ body:has([data-component="files"] .nav-stack.show-detail) [data-component="mobil
   text-align: center;
 }
 
+[data-component="mobile-clients-service-records"] .service-record-progress-row .info-row-label,
+[data-component="mobile-clients-service-records"] .service-record-progress-row .info-row-value {
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: hsl(var(--v3-text-muted));
+}
+
 [data-component="mobile-clients-service-records"] .service-record-text-row {
   flex-direction: column;
   gap: 4px;
