@@ -202,7 +202,7 @@ function LinkCard({
             ) : null}
             <InfoRow
                 label="발송 이력"
-                value={assignment.link.sentCount > 0 ? `${assignment.link.sentCount}회` : "없음"}
+                value={assignment.link.sentCount > 0 ? `${assignment.link.sentCount}회` : "-"}
                 tone={assignment.link.sentCount > 0 ? undefined : "muted"}
             />
             {showSentMetadata || assignment.link.token ? (
