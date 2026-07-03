@@ -268,7 +268,8 @@ export default function DashboardPage() {
   }, [selectedClientData]);
 
   const selectedClientAvatarClass = useMemo(() => {
-    return getClientBadgeAvatarClassName(selectedClientBadges[0]);
+    const statusBadge = selectedClientBadges.find(b => b.key === "service_status") ?? selectedClientBadges[0];
+    return getClientBadgeAvatarClassName(statusBadge);
   }, [selectedClientBadges]);
 
   const selectedClientContractInfo = useMemo(() => {
@@ -357,23 +358,10 @@ export default function DashboardPage() {
                 </div>
               }
               title={selectedClientData.name}
-              badgesLeft={
-                <>
-                  {selectedClientBadges
-                    .filter((badge) => badge.key === "service_status")
-                    .map((badge) => (
-                      <StatusBadge
-                        key={badge.key}
-                        status={badge.status}
-                        label={badge.label}
-                      />
-                    ))}
-                </>
-              }
               badges={
                 <>
                   {selectedClientBadges
-                    .filter((badge) => badge.key !== "service_status" && badge.key !== "breast_pump")
+                    .filter((badge) => badge.key !== "breast_pump")
                     .map((badge) => (
                       <StatusBadge
                         key={badge.key}

@@ -1645,8 +1645,11 @@ function TemplatesSection() {
                     <AnimatedSlotListItemContent
                       dataComponent="alimtalk-templates-item"
                       icon={FileText}
-                      iconContainerClassName="bg-violet-500/10"
-                      iconClassName="text-violet-500"
+                      iconContainerClassName={cn(
+                        template.status === "승인완료"
+                          ? "border border-[hsl(137,34%,84%)] bg-[hsl(137,60%,94%)] text-v3-green"
+                          : "border border-[hsla(38,92%,35%,0.18)] bg-[hsl(47,100%,92%)] text-[hsl(38,92%,35%)]"
+                      )}
                       title={template.name}
                       subtitle={template.description}
                       status={

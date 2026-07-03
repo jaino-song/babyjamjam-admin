@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { cn } from "@/lib/utils";
 import {
     Users,
     UserCheck,
@@ -77,6 +78,12 @@ function getOpenToNextWorkBadge(openToNextWork: boolean) {
             {openToNextWork ? "근무 가능" : "근무 불가"}
         </StatusPill>
     );
+}
+
+function getEmployeeAvatarClassName(openToNextWork: boolean): string {
+    return openToNextWork
+        ? "border border-[hsl(137,34%,84%)] bg-[hsl(137,60%,94%)] text-v3-green"
+        : "border border-[hsl(220,20%,90%)] bg-[hsl(220,20%,97%)] text-v3-text-muted";
 }
 
 function formatDate(dateStr: string | null | undefined): string {
@@ -258,8 +265,7 @@ export default function EmployeesPage() {
                                     <AnimatedSlotListItemContent
                                         dataComponent="employees-list-item"
                                         icon={UserCheck}
-                                        iconContainerClassName="bg-gradient-to-br from-v3-primary to-purple-500 text-white"
-                                        iconClassName="text-white"
+                                        iconContainerClassName={getEmployeeAvatarClassName(employee.openToNextWork)}
                                         title={employee.name}
                                         subtitle={
                                             <span className="flex items-center gap-1 truncate">
@@ -328,8 +334,8 @@ function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
     return (
         <DetailPanel
             avatar={
-                <div data-component="employees-detail-avatar" className="w-12 h-12 rounded-[16px] bg-gradient-to-br from-v3-primary to-purple-500 flex items-center justify-center text-white shadow-lg shrink-0">
-                    <UserCheck className="w-5 h-5 shrink-0 transition-colors text-white" aria-hidden="true" />
+                <div data-component="employees-detail-avatar" className={cn("w-12 h-12 rounded-[16px] flex items-center justify-center shadow-lg shrink-0", getEmployeeAvatarClassName(employee.openToNextWork))}>
+                    <UserCheck className="w-5 h-5 shrink-0 transition-colors" aria-hidden="true" />
                 </div>
             }
             title={employee.name}

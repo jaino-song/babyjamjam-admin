@@ -63,22 +63,25 @@ interface MessageHistoryDetailPanelProps {
 
 export const MESSAGE_HISTORY_STATUS_META: Record<
   MessageHistoryStatus,
-  { label: string; icon: LucideIcon; tone: string }
+  { label: string; icon: LucideIcon; tone: string; avatarClass: string }
 > = {
   sent: {
     label: "발송 성공",
     icon: CheckCircle2,
     tone: "bg-emerald-50 text-emerald-600",
+    avatarClass: "border border-[hsl(137,34%,84%)] bg-[hsl(137,60%,94%)] text-v3-green",
   },
   failed: {
     label: "발송 실패",
     icon: AlertCircle,
     tone: "bg-red-50 text-red-600",
+    avatarClass: "border border-[hsla(355,36%,45%,0.20)] bg-[hsl(355,40%,94%)] text-[hsl(355,36%,45%)]",
   },
   pending: {
     label: "재시도 대기",
     icon: Clock3,
     tone: "bg-amber-50 text-amber-600",
+    avatarClass: "border border-[hsla(38,92%,35%,0.18)] bg-[hsl(47,100%,92%)] text-[hsl(38,92%,35%)]",
   },
 };
 
@@ -340,7 +343,10 @@ export function MessageHistoryDetailPanel({
       avatar={
         <div
           data-component={`${dataComponentPrefix}-detail-avatar`}
-          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
+          className={cn(
+            "flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px]",
+            selectedRecord ? MESSAGE_HISTORY_STATUS_META[selectedRecord.status].avatarClass : "bg-v3-primary-light text-v3-primary"
+          )}
         >
           <History className="h-5 w-5" />
         </div>

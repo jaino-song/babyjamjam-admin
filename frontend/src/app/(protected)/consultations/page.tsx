@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { CalendarClock, Headset, MapPin, Phone, Search, UserRound } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 import {
     AnimatedSlotList,
@@ -89,6 +90,12 @@ function getReadLabel(readAt: string | null): string {
 
 function getReadVariant(readAt: string | null): "neutral" | "warning" {
     return readAt ? "neutral" : "warning";
+}
+
+function getConsultationAvatarClassName(readAt: string | null): string {
+    return readAt
+        ? "border border-[hsl(220,20%,90%)] bg-[hsl(220,20%,97%)] text-v3-text-muted"
+        : "border border-[hsla(38,92%,35%,0.18)] bg-[hsl(47,100%,92%)] text-[hsl(38,92%,35%)]";
 }
 
 export default function ConsultationsPage() {
@@ -261,8 +268,7 @@ export default function ConsultationsPage() {
                                     <AnimatedSlotListItemContent
                                         dataComponent="consultations-list-item"
                                         icon={Headset}
-                                        iconContainerClassName="bg-v3-primary text-white"
-                                        iconClassName="text-white"
+                                        iconContainerClassName={getConsultationAvatarClassName(item.readAt)}
                                         title={item.motherName}
                                         subtitle={
                                             <>
@@ -286,7 +292,7 @@ export default function ConsultationsPage() {
                 {activeInquiry ? (
                     <DetailPanel
                         avatar={
-                            <div data-component="consultations-detail-avatar" className="flex h-16 w-16 shrink-0 items-center justify-center rounded-[20px] bg-v3-primary text-white shadow-lg">
+                            <div data-component="consultations-detail-avatar" className={cn("flex h-16 w-16 shrink-0 items-center justify-center rounded-[20px] shadow-lg", getConsultationAvatarClassName(activeInquiry.readAt))}>
                                 <UserRound className="h-7 w-7" />
                             </div>
                         }

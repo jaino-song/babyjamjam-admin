@@ -987,18 +987,22 @@ export default function ClientsPage() {
 	                                            );
 	                                        }
 
-		                                        if (!client) return null;
-		                                        const clientBadges = getClientBadges(client);
-		                                        const primaryClientBadge = clientBadges[0] ?? null;
+	                                        if (!client) return null;
+	                                        const clientBadges = getClientBadges(client);
+	                                        const serviceStatusBadge = clientBadges.find((b) => b.key === "service_status");
+	                                        const sortedClientBadges = serviceStatusBadge
+	                                            ? [serviceStatusBadge, ...clientBadges.filter((b) => b.key !== "service_status")]
+	                                            : clientBadges;
+	                                        const primaryClientBadge = serviceStatusBadge ?? clientBadges[0] ?? null;
 
-		                                        return (
-		                                            <AnimatedSlotListItemContent
-		                                                dataComponent="clients-list-item"
-		                                                icon={Users}
-		                                                iconContainerClassName={getClientBadgeAvatarClassName(primaryClientBadge)}
-		                                                title={client.name}
-		                                                subtitle={
-		                                                    <>
+	                                        return (
+	                                            <AnimatedSlotListItemContent
+	                                                dataComponent="clients-list-item"
+	                                                icon={Users}
+	                                                iconContainerClassName={getClientBadgeAvatarClassName(primaryClientBadge)}
+	                                                title={client.name}
+	                                                subtitle={
+	                                                    <>
 	                                                        {client.phone ? <span>{client.phone}</span> : null}
 	                                                        {client.address ? (
 	                                                            <span className="truncate">
@@ -1007,7 +1011,7 @@ export default function ClientsPage() {
 	                                                        ) : null}
 	                                                    </>
 	                                                }
-			                                                status={clientBadges.map((badge, badgeIndex) => (
+			                                                status={sortedClientBadges.map((badge, badgeIndex) => (
 			                                                    <StatusBadge
 			                                                        key={badge.key ?? `${badge.status}-${badge.label ?? badgeIndex}`}
 			                                                        status={badge.status}
@@ -1068,30 +1072,17 @@ export default function ClientsPage() {
                                     data-component="clients-detail-avatar"
                                     className={cn(
                                         "w-16 h-16 rounded-[20px] flex items-center justify-center shadow-lg shrink-0",
-                                        getClientBadgeAvatarClassName(activeSelectedClientBadges[0])
+                                        getClientBadgeAvatarClassName(activeSelectedClientBadges.find(b => b.key === "service_status") ?? activeSelectedClientBadges[0])
                                     )}
                                 >
                                     <Users className="w-7 h-7 shrink-0 transition-colors text-current" aria-hidden="true" />
                                 </div>
                             }
                             title={activeSelectedClient.name}
-                            badgesLeft={
-                                <>
-                                    {activeSelectedClientBadges
-                                        .filter((badge) => badge.key === "service_status")
-                                        .map((badge) => (
-                                            <StatusBadge
-                                                key={badge.key}
-                                                status={badge.status}
-                                                label={badge.label}
-                                            />
-                                        ))}
-                                </>
-                            }
                             badges={
                                 <>
                                     {activeSelectedClientBadges
-                                        .filter((badge) => badge.key !== "service_status" && badge.key !== "breast_pump")
+                                        .filter((badge) => badge.key !== "breast_pump")
                                         .map((badge) => (
                                             <StatusBadge
                                                 key={badge.key}

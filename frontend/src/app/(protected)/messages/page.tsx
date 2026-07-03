@@ -178,6 +178,12 @@ function getMessageHistoryListStatusMeta(status: MessageHistoryRecord["status"])
     : { label: "실패", variant: "danger" as const };
 }
 
+function getMessageHistoryAvatarClassName(status: MessageHistoryRecord["status"]): string {
+  return status === "sent"
+    ? "border border-[hsl(137,34%,84%)] bg-[hsl(137,60%,94%)] text-v3-green"
+    : "border border-[hsla(355,36%,45%,0.20)] bg-[hsl(355,40%,94%)] text-[hsl(355,36%,45%)]";
+}
+
 type MessageHistoryRelativeDateFilter = "all" | "1d" | "7d" | "30d";
 type ScheduledPreviewFilter = "all" | "customer" | "staff";
 type TemplateDetailTab = "details" | "preview";
@@ -1442,7 +1448,7 @@ function MessageHistorySection() {
                   <AnimatedSlotListItemContent
                     dataComponent="messages-history-list-item"
                     icon={ItemIcon}
-                    iconContainerClassName="text-v3-primary"
+                    iconContainerClassName={getMessageHistoryAvatarClassName(record.status)}
                     title={record.title}
                     subtitle={record.recipientListLabel}
                     status={
