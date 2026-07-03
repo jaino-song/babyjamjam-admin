@@ -47,6 +47,13 @@ const LINK_STATUS_META: Record<ServiceRecordLinkStatus, { label: string; tone: L
     canceled: { label: "발송 취소", tone: "gray" },
 };
 
+const LINK_STATUS_TEXT_CLASS: Record<LinkBadgeTone, string> = {
+    gray: "info-row-value-muted",
+    blue: "info-row-value-primary",
+    green: "info-row-value-green",
+    burgundy: "info-row-value-burgundy",
+};
+
 export function ClientServiceRecords({
     client,
     activeTab,
@@ -180,7 +187,7 @@ function LinkCard({
         <InfoCard title="제공기록지 작성 링크" delay={delay}>
             <InfoRow
                 label="상태"
-                value={<span className={`badge-mini ${statusMeta.tone}`}>{statusMeta.label}</span>}
+                value={<span className={LINK_STATUS_TEXT_CLASS[statusMeta.tone]}>{statusMeta.label}</span>}
             />
             <InfoRow
                 label="제공인력"
@@ -704,10 +711,7 @@ function ServiceRecordsSkeleton() {
         <div className="detail-column" data-component="mobile-clients-service-records-skeleton" aria-hidden>
             <div className="info-card pop-up">
                 <div className="info-card-title">제공기록지 작성 링크</div>
-                <div className="info-row">
-                    <span className="info-row-label">상태</span>
-                    <Skeleton className="ml-auto h-6 w-16 rounded-full" />
-                </div>
+                <SkeletonInfoRow label="상태" valueClassName="w-14" />
                 <SkeletonInfoRow label="제공인력" valueClassName="w-36" />
                 <SkeletonInfoRow label="최근 발송" valueClassName="w-28" />
                 <SkeletonInfoRow label="발송 이력" valueClassName="w-10" />
