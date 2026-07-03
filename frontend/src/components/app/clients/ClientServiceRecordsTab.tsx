@@ -204,7 +204,7 @@ function LinkStatusCard({
             dataComponent="clients-detail-service-records-link-card"
             icon={<Link2 className="h-[calc(17px*var(--v3-ui-scale,1))] w-[calc(17px*var(--v3-ui-scale,1))]" />}
             title="제공기록지 작성 링크"
-            subtitle={`${employee.name} · ${formatPhone(employee.phone)} · 알림톡 발송`}
+            subtitle={`${employee.name} · ${formatPhone(employee.phone)} · 문자메시지 발송`}
             right={<StatusPill variant={statusMeta.variant}>{statusMeta.label}</StatusPill>}
         >
             <div className="grid grid-cols-2 gap-x-[calc(24px*var(--v3-ui-scale,1))] gap-y-[calc(6px*var(--v3-ui-scale,1))] border-t border-dashed border-v3-border pt-[calc(12px*var(--v3-ui-scale,1))] max-sm:grid-cols-1">
@@ -290,7 +290,7 @@ function ServiceHeaderCard({ assignment }: { assignment: ServiceRecordAssignment
             dataComponent="clients-detail-service-records-header-card"
             icon={<Baby className="h-[calc(17px*var(--v3-ui-scale,1))] w-[calc(17px*var(--v3-ui-scale,1))]" />}
             title="서비스 기본정보"
-            subtitle={header ? `${formatDateTimeKo(header.createdAt)} 작성` : "제공인력이 최초 접속 시 1회 작성"}
+            subtitle={header ? `${formatDateTimeKo(header.createdAt)} 작성` : "산모 및 신생아 정보"}
             right={<StatusPill variant={header ? "success" : "neutral"}>{header ? "작성 완료" : "작성 전"}</StatusPill>}
         >
             {header ? (
@@ -327,7 +327,7 @@ function ServiceSessionsCard({ assignment }: { assignment: ServiceRecordAssignme
             title="회차별 제공기록"
             subtitle={assignment.sessions.length > 0
                 ? "계약 회차를 누르면 기록 상세가 열립니다"
-                : `계약 회차 ${assignment.totalSessions}회 · 예정일은 주중 기준 자동 계산`}
+                : `계약 회차 ${assignment.totalSessions}회`}
             right={
                 <span className="text-[calc(12px*var(--v3-ui-scale,1))] font-semibold text-v3-text-muted">
                     <b className="text-v3-primary">{lockedCount}</b>/{totalSessions} 제출완료
@@ -351,11 +351,6 @@ function ServiceSessionsCard({ assignment }: { assignment: ServiceRecordAssignme
                     />
                 ))}
             </div>
-            {assignment.sessions.length === 0 && (
-                <p className="mt-[calc(12px*var(--v3-ui-scale,1))] text-center text-[calc(11.5px*var(--v3-ui-scale,1))] leading-6 text-v3-text-muted">
-                    제공인력이 링크 접속 후 작성하면 회차별 기록이 이곳에 표시됩니다.
-                </p>
-            )}
         </ServiceRecordCard>
     );
 }

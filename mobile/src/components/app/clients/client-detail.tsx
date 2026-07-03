@@ -5,6 +5,7 @@ import { CircleAlert, FileCheck2, MessageCircle, MoreVertical, SquarePen, Trash2
 
 import { Client } from "@/lib/client/types";
 import { EformsignDocument } from "@/lib/eformsign/types";
+import { useClientServiceRecords } from "@/hooks/useServiceRecords";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,6 +22,7 @@ import {
   MobileDetailTabPanel,
 } from "@/components/app/mobile-redesign/detail-sheet";
 import { ClientMessageHistoryDetail } from "@/components/app/clients/client-message-history-detail";
+import { ClientServiceRecords } from "@/components/app/clients/client-service-records";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -407,7 +409,7 @@ export function shouldShowMissingContractBadge(client: Client): boolean {
   return client.serviceStatus === "active" && client.documentStatus !== "completed";
 }
 
-export type DetailTabId = "basic" | "contracts" | "alimtalk";
+export type DetailTabId = "basic" | "contracts" | "alimtalk" | "serviceRecords";
 
 export interface ClientNotificationLogRecord {
   id: number;
@@ -599,6 +601,9 @@ export function ClientDetailContent({
   const detailKey = `${activeTab}:${client.id}`;
   const [selectedEntry, setSelectedEntry] = useState<{ key: string; log: ClientNotificationLogRecord } | null>(null);
   const selectedLog = selectedEntry && selectedEntry.key === detailKey ? selectedEntry.log : null;
+  const serviceRecordsQuery = useClientServiceRecords(client.id, {
+    enabled: activeTab === "serviceRecords",
+  });
 
   const group = GROUPS.find((g) => g.match(client)) ?? GROUPS[1];
   const featureLabel = clientFeatureLabel(client);
@@ -1028,6 +1033,7 @@ export function ClientDetailContent({
           { id: "basic", label: "기본 정보" },
           { id: "contracts", label: "계약서 정보" },
           { id: "alimtalk", label: "알림 발송" },
+          { id: "serviceRecords", label: "제공기록지" },
         ]}
         activeTab={activeTab}
         onTabChange={(id) => onTabChange(id as DetailTabId)}
@@ -1148,6 +1154,21 @@ export function ClientDetailContent({
             )}
           </InfoCard>
         )}
+      </MobileDetailTabPanel>
+
+      <MobileDetailTabPanel
+        name="clients"
+        tabId="serviceRecords"
+        activeTab={activeTab}
+        dataComponent="mobile-clients-service-records-tab"
+      >
+        <ClientServiceRecords
+          client={client}
+          activeTab={activeTab}
+          overview={serviceRecordsQuery.data}
+          isLoading={serviceRecordsQuery.isLoading}
+          isError={serviceRecordsQuery.isError}
+        />
       </MobileDetailTabPanel>
     </MobileDetailPage>
   );

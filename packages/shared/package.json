@@ -12,7 +12,9 @@
         "./types/alimtalk": "./src/types/alimtalk.ts",
         "./types/eformsign": "./src/types/eformsign.ts",
         "./types/message": "./src/types/message.ts",
+        "./types/service-record": "./src/types/service-record.ts",
         "./types/system-template": "./src/types/system-template.ts",
+        "./constants/service-record-form-layout": "./src/constants/service-record-form-layout.ts",
         "./utils": "./src/utils/index.ts",
         "./eslint-plugin": "./eslint-plugin/index.mjs"
     },
