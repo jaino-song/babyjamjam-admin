@@ -38,8 +38,8 @@ import {
     prioritizeClientBadges,
 } from "@/lib/client/badges";
 import { useToast } from "@/hooks/use-toast";
-import { useAlimtalkHistory } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
-import type { AlimtalkHistoryRecord } from "@/features/alimtalk-triggers/types";
+import { useMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
+import type { MessageLogRecord } from "@/features/message-triggers/types";
 import {
     getMessageHistoryTimestamp,
     MessageHistoryDetailPanel,
@@ -203,7 +203,7 @@ const filterValueToStatus = (filter: string): ServiceStatus | null => {
     }
 };
 
-function getClientMessageHistoryTime(record: AlimtalkHistoryRecord) {
+function getClientMessageHistoryTime(record: MessageLogRecord) {
     const timestamp = getMessageHistoryTimestamp(record);
     const time = new Date(timestamp).getTime();
     return Number.isNaN(time) ? 0 : time;
@@ -218,13 +218,13 @@ function ClientMessageHistoryList({
     selectedRecordId,
     onSelectRecord,
 }: {
-    records: AlimtalkHistoryRecord[];
+    records: MessageLogRecord[];
     canLookupMessages: boolean;
     isError: boolean;
     isLoading: boolean;
     clientName: string;
     selectedRecordId: number | null;
-    onSelectRecord: (record: AlimtalkHistoryRecord) => void;
+    onSelectRecord: (record: MessageLogRecord) => void;
 }) {
     if (!canLookupMessages) {
         return (
@@ -279,7 +279,7 @@ function ClientMessageHistoryList({
 
     return (
         <div data-component="clients-detail-messages-list">
-            <AnimatedSlotList<AlimtalkHistoryRecord>
+            <AnimatedSlotList<MessageLogRecord>
                 items={records}
                 isLoading={false}
                 itemVariant="card"
@@ -541,7 +541,7 @@ export default function ClientsPage() {
         data: messageHistoryData = [],
         isLoading: isMessageHistoryLoading,
         isError: isMessageHistoryError,
-    } = useAlimtalkHistory(CLIENT_MESSAGE_HISTORY_LIMIT);
+    } = useMessageHistory(CLIENT_MESSAGE_HISTORY_LIMIT);
 
     const { data: clientFromParam } = useClient(
         clientIdParam ? Number(clientIdParam) : 0
@@ -690,7 +690,7 @@ export default function ClientsPage() {
         setSelectedMessageHistoryId(null);
     };
 
-    const handleSelectClientMessageHistoryRecord = (record: AlimtalkHistoryRecord) => {
+    const handleSelectClientMessageHistoryRecord = (record: MessageLogRecord) => {
         if (clearMessageHistorySelectionTimeoutRef.current) {
             clearTimeout(clearMessageHistorySelectionTimeoutRef.current);
             clearMessageHistorySelectionTimeoutRef.current = null;

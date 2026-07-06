@@ -21,14 +21,14 @@ import {
   SplitLayout,
 } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useUpcomingAlimtalkJobs } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
-import { isUpcomingJobInChannel } from "@/features/alimtalk-triggers/channel";
+import { useUpcomingMessageTriggerJobs } from "@/features/message-triggers/hooks/use-message-triggers";
+import { isUpcomingJobInChannel } from "@/features/message-triggers/channel";
 import type {
   TriggerEventType,
   TriggerRecipientType,
   TriggerTemplateKey,
-  UpcomingAlimtalkJob,
-} from "@/features/alimtalk-triggers/types";
+  UpcomingMessageTriggerJob,
+} from "@/features/message-triggers/types";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 
@@ -132,7 +132,7 @@ function getRecipientBadge(recipientType: TriggerRecipientType) {
   return recipientType === "CLIENT" ? "고객" : "직원";
 }
 
-function matchesJobSearch(job: UpcomingAlimtalkJob, query: string) {
+function matchesJobSearch(job: UpcomingMessageTriggerJob, query: string) {
   const trimmedQuery = query.trim();
   if (!trimmedQuery) return true;
 
@@ -211,14 +211,14 @@ function UpcomingDetailEmpty({
   );
 }
 
-export function UpcomingAlimtalkManager() {
+export function UpcomingMessageTriggerManager() {
   const [listFilter, setListFilter] = useState<UpcomingListFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const [selectedJobId, setSelectedJobId] = useState<UpcomingJobSelection>(null);
   const isMobile = useIsMobile();
 
-  const { data: upcomingJobs = [], isLoading } = useUpcomingAlimtalkJobs();
+  const { data: upcomingJobs = [], isLoading } = useUpcomingMessageTriggerJobs();
   const alimtalkUpcomingJobs = useMemo(
     () => upcomingJobs.filter((job) => isUpcomingJobInChannel(job, "alimtalk")),
     [upcomingJobs],
@@ -300,7 +300,7 @@ export function UpcomingAlimtalkManager() {
         >
           {isLoading || filteredJobs.length > 0 ? (
             <div data-component="alimtalk-upcoming-list" className="space-y-3 pb-2">
-              <AnimatedSlotList<UpcomingAlimtalkJob>
+              <AnimatedSlotList<UpcomingMessageTriggerJob>
                 items={filteredJobs}
                 isLoading={isLoading}
                 loadingCount={5}

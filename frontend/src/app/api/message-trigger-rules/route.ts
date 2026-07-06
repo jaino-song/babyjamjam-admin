@@ -16,14 +16,14 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const response = await serverAPIClient.get("/alimtalk-trigger-rules", {
+    const response = await serverAPIClient.get("/message-trigger-rules", {
       headers: getAuthHeaders(token),
     });
     return NextResponse.json(response.data);
   } catch (error) {
-    console.error("[API] Error fetching alimtalk trigger rules:", error);
+    console.error("[API] Error fetching message trigger rules:", error);
     return NextResponse.json(
-      { error: "Failed to fetch alimtalk trigger rules" },
+      { error: "Failed to fetch message trigger rules" },
       { status: 500 },
     );
   }
@@ -37,14 +37,14 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const response = await serverAPIClient.post("/alimtalk-trigger-rules", body, {
+    const response = await serverAPIClient.post("/message-trigger-rules", body, {
       headers: getAuthHeaders(token),
     });
     return NextResponse.json(response.data, { status: 201 });
   } catch (error) {
-    console.error("[API] Error creating alimtalk trigger rule:", error);
+    console.error("[API] Error creating message trigger rule:", error);
     return NextResponse.json(
-      { error: "Failed to create alimtalk trigger rule" },
+      { error: "Failed to create message trigger rule" },
       { status: 500 },
     );
   }

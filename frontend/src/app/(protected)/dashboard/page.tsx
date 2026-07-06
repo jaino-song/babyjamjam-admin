@@ -8,9 +8,9 @@ import {
   useDashboardOverview,
 } from "@/hooks/useDashboardStats";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useAlimtalkHistory } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
-import { isSmsHistoryRecord } from "@/features/alimtalk-triggers/channel";
-import type { AlimtalkHistoryRecord } from "@/features/alimtalk-triggers/types";
+import { useMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
+import { isSmsHistoryRecord } from "@/features/message-triggers/channel";
+import type { MessageLogRecord } from "@/features/message-triggers/types";
 import { Client } from "@/lib/client/types";
 import {
   getClientBadgeAvatarClassName,
@@ -110,7 +110,7 @@ function isToday(dateStr: string): boolean {
   return target.getTime() === today.getTime();
 }
 
-function getDashboardMessageHistoryTime(record: AlimtalkHistoryRecord) {
+function getDashboardMessageHistoryTime(record: MessageLogRecord) {
   const timestamp = getMessageHistoryTimestamp(record);
   const time = new Date(timestamp).getTime();
   return Number.isNaN(time) ? 0 : time;
@@ -122,7 +122,7 @@ function DashboardSmsHistoryList({
   isLoading,
   clientName,
 }: {
-  records: AlimtalkHistoryRecord[];
+  records: MessageLogRecord[];
   isError: boolean;
   isLoading: boolean;
   clientName: string;
@@ -170,7 +170,7 @@ function DashboardSmsHistoryList({
 
   return (
     <div data-component="dashboard-detail-sms-list">
-      <AnimatedSlotList<AlimtalkHistoryRecord>
+      <AnimatedSlotList<MessageLogRecord>
         items={records}
         isLoading={false}
         itemVariant="card"
@@ -237,7 +237,7 @@ export default function DashboardPage() {
     data: messageHistoryRecords = [],
     isLoading: isMessageHistoryLoading,
     isError: isMessageHistoryError,
-  } = useAlimtalkHistory(DASHBOARD_MESSAGE_HISTORY_LIMIT);
+  } = useMessageHistory(DASHBOARD_MESSAGE_HISTORY_LIMIT);
   const user = useInitialUser();
   const locale = useLocale();
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);

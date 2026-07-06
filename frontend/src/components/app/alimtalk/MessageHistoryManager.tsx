@@ -25,19 +25,19 @@ import {
   useSplitLayoutSelection,
 } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useAlimtalkHistory } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
-import { isHistoryRecordInChannel } from "@/features/alimtalk-triggers/channel";
+import { useMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
+import { isHistoryRecordInChannel } from "@/features/message-triggers/channel";
 import type {
-  AlimtalkHistoryRecord,
-  AlimtalkHistoryStatus,
+  MessageLogRecord,
+  MessageLogStatus,
   TriggerEventType,
   TriggerRecipientType,
   TriggerTemplateKey,
-} from "@/features/alimtalk-triggers/types";
+} from "@/features/message-triggers/types";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { cn } from "@/lib/utils";
 
-type HistoryListFilter = "all" | AlimtalkHistoryStatus;
+type HistoryListFilter = "all" | MessageLogStatus;
 
 const EVENT_META: Record<TriggerEventType, { label: string; icon: typeof Send }> = {
   CLIENT_CREATED: { label: "고객 등록", icon: UserPlus },
@@ -82,7 +82,7 @@ const VARIABLE_LABELS: Record<string, string> = {
   timingText: "발송 문구",
 };
 
-const STATUS_META: Record<AlimtalkHistoryStatus, { label: string; icon: typeof CheckCircle2; tone: string }> = {
+const STATUS_META: Record<MessageLogStatus, { label: string; icon: typeof CheckCircle2; tone: string }> = {
   sent: {
     label: "발송 성공",
     icon: CheckCircle2,
@@ -193,19 +193,19 @@ function getTemplateLabel(templateKey: string) {
   return SMS_LOG_TEMPLATE_LABELS[templateKey] ?? TEMPLATE_LABELS[templateKey as TriggerTemplateKey] ?? templateKey;
 }
 
-function getStatusMeta(status: AlimtalkHistoryStatus) {
+function getStatusMeta(status: MessageLogStatus) {
   return STATUS_META[status] ?? STATUS_META.failed;
 }
 
-function getRecordTitle(record: AlimtalkHistoryRecord) {
+function getRecordTitle(record: MessageLogRecord) {
   return record.ruleName ?? getTemplateLabel(record.templateKey);
 }
 
-function getRecordTimestamp(record: AlimtalkHistoryRecord) {
+function getRecordTimestamp(record: MessageLogRecord) {
   return record.lastAttemptAt ?? record.updatedAt ?? record.createdAt;
 }
 
-function matchesHistorySearch(record: AlimtalkHistoryRecord, query: string) {
+function matchesHistorySearch(record: MessageLogRecord, query: string) {
   const trimmedQuery = query.trim();
   if (!trimmedQuery) return true;
 
@@ -297,12 +297,12 @@ function HistoryDetailEmpty({
   );
 }
 
-export function AlimtalkHistoryManager() {
+export function MessageHistoryManager() {
   const [statusFilter, setStatusFilter] = useState<HistoryListFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const deferredSearchQuery = useDeferredValue(searchQuery);
 
-  const { data: historyRecords = [], isLoading } = useAlimtalkHistory();
+  const { data: historyRecords = [], isLoading } = useMessageHistory();
   const alimtalkHistoryRecords = useMemo(
     () => historyRecords.filter((record) => isHistoryRecordInChannel(record, "alimtalk")),
     [historyRecords],
@@ -376,7 +376,7 @@ export function AlimtalkHistoryManager() {
           }
         >
           {isLoading || filteredRecords.length > 0 ? (
-            <AnimatedSlotList<AlimtalkHistoryRecord>
+            <AnimatedSlotList<MessageLogRecord>
               items={filteredRecords}
               isLoading={isLoading}
               loadingCount={5}

@@ -15,21 +15,21 @@ import { useMessageTemplates } from "@/features/message-templates/hooks/use-mess
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import type { SystemTemplateKey } from "@/features/system-templates/types";
 import {
-  useAlimtalkHistory as useMessageDeliveryHistory,
-  useUpcomingAlimtalkJobs as useUpcomingMessageJobs,
-} from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
+  useMessageHistory,
+  useUpcomingMessageTriggerJobs,
+} from "@/features/message-triggers/hooks/use-message-triggers";
 import {
   isHistoryRecordInChannel,
   isUpcomingJobInChannel,
   SMS_TRIGGER_TO_SYSTEM_TEMPLATE,
-} from "@/features/alimtalk-triggers/channel";
+} from "@/features/message-triggers/channel";
 import { useAllClients } from "@/features/clients/hooks/use-clients";
 import { useToast } from "@/hooks/use-toast";
 import type {
   TriggerEventType,
   TriggerRecipientType,
-  UpcomingAlimtalkJob,
-} from "@/features/alimtalk-triggers/types";
+  UpcomingMessageTriggerJob,
+} from "@/features/message-triggers/types";
 import { messageDeliveryApi } from "@/services/api";
 import { CustomTemplateForm } from "@/components/app/messages/forms/custom-template-form";
 import {
@@ -442,7 +442,7 @@ function formatScheduledDetailDate(dateString: string) {
   });
 }
 
-function matchesScheduledJobQuery(job: UpcomingAlimtalkJob, query: string) {
+function matchesScheduledJobQuery(job: UpcomingMessageTriggerJob, query: string) {
   const trimmedQuery = query.trim();
   if (!trimmedQuery) return true;
 
@@ -465,18 +465,18 @@ function matchesScheduledJobQuery(job: UpcomingAlimtalkJob, query: string) {
   ].some((field) => field && matchesKoreanSearch(field, trimmedQuery));
 }
 
-type ScheduledJobPayloadWithMessageBody = UpcomingAlimtalkJob["payload"] & {
+type ScheduledJobPayloadWithMessageBody = UpcomingMessageTriggerJob["payload"] & {
   messageBody?: string | null;
 };
 
-function getScheduledJobPayloadMessageBody(job: UpcomingAlimtalkJob | null) {
+function getScheduledJobPayloadMessageBody(job: UpcomingMessageTriggerJob | null) {
   const payload = job?.payload as ScheduledJobPayloadWithMessageBody | undefined;
   const messageBody = payload?.messageBody;
 
   return typeof messageBody === "string" ? messageBody.trim() : "";
 }
 
-function getScheduledJobTemplateVariables(job: UpcomingAlimtalkJob) {
+function getScheduledJobTemplateVariables(job: UpcomingMessageTriggerJob) {
   return {
     name: job.payload.recipientName,
     clientName: job.payload.recipientName,
@@ -485,7 +485,7 @@ function getScheduledJobTemplateVariables(job: UpcomingAlimtalkJob) {
   };
 }
 
-function getScheduledJobFallbackMessage(job: UpcomingAlimtalkJob, variables: Record<string, string>) {
+function getScheduledJobFallbackMessage(job: UpcomingMessageTriggerJob, variables: Record<string, string>) {
   if (job.templateKey === "SERVICE_INFO") {
     return serviceInfoMsgTemplate({ name: variables.name?.trim() || "{{name}}" });
   }
@@ -493,7 +493,7 @@ function getScheduledJobFallbackMessage(job: UpcomingAlimtalkJob, variables: Rec
   return "예약 발송 메시지 본문을 불러올 수 없습니다.";
 }
 
-function buildScheduledJobMessageBody(job: UpcomingAlimtalkJob | null, systemTemplateContent?: string) {
+function buildScheduledJobMessageBody(job: UpcomingMessageTriggerJob | null, systemTemplateContent?: string) {
   if (!job) return "";
 
   const payloadMessageBody = getScheduledJobPayloadMessageBody(job);
@@ -530,7 +530,7 @@ function MessageScheduledSection() {
   const [scheduledDetailTab, setScheduledDetailTab] = useState<ScheduledDetailTab>("info");
   const [scheduledSearchValue, setScheduledSearchValue] = useState("");
   const deferredScheduledSearchValue = useDeferredValue(scheduledSearchValue);
-  const { data: upcomingJobs = [], isLoading } = useUpcomingMessageJobs();
+  const { data: upcomingJobs = [], isLoading } = useUpcomingMessageTriggerJobs();
   const smsUpcomingJobs = useMemo(
     () => upcomingJobs.filter((job) => isUpcomingJobInChannel(job, "sms")),
     [upcomingJobs],
@@ -615,7 +615,7 @@ function MessageScheduledSection() {
           ) : undefined}
         >
           <div data-component="messages-scheduled-list" className="space-y-3 pb-2">
-            <AnimatedSlotList<UpcomingAlimtalkJob>
+            <AnimatedSlotList<UpcomingMessageTriggerJob>
                 items={filteredJobs}
                 isLoading={isLoading}
                 loadingCount={5}
@@ -1259,7 +1259,7 @@ function MessageHistorySection() {
   const [dateMonth, setDateMonth] = useState("");
   const [isRetrying, setIsRetrying] = useState(false);
   const deferredSearchValue = useDeferredValue(searchValue);
-  const { data: historyData = [], isLoading, isError } = useMessageDeliveryHistory();
+  const { data: historyData = [], isLoading, isError } = useMessageHistory();
   const { data: clients = [] } = useAllClients();
   const { toast } = useToast();
   const smsHistoryData = useMemo(

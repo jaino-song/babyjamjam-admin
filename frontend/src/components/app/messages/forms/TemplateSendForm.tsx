@@ -14,9 +14,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { filterHistoryRecordsByChannel } from "@/features/alimtalk-triggers/channel";
-import { useAlimtalkHistory as useMessageDeliveryHistory } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
-import type { AlimtalkHistoryRecord } from "@/features/alimtalk-triggers/types";
+import { filterHistoryRecordsByChannel } from "@/features/message-triggers/channel";
+import { useMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
+import type { MessageLogRecord } from "@/features/message-triggers/types";
 import { messageDeliveryApi } from "@/services/api";
 import type { Client } from "@/lib/client/types";
 import {
@@ -53,7 +53,7 @@ interface RecipientQueueItem {
 
 interface DuplicateSendMatch {
   recipient: RecipientQueueItem;
-  record: AlimtalkHistoryRecord;
+  record: MessageLogRecord;
 }
 
 interface TemplateSendFormProps {
@@ -99,7 +99,7 @@ function normalizeDuplicateMessage(message: string) {
   return message.replace(/\r\n/g, "\n").trim();
 }
 
-function getHistoryTimestamp(record: AlimtalkHistoryRecord) {
+function getHistoryTimestamp(record: MessageLogRecord) {
   return record.lastAttemptAt ?? record.updatedAt ?? record.createdAt;
 }
 
@@ -117,7 +117,7 @@ export function formatDuplicateSentAt(dateString: string) {
 }
 
 export function findRecentDuplicateSend(
-  history: AlimtalkHistoryRecord[],
+  history: MessageLogRecord[],
   params: {
     receiver: string;
     message: string;
@@ -162,7 +162,7 @@ export function TemplateSendForm({
   const [feedback, setFeedback] = useState<{ tone: "success" | "error"; message: string } | null>(null);
   const [duplicateSendCandidates, setDuplicateSendCandidates] = useState<DuplicateSendMatch[] | null>(null);
   const [recipientQueue, setRecipientQueue] = useState<RecipientQueueItem[]>([]);
-  const { data: historyData = [], refetch: refetchHistory } = useMessageDeliveryHistory();
+  const { data: historyData = [], refetch: refetchHistory } = useMessageHistory();
   const {
     name,
     phone,
