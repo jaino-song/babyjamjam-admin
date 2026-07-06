@@ -149,7 +149,7 @@ function mockEmptyHistory() {
 /** Build a success response for sendSms. */
 function buildSendSuccess() {
   return {
-    provider: "aligo" as const,
+    provider: "aligo_sms" as const,
     triggerType: "immediate" as const,
     request: { receiver: "", msgType: "SMS" as const, testMode: false },
     result: { resultCode: 1, message: "success", errorCount: 0 },
@@ -159,7 +159,7 @@ function buildSendSuccess() {
 /** Build a failure response for sendSms (resultCode !== 1). */
 function buildSendFailure() {
   return {
-    provider: "aligo" as const,
+    provider: "aligo_sms" as const,
     triggerType: "immediate" as const,
     request: { receiver: "", msgType: "SMS" as const, testMode: false },
     result: { resultCode: 0, message: "failed", errorCount: 1 },

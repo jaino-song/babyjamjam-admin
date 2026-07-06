@@ -26,7 +26,7 @@ REST API server powering all client applications.
 | Language | TypeScript |
 | Database | PostgreSQL via Prisma ORM |
 | Auth | JWT + Kakao OAuth |
-| Notifications | Web Push (VAPID) + AlimTalk (Aligo/ChannelTalk) |
+| Notifications | Web Push (VAPID) + AlimTalk/SMS (Aligo) |
 | Package Manager | pnpm |
 
 ```bash

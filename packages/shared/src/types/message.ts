@@ -378,7 +378,7 @@ export interface SendMessageDeliverySmsRequest {
 }
 
 export interface SendMessageDeliverySmsResponse {
-  provider: "aligo";
+  provider: "aligo_sms";
   triggerType: MessageDeliveryTriggerType;
   request: {
     senderPhone?: string;

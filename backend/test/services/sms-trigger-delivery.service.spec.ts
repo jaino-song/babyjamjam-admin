@@ -16,7 +16,7 @@ import { IMessageLogRepository } from "domain/repositories/message-log.repositor
 // Canonical SMS template set lives in the shared package (frontend/mobile source of truth).
 // The backend duplicates the trigger enums by design, so this drift guard is the only place
 // that ties the backend SMS delivery routing back to that single source.
-import { SMS_TRIGGER_TEMPLATE_KEYS } from "../../../packages/shared/src/types/alimtalk";
+import { SMS_TRIGGER_TEMPLATE_KEYS } from "../../../packages/shared/src/types/message";
 
 describe("SmsTriggerDeliveryService", () => {
     const branchId = "branch-1";
