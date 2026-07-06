@@ -9,7 +9,7 @@ import {
     UpdateEmployeeScheduleUsecase,
 } from "application/usecases/employee-schedule";
 import { EmployeeScheduleEntity } from "domain/entities/employee-schedule.entity";
-import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
+import { MessageTriggerService } from "./message-trigger.service";
 import { EmployeeFeedbackLinkService } from "./employee-feedback-link.service";
 
 @Injectable()
@@ -22,7 +22,7 @@ export class EmployeeScheduleService {
         private readonly listEmployeeSchedulesBySecondaryEmployeeIdUsecase: ListEmployeeSchedulesBySecondaryEmployeeIdUsecase,
         private readonly updateEmployeeScheduleUsecase: UpdateEmployeeScheduleUsecase,
         private readonly deleteEmployeeScheduleUsecase: DeleteEmployeeScheduleUsecase,
-        @Optional() private readonly triggerService?: AlimtalkTriggerService,
+        @Optional() private readonly triggerService?: MessageTriggerService,
         @Optional() private readonly employeeFeedbackLinkService?: EmployeeFeedbackLinkService,
     ) {}
 

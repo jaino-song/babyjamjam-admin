@@ -1,28 +1,28 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { IAlimtalkTriggerRuleRepository } from "domain/repositories/alimtalk-trigger-rule.repository.interface";
-import { AlimtalkTriggerRuleEntity } from "domain/entities/alimtalk-trigger-rule.entity";
+import { IMessageTriggerRuleRepository } from "domain/repositories/message-trigger-rule.repository.interface";
+import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import {
-    AlimtalkTriggerEventType,
-    AlimtalkTriggerOffsetType,
-    AlimtalkTriggerRecipientType,
-    AlimtalkTriggerTemplateKey,
-} from "domain/constants/alimtalk-trigger-catalog";
+    MessageTriggerEventType,
+    MessageTriggerOffsetType,
+    MessageTriggerRecipientType,
+    MessageTriggerTemplateKey,
+} from "domain/constants/message-trigger-catalog";
 
 @Injectable()
-export class SbAlimtalkTriggerRuleRepository implements IAlimtalkTriggerRuleRepository {
+export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleRepository {
     constructor(private readonly prisma: PrismaService) {}
 
-    async findAll(branchId: string): Promise<AlimtalkTriggerRuleEntity[]> {
-        const rows = await this.prisma.alimtalk_trigger_rule.findMany({
+    async findAll(branchId: string): Promise<MessageTriggerRuleEntity[]> {
+        const rows = await this.prisma.message_trigger_rule.findMany({
             where: { branchId },
             orderBy: { createdAt: "desc" },
         });
         return rows.map((row) => this.toDomain(row));
     }
 
-    async findById(branchId: string, id: string): Promise<AlimtalkTriggerRuleEntity | null> {
-        const row = await this.prisma.alimtalk_trigger_rule.findFirst({
+    async findById(branchId: string, id: string): Promise<MessageTriggerRuleEntity | null> {
+        const row = await this.prisma.message_trigger_rule.findFirst({
             where: { id, branchId },
         });
         return row ? this.toDomain(row) : null;
@@ -30,9 +30,9 @@ export class SbAlimtalkTriggerRuleRepository implements IAlimtalkTriggerRuleRepo
 
     async findActiveByEventTypes(
         branchId: string,
-        eventTypes: AlimtalkTriggerEventType[],
-    ): Promise<AlimtalkTriggerRuleEntity[]> {
-        const rows = await this.prisma.alimtalk_trigger_rule.findMany({
+        eventTypes: MessageTriggerEventType[],
+    ): Promise<MessageTriggerRuleEntity[]> {
+        const rows = await this.prisma.message_trigger_rule.findMany({
             where: {
                 branchId,
                 isActive: true,
@@ -45,9 +45,9 @@ export class SbAlimtalkTriggerRuleRepository implements IAlimtalkTriggerRuleRepo
 
     async create(
         branchId: string,
-        rule: AlimtalkTriggerRuleEntity,
-    ): Promise<AlimtalkTriggerRuleEntity> {
-        const row = await this.prisma.alimtalk_trigger_rule.create({
+        rule: MessageTriggerRuleEntity,
+    ): Promise<MessageTriggerRuleEntity> {
+        const row = await this.prisma.message_trigger_rule.create({
             data: {
                 branchId,
                 name: rule.name,
@@ -64,9 +64,9 @@ export class SbAlimtalkTriggerRuleRepository implements IAlimtalkTriggerRuleRepo
 
     async update(
         branchId: string,
-        rule: AlimtalkTriggerRuleEntity,
-    ): Promise<AlimtalkTriggerRuleEntity> {
-        const row = await this.prisma.alimtalk_trigger_rule.update({
+        rule: MessageTriggerRuleEntity,
+    ): Promise<MessageTriggerRuleEntity> {
+        const row = await this.prisma.message_trigger_rule.update({
             where: { id: rule.id },
             data: {
                 branchId,
@@ -83,7 +83,7 @@ export class SbAlimtalkTriggerRuleRepository implements IAlimtalkTriggerRuleRepo
     }
 
     async delete(branchId: string, id: string): Promise<void> {
-        await this.prisma.alimtalk_trigger_rule.deleteMany({
+        await this.prisma.message_trigger_rule.deleteMany({
             where: { id, branchId },
         });
     }
@@ -100,17 +100,17 @@ export class SbAlimtalkTriggerRuleRepository implements IAlimtalkTriggerRuleRepo
         templateKey: string;
         createdAt: Date;
         updatedAt: Date;
-    }): AlimtalkTriggerRuleEntity {
-        return AlimtalkTriggerRuleEntity.reconstitute(
+    }): MessageTriggerRuleEntity {
+        return MessageTriggerRuleEntity.reconstitute(
             row.id,
             row.branchId,
             row.name,
             row.isActive,
-            row.eventType as AlimtalkTriggerEventType,
-            row.offsetType as AlimtalkTriggerOffsetType,
+            row.eventType as MessageTriggerEventType,
+            row.offsetType as MessageTriggerOffsetType,
             row.offsetDays,
-            row.recipientType as AlimtalkTriggerRecipientType,
-            row.templateKey as AlimtalkTriggerTemplateKey,
+            row.recipientType as MessageTriggerRecipientType,
+            row.templateKey as MessageTriggerTemplateKey,
             row.createdAt,
             row.updatedAt,
         );

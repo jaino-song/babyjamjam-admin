@@ -2,14 +2,14 @@ import { AlimtalkTriggerDeliveryService } from "application/services/alimtalk-tr
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SystemSettingService } from "application/services/system-setting.service";
 import {
-    AlimtalkTriggerRecipientType,
-    AlimtalkTriggerTemplateKey,
-} from "domain/constants/alimtalk-trigger-catalog";
-import { AlimtalkTriggerJobEntity } from "domain/entities/alimtalk-trigger-job.entity";
+    MessageTriggerRecipientType,
+    MessageTriggerTemplateKey,
+} from "domain/constants/message-trigger-catalog";
+import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 
 describe("AlimtalkTriggerDeliveryService", () => {
-    const createJob = (templateKey: AlimtalkTriggerTemplateKey) =>
-        AlimtalkTriggerJobEntity.reconstitute(
+    const createJob = (templateKey: MessageTriggerTemplateKey) =>
+        MessageTriggerJobEntity.reconstitute(
             `job-${templateKey}`,
             "branch-1",
             "rule-1",
@@ -20,7 +20,7 @@ describe("AlimtalkTriggerDeliveryService", () => {
             null,
             7,
             null,
-            AlimtalkTriggerRecipientType.CLIENT,
+            MessageTriggerRecipientType.CLIENT,
             "010-1234-5678",
             templateKey,
             `rule-1:${templateKey}:7`,
@@ -51,7 +51,7 @@ describe("AlimtalkTriggerDeliveryService", () => {
             sendAligoAlimtalkUsecase as never,
         );
 
-        await expect(service.sendJob(createJob(AlimtalkTriggerTemplateKey.CLIENT_WELCOME))).resolves.toBe(true);
+        await expect(service.sendJob(createJob(MessageTriggerTemplateKey.CLIENT_WELCOME))).resolves.toBe(true);
 
         expect(messageSenderApprovalService.ensureApproved).toHaveBeenCalledWith("branch-1");
         expect(sendAligoAlimtalkUsecase.execute).toHaveBeenCalledWith(expect.objectContaining({

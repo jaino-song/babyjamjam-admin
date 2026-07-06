@@ -1,7 +1,7 @@
 import { Injectable, Logger, Optional } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
+import { MessageTriggerService } from "./message-trigger.service";
 import { SchedulerExecutionGuard } from "./scheduler-execution.guard";
 import {
     isTransientPrismaConnectivityError,
@@ -34,7 +34,7 @@ export class ClientDueDateSchedulerService {
 
     constructor(
         private readonly prisma: PrismaService,
-        @Optional() private readonly triggerService?: AlimtalkTriggerService,
+        @Optional() private readonly triggerService?: MessageTriggerService,
     ) {}
 
     @Cron("0 * * * *", { timeZone: KOREA_TIME_ZONE })

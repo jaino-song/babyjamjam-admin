@@ -70,7 +70,7 @@ describe("AligoService", () => {
                     templateKey: "CONTRACT_SIGNED",
                     // Regression: omitting branchId/clientId orphans the
                     // message_log row — invisible to the tenant-scoped
-                    // GET /alimtalk-logs history.
+                    // GET /message-logs history.
                     branchId: "branch-1",
                     clientId: 1,
                     variables: expect.objectContaining({

@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
-import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
+import { MessageTriggerService } from "./message-trigger.service";
 import { SchedulerExecutionGuard } from "./scheduler-execution.guard";
 import {
     isTransientPrismaConnectivityError,
@@ -11,8 +11,8 @@ const MAX_RUN_MS = 15 * 60 * 1000;
 const DB_COOLDOWN_MS = 5 * 60 * 1000;
 
 @Injectable()
-export class AlimtalkTriggerSchedulerService {
-    private readonly logger = new Logger(AlimtalkTriggerSchedulerService.name);
+export class MessageTriggerSchedulerService {
+    private readonly logger = new Logger(MessageTriggerSchedulerService.name);
     private readonly executionGuard = new SchedulerExecutionGuard({
         logger: this.logger,
         runningWarning: "[Scheduler] Previous due-job dispatch is still running; skipping tick",
@@ -22,7 +22,7 @@ export class AlimtalkTriggerSchedulerService {
         cooldownMs: DB_COOLDOWN_MS,
     });
 
-    constructor(private readonly triggerService: AlimtalkTriggerService) {}
+    constructor(private readonly triggerService: MessageTriggerService) {}
 
     @Cron("*/1 * * * *", { timeZone: "Asia/Seoul" })
     async dispatchDueJobs(): Promise<void> {

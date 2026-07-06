@@ -28,7 +28,7 @@ type ScheduleForOverview = Prisma.employee_scheduleGetPayload<{
     };
 }>;
 
-type FeedbackLinkJob = Prisma.alimtalk_trigger_jobGetPayload<{}>;
+type FeedbackLinkJob = Prisma.message_trigger_jobGetPayload<{}>;
 type FeedbackLinkLog = Prisma.message_logGetPayload<{}>;
 
 @Injectable()
@@ -56,7 +56,7 @@ export class AdminServiceRecordService {
         }
 
         const scheduleIds = schedules.map((schedule) => schedule.id);
-        const jobs = await this.prisma.alimtalk_trigger_job.findMany({
+        const jobs = await this.prisma.message_trigger_job.findMany({
             where: {
                 branchId,
                 employeeScheduleId: { in: scheduleIds },

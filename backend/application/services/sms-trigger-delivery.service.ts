@@ -4,14 +4,14 @@ import { MessageSenderApprovalService } from "application/services/message-sende
 import { SystemTemplateService } from "application/services/system-template.service";
 import { SendAligoSmsResult } from "application/dto/aligo/send-sms.dto";
 import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey } from "domain/constants/system-template-registry";
-import { AlimtalkTriggerTemplateKey } from "domain/constants/alimtalk-trigger-catalog";
+import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import {
     SERVICE_FEEDBACK_LINK_SMS_AUTOMATION_KEY,
     SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
     SERVICE_FEEDBACK_LINK_SMS_TITLE,
     SERVICE_FEEDBACK_LINK_SMS_TRIGGER_TYPE,
 } from "domain/constants/service-feedback-link-message";
-import { AlimtalkTriggerJobEntity } from "domain/entities/alimtalk-trigger-job.entity";
+import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import {
     MessageLogEntity,
     MessageLogStatus,
@@ -31,57 +31,57 @@ interface SmsTemplateDeliveryConfig {
     usePayloadMessage?: boolean;
 }
 
-export const SMS_TEMPLATE_DELIVERY: Partial<Record<AlimtalkTriggerTemplateKey, SmsTemplateDeliveryConfig>> = {
-    [AlimtalkTriggerTemplateKey.SERVICE_INFO]: {
+export const SMS_TEMPLATE_DELIVERY: Partial<Record<MessageTriggerTemplateKey, SmsTemplateDeliveryConfig>> = {
+    [MessageTriggerTemplateKey.SERVICE_INFO]: {
         smsLogTemplateKey: "service_info_sms",
         automationKey: "SERVICE_INFO_SMS",
         triggerType: "service_start_before_7_days",
         title: "서비스 안내",
         systemTemplateKey: SystemTemplateKey.SERVICE_INFO,
     },
-    [AlimtalkTriggerTemplateKey.CLIENT_GREETING]: {
+    [MessageTriggerTemplateKey.CLIENT_GREETING]: {
         smsLogTemplateKey: "client_greeting_sms",
         automationKey: "CLIENT_GREETING_SMS",
         triggerType: "client_created",
         title: "인사 메시지",
         systemTemplateKey: SystemTemplateKey.GREETING,
     },
-    [AlimtalkTriggerTemplateKey.PRICE_INFO]: {
+    [MessageTriggerTemplateKey.PRICE_INFO]: {
         smsLogTemplateKey: "price_info_sms",
         automationKey: "PRICE_INFO_SMS",
         triggerType: "price_info",
         title: "비용 안내",
         systemTemplateKey: SystemTemplateKey.PRICE_INFO,
     },
-    [AlimtalkTriggerTemplateKey.REMINDER]: {
+    [MessageTriggerTemplateKey.REMINDER]: {
         smsLogTemplateKey: "reminder_sms",
         automationKey: "REMINDER_SMS",
         triggerType: "reminder",
         title: "리마인드",
         systemTemplateKey: SystemTemplateKey.REMINDER,
     },
-    [AlimtalkTriggerTemplateKey.THANKS]: {
+    [MessageTriggerTemplateKey.THANKS]: {
         smsLogTemplateKey: "thanks_sms",
         automationKey: "THANKS_SMS",
         triggerType: "thanks",
         title: "예약 완료",
         systemTemplateKey: SystemTemplateKey.THANKS,
     },
-    [AlimtalkTriggerTemplateKey.SURVEY]: {
+    [MessageTriggerTemplateKey.SURVEY]: {
         smsLogTemplateKey: "survey_sms",
         automationKey: "SURVEY_SMS",
         triggerType: "survey",
         title: "모니터링 설문",
         systemTemplateKey: SystemTemplateKey.SURVEY,
     },
-    [AlimtalkTriggerTemplateKey.INFO]: {
+    [MessageTriggerTemplateKey.INFO]: {
         smsLogTemplateKey: "info_sms",
         automationKey: "INFO_SMS",
         triggerType: "info",
         title: "정보 안내",
         systemTemplateKey: SystemTemplateKey.INFO,
     },
-    [AlimtalkTriggerTemplateKey.SERVICE_FEEDBACK_LINK]: {
+    [MessageTriggerTemplateKey.SERVICE_FEEDBACK_LINK]: {
         smsLogTemplateKey: SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
         automationKey: SERVICE_FEEDBACK_LINK_SMS_AUTOMATION_KEY,
         triggerType: SERVICE_FEEDBACK_LINK_SMS_TRIGGER_TYPE,
@@ -102,11 +102,11 @@ export class SmsTriggerDeliveryService {
         private readonly logRepository: IMessageLogRepository,
     ) {}
 
-    canHandle(templateKey: AlimtalkTriggerTemplateKey): boolean {
+    canHandle(templateKey: MessageTriggerTemplateKey): boolean {
         return Boolean(SMS_TEMPLATE_DELIVERY[templateKey]);
     }
 
-    async sendJob(job: AlimtalkTriggerJobEntity): Promise<boolean> {
+    async sendJob(job: MessageTriggerJobEntity): Promise<boolean> {
         if (!job.branchId) {
             return false;
         }
@@ -121,7 +121,7 @@ export class SmsTriggerDeliveryService {
     }
 
     private async sendSmsJob(
-        job: AlimtalkTriggerJobEntity,
+        job: MessageTriggerJobEntity,
         config: SmsTemplateDeliveryConfig,
     ): Promise<boolean> {
         const payload = job.payload;
@@ -212,7 +212,7 @@ export class SmsTriggerDeliveryService {
         }
     }
 
-    private resolvePayloadSmsMessage(job: AlimtalkTriggerJobEntity): string {
+    private resolvePayloadSmsMessage(job: MessageTriggerJobEntity): string {
         const message = job.payload.messageBody?.trim();
         if (!message) {
             throw new Error(`SMS payload message is missing for job ${job.id}`);
@@ -225,7 +225,7 @@ export class SmsTriggerDeliveryService {
     }
 
     private async recordSmsLog(params: {
-        job: AlimtalkTriggerJobEntity;
+        job: MessageTriggerJobEntity;
         config: SmsTemplateDeliveryConfig;
         message: string;
         receiver: string;

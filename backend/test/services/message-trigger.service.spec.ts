@@ -1,28 +1,28 @@
-import { AlimtalkTriggerService } from "application/services/alimtalk-trigger.service";
+import { MessageTriggerService } from "application/services/message-trigger.service";
 import {
-    AlimtalkTriggerEventType,
-    AlimtalkTriggerOffsetType,
-    AlimtalkTriggerRecipientType,
-    AlimtalkTriggerTemplateKey,
-} from "domain/constants/alimtalk-trigger-catalog";
-import { AlimtalkTriggerRuleEntity } from "domain/entities/alimtalk-trigger-rule.entity";
+    MessageTriggerEventType,
+    MessageTriggerOffsetType,
+    MessageTriggerRecipientType,
+    MessageTriggerTemplateKey,
+} from "domain/constants/message-trigger-catalog";
+import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 
 jest.mock("infrastructure/database/schema-capabilities", () => ({
     hasColumn: jest.fn().mockResolvedValue(true),
     hasTable: jest.fn().mockResolvedValue(true),
 }));
 
-describe("AlimtalkTriggerService", () => {
+describe("MessageTriggerService", () => {
     const branchId = "branch-1";
     type ServiceInternals = {
         hasTriggerSchema: () => Promise<boolean>;
         rebuildJobsForRule: (
             branchId: string,
-            rule: AlimtalkTriggerRuleEntity,
+            rule: MessageTriggerRuleEntity,
             includePast: boolean,
         ) => Promise<void>;
         buildClientTemplateVariables: (
-            rule: AlimtalkTriggerRuleEntity,
+            rule: MessageTriggerRuleEntity,
             client: {
                 name: string;
                 phone: string | null;
@@ -42,22 +42,22 @@ describe("AlimtalkTriggerService", () => {
     const createRule = (overrides: Partial<{
         id: string;
         name: string;
-        eventType: AlimtalkTriggerEventType;
-        offsetType: AlimtalkTriggerOffsetType;
+        eventType: MessageTriggerEventType;
+        offsetType: MessageTriggerOffsetType;
         offsetDays: number;
-        recipientType: AlimtalkTriggerRecipientType;
-        templateKey: AlimtalkTriggerTemplateKey;
+        recipientType: MessageTriggerRecipientType;
+        templateKey: MessageTriggerTemplateKey;
     }> = {}) =>
-        AlimtalkTriggerRuleEntity.reconstitute(
+        MessageTriggerRuleEntity.reconstitute(
             overrides.id ?? "rule-1",
             branchId,
             overrides.name ?? "기존 규칙",
             true,
-            overrides.eventType ?? AlimtalkTriggerEventType.CLIENT_CREATED,
-            overrides.offsetType ?? AlimtalkTriggerOffsetType.IMMEDIATE,
+            overrides.eventType ?? MessageTriggerEventType.CLIENT_CREATED,
+            overrides.offsetType ?? MessageTriggerOffsetType.IMMEDIATE,
             overrides.offsetDays ?? 0,
-            overrides.recipientType ?? AlimtalkTriggerRecipientType.CLIENT,
-            overrides.templateKey ?? AlimtalkTriggerTemplateKey.CLIENT_WELCOME,
+            overrides.recipientType ?? MessageTriggerRecipientType.CLIENT,
+            overrides.templateKey ?? MessageTriggerTemplateKey.CLIENT_WELCOME,
             new Date("2026-06-01T00:00:00.000Z"),
             new Date("2026-06-01T00:00:00.000Z"),
         );
@@ -68,7 +68,7 @@ describe("AlimtalkTriggerService", () => {
             findActiveByEventTypes: jest.fn(),
             create: jest.fn(),
         };
-        const service = new AlimtalkTriggerService(
+        const service = new MessageTriggerService(
             {} as never,
             {} as never,
             {} as never,
@@ -89,18 +89,18 @@ describe("AlimtalkTriggerService", () => {
         const existingGreeting = createRule({
             id: "rule-existing-greeting",
             name: "신규 고객 인사 메시지",
-            eventType: AlimtalkTriggerEventType.CLIENT_CREATED,
-            offsetType: AlimtalkTriggerOffsetType.IMMEDIATE,
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
             offsetDays: 0,
-            templateKey: AlimtalkTriggerTemplateKey.CLIENT_GREETING,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
         });
         const createdServiceInfo = createRule({
             id: "rule-service-info",
             name: "서비스 시작 7일 전 서비스 안내",
-            eventType: AlimtalkTriggerEventType.SERVICE_START,
-            offsetType: AlimtalkTriggerOffsetType.BEFORE_DAYS,
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
             offsetDays: 7,
-            templateKey: AlimtalkTriggerTemplateKey.SERVICE_INFO,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
         });
         // CLIENT_GREETING already exists; only SERVICE_INFO will be created
         ruleRepository.findAll.mockResolvedValue([existingGreeting]);
@@ -113,11 +113,11 @@ describe("AlimtalkTriggerService", () => {
             expect.objectContaining({
                 name: "서비스 시작 7일 전 서비스 안내",
                 isActive: true,
-                eventType: AlimtalkTriggerEventType.SERVICE_START,
-                offsetType: AlimtalkTriggerOffsetType.BEFORE_DAYS,
+                eventType: MessageTriggerEventType.SERVICE_START,
+                offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
                 offsetDays: 7,
-                recipientType: AlimtalkTriggerRecipientType.CLIENT,
-                templateKey: AlimtalkTriggerTemplateKey.SERVICE_INFO,
+                recipientType: MessageTriggerRecipientType.CLIENT,
+                templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
             }),
         );
         expect(internals.rebuildJobsForRule).toHaveBeenCalledWith(branchId, createdServiceInfo, false);
@@ -129,18 +129,18 @@ describe("AlimtalkTriggerService", () => {
         const { service, ruleRepository } = createService();
         const existingServiceInfo = createRule({
             id: "rule-existing-service-info",
-            eventType: AlimtalkTriggerEventType.SERVICE_START,
-            offsetType: AlimtalkTriggerOffsetType.BEFORE_DAYS,
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
             offsetDays: 7,
-            templateKey: AlimtalkTriggerTemplateKey.SERVICE_INFO,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
         });
         const createdGreeting = createRule({
             id: "rule-greeting",
             name: "신규 고객 인사 메시지",
-            eventType: AlimtalkTriggerEventType.CLIENT_CREATED,
-            offsetType: AlimtalkTriggerOffsetType.IMMEDIATE,
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
             offsetDays: 0,
-            templateKey: AlimtalkTriggerTemplateKey.CLIENT_GREETING,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
         });
         // SERVICE_INFO already exists; only CLIENT_GREETING will be created
         ruleRepository.findAll.mockResolvedValue([existingServiceInfo]);
@@ -153,11 +153,11 @@ describe("AlimtalkTriggerService", () => {
             expect.objectContaining({
                 name: "신규 고객 인사 메시지",
                 isActive: true,
-                eventType: AlimtalkTriggerEventType.CLIENT_CREATED,
-                offsetType: AlimtalkTriggerOffsetType.IMMEDIATE,
+                eventType: MessageTriggerEventType.CLIENT_CREATED,
+                offsetType: MessageTriggerOffsetType.IMMEDIATE,
                 offsetDays: 0,
-                recipientType: AlimtalkTriggerRecipientType.CLIENT,
-                templateKey: AlimtalkTriggerTemplateKey.CLIENT_GREETING,
+                recipientType: MessageTriggerRecipientType.CLIENT,
+                templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
             }),
         );
         expect(rules).toContainEqual(createdGreeting);
@@ -168,17 +168,17 @@ describe("AlimtalkTriggerService", () => {
         const { service, internals, ruleRepository } = createService();
         const existingServiceInfo = createRule({
             id: "rule-existing-service-info",
-            eventType: AlimtalkTriggerEventType.SERVICE_START,
-            offsetType: AlimtalkTriggerOffsetType.BEFORE_DAYS,
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
             offsetDays: 7,
-            templateKey: AlimtalkTriggerTemplateKey.SERVICE_INFO,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
         });
         const existingGreeting = createRule({
             id: "rule-existing-greeting",
-            eventType: AlimtalkTriggerEventType.CLIENT_CREATED,
-            offsetType: AlimtalkTriggerOffsetType.IMMEDIATE,
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
             offsetDays: 0,
-            templateKey: AlimtalkTriggerTemplateKey.CLIENT_GREETING,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
         });
         ruleRepository.findAll.mockResolvedValue([existingServiceInfo, existingGreeting]);
 
@@ -192,7 +192,7 @@ describe("AlimtalkTriggerService", () => {
     it("does not enqueue jobs for existing clients when an IMMEDIATE CLIENT_GREETING rule is created", async () => {
         // Do NOT spy on rebuildJobsForRule — let the real guard run.
         const jobRepository = { upsertPending: jest.fn() };
-        const service = new AlimtalkTriggerService(
+        const service = new MessageTriggerService(
             {} as never,  // prisma — should not be reached past the IMMEDIATE guard
             {} as never,
             {} as never,
@@ -203,10 +203,10 @@ describe("AlimtalkTriggerService", () => {
 
         const greetingRule = createRule({
             id: "rule-greeting-new",
-            eventType: AlimtalkTriggerEventType.CLIENT_CREATED,
-            offsetType: AlimtalkTriggerOffsetType.IMMEDIATE,
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
             offsetDays: 0,
-            templateKey: AlimtalkTriggerTemplateKey.CLIENT_GREETING,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
         });
 
         // Call the private method directly — IMMEDIATE guard must return before touching DB
@@ -218,10 +218,10 @@ describe("AlimtalkTriggerService", () => {
     it("maps the service information name variable from the client name", () => {
         const { internals } = createService();
         const rule = createRule({
-            eventType: AlimtalkTriggerEventType.SERVICE_START,
-            offsetType: AlimtalkTriggerOffsetType.BEFORE_DAYS,
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
             offsetDays: 7,
-            templateKey: AlimtalkTriggerTemplateKey.SERVICE_INFO,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
         });
 
         const variables = internals.buildClientTemplateVariables(rule, {
@@ -243,10 +243,10 @@ describe("AlimtalkTriggerService", () => {
     it("maps CLIENT_GREETING template variables from the client", () => {
         const { internals } = createService();
         const rule = createRule({
-            eventType: AlimtalkTriggerEventType.CLIENT_CREATED,
-            offsetType: AlimtalkTriggerOffsetType.IMMEDIATE,
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
             offsetDays: 0,
-            templateKey: AlimtalkTriggerTemplateKey.CLIENT_GREETING,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
         });
 
         const variables = internals.buildClientTemplateVariables(rule, {
@@ -268,10 +268,10 @@ describe("AlimtalkTriggerService", () => {
     it("maps PRICE_INFO template variables including price/bank fields (data-minimization scoping)", () => {
         const { internals } = createService();
         const rule = createRule({
-            eventType: AlimtalkTriggerEventType.SERVICE_START,
-            offsetType: AlimtalkTriggerOffsetType.BEFORE_DAYS,
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
             offsetDays: 7,
-            templateKey: AlimtalkTriggerTemplateKey.PRICE_INFO,
+            templateKey: MessageTriggerTemplateKey.PRICE_INFO,
         });
 
         const variables = internals.buildClientTemplateVariables(rule, {
@@ -335,7 +335,7 @@ describe("AlimtalkTriggerService", () => {
                 }),
             },
         };
-        const service = new AlimtalkTriggerService(
+        const service = new MessageTriggerService(
             prisma as never,
             {} as never,
             {} as never,
@@ -349,10 +349,10 @@ describe("AlimtalkTriggerService", () => {
     it("drops the IMMEDIATE greeting on re-sync (includePast=false) but fires it on create (includePast=true)", async () => {
         const greetingRule = createRule({
             id: "rule-greeting-active",
-            eventType: AlimtalkTriggerEventType.CLIENT_CREATED,
-            offsetType: AlimtalkTriggerOffsetType.IMMEDIATE,
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
             offsetDays: 0,
-            templateKey: AlimtalkTriggerTemplateKey.CLIENT_GREETING,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
         });
 
         // Re-sync path (client update / due-date scheduler): greeting must be dropped.
@@ -371,10 +371,10 @@ describe("AlimtalkTriggerService", () => {
     it("persists overdue non-immediate client jobs on re-sync so missed automations can run", async () => {
         const serviceInfoRule = createRule({
             id: "rule-service-info-active",
-            eventType: AlimtalkTriggerEventType.SERVICE_START,
-            offsetType: AlimtalkTriggerOffsetType.SAME_DAY,
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.SAME_DAY,
             offsetDays: 0,
-            templateKey: AlimtalkTriggerTemplateKey.SERVICE_INFO,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
         });
         const reSync = createSyncService({
             startDate: new Date(Date.now() - 24 * 60 * 60 * 1000),
@@ -393,18 +393,18 @@ describe("AlimtalkTriggerService", () => {
 
         const existingServiceInfo = createRule({
             id: "rule-existing-service-info",
-            eventType: AlimtalkTriggerEventType.SERVICE_START,
-            offsetType: AlimtalkTriggerOffsetType.BEFORE_DAYS,
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
             offsetDays: 7,
-            templateKey: AlimtalkTriggerTemplateKey.SERVICE_INFO,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
         });
         // Admin-created greeting rule with a NON-default offset (AFTER_DAYS, not IMMEDIATE).
         const existingGreetingAfterDays = createRule({
             id: "rule-greeting-after-days",
-            eventType: AlimtalkTriggerEventType.CLIENT_CREATED,
-            offsetType: AlimtalkTriggerOffsetType.AFTER_DAYS,
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.AFTER_DAYS,
             offsetDays: 3,
-            templateKey: AlimtalkTriggerTemplateKey.CLIENT_GREETING,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
         });
         ruleRepository.findAll.mockResolvedValue([existingServiceInfo, existingGreetingAfterDays]);
 
@@ -421,18 +421,18 @@ describe("AlimtalkTriggerService", () => {
         const createdGreeting = createRule({
             id: "rule-greeting-new",
             name: "신규 고객 인사 메시지",
-            eventType: AlimtalkTriggerEventType.CLIENT_CREATED,
-            offsetType: AlimtalkTriggerOffsetType.IMMEDIATE,
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
             offsetDays: 0,
-            templateKey: AlimtalkTriggerTemplateKey.CLIENT_GREETING,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
         });
         const createdServiceInfo = createRule({
             id: "rule-service-info-new",
             name: "서비스 시작 7일 전 서비스 안내",
-            eventType: AlimtalkTriggerEventType.SERVICE_START,
-            offsetType: AlimtalkTriggerOffsetType.BEFORE_DAYS,
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
             offsetDays: 7,
-            templateKey: AlimtalkTriggerTemplateKey.SERVICE_INFO,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
         });
         // No rules exist yet — both defaults must be created
         ruleRepository.findAll.mockResolvedValue([]);

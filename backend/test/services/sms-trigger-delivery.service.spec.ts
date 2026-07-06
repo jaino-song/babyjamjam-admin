@@ -7,10 +7,10 @@ import { MessageSenderApprovalService } from "application/services/message-sende
 import { SystemTemplateService } from "application/services/system-template.service";
 import { SystemTemplateKey } from "domain/constants/system-template-registry";
 import {
-    AlimtalkTriggerRecipientType,
-    AlimtalkTriggerTemplateKey,
-} from "domain/constants/alimtalk-trigger-catalog";
-import { AlimtalkTriggerJobEntity } from "domain/entities/alimtalk-trigger-job.entity";
+    MessageTriggerRecipientType,
+    MessageTriggerTemplateKey,
+} from "domain/constants/message-trigger-catalog";
+import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
 // Canonical SMS template set lives in the shared package (frontend/mobile source of truth).
@@ -22,7 +22,7 @@ describe("SmsTriggerDeliveryService", () => {
     const branchId = "branch-1";
 
     const createServiceInfoJob = () =>
-        AlimtalkTriggerJobEntity.reconstitute(
+        MessageTriggerJobEntity.reconstitute(
             "job-service-info",
             branchId,
             "rule-service-info",
@@ -33,9 +33,9 @@ describe("SmsTriggerDeliveryService", () => {
             null,
             7,
             null,
-            AlimtalkTriggerRecipientType.CLIENT,
+            MessageTriggerRecipientType.CLIENT,
             "010-1234-5678",
-            AlimtalkTriggerTemplateKey.SERVICE_INFO,
+            MessageTriggerTemplateKey.SERVICE_INFO,
             "rule-service-info:7",
             {
                 clientId: 7,
@@ -117,7 +117,7 @@ describe("SmsTriggerDeliveryService", () => {
     });
 
     it("sends the CLIENT_GREETING trigger through SMS with the same log contract as the retired sender", async () => {
-        const greetingJob = AlimtalkTriggerJobEntity.reconstitute(
+        const greetingJob = MessageTriggerJobEntity.reconstitute(
             "job-greeting-1",
             branchId,
             "rule-greeting-1",
@@ -128,9 +128,9 @@ describe("SmsTriggerDeliveryService", () => {
             null,
             0,
             42,
-            AlimtalkTriggerRecipientType.CLIENT,
+            MessageTriggerRecipientType.CLIENT,
             "010-5678-1234",
-            AlimtalkTriggerTemplateKey.CLIENT_GREETING,
+            MessageTriggerTemplateKey.CLIENT_GREETING,
             "rule-greeting-1:client:42",
             {
                 clientId: 42,
@@ -234,7 +234,7 @@ describe("SERVICE_FEEDBACK_LINK delivery", () => {
         );
 
     const createFeedbackJob = () =>
-        AlimtalkTriggerJobEntity.reconstitute(
+        MessageTriggerJobEntity.reconstitute(
             "job-feedback-link",
             "branch-1",
             "system:service_feedback_link",
@@ -245,9 +245,9 @@ describe("SERVICE_FEEDBACK_LINK delivery", () => {
             null,
             7,
             11,
-            AlimtalkTriggerRecipientType.PRIMARY_EMPLOYEE,
+            MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
             "010-1111-2222",
-            AlimtalkTriggerTemplateKey.SERVICE_FEEDBACK_LINK,
+            MessageTriggerTemplateKey.SERVICE_FEEDBACK_LINK,
             "system:service_feedback_link:schedule:11:primary",
             {
                 clientId: 7,
@@ -320,7 +320,7 @@ describe("SERVICE_FEEDBACK_LINK delivery", () => {
 
 describe("PRICE_INFO data guard", () => {
     const createPriceInfoJob = (templateVariables: Record<string, string>) =>
-        AlimtalkTriggerJobEntity.reconstitute(
+        MessageTriggerJobEntity.reconstitute(
             "job-price-info",
             "branch-1",
             "rule-price-info",
@@ -331,9 +331,9 @@ describe("PRICE_INFO data guard", () => {
             null,
             7,
             null,
-            AlimtalkTriggerRecipientType.CLIENT,
+            MessageTriggerRecipientType.CLIENT,
             "010-1234-5678",
-            AlimtalkTriggerTemplateKey.PRICE_INFO,
+            MessageTriggerTemplateKey.PRICE_INFO,
             "rule-price-info:7",
             {
                 clientId: 7,

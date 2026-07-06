@@ -1,5 +1,5 @@
 import { ClientDueDateSchedulerService } from "application/services/client-due-date-scheduler.service";
-import { AlimtalkTriggerService } from "application/services/alimtalk-trigger.service";
+import { MessageTriggerService } from "application/services/message-trigger.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 describe("ClientDueDateSchedulerService", () => {
@@ -22,7 +22,7 @@ describe("ClientDueDateSchedulerService", () => {
         triggerService = createMockTriggerService();
         service = new ClientDueDateSchedulerService(
             prismaService as unknown as PrismaService,
-            triggerService as unknown as AlimtalkTriggerService,
+            triggerService as unknown as MessageTriggerService,
         );
     });
 

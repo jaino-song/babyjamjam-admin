@@ -1,34 +1,34 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { ExecutionContext, INestApplication, ValidationPipe } from "@nestjs/common";
 import request from "supertest";
-import { AlimtalkTriggerController } from "interface/controllers/alimtalk-trigger.controller";
+import { MessageTriggerController } from "interface/controllers/message-trigger.controller";
 import {
-    AlimtalkTriggerService,
-    type AlimtalkHistoryRecordView,
-    type UpcomingAlimtalkTriggerJobView,
-} from "application/services/alimtalk-trigger.service";
+    MessageTriggerService,
+    type MessageLogRecordView,
+    type UpcomingMessageTriggerJobView,
+} from "application/services/message-trigger.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { TenantGuard } from "infrastructure/tenant/tenant.guard";
 import {
-    AlimtalkTriggerEventType,
-    AlimtalkTriggerOffsetType,
-    AlimtalkTriggerRecipientType,
-    AlimtalkTriggerTemplateKey,
-    type AlimtalkTriggerTemplateCatalogItem,
-} from "domain/constants/alimtalk-trigger-catalog";
-import { AlimtalkTriggerRuleEntity } from "domain/entities/alimtalk-trigger-rule.entity";
+    MessageTriggerEventType,
+    MessageTriggerOffsetType,
+    MessageTriggerRecipientType,
+    MessageTriggerTemplateKey,
+    type MessageTriggerTemplateCatalogItem,
+} from "domain/constants/message-trigger-catalog";
+import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 
-describe("AlimtalkTriggerController (Integration)", () => {
+describe("MessageTriggerController (Integration)", () => {
     type RuleOverrides = Partial<{
         id: string;
         branchId: string | null;
         name: string;
         isActive: boolean;
-        eventType: AlimtalkTriggerEventType;
-        offsetType: AlimtalkTriggerOffsetType;
+        eventType: MessageTriggerEventType;
+        offsetType: MessageTriggerOffsetType;
         offsetDays: number;
-        recipientType: AlimtalkTriggerRecipientType;
-        templateKey: AlimtalkTriggerTemplateKey;
+        recipientType: MessageTriggerRecipientType;
+        templateKey: MessageTriggerTemplateKey;
         createdAt: Date;
         updatedAt: Date;
     }>;
@@ -50,32 +50,32 @@ describe("AlimtalkTriggerController (Integration)", () => {
     const createMockRule = (
         overrides: RuleOverrides = {},
     ) =>
-        AlimtalkTriggerRuleEntity.reconstitute(
+        MessageTriggerRuleEntity.reconstitute(
             overrides.id ?? "rule-1",
             overrides.branchId ?? branchId,
             overrides.name ?? "고객 등록 즉시 발송",
             overrides.isActive ?? true,
-            overrides.eventType ?? AlimtalkTriggerEventType.CLIENT_CREATED,
-            overrides.offsetType ?? AlimtalkTriggerOffsetType.IMMEDIATE,
+            overrides.eventType ?? MessageTriggerEventType.CLIENT_CREATED,
+            overrides.offsetType ?? MessageTriggerOffsetType.IMMEDIATE,
             overrides.offsetDays ?? 0,
-            overrides.recipientType ?? AlimtalkTriggerRecipientType.CLIENT,
-            overrides.templateKey ?? AlimtalkTriggerTemplateKey.CLIENT_WELCOME,
+            overrides.recipientType ?? MessageTriggerRecipientType.CLIENT,
+            overrides.templateKey ?? MessageTriggerTemplateKey.CLIENT_WELCOME,
             overrides.createdAt ?? new Date("2025-01-01T00:00:00.000Z"),
             overrides.updatedAt ?? new Date("2025-01-02T00:00:00.000Z"),
         );
 
     const createMockUpcomingJob = (
-        overrides: Partial<UpcomingAlimtalkTriggerJobView> = {},
-    ): UpcomingAlimtalkTriggerJobView => ({
+        overrides: Partial<UpcomingMessageTriggerJobView> = {},
+    ): UpcomingMessageTriggerJobView => ({
         id: overrides.id ?? "job-1",
         ruleId: overrides.ruleId ?? "rule-1",
         ruleName: overrides.ruleName ?? "고객 등록 즉시 발송",
-        eventType: overrides.eventType ?? AlimtalkTriggerEventType.CLIENT_CREATED,
-        offsetType: overrides.offsetType ?? AlimtalkTriggerOffsetType.IMMEDIATE,
+        eventType: overrides.eventType ?? MessageTriggerEventType.CLIENT_CREATED,
+        offsetType: overrides.offsetType ?? MessageTriggerOffsetType.IMMEDIATE,
         offsetDays: overrides.offsetDays ?? 0,
-        recipientType: overrides.recipientType ?? AlimtalkTriggerRecipientType.CLIENT,
+        recipientType: overrides.recipientType ?? MessageTriggerRecipientType.CLIENT,
         recipientPhone: overrides.recipientPhone ?? "010-1234-5678",
-        templateKey: overrides.templateKey ?? AlimtalkTriggerTemplateKey.CLIENT_WELCOME,
+        templateKey: overrides.templateKey ?? MessageTriggerTemplateKey.CLIENT_WELCOME,
         status: overrides.status ?? "pending",
         scheduledFor: overrides.scheduledFor ?? new Date("2025-01-03T09:00:00.000Z"),
         sentAt: overrides.sentAt ?? null,
@@ -96,11 +96,11 @@ describe("AlimtalkTriggerController (Integration)", () => {
     });
 
     const createMockHistoryRecord = (
-        overrides: Partial<AlimtalkHistoryRecordView> = {},
-    ): AlimtalkHistoryRecordView => ({
+        overrides: Partial<MessageLogRecordView> = {},
+    ): MessageLogRecordView => ({
         id: overrides.id ?? 1,
         provider: overrides.provider ?? "aligo_alimtalk",
-        templateKey: overrides.templateKey ?? AlimtalkTriggerTemplateKey.CLIENT_WELCOME,
+        templateKey: overrides.templateKey ?? MessageTriggerTemplateKey.CLIENT_WELCOME,
         triggerJobId: overrides.triggerJobId ?? "job-1",
         receiver: overrides.receiver ?? "010-1234-5678",
         clientId: overrides.clientId ?? 101,
@@ -116,24 +116,24 @@ describe("AlimtalkTriggerController (Integration)", () => {
         updatedAt: overrides.updatedAt ?? new Date("2025-01-03T09:01:00.000Z"),
         ruleId: overrides.ruleId ?? "rule-1",
         ruleName: overrides.ruleName ?? "고객 등록 즉시 발송",
-        eventType: overrides.eventType ?? AlimtalkTriggerEventType.CLIENT_CREATED,
-        offsetType: overrides.offsetType ?? AlimtalkTriggerOffsetType.IMMEDIATE,
+        eventType: overrides.eventType ?? MessageTriggerEventType.CLIENT_CREATED,
+        offsetType: overrides.offsetType ?? MessageTriggerOffsetType.IMMEDIATE,
         offsetDays: overrides.offsetDays ?? 0,
         scheduledFor: overrides.scheduledFor ?? new Date("2025-01-03T09:00:00.000Z"),
-        recipientType: overrides.recipientType ?? AlimtalkTriggerRecipientType.CLIENT,
+        recipientType: overrides.recipientType ?? MessageTriggerRecipientType.CLIENT,
         recipientName: overrides.recipientName ?? "김고객",
         clientName: overrides.clientName ?? "김고객",
         employeeName: overrides.employeeName ?? null,
     });
 
     const createMockTemplate = (
-        overrides: Partial<AlimtalkTriggerTemplateCatalogItem> = {},
-    ): AlimtalkTriggerTemplateCatalogItem => ({
-        key: overrides.key ?? AlimtalkTriggerTemplateKey.CLIENT_WELCOME,
+        overrides: Partial<MessageTriggerTemplateCatalogItem> = {},
+    ): MessageTriggerTemplateCatalogItem => ({
+        key: overrides.key ?? MessageTriggerTemplateKey.CLIENT_WELCOME,
         name: overrides.name ?? "고객 등록 안내",
         description: overrides.description ?? "고객 등록 직후 발송",
-        allowedEventTypes: overrides.allowedEventTypes ?? [AlimtalkTriggerEventType.CLIENT_CREATED],
-        allowedRecipientTypes: overrides.allowedRecipientTypes ?? [AlimtalkTriggerRecipientType.CLIENT],
+        allowedEventTypes: overrides.allowedEventTypes ?? [MessageTriggerEventType.CLIENT_CREATED],
+        allowedRecipientTypes: overrides.allowedRecipientTypes ?? [MessageTriggerRecipientType.CLIENT],
         requiredVariables: overrides.requiredVariables ?? [{ key: "clientName", label: "고객명" }],
         providers: overrides.providers ?? {
             aligo_alimtalk: { templateKey: "CLIENT_CREATED" },
@@ -166,10 +166,10 @@ describe("AlimtalkTriggerController (Integration)", () => {
         };
 
         const moduleFixture: TestingModule = await Test.createTestingModule({
-            controllers: [AlimtalkTriggerController],
+            controllers: [MessageTriggerController],
             providers: [
                 {
-                    provide: AlimtalkTriggerService,
+                    provide: MessageTriggerService,
                     useValue: triggerService,
                 },
             ],
@@ -189,11 +189,11 @@ describe("AlimtalkTriggerController (Integration)", () => {
         await app.close();
     });
 
-    describe("GET /alimtalk-trigger-rules", () => {
+    describe("GET /message-trigger-rules", () => {
         it("returns rules for the authenticated tenant", async () => {
             triggerService.listRules.mockResolvedValue([createMockRule()]);
 
-            const response = await request(app.getHttpServer()).get("/alimtalk-trigger-rules");
+            const response = await request(app.getHttpServer()).get("/message-trigger-rules");
 
             expect(response.status).toBe(200);
             expect(response.body).toHaveLength(1);
@@ -201,11 +201,11 @@ describe("AlimtalkTriggerController (Integration)", () => {
         });
     });
 
-    describe("GET /alimtalk-trigger-jobs/upcoming", () => {
+    describe("GET /message-trigger-jobs/upcoming", () => {
         it("uses the default limit when the query is omitted", async () => {
             triggerService.listUpcomingJobs.mockResolvedValue([createMockUpcomingJob()]);
 
-            const response = await request(app.getHttpServer()).get("/alimtalk-trigger-jobs/upcoming");
+            const response = await request(app.getHttpServer()).get("/message-trigger-jobs/upcoming");
 
             expect(response.status).toBe(200);
             expect(triggerService.listUpcomingJobs).toHaveBeenCalledWith(branchId, 200);
@@ -215,7 +215,7 @@ describe("AlimtalkTriggerController (Integration)", () => {
             triggerService.listUpcomingJobs.mockResolvedValue([]);
 
             const response = await request(app.getHttpServer())
-                .get("/alimtalk-trigger-jobs/upcoming")
+                .get("/message-trigger-jobs/upcoming")
                 .query({ limit: 999 });
 
             expect(response.status).toBe(400);
@@ -223,12 +223,12 @@ describe("AlimtalkTriggerController (Integration)", () => {
         });
     });
 
-    describe("GET /alimtalk-logs", () => {
+    describe("GET /message-logs", () => {
         it("returns history for the authenticated tenant", async () => {
             triggerService.listHistory.mockResolvedValue([createMockHistoryRecord()]);
 
             const response = await request(app.getHttpServer())
-                .get("/alimtalk-logs")
+                .get("/message-logs")
                 .query({ limit: 25 });
 
             expect(response.status).toBe(200);
@@ -240,7 +240,7 @@ describe("AlimtalkTriggerController (Integration)", () => {
             triggerService.listHistory.mockResolvedValue([createMockHistoryRecord()]);
 
             const response = await request(app.getHttpServer())
-                .get("/alimtalk-logs")
+                .get("/message-logs")
                 .query({ limit: 25, skip: 50 });
 
             expect(response.status).toBe(200);
@@ -248,7 +248,7 @@ describe("AlimtalkTriggerController (Integration)", () => {
         });
     });
 
-    describe("POST /alimtalk-trigger-rules", () => {
+    describe("POST /message-trigger-rules", () => {
         it("creates a rule with a valid payload", async () => {
             const createDto = {
                 name: "서비스 시작 리마인드",
@@ -263,15 +263,15 @@ describe("AlimtalkTriggerController (Integration)", () => {
                 createMockRule({
                     id: "rule-2",
                     name: createDto.name,
-                    eventType: AlimtalkTriggerEventType.SERVICE_START,
-                    offsetType: AlimtalkTriggerOffsetType.BEFORE_DAYS,
+                    eventType: MessageTriggerEventType.SERVICE_START,
+                    offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
                     offsetDays: 2,
-                    templateKey: AlimtalkTriggerTemplateKey.SERVICE_START_REMINDER,
+                    templateKey: MessageTriggerTemplateKey.SERVICE_START_REMINDER,
                 }),
             );
 
             const response = await request(app.getHttpServer())
-                .post("/alimtalk-trigger-rules")
+                .post("/message-trigger-rules")
                 .send(createDto);
 
             expect(response.status).toBe(201);
@@ -299,15 +299,15 @@ describe("AlimtalkTriggerController (Integration)", () => {
                 createMockRule({
                     id: "rule-service-info",
                     name: createDto.name,
-                    eventType: AlimtalkTriggerEventType.SERVICE_START,
-                    offsetType: AlimtalkTriggerOffsetType.BEFORE_DAYS,
+                    eventType: MessageTriggerEventType.SERVICE_START,
+                    offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
                     offsetDays: 7,
-                    templateKey: AlimtalkTriggerTemplateKey.SERVICE_INFO,
+                    templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
                 }),
             );
 
             const response = await request(app.getHttpServer())
-                .post("/alimtalk-trigger-rules")
+                .post("/message-trigger-rules")
                 .send(createDto);
 
             expect(response.status).toBe(201);
@@ -326,7 +326,7 @@ describe("AlimtalkTriggerController (Integration)", () => {
 
         it("rejects invalid trigger enums", async () => {
             const response = await request(app.getHttpServer())
-                .post("/alimtalk-trigger-rules")
+                .post("/message-trigger-rules")
                 .send({
                     name: "잘못된 규칙",
                     isActive: true,
@@ -341,18 +341,18 @@ describe("AlimtalkTriggerController (Integration)", () => {
         });
     });
 
-    describe("GET /alimtalk-trigger-rules/:id", () => {
+    describe("GET /message-trigger-rules/:id", () => {
         it("fetches a single rule for the authenticated tenant", async () => {
             triggerService.getRule.mockResolvedValue(createMockRule({ id: "rule-42" }));
 
-            const response = await request(app.getHttpServer()).get("/alimtalk-trigger-rules/rule-42");
+            const response = await request(app.getHttpServer()).get("/message-trigger-rules/rule-42");
 
             expect(response.status).toBe(200);
             expect(triggerService.getRule).toHaveBeenCalledWith(branchId, "rule-42");
         });
     });
 
-    describe("PATCH /alimtalk-trigger-rules/:id", () => {
+    describe("PATCH /message-trigger-rules/:id", () => {
         it("updates a rule with a valid partial payload", async () => {
             triggerService.updateRule.mockResolvedValue(
                 createMockRule({
@@ -363,7 +363,7 @@ describe("AlimtalkTriggerController (Integration)", () => {
             );
 
             const response = await request(app.getHttpServer())
-                .patch("/alimtalk-trigger-rules/rule-42")
+                .patch("/message-trigger-rules/rule-42")
                 .send({
                     name: "비활성 규칙",
                     isActive: false,
@@ -382,7 +382,7 @@ describe("AlimtalkTriggerController (Integration)", () => {
 
         it("rejects invalid numeric updates", async () => {
             const response = await request(app.getHttpServer())
-                .patch("/alimtalk-trigger-rules/rule-42")
+                .patch("/message-trigger-rules/rule-42")
                 .send({
                     offsetDays: -1,
                 });
@@ -392,23 +392,23 @@ describe("AlimtalkTriggerController (Integration)", () => {
         });
     });
 
-    describe("DELETE /alimtalk-trigger-rules/:id", () => {
+    describe("DELETE /message-trigger-rules/:id", () => {
         it("deletes a rule for the authenticated tenant", async () => {
             triggerService.deleteRule.mockResolvedValue(undefined);
 
-            const response = await request(app.getHttpServer()).delete("/alimtalk-trigger-rules/rule-42");
+            const response = await request(app.getHttpServer()).delete("/message-trigger-rules/rule-42");
 
             expect(response.status).toBe(200);
             expect(triggerService.deleteRule).toHaveBeenCalledWith(branchId, "rule-42");
         });
     });
 
-    describe("GET /alimtalk-trigger-templates", () => {
+    describe("GET /message-trigger-templates", () => {
         it("passes provider and filters through to the service", async () => {
             triggerService.listTemplates.mockResolvedValue([createMockTemplate()]);
 
             const response = await request(app.getHttpServer())
-                .get("/alimtalk-trigger-templates")
+                .get("/message-trigger-templates")
                 .query({
                     provider: "aligo_alimtalk",
                     eventType: "CLIENT_CREATED",

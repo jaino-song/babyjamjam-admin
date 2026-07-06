@@ -9,7 +9,7 @@ import { Prisma } from "@prisma/client";
 import { getServiceFeedbackTokenExpiresAt } from "domain/constants/service-feedback-link-message";
 import { addBusinessDaysKr, isBusinessDayKr, nextBusinessDayKr } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
+import { MessageTriggerService } from "./message-trigger.service";
 import {
     EmployeeFeedbackTokenService,
     FeedbackTokenContext,
@@ -67,7 +67,7 @@ export class ScheduleChangeService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly tokenService: EmployeeFeedbackTokenService,
-        @Optional() private readonly triggerService?: AlimtalkTriggerService,
+        @Optional() private readonly triggerService?: MessageTriggerService,
     ) {}
 
     private computeTarget(

@@ -1,29 +1,29 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
-import { AlimtalkTriggerService } from "application/services/alimtalk-trigger.service";
+import { MessageTriggerService } from "application/services/message-trigger.service";
 import {
-    AlimtalkTriggerEventType,
-    AlimtalkTriggerRecipientType,
+    MessageTriggerEventType,
+    MessageTriggerRecipientType,
     type SupportedTriggerProvider,
-} from "domain/constants/alimtalk-trigger-catalog";
+} from "domain/constants/message-trigger-catalog";
 import {
-    CreateAlimtalkTriggerRuleDto,
-    UpdateAlimtalkTriggerRuleDto,
-} from "interface/dto/alimtalk-trigger.dto";
+    CreateMessageTriggerRuleDto,
+    UpdateMessageTriggerRuleDto,
+} from "interface/dto/message-trigger.dto";
 import { parseInteger } from "interface/parse-integer";
 
 @Controller()
 @UseGuards(JwtGuard, TenantGuard)
-export class AlimtalkTriggerController {
-    constructor(private readonly triggerService: AlimtalkTriggerService) {}
+export class MessageTriggerController {
+    constructor(private readonly triggerService: MessageTriggerService) {}
 
-    @Get("alimtalk-trigger-rules")
+    @Get("message-trigger-rules")
     listRules(@CurrentTenant() tenant: { branchId?: string }) {
         return this.triggerService.listRules(tenant.branchId ?? "");
     }
 
-    @Get("alimtalk-trigger-jobs/upcoming")
+    @Get("message-trigger-jobs/upcoming")
     listUpcomingJobs(
         @CurrentTenant() tenant: { branchId?: string },
         @Query("limit") limit?: string,
@@ -34,7 +34,7 @@ export class AlimtalkTriggerController {
         );
     }
 
-    @Get("alimtalk-logs")
+    @Get("message-logs")
     listHistory(
         @CurrentTenant() tenant: { branchId?: string },
         @Query("limit") limit?: string,
@@ -47,15 +47,15 @@ export class AlimtalkTriggerController {
         );
     }
 
-    @Post("alimtalk-trigger-rules")
+    @Post("message-trigger-rules")
     createRule(
         @CurrentTenant() tenant: { branchId?: string },
-        @Body() dto: CreateAlimtalkTriggerRuleDto,
+        @Body() dto: CreateMessageTriggerRuleDto,
     ) {
         return this.triggerService.createRule(tenant.branchId ?? "", dto);
     }
 
-    @Get("alimtalk-trigger-rules/:id")
+    @Get("message-trigger-rules/:id")
     getRule(
         @CurrentTenant() tenant: { branchId?: string },
         @Param("id") id: string,
@@ -63,16 +63,16 @@ export class AlimtalkTriggerController {
         return this.triggerService.getRule(tenant.branchId ?? "", id);
     }
 
-    @Patch("alimtalk-trigger-rules/:id")
+    @Patch("message-trigger-rules/:id")
     updateRule(
         @CurrentTenant() tenant: { branchId?: string },
         @Param("id") id: string,
-        @Body() dto: UpdateAlimtalkTriggerRuleDto,
+        @Body() dto: UpdateMessageTriggerRuleDto,
     ) {
         return this.triggerService.updateRule(tenant.branchId ?? "", id, dto);
     }
 
-    @Delete("alimtalk-trigger-rules/:id")
+    @Delete("message-trigger-rules/:id")
     deleteRule(
         @CurrentTenant() tenant: { branchId?: string },
         @Param("id") id: string,
@@ -80,11 +80,11 @@ export class AlimtalkTriggerController {
         return this.triggerService.deleteRule(tenant.branchId ?? "", id);
     }
 
-    @Get("alimtalk-trigger-templates")
+    @Get("message-trigger-templates")
     listTemplates(
         @Query("provider") provider: SupportedTriggerProvider = "aligo_alimtalk",
-        @Query("eventType") eventType?: AlimtalkTriggerEventType,
-        @Query("recipientType") recipientType?: AlimtalkTriggerRecipientType,
+        @Query("eventType") eventType?: MessageTriggerEventType,
+        @Query("recipientType") recipientType?: MessageTriggerRecipientType,
     ) {
         return this.triggerService.listTemplates({ provider, eventType, recipientType });
     }

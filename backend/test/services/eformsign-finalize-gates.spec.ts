@@ -6,6 +6,7 @@ describe("runEformsignFinalizeGates", () => {
     function visibleLocator(overrides: Partial<Locator> = {}): Locator {
         return {
             isVisible: jest.fn().mockResolvedValue(true),
+            isEnabled: jest.fn().mockResolvedValue(true),
             click: jest.fn().mockResolvedValue(undefined),
             ...overrides,
         } as unknown as Locator;
@@ -38,7 +39,7 @@ describe("runEformsignFinalizeGates", () => {
 
         expect(result).toBe("request-send-clicked");
         expect((eformsignFrame as unknown as { locator: jest.Mock }).locator).toHaveBeenCalledWith(
-            "#requestWithInputCommentPopup, #inputCommentPopup",
+            "#inputCommentPopup",
         );
         expect(popupSendButton.click).toHaveBeenCalledTimes(1);
         expect((eformsignFrame as unknown as { getByRole: jest.Mock }).getByRole).not.toHaveBeenCalled();

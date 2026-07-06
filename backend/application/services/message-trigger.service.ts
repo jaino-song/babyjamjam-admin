@@ -7,28 +7,28 @@ import {
 } from "@nestjs/common";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
-    ALIMTALK_TRIGGER_TEMPLATE_CATALOG,
+    MESSAGE_TRIGGER_TEMPLATE_CATALOG,
     EVENT_OFFSET_OPTIONS,
     EVENT_RECIPIENT_OPTIONS,
-    getAlimtalkTriggerTemplateCatalog,
-    isCompatibleTriggerTemplate,
+    getMessageTriggerTemplateCatalog,
+    isCompatibleMessageTriggerTemplate,
     type SupportedTriggerProvider,
-    AlimtalkTriggerEventType,
-    AlimtalkTriggerOffsetType,
-    AlimtalkTriggerRecipientType,
-    AlimtalkTriggerTemplateKey,
-} from "domain/constants/alimtalk-trigger-catalog";
-import { AlimtalkTriggerRuleEntity } from "domain/entities/alimtalk-trigger-rule.entity";
-import { AlimtalkTriggerJobEntity } from "domain/entities/alimtalk-trigger-job.entity";
+    MessageTriggerEventType,
+    MessageTriggerOffsetType,
+    MessageTriggerRecipientType,
+    MessageTriggerTemplateKey,
+} from "domain/constants/message-trigger-catalog";
+import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
+import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
 import {
-    ALIMTALK_TRIGGER_RULE_REPOSITORY,
-    IAlimtalkTriggerRuleRepository,
-} from "domain/repositories/alimtalk-trigger-rule.repository.interface";
+    MESSAGE_TRIGGER_RULE_REPOSITORY,
+    IMessageTriggerRuleRepository,
+} from "domain/repositories/message-trigger-rule.repository.interface";
 import {
-    ALIMTALK_TRIGGER_JOB_REPOSITORY,
-    IAlimtalkTriggerJobRepository,
-} from "domain/repositories/alimtalk-trigger-job.repository.interface";
+    MESSAGE_TRIGGER_JOB_REPOSITORY,
+    IMessageTriggerJobRepository,
+} from "domain/repositories/message-trigger-job.repository.interface";
 import {
     MESSAGE_LOG_REPOSITORY,
     IMessageLogRepository,
@@ -41,43 +41,43 @@ import { buildSmsClientVariables } from "./sms-client-variables";
 interface UpsertRuleParams {
     name: string;
     isActive?: boolean;
-    eventType: AlimtalkTriggerEventType;
-    offsetType: AlimtalkTriggerOffsetType;
+    eventType: MessageTriggerEventType;
+    offsetType: MessageTriggerOffsetType;
     offsetDays?: number;
-    recipientType: AlimtalkTriggerRecipientType;
-    templateKey: AlimtalkTriggerTemplateKey;
+    recipientType: MessageTriggerRecipientType;
+    templateKey: MessageTriggerTemplateKey;
 }
 
 const DEFAULT_SERVICE_INFO_TRIGGER: UpsertRuleParams = {
     name: "서비스 시작 7일 전 서비스 안내",
     isActive: true,
-    eventType: AlimtalkTriggerEventType.SERVICE_START,
-    offsetType: AlimtalkTriggerOffsetType.BEFORE_DAYS,
+    eventType: MessageTriggerEventType.SERVICE_START,
+    offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
     offsetDays: 7,
-    recipientType: AlimtalkTriggerRecipientType.CLIENT,
-    templateKey: AlimtalkTriggerTemplateKey.SERVICE_INFO,
+    recipientType: MessageTriggerRecipientType.CLIENT,
+    templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
 };
 
 const DEFAULT_CLIENT_GREETING_TRIGGER: UpsertRuleParams = {
     name: "신규 고객 인사 메시지",
     isActive: true,
-    eventType: AlimtalkTriggerEventType.CLIENT_CREATED,
-    offsetType: AlimtalkTriggerOffsetType.IMMEDIATE,
+    eventType: MessageTriggerEventType.CLIENT_CREATED,
+    offsetType: MessageTriggerOffsetType.IMMEDIATE,
     offsetDays: 0,
-    recipientType: AlimtalkTriggerRecipientType.CLIENT,
-    templateKey: AlimtalkTriggerTemplateKey.CLIENT_GREETING,
+    recipientType: MessageTriggerRecipientType.CLIENT,
+    templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
 };
 
-export interface UpcomingAlimtalkTriggerJobView {
+export interface UpcomingMessageTriggerJobView {
     id: string;
     ruleId: string;
     ruleName: string;
-    eventType: AlimtalkTriggerEventType | null;
-    offsetType: AlimtalkTriggerOffsetType | null;
+    eventType: MessageTriggerEventType | null;
+    offsetType: MessageTriggerOffsetType | null;
     offsetDays: number;
-    recipientType: AlimtalkTriggerRecipientType;
+    recipientType: MessageTriggerRecipientType;
     recipientPhone: string | null;
-    templateKey: AlimtalkTriggerTemplateKey;
+    templateKey: MessageTriggerTemplateKey;
     status: string;
     scheduledFor: Date;
     sentAt: Date | null;
@@ -85,12 +85,12 @@ export interface UpcomingAlimtalkTriggerJobView {
     cancelReason: string | null;
     clientId: number | null;
     employeeScheduleId: number | null;
-    payload: AlimtalkTriggerJobEntity["payload"];
+    payload: MessageTriggerJobEntity["payload"];
     createdAt: Date;
     updatedAt: Date;
 }
 
-export interface AlimtalkHistoryRecordView {
+export interface MessageLogRecordView {
     id: number;
     provider: string;
     templateKey: string;
@@ -109,11 +109,11 @@ export interface AlimtalkHistoryRecordView {
     updatedAt: Date;
     ruleId: string | null;
     ruleName: string | null;
-    eventType: AlimtalkTriggerEventType | null;
-    offsetType: AlimtalkTriggerOffsetType | null;
+    eventType: MessageTriggerEventType | null;
+    offsetType: MessageTriggerOffsetType | null;
     offsetDays: number;
     scheduledFor: Date | null;
-    recipientType: AlimtalkTriggerRecipientType | null;
+    recipientType: MessageTriggerRecipientType | null;
     recipientName: string | null;
     clientName: string | null;
     employeeName: string | null;
@@ -135,20 +135,20 @@ interface ClientTriggerSource {
 }
 
 @Injectable()
-export class AlimtalkTriggerService {
+export class MessageTriggerService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly deliveryService: MessageTriggerDeliveryService,
         private readonly messageSenderApprovalService: MessageSenderApprovalService,
-        @Inject(ALIMTALK_TRIGGER_RULE_REPOSITORY)
-        private readonly ruleRepository: IAlimtalkTriggerRuleRepository,
-        @Inject(ALIMTALK_TRIGGER_JOB_REPOSITORY)
-        private readonly jobRepository: IAlimtalkTriggerJobRepository,
+        @Inject(MESSAGE_TRIGGER_RULE_REPOSITORY)
+        private readonly ruleRepository: IMessageTriggerRuleRepository,
+        @Inject(MESSAGE_TRIGGER_JOB_REPOSITORY)
+        private readonly jobRepository: IMessageTriggerJobRepository,
         @Inject(MESSAGE_LOG_REPOSITORY)
         private readonly logRepository: IMessageLogRepository,
     ) {}
 
-    async listRules(branchId: string): Promise<AlimtalkTriggerRuleEntity[]> {
+    async listRules(branchId: string): Promise<MessageTriggerRuleEntity[]> {
         if (!(await this.hasTriggerSchema())) {
             return [];
         }
@@ -165,7 +165,7 @@ export class AlimtalkTriggerService {
     async listUpcomingJobs(
         branchId: string,
         limit = 200,
-    ): Promise<UpcomingAlimtalkTriggerJobView[]> {
+    ): Promise<UpcomingMessageTriggerJobView[]> {
         if (!(await this.hasTriggerSchema())) {
             return [];
         }
@@ -209,7 +209,7 @@ export class AlimtalkTriggerService {
         branchId: string,
         limit = 200,
         skip = 0,
-    ): Promise<AlimtalkHistoryRecordView[]> {
+    ): Promise<MessageLogRecordView[]> {
         if (!(await hasTable(this.prisma, "message_log"))) {
             return [];
         }
@@ -224,7 +224,7 @@ export class AlimtalkTriggerService {
             .filter((id): id is string => !!id);
 
         const jobs = triggerJobIds.length > 0
-            ? await this.prisma.alimtalk_trigger_job.findMany({
+            ? await this.prisma.message_trigger_job.findMany({
                 where: { id: { in: triggerJobIds } },
                 select: {
                     id: true,
@@ -242,7 +242,7 @@ export class AlimtalkTriggerService {
 
         return logs.map((log) => {
             const job = log.triggerJobId ? jobsById.get(log.triggerJobId) : null;
-            const payload = (job?.payload as AlimtalkTriggerJobEntity["payload"] | undefined) ?? null;
+            const payload = (job?.payload as MessageTriggerJobEntity["payload"] | undefined) ?? null;
             const rule = job ? rulesById.get(job.ruleId) ?? null : null;
 
             return {
@@ -268,7 +268,7 @@ export class AlimtalkTriggerService {
                 offsetType: rule?.offsetType ?? null,
                 offsetDays: rule?.offsetDays ?? 0,
                 scheduledFor: job?.scheduledFor ?? null,
-                recipientType: (job?.recipientType as AlimtalkTriggerRecipientType | undefined) ?? null,
+                recipientType: (job?.recipientType as MessageTriggerRecipientType | undefined) ?? null,
                 recipientName: payload?.recipientName ?? null,
                 clientName: payload?.clientName ?? null,
                 employeeName: payload?.employeeName ?? null,
@@ -276,7 +276,7 @@ export class AlimtalkTriggerService {
         });
     }
 
-    async getRule(branchId: string, id: string): Promise<AlimtalkTriggerRuleEntity> {
+    async getRule(branchId: string, id: string): Promise<MessageTriggerRuleEntity> {
         await this.ensureTriggerSchemaReady();
         const rule = await this.ruleRepository.findById(branchId, id);
         if (!rule) {
@@ -287,10 +287,10 @@ export class AlimtalkTriggerService {
 
     listTemplates(params: {
         provider: SupportedTriggerProvider;
-        eventType?: AlimtalkTriggerEventType;
-        recipientType?: AlimtalkTriggerRecipientType;
+        eventType?: MessageTriggerEventType;
+        recipientType?: MessageTriggerRecipientType;
     }) {
-        return getAlimtalkTriggerTemplateCatalog(params.provider).filter((item) => {
+        return getMessageTriggerTemplateCatalog(params.provider).filter((item) => {
             if (params.eventType && !item.allowedEventTypes.includes(params.eventType)) return false;
             if (
                 params.recipientType &&
@@ -305,13 +305,13 @@ export class AlimtalkTriggerService {
     async createRule(
         branchId: string,
         params: UpsertRuleParams,
-    ): Promise<AlimtalkTriggerRuleEntity> {
+    ): Promise<MessageTriggerRuleEntity> {
         await this.ensureTriggerSchemaReady();
         await this.messageSenderApprovalService.ensureApproved(branchId);
         this.validateRule(params);
         const rule = await this.ruleRepository.create(
             branchId,
-            AlimtalkTriggerRuleEntity.create({
+            MessageTriggerRuleEntity.create({
                 branchId,
                 ...params,
                 offsetDays: this.normalizeOffsetDays(params.offsetType, params.offsetDays),
@@ -327,7 +327,7 @@ export class AlimtalkTriggerService {
         branchId: string,
         id: string,
         params: Partial<UpsertRuleParams>,
-    ): Promise<AlimtalkTriggerRuleEntity> {
+    ): Promise<MessageTriggerRuleEntity> {
         await this.ensureTriggerSchemaReady();
         await this.messageSenderApprovalService.ensureApproved(branchId);
         const rule = await this.getRule(branchId, id);
@@ -415,18 +415,18 @@ export class AlimtalkTriggerService {
         if (!client) return;
 
         const rules = await this.ruleRepository.findActiveByEventTypes(branchId, [
-            AlimtalkTriggerEventType.CLIENT_CREATED,
-            AlimtalkTriggerEventType.SERVICE_START,
-            AlimtalkTriggerEventType.SERVICE_END,
+            MessageTriggerEventType.CLIENT_CREATED,
+            MessageTriggerEventType.SERVICE_START,
+            MessageTriggerEventType.SERVICE_END,
         ]);
 
         await this.cancelPendingJobsForClient(rules.map((rule) => rule.id), clientId, "Client data changed");
 
         for (const rule of rules) {
-            if (rule.eventType === AlimtalkTriggerEventType.CLIENT_CREATED && !supportsCreatedAt) {
+            if (rule.eventType === MessageTriggerEventType.CLIENT_CREATED && !supportsCreatedAt) {
                 continue;
             }
-            if (rule.templateKey === AlimtalkTriggerTemplateKey.CLIENT_GREETING && suppressGreeting) {
+            if (rule.templateKey === MessageTriggerTemplateKey.CLIENT_GREETING && suppressGreeting) {
                 continue;
             }
             const job = this.buildClientJob(rule, client);
@@ -453,7 +453,7 @@ export class AlimtalkTriggerService {
         if (!schedule) return;
 
         const rules = await this.ruleRepository.findActiveByEventTypes(branchId, [
-            AlimtalkTriggerEventType.EMPLOYEE_ASSIGNED,
+            MessageTriggerEventType.EMPLOYEE_ASSIGNED,
         ]);
 
         await this.cancelPendingJobsForEmployeeSchedule(
@@ -470,7 +470,7 @@ export class AlimtalkTriggerService {
 
     async hasActiveRulesForEvents(
         branchId: string,
-        eventTypes: AlimtalkTriggerEventType[],
+        eventTypes: MessageTriggerEventType[],
     ): Promise<boolean> {
         if (!(await this.hasTriggerSchema())) {
             return false;
@@ -481,10 +481,10 @@ export class AlimtalkTriggerService {
 
     private async ensureDefaultTrigger(
         branchId: string,
-        rules: AlimtalkTriggerRuleEntity[],
+        rules: MessageTriggerRuleEntity[],
         defaults: UpsertRuleParams,
         matchTemplateKeyOnly = false,
-    ): Promise<{ rules: AlimtalkTriggerRuleEntity[]; created: AlimtalkTriggerRuleEntity | null }> {
+    ): Promise<{ rules: MessageTriggerRuleEntity[]; created: MessageTriggerRuleEntity | null }> {
         // For IMMEDIATE-greeting-style defaults, ANY existing rule with the same templateKey
         // counts as "the default already exists". Otherwise an admin-created greeting rule with
         // a non-default offset (e.g. AFTER_DAYS) would not match the full tuple, the IMMEDIATE
@@ -503,7 +503,7 @@ export class AlimtalkTriggerService {
 
         const created = await this.ruleRepository.create(
             branchId,
-            AlimtalkTriggerRuleEntity.create({
+            MessageTriggerRuleEntity.create({
                 branchId,
                 ...defaults,
             }),
@@ -514,8 +514,8 @@ export class AlimtalkTriggerService {
 
     private async ensureDefaultServiceInfoTrigger(
         branchId: string,
-        rules: AlimtalkTriggerRuleEntity[],
-    ): Promise<AlimtalkTriggerRuleEntity[]> {
+        rules: MessageTriggerRuleEntity[],
+    ): Promise<MessageTriggerRuleEntity[]> {
         if (!branchId) return rules;
 
         const { rules: rulesAfterServiceInfo } = await this.ensureDefaultTrigger(
@@ -536,19 +536,19 @@ export class AlimtalkTriggerService {
 
     private async rebuildJobsForRule(
         branchId: string,
-        rule: AlimtalkTriggerRuleEntity,
+        rule: MessageTriggerRuleEntity,
         includePast: boolean,
     ): Promise<void> {
         if (!rule.isActive) return;
 
-        if (rule.eventType === AlimtalkTriggerEventType.EMPLOYEE_ASSIGNED) {
+        if (rule.eventType === MessageTriggerEventType.EMPLOYEE_ASSIGNED) {
             return;
         }
 
-        if (rule.offsetType === AlimtalkTriggerOffsetType.IMMEDIATE) return;
+        if (rule.offsetType === MessageTriggerOffsetType.IMMEDIATE) return;
 
         const supportsCreatedAt = await hasColumn(this.prisma, "client", "created_at");
-        if (rule.eventType === AlimtalkTriggerEventType.CLIENT_CREATED && !supportsCreatedAt) {
+        if (rule.eventType === MessageTriggerEventType.CLIENT_CREATED && !supportsCreatedAt) {
             return;
         }
 
@@ -580,8 +580,8 @@ export class AlimtalkTriggerService {
     }
 
     private async persistPendingJob(
-        job: AlimtalkTriggerJobEntity | null,
-        rule: AlimtalkTriggerRuleEntity,
+        job: MessageTriggerJobEntity | null,
+        rule: MessageTriggerRuleEntity,
         includePast: boolean,
     ): Promise<void> {
         if (!job) return;
@@ -590,7 +590,7 @@ export class AlimtalkTriggerService {
         // due-job scheduler can send missed automations in scheduledFor order.
         if (
             !includePast &&
-            rule.offsetType === AlimtalkTriggerOffsetType.IMMEDIATE &&
+            rule.offsetType === MessageTriggerOffsetType.IMMEDIATE &&
             job.scheduledFor.getTime() <= Date.now()
         ) {
             return;
@@ -599,9 +599,9 @@ export class AlimtalkTriggerService {
     }
 
     private buildClientJob(
-        rule: AlimtalkTriggerRuleEntity,
+        rule: MessageTriggerRuleEntity,
         client: ClientTriggerSource,
-    ): AlimtalkTriggerJobEntity | null {
+    ): MessageTriggerJobEntity | null {
         if (!client.phone) return null;
 
         const anchorDate = this.getClientAnchorDate(rule.eventType, client);
@@ -617,7 +617,7 @@ export class AlimtalkTriggerService {
             templateVariables: this.buildClientTemplateVariables(rule, client),
         };
 
-        return AlimtalkTriggerJobEntity.create({
+        return MessageTriggerJobEntity.create({
             branchId: rule.branchId ?? undefined,
             ruleId: rule.id,
             scheduledFor,
@@ -631,7 +631,7 @@ export class AlimtalkTriggerService {
     }
 
     private buildEmployeeAssignmentJob(
-        rule: AlimtalkTriggerRuleEntity,
+        rule: MessageTriggerRuleEntity,
         schedule: {
             id: number;
             clientId: number;
@@ -642,16 +642,16 @@ export class AlimtalkTriggerService {
             primaryEmployee: { id: number; name: string; phone: string } | null;
             secondaryEmployee: { id: number; name: string; phone: string } | null;
         },
-    ): AlimtalkTriggerJobEntity | null {
+    ): MessageTriggerJobEntity | null {
         const employee =
-            rule.recipientType === AlimtalkTriggerRecipientType.PRIMARY_EMPLOYEE
+            rule.recipientType === MessageTriggerRecipientType.PRIMARY_EMPLOYEE
                 ? schedule.primaryEmployee
                 : schedule.secondaryEmployee;
         if (!employee?.phone) return null;
 
         const scheduledFor = new Date();
         const memberId = `employee:${employee.id}`;
-        return AlimtalkTriggerJobEntity.create({
+        return MessageTriggerJobEntity.create({
             branchId: rule.branchId ?? undefined,
             ruleId: rule.id,
             scheduledFor,
@@ -684,38 +684,38 @@ export class AlimtalkTriggerService {
     }
 
     private buildClientTemplateVariables(
-        rule: AlimtalkTriggerRuleEntity,
+        rule: MessageTriggerRuleEntity,
         client: ClientTriggerSource,
     ): Record<string, string> {
         switch (rule.templateKey) {
-            case AlimtalkTriggerTemplateKey.CLIENT_WELCOME:
+            case MessageTriggerTemplateKey.CLIENT_WELCOME:
                 return {
                     clientName: client.name,
                     registrationDate: this.formatDate(client.createdAt ?? null),
                     serviceType: client.type ?? "방문요양",
                 };
-            case AlimtalkTriggerTemplateKey.SERVICE_START_REMINDER:
+            case MessageTriggerTemplateKey.SERVICE_START_REMINDER:
                 return {
                     clientName: client.name,
                     serviceStartDate: this.formatDate(client.startDate),
                     timingText: this.describeTiming(rule, "서비스 시작"),
                 };
-            case AlimtalkTriggerTemplateKey.SERVICE_END_REMINDER:
+            case MessageTriggerTemplateKey.SERVICE_END_REMINDER:
                 return {
                     clientName: client.name,
                     serviceEndDate: this.formatDate(client.endDate),
                     timingText: this.describeTiming(rule, "서비스 종료"),
                 };
-            case AlimtalkTriggerTemplateKey.PRICE_INFO:
+            case MessageTriggerTemplateKey.PRICE_INFO:
                 // PRICE_INFO is the only SMS template that renders price/bank fields,
                 // so it is the only one that carries them into the job payload (data minimization).
                 return buildSmsClientVariables(client);
-            case AlimtalkTriggerTemplateKey.SERVICE_INFO:
-            case AlimtalkTriggerTemplateKey.CLIENT_GREETING:
-            case AlimtalkTriggerTemplateKey.REMINDER:
-            case AlimtalkTriggerTemplateKey.THANKS:
-            case AlimtalkTriggerTemplateKey.SURVEY:
-            case AlimtalkTriggerTemplateKey.INFO:
+            case MessageTriggerTemplateKey.SERVICE_INFO:
+            case MessageTriggerTemplateKey.CLIENT_GREETING:
+            case MessageTriggerTemplateKey.REMINDER:
+            case MessageTriggerTemplateKey.THANKS:
+            case MessageTriggerTemplateKey.SURVEY:
+            case MessageTriggerTemplateKey.INFO:
                 return { name: client.name, clientName: client.name, phone: client.phone ?? "" };
             default:
                 return {};
@@ -723,32 +723,32 @@ export class AlimtalkTriggerService {
     }
 
     private getClientAnchorDate(
-        eventType: AlimtalkTriggerEventType,
+        eventType: MessageTriggerEventType,
         client: Pick<ClientTriggerSource, "createdAt" | "startDate" | "endDate">,
     ): Date | null {
         switch (eventType) {
-            case AlimtalkTriggerEventType.CLIENT_CREATED:
+            case MessageTriggerEventType.CLIENT_CREATED:
                 return client.createdAt ?? null;
-            case AlimtalkTriggerEventType.SERVICE_START:
+            case MessageTriggerEventType.SERVICE_START:
                 return client.startDate;
-            case AlimtalkTriggerEventType.SERVICE_END:
+            case MessageTriggerEventType.SERVICE_END:
                 return client.endDate;
             default:
                 return null;
         }
     }
 
-    private computeScheduledFor(anchorDate: Date, rule: AlimtalkTriggerRuleEntity): Date {
-        if (rule.offsetType === AlimtalkTriggerOffsetType.IMMEDIATE) {
+    private computeScheduledFor(anchorDate: Date, rule: MessageTriggerRuleEntity): Date {
+        if (rule.offsetType === MessageTriggerOffsetType.IMMEDIATE) {
             return new Date();
         }
 
         const targetDate = new Date(anchorDate);
         targetDate.setHours(9, 0, 0, 0);
 
-        if (rule.offsetType === AlimtalkTriggerOffsetType.BEFORE_DAYS) {
+        if (rule.offsetType === MessageTriggerOffsetType.BEFORE_DAYS) {
             targetDate.setDate(targetDate.getDate() - rule.offsetDays);
-        } else if (rule.offsetType === AlimtalkTriggerOffsetType.AFTER_DAYS) {
+        } else if (rule.offsetType === MessageTriggerOffsetType.AFTER_DAYS) {
             targetDate.setDate(targetDate.getDate() + rule.offsetDays);
         }
 
@@ -759,20 +759,20 @@ export class AlimtalkTriggerService {
         ruleId: string,
         sourceKey: string,
         scheduledFor: Date,
-        recipientType: AlimtalkTriggerRecipientType,
+        recipientType: MessageTriggerRecipientType,
     ): string {
         return `${ruleId}:${sourceKey}:${recipientType}:${scheduledFor.toISOString()}`;
     }
 
-    private describeTiming(rule: AlimtalkTriggerRuleEntity, anchorLabel: string): string {
+    private describeTiming(rule: MessageTriggerRuleEntity, anchorLabel: string): string {
         switch (rule.offsetType) {
-            case AlimtalkTriggerOffsetType.SAME_DAY:
+            case MessageTriggerOffsetType.SAME_DAY:
                 return `${anchorLabel} 당일 안내`;
-            case AlimtalkTriggerOffsetType.BEFORE_DAYS:
+            case MessageTriggerOffsetType.BEFORE_DAYS:
                 return `${anchorLabel} ${rule.offsetDays}일 전 안내`;
-            case AlimtalkTriggerOffsetType.AFTER_DAYS:
+            case MessageTriggerOffsetType.AFTER_DAYS:
                 return `${anchorLabel} ${rule.offsetDays}일 후 안내`;
-            case AlimtalkTriggerOffsetType.IMMEDIATE:
+            case MessageTriggerOffsetType.IMMEDIATE:
                 return "즉시 안내";
             default:
                 return "알림 안내";
@@ -788,12 +788,12 @@ export class AlimtalkTriggerService {
     }
 
     private normalizeOffsetDays(
-        offsetType: AlimtalkTriggerOffsetType,
+        offsetType: MessageTriggerOffsetType,
         offsetDays?: number,
     ): number {
         if (
-            offsetType === AlimtalkTriggerOffsetType.IMMEDIATE ||
-            offsetType === AlimtalkTriggerOffsetType.SAME_DAY
+            offsetType === MessageTriggerOffsetType.IMMEDIATE ||
+            offsetType === MessageTriggerOffsetType.SAME_DAY
         ) {
             return 0;
         }
@@ -811,15 +811,15 @@ export class AlimtalkTriggerService {
 
         const normalizedOffsetDays = this.normalizeOffsetDays(params.offsetType, params.offsetDays);
         if (
-            (params.offsetType === AlimtalkTriggerOffsetType.BEFORE_DAYS ||
-                params.offsetType === AlimtalkTriggerOffsetType.AFTER_DAYS) &&
+            (params.offsetType === MessageTriggerOffsetType.BEFORE_DAYS ||
+                params.offsetType === MessageTriggerOffsetType.AFTER_DAYS) &&
             normalizedOffsetDays <= 0
         ) {
             throw new BadRequestException("Offset days must be greater than 0");
         }
 
         if (
-            !isCompatibleTriggerTemplate({
+            !isCompatibleMessageTriggerTemplate({
                 templateKey: params.templateKey,
                 eventType: params.eventType,
                 recipientType: params.recipientType,
@@ -828,7 +828,7 @@ export class AlimtalkTriggerService {
             throw new BadRequestException("Template is not compatible with the selected event and recipient");
         }
 
-        if (!ALIMTALK_TRIGGER_TEMPLATE_CATALOG[params.templateKey]) {
+        if (!MESSAGE_TRIGGER_TEMPLATE_CATALOG[params.templateKey]) {
             throw new BadRequestException("Unknown template key");
         }
     }
@@ -870,8 +870,8 @@ export class AlimtalkTriggerService {
 
     private async hasTriggerSchema(): Promise<boolean> {
         const [hasRuleTable, hasJobTable] = await Promise.all([
-            hasTable(this.prisma, "alimtalk_trigger_rule"),
-            hasTable(this.prisma, "alimtalk_trigger_job"),
+            hasTable(this.prisma, "message_trigger_rule"),
+            hasTable(this.prisma, "message_trigger_job"),
         ]);
         return hasRuleTable && hasJobTable;
     }
@@ -879,7 +879,7 @@ export class AlimtalkTriggerService {
     private async ensureTriggerSchemaReady(): Promise<void> {
         if (!(await this.hasTriggerSchema())) {
             throw new ServiceUnavailableException(
-                "AlimTalk trigger tables are not available. Apply the database migration first.",
+                "Message trigger tables are not available. Apply the database migration first.",
             );
         }
     }

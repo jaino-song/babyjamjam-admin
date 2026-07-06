@@ -1,21 +1,21 @@
 import {
-    AlimtalkTriggerEventType,
-    AlimtalkTriggerOffsetType,
-    AlimtalkTriggerRecipientType,
-    AlimtalkTriggerTemplateKey,
-} from "domain/constants/alimtalk-trigger-catalog";
+    MessageTriggerEventType,
+    MessageTriggerOffsetType,
+    MessageTriggerRecipientType,
+    MessageTriggerTemplateKey,
+} from "domain/constants/message-trigger-catalog";
 
-export class AlimtalkTriggerRuleEntity {
+export class MessageTriggerRuleEntity {
     constructor(
         public readonly id: string,
         public branchId: string | null,
         public name: string,
         public isActive: boolean,
-        public eventType: AlimtalkTriggerEventType,
-        public offsetType: AlimtalkTriggerOffsetType,
+        public eventType: MessageTriggerEventType,
+        public offsetType: MessageTriggerOffsetType,
         public offsetDays: number,
-        public recipientType: AlimtalkTriggerRecipientType,
-        public templateKey: AlimtalkTriggerTemplateKey,
+        public recipientType: MessageTriggerRecipientType,
+        public templateKey: MessageTriggerTemplateKey,
         public createdAt: Date,
         public updatedAt: Date,
     ) {}
@@ -24,14 +24,14 @@ export class AlimtalkTriggerRuleEntity {
         branchId?: string;
         name: string;
         isActive?: boolean;
-        eventType: AlimtalkTriggerEventType;
-        offsetType: AlimtalkTriggerOffsetType;
+        eventType: MessageTriggerEventType;
+        offsetType: MessageTriggerOffsetType;
         offsetDays?: number;
-        recipientType: AlimtalkTriggerRecipientType;
-        templateKey: AlimtalkTriggerTemplateKey;
-    }): AlimtalkTriggerRuleEntity {
+        recipientType: MessageTriggerRecipientType;
+        templateKey: MessageTriggerTemplateKey;
+    }): MessageTriggerRuleEntity {
         const now = new Date();
-        return new AlimtalkTriggerRuleEntity(
+        return new MessageTriggerRuleEntity(
             "",
             params.branchId ?? null,
             params.name,
@@ -51,15 +51,15 @@ export class AlimtalkTriggerRuleEntity {
         branchId: string | null,
         name: string,
         isActive: boolean,
-        eventType: AlimtalkTriggerEventType,
-        offsetType: AlimtalkTriggerOffsetType,
+        eventType: MessageTriggerEventType,
+        offsetType: MessageTriggerOffsetType,
         offsetDays: number,
-        recipientType: AlimtalkTriggerRecipientType,
-        templateKey: AlimtalkTriggerTemplateKey,
+        recipientType: MessageTriggerRecipientType,
+        templateKey: MessageTriggerTemplateKey,
         createdAt: Date,
         updatedAt: Date,
-    ): AlimtalkTriggerRuleEntity {
-        return new AlimtalkTriggerRuleEntity(
+    ): MessageTriggerRuleEntity {
+        return new MessageTriggerRuleEntity(
             id,
             branchId,
             name,
@@ -77,11 +77,11 @@ export class AlimtalkTriggerRuleEntity {
     update(params: {
         name?: string;
         isActive?: boolean;
-        eventType?: AlimtalkTriggerEventType;
-        offsetType?: AlimtalkTriggerOffsetType;
+        eventType?: MessageTriggerEventType;
+        offsetType?: MessageTriggerOffsetType;
         offsetDays?: number;
-        recipientType?: AlimtalkTriggerRecipientType;
-        templateKey?: AlimtalkTriggerTemplateKey;
+        recipientType?: MessageTriggerRecipientType;
+        templateKey?: MessageTriggerTemplateKey;
     }): void {
         this.name = params.name ?? this.name;
         this.isActive = params.isActive ?? this.isActive;

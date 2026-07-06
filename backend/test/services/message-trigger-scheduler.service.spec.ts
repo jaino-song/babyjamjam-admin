@@ -1,19 +1,19 @@
-import { AlimtalkTriggerSchedulerService } from "application/services/alimtalk-trigger-scheduler.service";
-import { AlimtalkTriggerService } from "application/services/alimtalk-trigger.service";
+import { MessageTriggerSchedulerService } from "application/services/message-trigger-scheduler.service";
+import { MessageTriggerService } from "application/services/message-trigger.service";
 
-describe("AlimtalkTriggerSchedulerService", () => {
+describe("MessageTriggerSchedulerService", () => {
     const createMockTriggerService = () => ({
         dispatchDueJobs: jest.fn(),
     });
 
-    let scheduler: AlimtalkTriggerSchedulerService;
+    let scheduler: MessageTriggerSchedulerService;
     let triggerService: ReturnType<typeof createMockTriggerService>;
     let nowSpy: jest.SpyInstance<number, []>;
 
     beforeEach(() => {
         triggerService = createMockTriggerService();
-        scheduler = new AlimtalkTriggerSchedulerService(
-            triggerService as unknown as AlimtalkTriggerService,
+        scheduler = new MessageTriggerSchedulerService(
+            triggerService as unknown as MessageTriggerService,
         );
         nowSpy = jest.spyOn(Date, "now");
         nowSpy.mockReturnValue(0);

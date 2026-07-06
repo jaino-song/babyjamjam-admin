@@ -1,11 +1,11 @@
 import {
-    AlimtalkTriggerRecipientType,
-    AlimtalkTriggerTemplateKey,
-} from "domain/constants/alimtalk-trigger-catalog";
+    MessageTriggerRecipientType,
+    MessageTriggerTemplateKey,
+} from "domain/constants/message-trigger-catalog";
 
-export type AlimtalkTriggerJobStatus = "pending" | "sent" | "failed" | "canceled";
+export type MessageTriggerJobStatus = "pending" | "sent" | "failed" | "canceled";
 
-export interface AlimtalkTriggerJobPayload {
+export interface MessageTriggerJobPayload {
     clientId?: number | null;
     clientName?: string | null;
     employeeId?: number | null;
@@ -18,23 +18,23 @@ export interface AlimtalkTriggerJobPayload {
     messageBody?: string | null;
 }
 
-export class AlimtalkTriggerJobEntity {
+export class MessageTriggerJobEntity {
     constructor(
         public readonly id: string,
         public branchId: string | null,
         public ruleId: string,
-        public status: AlimtalkTriggerJobStatus,
+        public status: MessageTriggerJobStatus,
         public scheduledFor: Date,
         public sentAt: Date | null,
         public canceledAt: Date | null,
         public cancelReason: string | null,
         public clientId: number | null,
         public employeeScheduleId: number | null,
-        public recipientType: AlimtalkTriggerRecipientType,
+        public recipientType: MessageTriggerRecipientType,
         public recipientPhone: string | null,
-        public templateKey: AlimtalkTriggerTemplateKey,
+        public templateKey: MessageTriggerTemplateKey,
         public dedupeKey: string,
-        public payload: AlimtalkTriggerJobPayload,
+        public payload: MessageTriggerJobPayload,
         public createdAt: Date,
         public updatedAt: Date,
     ) {}
@@ -45,14 +45,14 @@ export class AlimtalkTriggerJobEntity {
         scheduledFor: Date;
         clientId?: number | null;
         employeeScheduleId?: number | null;
-        recipientType: AlimtalkTriggerRecipientType;
+        recipientType: MessageTriggerRecipientType;
         recipientPhone?: string | null;
-        templateKey: AlimtalkTriggerTemplateKey;
+        templateKey: MessageTriggerTemplateKey;
         dedupeKey: string;
-        payload: AlimtalkTriggerJobPayload;
-    }): AlimtalkTriggerJobEntity {
+        payload: MessageTriggerJobPayload;
+    }): MessageTriggerJobEntity {
         const now = new Date();
-        return new AlimtalkTriggerJobEntity(
+        return new MessageTriggerJobEntity(
             "",
             params.branchId ?? null,
             params.ruleId,
@@ -77,22 +77,22 @@ export class AlimtalkTriggerJobEntity {
         id: string,
         branchId: string | null,
         ruleId: string,
-        status: AlimtalkTriggerJobStatus,
+        status: MessageTriggerJobStatus,
         scheduledFor: Date,
         sentAt: Date | null,
         canceledAt: Date | null,
         cancelReason: string | null,
         clientId: number | null,
         employeeScheduleId: number | null,
-        recipientType: AlimtalkTriggerRecipientType,
+        recipientType: MessageTriggerRecipientType,
         recipientPhone: string | null,
-        templateKey: AlimtalkTriggerTemplateKey,
+        templateKey: MessageTriggerTemplateKey,
         dedupeKey: string,
-        payload: AlimtalkTriggerJobPayload,
+        payload: MessageTriggerJobPayload,
         createdAt: Date,
         updatedAt: Date,
-    ): AlimtalkTriggerJobEntity {
-        return new AlimtalkTriggerJobEntity(
+    ): MessageTriggerJobEntity {
+        return new MessageTriggerJobEntity(
             id,
             branchId,
             ruleId,

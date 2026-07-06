@@ -12,7 +12,7 @@ import { ClientEntity } from "domain/entities/client.entity";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { computeServiceStatus, isServiceStatus, SERVICE_STATUS, SERVICE_STATUS_VALUES, ServiceStatusType } from "domain/value-objects/service-status.vo";
-import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
+import { MessageTriggerService } from "./message-trigger.service";
 import { EmployeeFeedbackLinkService } from "./employee-feedback-link.service";
 
 const FILTER_DAYS_THRESHOLD = 7;
@@ -139,7 +139,7 @@ export class ClientService {
         private readonly prismaService: PrismaService,
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
-        @Optional() private readonly triggerService?: AlimtalkTriggerService,
+        @Optional() private readonly triggerService?: MessageTriggerService,
         @Optional() private readonly employeeFeedbackLinkService?: EmployeeFeedbackLinkService,
     ) {}
 
