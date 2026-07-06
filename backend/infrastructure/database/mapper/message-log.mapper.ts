@@ -1,7 +1,8 @@
-import { AlimtalkLogEntity, AlimtalkLogStatus } from "domain/entities/alimtalk-log.entity";
 import { Prisma } from "@prisma/client";
 
-type AlimtalkLogRow = {
+import { MessageLogEntity, MessageLogStatus } from "domain/entities/message-log.entity";
+
+type MessageLogRow = {
     id: number;
     branchId: string | null;
     provider: string;
@@ -21,9 +22,9 @@ type AlimtalkLogRow = {
     updatedAt: Date;
 };
 
-export class AlimtalkLogMapper {
-    static toDomain(row: AlimtalkLogRow): AlimtalkLogEntity {
-        return AlimtalkLogEntity.reconstitute(
+export class MessageLogMapper {
+    static toDomain(row: MessageLogRow): MessageLogEntity {
+        return MessageLogEntity.reconstitute(
             row.id,
             row.branchId,
             row.provider,
@@ -33,7 +34,7 @@ export class AlimtalkLogMapper {
             row.clientId,
             row.messageBody,
             (row.variables as Record<string, string>) ?? {},
-            row.status as AlimtalkLogStatus,
+            row.status as MessageLogStatus,
             row.aligoMid,
             row.errorMessage,
             row.attempts,
@@ -44,7 +45,7 @@ export class AlimtalkLogMapper {
         );
     }
 
-    static toPrismaCreate(entity: AlimtalkLogEntity) {
+    static toPrismaCreate(entity: MessageLogEntity) {
         return {
             branchId: entity.branchId,
             provider: entity.provider,
@@ -63,7 +64,7 @@ export class AlimtalkLogMapper {
         };
     }
 
-    static toPrismaUpdate(entity: AlimtalkLogEntity) {
+    static toPrismaUpdate(entity: MessageLogEntity) {
         return {
             status: entity.status,
             aligoMid: entity.aligoMid,

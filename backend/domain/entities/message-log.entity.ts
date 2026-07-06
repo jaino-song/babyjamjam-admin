@@ -9,20 +9,29 @@ export interface MessageDeliveryRetryPolicy {
 }
 
 export function getMessageDeliveryRetryPolicy(provider: string): MessageDeliveryRetryPolicy {
-    return provider === "aligo_sms"
-        ? {
+    if (provider === "aligo_sms") {
+        return {
             maxAttempts: SMS_DELIVERY_MAX_ATTEMPTS,
             retryDelayMs: SMS_DELIVERY_RETRY_DELAY_MS,
-        }
-        : {
+        };
+    }
+
+    if (provider === "aligo_alimtalk") {
+        return {
             maxAttempts: ALIMTALK_DELIVERY_MAX_ATTEMPTS,
             retryDelayMs: ALIMTALK_DELIVERY_RETRY_DELAY_MS,
         };
+    }
+
+    return {
+        maxAttempts: ALIMTALK_DELIVERY_MAX_ATTEMPTS,
+        retryDelayMs: ALIMTALK_DELIVERY_RETRY_DELAY_MS,
+    };
 }
 
-export type AlimtalkLogStatus = "pending" | "sent" | "failed";
+export type MessageLogStatus = "pending" | "sent" | "failed";
 
-export class AlimtalkLogEntity {
+export class MessageLogEntity {
     constructor(
         public readonly id: number,
         public branchId: string | null,
@@ -33,7 +42,7 @@ export class AlimtalkLogEntity {
         public clientId: number | null,
         public messageBody: string,
         public variables: Record<string, string>,
-        public status: AlimtalkLogStatus,
+        public status: MessageLogStatus,
         public aligoMid: string | null,
         public errorMessage: string | null,
         public attempts: number,
@@ -81,9 +90,9 @@ export class AlimtalkLogEntity {
         clientId?: number;
         messageBody: string;
         variables: Record<string, string>;
-    }): AlimtalkLogEntity {
+    }): MessageLogEntity {
         const now = new Date();
-        return new AlimtalkLogEntity(
+        return new MessageLogEntity(
             0,
             params.branchId ?? null,
             params.provider,
@@ -114,7 +123,7 @@ export class AlimtalkLogEntity {
         clientId: number | null,
         messageBody: string,
         variables: Record<string, string>,
-        status: AlimtalkLogStatus,
+        status: MessageLogStatus,
         aligoMid: string | null,
         errorMessage: string | null,
         attempts: number,
@@ -122,8 +131,8 @@ export class AlimtalkLogEntity {
         nextRetryAt: Date | null,
         createdAt: Date,
         updatedAt: Date = createdAt,
-    ): AlimtalkLogEntity {
-        return new AlimtalkLogEntity(
+    ): MessageLogEntity {
+        return new MessageLogEntity(
             id, branchId, provider, templateKey, triggerJobId, receiver, clientId,
             messageBody, variables, status, aligoMid, errorMessage, attempts,
             lastAttemptAt, nextRetryAt, createdAt, updatedAt,

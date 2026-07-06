@@ -16,7 +16,7 @@ describe("AdminServiceRecordService", () => {
         alimtalk_trigger_job: {
             findMany: jest.fn(),
         },
-        alimtalk_log: {
+        message_log: {
             findMany: jest.fn(),
         },
     });
@@ -88,7 +88,7 @@ describe("AdminServiceRecordService", () => {
                 createdAt: new Date("2026-07-02T00:00:00.000Z"),
             },
         ]);
-        prisma.alimtalk_log.findMany.mockResolvedValue([
+        prisma.message_log.findMany.mockResolvedValue([
             {
                 id: 400,
                 branchId: "branch-1",
@@ -141,7 +141,7 @@ describe("AdminServiceRecordService", () => {
             createSchedule(2, "2026-07-03T00:00:00.000Z"),
         ]);
         prisma.alimtalk_trigger_job.findMany.mockResolvedValue([]);
-        prisma.alimtalk_log.findMany.mockResolvedValue([
+        prisma.message_log.findMany.mockResolvedValue([
             {
                 id: 500,
                 branchId: "branch-1",

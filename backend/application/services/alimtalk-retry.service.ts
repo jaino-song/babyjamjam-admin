@@ -2,25 +2,25 @@ import { Inject, Injectable, Logger } from "@nestjs/common";
 import { ALIGO_TEMPLATES } from "application/dto/aligo";
 import { AligoTemplateKey } from "application/dto/aligo/alimtalk-template.dto";
 import { maskPhone } from "application/utils/mask";
-import { AlimtalkLogEntity } from "domain/entities/alimtalk-log.entity";
+import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { ALIGO_API_PORT, IAligoApiPort } from "domain/ports/aligo-api.port";
 import {
-    ALIMTALK_LOG_REPOSITORY,
-    IAlimtalkLogRepository,
-} from "domain/repositories/alimtalk-log.repository.interface";
+    MESSAGE_LOG_REPOSITORY,
+    IMessageLogRepository,
+} from "domain/repositories/message-log.repository.interface";
 
 @Injectable()
 export class AlimtalkRetryService {
     private readonly logger = new Logger(AlimtalkRetryService.name);
 
     constructor(
-        @Inject(ALIMTALK_LOG_REPOSITORY)
-        private readonly logRepository: IAlimtalkLogRepository,
+        @Inject(MESSAGE_LOG_REPOSITORY)
+        private readonly logRepository: IMessageLogRepository,
         @Inject(ALIGO_API_PORT)
         private readonly aligoApi: IAligoApiPort,
     ) {}
 
-    async retry(log: AlimtalkLogEntity): Promise<void> {
+    async retry(log: MessageLogEntity): Promise<void> {
         try {
             const templateKey = log.templateKey as AligoTemplateKey;
             const template = ALIGO_TEMPLATES[templateKey];

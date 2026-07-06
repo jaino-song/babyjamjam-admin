@@ -20,7 +20,7 @@ import {
 } from "domain/constants/alimtalk-trigger-catalog";
 import { AlimtalkTriggerRuleEntity } from "domain/entities/alimtalk-trigger-rule.entity";
 import { AlimtalkTriggerJobEntity } from "domain/entities/alimtalk-trigger-job.entity";
-import { AlimtalkLogEntity } from "domain/entities/alimtalk-log.entity";
+import { MessageLogEntity } from "domain/entities/message-log.entity";
 import {
     ALIMTALK_TRIGGER_RULE_REPOSITORY,
     IAlimtalkTriggerRuleRepository,
@@ -30,9 +30,9 @@ import {
     IAlimtalkTriggerJobRepository,
 } from "domain/repositories/alimtalk-trigger-job.repository.interface";
 import {
-    ALIMTALK_LOG_REPOSITORY,
-    IAlimtalkLogRepository,
-} from "domain/repositories/alimtalk-log.repository.interface";
+    MESSAGE_LOG_REPOSITORY,
+    IMessageLogRepository,
+} from "domain/repositories/message-log.repository.interface";
 import { MessageTriggerDeliveryService } from "./message-trigger-delivery.service";
 import { hasColumn, hasTable } from "infrastructure/database/schema-capabilities";
 import { MessageSenderApprovalService } from "./message-sender-approval.service";
@@ -99,7 +99,7 @@ export interface AlimtalkHistoryRecordView {
     clientId: number | null;
     messageBody: string;
     variables: Record<string, string>;
-    status: AlimtalkLogEntity["status"];
+    status: MessageLogEntity["status"];
     aligoMid: string | null;
     errorMessage: string | null;
     attempts: number;
@@ -144,8 +144,8 @@ export class AlimtalkTriggerService {
         private readonly ruleRepository: IAlimtalkTriggerRuleRepository,
         @Inject(ALIMTALK_TRIGGER_JOB_REPOSITORY)
         private readonly jobRepository: IAlimtalkTriggerJobRepository,
-        @Inject(ALIMTALK_LOG_REPOSITORY)
-        private readonly logRepository: IAlimtalkLogRepository,
+        @Inject(MESSAGE_LOG_REPOSITORY)
+        private readonly logRepository: IMessageLogRepository,
     ) {}
 
     async listRules(branchId: string): Promise<AlimtalkTriggerRuleEntity[]> {
@@ -210,7 +210,7 @@ export class AlimtalkTriggerService {
         limit = 200,
         skip = 0,
     ): Promise<AlimtalkHistoryRecordView[]> {
-        if (!(await hasTable(this.prisma, "alimtalk_log"))) {
+        if (!(await hasTable(this.prisma, "message_log"))) {
             return [];
         }
 

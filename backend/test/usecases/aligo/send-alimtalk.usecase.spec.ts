@@ -1,7 +1,7 @@
 import { SendAligoAlimtalkUsecase } from "application/usecases/aligo/send-alimtalk.usecase";
 import { IAligoApiPort } from "domain/ports/aligo-api.port";
-import { IAlimtalkLogRepository } from "domain/repositories/alimtalk-log.repository.interface";
-import { AlimtalkLogEntity } from "domain/entities/alimtalk-log.entity";
+import { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
+import { MessageLogEntity } from "domain/entities/message-log.entity";
 
 describe("SendAligoAlimtalkUsecase", () => {
     const createMockAligoApi = (): jest.Mocked<IAligoApiPort> => ({
@@ -10,10 +10,10 @@ describe("SendAligoAlimtalkUsecase", () => {
         listTemplates: jest.fn(),
     });
 
-    const createMockLogRepository = (): jest.Mocked<IAlimtalkLogRepository> => ({
-        save: jest.fn().mockImplementation((log: AlimtalkLogEntity) => {
+    const createMockLogRepository = (): jest.Mocked<IMessageLogRepository> => ({
+        save: jest.fn().mockImplementation((log: MessageLogEntity) => {
             // Return a real entity instance so methods like markSent/markFailed work
-            return Promise.resolve(AlimtalkLogEntity.reconstitute(
+            return Promise.resolve(MessageLogEntity.reconstitute(
                 1,
                 log.branchId,
                 log.provider,
@@ -40,7 +40,7 @@ describe("SendAligoAlimtalkUsecase", () => {
 
     let usecase: SendAligoAlimtalkUsecase;
     let aligoApi: jest.Mocked<IAligoApiPort>;
-    let logRepository: jest.Mocked<IAlimtalkLogRepository>;
+    let logRepository: jest.Mocked<IMessageLogRepository>;
 
     beforeEach(() => {
         aligoApi = createMockAligoApi();
@@ -78,6 +78,9 @@ describe("SendAligoAlimtalkUsecase", () => {
                 );
                 expect(result.code).toBe(0);
                 expect(logRepository.save).toHaveBeenCalledTimes(1);
+                expect(logRepository.save).toHaveBeenCalledWith(
+                    expect.objectContaining({ provider: "aligo_alimtalk" }),
+                );
                 expect(logRepository.update).toHaveBeenCalledTimes(1);
             });
 

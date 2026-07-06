@@ -8,7 +8,7 @@ describe("MessageDeliveryController", () => {
     let controller: MessageDeliveryController;
     let aligoService: jest.Mocked<Pick<AligoService, "sendSms">>;
     let messageSenderApprovalService: jest.Mocked<Pick<MessageSenderApprovalService, "ensureApproved">>;
-    let prismaService: { alimtalk_log: { create: jest.Mock } };
+    let prismaService: { message_log: { create: jest.Mock } };
 
     beforeEach(() => {
         aligoService = {
@@ -18,7 +18,7 @@ describe("MessageDeliveryController", () => {
             ensureApproved: jest.fn().mockResolvedValue(undefined),
         };
         prismaService = {
-            alimtalk_log: {
+            message_log: {
                 create: jest.fn().mockResolvedValue({}),
             },
         };
@@ -50,7 +50,7 @@ describe("MessageDeliveryController", () => {
         ).rejects.toThrow(BadRequestException);
 
         expect(aligoService.sendSms).not.toHaveBeenCalled();
-        expect(prismaService.alimtalk_log.create).not.toHaveBeenCalled();
+        expect(prismaService.message_log.create).not.toHaveBeenCalled();
     });
 
     it("should normalize scheduled fields for the Aligo request and response payload", async () => {
@@ -98,7 +98,7 @@ describe("MessageDeliveryController", () => {
             testMode: true,
         });
         expect(result).toEqual({
-            provider: "aligo",
+            provider: "aligo_sms",
             triggerType: "scheduled",
             request: {
                 senderPhone: "0212345678",
@@ -116,7 +116,7 @@ describe("MessageDeliveryController", () => {
                 msgType: "LMS",
             },
         });
-        expect(prismaService.alimtalk_log.create).toHaveBeenCalledWith({
+        expect(prismaService.message_log.create).toHaveBeenCalledWith({
             data: expect.objectContaining({
                 branchId: "org-1",
                 provider: "aligo_sms",
@@ -161,14 +161,14 @@ describe("MessageDeliveryController", () => {
                 },
             ),
         ).resolves.toMatchObject({
-            provider: "aligo",
+            provider: "aligo_sms",
             triggerType: "immediate",
             result: {
                 message: "success",
             },
         });
 
-        expect(prismaService.alimtalk_log.create).toHaveBeenCalledWith({
+        expect(prismaService.message_log.create).toHaveBeenCalledWith({
             data: expect.objectContaining({
                 status: "sent",
                 errorMessage: null,
@@ -206,7 +206,7 @@ describe("MessageDeliveryController", () => {
             ),
         ).rejects.toThrow(BadGatewayException);
 
-        expect(prismaService.alimtalk_log.create).toHaveBeenCalledWith({
+        expect(prismaService.message_log.create).toHaveBeenCalledWith({
             data: expect.objectContaining({
                 branchId: "org-1",
                 provider: "aligo_sms",
@@ -252,7 +252,7 @@ describe("MessageDeliveryController", () => {
             ),
         ).rejects.toThrow(BadGatewayException);
 
-        expect(prismaService.alimtalk_log.create).toHaveBeenCalledWith({
+        expect(prismaService.message_log.create).toHaveBeenCalledWith({
             data: expect.objectContaining({
                 status: "failed",
                 nextRetryAt: null,
@@ -280,7 +280,7 @@ describe("MessageDeliveryController", () => {
             ),
         ).rejects.toThrow(BadGatewayException);
 
-        expect(prismaService.alimtalk_log.create).toHaveBeenCalledWith({
+        expect(prismaService.message_log.create).toHaveBeenCalledWith({
             data: expect.objectContaining({
                 branchId: "org-1",
                 provider: "aligo_sms",

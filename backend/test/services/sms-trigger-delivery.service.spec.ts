@@ -11,8 +11,8 @@ import {
     AlimtalkTriggerTemplateKey,
 } from "domain/constants/alimtalk-trigger-catalog";
 import { AlimtalkTriggerJobEntity } from "domain/entities/alimtalk-trigger-job.entity";
-import { AlimtalkLogEntity } from "domain/entities/alimtalk-log.entity";
-import { IAlimtalkLogRepository } from "domain/repositories/alimtalk-log.repository.interface";
+import { MessageLogEntity } from "domain/entities/message-log.entity";
+import { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
 // Canonical SMS template set lives in the shared package (frontend/mobile source of truth).
 // The backend duplicates the trigger enums by design, so this drift guard is the only place
 // that ties the backend SMS delivery routing back to that single source.
@@ -80,13 +80,13 @@ describe("SmsTriggerDeliveryService", () => {
             }),
         };
         const logRepository = {
-            save: jest.fn().mockImplementation(async (log: AlimtalkLogEntity) => log),
+            save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log),
         };
         const service = new SmsTriggerDeliveryService(
             messageSenderApprovalService as unknown as MessageSenderApprovalService,
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
-            logRepository as unknown as IAlimtalkLogRepository,
+            logRepository as unknown as IMessageLogRepository,
         );
 
         await expect(service.sendJob(createServiceInfoJob())).resolves.toBe(true);
@@ -100,7 +100,7 @@ describe("SmsTriggerDeliveryService", () => {
             title: "서비스 안내",
             msgType: "AUTO",
         });
-        const savedLog = logRepository.save.mock.calls[0]?.[0] as AlimtalkLogEntity;
+        const savedLog = logRepository.save.mock.calls[0]?.[0] as MessageLogEntity;
         expect(savedLog.provider).toBe("aligo_sms");
         expect(savedLog.templateKey).toBe("service_info_sms");
         expect(savedLog.triggerJobId).toBe("job-service-info");
@@ -175,13 +175,13 @@ describe("SmsTriggerDeliveryService", () => {
             }),
         };
         const logRepository = {
-            save: jest.fn().mockImplementation(async (log: AlimtalkLogEntity) => log),
+            save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log),
         };
         const service = new SmsTriggerDeliveryService(
             messageSenderApprovalService as unknown as MessageSenderApprovalService,
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
-            logRepository as unknown as IAlimtalkLogRepository,
+            logRepository as unknown as IMessageLogRepository,
         );
 
         await expect(service.sendJob(greetingJob)).resolves.toBe(true);
@@ -197,7 +197,7 @@ describe("SmsTriggerDeliveryService", () => {
         });
 
         // Verify the log matches the retired ClientGreetingSmsAutomationService byte-for-byte
-        const savedLog = logRepository.save.mock.calls[0]?.[0] as AlimtalkLogEntity;
+        const savedLog = logRepository.save.mock.calls[0]?.[0] as MessageLogEntity;
         expect(savedLog.provider).toBe("aligo_sms");
         expect(savedLog.templateKey).toBe("client_greeting_sms");
         expect(savedLog.triggerJobId).toBe("job-greeting-1");
@@ -230,7 +230,7 @@ describe("SERVICE_FEEDBACK_LINK delivery", () => {
             { ensureApproved: jest.fn().mockResolvedValue(undefined) } as unknown as MessageSenderApprovalService,
             overrides.aligoService as unknown as AligoService,
             { getByKey: jest.fn() } as unknown as SystemTemplateService,
-            overrides.logRepository as unknown as IAlimtalkLogRepository,
+            overrides.logRepository as unknown as IMessageLogRepository,
         );
 
     const createFeedbackJob = () =>
@@ -275,7 +275,7 @@ describe("SERVICE_FEEDBACK_LINK delivery", () => {
                 response: { result_code: 1, message: "성공", msg_id: 123, success_cnt: 1, error_cnt: 0 },
             }),
         };
-        const logRepository = { save: jest.fn().mockImplementation(async (log: AlimtalkLogEntity) => log) };
+        const logRepository = { save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log) };
         const service = buildService({ aligoService, logRepository });
 
         await expect(service.sendJob(createFeedbackJob())).resolves.toBe(true);
@@ -287,7 +287,7 @@ describe("SERVICE_FEEDBACK_LINK delivery", () => {
             title: "제공기록지 작성 링크",
             msgType: "AUTO",
         });
-        const savedLog = logRepository.save.mock.calls[0]?.[0] as AlimtalkLogEntity;
+        const savedLog = logRepository.save.mock.calls[0]?.[0] as MessageLogEntity;
         expect(savedLog.provider).toBe("aligo_sms");
         expect(savedLog.templateKey).toBe("service_feedback_link_sms");
         expect(savedLog.status).toBe("sent");
@@ -305,12 +305,12 @@ describe("SERVICE_FEEDBACK_LINK delivery", () => {
                 response: { result_code: -1, message: "잔액 부족", msg_id: null, success_cnt: 0, error_cnt: 1 },
             }),
         };
-        const logRepository = { save: jest.fn().mockImplementation(async (log: AlimtalkLogEntity) => log) };
+        const logRepository = { save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log) };
         const service = buildService({ aligoService, logRepository });
 
         await expect(service.sendJob(createFeedbackJob())).resolves.toBe(false);
 
-        const savedLog = logRepository.save.mock.calls[0]?.[0] as AlimtalkLogEntity;
+        const savedLog = logRepository.save.mock.calls[0]?.[0] as MessageLogEntity;
         expect(savedLog.templateKey).toBe("service_feedback_link_sms");
         expect(savedLog.status).toBe("failed");
         expect(savedLog.errorMessage).toBe("잔액 부족");
@@ -354,7 +354,7 @@ describe("PRICE_INFO data guard", () => {
             (overrides.systemTemplateService ?? {
                 getByKey: jest.fn().mockResolvedValue({ content: "총 금액 {{fullPrice}}원 / {{bankName}} {{accNum}}" }),
             }) as unknown as SystemTemplateService,
-            overrides.logRepository as unknown as IAlimtalkLogRepository,
+            overrides.logRepository as unknown as IMessageLogRepository,
         );
 
     it("cancels a PRICE_INFO job and does not send when price/bank data is missing", async () => {

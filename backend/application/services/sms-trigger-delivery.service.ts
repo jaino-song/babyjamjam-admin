@@ -13,14 +13,14 @@ import {
 } from "domain/constants/service-feedback-link-message";
 import { AlimtalkTriggerJobEntity } from "domain/entities/alimtalk-trigger-job.entity";
 import {
-    AlimtalkLogEntity,
-    AlimtalkLogStatus,
+    MessageLogEntity,
+    MessageLogStatus,
     SMS_DELIVERY_RETRY_DELAY_MS,
-} from "domain/entities/alimtalk-log.entity";
+} from "domain/entities/message-log.entity";
 import {
-    ALIMTALK_LOG_REPOSITORY,
-    IAlimtalkLogRepository,
-} from "domain/repositories/alimtalk-log.repository.interface";
+    MESSAGE_LOG_REPOSITORY,
+    IMessageLogRepository,
+} from "domain/repositories/message-log.repository.interface";
 
 interface SmsTemplateDeliveryConfig {
     smsLogTemplateKey: string;
@@ -98,8 +98,8 @@ export class SmsTriggerDeliveryService {
         private readonly messageSenderApprovalService: MessageSenderApprovalService,
         private readonly aligoService: AligoService,
         private readonly systemTemplateService: SystemTemplateService,
-        @Inject(ALIMTALK_LOG_REPOSITORY)
-        private readonly logRepository: IAlimtalkLogRepository,
+        @Inject(MESSAGE_LOG_REPOSITORY)
+        private readonly logRepository: IMessageLogRepository,
     ) {}
 
     canHandle(templateKey: AlimtalkTriggerTemplateKey): boolean {
@@ -229,7 +229,7 @@ export class SmsTriggerDeliveryService {
         config: SmsTemplateDeliveryConfig;
         message: string;
         receiver: string;
-        status: AlimtalkLogStatus;
+        status: MessageLogStatus;
         aligoMid: string | null;
         errorMessage: string | null;
         msgType: string;
@@ -249,7 +249,7 @@ export class SmsTriggerDeliveryService {
         }
 
         await this.logRepository.save(
-            AlimtalkLogEntity.reconstitute(
+            MessageLogEntity.reconstitute(
                 0,
                 params.job.branchId,
                 "aligo_sms",

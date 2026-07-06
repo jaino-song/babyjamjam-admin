@@ -9,9 +9,9 @@ import {
     AlimtalkTriggerRecipientType,
     AlimtalkTriggerTemplateKey,
 } from "domain/constants/alimtalk-trigger-catalog";
-import { AlimtalkLogEntity } from "domain/entities/alimtalk-log.entity";
+import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { AlimtalkTriggerJobEntity } from "domain/entities/alimtalk-trigger-job.entity";
-import { IAlimtalkLogRepository } from "domain/repositories/alimtalk-log.repository.interface";
+import { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
 import { IAlimtalkTriggerJobRepository } from "domain/repositories/alimtalk-trigger-job.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
@@ -37,7 +37,7 @@ describe("EmployeeFeedbackLinkService", () => {
         upsertPending: jest.fn().mockImplementation(async (job: AlimtalkTriggerJobEntity) => job),
     });
     const createLogRepository = () => ({
-        save: jest.fn().mockImplementation(async (log: AlimtalkLogEntity) => log),
+        save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log),
     });
     const createSchedule = (overrides: Record<string, unknown> = {}) => ({
         id: 10,
@@ -67,7 +67,7 @@ describe("EmployeeFeedbackLinkService", () => {
             tokenService as never,
             createConfigService() as unknown as ConfigService,
             jobRepository as unknown as IAlimtalkTriggerJobRepository,
-            createLogRepository() as unknown as IAlimtalkLogRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
 
@@ -103,7 +103,7 @@ describe("EmployeeFeedbackLinkService", () => {
             tokenService as never,
             createConfigService() as unknown as ConfigService,
             jobRepository as unknown as IAlimtalkTriggerJobRepository,
-            createLogRepository() as unknown as IAlimtalkLogRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
 
@@ -135,7 +135,7 @@ describe("EmployeeFeedbackLinkService", () => {
             createTokenService() as never,
             createConfigService() as unknown as ConfigService,
             jobRepository as unknown as IAlimtalkTriggerJobRepository,
-            logRepository as unknown as IAlimtalkLogRepository,
+            logRepository as unknown as IMessageLogRepository,
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule({
             primaryEmployee: {
@@ -149,7 +149,7 @@ describe("EmployeeFeedbackLinkService", () => {
         await service.scheduleForServiceStart(10);
 
         expect(jobRepository.upsertPending).not.toHaveBeenCalled();
-        const savedLog = logRepository.save.mock.calls[0]?.[0] as AlimtalkLogEntity;
+        const savedLog = logRepository.save.mock.calls[0]?.[0] as MessageLogEntity;
         expect(savedLog.templateKey).toBe(SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY);
         expect(savedLog.status).toBe("failed");
         expect(savedLog.nextRetryAt).toBeNull();
@@ -165,7 +165,7 @@ describe("EmployeeFeedbackLinkService", () => {
             createTokenService() as never,
             createConfigService() as unknown as ConfigService,
             jobRepository as unknown as IAlimtalkTriggerJobRepository,
-            logRepository as unknown as IAlimtalkLogRepository,
+            logRepository as unknown as IMessageLogRepository,
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule({
             primaryEmployee: {
@@ -191,7 +191,7 @@ describe("EmployeeFeedbackLinkService", () => {
             tokenService as never,
             createConfigService() as unknown as ConfigService,
             createJobRepository() as unknown as IAlimtalkTriggerJobRepository,
-            createLogRepository() as unknown as IAlimtalkLogRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
 
@@ -205,7 +205,7 @@ describe("EmployeeFeedbackLinkService", () => {
             tokenService as never,
             createConfigService() as unknown as ConfigService,
             createJobRepository() as unknown as IAlimtalkTriggerJobRepository,
-            createLogRepository() as unknown as IAlimtalkLogRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
         );
 
         await service.extendExpiryForEndDate(10, new Date("2026-07-12T00:00:00.000Z"));

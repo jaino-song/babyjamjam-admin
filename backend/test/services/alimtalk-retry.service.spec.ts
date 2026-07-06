@@ -1,7 +1,7 @@
 import { AlimtalkRetryService } from "application/services/alimtalk-retry.service";
-import { AlimtalkLogEntity } from "domain/entities/alimtalk-log.entity";
+import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { IAligoApiPort } from "domain/ports/aligo-api.port";
-import { IAlimtalkLogRepository } from "domain/repositories/alimtalk-log.repository.interface";
+import { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
 
 describe("AlimtalkRetryService", () => {
     const createMockLogRepository = () => ({
@@ -11,7 +11,7 @@ describe("AlimtalkRetryService", () => {
         sendAlimtalk: jest.fn(),
     });
     const createAlimtalkRetryLog = (templateKey = "CLIENT_CREATED") =>
-        AlimtalkLogEntity.reconstitute(
+        MessageLogEntity.reconstitute(
             88,
             "branch-1",
             "aligo_alimtalk",
@@ -39,7 +39,7 @@ describe("AlimtalkRetryService", () => {
         logRepository = createMockLogRepository();
         aligoApi = createMockAligoApi();
         service = new AlimtalkRetryService(
-            logRepository as unknown as IAlimtalkLogRepository,
+            logRepository as unknown as IMessageLogRepository,
             aligoApi as unknown as IAligoApiPort,
         );
     });

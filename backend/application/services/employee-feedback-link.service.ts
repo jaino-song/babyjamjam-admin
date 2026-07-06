@@ -15,15 +15,15 @@ import {
     AlimtalkTriggerTemplateKey,
 } from "domain/constants/alimtalk-trigger-catalog";
 import { AlimtalkTriggerJobEntity } from "domain/entities/alimtalk-trigger-job.entity";
-import { AlimtalkLogEntity } from "domain/entities/alimtalk-log.entity";
+import { MessageLogEntity } from "domain/entities/message-log.entity";
 import {
     ALIMTALK_TRIGGER_JOB_REPOSITORY,
     IAlimtalkTriggerJobRepository,
 } from "domain/repositories/alimtalk-trigger-job.repository.interface";
 import {
-    ALIMTALK_LOG_REPOSITORY,
-    IAlimtalkLogRepository,
-} from "domain/repositories/alimtalk-log.repository.interface";
+    MESSAGE_LOG_REPOSITORY,
+    IMessageLogRepository,
+} from "domain/repositories/message-log.repository.interface";
 import { EmployeeFeedbackTokenService } from "./employee-feedback-token.service";
 
 /**
@@ -41,8 +41,8 @@ export class EmployeeFeedbackLinkService {
         private readonly configService: ConfigService,
         @Inject(ALIMTALK_TRIGGER_JOB_REPOSITORY)
         private readonly jobRepository: IAlimtalkTriggerJobRepository,
-        @Inject(ALIMTALK_LOG_REPOSITORY)
-        private readonly logRepository: IAlimtalkLogRepository,
+        @Inject(MESSAGE_LOG_REPOSITORY)
+        private readonly logRepository: IMessageLogRepository,
     ) {}
 
     /** Backward-compatible wrapper: now schedules the SMS instead of sending immediately. */
@@ -226,7 +226,7 @@ export class EmployeeFeedbackLinkService {
     }): Promise<void> {
         const now = new Date();
         await this.logRepository.save(
-            AlimtalkLogEntity.reconstitute(
+            MessageLogEntity.reconstitute(
                 0,
                 params.branchId,
                 "aligo_sms",
