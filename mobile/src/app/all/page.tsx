@@ -18,28 +18,28 @@ import { useEmployees } from "@/hooks/useEmployees";
 import { useMessageTemplates } from "@/hooks/use-message-templates";
 import { useUnreadCount, usePushNotification } from "@/hooks/usePushNotification";
 import { AllSettingsRedesign } from "@/components/app/mobile-redesign/AllSettingsRedesign";
-import { UI_ONLY_AUTOMATION_TRIGGER_COUNT } from "@/components/app/mobile-redesign/AlimtalkTriggerList";
+import { UI_ONLY_AUTOMATION_TRIGGER_COUNT } from "@/components/app/mobile-redesign/MessageTriggerList";
 import type { MenuGroup } from "@/components/app/mobile-redesign/mockup-data";
-import { useAlimtalkTriggerRules } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
+import { useMessageTriggerRules } from "@/features/message-triggers/hooks/use-message-triggers";
 
 export default function AllMenuPage() {
   const clientsQuery = useAllClients();
   const employeesQuery = useEmployees();
   const messageTemplatesQuery = useMessageTemplates();
-  const alimtalkTriggerRulesQuery = useAlimtalkTriggerRules();
+  const messageTriggerRulesQuery = useMessageTriggerRules();
   const pushNotification = usePushNotification();
   const unreadCountQuery = useUnreadCount(true);
 
   const clients = clientsQuery.data ?? [];
   const employees = employeesQuery.data ?? [];
   const messageTemplates = messageTemplatesQuery.data ?? [];
-  const alimtalkTriggerRules = alimtalkTriggerRulesQuery.data ?? [];
-  const automationTriggerCount = alimtalkTriggerRules.length + UI_ONLY_AUTOMATION_TRIGGER_COUNT;
+  const messageTriggerRules = messageTriggerRulesQuery.data ?? [];
+  const automationTriggerCount = messageTriggerRules.length + UI_ONLY_AUTOMATION_TRIGGER_COUNT;
   const unreadNotifCount = unreadCountQuery.data ?? 0;
   const isClientsInitialLoading = clientsQuery.isLoading && !clientsQuery.data;
   const isEmployeesInitialLoading = employeesQuery.isLoading && !employeesQuery.data;
   const isMessageTemplatesInitialLoading = messageTemplatesQuery.isLoading && !messageTemplatesQuery.data;
-  const isAlimtalkRulesInitialLoading = alimtalkTriggerRulesQuery.isLoading && !alimtalkTriggerRulesQuery.data;
+  const isMessageRulesInitialLoading = messageTriggerRulesQuery.isLoading && !messageTriggerRulesQuery.data;
   const isUnreadInitialLoading = unreadCountQuery.isLoading && unreadCountQuery.data === undefined;
 
   const menuGroups = useMemo<MenuGroup[]>(() => {
@@ -110,8 +110,8 @@ export default function AllMenuPage() {
             href: "/alimtalk",
             icon: Send,
             tone: "gold",
-            value: isAlimtalkRulesInitialLoading ? undefined : `${automationTriggerCount}개`,
-            valueLoading: isAlimtalkRulesInitialLoading,
+            value: isMessageRulesInitialLoading ? undefined : `${automationTriggerCount}개`,
+            valueLoading: isMessageRulesInitialLoading,
             valueSkeletonWidth: "28px",
           },
         ],
@@ -140,7 +140,7 @@ export default function AllMenuPage() {
     isClientsInitialLoading,
     isEmployeesInitialLoading,
     isMessageTemplatesInitialLoading,
-    isAlimtalkRulesInitialLoading,
+    isMessageRulesInitialLoading,
     isUnreadInitialLoading,
     pushNotification.isLoading,
     pushNotification.isSubscribed,

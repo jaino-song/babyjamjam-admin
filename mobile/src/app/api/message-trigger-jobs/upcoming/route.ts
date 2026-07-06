@@ -16,16 +16,14 @@ export async function GET(request: NextRequest) {
     }
 
     const searchParams = request.nextUrl.searchParams;
-    const response = await serverAPIClient.get("/alimtalk-trigger-templates", {
+    const response = await serverAPIClient.get("/message-trigger-jobs/upcoming", {
       headers: getAuthHeaders(token),
       params: {
-        provider: searchParams.get("provider"),
-        eventType: searchParams.get("eventType"),
-        recipientType: searchParams.get("recipientType"),
+        limit: searchParams.get("limit") ?? undefined,
       },
     });
     return backendJsonResponse(response);
   } catch (error) {
-    return errorResponse(error, "fetch alimtalk trigger templates");
+    return errorResponse(error, "fetch upcoming message trigger jobs");
   }
 }

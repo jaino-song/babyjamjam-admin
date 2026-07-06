@@ -10,7 +10,7 @@ import {
   unauthorizedResponse,
 } from "@/lib/api/route-utils";
 
-// Mirrors backend UpdateAlimtalkTriggerRuleDto: every field is @IsOptional,
+// Mirrors backend UpdateMessageTriggerRuleDto: every field is @IsOptional,
 // so a passthrough object that type-checks known fields is sufficient. The
 // backend's authoritative ValidationPipe owns the enum/@Min constraints.
 const updateTriggerRuleSchema = z
@@ -38,7 +38,7 @@ function invalidTriggerIdResponse(): NextResponse {
 }
 
 function triggerRulePath(triggerId: string): string {
-  return `/alimtalk-trigger-rules/${encodeURIComponent(triggerId)}`;
+  return `/message-trigger-rules/${encodeURIComponent(triggerId)}`;
 }
 
 export async function GET(request: NextRequest, context: RouteContext) {
@@ -58,7 +58,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     });
     return backendJsonResponse(response);
   } catch (error) {
-    return errorResponse(error, "fetch alimtalk trigger rule");
+    return errorResponse(error, "fetch message trigger rule");
   }
 }
 
@@ -84,7 +84,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     });
     return backendJsonResponse(response);
   } catch (error) {
-    return errorResponse(error, "update alimtalk trigger rule");
+    return errorResponse(error, "update message trigger rule");
   }
 }
 
@@ -105,6 +105,6 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     });
     return backendJsonResponse(response);
   } catch (error) {
-    return errorResponse(error, "delete alimtalk trigger rule");
+    return errorResponse(error, "delete message trigger rule");
   }
 }

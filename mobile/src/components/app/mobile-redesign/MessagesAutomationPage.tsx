@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 
-import { AlimtalkTriggerList } from "@/components/app/mobile-redesign/AlimtalkTriggerList";
+import { MessageTriggerList } from "@/components/app/mobile-redesign/MessageTriggerList";
 import "@/components/app/mobile-redesign/redesign.css";
 
 export function MessagesAutomationPage() {
@@ -11,8 +11,8 @@ export function MessagesAutomationPage() {
   return (
     <section data-component="alimtalk" className="alimtalk-page">
       <div className="shell-content" data-component="alimtalk-content">
-        <div className="list-card pop-up alimtalk-trigger-card" data-component="alimtalk-trigger-card">
-          <div className="list-title" data-component="alimtalk-trigger-card-title">
+        <div className="list-card pop-up message-trigger-card" data-component="message-trigger-card">
+          <div className="list-title" data-component="message-trigger-card-title">
             <span className="list-title-text">메시지</span>
             <button
               type="button"
@@ -24,7 +24,7 @@ export function MessagesAutomationPage() {
             </button>
           </div>
 
-          <AlimtalkTriggerList />
+          <MessageTriggerList />
         </div>
       </div>
     </section>

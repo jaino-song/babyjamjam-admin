@@ -1,6 +1,6 @@
 import { api } from "@/lib/api/client";
 
-import { fetchAllAlimtalkLogs } from "../logs";
+import { fetchAllMessageLogs } from "../logs";
 
 jest.mock("@/lib/api/client", () => ({
   api: {
@@ -10,7 +10,7 @@ jest.mock("@/lib/api/client", () => ({
 
 const mockGet = api.get as jest.MockedFunction<typeof api.get>;
 
-describe("fetchAllAlimtalkLogs", () => {
+describe("fetchAllMessageLogs", () => {
   beforeEach(() => {
     mockGet.mockReset();
   });
@@ -20,12 +20,12 @@ describe("fetchAllAlimtalkLogs", () => {
       .mockResolvedValueOnce({ data: Array.from({ length: 500 }, (_, index) => ({ id: index + 1 })) })
       .mockResolvedValueOnce({ data: [{ id: 501 }] });
 
-    await expect(fetchAllAlimtalkLogs<{ id: number }>()).resolves.toHaveLength(501);
+    await expect(fetchAllMessageLogs<{ id: number }>()).resolves.toHaveLength(501);
 
-    expect(mockGet).toHaveBeenNthCalledWith(1, "/alimtalk-logs", {
+    expect(mockGet).toHaveBeenNthCalledWith(1, "/message-logs", {
       params: { limit: 500, skip: 0 },
     });
-    expect(mockGet).toHaveBeenNthCalledWith(2, "/alimtalk-logs", {
+    expect(mockGet).toHaveBeenNthCalledWith(2, "/message-logs", {
       params: { limit: 500, skip: 500 },
     });
   });

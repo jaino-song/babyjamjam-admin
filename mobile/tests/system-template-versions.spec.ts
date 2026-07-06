@@ -40,7 +40,7 @@ async function mockTemplateApi(page: Page): Promise<void> {
     });
   });
 
-  await page.route('**/api/alimtalk-trigger-rules', async (route: Route, request: Request) => {
+  await page.route('**/api/message-trigger-rules', async (route: Route, request: Request) => {
     if (request.method() !== 'GET') {
       await route.fallback();
       return;

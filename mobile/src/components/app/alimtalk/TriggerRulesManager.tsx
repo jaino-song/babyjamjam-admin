@@ -25,26 +25,26 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import {
-  useAlimtalkTriggerRules,
-  useAlimtalkTriggerTemplates,
-  useCreateAlimtalkTriggerRule,
-  useUpdateAlimtalkTriggerRule,
-  useDeleteAlimtalkTriggerRule,
-} from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
+  useMessageTriggerRules,
+  useMessageTriggerTemplates,
+  useCreateMessageTriggerRule,
+  useUpdateMessageTriggerRule,
+  useDeleteMessageTriggerRule,
+} from "@/features/message-triggers/hooks/use-message-triggers";
 import type {
-  AlimtalkTriggerRule,
-  CreateAlimtalkTriggerRuleDto,
+  MessageTriggerRule,
+  CreateMessageTriggerRuleDto,
   TriggerEventType,
   TriggerOffsetType,
   TriggerRecipientType,
   TriggerTemplateCatalogItem,
   TriggerTemplateKey,
-} from "@/features/alimtalk-triggers/types";
+} from "@/features/message-triggers/types";
 
 type RuleSelection = string | "new" | null;
 type RuleStatusFilter = "active" | "inactive";
 
-type RuleFormState = CreateAlimtalkTriggerRuleDto;
+type RuleFormState = CreateMessageTriggerRuleDto;
 type RuleFormDraft = {
   selectionId: RuleSelection;
   state: RuleFormState;
@@ -112,7 +112,7 @@ const RULE_STATUS_TABS = [
   { label: "비활성화", value: "inactive" },
 ] as const;
 
-function toFormState(rule: AlimtalkTriggerRule | null): RuleFormState {
+function toFormState(rule: MessageTriggerRule | null): RuleFormState {
   if (!rule) return DEFAULT_FORM_STATE;
   return {
     name: rule.name,
@@ -125,7 +125,7 @@ function toFormState(rule: AlimtalkTriggerRule | null): RuleFormState {
   };
 }
 
-function normalizeDto(dto: RuleFormState): CreateAlimtalkTriggerRuleDto {
+function normalizeDto(dto: RuleFormState): CreateMessageTriggerRuleDto {
   return {
     ...dto,
     offsetDays:
@@ -202,10 +202,10 @@ export function TriggerRulesManager() {
   const [statusFilter, setStatusFilter] = useState<RuleStatusFilter>("active");
   const [formDraft, setFormDraft] = useState<RuleFormDraft | null>(null);
 
-  const { data: rules = [], isLoading } = useAlimtalkTriggerRules();
-  const createMutation = useCreateAlimtalkTriggerRule();
-  const updateMutation = useUpdateAlimtalkTriggerRule();
-  const deleteMutation = useDeleteAlimtalkTriggerRule();
+  const { data: rules = [], isLoading } = useMessageTriggerRules();
+  const createMutation = useCreateMessageTriggerRule();
+  const updateMutation = useUpdateMessageTriggerRule();
+  const deleteMutation = useDeleteMessageTriggerRule();
 
   const resolvedProvider = "aligo_alimtalk" as const;
 
@@ -237,7 +237,7 @@ export function TriggerRulesManager() {
     [draftState]
   );
 
-  const templateQuery = useAlimtalkTriggerTemplates({
+  const templateQuery = useMessageTriggerTemplates({
     provider: resolvedProvider,
     eventType: optionNormalizedFormState.eventType,
     recipientType: optionNormalizedFormState.recipientType,
@@ -328,8 +328,8 @@ export function TriggerRulesManager() {
   };
 
   return (
-    <section data-component="alimtalk-trigger-rules">
-      <div data-component="alimtalk-trigger-rules-layout" className="min-h-[680px]">
+    <section data-component="message-trigger-rules">
+      <div data-component="message-trigger-rules-layout" className="min-h-[680px]">
         <SplitLayout
           hasSelection={effectiveSelectedRuleId !== null}
           onBack={() => {
@@ -352,11 +352,11 @@ export function TriggerRulesManager() {
                 icon={Plus}
                 label="새 규칙"
                 onClick={handleCreateNew}
-                data-component="alimtalk-trigger-rules-new"
+                data-component="message-trigger-rules-new"
               />
             }
           >
-            <div data-component="alimtalk-trigger-rules-list" className="space-y-2 pb-2">
+            <div data-component="message-trigger-rules-list" className="space-y-2 pb-2">
               <AnimatedSlotList<RuleListItem>
                 items={listItems}
                 isLoading={isLoading}
@@ -379,10 +379,10 @@ export function TriggerRulesManager() {
                   if (slotLoading) {
                     return (
                       <>
-                        <div data-component="alimtalk-trigger-rule-skeleton-icon" className="flex h-10 w-10 items-center justify-center rounded-[14px] bg-v3-dim-white">
+                        <div data-component="message-trigger-rule-skeleton-icon" className="flex h-10 w-10 items-center justify-center rounded-[14px] bg-v3-dim-white">
                           <Skeleton className="h-4 w-4 rounded-md bg-white/70" />
                         </div>
-                        <div data-component="alimtalk-trigger-rule-skeleton-text" className="min-w-0 flex-1">
+                        <div data-component="message-trigger-rule-skeleton-text" className="min-w-0 flex-1">
                           <Skeleton className="h-4 w-32 bg-v3-dim-white" />
                           <Skeleton className="mt-2 h-3 w-44 bg-v3-dim-white" />
                         </div>
@@ -395,10 +395,10 @@ export function TriggerRulesManager() {
 
                   return (
                     <>
-                      <div data-component="alimtalk-trigger-rule-icon" className="flex h-10 w-10 items-center justify-center rounded-[14px] bg-v3-dim-white text-v3-text-muted">
+                      <div data-component="message-trigger-rule-icon" className="flex h-10 w-10 items-center justify-center rounded-[14px] bg-v3-dim-white text-v3-text-muted">
                         <Icon className="h-4 w-4" />
                       </div>
-                      <div data-component="alimtalk-trigger-rule-copy" className="min-w-0 flex-1">
+                      <div data-component="message-trigger-rule-copy" className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <p className="truncate text-[0.82rem] font-semibold text-v3-dark">{item.title}</p>
                           {item.active ? (
@@ -420,7 +420,7 @@ export function TriggerRulesManager() {
               />
 
               {!isLoading && listItems.length === 0 && (
-                <div data-component="alimtalk-trigger-rules-empty" className="rounded-[18px] border border-dashed border-v3-border p-5 text-center">
+                <div data-component="message-trigger-rules-empty" className="rounded-[18px] border border-dashed border-v3-border p-5 text-center">
                   <p className="text-[0.82rem] font-semibold text-v3-dark">
                     {statusFilter === "active" ? "활성화된 발송 규칙이 없습니다." : "비활성화된 발송 규칙이 없습니다."}
                   </p>
@@ -438,7 +438,7 @@ export function TriggerRulesManager() {
             title={effectiveSelectedRuleId === "new" ? "새 발송 규칙" : selectedRule?.name ?? "발송 규칙"}
             subtitle="이벤트 시점, 수신자, 템플릿을 조합해 자동 발송 동작을 정의합니다."
             trailing={
-              <div data-component="alimtalk-trigger-rules-actions" className="flex items-center gap-2">
+              <div data-component="message-trigger-rules-actions" className="flex items-center gap-2">
                 {selectedRule && (
                   <button
                     type="button"
@@ -468,12 +468,12 @@ export function TriggerRulesManager() {
             }
           >
             {effectiveSelectedRuleId === null && !isLoading ? (
-              <div data-component="alimtalk-trigger-rules-detail-empty" className="rounded-[18px] border border-dashed border-v3-border p-8 text-center text-[0.82rem] text-v3-text-muted">
+              <div data-component="message-trigger-rules-detail-empty" className="rounded-[18px] border border-dashed border-v3-border p-8 text-center text-[0.82rem] text-v3-text-muted">
                 왼쪽 목록에서 규칙을 선택하거나 새 규칙을 만들어 주세요.
               </div>
             ) : (
-              <div data-component="alimtalk-trigger-rules-form" className="space-y-6">
-                <div data-component="alimtalk-trigger-rules-switch" className="flex items-center justify-between rounded-[18px] border border-v3-border bg-v3-dim-white/50 px-4 py-3">
+              <div data-component="message-trigger-rules-form" className="space-y-6">
+                <div data-component="message-trigger-rules-switch" className="flex items-center justify-between rounded-[18px] border border-v3-border bg-v3-dim-white/50 px-4 py-3">
                   <div>
                     <p className="text-[0.82rem] font-semibold text-v3-dark">규칙 활성화</p>
                     <p className="text-[0.72rem] text-v3-text-muted mt-1">비활성화하면 저장된 상태는 유지되고 자동 발송만 중단됩니다.</p>
@@ -484,8 +484,8 @@ export function TriggerRulesManager() {
                   />
                 </div>
 
-                <div data-component="alimtalk-trigger-rules-grid" className="grid gap-4">
-                  <div data-component="alimtalk-trigger-rules-name">
+                <div data-component="message-trigger-rules-grid" className="grid gap-4">
+                  <div data-component="message-trigger-rules-name">
                     <Label htmlFor="trigger-rule-name" className="text-[0.78rem] font-semibold">규칙 이름</Label>
                     <input
                       id="trigger-rule-name"
@@ -496,7 +496,7 @@ export function TriggerRulesManager() {
                     />
                   </div>
 
-                  <div data-component="alimtalk-trigger-rules-event">
+                  <div data-component="message-trigger-rules-event">
                     <Label htmlFor="trigger-rule-event" className="text-[0.78rem] font-semibold">이벤트 기준</Label>
                     <select
                       id="trigger-rule-event"
@@ -523,7 +523,7 @@ export function TriggerRulesManager() {
                     </select>
                   </div>
 
-                  <div data-component="alimtalk-trigger-rules-offset">
+                  <div data-component="message-trigger-rules-offset">
                     <Label htmlFor="trigger-rule-offset" className="text-[0.78rem] font-semibold">발송 시점</Label>
                     <select
                       id="trigger-rule-offset"
@@ -549,7 +549,7 @@ export function TriggerRulesManager() {
                     </select>
                   </div>
 
-                  <div data-component="alimtalk-trigger-rules-recipient">
+                  <div data-component="message-trigger-rules-recipient">
                     <Label htmlFor="trigger-rule-recipient" className="text-[0.78rem] font-semibold">수신 대상</Label>
                     <select
                       id="trigger-rule-recipient"
@@ -572,7 +572,7 @@ export function TriggerRulesManager() {
                 </div>
 
                 {(formState.offsetType === "BEFORE_DAYS" || formState.offsetType === "AFTER_DAYS") && (
-                  <div data-component="alimtalk-trigger-rules-offset-days" className="max-w-[220px]">
+                  <div data-component="message-trigger-rules-offset-days" className="max-w-[220px]">
                     <Label htmlFor="trigger-rule-offset-days" className="text-[0.78rem] font-semibold">기준 일수</Label>
                     <input
                       id="trigger-rule-offset-days"
@@ -590,7 +590,7 @@ export function TriggerRulesManager() {
                   </div>
                 )}
 
-                <div data-component="alimtalk-trigger-rules-template">
+                <div data-component="message-trigger-rules-template">
                   <Label htmlFor="trigger-rule-template" className="text-[0.78rem] font-semibold">발송 템플릿</Label>
                   <select
                     id="trigger-rule-template"
@@ -610,11 +610,11 @@ export function TriggerRulesManager() {
                     ))}
                   </select>
                   {currentTemplate && (
-                    <div data-component="alimtalk-trigger-rules-template-copy" className="mt-3 rounded-[18px] border border-v3-border bg-v3-dim-white/40 p-4">
+                    <div data-component="message-trigger-rules-template-copy" className="mt-3 rounded-[18px] border border-v3-border bg-v3-dim-white/40 p-4">
                       <p className="text-[0.8rem] font-semibold text-v3-dark">{currentTemplate.name}</p>
                       <p className="mt-1 text-[0.72rem] text-v3-text-muted">{currentTemplate.description}</p>
                       {currentTemplate.requiredVariables.length > 0 && (
-                        <div data-component="alimtalk-trigger-rules-template-vars" className="mt-3 flex flex-wrap gap-1.5">
+                        <div data-component="message-trigger-rules-template-vars" className="mt-3 flex flex-wrap gap-1.5">
                           {currentTemplate.requiredVariables.map((variable) => (
                             <span
                               key={variable.key}
@@ -629,7 +629,7 @@ export function TriggerRulesManager() {
                   )}
                 </div>
 
-                <div data-component="alimtalk-trigger-rules-preview" className="rounded-[20px] border border-v3-border bg-gradient-to-br from-v3-primary-light/70 to-white p-5">
+                <div data-component="message-trigger-rules-preview" className="rounded-[20px] border border-v3-border bg-gradient-to-br from-v3-primary-light/70 to-white p-5">
                   <p className="text-[0.78rem] font-semibold text-v3-dark">규칙 미리보기</p>
                   <p className="mt-2 text-[0.82rem] leading-relaxed text-v3-text">
                     {formState.name.trim() || "이름 없는 규칙"}:

@@ -218,7 +218,7 @@ async function routeDocumentClientSummaries(page: Page, summaries = DOCUMENT_CLI
 }
 
 async function routeNotificationLogs(page: Page, logs = NOTIFICATION_LOGS) {
-  await page.route("**/api/alimtalk-logs**", async (route) => {
+  await page.route("**/api/message-logs**", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",

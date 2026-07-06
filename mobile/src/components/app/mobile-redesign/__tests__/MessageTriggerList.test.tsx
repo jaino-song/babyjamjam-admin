@@ -1,28 +1,28 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-import { AlimtalkTriggerList } from "../AlimtalkTriggerList";
+import { MessageTriggerList } from "../MessageTriggerList";
 import {
-  useAlimtalkTriggerRules,
-  useUpdateAlimtalkTriggerRule,
-} from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
-import type { AlimtalkTriggerRule } from "@/features/alimtalk-triggers/types";
-import { fetchAllAlimtalkLogs } from "@/lib/alimtalk/logs";
+  useMessageTriggerRules,
+  useUpdateMessageTriggerRule,
+} from "@/features/message-triggers/hooks/use-message-triggers";
+import type { MessageTriggerRule } from "@/features/message-triggers/types";
+import { fetchAllMessageLogs } from "@/lib/messages/logs";
 
-jest.mock("@/features/alimtalk-triggers/hooks/use-alimtalk-triggers", () => ({
-  useAlimtalkTriggerRules: jest.fn(),
-  useUpdateAlimtalkTriggerRule: jest.fn(),
+jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
+  useMessageTriggerRules: jest.fn(),
+  useUpdateMessageTriggerRule: jest.fn(),
 }));
 
-jest.mock("@/lib/alimtalk/logs", () => ({
-  fetchAllAlimtalkLogs: jest.fn(),
+jest.mock("@/lib/messages/logs", () => ({
+  fetchAllMessageLogs: jest.fn(),
 }));
 
-const mockUseAlimtalkTriggerRules = useAlimtalkTriggerRules as jest.Mock;
-const mockUseUpdateAlimtalkTriggerRule = useUpdateAlimtalkTriggerRule as jest.Mock;
-const mockFetchAllAlimtalkLogs = fetchAllAlimtalkLogs as jest.Mock;
+const mockUseMessageTriggerRules = useMessageTriggerRules as jest.Mock;
+const mockUseUpdateMessageTriggerRule = useUpdateMessageTriggerRule as jest.Mock;
+const mockFetchAllMessageLogs = fetchAllMessageLogs as jest.Mock;
 
-function createRule(overrides: Partial<AlimtalkTriggerRule> = {}): AlimtalkTriggerRule {
+function createRule(overrides: Partial<MessageTriggerRule> = {}): MessageTriggerRule {
   return {
     id: "rule-start",
     branchId: "branch-1",
@@ -63,22 +63,22 @@ function renderPage() {
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <AlimtalkTriggerList />
+      <MessageTriggerList />
     </QueryClientProvider>,
   );
 }
 
-describe("AlimtalkTriggerList", () => {
+describe("MessageTriggerList", () => {
   const updateMutate = jest.fn();
 
   beforeEach(() => {
     updateMutate.mockClear();
-    mockFetchAllAlimtalkLogs.mockResolvedValue([]);
-    mockUseUpdateAlimtalkTriggerRule.mockReturnValue({
+    mockFetchAllMessageLogs.mockResolvedValue([]);
+    mockUseUpdateMessageTriggerRule.mockReturnValue({
       isPending: false,
       mutate: updateMutate,
     });
-    mockUseAlimtalkTriggerRules.mockReturnValue({
+    mockUseMessageTriggerRules.mockReturnValue({
       data: [],
       isError: false,
       isLoading: false,
@@ -90,12 +90,12 @@ describe("AlimtalkTriggerList", () => {
   });
 
   it("renders only actual trigger rules instead of fallback rows", async () => {
-    mockUseAlimtalkTriggerRules.mockReturnValue({
+    mockUseMessageTriggerRules.mockReturnValue({
       data: [createRule()],
       isError: false,
       isLoading: false,
     });
-    mockFetchAllAlimtalkLogs.mockResolvedValue([
+    mockFetchAllMessageLogs.mockResolvedValue([
       {
         id: 1,
         templateKey: "SERVICE_START_REMINDER",
@@ -147,7 +147,7 @@ describe("AlimtalkTriggerList", () => {
   });
 
   it("updates the selected real rule when the toggle row is pressed", async () => {
-    mockUseAlimtalkTriggerRules.mockReturnValue({
+    mockUseMessageTriggerRules.mockReturnValue({
       data: [createRule({ isActive: true })],
       isError: false,
       isLoading: false,
@@ -164,7 +164,7 @@ describe("AlimtalkTriggerList", () => {
   });
 
   it("renders the service information trigger seven days before service start", async () => {
-    mockUseAlimtalkTriggerRules.mockReturnValue({
+    mockUseMessageTriggerRules.mockReturnValue({
       data: [
         createRule({
           id: "rule-service-info",
@@ -183,7 +183,7 @@ describe("AlimtalkTriggerList", () => {
     expect(screen.getByText("서비스 시작 7일 전 · 고객")).toBeInTheDocument();
     const serviceInfoRow = screen.getByRole("button", { name: /서비스 시작 7일 전 서비스 안내/ });
     expect(serviceInfoRow).toHaveAttribute("data-trigger-channel", "SMS");
-    expect(serviceInfoRow.querySelector('[data-component="alimtalk-trigger-icon"]'))
+    expect(serviceInfoRow.querySelector('[data-component="message-trigger-icon"]'))
       .toHaveClass("trigger-icon-primary");
     expect(serviceInfoRow.querySelector("svg")).toHaveClass("lucide-message-square-text");
   });

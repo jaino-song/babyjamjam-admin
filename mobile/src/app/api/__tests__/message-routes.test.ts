@@ -4,13 +4,13 @@
 import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
-import { GET as listAlimtalkLogs } from "../alimtalk-logs/route";
+import { GET as listMessageLogs } from "../message-logs/route";
 import {
   GET as listAlimtalkTemplates,
   POST as createAlimtalkTemplate,
 } from "../alimtalk-templates/route";
-import { GET as listUpcomingJobs } from "../alimtalk-trigger-jobs/upcoming/route";
-import { GET as listTriggerTemplates } from "../alimtalk-trigger-templates/route";
+import { GET as listUpcomingJobs } from "../message-trigger-jobs/upcoming/route";
+import { GET as listTriggerTemplates } from "../message-trigger-templates/route";
 
 jest.mock("@/lib/api/server", () => ({
   serverAPIClient: {
@@ -49,26 +49,26 @@ describe("Alimtalk API routes", () => {
   describe("auth rejection", () => {
     const noAuth = { headers: { cookie: "" } };
 
-    it("rejects alimtalk logs GET without an auth cookie before proxying", async () => {
-      const response = await listAlimtalkLogs(createRequest("/api/alimtalk-logs", noAuth));
+    it("rejects message logs GET without an auth cookie before proxying", async () => {
+      const response = await listMessageLogs(createRequest("/api/message-logs", noAuth));
       expect(response.status).toBe(401);
       expect(mockGet).not.toHaveBeenCalled();
     });
 
     it("rejects upcoming jobs GET without an auth cookie before proxying", async () => {
-      const response = await listUpcomingJobs(createRequest("/api/alimtalk-trigger-jobs/upcoming", noAuth));
+      const response = await listUpcomingJobs(createRequest("/api/message-trigger-jobs/upcoming", noAuth));
       expect(response.status).toBe(401);
       expect(mockGet).not.toHaveBeenCalled();
     });
 
     it("rejects trigger templates GET without an auth cookie before proxying", async () => {
-      const response = await listTriggerTemplates(createRequest("/api/alimtalk-trigger-templates", noAuth));
+      const response = await listTriggerTemplates(createRequest("/api/message-trigger-templates", noAuth));
       expect(response.status).toBe(401);
       expect(mockGet).not.toHaveBeenCalled();
     });
   });
 
-  it("preserves backend error status and sanitizes payload when listing Alimtalk logs", async () => {
+  it("preserves backend error status and sanitizes payload when listing message logs", async () => {
     mockGet.mockRejectedValue({
       response: {
         status: 403,
@@ -76,22 +76,22 @@ describe("Alimtalk API routes", () => {
       },
     });
 
-    const response = await listAlimtalkLogs(createRequest("/api/alimtalk-logs"));
+    const response = await listMessageLogs(createRequest("/api/message-logs"));
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch alimtalk logs" });
+    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch message logs" });
   });
 
-  it("forwards Alimtalk log limit and skip params", async () => {
+  it("forwards message log limit and skip params", async () => {
     mockGet.mockResolvedValue({
       status: 200,
       data: [],
     });
 
-    const response = await listAlimtalkLogs(createRequest("/api/alimtalk-logs?limit=500&skip=500"));
+    const response = await listMessageLogs(createRequest("/api/message-logs?limit=500&skip=500"));
 
     expect(response.status).toBe(200);
-    expect(mockGet).toHaveBeenCalledWith("/alimtalk-logs", {
+    expect(mockGet).toHaveBeenCalledWith("/message-logs", {
       headers: { Authorization: "Bearer auth-token" },
       params: {
         limit: "500",
@@ -109,11 +109,11 @@ describe("Alimtalk API routes", () => {
     });
 
     const response = await listUpcomingJobs(
-      createRequest("/api/alimtalk-trigger-jobs/upcoming?limit=50"),
+      createRequest("/api/message-trigger-jobs/upcoming?limit=50"),
     );
 
     expect(response.status).toBe(429);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch upcoming alimtalk trigger jobs" });
+    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch upcoming message trigger jobs" });
   });
 
   it("preserves backend error status and sanitizes payload when listing trigger templates", async () => {
@@ -125,11 +125,11 @@ describe("Alimtalk API routes", () => {
     });
 
     const response = await listTriggerTemplates(
-      createRequest("/api/alimtalk-trigger-templates?provider=unknown"),
+      createRequest("/api/message-trigger-templates?provider=unknown"),
     );
 
     expect(response.status).toBe(422);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch alimtalk trigger templates" });
+    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch message trigger templates" });
   });
 
   it("preserves backend status and payload when listing Alimtalk templates", async () => {

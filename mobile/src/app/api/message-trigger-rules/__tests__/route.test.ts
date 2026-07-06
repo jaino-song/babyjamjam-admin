@@ -36,7 +36,7 @@ function createRequest(path: string, init: { method?: string; body?: BodyInit; h
   });
 }
 
-describe("Alimtalk trigger rule API routes", () => {
+describe("Message trigger rule API routes", () => {
   let consoleErrorSpy: jest.SpyInstance;
 
   beforeEach(() => {
@@ -56,14 +56,14 @@ describe("Alimtalk trigger rule API routes", () => {
     const ctx = { params: Promise.resolve({ triggerId: "rule_123" }) };
 
     it("rejects rule GET without an auth cookie before proxying", async () => {
-      const response = await getRule(createRequest("/api/alimtalk-trigger-rules/rule_123", noAuth), ctx);
+      const response = await getRule(createRequest("/api/message-trigger-rules/rule_123", noAuth), ctx);
       expect(response.status).toBe(401);
       expect(mockGet).not.toHaveBeenCalled();
     });
 
     it("rejects rule PATCH without an auth cookie before proxying", async () => {
       const response = await updateRule(
-        createRequest("/api/alimtalk-trigger-rules/rule_123", { method: "PATCH", headers: { cookie: "" } }),
+        createRequest("/api/message-trigger-rules/rule_123", { method: "PATCH", headers: { cookie: "" } }),
         ctx,
       );
       expect(response.status).toBe(401);
@@ -72,7 +72,7 @@ describe("Alimtalk trigger rule API routes", () => {
 
     it("rejects rule DELETE without an auth cookie before proxying", async () => {
       const response = await deleteRule(
-        createRequest("/api/alimtalk-trigger-rules/rule_123", { method: "DELETE", headers: { cookie: "" } }),
+        createRequest("/api/message-trigger-rules/rule_123", { method: "DELETE", headers: { cookie: "" } }),
         ctx,
       );
       expect(response.status).toBe(401);
@@ -88,10 +88,10 @@ describe("Alimtalk trigger rule API routes", () => {
       },
     });
 
-    const response = await listRules(createRequest("/api/alimtalk-trigger-rules"));
+    const response = await listRules(createRequest("/api/message-trigger-rules"));
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch alimtalk trigger rules" });
+    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch message trigger rules" });
   });
 
   const validRulePayload = {
@@ -109,7 +109,7 @@ describe("Alimtalk trigger rule API routes", () => {
     });
 
     const response = await createRule(
-      createRequest("/api/alimtalk-trigger-rules", {
+      createRequest("/api/message-trigger-rules", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...validRulePayload, offsetDays: 3 }),
@@ -119,7 +119,7 @@ describe("Alimtalk trigger rule API routes", () => {
     expect(response.status).toBe(202);
     await expect(response.json()).resolves.toEqual({ queued: true });
     expect(mockPost).toHaveBeenCalledWith(
-      "/alimtalk-trigger-rules",
+      "/message-trigger-rules",
       { ...validRulePayload, offsetDays: 3 },
       expect.anything(),
     );
@@ -127,7 +127,7 @@ describe("Alimtalk trigger rule API routes", () => {
 
   it("rejects a create body missing required fields before proxying", async () => {
     const response = await createRule(
-      createRequest("/api/alimtalk-trigger-rules", {
+      createRequest("/api/message-trigger-rules", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: "Reminder" }),
@@ -140,7 +140,7 @@ describe("Alimtalk trigger rule API routes", () => {
 
   it("rejects malformed create JSON before proxying", async () => {
     const response = await createRule(
-      createRequest("/api/alimtalk-trigger-rules", {
+      createRequest("/api/message-trigger-rules", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "{bad-json",
@@ -156,7 +156,7 @@ describe("Alimtalk trigger rule API routes", () => {
 
   it("rejects unsafe trigger IDs before proxying", async () => {
     const response = await getRule(
-      createRequest("/api/alimtalk-trigger-rules/bad%2Fid"),
+      createRequest("/api/message-trigger-rules/bad%2Fid"),
       { params: Promise.resolve({ triggerId: "bad%2Fid" }) },
     );
 
@@ -172,7 +172,7 @@ describe("Alimtalk trigger rule API routes", () => {
     });
 
     const response = await updateRule(
-      createRequest("/api/alimtalk-trigger-rules/rule_123", {
+      createRequest("/api/message-trigger-rules/rule_123", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isActive: false }),
@@ -183,7 +183,7 @@ describe("Alimtalk trigger rule API routes", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ id: "rule_123", isActive: false });
     expect(mockPatch).toHaveBeenCalledWith(
-      "/alimtalk-trigger-rules/rule_123",
+      "/message-trigger-rules/rule_123",
       { isActive: false },
       expect.anything(),
     );
@@ -191,7 +191,7 @@ describe("Alimtalk trigger rule API routes", () => {
 
   it("rejects an update body with a mistyped field before proxying", async () => {
     const response = await updateRule(
-      createRequest("/api/alimtalk-trigger-rules/rule_123", {
+      createRequest("/api/message-trigger-rules/rule_123", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: 123 }),
@@ -205,7 +205,7 @@ describe("Alimtalk trigger rule API routes", () => {
 
   it("rejects malformed update JSON before proxying", async () => {
     const response = await updateRule(
-      createRequest("/api/alimtalk-trigger-rules/rule_123", {
+      createRequest("/api/message-trigger-rules/rule_123", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: "{bad-json",
@@ -227,7 +227,7 @@ describe("Alimtalk trigger rule API routes", () => {
     });
 
     const response = await deleteRule(
-      createRequest("/api/alimtalk-trigger-rules/rule_123", { method: "DELETE" }),
+      createRequest("/api/message-trigger-rules/rule_123", { method: "DELETE" }),
       { params: Promise.resolve({ triggerId: "rule_123" }) },
     );
 
