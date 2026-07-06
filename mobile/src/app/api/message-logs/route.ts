@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     }
 
     const searchParams = request.nextUrl.searchParams;
-    const response = await serverAPIClient.get("/alimtalk-logs", {
+    const response = await serverAPIClient.get("/message-logs", {
       headers: getAuthHeaders(token),
       params: {
         limit: searchParams.get("limit") ?? undefined,
@@ -25,6 +25,6 @@ export async function GET(request: NextRequest) {
     });
     return backendJsonResponse(response);
   } catch (error) {
-    return errorResponse(error, "fetch alimtalk logs");
+    return errorResponse(error, "fetch message logs");
   }
 }

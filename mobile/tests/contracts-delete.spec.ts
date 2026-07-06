@@ -183,7 +183,7 @@ async function routeContractsDependencies(
     });
   });
 
-  await page.route("**/api/alimtalk-logs**", async (route) => {
+  await page.route("**/api/message-logs**", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",

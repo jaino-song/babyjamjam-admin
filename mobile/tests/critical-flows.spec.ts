@@ -76,7 +76,7 @@ test.describe('Critical flows (real backend)', () => {
     const authHeaders = { Authorization: `Bearer ${authToken}` };
 
     const logCount = async (): Promise<number> => {
-      const res = await page.request.get(`${BACKEND_URL}/alimtalk-logs`, { headers: authHeaders });
+      const res = await page.request.get(`${BACKEND_URL}/message-logs`, { headers: authHeaders });
       expect(res.ok()).toBeTruthy();
       const body = await res.json();
       const rows: unknown[] = Array.isArray(body) ? body : (body?.data ?? []);

@@ -10,7 +10,7 @@ import {
   unauthorizedResponse,
 } from "@/lib/api/route-utils";
 
-// Mirrors backend CreateAlimtalkTriggerRuleDto: name, eventType, offsetType,
+// Mirrors backend CreateMessageTriggerRuleDto: name, eventType, offsetType,
 // recipientType and templateKey are required enums; optional fields passthrough.
 const createTriggerRuleSchema = z
   .object({
@@ -33,6 +33,13 @@ const createTriggerRuleSchema = z
       "SERVICE_INFO",
       "SERVICE_END_REMINDER",
       "EMPLOYEE_ASSIGNED",
+      "SERVICE_FEEDBACK_LINK",
+      "CLIENT_GREETING",
+      "PRICE_INFO",
+      "REMINDER",
+      "THANKS",
+      "SURVEY",
+      "INFO",
     ]),
   })
   .passthrough();
@@ -44,12 +51,12 @@ export async function GET(request: NextRequest) {
       return unauthorizedResponse("Unauthorized");
     }
 
-    const response = await serverAPIClient.get("/alimtalk-trigger-rules", {
+    const response = await serverAPIClient.get("/message-trigger-rules", {
       headers: getAuthHeaders(token),
     });
     return backendJsonResponse(response);
   } catch (error) {
-    return errorResponse(error, "fetch alimtalk trigger rules");
+    return errorResponse(error, "fetch message trigger rules");
   }
 }
 
@@ -68,11 +75,11 @@ export async function POST(request: NextRequest) {
       return invalidBody;
     }
 
-    const response = await serverAPIClient.post("/alimtalk-trigger-rules", data, {
+    const response = await serverAPIClient.post("/message-trigger-rules", data, {
       headers: getAuthHeaders(token),
     });
     return backendJsonResponse(response);
   } catch (error) {
-    return errorResponse(error, "create alimtalk trigger rule");
+    return errorResponse(error, "create message trigger rule");
   }
 }

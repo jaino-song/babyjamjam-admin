@@ -3399,7 +3399,7 @@ body:has([data-component="alimtalk"]) [data-component="alimtalk-content"] {
   overflow-y: auto;
 }
 
-body:has([data-component="alimtalk"]) [data-component="alimtalk-trigger-card"] {
+body:has([data-component="alimtalk"]) [data-component="message-trigger-card"] {
   display: flex;
   flex: 1;
   min-height: 0;
@@ -3421,7 +3421,7 @@ body:has([data-component="alimtalk"]) .send-stat {
   line-height: normal;
 }
 
-body:has([data-component="alimtalk"]) button.alimtalk-trigger-row {
+body:has([data-component="alimtalk"]) button.message-trigger-row {
   width: 100%;
   appearance: none;
   border: 0;
@@ -3432,12 +3432,12 @@ body:has([data-component="alimtalk"]) button.alimtalk-trigger-row {
   text-align: left;
 }
 
-body:has([data-component="alimtalk"]) button.alimtalk-trigger-row:disabled {
+body:has([data-component="alimtalk"]) button.message-trigger-row:disabled {
   cursor: wait;
   opacity: 0.72;
 }
 
-body:has([data-component="alimtalk"]) .alimtalk-trigger-row-skeleton {
+body:has([data-component="alimtalk"]) .message-trigger-row-skeleton {
   padding: 12px 10px;
 }
 
