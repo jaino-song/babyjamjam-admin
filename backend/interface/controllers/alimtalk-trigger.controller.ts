@@ -82,7 +82,7 @@ export class AlimtalkTriggerController {
 
     @Get("alimtalk-trigger-templates")
     listTemplates(
-        @Query("provider") provider: SupportedTriggerProvider = "aligo",
+        @Query("provider") provider: SupportedTriggerProvider = "aligo_alimtalk",
         @Query("eventType") eventType?: AlimtalkTriggerEventType,
         @Query("recipientType") recipientType?: AlimtalkTriggerRecipientType,
     ) {

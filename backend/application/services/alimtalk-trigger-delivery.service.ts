@@ -2,8 +2,6 @@ import { Injectable } from "@nestjs/common";
 import { SystemSettingService } from "application/services/system-setting.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SendAligoAlimtalkUsecase } from "application/usecases/aligo";
-import { SendAlimtalkUsecase as SendChannelTalkAlimtalkUsecase } from "application/usecases/channeltalk";
-import { UpsertChannelTalkUserDto, CreateChannelTalkEventDto } from "application/dto/channeltalk";
 import {
     ALIMTALK_TRIGGER_TEMPLATE_CATALOG,
     AlimtalkTriggerTemplateKey,
@@ -17,7 +15,6 @@ export class AlimtalkTriggerDeliveryService {
         private readonly systemSettingService: SystemSettingService,
         private readonly messageSenderApprovalService: MessageSenderApprovalService,
         private readonly sendAligoAlimtalkUsecase: SendAligoAlimtalkUsecase,
-        private readonly sendChannelTalkAlimtalkUsecase: SendChannelTalkAlimtalkUsecase,
     ) {}
 
     async sendJob(job: AlimtalkTriggerJobEntity): Promise<boolean> {
@@ -40,33 +37,16 @@ export class AlimtalkTriggerDeliveryService {
 
         const payload = job.payload;
 
-        if (provider === "aligo") {
-            await this.sendAligoAlimtalkUsecase.execute({
-                templateKey: providerMapping.templateKey as AligoTemplateKey,
-                receiver: payload.recipientPhone,
-                variables: this.toAligoVariables(job.templateKey, payload.templateVariables),
-                buttonUrl: payload.buttonUrl ?? undefined,
-                branchId: job.branchId ?? undefined,
-                clientId: job.clientId ?? undefined,
-                triggerJobId: job.id,
-            });
-            return true;
-        }
-
-        const result = await this.sendChannelTalkAlimtalkUsecase.execute(
-            new UpsertChannelTalkUserDto({
-                memberId: payload.memberId,
-                name: payload.recipientName,
-                mobileNumber: payload.recipientPhone.replace(/-/g, ""),
-            }),
-            new CreateChannelTalkEventDto({
-                memberId: payload.memberId,
-                eventName: providerMapping.templateKey,
-                properties: payload.templateVariables,
-            }),
-        );
-
-        return result !== null;
+        await this.sendAligoAlimtalkUsecase.execute({
+            templateKey: providerMapping.templateKey as AligoTemplateKey,
+            receiver: payload.recipientPhone,
+            variables: this.toAligoVariables(job.templateKey, payload.templateVariables),
+            buttonUrl: payload.buttonUrl ?? undefined,
+            branchId: job.branchId ?? undefined,
+            clientId: job.clientId ?? undefined,
+            triggerJobId: job.id,
+        });
+        return true;
     }
 
     private toAligoVariables(

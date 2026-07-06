@@ -80,7 +80,7 @@ export function getTriggerTemplateChannel(
   return SMS_TRIGGER_TEMPLATE_KEYS.includes(key) ? "sms" : "alimtalk";
 }
 
-export type SupportedTriggerProvider = "aligo" | "channeltalk";
+export type SupportedTriggerProvider = "aligo_alimtalk";
 export type AlimtalkProvider = SupportedTriggerProvider | "none";
 
 export interface AlimtalkTriggerTemplateVariable {

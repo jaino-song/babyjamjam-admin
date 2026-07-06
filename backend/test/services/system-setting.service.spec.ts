@@ -33,23 +33,23 @@ describe("SystemSettingService", () => {
 
     describe("getAlimtalkProvider", () => {
         it("should return the current provider when set", async () => {
-            getSettingUsecase.executeWithDefault.mockResolvedValue("channeltalk");
+            getSettingUsecase.executeWithDefault.mockResolvedValue("aligo_alimtalk");
 
             const result = await service.getAlimtalkProvider();
 
             expect(getSettingUsecase.executeWithDefault).toHaveBeenCalledWith(
                 "alimtalk_provider",
-                "aligo"
+                "aligo_alimtalk"
             );
-            expect(result).toBe("channeltalk");
+            expect(result).toBe("aligo_alimtalk");
         });
 
-        it("should return default 'aligo' when not set", async () => {
-            getSettingUsecase.executeWithDefault.mockResolvedValue("aligo");
+        it("should return default 'aligo_alimtalk' when not set", async () => {
+            getSettingUsecase.executeWithDefault.mockResolvedValue("aligo_alimtalk");
 
             const result = await service.getAlimtalkProvider();
 
-            expect(result).toBe("aligo");
+            expect(result).toBe("aligo_alimtalk");
         });
 
         it("should return 'none' when disabled", async () => {
@@ -65,7 +65,7 @@ describe("SystemSettingService", () => {
         it("should return the stored provider setting entity with updatedAt", async () => {
             const entity = new SystemSettingEntity(
                 "alimtalk_provider",
-                "aligo",
+                "aligo_alimtalk",
                 new Date("2026-05-28T12:00:00.000Z")
             );
             getSettingUsecase.executeEntity.mockResolvedValue(entity);
@@ -81,21 +81,21 @@ describe("SystemSettingService", () => {
         it("should update the provider setting", async () => {
             const entity = new SystemSettingEntity(
                 "alimtalk_provider",
-                "channeltalk",
+                "aligo_alimtalk",
                 new Date()
             );
             updateSettingUsecase.execute.mockResolvedValue(entity);
 
-            const result = await service.setAlimtalkProvider("channeltalk");
+            const result = await service.setAlimtalkProvider("aligo_alimtalk");
 
             expect(updateSettingUsecase.execute).toHaveBeenCalledWith(
                 "alimtalk_provider",
-                "channeltalk"
+                "aligo_alimtalk"
             );
-            expect(result.value).toBe("channeltalk");
+            expect(result.value).toBe("aligo_alimtalk");
         });
 
-        it.each(["channeltalk", "aligo", "none"] as AlimtalkProvider[])(
+        it.each(["aligo_alimtalk", "none"] as AlimtalkProvider[])(
             "should accept valid provider '%s'",
             async (provider) => {
                 const entity = new SystemSettingEntity(
@@ -119,16 +119,8 @@ describe("SystemSettingService", () => {
     });
 
     describe("isAlimtalkEnabled", () => {
-        it("should return true when provider is channeltalk", async () => {
-            getSettingUsecase.executeWithDefault.mockResolvedValue("channeltalk");
-
-            const result = await service.isAlimtalkEnabled();
-
-            expect(result).toBe(true);
-        });
-
-        it("should return true when provider is aligo", async () => {
-            getSettingUsecase.executeWithDefault.mockResolvedValue("aligo");
+        it("should return true when provider is aligo_alimtalk", async () => {
+            getSettingUsecase.executeWithDefault.mockResolvedValue("aligo_alimtalk");
 
             const result = await service.isAlimtalkEnabled();
 

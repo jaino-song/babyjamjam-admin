@@ -28,7 +28,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { TitleSelectMolecule } from "@/components/ui/title-select-molecule";
 import { TitleTextInputMolecule } from "@/components/ui/title-text-input-molecule";
-import { settingsApi, type AlimtalkProvider } from "@/services/api";
+import { settingsApi } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
 import {
   useAlimtalkTriggerRules,
@@ -325,10 +325,6 @@ export function TriggerRulesManager({
 
   const rules = useMemo(() => (Array.isArray(rulesData) ? rulesData : []), [rulesData]);
 
-  const { data: providerSettings } = useQuery({
-    queryKey: ["settings", "alimtalk-provider"],
-    queryFn: settingsApi.getAlimtalkProvider,
-  });
   const { data: senderApproval, isLoading: isSenderApprovalLoading } = useQuery({
     queryKey: ["settings", "message-sender-approval"],
     queryFn: settingsApi.getMessageSenderApproval,
@@ -338,8 +334,7 @@ export function TriggerRulesManager({
   const isRetryPolicySelected = effectiveSelectedRuleId === RETRY_POLICY_SELECTION_ID;
   const isServiceFeedbackLinkSelected = effectiveSelectedRuleId === SERVICE_FEEDBACK_LINK_SELECTION_ID;
 
-  const resolvedProvider: Exclude<AlimtalkProvider, "none"> =
-    providerSettings?.provider === "channeltalk" ? "channeltalk" : "aligo";
+  const resolvedProvider = "aligo_alimtalk" as const;
 
   const selectedRule =
     effectiveSelectedRuleId &&

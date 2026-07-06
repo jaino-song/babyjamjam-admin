@@ -99,7 +99,7 @@ describe("AlimtalkTriggerController (Integration)", () => {
         overrides: Partial<AlimtalkHistoryRecordView> = {},
     ): AlimtalkHistoryRecordView => ({
         id: overrides.id ?? 1,
-        provider: overrides.provider ?? "aligo",
+        provider: overrides.provider ?? "aligo_alimtalk",
         templateKey: overrides.templateKey ?? AlimtalkTriggerTemplateKey.CLIENT_WELCOME,
         triggerJobId: overrides.triggerJobId ?? "job-1",
         receiver: overrides.receiver ?? "010-1234-5678",
@@ -136,7 +136,7 @@ describe("AlimtalkTriggerController (Integration)", () => {
         allowedRecipientTypes: overrides.allowedRecipientTypes ?? [AlimtalkTriggerRecipientType.CLIENT],
         requiredVariables: overrides.requiredVariables ?? [{ key: "clientName", label: "고객명" }],
         providers: overrides.providers ?? {
-            aligo: { templateKey: "CLIENT_CREATED" },
+            aligo_alimtalk: { templateKey: "CLIENT_CREATED" },
         },
     });
 
@@ -410,7 +410,7 @@ describe("AlimtalkTriggerController (Integration)", () => {
             const response = await request(app.getHttpServer())
                 .get("/alimtalk-trigger-templates")
                 .query({
-                    provider: "aligo",
+                    provider: "aligo_alimtalk",
                     eventType: "CLIENT_CREATED",
                     recipientType: "CLIENT",
                 });
@@ -418,7 +418,7 @@ describe("AlimtalkTriggerController (Integration)", () => {
             expect(response.status).toBe(200);
             expect(response.body).toHaveLength(1);
             expect(triggerService.listTemplates).toHaveBeenCalledWith({
-                provider: "aligo",
+                provider: "aligo_alimtalk",
                 eventType: "CLIENT_CREATED",
                 recipientType: "CLIENT",
             });

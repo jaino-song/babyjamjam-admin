@@ -105,7 +105,7 @@ describe("settings API routes", () => {
       createRequest("/api/settings/alimtalk-provider", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: "aligo" }),
+        body: JSON.stringify({ provider: "aligo_alimtalk" }),
       }),
     );
 
@@ -113,7 +113,7 @@ describe("settings API routes", () => {
     await expect(response.json()).resolves.toEqual({ queued: true });
     expect(mockPut).toHaveBeenCalledWith(
       "/settings/alimtalk-provider",
-      { provider: "aligo" },
+      { provider: "aligo_alimtalk" },
       { headers: { Authorization: "Bearer auth-token" } },
     );
   });

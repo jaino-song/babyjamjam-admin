@@ -26,7 +26,7 @@ function templateItem(
     allowedEventTypes: [],
     allowedRecipientTypes: [],
     requiredVariables: [],
-    providers: { aligo: { templateKey: overrides.key } },
+    providers: { aligo_alimtalk: { templateKey: overrides.key } },
     ...overrides,
   };
 }
@@ -34,7 +34,7 @@ function templateItem(
 function historyRecord(overrides: Partial<AlimtalkHistoryRecord>): AlimtalkHistoryRecord {
   return {
     id: 1,
-    provider: "aligo",
+    provider: "aligo_alimtalk",
     templateKey: "CLIENT_WELCOME",
     triggerJobId: null,
     receiver: "010-0000-0000",
@@ -200,8 +200,8 @@ describe("alimtalk trigger channel routing", () => {
 
   it("routes history records by sms provider or sms trigger template", () => {
     const smsProviderRecord = historyRecord({ provider: "aligo_sms", templateKey: "CLIENT_WELCOME" });
-    const smsTemplateRecord = historyRecord({ provider: "aligo", templateKey: "SERVICE_INFO" });
-    const alimtalkRecord = historyRecord({ provider: "aligo", templateKey: "CLIENT_WELCOME" });
+    const smsTemplateRecord = historyRecord({ provider: "aligo_alimtalk", templateKey: "SERVICE_INFO" });
+    const alimtalkRecord = historyRecord({ provider: "aligo_alimtalk", templateKey: "CLIENT_WELCOME" });
 
     expect(isHistoryRecordInChannel(smsProviderRecord, "sms")).toBe(true);
     expect(isHistoryRecordInChannel(smsTemplateRecord, "sms")).toBe(true);

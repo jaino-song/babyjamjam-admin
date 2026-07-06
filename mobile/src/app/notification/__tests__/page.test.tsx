@@ -72,8 +72,8 @@ function renderPage() {
 
 describe("NotificationPage", () => {
   beforeEach(() => {
-    mockGetAlimtalkProvider.mockResolvedValue({ provider: "aligo" });
-    mockUpdateAlimtalkProvider.mockResolvedValue({ provider: "channeltalk" });
+    mockGetAlimtalkProvider.mockResolvedValue({ provider: "aligo_alimtalk" });
+    mockUpdateAlimtalkProvider.mockResolvedValue({ provider: "none" });
   });
 
   afterEach(() => {
@@ -95,14 +95,13 @@ describe("NotificationPage", () => {
     expect(await screen.findByText("알리고 (Aligo)")).toBeInTheDocument();
 
     const rows = container.querySelectorAll('[data-component="notification-settings-row"]');
-    expect(rows.length).toBeGreaterThanOrEqual(6);
+    expect(rows.length).toBeGreaterThanOrEqual(5);
 
     expect(within(rows[0] as HTMLElement).getByText("앱 알림")).toBeInTheDocument();
     expect(within(rows[1] as HTMLElement).getByText("이메일 알림")).toBeInTheDocument();
     expect(screen.getByLabelText("앱 알림 설정")).toBeInTheDocument();
     expect(screen.getByLabelText("이메일 알림 설정")).toBeInTheDocument();
 
-    expect(screen.getByText("채널톡 (Channel Talk)")).toBeInTheDocument();
     expect(screen.getByText("사용 안함")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "발송" })).toBeInTheDocument();
   });
@@ -110,11 +109,11 @@ describe("NotificationPage", () => {
   it("selects an alimtalk provider when the provider row is clicked", async () => {
     renderPage();
 
-    const channelTalkTitle = await screen.findByText("채널톡 (Channel Talk)");
-    fireEvent.click(channelTalkTitle);
+    const noneTitle = await screen.findByText("사용 안함");
+    fireEvent.click(noneTitle);
 
     await waitFor(() => {
-      expect(mockUpdateAlimtalkProvider.mock.calls[0]?.[0]).toBe("channeltalk");
+      expect(mockUpdateAlimtalkProvider.mock.calls[0]?.[0]).toBe("none");
     });
   });
 });

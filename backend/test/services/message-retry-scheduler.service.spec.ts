@@ -57,7 +57,7 @@ describe("MessageRetrySchedulerService", () => {
 
     it("routes SMS and alimtalk retry logs to their dedicated services", async () => {
         const smsLog = createLog("aligo_sms");
-        const alimtalkLog = createLog("aligo");
+        const alimtalkLog = createLog("aligo_alimtalk");
         logRepository.findPendingRetries.mockResolvedValue([smsLog, alimtalkLog]);
 
         await scheduler.retryFailedMessages();

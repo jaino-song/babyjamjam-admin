@@ -1,7 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { SystemSettingModule } from "./system-setting.module";
-import { ChannelTalkModule } from "./channeltalk.module";
 import { AligoModule } from "./aligo.module";
 import { SystemTemplateModule } from "./system-template.module";
 import { AlimtalkService } from "application/services/alimtalk.service";
@@ -31,7 +30,7 @@ import { AlimtalkTemplateController } from "interface/controllers/alimtalk-templ
 import { AlimtalkTemplateService } from "application/services/alimtalk-template.service";
 
 @Module({
-    imports: [DatabaseModule, ConfigModule, SystemSettingModule, ChannelTalkModule, AligoModule, SystemTemplateModule],
+    imports: [DatabaseModule, ConfigModule, SystemSettingModule, AligoModule, SystemTemplateModule],
     controllers: [AlimtalkTriggerController, AlimtalkTemplateController],
     providers: [
         { provide: CLIENT_REPOSITORY, useClass: SbClientRepository },

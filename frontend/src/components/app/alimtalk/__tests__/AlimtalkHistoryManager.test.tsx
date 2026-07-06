@@ -56,7 +56,7 @@ const mockedUseAlimtalkHistory = jest.mocked(useAlimtalkHistory);
 
 const historyRecord: AlimtalkHistoryRecord = {
   id: 101,
-  provider: "aligo",
+  provider: "aligo_alimtalk",
   templateKey: "CLIENT_WELCOME",
   triggerJobId: "job-1",
   receiver: "010-1234-5678",

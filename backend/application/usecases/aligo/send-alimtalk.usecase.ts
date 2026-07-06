@@ -28,7 +28,7 @@ export class SendAligoAlimtalkUsecase {
         // 발송 로그 생성
         const log = AlimtalkLogEntity.create({
             branchId: dto.branchId,
-            provider: "aligo",
+            provider: "aligo_alimtalk",
             templateKey: dto.templateKey,
             triggerJobId: dto.triggerJobId,
             receiver: dto.receiver,

@@ -46,10 +46,9 @@ describe("AlimtalkTriggerDeliveryService", () => {
             ensureApproved: jest.fn().mockResolvedValue(undefined),
         };
         const service = new AlimtalkTriggerDeliveryService(
-            { getAlimtalkProvider: jest.fn().mockResolvedValue("aligo") } as unknown as SystemSettingService,
+            { getAlimtalkProvider: jest.fn().mockResolvedValue("aligo_alimtalk") } as unknown as SystemSettingService,
             messageSenderApprovalService as unknown as MessageSenderApprovalService,
             sendAligoAlimtalkUsecase as never,
-            { execute: jest.fn() } as never,
         );
 
         await expect(service.sendJob(createJob(AlimtalkTriggerTemplateKey.CLIENT_WELCOME))).resolves.toBe(true);

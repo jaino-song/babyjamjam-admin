@@ -153,7 +153,7 @@ const DOCUMENT_CLIENT_SUMMARIES = [
 const NOTIFICATION_LOGS = [
   {
     id: 1,
-    provider: "aligo",
+    provider: "aligo_alimtalk",
     templateKey: "CONTRACT_SENT",
     receiver: "010-1111-2222",
     clientId: 101,
@@ -189,7 +189,7 @@ const NOTIFICATION_LOGS = [
   },
   {
     id: 3,
-    provider: "aligo",
+    provider: "aligo_alimtalk",
     templateKey: "OTHER",
     receiver: "010-9999-9999",
     clientId: 999,

@@ -76,7 +76,7 @@ describe("SystemSettingController (Integration)", () => {
         it("should return current provider setting", async () => {
             const updatedAt = new Date("2026-05-28T12:00:00.000Z");
             systemSettingService.getAlimtalkProviderSetting.mockResolvedValue(
-                new SystemSettingEntity("alimtalk_provider", "aligo", updatedAt)
+                new SystemSettingEntity("alimtalk_provider", "aligo_alimtalk", updatedAt)
             );
 
             const response = await request(app.getHttpServer())
@@ -84,7 +84,7 @@ describe("SystemSettingController (Integration)", () => {
 
             expect(response.status).toBe(200);
             expect(response.body).toEqual({
-                provider: "aligo",
+                provider: "aligo_alimtalk",
                 enabled: true,
                 updatedAt: updatedAt.toISOString(),
             });
@@ -112,14 +112,14 @@ describe("SystemSettingController (Integration)", () => {
 
         it("should return default provider without updatedAt when setting is not stored", async () => {
             systemSettingService.getAlimtalkProviderSetting.mockResolvedValue(null);
-            systemSettingService.getAlimtalkProvider.mockResolvedValue("aligo");
+            systemSettingService.getAlimtalkProvider.mockResolvedValue("aligo_alimtalk");
 
             const response = await request(app.getHttpServer())
                 .get("/settings/alimtalk-provider");
 
             expect(response.status).toBe(200);
             expect(response.body).toEqual({
-                provider: "aligo",
+                provider: "aligo_alimtalk",
                 enabled: true,
             });
         });
@@ -135,38 +135,20 @@ describe("SystemSettingController (Integration)", () => {
             expect(guards).toContain(OwnerOrAdminGuard);
         });
 
-        it("should update provider to channeltalk", async () => {
+        it("should update provider to aligo_alimtalk", async () => {
             const entity = new SystemSettingEntity(
                 "alimtalk_provider",
-                "channeltalk",
-                new Date("2025-01-14T00:00:00Z")
-            );
-            systemSettingService.setAlimtalkProvider.mockResolvedValue(entity);
-
-            const response = await request(app.getHttpServer())
-                .put("/settings/alimtalk-provider")
-                .send({ provider: "channeltalk" });
-
-            expect(response.status).toBe(200);
-            expect(response.body.provider).toBe("channeltalk");
-            expect(response.body.enabled).toBe(true);
-            expect(systemSettingService.setAlimtalkProvider).toHaveBeenCalledWith("channeltalk");
-        });
-
-        it("should update provider to aligo", async () => {
-            const entity = new SystemSettingEntity(
-                "alimtalk_provider",
-                "aligo",
+                "aligo_alimtalk",
                 new Date()
             );
             systemSettingService.setAlimtalkProvider.mockResolvedValue(entity);
 
             const response = await request(app.getHttpServer())
                 .put("/settings/alimtalk-provider")
-                .send({ provider: "aligo" });
+                .send({ provider: "aligo_alimtalk" });
 
             expect(response.status).toBe(200);
-            expect(response.body.provider).toBe("aligo");
+            expect(response.body.provider).toBe("aligo_alimtalk");
             expect(response.body.enabled).toBe(true);
         });
 

@@ -1,4 +1,4 @@
-export const ALIMTALK_PROVIDERS = ["channeltalk", "aligo", "none"] as const;
+export const ALIMTALK_PROVIDERS = ["aligo_alimtalk", "none"] as const;
 export type AlimtalkProvider = (typeof ALIMTALK_PROVIDERS)[number];
 
 export interface RibbonConfig {
@@ -23,7 +23,7 @@ export const DEFAULT_RIBBON_CONFIG: RibbonConfig = {
 
 export class SystemSettingEntity {
     static readonly ALIMTALK_PROVIDER_KEY = "alimtalk_provider";
-    static readonly DEFAULT_ALIMTALK_PROVIDER: AlimtalkProvider = "aligo";
+    static readonly DEFAULT_ALIMTALK_PROVIDER: AlimtalkProvider = "aligo_alimtalk";
     static readonly RIBBON_CONFIG_KEY = "ribbon_config";
 
     constructor(

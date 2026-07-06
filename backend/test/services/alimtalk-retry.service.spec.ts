@@ -14,7 +14,7 @@ describe("AlimtalkRetryService", () => {
         AlimtalkLogEntity.reconstitute(
             88,
             "branch-1",
-            "aligo",
+            "aligo_alimtalk",
             templateKey,
             null,
             "01012345678",

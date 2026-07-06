@@ -113,7 +113,7 @@ function mockSettingsQueries({
     }
 
     return useQueryResult({
-      provider: "aligo",
+      provider: "aligo_alimtalk",
       enabled: providerEnabled,
     });
   });
@@ -157,7 +157,7 @@ beforeEach(() => {
         allowedRecipientTypes: ["CLIENT"],
         requiredVariables: [],
         providers: {
-          aligo: { templateKey: "tmpl_1" },
+          aligo_alimtalk: { templateKey: "tmpl_1" },
         },
       },
     ],

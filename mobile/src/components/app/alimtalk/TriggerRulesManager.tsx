@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import {
   BellRing,
   CalendarClock,
@@ -24,7 +23,6 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { settingsApi, type AlimtalkProvider } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
 import {
   useAlimtalkTriggerRules,
@@ -209,13 +207,7 @@ export function TriggerRulesManager() {
   const updateMutation = useUpdateAlimtalkTriggerRule();
   const deleteMutation = useDeleteAlimtalkTriggerRule();
 
-  const { data: providerSettings } = useQuery({
-    queryKey: ["settings", "alimtalk-provider"],
-    queryFn: settingsApi.getAlimtalkProvider,
-  });
-
-  const resolvedProvider: Exclude<AlimtalkProvider, "none"> =
-    providerSettings?.provider === "channeltalk" ? "channeltalk" : "aligo";
+  const resolvedProvider = "aligo_alimtalk" as const;
 
   const filteredRules = useMemo(() => {
     return rules.filter((rule) => rule.isActive === (statusFilter === "active"));

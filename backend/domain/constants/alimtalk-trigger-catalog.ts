@@ -33,7 +33,7 @@ export enum AlimtalkTriggerTemplateKey {
     INFO = "INFO",
 }
 
-export type SupportedTriggerProvider = "aligo" | "channeltalk";
+export type SupportedTriggerProvider = "aligo_alimtalk";
 
 // Free pairing: every SMS (system-template) trigger may fire on any client lifecycle event.
 const CLIENT_EVENT_TYPES = [
@@ -107,8 +107,7 @@ export const ALIMTALK_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "serviceType", label: "서비스 타입" },
         ],
         providers: {
-            aligo: { templateKey: "CLIENT_CREATED" },
-            channeltalk: { templateKey: "client_created" },
+            aligo_alimtalk: { templateKey: "CLIENT_CREATED" },
         },
     },
     [AlimtalkTriggerTemplateKey.SERVICE_START_REMINDER]: {
@@ -123,8 +122,7 @@ export const ALIMTALK_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "timingText", label: "발송 기준 문구" },
         ],
         providers: {
-            aligo: { templateKey: "SERVICE_START_REMINDER" },
-            channeltalk: { templateKey: "service_start_reminder" },
+            aligo_alimtalk: { templateKey: "SERVICE_START_REMINDER" },
         },
     },
     [AlimtalkTriggerTemplateKey.SERVICE_INFO]: {
@@ -137,8 +135,7 @@ export const ALIMTALK_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "name", label: "산모님 성함" },
         ],
         providers: {
-            aligo: { templateKey: "SERVICE_INFO" },
-            channeltalk: { templateKey: "service_info" },
+            aligo_alimtalk: { templateKey: "SERVICE_INFO" },
         },
     },
     [AlimtalkTriggerTemplateKey.SERVICE_END_REMINDER]: {
@@ -153,8 +150,7 @@ export const ALIMTALK_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "timingText", label: "발송 기준 문구" },
         ],
         providers: {
-            aligo: { templateKey: "SERVICE_END_REMINDER" },
-            channeltalk: { templateKey: "service_end_reminder" },
+            aligo_alimtalk: { templateKey: "SERVICE_END_REMINDER" },
         },
     },
     [AlimtalkTriggerTemplateKey.EMPLOYEE_ASSIGNED]: {
@@ -172,8 +168,7 @@ export const ALIMTALK_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "serviceStartDate", label: "서비스 시작일" },
         ],
         providers: {
-            aligo: { templateKey: "EMPLOYEE_ASSIGNED" },
-            channeltalk: { templateKey: "employee_assigned" },
+            aligo_alimtalk: { templateKey: "EMPLOYEE_ASSIGNED" },
         },
     },
     [AlimtalkTriggerTemplateKey.SERVICE_FEEDBACK_LINK]: {
@@ -198,8 +193,7 @@ export const ALIMTALK_TRIGGER_TEMPLATE_CATALOG: Record<
         allowedRecipientTypes: [AlimtalkTriggerRecipientType.CLIENT],
         requiredVariables: [],
         providers: {
-            aligo: { templateKey: "CLIENT_GREETING" },
-            channeltalk: { templateKey: "client_greeting" },
+            aligo_alimtalk: { templateKey: "CLIENT_GREETING" },
         },
     },
     [AlimtalkTriggerTemplateKey.PRICE_INFO]: {
@@ -220,8 +214,7 @@ export const ALIMTALK_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "accNum", label: "계좌번호" },
         ],
         providers: {
-            aligo: { templateKey: "PRICE_INFO" },
-            channeltalk: { templateKey: "price_info" },
+            aligo_alimtalk: { templateKey: "PRICE_INFO" },
         },
     },
     [AlimtalkTriggerTemplateKey.REMINDER]: {
@@ -232,8 +225,7 @@ export const ALIMTALK_TRIGGER_TEMPLATE_CATALOG: Record<
         allowedRecipientTypes: [AlimtalkTriggerRecipientType.CLIENT],
         requiredVariables: [{ key: "name", label: "산모님 성함" }],
         providers: {
-            aligo: { templateKey: "REMINDER" },
-            channeltalk: { templateKey: "reminder" },
+            aligo_alimtalk: { templateKey: "REMINDER" },
         },
     },
     [AlimtalkTriggerTemplateKey.THANKS]: {
@@ -244,8 +236,7 @@ export const ALIMTALK_TRIGGER_TEMPLATE_CATALOG: Record<
         allowedRecipientTypes: [AlimtalkTriggerRecipientType.CLIENT],
         requiredVariables: [{ key: "name", label: "산모님 성함" }],
         providers: {
-            aligo: { templateKey: "THANKS" },
-            channeltalk: { templateKey: "thanks" },
+            aligo_alimtalk: { templateKey: "THANKS" },
         },
     },
     [AlimtalkTriggerTemplateKey.SURVEY]: {
@@ -256,8 +247,7 @@ export const ALIMTALK_TRIGGER_TEMPLATE_CATALOG: Record<
         allowedRecipientTypes: [AlimtalkTriggerRecipientType.CLIENT],
         requiredVariables: [{ key: "name", label: "산모님 성함" }],
         providers: {
-            aligo: { templateKey: "SURVEY" },
-            channeltalk: { templateKey: "survey" },
+            aligo_alimtalk: { templateKey: "SURVEY" },
         },
     },
     [AlimtalkTriggerTemplateKey.INFO]: {
@@ -268,8 +258,7 @@ export const ALIMTALK_TRIGGER_TEMPLATE_CATALOG: Record<
         allowedRecipientTypes: [AlimtalkTriggerRecipientType.CLIENT],
         requiredVariables: [],
         providers: {
-            aligo: { templateKey: "INFO" },
-            channeltalk: { templateKey: "info" },
+            aligo_alimtalk: { templateKey: "INFO" },
         },
     },
 };
