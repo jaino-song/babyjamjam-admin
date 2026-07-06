@@ -16,17 +16,20 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const limit = request.nextUrl.searchParams.get("limit");
-    const response = await serverAPIClient.get("/alimtalk-trigger-jobs/upcoming", {
+    const searchParams = request.nextUrl.searchParams;
+    const response = await serverAPIClient.get("/message-trigger-templates", {
       headers: getAuthHeaders(token),
-      params: limit ? { limit } : undefined,
+      params: {
+        provider: searchParams.get("provider"),
+        eventType: searchParams.get("eventType"),
+        recipientType: searchParams.get("recipientType"),
+      },
     });
-
     return NextResponse.json(response.data);
   } catch (error) {
-    console.error("[API] Error fetching upcoming alimtalk trigger jobs:", error);
+    console.error("[API] Error fetching message trigger templates:", error);
     return NextResponse.json(
-      { error: "Failed to fetch upcoming alimtalk trigger jobs" },
+      { error: "Failed to fetch message trigger templates" },
       { status: 500 },
     );
   }

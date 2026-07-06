@@ -31,12 +31,12 @@ import { TitleTextInputMolecule } from "@/components/ui/title-text-input-molecul
 import { settingsApi } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
 import {
-  useAlimtalkTriggerRules,
-  useAlimtalkTriggerTemplates,
-  useCreateAlimtalkTriggerRule,
-  useUpdateAlimtalkTriggerRule,
-  useDeleteAlimtalkTriggerRule,
-} from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
+  useMessageTriggerRules,
+  useMessageTriggerTemplates,
+  useCreateMessageTriggerRule,
+  useUpdateMessageTriggerRule,
+  useDeleteMessageTriggerRule,
+} from "@/features/message-triggers/hooks/use-message-triggers";
 import {
   deriveAvailableTemplates,
   deriveEventTypesFromTemplates,
@@ -45,18 +45,18 @@ import {
   isTriggerRuleInChannel,
   SMS_TRIGGER_TO_SYSTEM_TEMPLATE,
   type TriggerMessageChannel,
-} from "@/features/alimtalk-triggers/channel";
+} from "@/features/message-triggers/channel";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { serviceInfoMsgTemplate } from "@/components/app/messages/templates/messageTemplate/serviceInfoMsg";
 import { AlimtalkPhonePreview } from "./AlimtalkPhonePreview";
 import type {
-  AlimtalkTriggerRule,
-  CreateAlimtalkTriggerRuleDto,
+  MessageTriggerRule,
+  CreateMessageTriggerRuleDto,
   TriggerEventType,
   TriggerOffsetType,
   TriggerRecipientType,
   TriggerTemplateKey,
-} from "@/features/alimtalk-triggers/types";
+} from "@/features/message-triggers/types";
 
 const RETRY_POLICY_SELECTION_ID = "retry-policy";
 const SERVICE_FEEDBACK_LINK_SELECTION_ID = "service-feedback-link";
@@ -73,7 +73,7 @@ type RuleSelection = string | "new" | null;
 type RuleStatusFilter = "active" | "inactive";
 type TriggerRuleDetailTab = "settings" | "preview";
 
-type RuleFormState = CreateAlimtalkTriggerRuleDto;
+type RuleFormState = CreateMessageTriggerRuleDto;
 
 type TriggerRuleListItem = {
   kind: "trigger-rule";
@@ -82,7 +82,7 @@ type TriggerRuleListItem = {
   subtitle: string;
   active: boolean;
   icon: typeof BellRing;
-  rule: AlimtalkTriggerRule;
+  rule: MessageTriggerRule;
 };
 
 type RetryPolicyListItem = {
@@ -260,7 +260,7 @@ const TRIGGER_TEMPLATE_MESSAGE_FALLBACKS: Record<TriggerTemplateKey, string> = {
 안내드립니다.`,
 };
 
-function toFormState(rule: AlimtalkTriggerRule | null, channel: TriggerMessageChannel = "alimtalk"): RuleFormState {
+function toFormState(rule: MessageTriggerRule | null, channel: TriggerMessageChannel = "alimtalk"): RuleFormState {
   if (!rule) return getDefaultFormState(channel);
   return {
     name: rule.name,
@@ -273,7 +273,7 @@ function toFormState(rule: AlimtalkTriggerRule | null, channel: TriggerMessageCh
   };
 }
 
-function normalizeDto(dto: RuleFormState): CreateAlimtalkTriggerRuleDto {
+function normalizeDto(dto: RuleFormState): CreateMessageTriggerRuleDto {
   return {
     ...dto,
     offsetDays:
@@ -318,10 +318,10 @@ export function TriggerRulesManager({
   const isCompactSplitLayout = splitLayoutMode === "compact";
   const copy = CHANNEL_COPY[channel];
 
-  const { data: rulesData = [], isLoading } = useAlimtalkTriggerRules();
-  const createMutation = useCreateAlimtalkTriggerRule();
-  const updateMutation = useUpdateAlimtalkTriggerRule();
-  const deleteMutation = useDeleteAlimtalkTriggerRule();
+  const { data: rulesData = [], isLoading } = useMessageTriggerRules();
+  const createMutation = useCreateMessageTriggerRule();
+  const updateMutation = useUpdateMessageTriggerRule();
+  const deleteMutation = useDeleteMessageTriggerRule();
 
   const rules = useMemo(() => (Array.isArray(rulesData) ? rulesData : []), [rulesData]);
 
@@ -347,7 +347,7 @@ export function TriggerRulesManager({
   // Fetch ALL templates for the provider in one query (no event/recipient filter), then derive
   // the event / recipient / template dropdowns from the catalog so future templates surface
   // automatically. Derivation is channel-generic — it works for both the SMS and 알림톡 forms.
-  const templateQuery = useAlimtalkTriggerTemplates({ provider: resolvedProvider });
+  const templateQuery = useMessageTriggerTemplates({ provider: resolvedProvider });
   const selectedSystemTemplateKey = SMS_TRIGGER_TO_SYSTEM_TEMPLATE[formState.templateKey] ?? "";
   const { data: selectedSystemTemplate } = useSystemTemplate(selectedSystemTemplateKey);
 
@@ -585,7 +585,7 @@ export function TriggerRulesManager({
     setIsRetryPolicyEnabled(checked);
   };
 
-  const handleRuleActiveToggle = async (rule: AlimtalkTriggerRule, checked: boolean) => {
+  const handleRuleActiveToggle = async (rule: MessageTriggerRule, checked: boolean) => {
     if (isTriggerRulesLocked) return;
 
     const dto = normalizeDto({

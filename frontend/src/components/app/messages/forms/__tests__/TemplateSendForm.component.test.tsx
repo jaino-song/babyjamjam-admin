@@ -6,8 +6,8 @@
  */
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-import type { AlimtalkHistoryRecord } from "@/features/alimtalk-triggers/types";
-import { useAlimtalkHistory } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
+import type { MessageLogRecord } from "@/features/message-triggers/types";
+import { useMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
 import { messageDeliveryApi } from "@/services/api";
 import { useFormStore } from "@/stores/form-store";
 
@@ -77,11 +77,11 @@ jest.mock(
   }),
 );
 
-// Mock the message-delivery history hook (aliased in TemplateSendForm as useMessageDeliveryHistory).
+// Mock the message-delivery history hook (aliased in TemplateSendForm as useMessageHistory).
 jest.mock(
-  "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers",
+  "@/features/message-triggers/hooks/use-message-triggers",
   () => ({
-    useAlimtalkHistory: jest.fn(),
+    useMessageHistory: jest.fn(),
   }),
 );
 
@@ -95,7 +95,7 @@ jest.mock("@/services/api", () => ({
 // ---------------------------------------------------------------------------
 // Typed references to mocks
 // ---------------------------------------------------------------------------
-const mockedUseAlimtalkHistory = jest.mocked(useAlimtalkHistory);
+const mockedUseMessageHistory = jest.mocked(useMessageHistory);
 const mockedSendSms = jest.mocked(messageDeliveryApi.sendSms);
 
 // ---------------------------------------------------------------------------
@@ -103,8 +103,8 @@ const mockedSendSms = jest.mocked(messageDeliveryApi.sendSms);
 // ---------------------------------------------------------------------------
 
 function buildHistoryRecord(
-  overrides: Partial<AlimtalkHistoryRecord> = {},
-): AlimtalkHistoryRecord {
+  overrides: Partial<MessageLogRecord> = {},
+): MessageLogRecord {
   return {
     id: 1,
     provider: "aligo_sms",
@@ -139,10 +139,10 @@ function buildHistoryRecord(
 /** Default mock: empty history, no-op refetch. */
 function mockEmptyHistory() {
   const refetch = jest.fn().mockResolvedValue({ data: [] });
-  mockedUseAlimtalkHistory.mockReturnValue({
+  mockedUseMessageHistory.mockReturnValue({
     data: [],
     refetch,
-  } as unknown as ReturnType<typeof useAlimtalkHistory>);
+  } as unknown as ReturnType<typeof useMessageHistory>);
   return refetch;
 }
 
@@ -245,12 +245,6 @@ describe("A: partial-failure send keeps only failed recipients in queue", () => 
     // Queue recipient 1 (01011111111 → 010-1111-1111) then recipient 2.
     await queueRecipient("01011111111");
     await queueRecipient("01022222222");
-
-    // Verify both are in the queue before sending.
-    const allPills = () =>
-      screen.queryAllByRole("status").length > 0
-        ? document.querySelectorAll('[data-component="messages-template-send-form-recipient"]')
-        : document.querySelectorAll('[data-component="messages-template-send-form-recipient"]');
 
     await waitFor(() => {
       expect(
@@ -374,10 +368,10 @@ describe("C: duplicate-send confirm dialog lists all duplicates (not just the fi
     const refetch = jest
       .fn()
       .mockResolvedValue({ data: [historyForRecipient1, historyForRecipient2] });
-    mockedUseAlimtalkHistory.mockReturnValue({
+    mockedUseMessageHistory.mockReturnValue({
       data: [historyForRecipient1, historyForRecipient2],
       refetch,
-    } as unknown as ReturnType<typeof useAlimtalkHistory>);
+    } as unknown as ReturnType<typeof useMessageHistory>);
 
     renderInfoForm();
 

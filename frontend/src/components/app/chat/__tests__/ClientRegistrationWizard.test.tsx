@@ -53,7 +53,7 @@ describe("ClientRegistrationWizard", () => {
         fireEvent.change(screen.getByLabelText("연락처"), { target: { value: "01012345678" } });
         fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "900101" } });
         fireEvent.change(screen.getByLabelText("주소"), { target: { value: "인천 연수구" } });
-        fireEvent.change(screen.getByLabelText("출산 예정일"), { target: { value: "2026-02-01" } });
+        fireEvent.change(screen.getByLabelText("출산 예정일"), { target: { value: "260201" } });
         expect(nextButton).not.toBeDisabled();
         fireEvent.click(nextButton);
 
@@ -105,7 +105,7 @@ describe("ClientRegistrationWizard", () => {
         fireEvent.change(screen.getByLabelText("연락처"), { target: { value: "01012345678" } });
         fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "900101" } });
         fireEvent.change(screen.getByLabelText("주소"), { target: { value: "인천 연수구" } });
-        fireEvent.change(screen.getByLabelText("출산 예정일"), { target: { value: "2026-02-01" } });
+        fireEvent.change(screen.getByLabelText("출산 예정일"), { target: { value: "260201" } });
         fireEvent.click(screen.getByRole("button", { name: "다음" }));
 
         fireEvent.click(screen.getByRole("checkbox", { name: "바우처 대상" }));

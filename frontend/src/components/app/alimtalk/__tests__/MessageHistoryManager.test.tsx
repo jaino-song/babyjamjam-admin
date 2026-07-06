@@ -1,8 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { AlimtalkHistoryManager } from "../AlimtalkHistoryManager";
-import { useAlimtalkHistory } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
-import type { AlimtalkHistoryRecord } from "@/features/alimtalk-triggers/types";
+import { MessageHistoryManager } from "../MessageHistoryManager";
+import { useMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
+import type { MessageLogRecord } from "@/features/message-triggers/types";
 
 jest.mock("@/components/app/v3", () => {
   const React = jest.requireActual("react");
@@ -48,13 +48,13 @@ jest.mock("@/components/app/v3", () => {
   };
 });
 
-jest.mock("@/features/alimtalk-triggers/hooks/use-alimtalk-triggers", () => ({
-  useAlimtalkHistory: jest.fn(),
+jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
+  useMessageHistory: jest.fn(),
 }));
 
-const mockedUseAlimtalkHistory = jest.mocked(useAlimtalkHistory);
+const mockedUseMessageHistory = jest.mocked(useMessageHistory);
 
-const historyRecord: AlimtalkHistoryRecord = {
+const historyRecord: MessageLogRecord = {
   id: 101,
   provider: "aligo_alimtalk",
   templateKey: "CLIENT_WELCOME",
@@ -87,15 +87,15 @@ const historyRecord: AlimtalkHistoryRecord = {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockedUseAlimtalkHistory.mockReturnValue({
+  mockedUseMessageHistory.mockReturnValue({
     data: [historyRecord],
     isLoading: false,
-  } as unknown as ReturnType<typeof useAlimtalkHistory>);
+  } as unknown as ReturnType<typeof useMessageHistory>);
 });
 
-describe("AlimtalkHistoryManager", () => {
+describe("MessageHistoryManager", () => {
   it("filters sms delivery records out of the alimtalk history list", () => {
-    mockedUseAlimtalkHistory.mockReturnValue({
+    mockedUseMessageHistory.mockReturnValue({
       data: [
         historyRecord,
         {
@@ -109,16 +109,16 @@ describe("AlimtalkHistoryManager", () => {
         },
       ],
       isLoading: false,
-    } as unknown as ReturnType<typeof useAlimtalkHistory>);
+    } as unknown as ReturnType<typeof useMessageHistory>);
 
-    render(<AlimtalkHistoryManager />);
+    render(<MessageHistoryManager />);
 
     expect(screen.getByText("인사(소개)")).toBeInTheDocument();
     expect(screen.queryByText("SMS 서비스 안내")).not.toBeInTheDocument();
   });
 
   it("does not preselect the first history item in compact split layout", async () => {
-    const { container } = render(<AlimtalkHistoryManager />);
+    const { container } = render(<MessageHistoryManager />);
 
     expect(await screen.findByText("인사(소개)")).toBeInTheDocument();
     await waitFor(() => {

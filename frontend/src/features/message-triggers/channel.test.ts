@@ -11,9 +11,9 @@ import {
   isUpcomingJobInChannel,
 } from "./channel";
 import type {
-  AlimtalkHistoryRecord,
+  MessageLogRecord,
   TriggerTemplateCatalogItem,
-  UpcomingAlimtalkJob,
+  UpcomingMessageTriggerJob,
 } from "./types";
 
 function templateItem(
@@ -31,7 +31,7 @@ function templateItem(
   };
 }
 
-function historyRecord(overrides: Partial<AlimtalkHistoryRecord>): AlimtalkHistoryRecord {
+function historyRecord(overrides: Partial<MessageLogRecord>): MessageLogRecord {
   return {
     id: 1,
     provider: "aligo_alimtalk",
@@ -63,7 +63,7 @@ function historyRecord(overrides: Partial<AlimtalkHistoryRecord>): AlimtalkHisto
   };
 }
 
-function upcomingJob(overrides: Partial<UpcomingAlimtalkJob>): UpcomingAlimtalkJob {
+function upcomingJob(overrides: Partial<UpcomingMessageTriggerJob>): UpcomingMessageTriggerJob {
   return {
     id: "job-1",
     ruleId: "rule-1",
@@ -93,7 +93,7 @@ function upcomingJob(overrides: Partial<UpcomingAlimtalkJob>): UpcomingAlimtalkJ
   };
 }
 
-describe("alimtalk trigger channel helpers", () => {
+describe("message trigger channel helpers", () => {
   it("routes SERVICE_INFO template data to the sms channel", () => {
     expect(isTriggerTemplateInChannel("SERVICE_INFO", "sms")).toBe(true);
     expect(isTriggerTemplateInChannel("SERVICE_INFO", "alimtalk")).toBe(false);

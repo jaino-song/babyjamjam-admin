@@ -48,8 +48,8 @@ import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TriggerRulesManager } from "@/components/app/alimtalk/TriggerRulesManager";
-import { AlimtalkHistoryManager } from "@/components/app/alimtalk/AlimtalkHistoryManager";
-import { UpcomingAlimtalkManager } from "@/components/app/alimtalk/UpcomingAlimtalkManager";
+import { MessageHistoryManager } from "@/components/app/alimtalk/MessageHistoryManager";
+import { UpcomingMessageTriggerManager } from "@/components/app/alimtalk/UpcomingMessageTriggerManager";
 import { AlimtalkTenantApplicationSettings } from "@/components/app/alimtalk/AlimtalkTenantApplicationSettings";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -1773,20 +1773,20 @@ export default function AlimtalkPage() {
         <div data-component="alimtalk-content" className="min-h-0 flex-1 min-w-0">
           {activeSection === "overview" ? (
             <section data-component="alimtalk-overview" className="h-full min-h-0">
-              <UpcomingAlimtalkManager />
+              <UpcomingMessageTriggerManager />
             </section>
           ) : null}
 
           {activeSection === "history" ? (
             <section data-component="alimtalk-history" className="h-full min-h-0">
-              <AlimtalkHistoryManager />
+              <MessageHistoryManager />
             </section>
           ) : null}
 
           {activeSection === "templates" ? <TemplatesSection /> : null}
 
           {activeSection === "triggers" ? (
-            <section data-component="alimtalk-triggers" className="h-full min-h-0">
+            <section data-component="message-triggers" className="h-full min-h-0">
               <TriggerRulesManager channel="alimtalk" />
             </section>
           ) : null}

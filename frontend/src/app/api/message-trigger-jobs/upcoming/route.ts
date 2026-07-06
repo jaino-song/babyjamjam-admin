@@ -17,16 +17,16 @@ export async function GET(request: NextRequest) {
     }
 
     const limit = request.nextUrl.searchParams.get("limit");
-    const response = await serverAPIClient.get("/alimtalk-logs", {
+    const response = await serverAPIClient.get("/message-trigger-jobs/upcoming", {
       headers: getAuthHeaders(token),
       params: limit ? { limit } : undefined,
     });
 
     return NextResponse.json(response.data);
   } catch (error) {
-    console.error("[API] Error fetching alimtalk logs:", error);
+    console.error("[API] Error fetching upcoming message trigger jobs:", error);
     return NextResponse.json(
-      { error: "Failed to fetch alimtalk logs" },
+      { error: "Failed to fetch upcoming message trigger jobs" },
       { status: 500 },
     );
   }

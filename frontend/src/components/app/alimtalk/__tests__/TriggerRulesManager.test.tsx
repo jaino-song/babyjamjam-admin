@@ -3,12 +3,12 @@ import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { TriggerRulesManager } from "../TriggerRulesManager";
 import {
-  useAlimtalkTriggerRules,
-  useAlimtalkTriggerTemplates,
-  useCreateAlimtalkTriggerRule,
-  useDeleteAlimtalkTriggerRule,
-  useUpdateAlimtalkTriggerRule,
-} from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
+  useMessageTriggerRules,
+  useMessageTriggerTemplates,
+  useCreateMessageTriggerRule,
+  useDeleteMessageTriggerRule,
+  useUpdateMessageTriggerRule,
+} from "@/features/message-triggers/hooks/use-message-triggers";
 
 jest.mock("@tanstack/react-query", () => ({
   useQuery: jest.fn(),
@@ -64,20 +64,20 @@ jest.mock("@/hooks/use-toast", () => ({
   }),
 }));
 
-jest.mock("@/features/alimtalk-triggers/hooks/use-alimtalk-triggers", () => ({
-  useAlimtalkTriggerRules: jest.fn(),
-  useAlimtalkTriggerTemplates: jest.fn(),
-  useCreateAlimtalkTriggerRule: jest.fn(),
-  useUpdateAlimtalkTriggerRule: jest.fn(),
-  useDeleteAlimtalkTriggerRule: jest.fn(),
+jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
+  useMessageTriggerRules: jest.fn(),
+  useMessageTriggerTemplates: jest.fn(),
+  useCreateMessageTriggerRule: jest.fn(),
+  useUpdateMessageTriggerRule: jest.fn(),
+  useDeleteMessageTriggerRule: jest.fn(),
 }));
 
 const mockedUseQuery = jest.mocked(useQuery);
-const mockedUseAlimtalkTriggerRules = jest.mocked(useAlimtalkTriggerRules);
-const mockedUseAlimtalkTriggerTemplates = jest.mocked(useAlimtalkTriggerTemplates);
-const mockedUseCreateAlimtalkTriggerRule = jest.mocked(useCreateAlimtalkTriggerRule);
-const mockedUseUpdateAlimtalkTriggerRule = jest.mocked(useUpdateAlimtalkTriggerRule);
-const mockedUseDeleteAlimtalkTriggerRule = jest.mocked(useDeleteAlimtalkTriggerRule);
+const mockedUseMessageTriggerRules = jest.mocked(useMessageTriggerRules);
+const mockedUseMessageTriggerTemplates = jest.mocked(useMessageTriggerTemplates);
+const mockedUseCreateMessageTriggerRule = jest.mocked(useCreateMessageTriggerRule);
+const mockedUseUpdateMessageTriggerRule = jest.mocked(useUpdateMessageTriggerRule);
+const mockedUseDeleteMessageTriggerRule = jest.mocked(useDeleteMessageTriggerRule);
 
 type QueryOptions = {
   queryKey?: readonly unknown[];
@@ -128,7 +128,7 @@ beforeEach(() => {
 
   mockSettingsQueries();
 
-  mockedUseAlimtalkTriggerRules.mockReturnValue({
+  mockedUseMessageTriggerRules.mockReturnValue({
     data: [
       {
         id: "rule-1",
@@ -145,9 +145,9 @@ beforeEach(() => {
       },
     ],
     isLoading: false,
-  } as unknown as ReturnType<typeof useAlimtalkTriggerRules>);
+  } as unknown as ReturnType<typeof useMessageTriggerRules>);
 
-  mockedUseAlimtalkTriggerTemplates.mockReturnValue({
+  mockedUseMessageTriggerTemplates.mockReturnValue({
     data: [
       {
         key: "SERVICE_START_REMINDER",
@@ -161,22 +161,22 @@ beforeEach(() => {
         },
       },
     ],
-  } as unknown as ReturnType<typeof useAlimtalkTriggerTemplates>);
+  } as unknown as ReturnType<typeof useMessageTriggerTemplates>);
 
-  mockedUseCreateAlimtalkTriggerRule.mockReturnValue({
+  mockedUseCreateMessageTriggerRule.mockReturnValue({
     isPending: false,
     mutateAsync: jest.fn(),
-  } as unknown as ReturnType<typeof useCreateAlimtalkTriggerRule>);
+  } as unknown as ReturnType<typeof useCreateMessageTriggerRule>);
 
-  mockedUseUpdateAlimtalkTriggerRule.mockReturnValue({
+  mockedUseUpdateMessageTriggerRule.mockReturnValue({
     isPending: false,
     mutateAsync: jest.fn(),
-  } as unknown as ReturnType<typeof useUpdateAlimtalkTriggerRule>);
+  } as unknown as ReturnType<typeof useUpdateMessageTriggerRule>);
 
-  mockedUseDeleteAlimtalkTriggerRule.mockReturnValue({
+  mockedUseDeleteMessageTriggerRule.mockReturnValue({
     isPending: false,
     mutateAsync: jest.fn(),
-  } as unknown as ReturnType<typeof useDeleteAlimtalkTriggerRule>);
+  } as unknown as ReturnType<typeof useDeleteMessageTriggerRule>);
 });
 
 describe("TriggerRulesManager", () => {

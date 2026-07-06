@@ -1,11 +1,11 @@
 import type {
-  AlimtalkHistoryRecord,
-  AlimtalkTriggerRule,
+  MessageLogRecord,
+  MessageTriggerRule,
   TriggerEventType,
   TriggerRecipientType,
   TriggerTemplateCatalogItem,
   TriggerTemplateKey,
-  UpcomingAlimtalkJob,
+  UpcomingMessageTriggerJob,
 } from "./types";
 // Single source of truth for a template's channel lives in the shared package so the form,
 // channel filters, and the backend delivery drift guard all agree.
@@ -13,7 +13,7 @@ import {
   SMS_TRIGGER_TEMPLATE_KEYS,
   SMS_TRIGGER_TO_SYSTEM_TEMPLATE,
   getTriggerTemplateChannel,
-} from "@babyjamjam/shared/types/alimtalk";
+} from "@babyjamjam/shared/types/message";
 
 export { SMS_TRIGGER_TEMPLATE_KEYS, SMS_TRIGGER_TO_SYSTEM_TEMPLATE, getTriggerTemplateChannel };
 
@@ -37,25 +37,25 @@ export function isTriggerTemplateInChannel(
   return channel === "sms" ? isSmsTemplate : !isSmsTemplate;
 }
 
-export function isTriggerRuleInChannel(rule: AlimtalkTriggerRule, channel: TriggerMessageChannel) {
+export function isTriggerRuleInChannel(rule: MessageTriggerRule, channel: TriggerMessageChannel) {
   return isTriggerTemplateInChannel(rule.templateKey, channel);
 }
 
-export function isUpcomingJobInChannel(job: UpcomingAlimtalkJob, channel: TriggerMessageChannel) {
+export function isUpcomingJobInChannel(job: UpcomingMessageTriggerJob, channel: TriggerMessageChannel) {
   return isTriggerTemplateInChannel(job.templateKey, channel);
 }
 
-export function isSmsHistoryRecord(record: AlimtalkHistoryRecord) {
+export function isSmsHistoryRecord(record: MessageLogRecord) {
   return isSmsHistoryProvider(record.provider) || isSmsTriggerTemplate(record.templateKey);
 }
 
-export function isHistoryRecordInChannel(record: AlimtalkHistoryRecord, channel: TriggerMessageChannel) {
+export function isHistoryRecordInChannel(record: MessageLogRecord, channel: TriggerMessageChannel) {
   const isSmsRecord = isSmsHistoryRecord(record);
   return channel === "sms" ? isSmsRecord : !isSmsRecord;
 }
 
 export function filterHistoryRecordsByChannel(
-  records: AlimtalkHistoryRecord[],
+  records: MessageLogRecord[],
   channel: TriggerMessageChannel,
 ) {
   return records.filter((record) => isHistoryRecordInChannel(record, channel));

@@ -16,9 +16,9 @@ import {
 } from "lucide-react";
 
 import type {
-  AlimtalkHistoryRecord as ApiAlimtalkHistoryRecord,
+  MessageLogRecord as ApiMessageLogRecord,
   TriggerEventType,
-} from "@/features/alimtalk-triggers/types";
+} from "@/features/message-triggers/types";
 import { DetailPanel, InfoCard, InfoRow, ListEmptyState } from "@/components/app/v3";
 import { Button } from "@/components/ui/button";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
@@ -217,7 +217,7 @@ export function getMessageHistoryTemplateLabel(templateKey: string, variables?: 
   return variableTitle ? normalizeHistoryTemplateLabel(variableTitle) : normalizeHistoryTemplateLabel(templateKey);
 }
 
-function getHistoryRecordTitle(record: ApiAlimtalkHistoryRecord) {
+function getHistoryRecordTitle(record: ApiMessageLogRecord) {
   const templateLabel = getMessageHistoryTemplateLabel(record.templateKey, record.variables);
   const ruleName = record.ruleName?.trim();
   if (ruleName && ruleName !== record.templateKey && templateLabel === normalizeHistoryTemplateLabel(record.templateKey)) {
@@ -231,12 +231,12 @@ function getHistoryChannelLabel(provider: string) {
   return provider === "aligo_sms" ? "메시지" : provider;
 }
 
-export function getMessageHistoryTimestamp(record: ApiAlimtalkHistoryRecord) {
+export function getMessageHistoryTimestamp(record: ApiMessageLogRecord) {
   return record.lastAttemptAt ?? record.updatedAt ?? record.createdAt;
 }
 
 export function normalizeMessageHistoryRecord(
-  record: ApiAlimtalkHistoryRecord,
+  record: ApiMessageLogRecord,
   options: NormalizeMessageHistoryRecordOptions = {}
 ): MessageHistoryRecord {
   const sentAt = getMessageHistoryTimestamp(record);
