@@ -4,13 +4,13 @@ ADD COLUMN IF NOT EXISTS "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT NOW();
 CREATE INDEX IF NOT EXISTS "idx_client_created_at"
 ON "client" ("created_at");
 
-ALTER TABLE "alimtalk_log"
+ALTER TABLE "message_log"
 ADD COLUMN IF NOT EXISTS "trigger_job_id" TEXT;
 
-CREATE INDEX IF NOT EXISTS "idx_alimtalk_log_trigger_job_id"
-ON "alimtalk_log" ("trigger_job_id");
+CREATE INDEX IF NOT EXISTS "idx_message_log_trigger_job_id"
+ON "message_log" ("trigger_job_id");
 
-CREATE TABLE IF NOT EXISTS "alimtalk_trigger_rule" (
+CREATE TABLE IF NOT EXISTS "message_trigger_rule" (
   "id" TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   "branch_id" UUID,
   "name" TEXT NOT NULL,
@@ -24,16 +24,16 @@ CREATE TABLE IF NOT EXISTS "alimtalk_trigger_rule" (
   "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS "idx_alimtalk_trigger_rule_branch"
-ON "alimtalk_trigger_rule" ("branch_id");
+CREATE INDEX IF NOT EXISTS "idx_message_trigger_rule_branch"
+ON "message_trigger_rule" ("branch_id");
 
-CREATE INDEX IF NOT EXISTS "idx_alimtalk_trigger_rule_active"
-ON "alimtalk_trigger_rule" ("branch_id", "is_active");
+CREATE INDEX IF NOT EXISTS "idx_message_trigger_rule_active"
+ON "message_trigger_rule" ("branch_id", "is_active");
 
-CREATE INDEX IF NOT EXISTS "idx_alimtalk_trigger_rule_event_type"
-ON "alimtalk_trigger_rule" ("event_type");
+CREATE INDEX IF NOT EXISTS "idx_message_trigger_rule_event_type"
+ON "message_trigger_rule" ("event_type");
 
-CREATE TABLE IF NOT EXISTS "alimtalk_trigger_job" (
+CREATE TABLE IF NOT EXISTS "message_trigger_job" (
   "id" TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   "branch_id" UUID,
   "rule_id" TEXT NOT NULL,
@@ -53,17 +53,17 @@ CREATE TABLE IF NOT EXISTS "alimtalk_trigger_job" (
   "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS "idx_alimtalk_trigger_job_branch"
-ON "alimtalk_trigger_job" ("branch_id");
+CREATE INDEX IF NOT EXISTS "idx_message_trigger_job_branch"
+ON "message_trigger_job" ("branch_id");
 
-CREATE INDEX IF NOT EXISTS "idx_alimtalk_trigger_job_rule_id"
-ON "alimtalk_trigger_job" ("rule_id");
+CREATE INDEX IF NOT EXISTS "idx_message_trigger_job_rule_id"
+ON "message_trigger_job" ("rule_id");
 
-CREATE INDEX IF NOT EXISTS "idx_alimtalk_trigger_job_status_scheduled_for"
-ON "alimtalk_trigger_job" ("status", "scheduled_for");
+CREATE INDEX IF NOT EXISTS "idx_message_trigger_job_status_scheduled_for"
+ON "message_trigger_job" ("status", "scheduled_for");
 
-CREATE INDEX IF NOT EXISTS "idx_alimtalk_trigger_job_client_id"
-ON "alimtalk_trigger_job" ("client_id");
+CREATE INDEX IF NOT EXISTS "idx_message_trigger_job_client_id"
+ON "message_trigger_job" ("client_id");
 
-CREATE INDEX IF NOT EXISTS "idx_alimtalk_trigger_job_employee_schedule_id"
-ON "alimtalk_trigger_job" ("employee_schedule_id");
+CREATE INDEX IF NOT EXISTS "idx_message_trigger_job_employee_schedule_id"
+ON "message_trigger_job" ("employee_schedule_id");

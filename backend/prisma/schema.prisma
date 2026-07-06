@@ -480,10 +480,10 @@ model auth_flow_state {
   @@index([kind, expiresAt], map: "idx_auth_flow_state_kind_expires_at")
 }
 
-model alimtalk_log {
+model message_log {
   id            Int       @id @default(autoincrement())
   branchId      String?   @map("branch_id") @db.Uuid
-  provider      String // "aligo" | "channeltalk"
+  provider      String // "aligo_sms" | "aligo_alimtalk"
   templateKey   String    @map("template_key")
   triggerJobId  String?   @map("trigger_job_id")
   receiver      String
@@ -499,15 +499,15 @@ model alimtalk_log {
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  @@index([branchId], map: "idx_alimtalk_log_branch")
-  @@index([triggerJobId], map: "idx_alimtalk_log_trigger_job_id")
-  @@index([status], map: "idx_alimtalk_log_status")
-  @@index([receiver], map: "idx_alimtalk_log_receiver")
-  @@index([createdAt], map: "idx_alimtalk_log_created_at")
-  @@index([nextRetryAt], map: "idx_alimtalk_log_next_retry_at")
+  @@index([branchId], map: "idx_message_log_branch")
+  @@index([triggerJobId], map: "idx_message_log_trigger_job_id")
+  @@index([status], map: "idx_message_log_status")
+  @@index([receiver], map: "idx_message_log_receiver")
+  @@index([createdAt], map: "idx_message_log_created_at")
+  @@index([nextRetryAt], map: "idx_message_log_next_retry_at")
 }
 
-model alimtalk_trigger_rule {
+model message_trigger_rule {
   id            String   @id @default(dbgenerated("(gen_random_uuid())::text"))
   branchId      String?  @map("branch_id") @db.Uuid
   name          String
@@ -520,12 +520,12 @@ model alimtalk_trigger_rule {
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  @@index([branchId], map: "idx_alimtalk_trigger_rule_branch")
-  @@index([branchId, isActive], map: "idx_alimtalk_trigger_rule_active")
-  @@index([eventType], map: "idx_alimtalk_trigger_rule_event_type")
+  @@index([branchId], map: "idx_message_trigger_rule_branch")
+  @@index([branchId, isActive], map: "idx_message_trigger_rule_active")
+  @@index([eventType], map: "idx_message_trigger_rule_event_type")
 }
 
-model alimtalk_trigger_job {
+model message_trigger_job {
   id                 String    @id @default(dbgenerated("(gen_random_uuid())::text"))
   branchId           String?   @map("branch_id") @db.Uuid
   ruleId             String    @map("rule_id")
@@ -544,11 +544,11 @@ model alimtalk_trigger_job {
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  @@index([branchId], map: "idx_alimtalk_trigger_job_branch")
-  @@index([ruleId], map: "idx_alimtalk_trigger_job_rule_id")
-  @@index([status, scheduledFor], map: "idx_alimtalk_trigger_job_status_scheduled_for")
-  @@index([clientId], map: "idx_alimtalk_trigger_job_client_id")
-  @@index([employeeScheduleId], map: "idx_alimtalk_trigger_job_employee_schedule_id")
+  @@index([branchId], map: "idx_message_trigger_job_branch")
+  @@index([ruleId], map: "idx_message_trigger_job_rule_id")
+  @@index([status, scheduledFor], map: "idx_message_trigger_job_status_scheduled_for")
+  @@index([clientId], map: "idx_message_trigger_job_client_id")
+  @@index([employeeScheduleId], map: "idx_message_trigger_job_employee_schedule_id")
 }
 
 model call_ingest_token {

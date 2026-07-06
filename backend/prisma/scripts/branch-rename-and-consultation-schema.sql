@@ -38,9 +38,9 @@ BEGIN
     'message',
     'message_template',
     'notification',
-    'alimtalk_log',
-    'alimtalk_trigger_rule',
-    'alimtalk_trigger_job',
+    'message_log',
+    'message_trigger_rule',
+    'message_trigger_job',
     'user_branch'
   ]
   LOOP
