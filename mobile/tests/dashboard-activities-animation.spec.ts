@@ -289,10 +289,9 @@ test.describe("Dashboard activities animations", () => {
     await expect(rows).toHaveCount(1);
 
     const row = rows.first();
-    await expect(row.locator('[data-component="mobile-redesign-list-row-badges"] .badge')).toHaveText([
-      "발송 대기",
-      "진행중",
-    ]);
+    const badges = row.locator('[data-component="mobile-redesign-list-row-badges"] [data-component="status-badge"]');
+    await expect(badges).toHaveText(["발송 대기"]);
+    await expect(row.locator('[data-component="mobile-redesign-list-row-badges-more"]')).toHaveText("+1");
     await expect(row.locator(".dday")).toHaveText(`${remainingBusinessDays}일 남음`);
     await expect(row.locator(".list-right")).toContainText(endLabel);
     await expect(page.getByRole("button", { name: /전체\s+1/ })).toBeVisible();

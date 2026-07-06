@@ -27,6 +27,23 @@ describe("ListPanel", () => {
     expect(screen.getByText("항목이 없습니다.")).toBeInTheDocument();
   });
 
+  it("renders emptyState through the overlay layer while keeping content mounted", () => {
+    const { container } = render(
+      <ListPanel
+        title="목록"
+        emptyState={<ListEmptyState message="항목이 없습니다." />}
+      >
+        <div data-testid="list-panel-content-child">본문</div>
+      </ListPanel>,
+    );
+
+    expect(container.querySelector('[data-component="list-panel-overlay"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-component="list-panel-empty-state"]')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component="list-panel-content"]')).toBeInTheDocument();
+    expect(screen.getByTestId("list-panel-content-child")).toBeInTheDocument();
+    expect(screen.getByText("항목이 없습니다.")).toBeInTheDocument();
+  });
+
   it("keeps inline tabs scrollable while search expands as an overlay", () => {
     const { container } = render(
       <ListPanel

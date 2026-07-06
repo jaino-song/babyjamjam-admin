@@ -126,7 +126,7 @@ describe("AlimtalkTriggerService", () => {
     });
 
     it("ensures the default CLIENT_GREETING trigger on rule listing", async () => {
-        const { service, internals, ruleRepository } = createService();
+        const { service, ruleRepository } = createService();
         const existingServiceInfo = createRule({
             id: "rule-existing-service-info",
             eventType: AlimtalkTriggerEventType.SERVICE_START,
@@ -302,7 +302,15 @@ describe("AlimtalkTriggerService", () => {
         });
     });
 
-    const createSyncService = () => {
+    const createSyncService = (clientOverrides: Partial<{
+        id: number;
+        name: string;
+        phone: string | null;
+        type: string | null;
+        startDate: Date | null;
+        endDate: Date | null;
+        createdAt: Date | null;
+    }> = {}) => {
         const ruleRepository = {
             findAll: jest.fn(),
             findActiveByEventTypes: jest.fn(),
@@ -323,6 +331,7 @@ describe("AlimtalkTriggerService", () => {
                     startDate: null,
                     endDate: null,
                     createdAt: new Date("2026-06-27T00:00:00.000Z"),
+                    ...clientOverrides,
                 }),
             },
         };
@@ -357,6 +366,26 @@ describe("AlimtalkTriggerService", () => {
         create.ruleRepository.findActiveByEventTypes.mockResolvedValue([greetingRule]);
         await create.service.syncClientRulesForClient(branchId, 1, true);
         expect(create.jobRepository.upsertPending).toHaveBeenCalledTimes(1);
+    });
+
+    it("persists overdue non-immediate client jobs on re-sync so missed automations can run", async () => {
+        const serviceInfoRule = createRule({
+            id: "rule-service-info-active",
+            eventType: AlimtalkTriggerEventType.SERVICE_START,
+            offsetType: AlimtalkTriggerOffsetType.SAME_DAY,
+            offsetDays: 0,
+            templateKey: AlimtalkTriggerTemplateKey.SERVICE_INFO,
+        });
+        const reSync = createSyncService({
+            startDate: new Date(Date.now() - 24 * 60 * 60 * 1000),
+        });
+        reSync.ruleRepository.findActiveByEventTypes.mockResolvedValue([serviceInfoRule]);
+
+        await reSync.service.syncClientRulesForClient(branchId, 1, false);
+
+        expect(reSync.jobRepository.upsertPending).toHaveBeenCalledTimes(1);
+        const persistedJob = reSync.jobRepository.upsertPending.mock.calls[0][0];
+        expect(persistedJob.scheduledFor.getTime()).toBeLessThanOrEqual(Date.now());
     });
 
     it("does not re-create the CLIENT_GREETING default when a non-default (AFTER_DAYS) greeting rule already exists", async () => {

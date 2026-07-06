@@ -21,6 +21,7 @@ import {
 import {
   isHistoryRecordInChannel,
   isUpcomingJobInChannel,
+  SMS_TRIGGER_TO_SYSTEM_TEMPLATE,
 } from "@/features/alimtalk-triggers/channel";
 import { useAllClients } from "@/features/clients/hooks/use-clients";
 import { useToast } from "@/hooks/use-toast";
@@ -52,6 +53,8 @@ import {
   DetailTabPanels,
   DetailTabs,
   HeaderActionButton,
+  InfoCard,
+  InfoRow,
   ListEmptyState,
   ListPanel,
   PageSection,
@@ -64,6 +67,8 @@ import {
   AutoFillMsgCardSide,
   type AutoFillMsgCardVariableItem,
 } from "@/components/app/messages/templates/AutoFillMsgCard";
+import { MsgField } from "@/components/app/messages/templates/MsgField";
+import { serviceInfoMsgTemplate } from "@/components/app/messages/templates/messageTemplate/serviceInfoMsg";
 import {
   Select,
   SelectContent,
@@ -75,6 +80,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/app/ui/status-badge";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { findMessageHistoryClient } from "@/lib/message-history/client-match";
+import { renderTemplate } from "@/lib/template-utils";
 import { cn } from "@/lib/utils";
 import {
   Bell,
@@ -186,6 +192,7 @@ function getMessageHistoryAvatarClassName(status: MessageHistoryRecord["status"]
 
 type MessageHistoryRelativeDateFilter = "all" | "1d" | "7d" | "30d";
 type ScheduledPreviewFilter = "all" | "customer" | "staff";
+type ScheduledDetailTab = "info" | "message";
 type TemplateDetailTab = "details" | "preview";
 
 const PLACEHOLDER_COPY: Record<
@@ -320,6 +327,11 @@ const SCHEDULED_PREVIEW_TABS: {
   { value: "staff", label: "직원" },
 ];
 
+const SCHEDULED_DETAIL_TABS = [
+  { key: "info", label: "발송 정보" },
+  { key: "message", label: "메시지 내용" },
+] satisfies Array<{ key: ScheduledDetailTab; label: string }>;
+
 const TEMPLATE_DETAIL_TABS = [
   { key: "details", label: "상세정보" },
   { key: "preview", label: "미리보기" },
@@ -453,6 +465,48 @@ function matchesScheduledJobQuery(job: UpcomingAlimtalkJob, query: string) {
   ].some((field) => field && matchesKoreanSearch(field, trimmedQuery));
 }
 
+type ScheduledJobPayloadWithMessageBody = UpcomingAlimtalkJob["payload"] & {
+  messageBody?: string | null;
+};
+
+function getScheduledJobPayloadMessageBody(job: UpcomingAlimtalkJob | null) {
+  const payload = job?.payload as ScheduledJobPayloadWithMessageBody | undefined;
+  const messageBody = payload?.messageBody;
+
+  return typeof messageBody === "string" ? messageBody.trim() : "";
+}
+
+function getScheduledJobTemplateVariables(job: UpcomingAlimtalkJob) {
+  return {
+    name: job.payload.recipientName,
+    clientName: job.payload.recipientName,
+    phone: job.payload.recipientPhone,
+    ...job.payload.templateVariables,
+  };
+}
+
+function getScheduledJobFallbackMessage(job: UpcomingAlimtalkJob, variables: Record<string, string>) {
+  if (job.templateKey === "SERVICE_INFO") {
+    return serviceInfoMsgTemplate({ name: variables.name?.trim() || "{{name}}" });
+  }
+
+  return "예약 발송 메시지 본문을 불러올 수 없습니다.";
+}
+
+function buildScheduledJobMessageBody(job: UpcomingAlimtalkJob | null, systemTemplateContent?: string) {
+  if (!job) return "";
+
+  const payloadMessageBody = getScheduledJobPayloadMessageBody(job);
+  if (payloadMessageBody) return payloadMessageBody;
+
+  const variables = getScheduledJobTemplateVariables(job);
+  if (systemTemplateContent) {
+    return renderTemplate(systemTemplateContent, variables);
+  }
+
+  return getScheduledJobFallbackMessage(job, variables);
+}
+
 const FormComponents: Record<
   BuiltinTemplateType,
   React.ComponentType<{
@@ -473,6 +527,7 @@ const FormComponents: Record<
 function MessageScheduledSection() {
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [scheduledFilter, setScheduledFilter] = useState<ScheduledPreviewFilter>("all");
+  const [scheduledDetailTab, setScheduledDetailTab] = useState<ScheduledDetailTab>("info");
   const [scheduledSearchValue, setScheduledSearchValue] = useState("");
   const deferredScheduledSearchValue = useDeferredValue(scheduledSearchValue);
   const { data: upcomingJobs = [], isLoading } = useUpcomingMessageJobs();
@@ -508,10 +563,24 @@ function MessageScheduledSection() {
   const hasScheduledFilters = scheduledFilter !== "all" || hasScheduledSearchQuery;
   const selectedJobPhone = selectedJob?.recipientPhone ?? selectedJob?.payload.recipientPhone ?? "-";
   const selectedJobVariables = selectedJob ? Object.entries(selectedJob.payload.templateVariables) : [];
+  const selectedJobSystemTemplateKey = selectedJob ? SMS_TRIGGER_TO_SYSTEM_TEMPLATE[selectedJob.templateKey] ?? "" : "";
+  const { data: selectedJobSystemTemplate } = useSystemTemplate(selectedJobSystemTemplateKey);
+  const selectedJobMessageBody = buildScheduledJobMessageBody(selectedJob, selectedJobSystemTemplate?.content);
+  const handleScheduledDetailTabChange = useCallback((key: string) => {
+    if (key === "info" || key === "message") {
+      setScheduledDetailTab(key);
+    }
+  }, []);
 
   return (
     <div data-component="messages-scheduled-layout" className="flex min-h-[560px] flex-1 flex-col">
-      <SplitLayout hasSelection={!!selectedJob} onBack={() => setSelectedJobId(null)}>
+      <SplitLayout
+        hasSelection={!!selectedJob}
+        onBack={() => {
+          setSelectedJobId(null);
+          setScheduledDetailTab("info");
+        }}
+      >
         <ListPanel
           title="발송 예정"
           subtitle="발송이 예정된 메시지를 확인할 수 있어요."
@@ -520,11 +589,13 @@ function MessageScheduledSection() {
           onTabChange={(value) => {
             setScheduledFilter(value as ScheduledPreviewFilter);
             setSelectedJobId(null);
+            setScheduledDetailTab("info");
           }}
           searchValue={scheduledSearchValue}
           onSearchChange={(value) => {
             setScheduledSearchValue(value);
             setSelectedJobId(null);
+            setScheduledDetailTab("info");
           }}
           searchPlaceholder="이름, 연락처, 템플릿 검색..."
           headerActions={
@@ -535,10 +606,16 @@ function MessageScheduledSection() {
               {(hasScheduledFilters ? filteredJobs.length : smsUpcomingJobs.length)}개
             </span>
           }
+          emptyState={!(isLoading || filteredJobs.length > 0) ? (
+            <ListEmptyState
+              message={
+                hasScheduledFilters ? "조건에 맞는 예약 발송 항목이 없습니다." : "발송 예정 항목이 없습니다."
+              }
+            />
+          ) : undefined}
         >
-          {(isLoading || filteredJobs.length > 0) ? (
-            <div data-component="messages-scheduled-list" className="space-y-3 pb-2">
-              <AnimatedSlotList<UpcomingAlimtalkJob>
+          <div data-component="messages-scheduled-list" className="space-y-3 pb-2">
+            <AnimatedSlotList<UpcomingAlimtalkJob>
                 items={filteredJobs}
                 isLoading={isLoading}
                 loadingCount={5}
@@ -548,7 +625,10 @@ function MessageScheduledSection() {
                   isActive: !slotLoading && item?.id === selectedJobId,
                   isInteractive: !slotLoading && Boolean(item),
                 })}
-                onSlotClick={(item) => setSelectedJobId(item.id)}
+                onSlotClick={(item) => {
+                  setSelectedJobId(item.id);
+                  setScheduledDetailTab("info");
+                }}
                 render={({ item }) => {
                   if (!item) return null;
 
@@ -572,13 +652,6 @@ function MessageScheduledSection() {
                 }}
               />
             </div>
-          ) : (
-            <ListEmptyState
-              message={
-                hasScheduledFilters ? "조건에 맞는 예약 발송 항목이 없습니다." : "발송 예정 항목이 없습니다."
-              }
-            />
-          )}
         </ListPanel>
 
         <DetailPanel
@@ -617,6 +690,15 @@ function MessageScheduledSection() {
               </div>
             ) : null
           }
+          tabs={
+            selectedJob ? (
+              <DetailTabs
+                tabs={SCHEDULED_DETAIL_TABS}
+                activeTab={scheduledDetailTab}
+                onTabChange={handleScheduledDetailTabChange}
+              />
+            ) : undefined
+          }
           emptyState={
             !isLoading && !selectedJob ? (
               <DetailEmptyState
@@ -650,133 +732,121 @@ function MessageScheduledSection() {
               ))}
             </div>
           ) : selectedJob ? (
-            <div data-component="messages-scheduled-detail" className="space-y-4">
-              <div
-                data-component="messages-scheduled-detail-overview"
-                className="rounded-[20px] border border-v3-border bg-v3-dim-white/30 p-5"
-              >
-                <p className="text-[0.72rem] font-semibold text-v3-primary">예약 개요</p>
-                <p className="mt-2 text-[0.9rem] font-bold text-v3-dark">{selectedJob.ruleName}</p>
-                <p className="mt-2 text-[0.82rem] leading-6 text-v3-text-muted">
-                  {`${selectedJob.payload.recipientName}님에게 ${formatScheduledDetailDate(selectedJob.scheduledFor)}에 ${getHistoryTemplateLabel(selectedJob.templateKey)} 템플릿이 발송될 예정입니다.`}
-                </p>
-                <p className="mt-3 text-[0.74rem] leading-6 text-v3-text-muted">
-                  현재 API에서는 예약 건의 최종 메시지 본문 원문을 내려주지 않아, 이 화면에서는 수신자 정보와 템플릿 변수만 표시합니다.
-                </p>
-              </div>
+            <DetailTabPanels
+              activeTab={scheduledDetailTab}
+              dataComponent="messages-scheduled-detail-tab-panels"
+              panelDataComponent="messages-scheduled-detail-tab-panel"
+              panels={[
+                {
+                  key: "info",
+                  children: (
+                    <div data-component="messages-scheduled-detail" className="space-y-4">
+                      <InfoCard title="예약 개요" data-component="messages-scheduled-detail-overview">
+                        <InfoRow
+                          data-component="messages-scheduled-detail-overview-rule"
+                          label="발송 규칙"
+                          value={selectedJob.ruleName}
+                        />
+                        <InfoRow
+                          data-component="messages-scheduled-detail-overview-recipient"
+                          label="수신자"
+                          value={selectedJob.payload.recipientName || "-"}
+                        />
+                        <InfoRow
+                          data-component="messages-scheduled-detail-overview-scheduled-time"
+                          label="발신 예정 시간"
+                          value={formatScheduledDetailDate(selectedJob.scheduledFor)}
+                        />
+                        <InfoRow
+                          data-component="messages-scheduled-detail-overview-template"
+                          label="템플릿"
+                          value={getHistoryTemplateLabel(selectedJob.templateKey)}
+                        />
+                      </InfoCard>
 
-              <div
-                data-component="messages-scheduled-detail-grid"
-                className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
-              >
-                <div
-                  data-component="messages-scheduled-detail-meta"
-                  className="rounded-[20px] border border-v3-border bg-white p-5"
-                >
-                  <h3 className="text-[0.85rem] font-bold text-v3-dark">메시지 정보</h3>
-                  <div data-component="messages-scheduled-detail-meta-list" className="mt-4 space-y-3">
-                    <div
-                      data-component="messages-scheduled-detail-meta-item"
-                      className="flex items-center justify-between gap-3 text-[0.78rem]"
-                    >
-                      <span className="text-v3-text-muted">수신자 이름</span>
-                      <span className="font-semibold text-v3-dark">{selectedJob.payload.recipientName || "-"}</span>
-                    </div>
-                    <div
-                      data-component="messages-scheduled-detail-meta-item"
-                      className="flex items-center justify-between gap-3 text-[0.78rem]"
-                    >
-                      <span className="text-v3-text-muted">전화번호</span>
-                      <span className="font-semibold text-v3-dark">{selectedJobPhone}</span>
-                    </div>
-                    <div
-                      data-component="messages-scheduled-detail-meta-item"
-                      className="flex items-center justify-between gap-3 text-[0.78rem]"
-                    >
-                      <span className="text-v3-text-muted">발신 예정 시간</span>
-                      <span className="font-semibold text-v3-dark">{formatScheduledDetailDate(selectedJob.scheduledFor)}</span>
-                    </div>
-                    <div
-                      data-component="messages-scheduled-detail-meta-item"
-                      className="flex items-center justify-between gap-3 text-[0.78rem]"
-                    >
-                      <span className="text-v3-text-muted">메시지 템플릿 이름</span>
-                      <span className="font-semibold text-v3-dark">{getHistoryTemplateLabel(selectedJob.templateKey)}</span>
-                    </div>
-                    <div
-                      data-component="messages-scheduled-detail-meta-item"
-                      className="flex items-center justify-between gap-3 text-[0.78rem]"
-                    >
-                      <span className="text-v3-text-muted">발송 규칙명</span>
-                      <span className="font-semibold text-v3-dark">{selectedJob.ruleName}</span>
-                    </div>
-                    <div
-                      data-component="messages-scheduled-detail-meta-item"
-                      className="flex items-center justify-between gap-3 text-[0.78rem]"
-                    >
-                      <span className="text-v3-text-muted">수신 유형</span>
-                      <span className="font-semibold text-v3-dark">{getScheduledRecipientLabel(selectedJob.recipientType)}</span>
-                    </div>
-                    <div
-                      data-component="messages-scheduled-detail-meta-item"
-                      className="flex items-center justify-between gap-3 text-[0.78rem]"
-                    >
-                      <span className="text-v3-text-muted">이벤트 기준</span>
-                      <span className="font-semibold text-v3-dark">{getScheduledEventLabel(selectedJob.eventType)}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div
-                  data-component="messages-scheduled-detail-variables"
-                  className="rounded-[20px] border border-v3-border bg-white p-5"
-                >
-                  <h3 className="text-[0.85rem] font-bold text-v3-dark">변수</h3>
-                  <div data-component="messages-scheduled-detail-variables-body" className="mt-4">
-                    {selectedJobVariables.length > 0 ? (
                       <div
-                        data-component="messages-scheduled-detail-variable-list"
-                        className="space-y-3"
+                        data-component="messages-scheduled-detail-grid"
+                        className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
                       >
-                        {selectedJobVariables.map(([key, value]) => (
-                          <div
-                            key={`${selectedJob.id}-${key}`}
-                            data-component="messages-scheduled-detail-variable-item"
-                            className="rounded-[16px] border border-v3-border bg-v3-dim-white/30 px-4 py-3"
-                          >
-                            <div
-                              data-component="messages-scheduled-detail-variable-meta"
-                              className="flex flex-wrap items-center gap-2"
-                            >
-                              <span
-                                data-component="messages-scheduled-detail-variable-token"
-                                className="inline-flex items-center rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary"
-                              >
-                                {key}
-                              </span>
-                              <span
-                                data-component="messages-scheduled-detail-variable-label"
-                                className="text-[0.72rem] text-v3-text-muted"
-                              >
-                                {SCHEDULED_VARIABLE_LABELS[key] ?? key}
-                              </span>
-                            </div>
-                            <p
-                              data-component="messages-scheduled-detail-variable-value"
-                              className="mt-2 text-[0.8rem] font-semibold text-v3-dark"
-                            >
-                              {value || "-"}
-                            </p>
-                          </div>
-                        ))}
+                        <InfoCard title="메시지 정보" data-component="messages-scheduled-detail-meta">
+                          <InfoRow
+                            data-component="messages-scheduled-detail-meta-recipient"
+                            label="수신자 이름"
+                            value={selectedJob.payload.recipientName || "-"}
+                          />
+                          <InfoRow
+                            data-component="messages-scheduled-detail-meta-phone"
+                            label="전화번호"
+                            value={selectedJobPhone}
+                          />
+                          <InfoRow
+                            data-component="messages-scheduled-detail-meta-scheduled-time"
+                            label="발신 예정 시간"
+                            value={formatScheduledDetailDate(selectedJob.scheduledFor)}
+                          />
+                          <InfoRow
+                            data-component="messages-scheduled-detail-meta-template"
+                            label="메시지 템플릿 이름"
+                            value={getHistoryTemplateLabel(selectedJob.templateKey)}
+                          />
+                          <InfoRow
+                            data-component="messages-scheduled-detail-meta-rule"
+                            label="발송 규칙명"
+                            value={selectedJob.ruleName}
+                          />
+                          <InfoRow
+                            data-component="messages-scheduled-detail-meta-recipient-type"
+                            label="수신 유형"
+                            value={getScheduledRecipientLabel(selectedJob.recipientType)}
+                          />
+                          <InfoRow
+                            data-component="messages-scheduled-detail-meta-event"
+                            label="이벤트 기준"
+                            value={getScheduledEventLabel(selectedJob.eventType)}
+                          />
+                        </InfoCard>
+
+                        <InfoCard title="변수" data-component="messages-scheduled-detail-variables">
+                          {selectedJobVariables.length > 0 ? (
+                            selectedJobVariables.map(([key, value], index) => (
+                              <InfoRow
+                                key={`${selectedJob.id}-${key}`}
+                                data-component={`messages-scheduled-detail-variable-${index + 1}`}
+                                label={SCHEDULED_VARIABLE_LABELS[key] ?? key}
+                                value={value || "-"}
+                              />
+                            ))
+                          ) : (
+                            <InfoRow
+                              data-component="messages-scheduled-detail-variable-empty"
+                              label="변수"
+                              value={<span className="font-normal text-v3-text-muted">변수 정보가 없습니다.</span>}
+                            />
+                          )}
+                        </InfoCard>
                       </div>
-                    ) : (
-                      <p className="text-[0.75rem] text-v3-text-muted">변수 정보가 없습니다.</p>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
+                    </div>
+                  ),
+                },
+                {
+                  key: "message",
+                  children: (
+                    <InfoCard
+                      title="메시지 내용"
+                      data-component="messages-scheduled-detail-message"
+                      className="flex min-h-[420px] flex-col"
+                    >
+                      <div
+                        data-component="messages-generated-msg-detail-content-body"
+                        className="flex min-h-[320px] flex-1 rounded-[18px] bg-white p-4"
+                      >
+                        <MsgField value={selectedJobMessageBody} />
+                      </div>
+                    </InfoCard>
+                  ),
+                },
+              ]}
+            />
           ) : null}
         </DetailPanel>
       </SplitLayout>
@@ -875,10 +945,16 @@ function MessageSectionPlaceholder({ sectionId }: { sectionId: PlaceholderSectio
               {(isScheduledSection ? filteredPreviewItems.length : copy.items.length)}개
             </span>
           }
+          emptyState={!(filteredPreviewItems.length > 0) ? (
+            <ListEmptyState
+              message={
+                hasScheduledFilters ? "조건에 맞는 예약 발송 항목이 없습니다." : "발송 예정 항목이 없습니다."
+              }
+            />
+          ) : undefined}
         >
-          {filteredPreviewItems.length > 0 ? (
-            <div data-component="messages-section-placeholder-list" className="space-y-3 pb-2">
-              <AnimatedSlotList<PlaceholderPreviewItem>
+          <div data-component="messages-section-placeholder-list" className="space-y-3 pb-2">
+            <AnimatedSlotList<PlaceholderPreviewItem>
                 items={filteredPreviewItems}
                 isLoading={false}
                 className="space-y-2"
@@ -919,13 +995,6 @@ function MessageSectionPlaceholder({ sectionId }: { sectionId: PlaceholderSectio
                 }}
               />
             </div>
-          ) : (
-            <ListEmptyState
-              message={
-                hasScheduledFilters ? "조건에 맞는 예약 발송 항목이 없습니다." : "발송 예정 항목이 없습니다."
-              }
-            />
-          )}
         </ListPanel>
 
         <DetailPanel
@@ -1325,6 +1394,9 @@ function MessageHistorySection() {
             {filteredRecords.length}건
           </span>
         }
+        emptyState={!isError && !isLoading && filteredRecords.length === 0 ? (
+          <ListEmptyState message={emptyStateCopy.title} />
+        ) : undefined}
         subHeader={
           !isError ? (
             <div data-component="messages-history-list-filters" className="flex items-center justify-between gap-2">
@@ -1405,8 +1477,6 @@ function MessageHistorySection() {
             <p className="text-sm font-semibold text-red-700">발송 기록을 불러오지 못했습니다.</p>
             <p className="mt-1 text-[0.8rem] text-red-600">잠시 후 다시 시도해 주세요.</p>
           </div>
-        ) : !isLoading && filteredRecords.length === 0 ? (
-          <ListEmptyState message={emptyStateCopy.title} />
         ) : (
           <>
             <AnimatedSlotList<MessageHistoryRecord>
@@ -1763,6 +1833,9 @@ export default function MessagesPage() {
                       </div>
                     ) : undefined
                   }
+                  emptyState={!(isTemplateListLoading || visibleItems.length > 0) && templateFilter === "branch" && !isLoadingUserTemplates ? (
+                    <ListEmptyState message="등록된 지점 템플릿이 없습니다." />
+                  ) : undefined}
                 >
                   {isTemplateListLoading || visibleItems.length > 0 ? (
                     <div data-component="messages-templates-list" className="space-y-2 pb-2">
@@ -1804,8 +1877,6 @@ export default function MessagesPage() {
                         }}
                       />
                     </div>
-                  ) : templateFilter === "branch" && !isLoadingUserTemplates ? (
-                    <ListEmptyState message="등록된 지점 템플릿이 없습니다." />
                   ) : null}
                 </ListPanel>
 

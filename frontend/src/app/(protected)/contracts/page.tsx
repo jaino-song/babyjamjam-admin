@@ -659,11 +659,11 @@ export default function ContractsPage() {
                 }
               />
             }
-          >
-            {documents.length === 0 && !isInitialLoading && !isContentLoading ? (
+            emptyState={documents.length === 0 && !isInitialLoading && !isContentLoading ? (
               <ListEmptyState message="계약 문서가 없습니다" />
-            ) : (
-              <AnimatedSlotList<EformsignDocument>
+            ) : undefined}
+          >
+            <AnimatedSlotList<EformsignDocument>
                 items={documents}
                 isLoading={isInitialLoading || isContentLoading}
                 loadingCount={6}
@@ -692,7 +692,6 @@ export default function ContractsPage() {
                   );
                 }}
               />
-            )}
           </ListPanel>
 
           {(isCreating || hasContractCreationSession) && (
@@ -767,8 +766,9 @@ export default function ContractsPage() {
                       <Briefcase className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
                     </div>
                   }
+                  emptyState={<ListEmptyState message="아직 준비중입니다" />}
                 >
-                  <ListEmptyState message="아직 준비중입니다" />
+                  {null}
                 </ListPanel>
                 <DetailPanel
                   title="제공인력 계약서"
@@ -796,8 +796,9 @@ export default function ContractsPage() {
                       <FileText className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
                     </div>
                   }
+                  emptyState={<ListEmptyState message="아직 준비중입니다" />}
                 >
-                  <ListEmptyState message="아직 준비중입니다" />
+                  {null}
                 </ListPanel>
                 <DetailPanel
                   title="전자문서"
@@ -825,8 +826,9 @@ export default function ContractsPage() {
                       <Bell className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
                     </div>
                   }
+                  emptyState={<ListEmptyState message="아직 준비중입니다" />}
                 >
-                  <ListEmptyState message="아직 준비중입니다" />
+                  {null}
                 </ListPanel>
                 <DetailPanel
                   title="알림 설정"

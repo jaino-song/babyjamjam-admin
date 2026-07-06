@@ -62,24 +62,26 @@ describe("MobileBottomNav", () => {
     });
   });
 
-  it("marks 통화요약 active on /calls", () => {
+  it("renders 통화요약 as disabled", () => {
     mockUsePathname.mockReturnValue("/calls");
 
-    render(<MobileBottomNav />);
+    const { container } = render(<MobileBottomNav />);
+    const callsItem = container.querySelector('[data-component="mobile-bottom-nav-chat"]');
 
-    expect(screen.getByRole("link", { name: /통화요약/ })).toHaveAttribute("aria-current", "page");
+    expect(callsItem).toHaveTextContent("통화요약");
+    expect(callsItem).toHaveAttribute("aria-disabled", "true");
+    expect(callsItem).toHaveAttribute("data-disabled", "true");
+    expect(callsItem).toHaveClass("text-gray-400");
+    expect(callsItem).not.toHaveClass("opacity-60");
+    expect(screen.queryByRole("link", { name: /통화요약/ })).not.toBeInTheDocument();
   });
 
-  it("renders the pending badge when the count endpoint returns > 0", async () => {
-    (global.fetch as jest.Mock).mockResolvedValue({
-      ok: true,
-      json: async () => ({ count: 3 }),
-    });
+  it("does not fetch the calls pending count while 통화요약 is disabled", () => {
     mockUsePathname.mockReturnValue("/dashboard");
 
     render(<MobileBottomNav />);
 
-    expect(await screen.findByText("3")).toBeInTheDocument();
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it("moves nav foreground colors with the pressed indicator before route change", async () => {

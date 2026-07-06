@@ -220,14 +220,14 @@ export default function EmployeesPage() {
                             className="text-[calc(12px*var(--v3-ui-scale,1))]"
                         />
                     }
-                >
-                    {!isLoading && employees.length === 0 ? (
+                    emptyState={!isLoading && employees.length === 0 ? (
                         <ListEmptyState
                             name="employees-empty"
                             message={search || filter !== "all" ? "검색 결과가 없습니다" : "등록된 직원이 없습니다"}
                         />
-                    ) : (
-                        <AnimatedSlotList<Employee>
+                    ) : undefined}
+                >
+                    <AnimatedSlotList<Employee>
                             items={employees}
                             isLoading={isLoading}
                             loadingCount={6}
@@ -278,7 +278,6 @@ export default function EmployeesPage() {
                                 );
                             }}
                         />
-                    )}
                 </ListPanel>
 
                 {isCreatingEmployee ? (

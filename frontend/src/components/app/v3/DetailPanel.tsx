@@ -165,7 +165,10 @@ export function DetailPanel({
       {resolvedOverlay ? (
         <div
           data-component="detail-panel-overlay"
-          className="pointer-events-none absolute inset-0 z-10 flex -translate-y-[calc(12px*var(--v3-ui-scale,1))] items-center justify-center p-[calc(24px*var(--v3-ui-scale,1))]"
+          className={cn(
+            "pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-[calc(24px*var(--v3-ui-scale,1))]",
+            overlay ? "-translate-y-[calc(12px*var(--v3-ui-scale,1))]" : undefined,
+          )}
         >
           {resolvedOverlay}
         </div>

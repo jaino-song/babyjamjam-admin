@@ -38,6 +38,7 @@ interface ListPanelProps {
   subHeader?: React.ReactNode;
   disabled?: boolean;
   disabledOverlay?: React.ReactNode;
+  className?: string;
 }
 
 export function ListPanel({
@@ -62,11 +63,13 @@ export function ListPanel({
   subHeader,
   disabled = false,
   disabledOverlay,
+  className,
 }: ListPanelProps) {
   const showTabs = tabs && tabs.length > 0;
   const hasSearch = searchValue !== undefined && !!onSearchChange;
   const showControls = showTabs || hasSearch;
   const showContentSkeleton = (isLoading || isContentLoading) && contentSkeleton;
+  const resolvedOverlay = overlay ?? emptyState;
   const headerAlignmentClass = subtitle ? "items-start" : "items-center";
   const headerClassName =
     headerPadding === "default"
@@ -94,8 +97,14 @@ export function ListPanel({
   const activeTabLabel = tabs?.find(t => t.value === activeTab)?.label ?? tabs?.[0]?.label ?? "";
 
   return (
-    <div data-component="list-panel" className="relative flex h-full min-h-0 flex-1 self-stretch flex-col overflow-hidden rounded-[28px] bg-white shadow-v3">
-      <div data-component="list-panel-top-area" className="shrink-0">
+    <div
+      data-component="list-panel"
+      className={cn(
+        "relative flex h-full min-h-0 flex-1 self-stretch flex-col overflow-hidden rounded-[28px] bg-white shadow-v3",
+        className,
+      )}
+    >
+      <div data-component="list-panel-top-area" className="relative z-20 shrink-0">
         <div data-component="list-panel-header" className={headerClassName}>
           <div className="flex min-w-0 items-center gap-[calc(16px*var(--v3-ui-scale,1))]">
             {avatar}
@@ -215,33 +224,27 @@ export function ListPanel({
           </div>
         )}
       </div>
-      {overlay ? (
+      {resolvedOverlay ? (
         <div
           data-component="list-panel-overlay"
-          className="pointer-events-none absolute inset-0 z-10 flex -translate-y-[calc(12px*var(--v3-ui-scale,1))] items-center justify-center p-[calc(24px*var(--v3-ui-scale,1))]"
+          className={cn(
+            "pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-[calc(24px*var(--v3-ui-scale,1))]",
+            overlay ? "-translate-y-[calc(12px*var(--v3-ui-scale,1))]" : undefined,
+          )}
         >
-          {overlay}
+          {resolvedOverlay}
         </div>
       ) : null}
 
-      {emptyState ? (
-        <div
-          data-component="list-panel-empty-state"
-          className="absolute inset-0 z-10 flex items-center justify-center p-[calc(24px*var(--v3-ui-scale,1))]"
-        >
-          {emptyState}
-        </div>
-      ) : (
-        <div
-          data-component="list-panel-content"
-          className="scrollbar-on-scroll relative flex min-h-0 flex-1 flex-col overflow-y-auto px-[calc(24px*var(--v3-ui-scale,1))] pt-[calc(12px*var(--v3-ui-scale,1))]"
-          data-scroll-active={isScrollActive ? "true" : "false"}
-          onScroll={handleScroll}
-        >
-          {showContentSkeleton ? contentSkeleton : children}
-          <div className="sticky bottom-0 h-[calc(24px*var(--v3-ui-scale,1))] shrink-0 bg-white" />
-        </div>
-      )}
+      <div
+        data-component="list-panel-content"
+        className="scrollbar-on-scroll relative flex min-h-0 flex-1 flex-col overflow-y-auto px-[calc(24px*var(--v3-ui-scale,1))] pt-[calc(12px*var(--v3-ui-scale,1))]"
+        data-scroll-active={isScrollActive ? "true" : "false"}
+        onScroll={handleScroll}
+      >
+        {showContentSkeleton ? contentSkeleton : children}
+        <div className="sticky bottom-0 h-[calc(24px*var(--v3-ui-scale,1))] shrink-0 bg-white" />
+      </div>
       {disabled ? (
         <div
           data-component="list-panel-disabled-overlay"

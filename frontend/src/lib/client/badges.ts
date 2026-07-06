@@ -1,6 +1,9 @@
+import { getClientBadgeStatusToken } from "@babyjamjam/shared/tokens/status-badge";
+
 import type { Client, ClientBadge, ClientBadgeTone } from "@/lib/client/types";
 
 const SCHEDULE_CHANGE_BADGE_LABEL = "일정 변경";
+const PRIMARY_CLIENT_BADGE_KEYS = ["contract_required", "service_status"] as const satisfies readonly ClientBadge["key"][];
 
 const CLIENT_BADGE_AVATAR_CLASS_BY_TONE: Record<ClientBadgeTone, string> = {
     danger: "border border-[hsla(355,36%,45%,0.20)] bg-[hsl(355,40%,94%)] text-[hsl(355,36%,45%)]",
@@ -18,25 +21,51 @@ export const applyScheduleChangeBadge = (
         return badges;
     }
 
-    const serviceStatusBadge = badges.find((badge) => badge.key === "service_status");
-    const otherBadges = badges.filter((badge) => badge.key !== "service_status");
+    const scheduleChangeBadge = (serviceStatusBadge?: ClientBadge): ClientBadge => ({
+        key: "service_status",
+        status: "scheduleChange",
+        label: SCHEDULE_CHANGE_BADGE_LABEL,
+        tone: "danger",
+        priority: serviceStatusBadge?.priority ?? 0,
+    });
 
-    return [
-        {
-            key: "service_status",
-            status: "scheduleChange",
-            label: SCHEDULE_CHANGE_BADGE_LABEL,
-            tone: "danger",
-            priority: serviceStatusBadge?.priority ?? 0,
-        },
-        ...otherBadges,
-    ];
+    let didReplaceServiceStatus = false;
+    const updatedBadges = badges.map((badge) => {
+        if (badge.key !== "service_status") {
+            return badge;
+        }
+
+        didReplaceServiceStatus = true;
+        return scheduleChangeBadge(badge);
+    });
+
+    return didReplaceServiceStatus ? updatedBadges : [scheduleChangeBadge(), ...badges];
 };
 
 export const getClientBadges = (client: Pick<Client, "badges" | "pendingScheduleChange"> | null | undefined): ClientBadge[] => {
     return applyScheduleChangeBadge(client, client?.badges ?? []);
 };
 
-export const getClientBadgeAvatarClassName = (badge: Pick<ClientBadge, "tone"> | null | undefined): string => {
-    return CLIENT_BADGE_AVATAR_CLASS_BY_TONE[badge?.tone ?? "warning"];
+export const getPrimaryClientBadge = (badges: ClientBadge[]): ClientBadge | null => {
+    return PRIMARY_CLIENT_BADGE_KEYS
+        .map((key) => badges.find((badge) => badge.key === key))
+        .find((badge): badge is ClientBadge => Boolean(badge)) ?? badges[0] ?? null;
+};
+
+export const prioritizeClientBadges = (badges: ClientBadge[]): ClientBadge[] => {
+    const prioritizedBadges = PRIMARY_CLIENT_BADGE_KEYS
+        .map((key) => badges.find((badge) => badge.key === key))
+        .filter((badge): badge is ClientBadge => Boolean(badge));
+    const prioritizedKeys = new Set(prioritizedBadges.map((badge) => badge.key));
+
+    return [
+        ...prioritizedBadges,
+        ...badges.filter((badge) => !prioritizedKeys.has(badge.key)),
+    ];
+};
+
+export const getClientBadgeAvatarClassName = (badge: Pick<ClientBadge, "key" | "status" | "tone"> | null | undefined): string => {
+    const tokenVariant = badge ? getClientBadgeStatusToken(badge.key, badge.status)?.variant : null;
+    const tone = tokenVariant === "info" ? "primary" : tokenVariant ?? badge?.tone ?? "warning";
+    return CLIENT_BADGE_AVATAR_CLASS_BY_TONE[tone];
 };

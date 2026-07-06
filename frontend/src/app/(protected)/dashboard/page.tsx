@@ -7,9 +7,23 @@ import {
   fetchDashboardClientPage,
   useDashboardOverview,
 } from "@/hooks/useDashboardStats";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useAlimtalkHistory } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
+import { isSmsHistoryRecord } from "@/features/alimtalk-triggers/channel";
+import type { AlimtalkHistoryRecord } from "@/features/alimtalk-triggers/types";
 import { Client } from "@/lib/client/types";
-import { getClientBadgeAvatarClassName, getClientBadges } from "@/lib/client/badges";
+import {
+  getClientBadgeAvatarClassName,
+  getClientBadges,
+  getPrimaryClientBadge,
+} from "@/lib/client/badges";
 import { getActionRequiredStatus } from "@/lib/client/action-required";
+import { matchesMessageHistoryClient } from "@/lib/message-history/client-match";
+import {
+  getMessageHistoryTimestamp,
+  MESSAGE_HISTORY_STATUS_META,
+  normalizeMessageHistoryRecord,
+} from "@/components/app/messages/MessageHistoryDetailPanel";
 import { useInitialUser } from "@/providers/UserProvider";
 import { cn } from "@/lib/utils";
 import {
@@ -22,6 +36,8 @@ import {
   InfoCard,
   InfoRow,
   StatusBadge,
+  AnimatedSlotList,
+  AnimatedSlotListItemContent,
   RecentActivitiesPanel,
   type ActionRequiredItem,
 } from "@/components/app/v3";
@@ -49,6 +65,13 @@ const DASHBOARD_STAT_KEYS = [
   { icon: Calendar, valueKey: "upcomingSoon" as const, label: "곧 시작 예정", colorIndex: 1, counter: "건" },
   { icon: Send, valueKey: "contractsRequired" as const, label: "계약서 필요", colorIndex: 3, counter: "건" },
 ];
+
+const DASHBOARD_MESSAGE_HISTORY_LIMIT = 500;
+const DASHBOARD_MESSAGE_HISTORY_STATUS_LABELS = {
+  sent: "성공",
+  failed: "실패",
+  pending: "대기",
+} as const;
 
 const formatDate = (dateStr: string | null): string => {
   if (!dateStr) return "-";
@@ -87,6 +110,120 @@ function isToday(dateStr: string): boolean {
   return target.getTime() === today.getTime();
 }
 
+function getDashboardMessageHistoryTime(record: AlimtalkHistoryRecord) {
+  const timestamp = getMessageHistoryTimestamp(record);
+  const time = new Date(timestamp).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function DashboardSmsHistoryList({
+  records,
+  isError,
+  isLoading,
+  clientName,
+}: {
+  records: AlimtalkHistoryRecord[];
+  isError: boolean;
+  isLoading: boolean;
+  clientName: string;
+}) {
+  if (isLoading) {
+    return (
+      <div data-component="dashboard-detail-sms-skeleton-list" className="w-full space-y-2">
+        {[0, 1, 2].map((index) => (
+          <div
+            key={index}
+            data-component="dashboard-detail-sms-skeleton-item"
+            className="flex h-[calc(94px*var(--v3-ui-scale,1))] items-center gap-[calc(12px*var(--v3-ui-scale,1))] overflow-hidden rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--v3-ui-scale,1))]"
+          >
+            <Skeleton className="h-[calc(44px*var(--v3-ui-scale,1))] w-[calc(44px*var(--v3-ui-scale,1))] shrink-0 rounded-[14px] bg-v3-dim-white" />
+            <div data-component="dashboard-detail-sms-skeleton-copy" className="min-w-0 flex-1 space-y-2">
+              <Skeleton className="h-[calc(16px*var(--v3-ui-scale,1))] w-[calc(96px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
+              <Skeleton className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(160px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
+            </div>
+            <div data-component="dashboard-detail-sms-skeleton-meta" className="flex shrink-0 flex-col items-end gap-2">
+              <Skeleton className="h-[calc(24px*var(--v3-ui-scale,1))] w-[calc(56px*var(--v3-ui-scale,1))] rounded-full bg-v3-dim-white" />
+              <Skeleton className="h-[calc(10px*var(--v3-ui-scale,1))] w-[calc(40px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div data-component="dashboard-detail-sms-error" className="w-full py-12 text-center text-[calc(13px*var(--v3-ui-scale,1))] text-v3-text-muted">
+        메시지 발송 내역을 불러오지 못했습니다
+      </div>
+    );
+  }
+
+  if (records.length === 0) {
+    return (
+      <DetailEmptyState
+        name="dashboard-detail-sms-empty"
+        message="메시지 발송 내역이 없습니다"
+      />
+    );
+  }
+
+  return (
+    <div data-component="dashboard-detail-sms-list">
+      <AnimatedSlotList<AlimtalkHistoryRecord>
+        items={records}
+        isLoading={false}
+        itemVariant="card"
+        itemDataComponent="dashboard-detail-sms-list-item"
+        getItemKey={(record) => String(record.id)}
+        render={({ item: record }) => {
+          if (!record) return null;
+
+          const normalizedRecord = normalizeMessageHistoryRecord(record, {
+            recipientNameFallback: clientName,
+            recipientListLabelFallback: clientName,
+          });
+          const statusMeta = MESSAGE_HISTORY_STATUS_META[normalizedRecord.status] ?? MESSAGE_HISTORY_STATUS_META.failed;
+          const statusBorderClassName =
+            normalizedRecord.status === "sent"
+              ? "border-[hsl(137,34%,84%)]"
+              : normalizedRecord.status === "pending"
+                ? "border-amber-100"
+                : "border-red-100";
+          const ItemIcon = normalizedRecord.icon;
+
+          return (
+            <AnimatedSlotListItemContent
+              dataComponent="dashboard-detail-sms-list-item"
+              icon={ItemIcon}
+              iconContainerClassName="text-v3-primary"
+              title={normalizedRecord.title}
+              subtitle={normalizedRecord.messagePreview}
+              status={
+                <div
+                  data-component="dashboard-detail-sms-list-item-meta"
+                  className="flex shrink-0 flex-col items-end justify-end gap-1 text-right"
+                >
+                  <span
+                    data-component="dashboard-detail-sms-list-item-status"
+                    className={cn(
+                      "inline-flex shrink-0 items-center justify-center overflow-hidden rounded-[50px] border px-[calc(12px*var(--v3-ui-scale,1))] py-[calc(4px*var(--v3-ui-scale,1))] text-[calc(10.4px*var(--v3-ui-scale,1))] font-semibold whitespace-nowrap transition-colors",
+                      statusMeta.tone,
+                      statusBorderClassName
+                    )}
+                  >
+                    {DASHBOARD_MESSAGE_HISTORY_STATUS_LABELS[normalizedRecord.status]}
+                  </span>
+                </div>
+              }
+            />
+          );
+        }}
+      />
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -96,6 +233,11 @@ export default function DashboardPage() {
     isError: overviewError,
     refetch: refetchOverview,
   } = useDashboardOverview(50);
+  const {
+    data: messageHistoryRecords = [],
+    isLoading: isMessageHistoryLoading,
+    isError: isMessageHistoryError,
+  } = useAlimtalkHistory(DASHBOARD_MESSAGE_HISTORY_LIMIT);
   const user = useInitialUser();
   const locale = useLocale();
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
@@ -103,6 +245,13 @@ export default function DashboardPage() {
   const [extraClientPages, setExtraClientPages] = useState<Client[][]>([]);
   const [isFetchingNextClients, setIsFetchingNextClients] = useState(false);
   const dashboardClientIdParam = searchParams.get("clientId");
+
+  useEffect(() => {
+    if (activeDetailTab === "alimtalk") {
+      setActiveDetailTab("sms");
+    }
+  }, [activeDetailTab]);
+
   const dashboardClientId = useMemo(() => {
     if (!dashboardClientIdParam) {
       return null;
@@ -268,9 +417,19 @@ export default function DashboardPage() {
   }, [selectedClientData]);
 
   const selectedClientAvatarClass = useMemo(() => {
-    const statusBadge = selectedClientBadges.find(b => b.key === "service_status") ?? selectedClientBadges[0];
-    return getClientBadgeAvatarClassName(statusBadge);
+    return getClientBadgeAvatarClassName(getPrimaryClientBadge(selectedClientBadges));
   }, [selectedClientBadges]);
+
+  const selectedClientSmsHistory = useMemo(() => {
+    if (!selectedClientData) return [];
+
+    return messageHistoryRecords
+      .filter((record) => (
+        isSmsHistoryRecord(record) &&
+        matchesMessageHistoryClient(record, selectedClientData)
+      ))
+      .sort((left, right) => getDashboardMessageHistoryTime(right) - getDashboardMessageHistoryTime(left));
+  }, [messageHistoryRecords, selectedClientData]);
 
   const selectedClientContractInfo = useMemo(() => {
     if (!selectedClientData) {
@@ -311,6 +470,7 @@ export default function DashboardPage() {
         <StatsBar
           name="dashboard"
           isLoading={overviewLoading}
+          density="responsive-square"
           items={DASHBOARD_STAT_KEYS.map((s) => ({
             icon: s.icon,
             value: dashboardStats[s.valueKey],
@@ -412,7 +572,7 @@ export default function DashboardPage() {
                   tabs={[
                     { key: "basic", label: "기본 정보" },
                     { key: "contracts", label: "계약서 정보" },
-                    { key: "alimtalk", label: "메시지 발송 현황" },
+                    { key: "sms", label: "메시지 발송 현황" },
                   ]}
                   activeTab={activeDetailTab}
                   onTabChange={setActiveDetailTab}
@@ -421,8 +581,10 @@ export default function DashboardPage() {
             >
               <DetailTabPanels
                 activeTab={activeDetailTab}
+                className="flex min-h-0 flex-1 flex-col"
                 dataComponent="dashboard-detail-content"
                 panelDataComponent="dashboard-detail-content-panel"
+                trackClassName="min-h-0 flex-1"
                 panels={[
                   {
                     key: "basic",
@@ -474,11 +636,14 @@ export default function DashboardPage() {
                     ),
                   },
                   {
-                    key: "alimtalk",
+                    key: "sms",
+                    className: "flex min-h-0",
                     children: (
-                      <DetailEmptyState
-                        name="dashboard-detail-alimtalk-empty"
-                        message="메시지 발송 현황이 없습니다"
+                      <DashboardSmsHistoryList
+                        records={selectedClientSmsHistory}
+                        isLoading={isMessageHistoryLoading}
+                        isError={isMessageHistoryError}
+                        clientName={selectedClientData.name}
                       />
                     ),
                   },

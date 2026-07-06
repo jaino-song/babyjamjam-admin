@@ -9,6 +9,7 @@
     "exports": {
         ".": "./src/index.ts",
         "./api": "./src/api/index.ts",
+        "./tokens/status-badge": "./src/tokens/status-badge.ts",
         "./types/alimtalk": "./src/types/alimtalk.ts",
         "./types/eformsign": "./src/types/eformsign.ts",
         "./types/message": "./src/types/message.ts",

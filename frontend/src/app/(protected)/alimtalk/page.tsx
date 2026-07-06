@@ -1623,12 +1623,12 @@ function TemplatesSection() {
           activeTab={activeGroup}
           onTabChange={handleGroupChange}
           headerActions={<HeaderActionButton icon={Plus} label="새 템플릿" onClick={() => setMode("create")} />}
-        >
-          {visibleTemplates.length === 0 ? (
+          emptyState={visibleTemplates.length === 0 ? (
             <ListEmptyState message="등록된 템플릿이 없습니다." />
-          ) : (
-            <div data-component="alimtalk-templates-list" className="space-y-2 pb-2">
-              <AnimatedSlotList<TemplateRecord>
+          ) : undefined}
+        >
+          <div data-component="alimtalk-templates-list" className="space-y-2 pb-2">
+            <AnimatedSlotList<TemplateRecord>
                 items={visibleTemplates}
                 isLoading={false}
                 className="space-y-2"
@@ -1680,7 +1680,6 @@ function TemplatesSection() {
                 }}
               />
             </div>
-          )}
         </ListPanel>
 
         <DetailPanel

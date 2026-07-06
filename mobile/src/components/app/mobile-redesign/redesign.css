@@ -495,6 +495,13 @@ main[data-component="main-content"]:has([data-component="dashboard"]) > [data-co
 .list-row-badges .badge {
   flex-shrink: 0;
 }
+.list-row-badges-more {
+  flex-shrink: 0;
+  color: hsl(var(--v3-text-muted));
+  font-size: 0.65rem;
+  font-weight: 600;
+  line-height: 1;
+}
 .list-meta {
   font-size: 0.66rem;
   color: hsl(var(--v3-text-muted));
@@ -6404,6 +6411,10 @@ body:has([data-component="contracts"]) [data-component="app-providers"] {
 body nav[data-component="mobile-bottom-nav"] a[data-component^="mobile-bottom-nav-"]:not([data-visual-active="true"]) {
   background: transparent !important;
   color: var(--color-gray-500, #6b7280) !important;
+}
+
+body nav[data-component="mobile-bottom-nav"] [data-component^="mobile-bottom-nav-"][data-disabled="true"] {
+  color: var(--color-gray-400, #9ca3af) !important;
 }
 
 body nav[data-component="mobile-bottom-nav"] a[data-visual-active="true"] {

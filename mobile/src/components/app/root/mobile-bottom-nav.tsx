@@ -1,6 +1,6 @@
 "use client";
 
-import { type CSSProperties, useState, useEffect } from "react";
+import { type CSSProperties, useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { Home, User, FileText, Phone, Menu } from "lucide-react";
@@ -13,10 +13,11 @@ const NAV_ITEMS: Array<{
   label: string;
   icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
   kind?: "normal" | "chat";
+  disabled?: boolean;
 }> = [
   { href: "/dashboard", label: "홈", icon: Home, kind: "normal" },
   { href: "/clients", label: "고객", icon: User, kind: "normal" },
-  { href: "/calls", label: "통화요약", icon: Phone, kind: "chat" },
+  { href: "/calls", label: "통화요약", icon: Phone, kind: "chat", disabled: true },
   { href: "/contracts", label: "계약", icon: FileText, kind: "normal" },
   { href: "/all", label: "전체", icon: Menu, kind: "normal" },
 ];
@@ -38,25 +39,8 @@ export function MobileBottomNav() {
   const safePathname = pathname ?? "";
   const prefersReducedMotion = useReducedMotion();
   const [pressedItem, setPressedItem] = useState<PressedNavItem | null>(null);
-  const [pendingCount, setPendingCount] = useState(0);
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const response = await fetch("/api/client-drafts/count?status=PENDING");
-        if (!response.ok) return;
-        const data = (await response.json()) as { count?: number };
-        if (!cancelled) setPendingCount(data.count ?? 0);
-      } catch {
-        /* nav badge is best-effort */
-      }
-    };
-    void load();
-    const timer = setInterval(load, 60_000);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, []);
   const activeIndex = safePathname
-    ? NAV_ITEMS.findIndex((item) => isNavItemActive(item.href, safePathname))
+    ? NAV_ITEMS.findIndex((item) => !item.disabled && isNavItemActive(item.href, safePathname))
     : -1;
   const activeItem = activeIndex >= 0 ? NAV_ITEMS[activeIndex] : null;
   const pressedHref = pressedItem?.pathname === safePathname ? pressedItem.href : null;
@@ -123,8 +107,45 @@ export function MobileBottomNav() {
 
       {NAV_ITEMS.map((item, index) => {
         const isActive = isNavItemActive(item.href, pathname);
-        const isIndicated = indicatorVisible && index === indicatorIndex;
+        const isDisabled = item.disabled === true;
+        const isIndicated = !isDisabled && indicatorVisible && index === indicatorIndex;
         const Icon = item.icon;
+        const dataComponent =
+          item.kind === "chat"
+            ? "mobile-bottom-nav-chat"
+            : `mobile-bottom-nav-${item.href.replace("/", "")}`;
+        const itemClassName = cn(
+          "relative z-10 flex h-10 flex-col items-center gap-[2px] rounded-[14px] px-1 py-[5px]",
+          prefersReducedMotion ? null : "transition-colors duration-300 ease-out",
+          isDisabled ? "cursor-not-allowed text-gray-400" : isIndicated ? "text-white" : "text-gray-500"
+        );
+        const itemContent = (
+          <>
+            <span className="relative">
+              <Icon
+                className="h-5 w-5 shrink-0"
+                strokeWidth={2.5}
+              />
+            </span>
+            <span className="text-[10px] font-medium leading-none">
+              {item.label}
+            </span>
+          </>
+        );
+
+        if (isDisabled) {
+          return (
+            <span
+              key={item.href}
+              aria-disabled="true"
+              data-component={dataComponent}
+              data-disabled="true"
+              className={itemClassName}
+            >
+              {itemContent}
+            </span>
+          );
+        }
 
         return (
           <Link
@@ -137,34 +158,10 @@ export function MobileBottomNav() {
                 setPressedItem({ href: item.href, pathname: safePathname });
               }
             }}
-            data-component={
-              item.kind === "chat"
-                ? "mobile-bottom-nav-chat"
-                : `mobile-bottom-nav-${item.href.replace("/", "")}`
-            }
-            className={cn(
-              "relative z-10 flex h-10 flex-col items-center gap-[2px] rounded-[14px] px-1 py-[5px]",
-              prefersReducedMotion ? null : "transition-colors duration-300 ease-out",
-              isIndicated ? "text-white" : "text-gray-500"
-            )}
+            data-component={dataComponent}
+            className={itemClassName}
           >
-            <span className="relative">
-              <Icon
-                className="h-5 w-5 shrink-0"
-                strokeWidth={2.5}
-              />
-              {item.href === "/calls" && pendingCount > 0 && (
-                <span
-                  data-component="mobile-bottom-nav-calls-badge"
-                  className="absolute -top-1 -right-2 min-w-[16px] rounded-full bg-red-500 px-1 text-center text-[10px] font-bold leading-4 text-white"
-                >
-                  {pendingCount > 9 ? "9+" : pendingCount}
-                </span>
-              )}
-            </span>
-            <span className="text-[10px] font-medium leading-none">
-              {item.label}
-            </span>
+            {itemContent}
           </Link>
         );
       })}

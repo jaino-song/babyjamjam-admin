@@ -160,7 +160,7 @@ export class ClientService {
     } {
         switch (status) {
             case SERVICE_STATUS.ACTIVE:
-                return { status: "active", label: "진행중", tone: "success" };
+                return { status: "active", label: "진행중", tone: "primary" };
             case SERVICE_STATUS.WAITING:
                 return { status: "pending", label: "대기", tone: "warning" };
             case SERVICE_STATUS.REPLACEMENT_REQUESTED:
@@ -168,7 +168,7 @@ export class ClientService {
             case SERVICE_STATUS.TERMINATED:
                 return { status: "terminated", label: "중단", tone: "danger" };
             case SERVICE_STATUS.COMPLETED:
-                return { status: "completed", label: "완료", tone: "neutral" };
+                return { status: "completed", label: "완료", tone: "success" };
             default:
                 return { status: "pending", label: "-", tone: "warning" };
         }
@@ -197,7 +197,7 @@ export class ClientService {
                 key: "breast_pump",
                 status: "breastPump",
                 label: "유축기 대여",
-                tone: "danger",
+                tone: "primary",
                 priority: 20,
             });
         }

@@ -306,7 +306,8 @@ function clientFeatureLabel(client: Client): string | null {
   return client.type;
 }
 
-function clientFeatureLabelTone(client: Client): "green" | "burgundy" {
+function clientFeatureLabelTone(client: Client): "green" | "burgundy" | "primary" {
+  if (client.breastPump) return "primary";
   if (client.voucherClient) return "green";
   return "burgundy";
 }

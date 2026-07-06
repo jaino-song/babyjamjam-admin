@@ -31,11 +31,15 @@ import {
     useClient,
 } from "@/features/clients/hooks/use-clients";
 import type { Client, ServiceStatus } from "@/lib/client/types";
-import { getClientBadgeAvatarClassName, getClientBadges } from "@/lib/client/badges";
+import {
+    getClientBadgeAvatarClassName,
+    getClientBadges,
+    getPrimaryClientBadge,
+    prioritizeClientBadges,
+} from "@/lib/client/badges";
 import { useToast } from "@/hooks/use-toast";
 import { useAlimtalkHistory } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
 import type { AlimtalkHistoryRecord } from "@/features/alimtalk-triggers/types";
-import { useClientServiceRecords } from "@/features/service-records/hooks/use-service-records";
 import {
     getMessageHistoryTimestamp,
     MessageHistoryDetailPanel,
@@ -49,7 +53,6 @@ import {
     ClientFormPanel,
 } from "@/components/app/clients/ClientFormDialog";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
-import { ClientServiceRecordsTab } from "@/components/app/clients/ClientServiceRecordsTab";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
@@ -100,7 +103,6 @@ const CLIENT_DETAIL_TABS = [
     { key: "basic", label: "기본 정보" },
     { key: "contracts", label: "계약서 정보" },
     { key: "alimtalk", label: "메시지 발송 현황" },
-    { key: "service-records", label: "제공기록지" },
 ] as const;
 
 const SCHEDULE_CHANGE_DETAIL_TAB = { key: "schedule-change", label: "일정 변경" } as const;
@@ -579,11 +581,6 @@ export default function ClientsPage() {
 
         return detailTabState.key;
     }, [activeScheduleChange, activeSelectedClientId, detailTabState, hasActiveScheduleChange]);
-    const {
-        data: serviceRecordOverview,
-        isLoading: isServiceRecordsLoading,
-        isError: isServiceRecordsError,
-    } = useClientServiceRecords(activeSelectedClientId, { enabled: activeDetailTab === "service-records" });
 
     const setActiveDetailTab = (key: ClientDetailTabKey, clientId: number | null = activeSelectedClientId) => {
         setDetailTabState({ key, clientId });
@@ -931,35 +928,35 @@ export default function ClientsPage() {
                                     setSelectedClient(null);
                                 }}
                             >
-	                <ListPanel
-	                    title="고객 목록"
-	                    tabs={FILTER_CHIPS}
-	                    activeTab={activeFilter}
-	                    onTabChange={setActiveFilter}
-	                    searchValue={searchQuery}
-	                    onSearchChange={setSearchQuery}
-	                    searchPlaceholder={t(locale, "clients.search-placeholder")}
-	                    isLoading={isLoading}
-	                    headerActions={
-	                        <HeaderActionButton
-	                            icon={Plus}
-	                            label={t(locale, "clients.add")}
-	                            onClick={handleAddNew}
-	                            data-testid="add-client-button"
-	                            data-component="clients-header-add"
-	                            className={
-	                                shouldShowClientFormPanel
-	                                    ? "bg-v3-primary text-white hover:bg-v3-primary"
-	                                    : undefined
-	                            }
-	                        />
-	                    }
-	                >
-	                    {!isLoading && filteredClients.length === 0 ? (
-	                        <ListEmptyState message={t(locale, "clients.no-data")} />
-	                    ) : (
-	                        <div data-component="clients-list-content" className="space-y-2">
-	                            <AnimatedSlotList<Client>
+                <ListPanel
+                    title="고객 목록"
+                    tabs={FILTER_CHIPS}
+                    activeTab={activeFilter}
+                    onTabChange={setActiveFilter}
+                    searchValue={searchQuery}
+                    onSearchChange={setSearchQuery}
+                    searchPlaceholder={t(locale, "clients.search-placeholder")}
+                    isLoading={isLoading}
+                    headerActions={
+                        <HeaderActionButton
+                            icon={Plus}
+                            label={t(locale, "clients.add")}
+                            onClick={handleAddNew}
+                            data-testid="add-client-button"
+                            data-component="clients-header-add"
+                            className={
+                                shouldShowClientFormPanel
+                                    ? "bg-v3-primary text-white hover:bg-v3-primary"
+                                    : undefined
+                            }
+                        />
+                    }
+                    emptyState={!isLoading && filteredClients.length === 0 ? (
+                        <ListEmptyState message={t(locale, "clients.no-data")} />
+                    ) : undefined}
+                >
+                    <div data-component="clients-list-content" className="space-y-2">
+                        <AnimatedSlotList<Client>
 	                                    items={filteredClients}
 	                                    isLoading={isLoading}
 	                                    loadingCount={10}
@@ -989,11 +986,8 @@ export default function ClientsPage() {
 
 	                                        if (!client) return null;
 	                                        const clientBadges = getClientBadges(client);
-	                                        const serviceStatusBadge = clientBadges.find((b) => b.key === "service_status");
-	                                        const sortedClientBadges = serviceStatusBadge
-	                                            ? [serviceStatusBadge, ...clientBadges.filter((b) => b.key !== "service_status")]
-	                                            : clientBadges;
-	                                        const primaryClientBadge = serviceStatusBadge ?? clientBadges[0] ?? null;
+	                                        const sortedClientBadges = prioritizeClientBadges(clientBadges);
+	                                        const primaryClientBadge = getPrimaryClientBadge(clientBadges);
 
 	                                        return (
 	                                            <AnimatedSlotListItemContent
@@ -1023,7 +1017,6 @@ export default function ClientsPage() {
 	                                    }}
 	                                />
 	                        </div>
-	                    )}
 	                </ListPanel>
 
                 {shouldShowClientFormPanel ? (
@@ -1072,7 +1065,7 @@ export default function ClientsPage() {
                                     data-component="clients-detail-avatar"
                                     className={cn(
                                         "w-16 h-16 rounded-[20px] flex items-center justify-center shadow-lg shrink-0",
-                                        getClientBadgeAvatarClassName(activeSelectedClientBadges.find(b => b.key === "service_status") ?? activeSelectedClientBadges[0])
+                                        getClientBadgeAvatarClassName(getPrimaryClientBadge(activeSelectedClientBadges))
                                     )}
                                 >
                                     <Users className="w-7 h-7 shrink-0 transition-colors text-current" aria-hidden="true" />
@@ -1299,17 +1292,6 @@ export default function ClientsPage() {
                                                 clientName={activeSelectedClient.name}
                                                 selectedRecordId={selectedMessageHistoryId}
                                                 onSelectRecord={handleSelectClientMessageHistoryRecord}
-                                            />
-                                        ),
-                                    },
-                                    {
-                                        key: "service-records",
-                                        children: (
-                                            <ClientServiceRecordsTab
-                                                overview={serviceRecordOverview}
-                                                clientId={activeSelectedClientId}
-                                                isLoading={isServiceRecordsLoading}
-                                                isError={isServiceRecordsError}
                                             />
                                         ),
                                     },
