@@ -14,6 +14,7 @@ import {
   getPrimaryClientBadge,
   prioritizeClientBadges,
 } from "@/lib/client/badges";
+import { getDashboardClientDueLabel } from "@/lib/dashboard/client-due";
 import { cn } from "@/lib/utils";
 import { AnimatedSlotList } from "./AnimatedSlotList";
 import { AnimatedSlotListItemContent } from "./AnimatedSlotListItemContent";
@@ -109,19 +110,6 @@ export function getRecentActivityAvatarClass({
   }
 
   return getRecentActivityActionVisual(3).iconBg;
-}
-
-function getRelativeDate(dateStr: string): string {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const target = new Date(dateStr);
-  target.setHours(0, 0, 0, 0);
-  const diffDays = Math.round(
-    (target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
-  );
-  if (diffDays <= 0) return "오늘";
-  if (diffDays === 1) return "내일";
-  return `${diffDays}일 후`;
 }
 
 function isToday(dateStr: string): boolean {
@@ -355,9 +343,10 @@ export function RecentActivitiesPanel({
                 const clientBadges = getClientBadges(item.client);
                 const sortedClientBadges = prioritizeClientBadges(clientBadges);
                 const primaryClientBadge = getPrimaryClientBadge(clientBadges);
-                const subtitle = `${item.client.type || "일반"} · ${item.client.primaryEmployee?.name || "-"}${
-                  item.isUpcoming && item.client.startDate ? ` · ${getRelativeDate(item.client.startDate)}` : ""
-                }`;
+                const subtitle = getDashboardClientDueLabel(item.client, {
+                  contractRequired: sortedClientBadges.some((badge) => badge.key === "contract_required"),
+                  upcoming: item.isUpcoming,
+                }) ?? `${item.client.type || "일반"} · ${item.client.primaryEmployee?.name || "-"}`;
 
                 return (
                   <AnimatedSlotListItemContent

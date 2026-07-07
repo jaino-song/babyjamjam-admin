@@ -117,7 +117,7 @@ export function MobileBottomNav() {
         const itemClassName = cn(
           "relative z-10 flex h-10 flex-col items-center gap-[2px] rounded-[14px] px-1 py-[5px]",
           prefersReducedMotion ? null : "transition-colors duration-300 ease-out",
-          isDisabled ? "cursor-not-allowed text-gray-400" : isIndicated ? "text-white" : "text-gray-500"
+          isDisabled ? "cursor-not-allowed text-gray-300" : isIndicated ? "text-white" : "text-gray-500"
         );
         const itemContent = (
           <>

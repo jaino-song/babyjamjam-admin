@@ -1,0 +1,185 @@
+name: Database Patches
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Target database environment
+        required: true
+        default: preview
+        type: choice
+        options:
+          - preview
+          - production
+  push:
+    branches: [ preview, main ]
+    paths:
+      - 'backend/prisma/**'
+      - '.github/workflows/database-patches.yml'
+
+concurrency:
+  group: database-patches-${{ inputs.target || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  apply-preview:
+    name: apply preview database patches
+    if: >-
+      (github.event_name == 'push' && github.ref_name == 'preview') ||
+      (github.event_name == 'workflow_dispatch' && inputs.target == 'preview')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: preview
+    env:
+      DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.PREVIEW_DIRECT_URL || secrets.PREVIEW_DATABASE_URL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check database secrets
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "PREVIEW_DATABASE_URL secret is required."
+            exit 1
+          fi
+
+          if [ -z "$DIRECT_URL" ]; then
+            echo "PREVIEW_DIRECT_URL or PREVIEW_DATABASE_URL secret is required."
+            exit 1
+          fi
+
+      - name: Apply idempotent database patches
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --stdin <<'SQL'
+          ALTER TABLE "client" ALTER COLUMN "care_center" DROP NOT NULL;
+          ALTER TABLE "client_draft" ADD COLUMN IF NOT EXISTS "confirming_started_at" TIMESTAMPTZ(6);
+          SQL
+
+      - name: Verify database patches
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --stdin <<'SQL'
+          DO $$
+          BEGIN
+            IF EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'client'
+                AND column_name = 'care_center'
+                AND is_nullable <> 'YES'
+            ) THEN
+              RAISE EXCEPTION 'client.care_center is still NOT NULL';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'client_draft'
+                AND column_name = 'confirming_started_at'
+                AND data_type = 'timestamp with time zone'
+                AND is_nullable = 'YES'
+            ) THEN
+              RAISE EXCEPTION 'client_draft.confirming_started_at is missing or has the wrong shape';
+            END IF;
+          END $$;
+          SQL
+
+  apply-production:
+    name: apply production database patches
+    if: >-
+      (github.event_name == 'push' && github.ref_name == 'main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.target == 'production')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL || secrets.PROD_DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.PRODUCTION_DIRECT_URL || secrets.PROD_DIRECT_URL || secrets.PRODUCTION_DATABASE_URL || secrets.PROD_DATABASE_URL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check database secrets
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "PRODUCTION_DATABASE_URL or PROD_DATABASE_URL secret is required."
+            exit 1
+          fi
+
+          if [ -z "$DIRECT_URL" ]; then
+            echo "PRODUCTION_DIRECT_URL, PROD_DIRECT_URL, PRODUCTION_DATABASE_URL, or PROD_DATABASE_URL secret is required."
+            exit 1
+          fi
+
+      - name: Apply idempotent database patches
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --stdin <<'SQL'
+          ALTER TABLE "client" ALTER COLUMN "care_center" DROP NOT NULL;
+          ALTER TABLE "client_draft" ADD COLUMN IF NOT EXISTS "confirming_started_at" TIMESTAMPTZ(6);
+          SQL
+
+      - name: Verify database patches
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --stdin <<'SQL'
+          DO $$
+          BEGIN
+            IF EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'client'
+                AND column_name = 'care_center'
+                AND is_nullable <> 'YES'
+            ) THEN
+              RAISE EXCEPTION 'client.care_center is still NOT NULL';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'client_draft'
+                AND column_name = 'confirming_started_at'
+                AND data_type = 'timestamp with time zone'
+                AND is_nullable = 'YES'
+            ) THEN
+              RAISE EXCEPTION 'client_draft.confirming_started_at is missing or has the wrong shape';
+            END IF;
+          END $$;
+          SQL

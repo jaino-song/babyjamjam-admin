@@ -257,17 +257,15 @@ test.describe("Dashboard activities animations", () => {
     const twoDaysAgo = new Date();
     twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
     twoDaysAgo.setHours(12, 0, 0, 0);
+    const startIso = isoDateInKorea(twoDaysAgo);
+    const elapsedBusinessDays = diffBusinessDaysKr(startIso, isoDateInKorea());
+    if (elapsedBusinessDays === null) {
+      throw new Error(`Failed to calculate business-day diff for ${startIso}`);
+    }
 
     const twentyFiveDaysLater = new Date();
     twentyFiveDaysLater.setDate(twentyFiveDaysLater.getDate() + 25);
     twentyFiveDaysLater.setHours(12, 0, 0, 0);
-    const endIso = isoDateInKorea(twentyFiveDaysLater);
-    const endLabel = `~${Number(endIso.slice(5, 7))}/${Number(endIso.slice(8, 10))}`;
-    const remainingBusinessDays = diffBusinessDaysKr(endIso, isoDateInKorea());
-    if (remainingBusinessDays === null) {
-      throw new Error(`Failed to calculate business-day diff for ${endIso}`);
-    }
-
     await mockClientsRoute(page, () => ({
       body: createClientsResponse([
         createMockClient({
@@ -290,10 +288,10 @@ test.describe("Dashboard activities animations", () => {
 
     const row = rows.first();
     const badges = row.locator('[data-component="mobile-redesign-list-row-badges"] [data-component="status-badge"]');
-    await expect(badges).toHaveText(["발송 대기"]);
+    await expect(badges).toHaveText(["계약서 필요"]);
     await expect(row.locator('[data-component="mobile-redesign-list-row-badges-more"]')).toHaveText("+1");
-    await expect(row.locator(".dday")).toHaveText(`${remainingBusinessDays}일 남음`);
-    await expect(row.locator(".list-right")).toContainText(endLabel);
+    await expect(row.locator(".dday")).toHaveText(`서비스 시작 ${Math.abs(elapsedBusinessDays)} 영업일 경과`);
+    await expect(row.locator(".list-right")).toContainText("계약서 필요");
     await expect(page.getByRole("button", { name: /전체\s+1/ })).toBeVisible();
     await expect(page.getByRole("button", { name: /조치 필요\s+1/ })).toBeVisible();
     await expect(page.getByRole("button", { name: /종료 예정\s+1/ })).toBeVisible();

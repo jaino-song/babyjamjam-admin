@@ -1,3 +1,8 @@
+import type {
+    ClientBadgeKey,
+    ClientBadgeStatus,
+} from "@babyjamjam/shared/tokens/status-badge";
+
 // Employee summary for client responses
 export interface EmployeeSummary {
     id: number;
@@ -6,6 +11,18 @@ export interface EmployeeSummary {
 
 // Document status type for eformsign documents
 export type DocumentStatus = 'created' | 'opened' | 'completed' | 'requested' | 'rejected' | 'revoked' | 'deleted' | null;
+
+export type { ClientBadgeKey, ClientBadgeStatus };
+
+export type ClientBadgeTone = "danger" | "success" | "primary" | "warning" | "neutral";
+
+export interface ClientBadge {
+    key: ClientBadgeKey;
+    status: ClientBadgeStatus;
+    label?: string;
+    tone?: ClientBadgeTone;
+    priority?: number;
+}
 
 // Client entity types
 export interface Client {
@@ -34,6 +51,7 @@ export interface Client {
     areaId?: string | null;
     hasSigned: boolean;
     documentStatus: DocumentStatus;    // eformsign document status: created/opened/completed
+    badges?: ClientBadge[];
 }
 
 // Create client DTO - Frontend sends employeeId, backend converts to scheduleId

@@ -38,6 +38,8 @@ describe("EmployeeFeedbackLinkService", () => {
     });
     const createLogRepository = () => ({
         save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log),
+        update: jest.fn().mockImplementation(async (log: MessageLogEntity) => log),
+        findRetryableServiceFeedbackSmsByScheduleId: jest.fn().mockResolvedValue([]),
     });
     const createSchedule = (overrides: Record<string, unknown> = {}) => ({
         id: 10,
@@ -124,6 +126,50 @@ describe("EmployeeFeedbackLinkService", () => {
         expect(result.scheduledFor).toBe(job.scheduledFor);
         expect(job.dedupeKey).toBe(`${SERVICE_FEEDBACK_LINK_RULE_ID}:schedule:10:primary`);
         expect(job.payload.buttonUrl).toBe("https://mobile.test/feedback/efl_token");
+    });
+
+    it("supersedes retryable stale SMS logs before issuing a replacement token", async () => {
+        const prisma = createPrisma();
+        const tokenService = createTokenService();
+        const logRepository = createLogRepository();
+        const staleLog = MessageLogEntity.reconstitute(
+            77,
+            "branch-1",
+            "aligo_sms",
+            SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
+            "job-1",
+            "01011112222",
+            20,
+            "old link",
+            {},
+            "failed",
+            null,
+            "temporary failure",
+            1,
+            new Date("2026-07-03T06:00:00.000Z"),
+            new Date("2026-07-03T06:05:00.000Z"),
+            new Date("2026-07-03T06:00:00.000Z"),
+            new Date("2026-07-03T06:00:00.000Z"),
+        );
+        logRepository.findRetryableServiceFeedbackSmsByScheduleId.mockResolvedValue([staleLog]);
+        const service = new EmployeeFeedbackLinkService(
+            prisma as unknown as PrismaService,
+            tokenService as never,
+            createConfigService() as unknown as ConfigService,
+            createJobRepository() as unknown as IMessageTriggerJobRepository,
+            logRepository as unknown as IMessageLogRepository,
+        );
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+
+        await service.sendNow(10);
+
+        expect(logRepository.findRetryableServiceFeedbackSmsByScheduleId).toHaveBeenCalledWith(10);
+        expect(staleLog.nextRetryAt).toBeNull();
+        expect(staleLog.errorMessage).toBe("Feedback link rescheduled");
+        expect(logRepository.update).toHaveBeenCalledWith(staleLog);
+        expect(logRepository.update.mock.invocationCallOrder[0]).toBeLessThan(
+            tokenService.issueLink.mock.invocationCallOrder[0]!,
+        );
     });
 
     it("records a failed history row when provider phone is missing", async () => {

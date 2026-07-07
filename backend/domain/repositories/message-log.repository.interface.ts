@@ -4,6 +4,7 @@ export interface IMessageLogRepository {
     save(log: MessageLogEntity): Promise<MessageLogEntity>;
     update(log: MessageLogEntity): Promise<MessageLogEntity>;
     findPendingRetries(): Promise<MessageLogEntity[]>;
+    findRetryableServiceFeedbackSmsByScheduleId(scheduleId: number): Promise<MessageLogEntity[]>;
     findRecentByBranch(
         branchId: string,
         limit?: number,

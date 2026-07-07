@@ -507,6 +507,11 @@ main[data-component="main-content"]:has([data-component="dashboard"]) > [data-co
   color: hsl(var(--v3-text-muted));
   margin-top: 0;
 }
+.list-meta-due {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
 .list-right {
   display: flex;
   flex-direction: column;
@@ -1439,7 +1444,7 @@ body.mobile-all-route .menu-row {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  height: 56px;
+  min-height: 56px;
   justify-content: center;
 }
 .client-detail-name {
@@ -6414,7 +6419,7 @@ body nav[data-component="mobile-bottom-nav"] a[data-component^="mobile-bottom-na
 }
 
 body nav[data-component="mobile-bottom-nav"] [data-component^="mobile-bottom-nav-"][data-disabled="true"] {
-  color: var(--color-gray-400, #9ca3af) !important;
+  color: var(--color-gray-300, #d1d5db) !important;
 }
 
 body nav[data-component="mobile-bottom-nav"] a[data-visual-active="true"] {

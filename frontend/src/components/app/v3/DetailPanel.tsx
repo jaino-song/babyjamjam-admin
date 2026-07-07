@@ -45,7 +45,11 @@ interface DetailPanelProps {
 }
 
 export const DETAIL_PANEL_FOOTER_CLASS_NAME =
-  "shrink-0 border-t border-v3-border bg-white px-[20%] pt-4 pb-4 flex flex-wrap items-center justify-between gap-y-2";
+  "shrink-0 border-t border-v3-border bg-white px-[calc(24px*var(--v3-ui-scale,1))] py-[calc(16px*var(--v3-ui-scale,1))] flex flex-wrap items-center justify-between gap-[calc(12px*var(--v3-ui-scale,1))]";
+export const DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME =
+  "min-w-0 text-[calc(12px*var(--v3-ui-scale,1))] font-semibold text-v3-text-muted";
+export const DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME =
+  "ml-auto flex shrink-0 flex-wrap justify-end gap-[calc(12px*var(--v3-ui-scale,1))]";
 
 function DetailPanelTextSkeleton({
   name,

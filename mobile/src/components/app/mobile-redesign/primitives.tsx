@@ -245,7 +245,7 @@ export function Badge({ label, tone }: { label: string; tone: ListRow["badgeTone
   );
 }
 
-function ListRowBadges({ badges }: { badges: Array<{ label: string; tone: ListRow["badgeTone"] }> }) {
+export function ListRowBadges({ badges }: { badges: Array<{ label: string; tone: ListRow["badgeTone"] }> }) {
   const [primaryBadge, ...hiddenBadges] = badges;
 
   if (!primaryBadge) return null;
@@ -509,21 +509,20 @@ export function ClientLikeRow({ row }: { row: ListRow }) {
     >
       <div className={`list-avatar ${avatarToneClass[row.avatarTone ?? "primary"]}`}>{row.initial}</div>
       <div className="list-info flex flex-col">
-        <div className="list-name">
-          {row.name}
-          {hasDue && badges.length > 0 && <ListRowBadges badges={badges} />}
+        <div className="list-name">{row.name}</div>
+        <div className={hasDue ? "list-meta list-meta-due" : "list-meta"}>
+          {hasDue ? (
+            <>
+              {row.due && <span className={`dday ${row.dueTone ?? ""}`}>{row.due}</span>}
+              {row.dueSub && <span className="dday-sub">{row.dueSub}</span>}
+            </>
+          ) : (
+            row.meta
+          )}
         </div>
-        <div className="list-meta">{row.meta}</div>
       </div>
       <div className="list-right">
-        {hasDue ? (
-          <>
-            {row.due && <span className={`dday ${row.dueTone ?? ""}`}>{row.due}</span>}
-            {row.dueSub && <span className="dday-sub">{row.dueSub}</span>}
-          </>
-        ) : (
-          <ListRowBadges badges={badges} />
-        )}
+        <ListRowBadges badges={badges} />
       </div>
     </div>
   );

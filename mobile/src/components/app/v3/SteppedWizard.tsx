@@ -317,6 +317,7 @@ export function SteppedWizard({
             onClick={handleNext}
             disabled={isNextButtonDisabled}
             size="md"
+            width="md"
             className={cn(
               "gap-1.5 rounded-2xl border-none",
               "bg-v3-primary text-[0.8rem] md:text-[0.85rem] font-bold text-white",

@@ -53,7 +53,6 @@ import {
     ClientFormPanel,
 } from "@/components/app/clients/ClientFormDialog";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
-import { useClientDialogStore } from "@/stores/client-dialog-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -529,9 +528,6 @@ export default function ClientsPage() {
     const [isMessageHistoryDetailVisible, setIsMessageHistoryDetailVisible] = useState(false);
     const clearMessageHistorySelectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [detailModalOpen, setDetailModalOpen] = useState(false);
-    const clientDialogDraft = useClientDialogStore((state) => state.draft);
-    const clearClientDialogDraft = useClientDialogStore((state) => state.clearDraft);
-
 
     const { data, isLoading } = useClients(1, 50);
     const deleteClient = useDeleteClient();
@@ -547,8 +543,24 @@ export default function ClientsPage() {
         clientIdParam ? Number(clientIdParam) : 0
     );
 
-    const activeSelectedClient = selectedClient ?? (clientIdParam ? clientFromParam ?? null : null);
-    const panelFormClient = shouldOpenClientFormFromUrl ? clientDialogDraft?.client ?? null : null;
+    const clients = useMemo(() => data?.data || [], [data?.data]);
+    const selectedClientFromList = useMemo(
+        () =>
+            selectedClient
+                ? clients.find((client) => client.id === selectedClient.id) ?? selectedClient
+                : null,
+        [clients, selectedClient]
+    );
+    const clientFromParamList = useMemo(() => {
+        if (!clientIdParam) return null;
+
+        const parsedClientId = Number(clientIdParam);
+        if (!Number.isFinite(parsedClientId)) return null;
+
+        return clients.find((client) => client.id === parsedClientId) ?? null;
+    }, [clientIdParam, clients]);
+    const activeSelectedClient = selectedClientFromList ?? (clientIdParam ? clientFromParamList ?? clientFromParam ?? null : null);
+    const panelFormClient = null;
     const shouldShowClientFormPanel = isCreatingClient || shouldOpenClientFormFromUrl;
     const activeScheduleChange = activeSelectedClient?.pendingScheduleChange ?? null;
     const hasActiveScheduleChange = Boolean(activeScheduleChange);
@@ -586,7 +598,6 @@ export default function ClientsPage() {
         setDetailTabState({ key, clientId });
     };
 
-    const clients = useMemo(() => data?.data || [], [data?.data]);
     const isScheduleChangeActionPending = approveScheduleChange.isPending || rejectScheduleChange.isPending;
 
     const activeClientMessageHistory = useMemo(
@@ -717,7 +728,6 @@ export default function ClientsPage() {
         setActiveSection(nextSection);
 
         if (nextSection === "automation") {
-            clearClientDialogDraft();
             setIsCreatingClient(false);
             setSelectedClient(null);
             clearClientMessageHistoryDetail();
@@ -736,10 +746,6 @@ export default function ClientsPage() {
             router.replace("/clients");
         }
 
-        if (!shouldOpenClientFormFromUrl) {
-            clearClientDialogDraft();
-        }
-
         setSelectedClient(null);
         setEditingClient(null);
         setActiveDetailTab("basic");
@@ -755,7 +761,6 @@ export default function ClientsPage() {
             router.replace("/clients");
         }
 
-        clearClientDialogDraft();
         setIsCreatingClient(false);
         clearClientMessageHistoryDetail();
         setSelectedClient(client);
@@ -846,8 +851,20 @@ export default function ClientsPage() {
         }
     };
 
+    const handleClientFormDialogSuccess = (client: Client) => {
+        setSelectedClient((currentClient) => {
+            if (!currentClient || currentClient.id === client.id) {
+                return client;
+            }
+
+            return currentClient;
+        });
+        setEditingClient((currentClient) => (
+            currentClient?.id === client.id ? client : currentClient
+        ));
+    };
+
     const handleClientFormPanelClose = () => {
-        clearClientDialogDraft();
         setIsCreatingClient(false);
         setClientFormActiveStep(0);
         clearClientMessageHistoryDetail();
@@ -1323,6 +1340,7 @@ export default function ClientsPage() {
                 open={formDialogOpen}
                 onClose={handleFormDialogClose}
                 client={editingClient ?? null}
+                onSuccess={handleClientFormDialogSuccess}
             />
         </PageSection>
     );

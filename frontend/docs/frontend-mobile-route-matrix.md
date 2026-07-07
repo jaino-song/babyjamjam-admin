@@ -24,7 +24,6 @@ These routes exist in both apps and should be treated as the primary merge targe
 - `/contracts/creation`
 - `/dashboard`
 - `/employees`
-- `/employees/new`
 - `/files`
 - `/logout`
 - `/messages`
@@ -49,6 +48,7 @@ These routes exist in both apps and should be treated as the primary merge targe
 ## Mobile-Only Routes
 
 - `/admin/feedback`
+- `/employees/new`
 
 ## Merge Rules
 

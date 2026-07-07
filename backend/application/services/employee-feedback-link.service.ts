@@ -118,6 +118,14 @@ export class EmployeeFeedbackLinkService {
         }
     }
 
+    private async supersedeRetryableFeedbackSmsLogs(scheduleId: number, reason: string): Promise<void> {
+        const logs = await this.logRepository.findRetryableServiceFeedbackSmsByScheduleId(scheduleId);
+        for (const log of logs) {
+            log.markRetrySuperseded(reason);
+            await this.logRepository.update(log);
+        }
+    }
+
     private async issueFeedbackLinkJob(
         scheduleId: number,
         options: {
@@ -134,6 +142,7 @@ export class EmployeeFeedbackLinkService {
         }
 
         await this.cancelPendingFeedbackJobs(scheduleId, "Feedback link rescheduled");
+        await this.supersedeRetryableFeedbackSmsLogs(scheduleId, "Feedback link rescheduled");
 
         const employee = schedule.primaryEmployee;
         if (!this.normalizePhone(employee.phone)) {

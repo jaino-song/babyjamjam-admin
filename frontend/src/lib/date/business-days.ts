@@ -42,6 +42,58 @@ export function isBusinessDayKr(iso: string): boolean {
     return !KR_HOLIDAYS.has(iso);
 }
 
+const KOREA_DATE_FORMATTER = new Intl.DateTimeFormat("en", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+});
+
+function parseIsoDate(iso: string): Date | null {
+    const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return null;
+    return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+}
+
+function isoFromUtcDate(date: Date): string {
+    return date.toISOString().slice(0, 10);
+}
+
+export function isoDateInKorea(date = new Date()): string {
+    const parts = KOREA_DATE_FORMATTER.formatToParts(date);
+    const year = parts.find((part) => part.type === "year")?.value ?? "";
+    const month = parts.find((part) => part.type === "month")?.value ?? "";
+    const day = parts.find((part) => part.type === "day")?.value ?? "";
+    return `${year}-${month}-${day}`;
+}
+
+export function diffBusinessDaysKr(targetISO: string, baseISO = isoDateInKorea()): number | null {
+    const target = parseIsoDate(targetISO);
+    const base = parseIsoDate(baseISO);
+    if (!target || !base) return null;
+
+    const targetTime = target.getTime();
+    const baseTime = base.getTime();
+    if (targetTime === baseTime) return 0;
+
+    const cursor = new Date(base);
+    let count = 0;
+
+    if (targetTime > baseTime) {
+        while (cursor.getTime() < targetTime) {
+            cursor.setUTCDate(cursor.getUTCDate() + 1);
+            if (isBusinessDayKr(isoFromUtcDate(cursor))) count++;
+        }
+        return count;
+    }
+
+    while (cursor.getTime() > targetTime) {
+        if (isBusinessDayKr(isoFromUtcDate(cursor))) count++;
+        cursor.setUTCDate(cursor.getUTCDate() - 1);
+    }
+    return -count;
+}
+
 // Counts startISO as day 1. If startISO is not a business day, the next
 // Korean business day becomes day 1.
 export function calcEndDateBusinessDays(startISO: string, numberOfBusinessDays: number): string {

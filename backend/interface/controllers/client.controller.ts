@@ -87,6 +87,11 @@ export class ClientController {
         );
     }
 
+    @Get("check-phone")
+    async checkPhone(@CurrentTenant() tenant: { branchId?: string }, @Query("phone") phone?: string) {
+        return { exists: await this.clientService.checkPhoneExists(tenant.branchId ?? "", phone) };
+    }
+
     @Get(":id")
     findById(@CurrentTenant() tenant: { branchId?: string }, @Param("id", ParseIntPipe) id: number) {
         return this.clientService.findById(tenant.branchId ?? "", id);

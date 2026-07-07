@@ -117,6 +117,42 @@ describe("SbEmployeeRepository", () => {
     });
 
     // ============================================
+    // findByPhone
+    // ============================================
+    describe("findByPhone", () => {
+        it("should return the employee whose normalized phone matches", async () => {
+            const row = createEmployeeRow({ id: 3, phone: "010-1234-5678" });
+            employeeModel.findMany.mockResolvedValue([
+                createEmployeeRow({ id: 2, phone: "010-0000-0000" }),
+                { id: row.id, phone: row.phone },
+            ]);
+            employeeModel.findFirst.mockResolvedValue(row);
+
+            const result = await repository.findByPhone(branchId, "01012345678");
+
+            expect(employeeModel.findMany).toHaveBeenCalledWith({
+                where: { branchId },
+                select: { id: true, phone: true },
+            });
+            expect(employeeModel.findFirst).toHaveBeenCalledWith({
+                where: { id: 3, branchId },
+            });
+            expect(result).toMatchObject({ id: 3, phone: "010-1234-5678" });
+        });
+
+        it("should return null when no employee phone matches", async () => {
+            employeeModel.findMany.mockResolvedValue([
+                { id: 2, phone: "010-0000-0000" },
+            ]);
+
+            const result = await repository.findByPhone(branchId, "01012345678");
+
+            expect(result).toBeNull();
+            expect(employeeModel.findFirst).not.toHaveBeenCalled();
+        });
+    });
+
+    // ============================================
     // findAll
     // ============================================
     describe("findAll", () => {

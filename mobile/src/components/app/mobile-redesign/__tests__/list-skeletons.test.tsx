@@ -41,24 +41,27 @@ describe("mobile redesign list skeletons", () => {
           badgeTone: "primary",
           badges: [
             { label: "계약서 필요", tone: "burgundy" },
-            { label: "발송 대기", tone: "orange" },
+            { label: "유축기 대여", tone: "primary" },
             { label: "진행중", tone: "primary" },
           ],
-          due: "5일 남음",
-          dueSub: "~7/31",
+          due: "서비스 종료 5 영업일 남음",
         }}
       />
     );
 
-    const badgeGroup = container.querySelector('[data-component="mobile-redesign-list-row-badges"]');
+    const badgeGroup = container.querySelector<HTMLElement>('[data-component="mobile-redesign-list-row-badges"]');
     const statusBadges = badgeGroup?.querySelectorAll('[data-component="status-badge"]');
     const more = container.querySelector('[data-component="mobile-redesign-list-row-badges-more"]');
+    const meta = container.querySelector(".list-meta");
+    const right = container.querySelector<HTMLElement>(".list-right");
 
     expect(badgeGroup).toBeInTheDocument();
+    expect(right).toContainElement(badgeGroup);
+    expect(meta).toHaveTextContent("서비스 종료 5 영업일 남음");
     expect(statusBadges).toHaveLength(1);
     expect(statusBadges?.[0]).toHaveTextContent("계약서 필요");
     expect(more).toHaveTextContent("+2");
-    expect(badgeGroup).not.toHaveTextContent("발송 대기");
+    expect(badgeGroup).not.toHaveTextContent("유축기 대여");
     expect(badgeGroup).not.toHaveTextContent("진행중");
   });
 });

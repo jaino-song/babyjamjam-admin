@@ -11,6 +11,7 @@ import { useInfiniteClients } from "@/hooks/useInfiniteClients";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import { fetchAllMessageLogs } from "@/lib/messages/logs";
 import { Client } from "@/lib/client/types";
+import { getMobileClientBadges } from "@/lib/client/badges";
 import { getStatusCategory } from "@/lib/eformsign/status-codes";
 import { useLocale } from "@/providers/LocaleProvider";
 import { eformsignApi, withEformsignReauth } from "@/services/api";
@@ -23,23 +24,24 @@ import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { useFormStore } from "@/stores/form-store";
 import {
-  Badge,
   ListCard,
   ListCountSkeleton,
   ListItemRow,
   ListLoadMoreButton,
   ListLoadMoreSentinel,
+  ListRowBadges,
   ListRowsSkeleton,
 } from "@/components/app/mobile-redesign/primitives";
 import {
   MobileDetailSheet,
   MobileSearchBar,
 } from "@/components/app/mobile-redesign/detail-sheet";
-import { ClientDetailContent, GROUPS, shouldShowMissingContractBadge, type ClientGroup, type ClientNotificationLogRecord, type DetailTabId } from "@/components/app/clients/client-detail";
+import { ClientDetailContent, GROUPS, type ClientGroup, type ClientNotificationLogRecord, type DetailTabId } from "@/components/app/clients/client-detail";
 import "@/components/app/mobile-redesign/redesign.css";
 
 const CLIENTS_ROUTE_BODY_CLASS = "mobile-clients-route";
 const ALL_FILTER = "전체";
+const CONTRACT_REQUIRED_FILTER = "계약서 필요";
 
 function defaultClientMeta(c: Client) {
   const type = c.type ?? "유형 미정";
@@ -153,6 +155,10 @@ const UNKNOWN_CLIENT_GROUP: ClientGroup = {
 
 export function groupForClient(c: Client): ClientGroup {
   return GROUPS.find((g) => g.match(c)) ?? UNKNOWN_CLIENT_GROUP;
+}
+
+function hasContractRequiredBadge(c: Client): boolean {
+  return getMobileClientBadges(c).some((badge) => badge.key === "contract_required");
 }
 
 function normalizePhone(value: string | null | undefined): string {
@@ -394,11 +400,16 @@ export default function ClientsPage() {
     }
     return { counts, map };
   }, [allFilteredClients]);
+  const contractRequiredClients = useMemo(
+    () => allFilteredClients.filter(hasContractRequiredBadge),
+    [allFilteredClients],
+  );
 
   const filterItems = useMemo(() => {
     if (isClientsFetching) {
       return [
         { label: ALL_FILTER, count: "", skeleton: true },
+        { label: CONTRACT_REQUIRED_FILTER, count: "", skeleton: true },
         ...GROUPS.map((g) => ({ label: g.title, count: "", skeleton: true })),
       ];
     }
@@ -408,6 +419,10 @@ export default function ClientsPage() {
         label: ALL_FILTER,
         count: String(total ?? allClients.length),
       },
+      {
+        label: CONTRACT_REQUIRED_FILTER,
+        count: String(contractRequiredClients.length),
+      },
     ];
     for (const g of GROUPS) {
       items.push({
@@ -416,7 +431,7 @@ export default function ClientsPage() {
       });
     }
     return items;
-  }, [allClients.length, grouped.counts, isClientsFetching, total]);
+  }, [allClients.length, contractRequiredClients.length, grouped.counts, isClientsFetching, total]);
 
   const sectionsFull = useMemo(() => {
     type Section = {
@@ -435,6 +450,18 @@ export default function ClientsPage() {
         : [];
     }
 
+    if (activeFilter === CONTRACT_REQUIRED_FILTER) {
+      return contractRequiredClients.length > 0
+        ? [{
+            key: "contract_required",
+            title: `${CONTRACT_REQUIRED_FILTER} · ${contractRequiredClients.length}명`,
+            group: GROUPS[0],
+            fullRows: contractRequiredClients,
+            fullCount: contractRequiredClients.length,
+          }]
+        : [];
+    }
+
     // 개별 필터: 해당 상태 그룹 단일 섹션.
     const sections: Section[] = [];
     for (const g of GROUPS) {
@@ -450,7 +477,7 @@ export default function ClientsPage() {
       });
     }
     return sections;
-  }, [activeFilter, grouped.map, allFilteredClients]);
+  }, [activeFilter, contractRequiredClients, grouped.map, allFilteredClients]);
 
   const maxFullCount = useMemo(
     () => sectionsFull.reduce((m, s) => Math.max(m, s.fullCount), 0),
@@ -535,29 +562,21 @@ export default function ClientsPage() {
                   >
                     {section.rows.map((c, idx) => {
                       const g = groupForClient(c);
+                      const badges = getMobileClientBadges(c);
+                      const avatarTone = badges[0]?.tone ?? g.badgeTone;
                       return (
                       <ListItemRow
                         key={c.id}
                         style={{ animationDelay: `${Math.min(idx, 4) * 40}ms` }}
 	                        dataComponent="mobile-clients-row"
 	                        left={
-	                          <div className={`list-avatar av-${g.badgeTone}`} data-component="mobile-clients-row-avatar">
+	                          <div className={`list-avatar av-${avatarTone}`} data-component="mobile-clients-row-avatar">
 	                            <User size={16} strokeWidth={2} />
 	                          </div>
 	                        }
                         name={c.name}
                         meta={clientMeta(c)}
-                        right={
-                          <div
-                            className="list-row-badges mobile-clients-row-badges"
-                            data-component="mobile-clients-row-badges"
-                          >
-                            <Badge label={g.badge} tone={g.badgeTone} />
-                            {shouldShowMissingContractBadge(c) && (
-                              <Badge label="계약서 없음" tone="burgundy" />
-                            )}
-                          </div>
-                        }
+                        right={<ListRowBadges badges={badges} />}
                         onClick={() => handleSelectClient(c)}
                       />
                       );

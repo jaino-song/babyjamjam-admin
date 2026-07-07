@@ -4,6 +4,10 @@ import { IMessageLogRepository } from "domain/repositories/message-log.repositor
 import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { MessageLogMapper } from "infrastructure/database/mapper/message-log.mapper";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import {
+    SERVICE_FEEDBACK_LINK_RULE_ID,
+    SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
+} from "domain/constants/service-feedback-link-message";
 
 @Injectable()
 export class SbMessageLogRepository implements IMessageLogRepository {
@@ -32,6 +36,32 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             },
             orderBy: { nextRetryAt: "asc" },
             take: 50,
+        });
+        return rows.map(MessageLogMapper.toDomain);
+    }
+
+    async findRetryableServiceFeedbackSmsByScheduleId(scheduleId: number): Promise<MessageLogEntity[]> {
+        const jobs = await this.prisma.message_trigger_job.findMany({
+            where: {
+                employeeScheduleId: scheduleId,
+                ruleId: SERVICE_FEEDBACK_LINK_RULE_ID,
+            },
+            select: { id: true },
+        });
+        const triggerJobIds = jobs.map((job) => job.id);
+
+        const rows = await this.prisma.message_log.findMany({
+            where: {
+                provider: "aligo_sms",
+                templateKey: SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
+                status: { in: ["pending", "failed"] },
+                nextRetryAt: { not: null },
+                OR: [
+                    ...(triggerJobIds.length > 0 ? [{ triggerJobId: { in: triggerJobIds } }] : []),
+                    { variables: { path: ["scheduleId"], equals: String(scheduleId) } },
+                ],
+            },
+            orderBy: { createdAt: "desc" },
         });
         return rows.map(MessageLogMapper.toDomain);
     }

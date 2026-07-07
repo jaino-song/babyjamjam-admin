@@ -4,6 +4,7 @@ import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { CircleAlert, FileCheck2, MessageCircle, MoreVertical, SquarePen, Trash2, User } from "lucide-react";
 
 import { Client } from "@/lib/client/types";
+import { getMobileClientBadges } from "@/lib/client/badges";
 import { EformsignDocument } from "@/lib/eformsign/types";
 import { useClientServiceRecords } from "@/hooks/useServiceRecords";
 import {
@@ -297,19 +298,6 @@ function contractPrimaryEmployeeName(doc: EformsignDocument | null | undefined):
     "employeeName",
     "providerName",
   ]);
-}
-
-function clientFeatureLabel(client: Client): string | null {
-  if (client.breastPump) return "유축기 대여";
-  if (client.careCenter) return "조리원 이용";
-  if (client.voucherClient) return "바우처";
-  return client.type;
-}
-
-function clientFeatureLabelTone(client: Client): "green" | "burgundy" | "primary" {
-  if (client.breastPump) return "primary";
-  if (client.voucherClient) return "green";
-  return "burgundy";
 }
 
 function documentStatusLabel(status: Client["documentStatus"]): string {
@@ -607,11 +595,10 @@ export function ClientDetailContent({
   });
 
   const group = GROUPS.find((g) => g.match(client)) ?? GROUPS[1];
-  const featureLabel = clientFeatureLabel(client);
-  const featureLabelTone = clientFeatureLabelTone(client);
+  const clientBadges = getMobileClientBadges(client);
+  const detailAvatarTone = clientBadges[0]?.tone ?? group.badgeTone;
   const docTone = documentStatusTone(client.documentStatus);
   const hasContractDocument = Boolean(client.eDocId);
-  const showMissingContractBadge = shouldShowMissingContractBadge(client);
   const displayNotificationLogs = visibleNotificationLogs(notificationLogs);
   const birthDate = firstValue(
     client.birthday,
@@ -962,13 +949,9 @@ export function ClientDetailContent({
       <MobileDetailHeader
         name="clients"
         avatar={<User size={22} strokeWidth={2} />}
-        avatarTone={group.badgeTone}
+        avatarTone={detailAvatarTone}
         title={client.name}
-        badges={[
-          { label: group.badge, tone: group.badgeMini },
-          ...(featureLabel ? [{ label: featureLabel, tone: featureLabelTone }] : []),
-          ...(showMissingContractBadge ? [{ label: "계약서 없음", tone: "burgundy" as const }] : []),
-        ]}
+        badges={clientBadges.map((badge) => ({ label: badge.label, tone: badge.tone }))}
         menu={
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
