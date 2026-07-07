@@ -32,7 +32,7 @@ import {
 } from "@/components/app/ui/form-section";
 import {
     SteppedWizardPanelContent,
-} from "@/components/app/v3";
+} from "@/components/app/v3/SteppedWizardPanelLayout";
 import {
     DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME,
     DETAIL_PANEL_FOOTER_CLASS_NAME,
