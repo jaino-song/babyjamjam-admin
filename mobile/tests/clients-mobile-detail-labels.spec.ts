@@ -76,7 +76,9 @@ test.describe("Mobile clients detail labels", () => {
     await expect(page.locator('[data-component="mobile-clients-row"]')).toBeVisible({ timeout: 15000 });
 
     await page.locator('[data-component="mobile-clients-row"]', { hasText: CLIENT.name }).click();
-    await page.getByRole("button", { name: "알림 발송" }).click();
+    const notificationTabButton = page.locator('[data-component="mobile-redesign-detail-tabs"] [data-tab="alimtalk"]');
+    await expect(notificationTabButton).toBeVisible();
+    await notificationTabButton.dispatchEvent("click");
 
     const alimtalkTab = page.locator('[data-component="mobile-clients-alimtalk-tab"]');
     await expect(alimtalkTab).toBeVisible();
