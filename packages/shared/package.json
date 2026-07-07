@@ -19,6 +19,7 @@
         "./eslint-plugin": "./eslint-plugin/index.mjs"
     },
     "scripts": {
+        "test": "node --test eslint-plugin/__tests__/*.test.js",
         "type-check": "tsc --noEmit"
     },
     "dependencies": {
@@ -30,6 +31,7 @@
         "next": "^16"
     },
     "devDependencies": {
+        "eslint": "^9",
         "next": "16.1.6",
         "typescript": "^5"
     }
