@@ -63,12 +63,12 @@
   justify-content: space-between;
   height: 64px;
   padding: 0 14px;
-  background: white;
-  border-bottom: 1px solid hsl(var(--v3-border));
+  background: hsl(var(--v3-primary));
+  border-bottom: 1px solid hsl(var(--v3-primary));
 }
 
 .navbarTitle {
-  color: hsl(var(--v3-dark));
+  color: white;
   font-size: 1rem;
   font-weight: 700;
 }
@@ -83,7 +83,7 @@
   border: 0;
   border-radius: 12px;
   background: transparent;
-  color: hsl(var(--v3-text));
+  color: white;
   cursor: pointer;
 }
 

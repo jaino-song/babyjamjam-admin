@@ -3,8 +3,10 @@ import { DatabaseModule } from "infrastructure/database/database.module";
 import { AligoModule } from "module/aligo.module";
 import { AlimtalkModule } from "module/alimtalk.module";
 import { EformsignDocModule } from "module/eformsign-doc.module";
+import { AdminServiceRecordController } from "interface/controllers/admin-service-record.controller";
 import { ServiceFeedbackController } from "interface/controllers/service-feedback.controller";
 import { ScheduleChangeController } from "interface/controllers/schedule-change.controller";
+import { AdminServiceRecordService } from "application/services/admin-service-record.service";
 import { ServiceFeedbackService } from "application/services/service-feedback.service";
 import { ScheduleChangeService } from "application/services/schedule-change.service";
 import { EmployeeFeedbackTokenService } from "application/services/employee-feedback-token.service";
@@ -18,8 +20,9 @@ import { EmployeeFeedbackGuard } from "infrastructure/auth/employee-feedback.gua
  */
 @Module({
     imports: [DatabaseModule, AligoModule, AlimtalkModule, EformsignDocModule],
-    controllers: [ServiceFeedbackController, ScheduleChangeController],
+    controllers: [ServiceFeedbackController, ScheduleChangeController, AdminServiceRecordController],
     providers: [
+        AdminServiceRecordService,
         ServiceFeedbackService,
         ScheduleChangeService,
         EmployeeFeedbackTokenService,

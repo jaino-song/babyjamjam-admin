@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import {
     ChangeEmployeeOpenStatusUsecase,
     CreateEmployeeUsecase,
@@ -15,6 +15,8 @@ import {
 } from "application/usecases/employee";
 import { normalizeEmployeeGrade } from "domain/constants/employee-grade.constants";
 import { EmployeeEntity } from "domain/entities/employee.entity";
+import { EMPLOYEE_REPOSITORY, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
+import { normalizePhone } from "application/utils/normalize-phone";
 
 export type EmployeeUpdateParams = {
     name?: string;
@@ -40,6 +42,8 @@ export class EmployeeService {
         private readonly listEmployeesByRegisteredDateRangeUsecase: ListEmployeesByRegisteredDateRangeUsecase,
         private readonly changeEmployeeOpenStatusUsecase: ChangeEmployeeOpenStatusUsecase,
         private readonly listEmployeesOpenToNextWorkUsecase: ListEmployeesOpenToNextWorkUsecase,
+        @Inject(EMPLOYEE_REPOSITORY)
+        private readonly employeeRepository: IEmployeeRepository,
     ) {}
 
     create(
@@ -103,5 +107,13 @@ export class EmployeeService {
 
     findAllOpenToNextWork(branchid: string): Promise<EmployeeEntity[]> {
         return this.listEmployeesOpenToNextWorkUsecase.execute(branchid);
+    }
+
+    async checkPhoneExists(branchid: string, phone: string | null | undefined): Promise<boolean> {
+        const normalizedPhone = normalizePhone(phone);
+        if (!normalizedPhone) return false;
+
+        const existing = await this.employeeRepository.findByPhone(branchid, normalizedPhone);
+        return existing !== null;
     }
 }

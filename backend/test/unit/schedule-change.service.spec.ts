@@ -1,5 +1,4 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { ScheduleChangeService } from "application/services/schedule-change.service";
 import { EmployeeFeedbackTokenService } from "application/services/employee-feedback-token.service";
@@ -36,10 +35,6 @@ const createMockPrismaService = () => ({
 
 const createMockTokenService = () => ({
     extendExpiryForSchedule: jest.fn(),
-});
-
-const createMockConfigService = () => ({
-    get: jest.fn(),
 });
 
 const createMockTriggerService = () => ({
@@ -121,7 +116,6 @@ describe("ScheduleChangeService", () => {
     let prismaService: ReturnType<typeof createMockPrismaService>;
     let txPrismaService: ReturnType<typeof createMockPrismaService>;
     let tokenService: ReturnType<typeof createMockTokenService>;
-    let configService: ReturnType<typeof createMockConfigService>;
     let triggerService: ReturnType<typeof createMockTriggerService>;
     let events: string[];
 
@@ -129,7 +123,6 @@ describe("ScheduleChangeService", () => {
         prismaService = createMockPrismaService();
         txPrismaService = createMockPrismaService();
         tokenService = createMockTokenService();
-        configService = createMockConfigService();
         triggerService = createMockTriggerService();
         events = [];
 
@@ -147,7 +140,6 @@ describe("ScheduleChangeService", () => {
         service = new ScheduleChangeService(
             prismaService as unknown as PrismaService,
             tokenService as unknown as EmployeeFeedbackTokenService,
-            configService as unknown as ConfigService,
             triggerService as unknown as AlimtalkTriggerService,
         );
     });
@@ -338,7 +330,7 @@ describe("ScheduleChangeService", () => {
             });
             expect(tokenService.extendExpiryForSchedule).toHaveBeenCalledWith(
                 SCHEDULE_ID,
-                toDbDate("2026-07-29"),
+                new Date("2026-07-15T20:00:00+09:00"),
                 txPrismaService,
             );
             expect(txPrismaService.schedule_change_request.update).toHaveBeenCalledWith({

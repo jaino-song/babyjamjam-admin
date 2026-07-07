@@ -157,6 +157,28 @@ describe("ClientService", () => {
     });
 
     // ============================================
+    // checkPhoneExists
+    // ============================================
+    describe("checkPhoneExists", () => {
+        it("should check duplicate phones through the client repository only", async () => {
+            const client = createClientEntity();
+            clientRepository.findByPhone.mockResolvedValue(client);
+
+            const result = await service.checkPhoneExists(branchId, "010-1234-5678");
+
+            expect(result).toBe(true);
+            expect(clientRepository.findByPhone).toHaveBeenCalledWith(branchId, "01012345678");
+        });
+
+        it("should return false without querying when the phone is invalid", async () => {
+            const result = await service.checkPhoneExists(branchId, "1234");
+
+            expect(result).toBe(false);
+            expect(clientRepository.findByPhone).not.toHaveBeenCalled();
+        });
+    });
+
+    // ============================================
     // create
     // ============================================
     describe("create", () => {

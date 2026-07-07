@@ -58,12 +58,17 @@ const TEMPLATE_LABELS: Record<TriggerTemplateKey, string> = {
   SERVICE_INFO: "서비스 안내",
   SERVICE_END_REMINDER: "서비스 종료 안내",
   EMPLOYEE_ASSIGNED: "직원 배정 완료",
+  SERVICE_FEEDBACK_LINK: "제공기록지 작성 링크",
   CLIENT_GREETING: "인사(소개)",
   PRICE_INFO: "비용 안내",
   REMINDER: "리마인드",
   THANKS: "예약 완료(입금 확인)",
   SURVEY: "모니터링 설문",
   INFO: "정보 요청",
+};
+
+const SMS_LOG_TEMPLATE_LABELS: Record<string, string> = {
+  service_feedback_link_sms: "제공기록지 작성 링크",
 };
 
 const VARIABLE_LABELS: Record<string, string> = {
@@ -185,7 +190,7 @@ function getEventMeta(eventType: TriggerEventType | null) {
 }
 
 function getTemplateLabel(templateKey: string) {
-  return TEMPLATE_LABELS[templateKey as TriggerTemplateKey] ?? templateKey;
+  return SMS_LOG_TEMPLATE_LABELS[templateKey] ?? TEMPLATE_LABELS[templateKey as TriggerTemplateKey] ?? templateKey;
 }
 
 function getStatusMeta(status: AlimtalkHistoryStatus) {

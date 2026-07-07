@@ -2,6 +2,8 @@
 
 import React from "react";
 import { ChevronLeft } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { DetailTabs } from "./DetailTabs";
 import { PanelTitleGroup } from "./PanelTitleGroup";
 import { useSplitLayoutNavOptional } from "./SplitLayoutContext";
 import { useScrollActivity } from "./useScrollActivity";
@@ -15,8 +17,12 @@ interface DetailPanelProps {
   title?: React.ReactNode;
   /** Subtitle below the title */
   subtitle?: React.ReactNode;
-  /** Badges/chips inline with the title */
+  /** Badges/chips rendered before the title (leftmost position) */
+  badgesLeft?: React.ReactNode;
+  /** Badges/chips inline after the title */
   badges?: React.ReactNode;
+  /** Badges/chips pushed to the far right of the title row */
+  badgesRight?: React.ReactNode;
   /** Trailing content on the right side of the header (e.g. Stepper) */
   trailing?: React.ReactNode;
   /** Optional stepper rendered on the right side of the structured header */
@@ -33,7 +39,33 @@ interface DetailPanelProps {
   overlay?: React.ReactNode;
   emptyState?: React.ReactNode;
   footer?: React.ReactNode;
+  footerClassName?: string;
+  isLoading?: boolean;
   children: React.ReactNode;
+}
+
+export const DETAIL_PANEL_FOOTER_CLASS_NAME =
+  "shrink-0 border-t border-v3-border bg-white px-[calc(24px*var(--v3-ui-scale,1))] py-[calc(16px*var(--v3-ui-scale,1))] flex flex-wrap items-center justify-between gap-[calc(12px*var(--v3-ui-scale,1))]";
+export const DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME =
+  "min-w-0 text-[calc(12px*var(--v3-ui-scale,1))] font-semibold text-v3-text-muted";
+export const DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME =
+  "ml-auto flex shrink-0 flex-wrap justify-end gap-[calc(12px*var(--v3-ui-scale,1))]";
+
+function DetailPanelTextSkeleton({
+  name,
+  className,
+}: {
+  name: string;
+  className?: string;
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      data-slot="skeleton"
+      data-component={name}
+      className={cn("block animate-pulse rounded-md bg-v3-dim-white", className)}
+    />
+  );
 }
 
 export function DetailPanel({
@@ -41,7 +73,9 @@ export function DetailPanel({
   avatar,
   title,
   subtitle,
+  badgesLeft,
   badges,
+  badgesRight,
   trailing,
   stepper,
   headerAction,
@@ -51,6 +85,8 @@ export function DetailPanel({
   overlay,
   emptyState,
   footer,
+  footerClassName,
+  isLoading = false,
   children,
 }: DetailPanelProps) {
   const splitLayoutNav = useSplitLayoutNavOptional();
@@ -63,8 +99,28 @@ export function DetailPanel({
       : null
   );
 
-  const hasStructuredHeader = !!title;
+  const resolvedTitle =
+    isLoading && title ? (
+      <DetailPanelTextSkeleton
+        name="detail-panel-title-skeleton"
+        className="h-[calc(18px*var(--v3-ui-scale,1))] w-36"
+      />
+    ) : title;
+  const resolvedSubtitle =
+    isLoading && subtitle ? (
+      <DetailPanelTextSkeleton
+        name="detail-panel-subtitle-skeleton"
+        className="h-[calc(14px*var(--v3-ui-scale,1))] w-80 max-w-full"
+      />
+    ) : subtitle;
+  const hasStructuredHeader = !!resolvedTitle;
   const hasHeaderTrailing = !!stepper || !!trailing;
+  const renderedTabs =
+    isLoading &&
+    React.isValidElement<React.ComponentProps<typeof DetailTabs>>(tabs) &&
+    tabs.type === DetailTabs
+      ? React.cloneElement(tabs, { isLoading: true })
+      : tabs;
 
   const renderedHeader = hasStructuredHeader ? (
     <div className="flex items-center justify-between gap-[calc(16px*var(--v3-ui-scale,1))]">
@@ -72,9 +128,11 @@ export function DetailPanel({
         {avatar}
         <PanelTitleGroup
           component="detail-panel"
-          title={title}
-          subtitle={subtitle}
+          title={resolvedTitle}
+          subtitle={resolvedSubtitle}
+          badgesLeft={badgesLeft}
           badges={badges}
+          badgesRight={badgesRight}
           className="flex-1"
           subtitleClassName="min-w-0 max-w-full overflow-hidden text-[calc(14px*var(--v3-ui-scale,1))]"
           titleClassName="text-[calc(16px*var(--v3-ui-scale,1))]"
@@ -107,11 +165,14 @@ export function DetailPanel({
         </header>
       )}
       {headerAction && <div className="px-[calc(24px*var(--v3-ui-scale,1))] pb-[calc(24px*var(--v3-ui-scale,1))]">{headerAction}</div>}
-      {tabs && <div className="px-[calc(24px*var(--v3-ui-scale,1))]">{tabs}</div>}
+      {renderedTabs && <div className="px-[calc(24px*var(--v3-ui-scale,1))]">{renderedTabs}</div>}
       {resolvedOverlay ? (
         <div
           data-component="detail-panel-overlay"
-          className="pointer-events-none absolute inset-0 z-10 flex -translate-y-[calc(12px*var(--v3-ui-scale,1))] items-center justify-center p-[calc(24px*var(--v3-ui-scale,1))]"
+          className={cn(
+            "pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-[calc(24px*var(--v3-ui-scale,1))]",
+            overlay ? "-translate-y-[calc(12px*var(--v3-ui-scale,1))]" : undefined,
+          )}
         >
           {resolvedOverlay}
         </div>
@@ -123,7 +184,7 @@ export function DetailPanel({
           data-scroll-active={isScrollActive ? "true" : "false"}
           onScroll={handleScroll}
         >
-          {children}
+          {isLoading ? null : children}
         </div>
         <div
           data-component="detail-panel-bottom-spacer"
@@ -131,7 +192,10 @@ export function DetailPanel({
         />
       </main>
       {footer ? (
-        <footer data-component="detail-panel-footer" className="shrink-0">
+        <footer
+          data-component="detail-panel-footer"
+          className={cn(DETAIL_PANEL_FOOTER_CLASS_NAME, footerClassName)}
+        >
           {footer}
         </footer>
       ) : null}

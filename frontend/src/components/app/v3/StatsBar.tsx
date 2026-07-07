@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { StatMini } from "./StatMini";
+import { StatMini, type StatMiniDensity } from "./StatMini";
 
 export interface StatsBarItem {
   icon: React.ComponentType<{ className?: string }>;
@@ -14,10 +14,16 @@ export interface StatsBarItem {
 interface StatsBarProps {
   items: readonly StatsBarItem[];
   isLoading?: boolean;
+  density?: StatMiniDensity;
   name?: string;
 }
 
-export function StatsBar({ items, isLoading = false, name = "stats" }: StatsBarProps) {
+export function StatsBar({
+  items,
+  isLoading = false,
+  density = "default",
+  name = "stats",
+}: StatsBarProps) {
   return (
     <div data-component={`${name}-stats`} className="flex flex-wrap gap-[calc(16px*var(--v3-ui-scale,1))]">
       {items.map((item, idx) => (
@@ -30,6 +36,7 @@ export function StatsBar({ items, isLoading = false, name = "stats" }: StatsBarP
           colorIndex={item.colorIndex ?? idx}
           animationDelay={`${idx * 0.08}s`}
           isLoading={isLoading}
+          density={density}
         />
       ))}
     </div>

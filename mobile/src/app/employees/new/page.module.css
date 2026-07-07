@@ -53,8 +53,8 @@
   justify-content: space-between;
   height: 64px;
   padding: 0 14px;
-  border-bottom: 1px solid hsl(var(--v3-border));
-  background: white;
+  border-bottom: 1px solid hsl(var(--v3-primary));
+  background: hsl(var(--v3-primary));
 }
 
 .navbarIconButton {
@@ -68,7 +68,7 @@
   border: 0;
   border-radius: 12px;
   background: transparent;
-  color: hsl(var(--v3-text));
+  color: white;
   cursor: pointer;
   font-family: inherit;
 }
@@ -76,7 +76,7 @@
 .navbarTitle {
   font-size: 1rem;
   font-weight: 700;
-  color: hsl(var(--v3-dark));
+  color: white;
 }
 
 .wizardContent {

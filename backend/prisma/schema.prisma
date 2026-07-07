@@ -566,7 +566,7 @@ model call_ingest_token {
 }
 
 /// Per-assignment no-login feedback access for a 제공인력.
-/// The SMS link carries the plaintext link token; a DOB challenge mints the access token.
+/// The SMS link carries the plaintext link token; a phone challenge mints the access token.
 model employee_feedback_token {
   id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   branchId        String            @map("branch_id") @db.Uuid
@@ -574,7 +574,7 @@ model employee_feedback_token {
   employeeId      Int               @map("employee_id") @db.SmallInt
   linkTokenHash   String            @unique @map("link_token_hash")
   accessTokenHash String?           @unique @map("access_token_hash")
-  expectedDobHash String            @map("expected_dob_hash")
+  expectedPhoneHash String          @map("expected_phone_hash")
   verifiedAt      DateTime?         @map("verified_at") @db.Timestamptz(6)
   failedAttempts  Int               @default(0) @map("failed_attempts")
   expiresAt       DateTime          @map("expires_at") @db.Timestamptz(6)

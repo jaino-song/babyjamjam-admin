@@ -81,6 +81,10 @@ const STATUS_NAME_TO_CODE: Record<string, string> = {
 
 const COMPLETED_STATUS_CODES = new Set(["003", "012", "022", "032", "050", "062", "072", "092"]);
 const REJECTED_STATUS_CODES = new Set(["011", "021", "031", "040", "042", "045", "047", "049", "061", "071", "080"]);
+const PROVIDER_REVIEW_STEP_TYPES = new Set(["06"]);
+const PROVIDER_REVIEW_OWNER_KEYWORDS = ["제공기관", "관리자", "담당자"];
+const PROVIDER_REVIEW_ACTION_KEYWORDS = ["확인", "검토"];
+const CUSTOMER_STEP_KEYWORDS = ["이용자", "고객", "산모"];
 
 @Injectable()
 export class EformsignWebhookService {
@@ -458,8 +462,28 @@ export class EformsignWebhookService {
             return false;
         }
 
-        const recipients = currentStatus?.step_recipients ?? [];
-        return recipients.length > 0 && recipients.every((recipient) => recipient.recipient_type === "01");
+        return this.isProviderReviewStep(currentStatus);
+    }
+
+    private isProviderReviewStep(
+        currentStatus: EformsignApiDocumentResponse["current_status"] | null | undefined
+    ): boolean {
+        const stepType = currentStatus?.step_type?.trim() ?? "";
+        const stepName = currentStatus?.step_name?.trim() ?? "";
+
+        if (PROVIDER_REVIEW_STEP_TYPES.has(stepType)) {
+            return true;
+        }
+        if (!stepName) {
+            return false;
+        }
+        if (CUSTOMER_STEP_KEYWORDS.some((keyword) => stepName.includes(keyword))) {
+            return false;
+        }
+
+        const hasProviderOwner = PROVIDER_REVIEW_OWNER_KEYWORDS.some((keyword) => stepName.includes(keyword));
+        const hasReviewAction = PROVIDER_REVIEW_ACTION_KEYWORDS.some((keyword) => stepName.includes(keyword));
+        return hasProviderOwner && hasReviewAction;
     }
 
     private async notifyReviewRequiredIfNeeded(

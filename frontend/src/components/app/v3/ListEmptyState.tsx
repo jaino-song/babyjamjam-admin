@@ -16,7 +16,7 @@ export function ListEmptyState({
 }: ListEmptyStateProps) {
   return (
     <div
-      className={cn("flex min-h-[calc(320px*var(--v3-ui-scale,1))] flex-1 items-center justify-center", className)}
+      className={cn("flex min-h-full flex-1 items-center justify-center", className)}
     >
       <div data-component="list-empty-state-copy" className="text-center text-v3-text-muted">
         <Icon className="mx-auto mb-[calc(12px*var(--v3-ui-scale,1))] h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] opacity-30" />

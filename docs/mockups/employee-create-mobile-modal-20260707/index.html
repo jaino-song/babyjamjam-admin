@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>새 제공인력 등록 모바일 모달 목업</title>
+    <style>
+      :root {
+        --primary: #004bad;
+        --primary-pressed: #003f91;
+        --surface: #ffffff;
+        --canvas: #f5f7fb;
+        --line: #dbe3ee;
+        --line-strong: #cfd9e7;
+        --text: #1f2a3d;
+        --muted: #728197;
+        --muted-strong: #526173;
+        --danger: #e5484d;
+        --success-bg: #e7f5ec;
+        --success: #267447;
+        --shadow: 0 24px 60px rgba(23, 35, 55, 0.28);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #858585;
+        color: var(--text);
+      }
+
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+
+      .stage {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        overflow: hidden;
+      }
+
+      .client-page {
+        position: absolute;
+        top: 0;
+        width: 430px;
+        height: 100vh;
+        max-height: 900px;
+        background: var(--canvas);
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+        overflow: hidden;
+      }
+
+      .client-navbar {
+        height: 64px;
+        background: var(--primary);
+        color: white;
+        display: grid;
+        grid-template-columns: 48px 1fr 48px;
+        align-items: center;
+        padding: 0 12px;
+        font-weight: 800;
+        font-size: 18px;
+      }
+
+      .client-navbar span {
+        text-align: center;
+      }
+
+      .client-shell {
+        padding: 16px 16px 104px;
+      }
+
+      .progress {
+        height: 6px;
+        width: 100%;
+        border-radius: 999px;
+        background: #eef2f7;
+        overflow: hidden;
+        margin-bottom: 18px;
+      }
+
+      .progress::before {
+        content: "";
+        display: block;
+        width: 66%;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, var(--primary), #1677ff);
+      }
+
+      .page-title {
+        margin: 0 0 6px;
+        font-size: 20px;
+        line-height: 1.25;
+        font-weight: 800;
+      }
+
+      .page-subtitle {
+        margin: 0 0 18px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .background-card {
+        background: var(--surface);
+        border-radius: 16px;
+        box-shadow: 0 1px 8px rgba(31, 42, 61, 0.06);
+        padding: 16px;
+        margin-bottom: 12px;
+      }
+
+      .background-input {
+        height: 48px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        padding: 0 14px;
+        color: #8592a5;
+        margin-top: 10px;
+      }
+
+      .dim {
+        position: fixed;
+        inset: 0;
+        background: rgba(30, 32, 36, 0.58);
+        padding: 0;
+      }
+
+      .modal {
+        --modal-top-gap: 5vh;
+        position: fixed;
+        top: var(--modal-top-gap);
+        bottom: 0;
+        left: 50%;
+        width: min(390px, 100vw);
+        height: calc(100dvh - var(--modal-top-gap));
+        max-height: calc(100dvh - var(--modal-top-gap));
+        background: var(--canvas);
+        border-radius: 24px 24px 0 0;
+        box-shadow: var(--shadow);
+        overflow: hidden;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        transform: translateX(-50%);
+        animation: employee-modal-slide-up 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+      }
+
+      @keyframes employee-modal-slide-up {
+        from {
+          transform: translate(-50%, calc(100% + 16px));
+        }
+
+        to {
+          transform: translate(-50%, 0);
+        }
+      }
+
+      .modal-header {
+        background: var(--primary);
+        color: white;
+        min-height: 64px;
+        display: grid;
+        grid-template-columns: 44px 1fr 44px;
+        align-items: center;
+        padding: 0 12px;
+      }
+
+      .icon-button {
+        width: 40px;
+        height: 40px;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        border-radius: 12px;
+        display: inline-grid;
+        place-items: center;
+        cursor: pointer;
+      }
+
+      .icon-button:focus-visible,
+      .primary-action:focus-visible,
+      .secondary-action:focus-visible,
+      input:focus,
+      select:focus {
+        outline: 3px solid rgba(22, 119, 255, 0.22);
+        outline-offset: 2px;
+      }
+
+      .modal-title {
+        min-width: 0;
+        text-align: center;
+      }
+
+      .modal-title h1 {
+        margin: 0;
+        font-size: 18px;
+        line-height: 1.2;
+        font-weight: 800;
+        letter-spacing: 0;
+      }
+
+      .modal-title p {
+        margin: 4px 0 0;
+        color: rgba(255, 255, 255, 0.78);
+        font-size: 11px;
+        font-weight: 650;
+      }
+
+      .modal-body {
+        min-height: 0;
+        overflow-y: auto;
+        padding: 14px 14px 18px;
+      }
+
+      .context-strip {
+        border-radius: 16px;
+        background: white;
+        border: 1px solid #edf1f7;
+        padding: 12px 14px;
+        margin-bottom: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .context-strip strong {
+        display: block;
+        font-size: 13px;
+        line-height: 1.25;
+      }
+
+      .context-strip span {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 3px;
+      }
+
+      .pill {
+        flex: 0 0 auto;
+        border-radius: 999px;
+        background: #eef6ff;
+        color: var(--primary);
+        padding: 6px 10px;
+        font-size: 11px;
+        font-weight: 800;
+      }
+
+      .form-section {
+        background: white;
+        border-radius: 16px;
+        box-shadow: 0 1px 8px rgba(31, 42, 61, 0.06);
+        padding: 16px;
+        margin-bottom: 12px;
+      }
+
+      .section-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+
+      .section-title {
+        margin: 0;
+        color: var(--muted-strong);
+        font-size: 14px;
+        font-weight: 800;
+      }
+
+      .section-caption {
+        margin: 2px 0 0;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.35;
+      }
+
+      .field {
+        display: grid;
+        gap: 7px;
+        margin-top: 13px;
+      }
+
+      .field:first-of-type {
+        margin-top: 0;
+      }
+
+      .field label {
+        color: var(--muted-strong);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .required {
+        color: var(--danger);
+      }
+
+      .control-wrap {
+        position: relative;
+      }
+
+      .control,
+      .select {
+        width: 100%;
+        min-height: 48px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: white;
+        color: var(--text);
+        padding: 0 14px;
+        font-size: 16px;
+        line-height: 1.2;
+      }
+
+      .control::placeholder {
+        color: #98a5b7;
+      }
+
+      .select {
+        appearance: none;
+        padding-right: 42px;
+      }
+
+      .select-icon {
+        position: absolute;
+        right: 14px;
+        top: 50%;
+        width: 18px;
+        height: 18px;
+        transform: translateY(-50%);
+        color: #66758a;
+        pointer-events: none;
+      }
+
+      .chip-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 2px;
+      }
+
+      .chip {
+        border: 1px solid var(--line);
+        background: white;
+        color: var(--muted-strong);
+        border-radius: 999px;
+        padding: 8px 12px;
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .chip.is-selected {
+        background: #eef6ff;
+        border-color: rgba(0, 75, 173, 0.34);
+        color: var(--primary);
+      }
+
+      .switch-row {
+        min-height: 52px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 10px 12px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+      }
+
+      .switch-row strong {
+        display: block;
+        font-size: 13px;
+      }
+
+      .switch-row span {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.3;
+      }
+
+      .switch {
+        flex: 0 0 auto;
+        width: 46px;
+        height: 26px;
+        border-radius: 999px;
+        border: 0;
+        background: var(--primary);
+        padding: 3px;
+        display: flex;
+        justify-content: flex-end;
+      }
+
+      .switch::before {
+        content: "";
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: white;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+      }
+
+      .helper {
+        margin: 10px 0 0;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.5;
+      }
+
+      .modal-footer {
+        background: white;
+        border-top: 1px solid #e3e9f2;
+        padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+        display: grid;
+        grid-template-columns: minmax(96px, 0.9fr) minmax(132px, 1.4fr);
+        gap: 10px;
+      }
+
+      .secondary-action,
+      .primary-action {
+        min-height: 52px;
+        border-radius: 16px;
+        border: 0;
+        font-size: 16px;
+        font-weight: 800;
+        cursor: pointer;
+      }
+
+      .secondary-action {
+        background: #f1f4f8;
+        color: #344255;
+      }
+
+      .primary-action {
+        background: var(--primary);
+        color: white;
+        box-shadow: 0 8px 18px rgba(0, 75, 173, 0.2);
+      }
+
+      .primary-action:active {
+        background: var(--primary-pressed);
+      }
+
+      @media (max-width: 430px) {
+        .stage {
+          padding: 0;
+        }
+
+        .client-page {
+          width: 100vw;
+        }
+
+        .dim {
+          padding: 0;
+        }
+
+        .modal {
+          left: 0;
+          width: 100%;
+          transform: translateY(0);
+          animation-name: employee-modal-slide-up-mobile;
+        }
+      }
+
+      @keyframes employee-modal-slide-up-mobile {
+        from {
+          transform: translateY(calc(100% + 16px));
+        }
+
+        to {
+          transform: translateY(0);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="stage">
+      <section class="client-page" aria-hidden="true">
+        <header class="client-navbar">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span>새 고객 추가</span>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
+          </svg>
+        </header>
+        <div class="client-shell">
+          <div class="progress"></div>
+          <h2 class="page-title">서비스 설정</h2>
+          <p class="page-subtitle">바우처와 제공인력, 요금 정보를 확인해주세요.</p>
+          <div class="background-card">
+            <strong>제공인력 배정</strong>
+            <div class="background-input">이름으로 검색...</div>
+            <div class="background-input">이름으로 검색...</div>
+          </div>
+          <div class="background-card">
+            <strong>요금 정보</strong>
+            <div class="background-input">1,424,000 원</div>
+            <div class="background-input">982,000 원</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="dim" aria-label="새 제공인력 등록 모달 목업">
+        <article class="modal" role="dialog" aria-modal="true" aria-labelledby="employee-modal-title">
+          <header class="modal-header">
+            <button class="icon-button" type="button" aria-label="뒤로">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
+            <div class="modal-title">
+              <h1 id="employee-modal-title">새 제공인력 등록</h1>
+              <p>고객 생성 중 바로 추가</p>
+            </div>
+            <button class="icon-button" type="button" aria-label="닫기">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
+              </svg>
+            </button>
+          </header>
+
+          <div class="modal-body">
+            <div class="context-strip">
+              <div>
+                <strong>제공인력 1에 배정</strong>
+                <span>등록 완료 후 선택값으로 자동 입력됩니다</span>
+              </div>
+              <span class="pill">신규 등록</span>
+            </div>
+
+            <section class="form-section">
+              <div class="section-head">
+                <div>
+                  <h2 class="section-title">기본 정보</h2>
+                  <p class="section-caption">연락 가능한 정보만 먼저 입력해도 됩니다.</p>
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="employee-name">이름 <span class="required">*</span></label>
+                <input id="employee-name" class="control" value="김정인" />
+              </div>
+
+              <div class="field">
+                <label for="employee-phone">연락처 <span class="required">*</span></label>
+                <input id="employee-phone" class="control" value="010-1234-5678" inputmode="tel" />
+              </div>
+
+              <div class="field">
+                <label for="employee-birthday">생년월일</label>
+                <input id="employee-birthday" class="control" placeholder="YYMMDD" inputmode="numeric" />
+              </div>
+            </section>
+
+            <section class="form-section">
+              <div class="section-head">
+                <div>
+                  <h2 class="section-title">근무 설정</h2>
+                  <p class="section-caption">필요한 범위만 선택하고 나중에 수정할 수 있습니다.</p>
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="employee-grade">등급</label>
+                <div class="control-wrap">
+                  <select id="employee-grade" class="select">
+                    <option>스탠다드</option>
+                    <option>베스트</option>
+                    <option>프리미엄</option>
+                  </select>
+                  <svg class="select-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </div>
+              </div>
+
+              <div class="field">
+                <label>근무 지역</label>
+                <div class="chip-grid" aria-label="근무 지역 선택">
+                  <button class="chip is-selected" type="button">남동구</button>
+                  <button class="chip" type="button">연수구</button>
+                  <button class="chip" type="button">부평구</button>
+                  <button class="chip" type="button">미추홀구</button>
+                </div>
+              </div>
+
+              <div class="field">
+                <label>근무 가능 상태</label>
+                <div class="switch-row">
+                  <div>
+                    <strong>다음 근무 배정 가능</strong>
+                    <span>고객 생성 완료 후 배정 후보에 표시합니다.</span>
+                  </div>
+                  <button class="switch" type="button" aria-label="다음 근무 배정 가능 켜짐"></button>
+                </div>
+              </div>
+
+              <p class="helper">필수 정보는 이름과 연락처입니다. 나머지 항목은 제공인력 상세 화면에서 보완할 수 있습니다.</p>
+            </section>
+          </div>
+
+          <footer class="modal-footer">
+            <button class="secondary-action" type="button">취소</button>
+            <button class="primary-action" type="button">등록</button>
+          </footer>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

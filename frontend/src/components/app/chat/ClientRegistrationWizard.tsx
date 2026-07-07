@@ -50,6 +50,32 @@ function formatPrice(price: string): string {
     return num.toLocaleString("ko-KR");
 }
 
+function parseCompactDateInput(value: string): string {
+    return value.replace(/\D/g, "").slice(0, 6);
+}
+
+function normalizeCompactDateForSubmit(value: string): string {
+    const compactDate = parseCompactDateInput(value);
+    if (compactDate.length !== 6) return value;
+
+    const yearPrefix = Number(compactDate.slice(0, 2)) >= 70 ? "19" : "20";
+    return `${yearPrefix}${compactDate.slice(0, 2)}-${compactDate.slice(2, 4)}-${compactDate.slice(4, 6)}`;
+}
+
+function isValidCompactDateInput(value: string): boolean {
+    const compactDate = parseCompactDateInput(value);
+    if (compactDate.length !== 6) return false;
+
+    const normalizedDate = normalizeCompactDateForSubmit(compactDate);
+    const date = new Date(`${normalizedDate}T00:00:00`);
+    return (
+        !Number.isNaN(date.getTime()) &&
+        date.getFullYear() === Number(normalizedDate.slice(0, 4)) &&
+        date.getMonth() + 1 === Number(normalizedDate.slice(5, 7)) &&
+        date.getDate() === Number(normalizedDate.slice(8, 10))
+    );
+}
+
 export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizardProps) {
     const createClientMutation = useCreateClient();
     const [activeStep, setActiveStep] = useState(0);
@@ -101,7 +127,7 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
                 phone.trim().length > 0 &&
                 birthday.trim().length > 0 &&
                 address.trim().length > 0 &&
-                dueDate.trim().length > 0
+                isValidCompactDateInput(dueDate)
             );
         }
         if (activeStep === 1) {
@@ -164,7 +190,7 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
                 phone: phone.trim(),
                 birthday: birthday.trim(),
                 address: address.trim(),
-                dueDate: dueDate.trim(),
+                dueDate: normalizeCompactDateForSubmit(dueDate.trim()),
                 careCenter,
                 voucherClient,
                 breastPump,
@@ -232,9 +258,12 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
                             <Label htmlFor="dueDate">출산 예정일</Label>
                             <Input
                                 id="dueDate"
-                                type="date"
+                                type="text"
+                                inputMode="numeric"
+                                maxLength={6}
+                                placeholder="YYMMDD"
                                 value={dueDate}
-                                onChange={(e) => setDueDate(e.target.value)}
+                                onChange={(e) => setDueDate(parseCompactDateInput(e.target.value))}
                             />
                         </div>
                         <div className="space-y-2">
@@ -261,6 +290,7 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
                             <Label htmlFor="address">주소</Label>
                             <Input
                                 id="address"
+                                placeholder="상세 주소"
                                 value={address}
                                 onChange={(e) => setAddress(e.target.value)}
                             />

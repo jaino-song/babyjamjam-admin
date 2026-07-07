@@ -4,6 +4,7 @@ export interface IAlimtalkLogRepository {
     save(log: AlimtalkLogEntity): Promise<AlimtalkLogEntity>;
     update(log: AlimtalkLogEntity): Promise<AlimtalkLogEntity>;
     findPendingRetries(): Promise<AlimtalkLogEntity[]>;
+    findRetryableServiceFeedbackSmsByScheduleId(scheduleId: number): Promise<AlimtalkLogEntity[]>;
     findRecentByBranch(
         branchId: string,
         limit?: number,

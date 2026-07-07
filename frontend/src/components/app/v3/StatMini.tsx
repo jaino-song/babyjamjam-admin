@@ -4,6 +4,8 @@ import React from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
+export type StatMiniDensity = "default" | "responsive-square";
+
 interface StatMiniProps {
   icon: React.ComponentType<{ className?: string }>;
   value: string | number;
@@ -12,6 +14,7 @@ interface StatMiniProps {
   animationDelay?: React.CSSProperties["animationDelay"];
   isLoading?: boolean;
   counter?: string;
+  density?: StatMiniDensity;
 }
 
 const colorVariants = [
@@ -29,15 +32,19 @@ export function StatMini({
   animationDelay,
   isLoading = false,
   counter = "",
+  density = "default",
 }: StatMiniProps) {
   const variant = colorVariants[colorIndex % colorVariants.length];
   const animationStyle = animationDelay ? { animationDelay } : undefined;
+  const isResponsiveSquare = density === "responsive-square";
 
   return (
     <div
       data-component="stat-mini"
       className={cn(
-        "flex w-[calc(176px*var(--v3-ui-scale,1))] items-center justify-start gap-[calc(16px*var(--v3-ui-scale,1))] rounded-[20px] bg-white p-[calc(16px*var(--v3-ui-scale,1))] shadow-v3",
+        isResponsiveSquare
+          ? "flex aspect-square w-[calc(96px*var(--v3-ui-scale,1))] items-center justify-center rounded-[20px] bg-white p-[calc(12px*var(--v3-ui-scale,1))] text-center shadow-v3 min-[961px]:aspect-auto min-[961px]:w-[calc(176px*var(--v3-ui-scale,1))] min-[961px]:justify-start min-[961px]:gap-[calc(16px*var(--v3-ui-scale,1))] min-[961px]:p-[calc(16px*var(--v3-ui-scale,1))] min-[961px]:text-left"
+          : "flex w-[calc(176px*var(--v3-ui-scale,1))] items-center justify-start gap-[calc(16px*var(--v3-ui-scale,1))] rounded-[20px] bg-white p-[calc(16px*var(--v3-ui-scale,1))] shadow-v3",
         // Component-level animation so stats behave identically across pages.
         "animate-v3-pop-up"
       )}
@@ -46,7 +53,8 @@ export function StatMini({
       <div
         data-component="stat-mini-icon"
         className={cn(
-          "flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] items-center justify-center rounded-[14px]",
+          "h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] items-center justify-center rounded-[14px]",
+          isResponsiveSquare ? "hidden min-[961px]:flex" : "flex",
           isLoading ? "bg-v3-dim-white" : variant.bg
         )}
       >
@@ -57,13 +65,18 @@ export function StatMini({
         )}
       </div>
       {isLoading ? (
-        <div className="space-y-[calc(8px*var(--v3-ui-scale,1))]">
+        <div className={cn("space-y-[calc(8px*var(--v3-ui-scale,1))]", isResponsiveSquare && "min-[961px]:text-left")}>
           <Skeleton className="h-[calc(33px*var(--v3-ui-scale,1))] w-[calc(64px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
           <Skeleton className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(80px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
         </div>
       ) : (
-        <div>
-          <span className="flex items-center gap-[calc(4px*var(--v3-ui-scale,1))]">
+        <div className={cn(isResponsiveSquare && "min-w-0")}>
+          <span
+            className={cn(
+              "flex items-center gap-[calc(4px*var(--v3-ui-scale,1))]",
+              isResponsiveSquare && "justify-center min-[961px]:justify-start"
+            )}
+          >
             <p className="text-[calc(24px*var(--v3-ui-scale,1))] font-bold text-v3-dark">{value}</p>
             <p className="mb-[calc(4px*var(--v3-ui-scale,1))] self-end text-[calc(11.2px*var(--v3-ui-scale,1))] text-v3-text-muted">{counter}</p>
           </span>

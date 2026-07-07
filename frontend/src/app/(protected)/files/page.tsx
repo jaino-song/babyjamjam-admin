@@ -177,11 +177,11 @@ export default function FilesPage() {
               data-component="files-upload-btn"
             />
           }
-        >
-          {!isLoading && filteredDocs.length === 0 ? (
+          emptyState={!isLoading && filteredDocs.length === 0 ? (
             <ListEmptyState message={searchQuery ? "검색 결과가 없습니다" : "등록된 문서가 없습니다"} />
-          ) : (
-            <AnimatedSlotList<Document>
+          ) : undefined}
+        >
+          <AnimatedSlotList<Document>
               items={filteredDocs}
               isLoading={isLoading}
               loadingCount={4}
@@ -227,7 +227,6 @@ export default function FilesPage() {
                 );
               }}
             />
-          )}
         </ListPanel>
 
         {isLoading ? (

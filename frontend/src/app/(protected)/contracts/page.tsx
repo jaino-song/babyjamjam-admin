@@ -8,6 +8,7 @@ import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import {
   FileText,
   FileSignature,
+  ClipboardList,
   Clock,
   CheckCircle2,
   AlertTriangle,
@@ -150,6 +151,12 @@ const TAB_ITEMS = [
   { label: "대기", value: "in-progress" },
   { label: "완료", value: "completed" },
   { label: "기간 만료", value: "expired" },
+];
+
+const SERVICE_RECORD_TAB_ITEMS = [
+  { label: "전체", value: "all" },
+  { label: "진행중", value: "in-progress" },
+  { label: "완료", value: "completed" },
 ];
 
 const DETAIL_TABS = [
@@ -414,6 +421,7 @@ function canReRequestDocument(doc: EformsignDocument): boolean {
 
 const NAV_SECTIONS = [
   { id: "maternity", label: "산모 계약서", icon: FileSignature },
+  { id: "service-records", label: "제공기록지", icon: ClipboardList },
   { id: "caregiver", label: "제공인력 계약서", icon: Briefcase, disabled: true },
   { id: "documents", label: "전자문서 목록", icon: FileText, disabled: true },
   { id: "notifications", label: "알림 설정", icon: Bell, disabled: true },
@@ -432,6 +440,8 @@ export default function ContractsPage() {
   const [contractCreationActiveStep, setContractCreationActiveStep] = useState(0);
   const [deleteTargetDocumentId, setDeleteTargetDocumentId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [serviceRecordActiveTab, setServiceRecordActiveTab] = useState("all");
+  const [serviceRecordSearchQuery, setServiceRecordSearchQuery] = useState("");
 
   const { isAuthenticated, isLoading: isLoadingAuth, error: authError } = useEformsignAuth({
     syncOnWindowFocus: false,
@@ -659,11 +669,11 @@ export default function ContractsPage() {
                 }
               />
             }
-          >
-            {documents.length === 0 && !isInitialLoading && !isContentLoading ? (
+            emptyState={documents.length === 0 && !isInitialLoading && !isContentLoading ? (
               <ListEmptyState message="계약 문서가 없습니다" />
-            ) : (
-              <AnimatedSlotList<EformsignDocument>
+            ) : undefined}
+          >
+            <AnimatedSlotList<EformsignDocument>
                 items={documents}
                 isLoading={isInitialLoading || isContentLoading}
                 loadingCount={6}
@@ -692,7 +702,6 @@ export default function ContractsPage() {
                   );
                 }}
               />
-            )}
           </ListPanel>
 
           {(isCreating || hasContractCreationSession) && (
@@ -705,7 +714,7 @@ export default function ContractsPage() {
                   onSessionStateChange={handleContractCreationSessionChange}
                   activeStep={contractCreationActiveStep}
                   onActiveStepChange={setContractCreationActiveStep}
-                  renderLayout={({ content, footer }) => (
+                  renderLayout={({ content, footer, footerClassName }) => (
                     <DetailPanel
                       title="전자계약서 작성"
                       subtitle="고객에게 전자계약서를 발송합니다"
@@ -723,6 +732,7 @@ export default function ContractsPage() {
                           currentStep={contractCreationActiveStep}
                         />
                       }
+                      footerClassName={footerClassName}
                       footer={footer}
                     >
                       {content}
@@ -755,6 +765,26 @@ export default function ContractsPage() {
             </section>
           ) : null}
 
+          {activeSection === "service-records" ? (
+            <section data-component="contracts-service-records" className="flex flex-1 min-h-0 flex-col">
+              <SplitLayout hasSelection={false}>
+                <ListPanel
+                  title="제공기록지 목록"
+                  tabs={SERVICE_RECORD_TAB_ITEMS}
+                  activeTab={serviceRecordActiveTab}
+                  onTabChange={setServiceRecordActiveTab}
+                  searchValue={serviceRecordSearchQuery}
+                  onSearchChange={setServiceRecordSearchQuery}
+                  searchPlaceholder="고객명 검색..."
+                  emptyState={<ListEmptyState message="아직 제공기록지가 없습니다" />}
+                >
+                  {null}
+                </ListPanel>
+                <EmptyState icon={ClipboardList} message="제공기록지를 선택하면 상세 정보가 표시됩니다" />
+              </SplitLayout>
+            </section>
+          ) : null}
+
           {activeSection === "caregiver" ? (
             <section data-component="contracts-caregiver" className="flex flex-1 min-h-0 flex-col">
               <SplitLayout hasSelection={false}>
@@ -766,8 +796,9 @@ export default function ContractsPage() {
                       <Briefcase className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
                     </div>
                   }
+                  emptyState={<ListEmptyState message="아직 준비중입니다" />}
                 >
-                  <ListEmptyState message="아직 준비중입니다" />
+                  {null}
                 </ListPanel>
                 <DetailPanel
                   title="제공인력 계약서"
@@ -795,8 +826,9 @@ export default function ContractsPage() {
                       <FileText className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
                     </div>
                   }
+                  emptyState={<ListEmptyState message="아직 준비중입니다" />}
                 >
-                  <ListEmptyState message="아직 준비중입니다" />
+                  {null}
                 </ListPanel>
                 <DetailPanel
                   title="전자문서"
@@ -824,8 +856,9 @@ export default function ContractsPage() {
                       <Bell className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
                     </div>
                   }
+                  emptyState={<ListEmptyState message="아직 준비중입니다" />}
                 >
-                  <ListEmptyState message="아직 준비중입니다" />
+                  {null}
                 </ListPanel>
                 <DetailPanel
                   title="알림 설정"

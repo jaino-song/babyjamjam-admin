@@ -495,10 +495,22 @@ main[data-component="main-content"]:has([data-component="dashboard"]) > [data-co
 .list-row-badges .badge {
   flex-shrink: 0;
 }
+.list-row-badges-more {
+  flex-shrink: 0;
+  color: hsl(var(--v3-text-muted));
+  font-size: 0.65rem;
+  font-weight: 600;
+  line-height: 1;
+}
 .list-meta {
   font-size: 0.66rem;
   color: hsl(var(--v3-text-muted));
   margin-top: 0;
+}
+.list-meta-due {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
 }
 .list-right {
   display: flex;
@@ -1432,7 +1444,7 @@ body.mobile-all-route .menu-row {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  height: 56px;
+  min-height: 56px;
   justify-content: center;
 }
 .client-detail-name {
@@ -1546,6 +1558,10 @@ body.mobile-all-route .menu-row {
   font-weight: 600;
   color: hsl(var(--v3-dark));
   word-break: keep-all;
+}
+.info-row-no-label .info-row-value {
+  margin-left: 0;
+  text-align: left;
 }
 .info-row-value-green { color: hsl(var(--v3-green)); }
 .info-row-value-burgundy { color: hsl(var(--v3-burgundy)); }
@@ -2228,7 +2244,19 @@ body:has([data-component="files"] .nav-stack.show-detail) [data-component="mobil
   border-color: hsl(var(--v3-border));
 }
 
+[data-component="clients"] .badge-mini.gray {
+  background: hsl(var(--v3-dim-white));
+  color: hsl(var(--v3-text-muted));
+  border-color: hsl(var(--v3-border));
+}
+
 [data-component="clients"] .badge-mini.primary {
+  border-color: hsl(214, 70%, 85%);
+}
+
+[data-component="clients"] .badge-mini.blue {
+  background: hsl(var(--v3-primary-light));
+  color: hsl(var(--v3-primary));
   border-color: hsl(214, 70%, 85%);
 }
 
@@ -2295,6 +2323,91 @@ body:has([data-component="files"] .nav-stack.show-detail) [data-component="mobil
 [data-component="clients"] .doc-icon-purple {
   background: hsl(267, 50%, 92%);
   color: hsl(267, 50%, 46%);
+}
+
+[data-component="mobile-clients-service-records"] .detail-actions.card-actions {
+  margin-top: 10px;
+  padding: 0;
+}
+
+[data-component="mobile-clients-service-records"] .link-note {
+  margin-top: 8px;
+  color: hsl(var(--v3-text-muted));
+  font-size: 0.66rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
+[data-component="mobile-clients-service-records"] .service-record-card-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+[data-component="mobile-clients-service-records"] .service-record-card-title-row .info-card-title {
+  flex-shrink: 0;
+  margin-bottom: 0;
+}
+
+[data-component="mobile-clients-service-records"] .service-record-card-title-row .service-record-progress-row {
+  margin-left: auto;
+}
+
+[data-component="mobile-clients-service-records"] .service-record-card-title-row .info-row {
+  border-bottom: 0;
+  padding: 0;
+}
+
+[data-component="mobile-clients-service-records"] .service-record-card-title-row .info-row-no-label .info-row-value {
+  margin-left: auto;
+  text-align: right;
+}
+
+[data-component="mobile-clients-service-records"] .service-record-progress-row .info-row-label,
+[data-component="mobile-clients-service-records"] .service-record-progress-row .info-row-value {
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: hsl(var(--v3-text-muted));
+}
+
+[data-component="mobile-clients-service-records"] .service-record-text-row {
+  flex-direction: column;
+  gap: 4px;
+}
+
+[data-component="mobile-clients-service-records"] .service-record-text-row .message-detail-body {
+  width: 100%;
+}
+
+[data-component="mobile-clients-service-records"] .service-record-snapshot-note {
+  padding: 4px;
+  font-size: 0.62rem;
+  font-weight: 500;
+}
+
+[data-slot="skeleton"].service-record-skeleton-loader {
+  background:
+    linear-gradient(
+      90deg,
+      hsl(var(--v3-text-muted) / 0.42) 0%,
+      hsl(var(--v3-text-muted) / 0.2) 42%,
+      hsl(var(--v3-text-muted) / 0.42) 78%
+    );
+  background-size: 220% 100%;
+  opacity: 1;
+  animation: service-record-skeleton-shimmer 1.05s ease-in-out infinite;
+}
+
+@keyframes service-record-skeleton-shimmer {
+  0% {
+    background-position: 120% 0;
+  }
+
+  100% {
+    background-position: -120% 0;
+  }
 }
 
 body:has([data-component="clients"]) [data-component="mobile-bottom-nav"] {
@@ -6303,6 +6416,10 @@ body:has([data-component="contracts"]) [data-component="app-providers"] {
 body nav[data-component="mobile-bottom-nav"] a[data-component^="mobile-bottom-nav-"]:not([data-visual-active="true"]) {
   background: transparent !important;
   color: var(--color-gray-500, #6b7280) !important;
+}
+
+body nav[data-component="mobile-bottom-nav"] [data-component^="mobile-bottom-nav-"][data-disabled="true"] {
+  color: var(--color-gray-300, #d1d5db) !important;
 }
 
 body nav[data-component="mobile-bottom-nav"] a[data-visual-active="true"] {

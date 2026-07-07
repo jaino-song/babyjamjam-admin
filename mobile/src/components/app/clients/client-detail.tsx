@@ -4,7 +4,9 @@ import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { CircleAlert, FileCheck2, MessageCircle, MoreVertical, SquarePen, Trash2, User } from "lucide-react";
 
 import { Client } from "@/lib/client/types";
+import { getMobileClientBadges } from "@/lib/client/badges";
 import { EformsignDocument } from "@/lib/eformsign/types";
+import { useClientServiceRecords } from "@/hooks/useServiceRecords";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,6 +23,7 @@ import {
   MobileDetailTabPanel,
 } from "@/components/app/mobile-redesign/detail-sheet";
 import { ClientMessageHistoryDetail } from "@/components/app/clients/client-message-history-detail";
+import { ClientServiceRecords } from "@/components/app/clients/client-service-records";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -297,18 +300,6 @@ function contractPrimaryEmployeeName(doc: EformsignDocument | null | undefined):
   ]);
 }
 
-function clientFeatureLabel(client: Client): string | null {
-  if (client.breastPump) return "유축기 대여";
-  if (client.careCenter) return "조리원 이용";
-  if (client.voucherClient) return "바우처";
-  return client.type;
-}
-
-function clientFeatureLabelTone(client: Client): "green" | "burgundy" {
-  if (client.voucherClient) return "green";
-  return "burgundy";
-}
-
 function documentStatusLabel(status: Client["documentStatus"]): string {
   switch (status) {
     case "completed":
@@ -407,7 +398,7 @@ export function shouldShowMissingContractBadge(client: Client): boolean {
   return client.serviceStatus === "active" && client.documentStatus !== "completed";
 }
 
-export type DetailTabId = "basic" | "contracts" | "alimtalk";
+export type DetailTabId = "basic" | "contracts" | "alimtalk" | "serviceRecords";
 
 export interface ClientNotificationLogRecord {
   id: number;
@@ -427,6 +418,8 @@ export interface ClientNotificationLogRecord {
 type DetailRowTone = "green" | "primary" | "orange" | "muted" | "burgundy" | "purple";
 const CLIENT_GREETING_SMS_TEMPLATE_KEY = "client_greeting_sms";
 const CLIENT_GREETING_SMS_TITLE = "인사 메시지";
+const SERVICE_FEEDBACK_LINK_SMS_TEMPLATE_KEY = "service_feedback_link_sms";
+const SERVICE_FEEDBACK_LINK_SMS_TITLE = "제공기록지 작성 링크";
 
 function DetailDocRow({
   icon,
@@ -492,6 +485,7 @@ function notificationTitle(log: ClientNotificationLogRecord): string {
   const variableTitle = stringFromUnknown(variables.title);
   if (variableTitle) return variableTitle;
   if (log.templateKey === CLIENT_GREETING_SMS_TEMPLATE_KEY) return CLIENT_GREETING_SMS_TITLE;
+  if (log.templateKey === SERVICE_FEEDBACK_LINK_SMS_TEMPLATE_KEY) return SERVICE_FEEDBACK_LINK_SMS_TITLE;
   if (log.templateKey === "manual_sms") return "수동 메시지";
   return log.templateKey || "발송 내역";
 }
@@ -596,13 +590,15 @@ export function ClientDetailContent({
   const detailKey = `${activeTab}:${client.id}`;
   const [selectedEntry, setSelectedEntry] = useState<{ key: string; log: ClientNotificationLogRecord } | null>(null);
   const selectedLog = selectedEntry && selectedEntry.key === detailKey ? selectedEntry.log : null;
+  const serviceRecordsQuery = useClientServiceRecords(client.id, {
+    enabled: activeTab === "serviceRecords",
+  });
 
   const group = GROUPS.find((g) => g.match(client)) ?? GROUPS[1];
-  const featureLabel = clientFeatureLabel(client);
-  const featureLabelTone = clientFeatureLabelTone(client);
+  const clientBadges = getMobileClientBadges(client);
+  const detailAvatarTone = clientBadges[0]?.tone ?? group.badgeTone;
   const docTone = documentStatusTone(client.documentStatus);
   const hasContractDocument = Boolean(client.eDocId);
-  const showMissingContractBadge = shouldShowMissingContractBadge(client);
   const displayNotificationLogs = visibleNotificationLogs(notificationLogs);
   const birthDate = firstValue(
     client.birthday,
@@ -953,13 +949,9 @@ export function ClientDetailContent({
       <MobileDetailHeader
         name="clients"
         avatar={<User size={22} strokeWidth={2} />}
-        avatarTone={group.badgeTone}
+        avatarTone={detailAvatarTone}
         title={client.name}
-        badges={[
-          { label: group.badge, tone: group.badgeMini },
-          ...(featureLabel ? [{ label: featureLabel, tone: featureLabelTone }] : []),
-          ...(showMissingContractBadge ? [{ label: "계약서 없음", tone: "burgundy" as const }] : []),
-        ]}
+        badges={clientBadges.map((badge) => ({ label: badge.label, tone: badge.tone }))}
         menu={
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -1025,6 +1017,7 @@ export function ClientDetailContent({
           { id: "basic", label: "기본 정보" },
           { id: "contracts", label: "계약서 정보" },
           { id: "alimtalk", label: "알림 발송" },
+          { id: "serviceRecords", label: "제공기록지" },
         ]}
         activeTab={activeTab}
         onTabChange={(id) => onTabChange(id as DetailTabId)}
@@ -1145,6 +1138,21 @@ export function ClientDetailContent({
             )}
           </InfoCard>
         )}
+      </MobileDetailTabPanel>
+
+      <MobileDetailTabPanel
+        name="clients"
+        tabId="serviceRecords"
+        activeTab={activeTab}
+        dataComponent="mobile-clients-service-records-tab"
+      >
+        <ClientServiceRecords
+          client={client}
+          activeTab={activeTab}
+          overview={serviceRecordsQuery.data}
+          isLoading={serviceRecordsQuery.isLoading}
+          isError={serviceRecordsQuery.isError}
+        />
       </MobileDetailTabPanel>
     </MobileDetailPage>
   );

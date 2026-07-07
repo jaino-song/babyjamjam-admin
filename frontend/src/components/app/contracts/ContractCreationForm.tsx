@@ -2,7 +2,7 @@
 import dayjs from "dayjs";
 import "dayjs/locale/ko";
 import { useRouter } from "next/navigation";
-import { Check, ChevronLeft, ChevronRight, Send, X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
@@ -168,8 +168,12 @@ import type { Client } from "@/lib/client/types";
 import type { Employee } from "@/hooks/useEmployees";
 import {
   SteppedWizardPanelContent,
-  SteppedWizardPanelFooter,
 } from "@/components/app/v3/SteppedWizardPanelLayout";
+import {
+  DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME,
+  DETAIL_PANEL_FOOTER_CLASS_NAME,
+  DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME,
+} from "@/components/app/v3/DetailPanel";
 
 interface ContractDataDto {
   customerName: string;
@@ -220,7 +224,12 @@ const COMPLETED_PILL =
 
 const INPUT_CLS = "bg-white";
 
-const LABEL_CLS = "text-xs font-semibold text-v3-text-muted";
+const LABEL_CLS = "text-[calc(12px*var(--v3-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted";
+const PANEL_GRID_CLASS_NAME =
+  "grid w-full grid-cols-1 gap-[calc(16px*var(--v3-ui-scale,1))] pb-[calc(24px*var(--v3-ui-scale,1))] md:grid-cols-2";
+const PANEL_THREE_COLUMN_GRID_CLASS_NAME =
+  "grid w-full grid-cols-1 gap-[calc(16px*var(--v3-ui-scale,1))] md:grid-cols-3";
+const PANEL_FULL_FIELD_CLASS_NAME = "md:col-span-2";
 
 const SELECT_CLS =
   cn(
@@ -231,6 +240,7 @@ const SELECT_CLS =
 export interface ContractCreationFormLayoutParts {
   content: ReactNode;
   footer: ReactNode;
+  footerClassName?: string;
 }
 
 export interface ContractCreationFormProps {
@@ -885,6 +895,21 @@ export const ContractCreationForm = ({
   // endDate는 이용자 서명 후 직원이 Step 3에서 사후 입력하므로 발급 시점에는 옵셔널.
   const isStep4Valid = Boolean(startDate && paymentDate);
   const isCurrentStepValid = [isStep1Valid, isStep2Valid, isStep3Valid, isStep4Valid][activeStep] ?? true;
+  const requiredFieldProgressText = `필수 항목 11개 중 ${
+    [
+      Boolean(name.trim()),
+      Boolean(phone.trim()),
+      Boolean(area),
+      isEmployee1Valid,
+      Boolean(voucherType),
+      Boolean(voucherDuration),
+      Boolean(fullPrice),
+      Boolean(grant),
+      Boolean(actualPrice),
+      Boolean(startDate),
+      Boolean(paymentDate),
+    ].filter(Boolean).length
+  }개 입력됨`;
   const hasVoucherPricingSelection = Boolean(voucherType && voucherDuration);
 
   const handleStepChange = (nextStep: number) => {
@@ -939,7 +964,7 @@ export const ContractCreationForm = ({
     {
       label: stepLabels[0] ?? "이용자 정보",
       content: (
-        <div className="flex flex-1 min-h-0 flex-col justify-start gap-6">
+        <div className={PANEL_GRID_CLASS_NAME}>
           <ClientAutocomplete
             value={clientId}
             onChange={handleClientSelect}
@@ -981,8 +1006,8 @@ export const ContractCreationForm = ({
             dataComponent="contract-creation-client-due-date-input"
           />
 
-          <div className="flex flex-col gap-2" data-component="contract-creation-doc-type-field">
-            <Label data-component="contract-creation-doc-type-label">
+          <div className={cn(PANEL_FULL_FIELD_CLASS_NAME, "grid gap-[calc(7px*var(--v3-ui-scale,1))]")} data-component="contract-creation-doc-type-field">
+            <Label className={LABEL_CLS} data-component="contract-creation-doc-type-label">
               {t(locale, "contract-msg.doc-type-label")}
               <span className="text-destructive ml-1">*</span>
             </Label>
@@ -1039,8 +1064,8 @@ export const ContractCreationForm = ({
     {
       label: stepLabels[1] ?? "제공인력 정보",
       content: (
-        <div className="flex flex-col gap-6">
-          <div className="flex flex-col gap-4">
+        <div className="grid gap-[calc(18px*var(--v3-ui-scale,1))]">
+          <div className={PANEL_GRID_CLASS_NAME}>
             <EmployeeAutocomplete
               value={isEmployeeManualEntry ? null : employeeId}
               onChange={handleEmployeeSelect}
@@ -1061,7 +1086,7 @@ export const ContractCreationForm = ({
           </div>
 
           <Separator className="my-1" />
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center gap-[calc(8px*var(--v3-ui-scale,1))]">
             <Checkbox id="add-employee2" checked={showEmployee2} onCheckedChange={handleToggleShowEmployee2} />
             <Label htmlFor="add-employee2" className="cursor-pointer">
               {t(locale, "contract-msg.add-employee2-toggle")}
@@ -1069,7 +1094,7 @@ export const ContractCreationForm = ({
           </div>
 
           {showEmployee2 && (
-            <div className="flex flex-col gap-4">
+            <div className={PANEL_GRID_CLASS_NAME}>
               <EmployeeAutocomplete
                 value={isEmployee2ManualEntry ? null : employee2Id}
                 onChange={handleEmployee2Select}
@@ -1110,8 +1135,8 @@ export const ContractCreationForm = ({
     {
       label: stepLabels[2] ?? "바우처 정보",
       content: (
-        <div className="flex flex-col gap-6">
-          <div className="flex flex-col gap-6 md:flex-row md:items-start md:gap-4">
+        <div className="grid gap-[calc(18px*var(--v3-ui-scale,1))]">
+          <div className={PANEL_THREE_COLUMN_GRID_CLASS_NAME}>
             <div className="space-y-2 flex-1 min-w-0">
               <Label className={LABEL_CLS}>{t(locale, "price-info-msg.voucher-year-label")}</Label>
               <select
@@ -1175,7 +1200,7 @@ export const ContractCreationForm = ({
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className={PANEL_THREE_COLUMN_GRID_CLASS_NAME}>
             <div className="space-y-2">
               <Label className={LABEL_CLS}>{t(locale, "contract-msg.full-price-label")}</Label>
               <div className="relative">
@@ -1244,7 +1269,7 @@ export const ContractCreationForm = ({
     {
       label: stepLabels[3] ?? "계약 정보",
       content: (
-        <div className="flex flex-col gap-6 md:flex-row md:items-start md:gap-4">
+        <div className={PANEL_THREE_COLUMN_GRID_CLASS_NAME}>
           <div className="space-y-2 flex-1 min-w-0">
             <Label className={LABEL_CLS}>{t(locale, "contract-msg.start-date-label")}</Label>
             <Input
@@ -1366,67 +1391,66 @@ export const ContractCreationForm = ({
   );
 
   const footer = (
-    <SteppedWizardPanelFooter className={footerClassName}>
-      <div className="flex flex-1 items-center justify-start">
+    <div className="flex w-full flex-wrap items-center justify-between gap-[calc(12px*var(--v3-ui-scale,1))]">
+      <span className={DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME}>{requiredFieldProgressText}</span>
+      <div className={DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME}>
         {hasProcessingSuccess ? (
-          <div aria-hidden="true" />
+          null
         ) : (
           <Button
             type="button"
-            variant="ghost"
-            width="md"
+            variant="neutral"
+            size="sm"
             onClick={handleCancel}
             disabled={hasCreationSession && !hasProcessingFailure}
+            className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
           >
             취소
           </Button>
         )}
-      </div>
-      <div className="flex flex-1 items-center justify-end gap-2">
         {activeStep > 0 && !isProcessingStep && (
           <Button
             type="button"
             variant="outline"
+            size="sm"
             data-testid="contract-creation-back"
             onClick={() => handleStepChange(activeStep - 1)}
+            className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
           >
-            <ChevronLeft className="h-4 w-4" />
             이전
           </Button>
         )}
         {activeStep < CONTRACT_INFO_STEP_INDEX ? (
           <Button
             type="button"
+            size="sm"
             data-testid="contract-creation-next"
-            width="md"
             onClick={() => handleStepChange(activeStep + 1)}
             disabled={!isCurrentStepValid}
+            className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
           >
-            <span
-              data-component="contract-creation-next-content"
-              className="grid w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center"
-            >
-              <span className="col-start-2">다음</span>
-              <ChevronRight className="col-start-3 ml-2 h-4 w-4 justify-self-start" />
-            </span>
+            다음
           </Button>
         ) : activeStep === CONTRACT_INFO_STEP_INDEX ? (
           <Button
             type="button"
+            size="sm"
             data-testid="contract-creation-submit"
             onClick={handleWizardComplete}
             disabled={!isStep1Valid || !isStep2Valid || !isStep3Valid || !isStep4Valid || isSubmitting}
+            className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
           >
             {isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}
           </Button>
         ) : hasProcessingSuccess ? (
           <Button
             type="button"
+            size="sm"
             data-testid="contract-creation-new-send"
             data-component="contract-creation-new-send"
             onClick={handleStartNewContractCreation}
+            className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
           >
-            <Send className="h-4 w-4" />
             새 전자문서 발송
           </Button>
         ) : hasProcessingFailure ? (
@@ -1434,32 +1458,41 @@ export const ContractCreationForm = ({
             <Button
               type="button"
               variant="outline"
+              size="sm"
               data-testid="contract-creation-manual"
               onClick={handleManualContractCreation}
               disabled={isSubmitting}
+              className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
             >
               수동 입력
             </Button>
             <Button
               type="button"
+              size="sm"
               data-testid="contract-creation-retry"
               onClick={handleRetryContractCreation}
               disabled={isSubmitting}
+              className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
             >
               {isSubmitting ? "재시도 중..." : "재시도"}
             </Button>
           </>
         ) : null}
       </div>
-    </SteppedWizardPanelFooter>
+    </div>
   );
 
   return (
     <>
-      {renderLayout ? renderLayout({ content, footer }) : (
+      {renderLayout ? renderLayout({ content, footer, footerClassName }) : (
         <>
           {content}
-          {footer}
+          <footer
+            data-component="detail-panel-footer"
+            className={cn(DETAIL_PANEL_FOOTER_CLASS_NAME, footerClassName)}
+          >
+            {footer}
+          </footer>
         </>
       )}
 

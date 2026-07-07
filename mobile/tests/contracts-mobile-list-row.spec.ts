@@ -108,9 +108,58 @@ const STAGE_DOCUMENTS = {
       updated_date: Date.now() - 1000,
       current_status: {
         status_type: "020",
+        step_type: "06",
         step_index: 2,
+        step_name: "제공기관 검토",
         step_group: 3,
         step_recipients: [{ recipient_type: "01", name: "검토 담당자" }],
+      },
+      histories: [],
+      previous_status: [],
+    },
+    {
+      id: "doc-user-participant",
+      document_number: "DOC-USER-PARTICIPANT",
+      template: { id: "tpl-1", name: "Contract" },
+      document_name: "이용자단계 계약서",
+      creator: { recipient_type: "sender", id: "admin", name: "Admin" },
+      created_date: Date.now() - 1500,
+      last_editor: { recipient_type: "sender", id: "admin", name: "Admin" },
+      updated_date: Date.now() - 1500,
+      current_status: {
+        status_type: "060",
+        status_doc_type: "01",
+        status_doc_detail: "060",
+        step_type: "05",
+        step_index: "2",
+        step_name: "이용자",
+        step_recipients: [{ recipient_type: "01", name: "이용자단계" }],
+        step_group: 3,
+        expired_date: Date.now() + 1000 * 60 * 60 * 24,
+        _expired: false,
+      },
+      histories: [
+        { action_type: "002", step_type: "00", step_name: "제공기관 작성" },
+        { action_type: "060", step_type: "05", step_name: "이용자" },
+      ],
+      previous_status: [{ action_type: "002", step_type: "00", step_name: "제공기관 작성" }],
+    },
+    {
+      id: "doc-provider-drafting",
+      document_number: "DOC-PROVIDER-DRAFTING",
+      template: { id: "tpl-1", name: "Contract" },
+      document_name: "작성단계 계약서",
+      creator: { recipient_type: "sender", id: "admin", name: "Admin" },
+      created_date: Date.now() - 1400,
+      last_editor: { recipient_type: "sender", id: "admin", name: "Admin" },
+      updated_date: Date.now() - 1400,
+      current_status: {
+        status_type: "002",
+        step_type: "00",
+        step_index: "1",
+        step_name: "제공기관 작성",
+        step_group: 1,
+        step_recipients: [{ recipient_type: "01", name: "작성 담당자" }],
       },
       histories: [],
       previous_status: [],
@@ -135,7 +184,7 @@ const STAGE_DOCUMENTS = {
       previous_status: [],
     },
   ],
-  total_rows: 6,
+  total_rows: 8,
   limit: 20,
   skip: 0,
 };
@@ -147,7 +196,9 @@ const DOCUMENT_CLIENT_SUMMARIES = [
   { documentId: "doc-stale-step", clientId: 103, clientName: "구문서", clientPhone: "010-3333-4444", providerName: "최제공" },
   { documentId: "doc-send-failed", clientId: 104, clientName: "전송실패", clientPhone: "010-4444-5555", providerName: "정제공" },
   { documentId: "doc-review", clientId: 105, clientName: "검토고객", clientPhone: "010-5555-6666", providerName: "한제공" },
-  { documentId: "doc-completed", clientId: 106, clientName: "완료고객", clientPhone: "010-6666-7777", providerName: "오제공" },
+  { documentId: "doc-user-participant", clientId: 106, clientName: "이용자단계", clientPhone: "010-6666-0000", providerName: "송제공" },
+  { documentId: "doc-provider-drafting", clientId: 107, clientName: "작성단계", clientPhone: "010-6666-1111", providerName: "강제공" },
+  { documentId: "doc-completed", clientId: 108, clientName: "완료고객", clientPhone: "010-6666-7777", providerName: "오제공" },
 ];
 
 const NOTIFICATION_LOGS = [
@@ -318,6 +369,8 @@ test.describe("Mobile contracts list rows", () => {
     // Row name comes from DOCUMENT_CLIENT_SUMMARIES.clientName ("검토고객"),
     // not the step recipient name.
     const reviewRow = page.locator('[data-component="mobile-contracts-row"]', { hasText: "검토고객" });
+    const userParticipantRow = page.locator('[data-component="mobile-contracts-row"]', { hasText: "이용자단계" });
+    const providerDraftingRow = page.locator('[data-component="mobile-contracts-row"]', { hasText: "작성단계" });
     const completedRow = page.locator('[data-component="mobile-contracts-row"]', { hasText: "완료고객" });
 
     await expect(waitingRow.locator(".step-label")).toHaveText("3/6 - 이용자 문서 열람 대기");
@@ -325,6 +378,8 @@ test.describe("Mobile contracts list rows", () => {
     await expect(staleStepRow.locator(".step-label")).toHaveText("3/6 - 이용자 문서 열람 대기");
     await expect(sendFailedRow.locator(".step-label")).toHaveText("이용자 문서 전송 실패");
     await expect(reviewRow.locator(".step-label")).toHaveText("5/6 - 제공기관 검토 필요");
+    await expect(userParticipantRow.locator(".step-label")).toHaveText("3/6 - 이용자 문서 열람 대기");
+    await expect(providerDraftingRow.locator(".step-label")).toHaveText("3/6 - 이용자 문서 열람 대기");
     await expect(completedRow.locator(".step-label")).toHaveText("6/6 - 계약서 완료");
   });
 
@@ -367,7 +422,7 @@ test.describe("Mobile contracts list rows", () => {
     await expect(page.locator('[data-component="mobile-contracts-row"]', { hasText: "대기고객" })).toBeVisible();
     await expect(page.locator('[data-component="mobile-contracts-loading-row"]')).toHaveCount(0);
     await expect(page.locator('[data-component="mobile-contracts-empty"]')).toHaveCount(0);
-    await expect(page.locator('[data-component="mobile-redesign-list-title"]')).toContainText("6건");
+    await expect(page.locator('[data-component="mobile-redesign-list-title"]')).toContainText("8건");
 
     const afterBox = await listCard.boundingBox();
     expect(afterBox).not.toBeNull();

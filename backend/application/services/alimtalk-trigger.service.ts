@@ -430,7 +430,7 @@ export class AlimtalkTriggerService {
                 continue;
             }
             const job = this.buildClientJob(rule, client);
-            await this.persistPendingJob(job, includePast);
+            await this.persistPendingJob(job, rule, includePast);
         }
     }
 
@@ -464,7 +464,7 @@ export class AlimtalkTriggerService {
 
         for (const rule of rules) {
             const job = this.buildEmployeeAssignmentJob(rule, schedule);
-            await this.persistPendingJob(job, includePast);
+            await this.persistPendingJob(job, rule, includePast);
         }
     }
 
@@ -575,22 +575,26 @@ export class AlimtalkTriggerService {
 
         for (const client of clients) {
             const job = this.buildClientJob(rule, client);
-            await this.persistPendingJob(job, includePast);
+            await this.persistPendingJob(job, rule, includePast);
         }
     }
 
     private async persistPendingJob(
         job: AlimtalkTriggerJobEntity | null,
+        rule: AlimtalkTriggerRuleEntity,
         includePast: boolean,
     ): Promise<void> {
         if (!job) return;
-        // IMMEDIATE / now-scheduled jobs must fire ONLY on the live create/assign path
-        // (includePast=true). On any re-sync path (includePast=false: client update,
-        // due-date scheduler, rule rebuild) a "now" job is a re-fire and must be dropped.
-        // Note the `<=`: a job scheduledFor === Date.now() is a re-fire on these paths and
-        // is dropped, preventing repeat greetings on every edit/scheduler pass. The
-        // create-time greeting is preserved because that path uses includePast=true.
-        if (!includePast && job.scheduledFor.getTime() <= Date.now()) return;
+        // IMMEDIATE jobs must fire only on the live create/assign path (includePast=true).
+        // Delayed lifecycle jobs that are already overdue should still be persisted so the
+        // due-job scheduler can send missed automations in scheduledFor order.
+        if (
+            !includePast &&
+            rule.offsetType === AlimtalkTriggerOffsetType.IMMEDIATE &&
+            job.scheduledFor.getTime() <= Date.now()
+        ) {
+            return;
+        }
         await this.jobRepository.upsertPending(job);
     }
 

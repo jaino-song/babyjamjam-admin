@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { InfoRow } from "@/components/app/ui/info-row";
 import { Badge } from "@/components/ui/badge";
+import { APP_DIALOG_FLUSH_CONTENT_CLASS_NAME } from "@/components/ui/app-surface";
 
 interface ClientDetailModalProps {
     open: boolean;
@@ -114,7 +115,7 @@ export function ClientDetailModal({
 
     return (
         <Dialog data-component="clients-detail-modal" open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-            <DialogContent className="max-w-lg rounded-[28px] shadow-[0_20px_60px_hsla(214,50%,20%,0.15)] border-none bg-white p-0 overflow-hidden gap-0">
+            <DialogContent className={`max-w-lg bg-white ${APP_DIALOG_FLUSH_CONTENT_CLASS_NAME}`}>
                 <DialogHeader data-component="clients-detail-modal-header" className="p-6 text-center border-b border-border bg-gradient-to-br from-[hsl(214,80%,98%)] to-white relative">
                     <div className="mx-auto w-20 h-20 rounded-[24px] flex items-center justify-center text-2xl font-bold text-white mb-4 shadow-[0_12px_32px_hsla(214,100%,34%,0.3)] bg-gradient-to-br from-[hsl(214,100%,34%)] to-[hsl(214,100%,28%)]">
                         {client.name.charAt(0)}

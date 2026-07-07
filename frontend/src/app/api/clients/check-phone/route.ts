@@ -1,23 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
+import { getAuthHeaders, getAuthToken } from "@/lib/api/route-utils";
 
-interface ClientPhone {
-  phone?: string | null;
-}
-
-interface PaginatedClientsResponse {
-  data?: ClientPhone[];
-  total?: number;
-  page?: number;
-  limit?: number;
-}
-
-function getAuthToken(request: NextRequest): string | null {
-  return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string | null): Record<string, string> {
-  return token ? { Authorization: `Bearer ${token}` } : {};
+interface CheckPhoneResponse {
+  exists?: boolean;
 }
 
 // GET /api/clients/check-phone?phone=01096411878
@@ -38,54 +24,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ exists: false });
     }
 
-    const limit = 500;
-    let page = 1;
-    let exists = false;
+    const response = await serverAPIClient.get<CheckPhoneResponse>("/clients/check-phone", {
+      params: { phone: targetDigits },
+      headers: getAuthHeaders(token),
+    });
 
-    while (!exists) {
-      const response = await serverAPIClient.get<PaginatedClientsResponse | ClientPhone[]>("/clients", {
-        params: { page, limit },
-        headers: getAuthHeaders(token),
-      });
-
-      const payload = response.data;
-      const clients = Array.isArray(payload)
-        ? payload
-        : Array.isArray(payload?.data)
-          ? payload.data
-          : [];
-
-      if (clients.length === 0) {
-        break;
-      }
-
-      exists = clients.some(
-        (client) => (client.phone ?? "").replace(/\D/g, "") === targetDigits,
-      );
-
-      if (exists) {
-        break;
-      }
-
-      if (Array.isArray(payload)) {
-        break;
-      }
-
-      const total = typeof payload?.total === "number" ? payload.total : undefined;
-      const currentPage = typeof payload?.page === "number" ? payload.page : page;
-
-      if (total !== undefined && currentPage * limit >= total) {
-        break;
-      }
-
-      if (clients.length < limit) {
-        break;
-      }
-
-      page += 1;
-    }
-
-    return NextResponse.json({ exists });
+    return NextResponse.json({ exists: response.data?.exists === true });
   } catch (error) {
     console.error("[API] Error checking phone:", error);
     return NextResponse.json({ exists: false });

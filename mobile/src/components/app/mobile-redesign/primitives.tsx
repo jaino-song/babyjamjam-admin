@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import type { CSSProperties, ReactNode, RefObject } from "react";
+import type { ComponentProps, CSSProperties, ReactNode, RefObject } from "react";
 import { ChevronDown, ChevronRight, FileCheck2, Plus } from "lucide-react";
 
+import { StatusPill } from "@/components/app/ui/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { ContractRow, ListRow, MenuGroup, SectionRows } from "./mockup-data";
 
@@ -97,12 +98,12 @@ const avatarToneClass: Record<NonNullable<ListRow["avatarTone"]>, string> = {
   purple: "bg-v3-purple",
 };
 
-const badgeToneClass = {
-  primary: "badge-primary",
-  green: "badge-green",
-  burgundy: "badge-burgundy",
-  orange: "badge-orange",
-  muted: "badge-muted",
+const badgeToneVariant: Record<ListRow["badgeTone"], NonNullable<ComponentProps<typeof StatusPill>["variant"]>> = {
+  primary: "primary",
+  green: "success",
+  burgundy: "danger",
+  orange: "warning",
+  muted: "neutral",
 };
 
 const iconToneClass: Record<ContractRow["iconTone"], string> = {
@@ -236,8 +237,35 @@ export function MobileMenuRow({
   );
 }
 
-export function Badge({ label, tone }: { label: string; tone: keyof typeof badgeToneClass }) {
-  return <span className={`badge ${badgeToneClass[tone]}`}>{label}</span>;
+export function Badge({ label, tone }: { label: string; tone: ListRow["badgeTone"] }) {
+  return (
+    <StatusPill variant={badgeToneVariant[tone]} size="sm">
+      {label}
+    </StatusPill>
+  );
+}
+
+export function ListRowBadges({ badges }: { badges: Array<{ label: string; tone: ListRow["badgeTone"] }> }) {
+  const [primaryBadge, ...hiddenBadges] = badges;
+
+  if (!primaryBadge) return null;
+
+  return (
+    <span
+      className="list-row-badges"
+      data-component="mobile-redesign-list-row-badges"
+    >
+      <Badge label={primaryBadge.label} tone={primaryBadge.tone} />
+      {hiddenBadges.length > 0 && (
+        <span
+          className="list-row-badges-more"
+          data-component="mobile-redesign-list-row-badges-more"
+        >
+          +{hiddenBadges.length}
+        </span>
+      )}
+    </span>
+  );
 }
 
 type FilterPillItem = {
@@ -481,45 +509,20 @@ export function ClientLikeRow({ row }: { row: ListRow }) {
     >
       <div className={`list-avatar ${avatarToneClass[row.avatarTone ?? "primary"]}`}>{row.initial}</div>
       <div className="list-info flex flex-col">
-        <div className="list-name">
-          {row.name}
-          {hasDue && badges.length > 0 && (
-            <span
-              className="list-row-badges"
-              data-component="mobile-redesign-list-row-badges"
-            >
-              {badges.map((badge, index) => (
-                <Badge
-                  key={`${badge.label}-${index}`}
-                  label={badge.label}
-                  tone={badge.tone}
-                />
-              ))}
-            </span>
+        <div className="list-name">{row.name}</div>
+        <div className={hasDue ? "list-meta list-meta-due" : "list-meta"}>
+          {hasDue ? (
+            <>
+              {row.due && <span className={`dday ${row.dueTone ?? ""}`}>{row.due}</span>}
+              {row.dueSub && <span className="dday-sub">{row.dueSub}</span>}
+            </>
+          ) : (
+            row.meta
           )}
         </div>
-        <div className="list-meta">{row.meta}</div>
       </div>
       <div className="list-right">
-        {hasDue ? (
-          <>
-            {row.due && <span className={`dday ${row.dueTone ?? ""}`}>{row.due}</span>}
-            {row.dueSub && <span className="dday-sub">{row.dueSub}</span>}
-          </>
-        ) : (
-          <span
-            className="list-row-badges"
-            data-component="mobile-redesign-list-row-badges"
-          >
-            {badges.map((badge, index) => (
-              <Badge
-                key={`${badge.label}-${index}`}
-                label={badge.label}
-                tone={badge.tone}
-              />
-            ))}
-          </span>
-        )}
+        <ListRowBadges badges={badges} />
       </div>
     </div>
   );

@@ -96,11 +96,11 @@ export default function AdminFeedbackPage() {
           searchValue={searchQuery}
           onSearchChange={setSearchQuery}
           searchPlaceholder="사용자, 코멘트 검색..."
-        >
-          {!feedbackLoading && filteredList.length === 0 ? (
+          emptyState={!feedbackLoading && filteredList.length === 0 ? (
             <ListEmptyState message={searchQuery ? '검색 결과가 없습니다' : '피드백이 없습니다'} />
-          ) : (
-            <AnimatedSlotList<FeedbackItem>
+          ) : undefined}
+        >
+          <AnimatedSlotList<FeedbackItem>
               items={filteredList}
               isLoading={feedbackLoading}
               loadingCount={5}
@@ -146,7 +146,6 @@ export default function AdminFeedbackPage() {
                 );
               }}
             />
-          )}
         </ListPanel>
 
         {feedbackLoading ? (

@@ -1,5 +1,6 @@
 import * as React from "react";
 import { Card } from "@/components/ui/card";
+import { APP_SURFACE_CARD_CLASS_NAME } from "@/components/ui/app-surface";
 import { cn } from "@/lib/utils";
 
 export interface CardShellProps
@@ -16,7 +17,7 @@ export function CardShell({
     <Card
       {...props}
       className={cn(
-        "relative w-full rounded-[28px] border-0 bg-white p-6 text-foreground shadow-v3 sm:p-7",
+        APP_SURFACE_CARD_CLASS_NAME,
         "flex flex-col gap-6 overflow-hidden",
         animated && "animate-scale-in",
         className

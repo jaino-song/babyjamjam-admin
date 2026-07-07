@@ -140,7 +140,12 @@ export function EmployeeAutocomplete({
             data-testid={dataTestId ?? "employee-autocomplete"}
         >
             {label && (
-                <Label className={cn(error && "text-destructive")}>
+                <Label
+                    className={cn(
+                        "text-[calc(12px*var(--v3-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted",
+                        error && "text-destructive",
+                    )}
+                >
                     {label}
                     {required && <span className="text-destructive ml-1">*</span>}
                 </Label>

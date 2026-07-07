@@ -1,20 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 export interface DetailTab {
   key: string;
-  label: string;
+  label: ReactNode;
 }
 
 export interface DetailTabsProps {
   tabs: DetailTab[];
   activeTab: string;
   onTabChange: (key: string) => void;
+  isLoading?: boolean;
 }
 
-export function DetailTabs({ tabs, activeTab, onTabChange }: DetailTabsProps) {
+export function DetailTabs({ tabs, activeTab, onTabChange, isLoading = false }: DetailTabsProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [indicatorMetrics, setIndicatorMetrics] = useState({
@@ -86,22 +87,37 @@ export function DetailTabs({ tabs, activeTab, onTabChange }: DetailTabsProps) {
       data-component="detail-tabs"
       className="relative flex gap-[calc(4px*var(--v3-ui-scale,1))] border-b border-v3-border"
     >
-      {tabs.map((tab) => (
+      {tabs.map((tab, index) => (
         <button
           data-component="detail-tabs-button"
           key={tab.key}
           ref={(node) => {
             buttonRefs.current[tab.key] = node;
           }}
-          onClick={() => onTabChange(tab.key)}
+          onClick={() => {
+            if (isLoading) return;
+            onTabChange(tab.key);
+          }}
+          aria-disabled={isLoading ? "true" : undefined}
           className={cn(
             "relative px-[calc(12px*var(--v3-ui-scale,1))] pb-[calc(8px*var(--v3-ui-scale,1))] text-[calc(14px*var(--v3-ui-scale,1))] transition-colors",
             activeTab === tab.key
               ? "text-primary font-semibold"
-              : "text-v3-text-muted hover:text-v3-text"
+              : "text-v3-text-muted hover:text-v3-text",
+            isLoading && "cursor-default hover:text-inherit",
           )}
         >
-          {tab.label}
+          {isLoading ? (
+            <span
+              aria-hidden="true"
+              data-slot="skeleton"
+              data-component="detail-tabs-text-skeleton"
+              className={cn(
+                "block h-[calc(16px*var(--v3-ui-scale,1))] animate-pulse rounded-md bg-v3-dim-white",
+                index === 0 ? "w-16" : "w-14",
+              )}
+            />
+          ) : tab.label}
         </button>
       ))}
       <div

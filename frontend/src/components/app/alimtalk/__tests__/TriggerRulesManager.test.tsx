@@ -230,15 +230,34 @@ describe("TriggerRulesManager", () => {
     const { container } = render(<TriggerRulesManager dataComponentPrefix="message" channel="sms" />);
 
     expect(screen.getByText("SMS 발송 규칙")).toBeInTheDocument();
+    expect(screen.getByText("제공기록지 전송 자동화 규칙")).toBeInTheDocument();
+    expect(screen.getByText("서비스 시작일 오후 3시에 주 담당 제공인력에게 작성 링크를 SMS로 발송합니다.")).toBeInTheDocument();
     expect(screen.getByText("SMS 재시도 규칙")).toBeInTheDocument();
     expect(screen.getByText("SMS 전송 실패 시 5분 후 자동 재시도하며, 최초 발송 이후 최대 2번까지 다시 시도합니다.")).toBeInTheDocument();
     expect(screen.queryByText("서비스 시작 안내")).not.toBeInTheDocument();
+
+    const serviceFeedbackSwitch = screen.getByRole("switch", { name: "제공기록지 전송 자동화 규칙 활성화" });
+    expect(serviceFeedbackSwitch).toHaveAttribute("aria-checked", "true");
+    expect(serviceFeedbackSwitch).toBeDisabled();
+
+    fireEvent.click(screen.getByText("제공기록지 전송 자동화 규칙"));
+
+    expect(container.querySelector('[data-component="split-layout"]')).toHaveAttribute("data-has-selection", "true");
+    expect(screen.getByText("발송 시점")).toBeInTheDocument();
+    expect(screen.getByText("서비스 시작일 오후 3시")).toBeInTheDocument();
+    expect(screen.getByText("수신 대상")).toBeInTheDocument();
+    expect(screen.getByText("주 담당 제공인력")).toBeInTheDocument();
+    expect(screen.getByText("실패 재시도")).toBeInTheDocument();
+    expect(screen.getByText("SMS 재시도 규칙 적용")).toBeInTheDocument();
+    expect(screen.getByText("토큰 만료")).toBeInTheDocument();
+    expect(screen.getByText("서비스 종료일 오후 8시")).toBeInTheDocument();
 
     const retrySwitch = screen.getByRole("switch", { name: "SMS 재시도 규칙 활성화" });
     expect(retrySwitch).toHaveAttribute("aria-checked", "true");
 
     fireEvent.click(screen.getByRole("button", { name: "비활성화" }));
 
+    expect(screen.queryByText("제공기록지 전송 자동화 규칙")).not.toBeInTheDocument();
     expect(screen.queryByText("SMS 재시도 규칙")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "활성화" }));

@@ -48,6 +48,7 @@ describe("EmployeeController (Integration)", () => {
             findByRegisteredDate: jest.fn(),
             findByRegisteredDateRange: jest.fn(),
             findAllOpenToNextWork: jest.fn(),
+            checkPhoneExists: jest.fn(),
             changeOpenStatus: jest.fn(),
             update: jest.fn(),
             delete: jest.fn(),
@@ -193,6 +194,23 @@ describe("EmployeeController (Integration)", () => {
                 expect(response.status).toBe(200);
                 expect(response.body).toEqual([]);
             });
+        });
+    });
+
+    // ============================================
+    // GET /employees/check-phone - Check Phone
+    // ============================================
+    describe("GET /employees/check-phone", () => {
+        it("should check phone duplication against employees only", async () => {
+            employeeService.checkPhoneExists.mockResolvedValue(true);
+
+            const response = await request(app.getHttpServer())
+                .get("/employees/check-phone")
+                .query({ phone: "010-1234-5678" });
+
+            expect(response.status).toBe(200);
+            expect(response.body).toEqual({ exists: true });
+            expect(employeeService.checkPhoneExists).toHaveBeenCalledWith(expect.any(String), "010-1234-5678");
         });
     });
 

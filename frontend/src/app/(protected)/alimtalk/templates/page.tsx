@@ -154,12 +154,12 @@ export default function AlimtalkTemplatesPage() {
           tabs={listTabs}
           activeTab={activeGroup}
           onTabChange={handleGroupChange}
-        >
-          {!isListLoading && visibleItems.length === 0 ? (
+          emptyState={!isListLoading && visibleItems.length === 0 ? (
             <ListEmptyState message="등록된 사용자 템플릿이 없습니다." />
-          ) : (
-            <div data-component="alimtalk-templates-list-content" className="space-y-2 pb-2">
-              <AnimatedSlotList<TemplateListItem>
+          ) : undefined}
+        >
+          <div data-component="alimtalk-templates-list-content" className="space-y-2 pb-2">
+            <AnimatedSlotList<TemplateListItem>
                 items={visibleItems}
                 isLoading={isListLoading}
                 loadingCount={6}
@@ -197,7 +197,6 @@ export default function AlimtalkTemplatesPage() {
                 }}
               />
             </div>
-          )}
         </ListPanel>
 
         <DetailPanel>

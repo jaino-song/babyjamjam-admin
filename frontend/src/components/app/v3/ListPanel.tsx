@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ExpandableSearch } from "./ExpandableSearch";
@@ -25,6 +25,8 @@ interface ListPanelProps {
   tabsVariant?: "inline" | "dropdown";
   headerPadding?: "auto" | "compact" | "default";
   overlay?: React.ReactNode;
+  /** Empty state rendered as overlay (centered in full panel height) */
+  emptyState?: React.ReactNode;
   children: React.ReactNode;
   headerActions?: React.ReactNode;
   searchValue?: string;
@@ -36,6 +38,7 @@ interface ListPanelProps {
   subHeader?: React.ReactNode;
   disabled?: boolean;
   disabledOverlay?: React.ReactNode;
+  className?: string;
 }
 
 export function ListPanel({
@@ -48,6 +51,7 @@ export function ListPanel({
   tabsVariant = "inline",
   headerPadding = "auto",
   overlay,
+  emptyState,
   children,
   headerActions,
   searchValue,
@@ -59,11 +63,15 @@ export function ListPanel({
   subHeader,
   disabled = false,
   disabledOverlay,
+  className,
 }: ListPanelProps) {
+  const inlineTabsRef = useRef<HTMLDivElement>(null);
+  const tabButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const showTabs = tabs && tabs.length > 0;
   const hasSearch = searchValue !== undefined && !!onSearchChange;
   const showControls = showTabs || hasSearch;
   const showContentSkeleton = (isLoading || isContentLoading) && contentSkeleton;
+  const resolvedOverlay = overlay ?? emptyState;
   const headerAlignmentClass = subtitle ? "items-start" : "items-center";
   const headerClassName =
     headerPadding === "default"
@@ -75,7 +83,41 @@ export function ListPanel({
           : `flex ${headerAlignmentClass} justify-between p-[calc(24px*var(--v3-ui-scale,1))] shrink-0`;
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const [tabIndicatorMetrics, setTabIndicatorMetrics] = useState({
+    left: 0,
+    width: 0,
+    isReady: false,
+  });
+  const [isTabIndicatorTransitionEnabled, setIsTabIndicatorTransitionEnabled] = useState(false);
   const { isScrollActive, handleScroll } = useScrollActivity();
+
+  const measureTabIndicator = useCallback(() => {
+    const root = inlineTabsRef.current;
+    const activeButton = activeTab ? tabButtonRefs.current[activeTab] : null;
+
+    if (!root || !activeButton) {
+      setTabIndicatorMetrics((currentMetrics) =>
+        currentMetrics.isReady ? { ...currentMetrics, isReady: false } : currentMetrics
+      );
+      return;
+    }
+
+    const rootRect = root.getBoundingClientRect();
+    const buttonRect = activeButton.getBoundingClientRect();
+    const nextMetrics = {
+      left: buttonRect.left - rootRect.left,
+      width: buttonRect.width,
+      isReady: true,
+    };
+
+    setTabIndicatorMetrics((currentMetrics) =>
+      currentMetrics.left === nextMetrics.left &&
+      currentMetrics.width === nextMetrics.width &&
+      currentMetrics.isReady === nextMetrics.isReady
+        ? currentMetrics
+        : nextMetrics
+    );
+  }, [activeTab]);
 
   useEffect(() => {
     if (!dropdownOpen) return;
@@ -88,11 +130,58 @@ export function ListPanel({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [dropdownOpen]);
 
+  useLayoutEffect(() => {
+    const animationFrameId = requestAnimationFrame(measureTabIndicator);
+
+    const root = inlineTabsRef.current;
+    if (!root) {
+      return () => cancelAnimationFrame(animationFrameId);
+    }
+
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(measureTabIndicator);
+
+    resizeObserver?.observe(root);
+    tabs?.forEach((tab) => {
+      const button = tabButtonRefs.current[tab.value];
+      if (button) resizeObserver?.observe(button);
+    });
+
+    window.addEventListener("resize", measureTabIndicator);
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", measureTabIndicator);
+    };
+  }, [measureTabIndicator, tabs]);
+
+  useEffect(() => {
+    if (!tabIndicatorMetrics.isReady) return;
+
+    const animationFrameId = requestAnimationFrame(() => {
+      setIsTabIndicatorTransitionEnabled(true);
+    });
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [tabIndicatorMetrics.isReady]);
+
   const activeTabLabel = tabs?.find(t => t.value === activeTab)?.label ?? tabs?.[0]?.label ?? "";
+  const activeTabIndicatorClassName =
+    tabs?.find((tab) => tab.value === activeTab)?.indicatorClassName ?? "bg-primary";
 
   return (
-    <div data-component="list-panel" className="relative flex h-full min-h-0 flex-1 self-stretch flex-col overflow-hidden rounded-[28px] bg-white shadow-v3">
-      <div data-component="list-panel-top-area" className="shrink-0">
+    <div
+      data-component="list-panel"
+      className={cn(
+        "relative flex h-full min-h-0 flex-1 self-stretch flex-col overflow-hidden rounded-[28px] bg-white shadow-v3",
+        className,
+      )}
+    >
+      <div data-component="list-panel-top-area" className="relative z-20 shrink-0">
         <div data-component="list-panel-header" className={headerClassName}>
           <div className="flex min-w-0 items-center gap-[calc(16px*var(--v3-ui-scale,1))]">
             {avatar}
@@ -167,12 +256,19 @@ export function ListPanel({
                   data-component="list-panel-tab-scroll"
                   className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
                 >
-                  <div className="flex w-max gap-[calc(4px*var(--v3-ui-scale,1))]">
+                  <div
+                    ref={inlineTabsRef}
+                    data-component="list-panel-tab-list"
+                    className="relative flex w-max gap-[calc(4px*var(--v3-ui-scale,1))]"
+                  >
                     {(tabs ?? []).map((tab) => (
                       <button
                         data-component="list-panel-tab-button"
                         type="button"
                         key={tab.value}
+                        ref={(node) => {
+                          tabButtonRefs.current[tab.value] = node;
+                        }}
                         disabled={disabled}
                         onClick={() => onTabChange?.(tab.value)}
                         className={cn(
@@ -184,17 +280,22 @@ export function ListPanel({
                         )}
                       >
                         {tab.label}
-                        {activeTab === tab.value ? (
-                          <span
-                            data-component="list-panel-tab-indicator"
-                            className={cn(
-                              "absolute bottom-0 left-0 h-0.5 w-full",
-                              tab.indicatorClassName ?? "bg-primary"
-                            )}
-                          />
-                        ) : null}
                       </button>
                     ))}
+                    <span
+                      data-component="list-panel-tab-indicator"
+                      className={cn(
+                        "pointer-events-none absolute bottom-0 left-0 h-0.5 will-change-[transform,width]",
+                        activeTabIndicatorClassName,
+                        isTabIndicatorTransitionEnabled &&
+                          "transition-[transform,width,opacity,background-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+                        tabIndicatorMetrics.isReady ? "opacity-100" : "opacity-0",
+                      )}
+                      style={{
+                        transform: `translateX(${tabIndicatorMetrics.left}px)`,
+                        width: `${tabIndicatorMetrics.width}px`,
+                      }}
+                    />
                   </div>
                 </div>
               )
@@ -212,12 +313,15 @@ export function ListPanel({
           </div>
         )}
       </div>
-      {overlay ? (
+      {resolvedOverlay ? (
         <div
           data-component="list-panel-overlay"
-          className="pointer-events-none absolute inset-0 z-10 flex -translate-y-[calc(12px*var(--v3-ui-scale,1))] items-center justify-center p-[calc(24px*var(--v3-ui-scale,1))]"
+          className={cn(
+            "pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-[calc(24px*var(--v3-ui-scale,1))]",
+            overlay ? "-translate-y-[calc(12px*var(--v3-ui-scale,1))]" : undefined,
+          )}
         >
-          {overlay}
+          {resolvedOverlay}
         </div>
       ) : null}
 

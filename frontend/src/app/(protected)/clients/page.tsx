@@ -31,7 +31,12 @@ import {
     useClient,
 } from "@/features/clients/hooks/use-clients";
 import type { Client, ServiceStatus } from "@/lib/client/types";
-import { getClientBadgeAvatarClassName, getClientBadges } from "@/lib/client/badges";
+import {
+    getClientBadgeAvatarClassName,
+    getClientBadges,
+    getPrimaryClientBadge,
+    prioritizeClientBadges,
+} from "@/lib/client/badges";
 import { useToast } from "@/hooks/use-toast";
 import { useAlimtalkHistory } from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
 import type { AlimtalkHistoryRecord } from "@/features/alimtalk-triggers/types";
@@ -48,7 +53,6 @@ import {
     ClientFormPanel,
 } from "@/components/app/clients/ClientFormDialog";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
-import { useClientDialogStore } from "@/stores/client-dialog-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -524,9 +528,6 @@ export default function ClientsPage() {
     const [isMessageHistoryDetailVisible, setIsMessageHistoryDetailVisible] = useState(false);
     const clearMessageHistorySelectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [detailModalOpen, setDetailModalOpen] = useState(false);
-    const clientDialogDraft = useClientDialogStore((state) => state.draft);
-    const clearClientDialogDraft = useClientDialogStore((state) => state.clearDraft);
-
 
     const { data, isLoading } = useClients(1, 50);
     const deleteClient = useDeleteClient();
@@ -542,8 +543,24 @@ export default function ClientsPage() {
         clientIdParam ? Number(clientIdParam) : 0
     );
 
-    const activeSelectedClient = selectedClient ?? (clientIdParam ? clientFromParam ?? null : null);
-    const panelFormClient = shouldOpenClientFormFromUrl ? clientDialogDraft?.client ?? null : null;
+    const clients = useMemo(() => data?.data || [], [data?.data]);
+    const selectedClientFromList = useMemo(
+        () =>
+            selectedClient
+                ? clients.find((client) => client.id === selectedClient.id) ?? selectedClient
+                : null,
+        [clients, selectedClient]
+    );
+    const clientFromParamList = useMemo(() => {
+        if (!clientIdParam) return null;
+
+        const parsedClientId = Number(clientIdParam);
+        if (!Number.isFinite(parsedClientId)) return null;
+
+        return clients.find((client) => client.id === parsedClientId) ?? null;
+    }, [clientIdParam, clients]);
+    const activeSelectedClient = selectedClientFromList ?? (clientIdParam ? clientFromParamList ?? clientFromParam ?? null : null);
+    const panelFormClient = null;
     const shouldShowClientFormPanel = isCreatingClient || shouldOpenClientFormFromUrl;
     const activeScheduleChange = activeSelectedClient?.pendingScheduleChange ?? null;
     const hasActiveScheduleChange = Boolean(activeScheduleChange);
@@ -581,7 +598,6 @@ export default function ClientsPage() {
         setDetailTabState({ key, clientId });
     };
 
-    const clients = useMemo(() => data?.data || [], [data?.data]);
     const isScheduleChangeActionPending = approveScheduleChange.isPending || rejectScheduleChange.isPending;
 
     const activeClientMessageHistory = useMemo(
@@ -712,7 +728,6 @@ export default function ClientsPage() {
         setActiveSection(nextSection);
 
         if (nextSection === "automation") {
-            clearClientDialogDraft();
             setIsCreatingClient(false);
             setSelectedClient(null);
             clearClientMessageHistoryDetail();
@@ -731,10 +746,6 @@ export default function ClientsPage() {
             router.replace("/clients");
         }
 
-        if (!shouldOpenClientFormFromUrl) {
-            clearClientDialogDraft();
-        }
-
         setSelectedClient(null);
         setEditingClient(null);
         setActiveDetailTab("basic");
@@ -750,7 +761,6 @@ export default function ClientsPage() {
             router.replace("/clients");
         }
 
-        clearClientDialogDraft();
         setIsCreatingClient(false);
         clearClientMessageHistoryDetail();
         setSelectedClient(client);
@@ -841,8 +851,20 @@ export default function ClientsPage() {
         }
     };
 
+    const handleClientFormDialogSuccess = (client: Client) => {
+        setSelectedClient((currentClient) => {
+            if (!currentClient || currentClient.id === client.id) {
+                return client;
+            }
+
+            return currentClient;
+        });
+        setEditingClient((currentClient) => (
+            currentClient?.id === client.id ? client : currentClient
+        ));
+    };
+
     const handleClientFormPanelClose = () => {
-        clearClientDialogDraft();
         setIsCreatingClient(false);
         setClientFormActiveStep(0);
         clearClientMessageHistoryDetail();
@@ -923,35 +945,35 @@ export default function ClientsPage() {
                                     setSelectedClient(null);
                                 }}
                             >
-	                <ListPanel
-	                    title="고객 목록"
-	                    tabs={FILTER_CHIPS}
-	                    activeTab={activeFilter}
-	                    onTabChange={setActiveFilter}
-	                    searchValue={searchQuery}
-	                    onSearchChange={setSearchQuery}
-	                    searchPlaceholder={t(locale, "clients.search-placeholder")}
-	                    isLoading={isLoading}
-	                    headerActions={
-	                        <HeaderActionButton
-	                            icon={Plus}
-	                            label={t(locale, "clients.add")}
-	                            onClick={handleAddNew}
-	                            data-testid="add-client-button"
-	                            data-component="clients-header-add"
-	                            className={
-	                                shouldShowClientFormPanel
-	                                    ? "bg-v3-primary text-white hover:bg-v3-primary"
-	                                    : undefined
-	                            }
-	                        />
-	                    }
-	                >
-	                    {!isLoading && filteredClients.length === 0 ? (
-	                        <ListEmptyState message={t(locale, "clients.no-data")} />
-	                    ) : (
-	                        <div data-component="clients-list-content" className="space-y-2">
-	                            <AnimatedSlotList<Client>
+                <ListPanel
+                    title="고객 목록"
+                    tabs={FILTER_CHIPS}
+                    activeTab={activeFilter}
+                    onTabChange={setActiveFilter}
+                    searchValue={searchQuery}
+                    onSearchChange={setSearchQuery}
+                    searchPlaceholder={t(locale, "clients.search-placeholder")}
+                    isLoading={isLoading}
+                    headerActions={
+                        <HeaderActionButton
+                            icon={Plus}
+                            label={t(locale, "clients.add")}
+                            onClick={handleAddNew}
+                            data-testid="add-client-button"
+                            data-component="clients-header-add"
+                            className={
+                                shouldShowClientFormPanel
+                                    ? "bg-v3-primary text-white hover:bg-v3-primary"
+                                    : undefined
+                            }
+                        />
+                    }
+                    emptyState={!isLoading && filteredClients.length === 0 ? (
+                        <ListEmptyState message={t(locale, "clients.no-data")} />
+                    ) : undefined}
+                >
+                    <div data-component="clients-list-content" className="space-y-2">
+                        <AnimatedSlotList<Client>
 	                                    items={filteredClients}
 	                                    isLoading={isLoading}
 	                                    loadingCount={10}
@@ -979,18 +1001,19 @@ export default function ClientsPage() {
 	                                            );
 	                                        }
 
-		                                        if (!client) return null;
-		                                        const clientBadges = getClientBadges(client);
-		                                        const primaryClientBadge = clientBadges[0] ?? null;
+	                                        if (!client) return null;
+	                                        const clientBadges = getClientBadges(client);
+	                                        const sortedClientBadges = prioritizeClientBadges(clientBadges);
+	                                        const primaryClientBadge = getPrimaryClientBadge(clientBadges);
 
-		                                        return (
-		                                            <AnimatedSlotListItemContent
-		                                                dataComponent="clients-list-item"
-		                                                icon={Users}
-		                                                iconContainerClassName={getClientBadgeAvatarClassName(primaryClientBadge)}
-		                                                title={client.name}
-		                                                subtitle={
-		                                                    <>
+	                                        return (
+	                                            <AnimatedSlotListItemContent
+	                                                dataComponent="clients-list-item"
+	                                                icon={Users}
+	                                                iconContainerClassName={getClientBadgeAvatarClassName(primaryClientBadge)}
+	                                                title={client.name}
+	                                                subtitle={
+	                                                    <>
 	                                                        {client.phone ? <span>{client.phone}</span> : null}
 	                                                        {client.address ? (
 	                                                            <span className="truncate">
@@ -999,7 +1022,7 @@ export default function ClientsPage() {
 	                                                        ) : null}
 	                                                    </>
 	                                                }
-			                                                status={clientBadges.map((badge, badgeIndex) => (
+			                                                status={sortedClientBadges.map((badge, badgeIndex) => (
 			                                                    <StatusBadge
 			                                                        key={badge.key ?? `${badge.status}-${badge.label ?? badgeIndex}`}
 			                                                        status={badge.status}
@@ -1011,7 +1034,6 @@ export default function ClientsPage() {
 	                                    }}
 	                                />
 	                        </div>
-	                    )}
 	                </ListPanel>
 
                 {shouldShowClientFormPanel ? (
@@ -1060,7 +1082,7 @@ export default function ClientsPage() {
                                     data-component="clients-detail-avatar"
                                     className={cn(
                                         "w-16 h-16 rounded-[20px] flex items-center justify-center shadow-lg shrink-0",
-                                        getClientBadgeAvatarClassName(activeSelectedClientBadges[0])
+                                        getClientBadgeAvatarClassName(getPrimaryClientBadge(activeSelectedClientBadges))
                                     )}
                                 >
                                     <Users className="w-7 h-7 shrink-0 transition-colors text-current" aria-hidden="true" />
@@ -1069,13 +1091,28 @@ export default function ClientsPage() {
                             title={activeSelectedClient.name}
                             badges={
                                 <>
-                                    {activeSelectedClientBadges.map((badge) => (
-                                        <StatusBadge
-                                            key={badge.key}
-                                            status={badge.status}
-                                            label={badge.label}
-                                        />
-                                    ))}
+                                    {activeSelectedClientBadges
+                                        .filter((badge) => badge.key !== "breast_pump")
+                                        .map((badge) => (
+                                            <StatusBadge
+                                                key={badge.key}
+                                                status={badge.status}
+                                                label={badge.label}
+                                            />
+                                        ))}
+                                </>
+                            }
+                            badgesRight={
+                                <>
+                                    {activeSelectedClientBadges
+                                        .filter((badge) => badge.key === "breast_pump")
+                                        .map((badge) => (
+                                            <StatusBadge
+                                                key={badge.key}
+                                                status={badge.status}
+                                                label={badge.label}
+                                            />
+                                        ))}
                                 </>
                             }
                             subtitle={
@@ -1303,6 +1340,7 @@ export default function ClientsPage() {
                 open={formDialogOpen}
                 onClose={handleFormDialogClose}
                 client={editingClient ?? null}
+                onSuccess={handleClientFormDialogSuccess}
             />
         </PageSection>
     );

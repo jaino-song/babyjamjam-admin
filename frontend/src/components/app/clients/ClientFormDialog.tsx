@@ -2,10 +2,10 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useVoucherPriceInfos } from "@/hooks/useVoucherData";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
+import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
 import {
     Client,
@@ -13,38 +13,38 @@ import {
     UpdateClientDto,
     SERVICE_STATUS_OPTIONS
 } from "@/lib/client/types";
+import type { Employee } from "@/hooks/useEmployees";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
 import { cn } from "@/lib/utils";
+import { calcEndDateBusinessDays } from "@/lib/date/business-days";
 import voucherOptions from "../messages/templates/json/voucher.json";
 
 import {
     Dialog,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input, V3_INPUT_CONTROL_CLASS_NAME } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-    SelectGroup,
-    SelectLabel,
-} from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { StatusBadge } from "@/components/app/ui/status-badge";
 import { Spinner } from "@/components/ui/spinner";
-import { TitleDescChildrenMolecule } from "@/components/app/ui/TitleDescChildrenMolecule";
 import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
-import { TitleTextInputMolecule } from "../messages/forms/form-components/TitleTextInputMolecule";
+import {
+    FormField,
+    FormGrid,
+    FormHelperText,
+    FormNativeSelect,
+    FormSection,
+    FormSwitchRow,
+    FormTextInput,
+} from "@/components/app/ui/form-section";
 import {
     SteppedWizardPanelContent,
-    SteppedWizardPanelFooter,
 } from "@/components/app/v3/SteppedWizardPanelLayout";
+import {
+    DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME,
+    DETAIL_PANEL_FOOTER_CLASS_NAME,
+    DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME,
+} from "@/components/app/v3/DetailPanel";
 
 export interface ClientFormDialogProps {
     open: boolean;
@@ -60,10 +60,11 @@ export interface ClientFormPanelProps extends Omit<ClientFormDialogProps, "open"
     renderLayout?: (parts: { content: ReactNode; footer: ReactNode }) => ReactNode;
 }
 
-const FIELD_GRID_CLASS_NAME = "grid grid-cols-1 gap-4 sm:grid-cols-2";
-const SECTION_CARD_CLASS_NAME = "rounded-[24px] border border-v3-border/70 bg-white p-5";
-const LABEL_CLASS_NAME = "text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-v3-text-muted";
-const V3_INPUT_CLASS_NAME = V3_INPUT_CONTROL_CLASS_NAME;
+type ClientFormData = Omit<CreateClientDto, "primaryEmployeeId"> & { primaryEmployeeId: number | null };
+
+const PANEL_STEP_CONTENT_CLASS_NAME =
+    "grid w-full grid-cols-1 gap-[calc(16px*var(--v3-ui-scale,1))] pb-[calc(24px*var(--v3-ui-scale,1))] md:grid-cols-2";
+const PANEL_FULL_FIELD_CLASS_NAME = "md:col-span-2";
 export const CLIENT_FORM_STEPPER_STEPS = [
     { label: "이용자\n정보" },
     { label: "제공인력\n정보" },
@@ -72,6 +73,29 @@ export const CLIENT_FORM_STEPPER_STEPS = [
 ] as const;
 
 const CLIENT_FORM_LAST_STEP_INDEX = CLIENT_FORM_STEPPER_STEPS.length - 1;
+
+interface ClientDialogSectionProps {
+    dataComponent: string;
+    title: ReactNode;
+    description: ReactNode;
+    children: ReactNode;
+}
+
+function ClientDialogSection({ dataComponent, title, description, children }: ClientDialogSectionProps) {
+    return (
+        <FormSection
+            data-component={dataComponent}
+            title={title}
+            description={description}
+            headerDataComponent={`${dataComponent}-head`}
+            titleDataComponent={`${dataComponent}-title`}
+            descriptionDataComponent={`${dataComponent}-caption`}
+            bodyDataComponent={`${dataComponent}-body`}
+        >
+            {children}
+        </FormSection>
+    );
+}
 
 // Format number with commas (handles comma-formatted strings too)
 const formatPrice = (price: number | string): string => {
@@ -111,6 +135,44 @@ const formatDateForInput = (dateString: string | null | undefined): string => {
     const date = new Date(dateString);
     if (isNaN(date.getTime())) return "";
     return date.toISOString().split("T")[0];
+};
+
+const formatDateForCompactInput = (dateString: string | null | undefined): string => {
+    const formattedDate = formatDateForInput(dateString);
+    if (!formattedDate) return "";
+    return `${formattedDate.slice(2, 4)}${formattedDate.slice(5, 7)}${formattedDate.slice(8, 10)}`;
+};
+
+const parseCompactDateInput = (value: string): string => {
+    return value.replace(/\D/g, "").slice(0, 6);
+};
+
+const normalizeCompactDateForSubmit = (value: string): string => {
+    const compactDate = parseCompactDateInput(value);
+    if (compactDate.length !== 6) return value;
+
+    const yearPrefix = Number(compactDate.slice(0, 2)) >= 70 ? "19" : "20";
+    return `${yearPrefix}${compactDate.slice(0, 2)}-${compactDate.slice(2, 4)}-${compactDate.slice(4, 6)}`;
+};
+
+const normalizeDateForCompactState = (value: string | null | undefined): string => {
+    const compactDate = formatDateForCompactInput(value);
+    if (compactDate) return compactDate;
+    return parseCompactDateInput(value ?? "");
+};
+
+const isValidCompactDateInput = (value: string): boolean => {
+    const compactDate = parseCompactDateInput(value);
+    if (compactDate.length !== 6) return false;
+
+    const normalizedDate = normalizeCompactDateForSubmit(compactDate);
+    const date = new Date(`${normalizedDate}T00:00:00`);
+    return (
+        !Number.isNaN(date.getTime()) &&
+        date.getFullYear() === Number(normalizedDate.slice(0, 4)) &&
+        date.getMonth() + 1 === Number(normalizedDate.slice(5, 7)) &&
+        date.getDate() === Number(normalizedDate.slice(8, 10))
+    );
 };
 
 export function ClientFormPanel({
@@ -166,15 +228,12 @@ function ClientFormContent({
     // Read pre-filled name from Zustand store (when opened from ClientAutocomplete)
     const prefillName = useClientDialogStore((state) => state.prefillName);
     const clearPrefillName = useClientDialogStore((state) => state.clearPrefillName);
-    const draft = useClientDialogStore((state) => state.draft);
-    const setDraft = useClientDialogStore((state) => state.setDraft);
-    const clearDraft = useClientDialogStore((state) => state.clearDraft);
 
     const createClient = useCreateClient();
     const updateClient = useUpdateClient();
 
     // Form state - use extended type to allow null for primaryEmployeeId during form editing
-    const [formData, setFormData] = useState<Omit<CreateClientDto, 'primaryEmployeeId'> & { primaryEmployeeId: number | null }>({
+    const [formData, setFormData] = useState<ClientFormData>({
         name: "",
         birthday: "",
         dueDate: "",
@@ -196,6 +255,8 @@ function ClientFormContent({
     });
 
     const [error, setError] = useState<string | null>(null);
+    const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
+    const [employeeDialogTarget, setEmployeeDialogTarget] = useState<"primary" | "secondary" | null>(null);
     const contentRef = useRef<HTMLDivElement>(null);
     const [internalActiveStep, setInternalActiveStep] = useState(0);
     const activeStep = controlledActiveStep ?? internalActiveStep;
@@ -224,6 +285,34 @@ function ClientFormContent({
         return durations.sort((a, b) => a - b);
     }, [voucherPriceInfos]);
 
+    const voucherTypeOptions = useMemo(
+        () =>
+            Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => ({
+                label: groupName,
+                options: Object.entries(types).map(([typeValue, typeData]) => ({
+                    value: typeValue,
+                    label: typeData.label,
+                })),
+            })),
+        []
+    );
+
+    const durationOptions = useMemo(
+        () => availableDurations.map((duration) => ({
+            value: String(duration),
+            label: `${duration}일`,
+        })),
+        [availableDurations]
+    );
+
+    const serviceStatusOptions = useMemo(
+        () => SERVICE_STATUS_OPTIONS.map((status) => ({
+            value: status.value,
+            label: status.label,
+        })),
+        []
+    );
+
     // Get price info for selected type and duration
     const selectedPriceInfo = useMemo(() => {
         if (!voucherPriceInfos || !formData.duration) return null;
@@ -246,6 +335,28 @@ function ClientFormContent({
         }
     }, [selectedPriceInfo, pricesManuallyEdited]);
 
+    useEffect(() => {
+        queueMicrotask(() => {
+            setFormData(prev => {
+                const duration = prev.duration;
+                const startDate = prev.startDate ?? "";
+
+                if (!duration || !isValidCompactDateInput(startDate)) {
+                    return prev.endDate ? { ...prev, endDate: "" } : prev;
+                }
+
+                const startDateIso = normalizeCompactDateForSubmit(startDate);
+                const computedEndDateIso = calcEndDateBusinessDays(startDateIso, duration);
+                const computedEndDate = normalizeDateForCompactState(computedEndDateIso);
+
+                return prev.endDate === computedEndDate ? prev : {
+                    ...prev,
+                    endDate: computedEndDate,
+                };
+            });
+        });
+    }, [formData.duration, formData.startDate]);
+
     // Reset duration when type changes
     const handleTypeChange = (newType: string) => {
         setFormData(prev => ({
@@ -264,22 +375,14 @@ function ClientFormContent({
     // Reset form when dialog opens/closes or client changes
     useEffect(() => {
         if (open) {
-            const employeeCreatedId = searchParams.get("employeeCreatedId");
-            const employeeTarget = searchParams.get("target");
-            const parsedEmployeeId = employeeCreatedId ? Number(employeeCreatedId) : null;
-            const hasReturnedEmployee =
-                parsedEmployeeId !== null &&
-                !Number.isNaN(parsedEmployeeId) &&
-                (employeeTarget === "primary" || employeeTarget === "secondary");
+            let nextFormData: ClientFormData | null = null;
+            let nextPricesManuallyEdited = false;
 
-            let nextFormData = draft?.formData ?? null;
-            let nextPricesManuallyEdited = draft?.pricesManuallyEdited ?? false;
-
-            if (!nextFormData && client) {
+            if (client) {
                 nextFormData = {
                     name: client.name,
                     birthday: client.birthday || "",
-                    dueDate: formatDateForInput(client.dueDate),
+                    dueDate: normalizeDateForCompactState(client.dueDate),
                     address: client.address || "",
                     phone: client.phone || "",
                     primaryEmployeeId: client.primaryEmployee?.id ?? null,
@@ -289,8 +392,8 @@ function ClientFormContent({
                     fullPrice: client.fullPrice || "",
                     grant: client.grant || "",
                     actualPrice: client.actualPrice || "",
-                    startDate: formatDateForInput(client.startDate),
-                    endDate: formatDateForInput(client.endDate),
+                    startDate: normalizeDateForCompactState(client.startDate),
+                    endDate: normalizeDateForCompactState(client.endDate),
                     careCenter: client.careCenter,
                     voucherClient: client.voucherClient,
                     breastPump: client.breastPump,
@@ -323,31 +426,45 @@ function ClientFormContent({
                 clearPrefillName();
             }
 
-            if (hasReturnedEmployee && parsedEmployeeId !== null) {
-                nextFormData = {
-                    ...nextFormData,
-                    primaryEmployeeId:
-                        employeeTarget === "primary" ? parsedEmployeeId : nextFormData.primaryEmployeeId,
-                    secondaryEmployeeId:
-                        employeeTarget === "secondary" ? parsedEmployeeId : nextFormData.secondaryEmployeeId,
-                };
-            }
+            nextFormData = {
+                ...nextFormData,
+                dueDate: normalizeDateForCompactState(nextFormData.dueDate),
+                startDate: normalizeDateForCompactState(nextFormData.startDate),
+                endDate: normalizeDateForCompactState(nextFormData.endDate),
+            };
 
             queueMicrotask(() => {
                 setFormData(nextFormData);
                 setPricesManuallyEdited(nextPricesManuallyEdited);
                 setError(null);
-
-                if (hasReturnedEmployee) {
-                    clearDraft();
-                    router.replace("/clients?openClientForm=1");
-                }
             });
         }
-    }, [clearDraft, clearPrefillName, client, draft, open, prefillName, router, searchParams]);
+    }, [clearPrefillName, client, open, prefillName]);
 
     const handleChange = (field: keyof CreateClientDto, value: unknown) => {
         setFormData(prev => ({ ...prev, [field]: value }));
+    };
+
+    const openEmployeeDialog = (target: "primary" | "secondary") => {
+        setEmployeeDialogTarget(target);
+        setIsEmployeeDialogOpen(true);
+    };
+
+    const handleEmployeeDialogClose = () => {
+        setIsEmployeeDialogOpen(false);
+        setEmployeeDialogTarget(null);
+    };
+
+    const handleEmployeeCreated = (newEmployee: Employee) => {
+        setFormData(prev => {
+            if (employeeDialogTarget === "primary") {
+                return { ...prev, primaryEmployeeId: newEmployee.id };
+            }
+            if (employeeDialogTarget === "secondary") {
+                return { ...prev, secondaryEmployeeId: newEmployee.id };
+            }
+            return prev;
+        });
     };
 
     // Handle manual price changes
@@ -389,6 +506,10 @@ function ClientFormContent({
             setErrorAndScroll(t(locale, "clients.form.error-due-date-required"));
             return;
         }
+        if (!isValidCompactDateInput(formData.dueDate)) {
+            setErrorAndScroll(t(locale, "clients.form.error-due-date-invalid"));
+            return;
+        }
         if (!formData.address?.trim()) {
             setErrorAndScroll(t(locale, "clients.form.error-address-required"));
             return;
@@ -416,19 +537,31 @@ function ClientFormContent({
             setErrorAndScroll(t(locale, "clients.form.error-start-date-required"));
             return;
         }
+        if (!isValidCompactDateInput(formData.startDate)) {
+            setErrorAndScroll(t(locale, "clients.form.error-start-date-required"));
+            return;
+        }
         if (!formData.endDate?.trim()) {
+            setErrorAndScroll(t(locale, "clients.form.error-end-date-required"));
+            return;
+        }
+        if (!isValidCompactDateInput(formData.endDate)) {
             setErrorAndScroll(t(locale, "clients.form.error-end-date-required"));
             return;
         }
 
         try {
+            const normalizedDueDate = normalizeCompactDateForSubmit(formData.dueDate);
+            const normalizedStartDate = normalizeCompactDateForSubmit(formData.startDate);
+            const normalizedEndDate = normalizeCompactDateForSubmit(formData.endDate);
+
             if (isEditMode && client) {
                 // Build update DTO, excluding null employee IDs to avoid validation errors
                 // (backend @IsOptional only skips undefined, not null)
                 const updateDto: UpdateClientDto = {
                     name: formData.name,
                     birthday: formData.birthday,
-                    dueDate: formData.dueDate || null,
+                    dueDate: normalizedDueDate || null,
                     address: formData.address,
                     phone: formData.phone,
                     // Only include employee IDs if explicitly selected (not null)
@@ -439,25 +572,24 @@ function ClientFormContent({
                     fullPrice: formData.fullPrice,
                     grant: formData.grant,
                     actualPrice: formData.actualPrice,
-                    startDate: formData.startDate || null,
-                    endDate: formData.endDate || null,
+                    startDate: normalizedStartDate || null,
+                    endDate: normalizedEndDate || null,
                     careCenter: formData.careCenter,
                     voucherClient: formData.voucherClient,
                     breastPump: formData.breastPump,
                     serviceStatus: formData.serviceStatus,
                 };
                 const updatedClient = await updateClient.mutateAsync({ id: client.id, dto: updateDto });
-                clearDraft();
                 onSuccess?.(updatedClient);
             } else {
                 const createDto: CreateClientDto = {
                     ...formData,
+                    dueDate: normalizedDueDate,
                     duration: formData.duration || null,
-                    startDate: formData.startDate || null,
-                    endDate: formData.endDate || null,
+                    startDate: normalizedStartDate || null,
+                    endDate: normalizedEndDate || null,
                 };
                 const newClient = await createClient.mutateAsync(createDto);
-                clearDraft();
                 onSuccess?.(newClient);
             }
             onClose();
@@ -472,7 +604,7 @@ function ClientFormContent({
     const isBasicStepValid = Boolean(
         formData.name.trim() &&
         formData.birthday?.trim() &&
-        formData.dueDate?.trim() &&
+        isValidCompactDateInput(formData.dueDate ?? "") &&
         formData.address?.trim() &&
         formData.phone?.trim()
     );
@@ -483,8 +615,8 @@ function ClientFormContent({
         formData.fullPrice?.trim()
     );
     const isContractStepValid = Boolean(
-        formData.startDate?.trim() &&
-        formData.endDate?.trim()
+        isValidCompactDateInput(formData.startDate ?? "") &&
+        isValidCompactDateInput(formData.endDate ?? "")
     );
     const stepValidation = [
         isBasicStepValid,
@@ -494,10 +626,22 @@ function ClientFormContent({
     ] as const;
     const isCurrentStepValid = stepValidation[activeStep] ?? true;
     const isFormComplete = isBasicStepValid && isVoucherStepValid && isContractStepValid;
+    const requiredFieldProgressText = `필수 항목 10개 중 ${
+        [
+            Boolean(formData.name.trim()),
+            isValidCompactDateInput(formData.birthday ?? ""),
+            isValidCompactDateInput(formData.dueDate ?? ""),
+            Boolean(formData.address?.trim()),
+            Boolean(formData.phone?.trim()),
+            Boolean(formData.type?.trim()),
+            Boolean(formData.duration),
+            Boolean(formData.fullPrice?.trim()),
+            isValidCompactDateInput(formData.startDate ?? ""),
+            isValidCompactDateInput(formData.endDate ?? ""),
+        ].filter(Boolean).length
+    }개 입력됨`;
 
     const handleDialogClose = () => {
-        clearDraft();
-
         if (searchParams.get("openClientForm") === "1") {
             router.replace("/clients");
         }
@@ -508,15 +652,26 @@ function ClientFormContent({
     const formTitle = isEditMode
         ? t(locale, "clients.form.edit-title")
         : t(locale, "clients.form.add-title");
-    const formDescription = isEditMode
-        ? "기본 정보, 담당 인력, 서비스 조건을 한 번에 수정합니다."
-        : "고객의 기본 정보와 서비스 조건을 단계 없이 빠르게 등록합니다.";
     const dialogFormActions = (
-        <>
-            <Button variant="neutral" onClick={handleDialogClose} disabled={isSubmitting}>
+        <div className="ml-auto flex w-full flex-col-reverse gap-2 sm:w-[300px] sm:flex-row sm:justify-end">
+            <Button
+                variant="neutral"
+                size="sm"
+                onClick={handleDialogClose}
+                disabled={isSubmitting}
+                data-component="clients-form-dialog-cancel"
+                className="w-full sm:flex-1"
+            >
                 {t(locale, "common.cancel")}
             </Button>
-            <Button onClick={handleSubmit} disabled={isSubmitting}>
+            <Button
+                variant="positive"
+                size="sm"
+                onClick={handleSubmit}
+                disabled={isSubmitting}
+                data-component="clients-form-dialog-submit"
+                className="w-full sm:flex-1"
+            >
                 {isSubmitting ? (
                     <Spinner className="h-4 w-4" />
                 ) : isEditMode ? (
@@ -525,42 +680,55 @@ function ClientFormContent({
                     t(locale, "common.create")
                 )}
             </Button>
-        </>
+        </div>
     );
     const panelFormActions = (
-        <>
-            <Button variant="neutral" onClick={handleDialogClose} disabled={isSubmitting}>
-                {t(locale, "common.cancel")}
-            </Button>
-            <div className="flex items-center gap-2">
+        <div className="flex w-full flex-wrap items-center justify-between gap-[calc(12px*var(--v3-ui-scale,1))]">
+            <span className={DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME}>{requiredFieldProgressText}</span>
+            <div className={DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME}>
+                {activeStep === 0 && (
+                    <Button
+                        variant="neutral"
+                        size="sm"
+                        onClick={handleDialogClose}
+                        disabled={isSubmitting}
+                        className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
+                    >
+                        {t(locale, "common.cancel")}
+                    </Button>
+                )}
                 {activeStep > 0 && (
                     <Button
                         type="button"
                         variant="outline"
+                        size="sm"
                         onClick={() => handleStepChange(activeStep - 1)}
                         disabled={isSubmitting}
                         data-component="clients-form-panel-prev"
+                        className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
                     >
-                        <ChevronLeft className="h-4 w-4" />
                         이전
                     </Button>
                 )}
                 {activeStep < CLIENT_FORM_LAST_STEP_INDEX ? (
                     <Button
                         type="button"
+                        size="sm"
                         onClick={() => handleStepChange(activeStep + 1)}
                         disabled={!isCurrentStepValid || isSubmitting}
                         data-component="clients-form-panel-next"
+                        className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
                     >
                         다음
-                        <ChevronRight className="h-4 w-4" />
                     </Button>
                 ) : (
                     <Button
                         type="button"
+                        size="sm"
                         onClick={handleSubmit}
                         disabled={isSubmitting || !isFormComplete}
                         data-component="clients-form-panel-submit"
+                        className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
                     >
                         {isSubmitting ? (
                             <Spinner className="h-4 w-4" />
@@ -572,85 +740,100 @@ function ClientFormContent({
                     </Button>
                 )}
             </div>
-        </>
+        </div>
     );
 
     const basicInfoSection = (
-        <TitleDescChildrenMolecule
+        <ClientDialogSection
+            dataComponent="clients-form-dialog-section-basic"
             title={t(locale, "clients.form.section-basic")}
             description="고객의 프로필과 연락처를 먼저 입력해 주세요."
-            className={SECTION_CARD_CLASS_NAME}
-            titleClassName={LABEL_CLASS_NAME}
         >
-            <div className={FIELD_GRID_CLASS_NAME}>
-                <div className="space-y-2">
-                    <Label htmlFor="name" className={LABEL_CLASS_NAME}>
-                        {t(locale, "clients.form.name")}
-                        <span className="text-destructive ml-1">*</span>
-                    </Label>
-                    <Input
+            <FormGrid data-component="clients-form-dialog-basic-grid">
+                <FormField
+                    data-component="clients-form-dialog-field-name"
+                    htmlFor="name"
+                    label={t(locale, "clients.form.name")}
+                    required
+                >
+                    <FormTextInput
                         id="name"
-                        className={V3_INPUT_CLASS_NAME}
                         value={formData.name}
                         onChange={(e) => handleChange("name", e.target.value)}
                     />
-                </div>
-                <div className="space-y-2">
-                    <Label htmlFor="birthday" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.birthday")}</Label>
-                    <Input
+                </FormField>
+
+                <FormField
+                    data-component="clients-form-dialog-field-birthday"
+                    htmlFor="birthday"
+                    label={t(locale, "clients.form.birthday")}
+                >
+                    <FormTextInput
                         id="birthday"
-                        className={V3_INPUT_CLASS_NAME}
                         placeholder="YYMMDD"
                         value={formData.birthday ?? ""}
                         onChange={(e) => handleChange("birthday", e.target.value)}
                         maxLength={6}
                     />
-                    <p className="text-xs text-muted-foreground">
+                    <FormHelperText data-component="clients-form-dialog-field-birthday-helper">
                         {t(locale, "clients.form.birthday-helper")}
-                    </p>
-                </div>
-                <div className="space-y-2">
-                    <Label htmlFor="dueDate" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.due-date")}</Label>
-                    <Input
+                    </FormHelperText>
+                </FormField>
+
+                <FormField
+                    data-component="clients-form-dialog-field-due-date"
+                    htmlFor="dueDate"
+                    label={t(locale, "clients.form.due-date")}
+                >
+                    <FormTextInput
                         id="dueDate"
-                        type="date"
-                        className={V3_INPUT_CLASS_NAME}
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="YYMMDD"
                         value={formData.dueDate || ""}
-                        onChange={(e) => handleChange("dueDate", e.target.value)}
+                        onChange={(e) => handleChange("dueDate", parseCompactDateInput(e.target.value))}
                     />
-                </div>
-                <div className="space-y-2">
-                    <Label htmlFor="phone" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.phone")}</Label>
-                    <Input
+                </FormField>
+
+                <FormField
+                    data-component="clients-form-dialog-field-phone"
+                    htmlFor="phone"
+                    label={t(locale, "clients.form.phone")}
+                >
+                    <FormTextInput
                         id="phone"
-                        className={V3_INPUT_CLASS_NAME}
                         placeholder="010-1234-5678"
                         value={formData.phone ?? ""}
                         onChange={(e) => handleChange("phone", formatPhoneNumber(e.target.value))}
                         maxLength={13}
                     />
-                </div>
-                <div className="space-y-2 sm:col-span-2">
-                    <Label htmlFor="address" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.address")}</Label>
-                    <Input
+                </FormField>
+
+                <FormField
+                    data-component="clients-form-dialog-field-address"
+                    htmlFor="address"
+                    label={t(locale, "clients.form.address")}
+                    className="sm:col-span-2"
+                >
+                    <FormTextInput
                         id="address"
-                        className={V3_INPUT_CLASS_NAME}
+                        placeholder="상세 주소"
                         value={formData.address ?? ""}
                         onChange={(e) => handleChange("address", e.target.value)}
                     />
-                </div>
-            </div>
-        </TitleDescChildrenMolecule>
+                </FormField>
+            </FormGrid>
+        </ClientDialogSection>
     );
 
     const employeeSection = (
-        <TitleDescChildrenMolecule
+        <ClientDialogSection
+            dataComponent="clients-form-dialog-section-employee"
             title={t(locale, "clients.form.section-employee")}
             description="서비스를 담당할 제공인력을 배정해 주세요."
-            className={SECTION_CARD_CLASS_NAME}
-            titleClassName={LABEL_CLASS_NAME}
         >
-            <div className={FIELD_GRID_CLASS_NAME}>
+            <FormGrid data-component="clients-form-dialog-employee-grid">
                 <EmployeeAutocomplete
                     value={formData.primaryEmployeeId}
                     onChange={(id) => handleChange("primaryEmployeeId", id)}
@@ -658,12 +841,7 @@ function ClientFormContent({
                     excludeIds={formData.secondaryEmployeeId != null ? [formData.secondaryEmployeeId] : []}
                     allowManualEntry
                     onManualEntry={() => {
-                        setDraft({
-                            formData,
-                            pricesManuallyEdited,
-                            client: client ?? null,
-                        });
-                        router.push("/employees/new?returnTo=/clients?openClientForm=1&target=primary");
+                        openEmployeeDialog("primary");
                     }}
                 />
                 <EmployeeAutocomplete
@@ -673,282 +851,298 @@ function ClientFormContent({
                     excludeIds={formData.primaryEmployeeId != null ? [formData.primaryEmployeeId] : []}
                     allowManualEntry
                     onManualEntry={() => {
-                        setDraft({
-                            formData,
-                            pricesManuallyEdited,
-                            client: client ?? null,
-                        });
-                        router.push("/employees/new?returnTo=/clients?openClientForm=1&target=secondary");
+                        openEmployeeDialog("secondary");
                     }}
                 />
-            </div>
-        </TitleDescChildrenMolecule>
+            </FormGrid>
+        </ClientDialogSection>
     );
 
     const voucherInfoSections = (
         <>
-            <TitleDescChildrenMolecule
+            <ClientDialogSection
+                dataComponent="clients-form-dialog-section-service"
                 title={t(locale, "clients.form.section-service")}
                 description="바우처 유형과 서비스 기간을 선택해 주세요."
-                className={SECTION_CARD_CLASS_NAME}
-                titleClassName={LABEL_CLASS_NAME}
             >
-                <div className="flex flex-wrap items-end gap-4">
-                    <div className="flex-1 space-y-2">
-                        <Label className={LABEL_CLASS_NAME}>{t(locale, "clients.form.voucher-type")}</Label>
-                        <Select
+                <FormGrid data-component="clients-form-dialog-service-grid">
+                    <FormField
+                        data-component="clients-form-dialog-field-voucher-type"
+                        htmlFor="clients-form-voucher-type"
+                        label={t(locale, "clients.form.voucher-type")}
+                    >
+                        <FormNativeSelect
+                            id="clients-form-voucher-type"
                             value={formData.type || ""}
+                            options={voucherTypeOptions}
+                            placeholder={t(locale, "clients.form.voucher-type")}
                             onValueChange={handleTypeChange}
-                        >
-                            <SelectTrigger className="w-full">
-                                <SelectValue placeholder={t(locale, "clients.form.voucher-type")} />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
-                                    <SelectGroup key={groupName}>
-                                        <SelectLabel className="font-semibold">{groupName}</SelectLabel>
-                                        {Object.entries(types).map(([typeValue, typeData]) => (
-                                            <SelectItem key={typeValue} value={typeValue} className="pl-6">
-                                                {typeData.label}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectGroup>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    </div>
-                    <div className="flex-1 space-y-2">
-                        <Label className={LABEL_CLASS_NAME}>{t(locale, "clients.form.duration")}</Label>
+                            wrapDataComponent="clients-form-dialog-field-voucher-type-select-wrap"
+                            selectDataComponent="clients-form-dialog-field-voucher-type-select"
+                            iconDataComponent="clients-form-dialog-field-voucher-type-select-icon"
+                        />
+                    </FormField>
+
+                    <FormField
+                        data-component="clients-form-dialog-field-duration"
+                        htmlFor="clients-form-duration"
+                        label={t(locale, "clients.form.duration")}
+                    >
                         <div className="relative">
-                            <Select
+                            <FormNativeSelect
+                                id="clients-form-duration"
                                 value={formData.duration?.toString() || ""}
+                                options={durationOptions}
+                                placeholder={t(locale, "clients.form.duration")}
                                 onValueChange={(value) => {
                                     handleChange("duration", value ? Number(value) : null);
                                     setPricesManuallyEdited(false);
                                 }}
                                 disabled={!formData.type || isPriceLoading}
-                            >
-                                <SelectTrigger className="w-full">
-                                    <SelectValue placeholder={t(locale, "clients.form.duration")} />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {availableDurations.map((duration) => (
-                                        <SelectItem key={duration} value={String(duration)}>
-                                            {duration}일
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
+                                wrapDataComponent="clients-form-dialog-field-duration-select-wrap"
+                                selectDataComponent="clients-form-dialog-field-duration-select"
+                                iconDataComponent="clients-form-dialog-field-duration-select-icon"
+                            />
                             {isPriceLoading && (
                                 <div className="absolute right-10 top-1/2 -translate-y-1/2">
                                     <Spinner className="h-4 w-4" />
                                 </div>
                             )}
                         </div>
-                    </div>
-                </div>
-            </TitleDescChildrenMolecule>
+                    </FormField>
+                </FormGrid>
+            </ClientDialogSection>
 
-            <TitleDescChildrenMolecule
+            <ClientDialogSection
+                dataComponent="clients-form-dialog-section-pricing"
                 title={t(locale, "clients.form.section-pricing")}
                 description="서비스 금액과 지원 금액을 확인하고 조정해 주세요."
-                className={SECTION_CARD_CLASS_NAME}
-                titleClassName={LABEL_CLASS_NAME}
             >
-                <div className="flex items-center gap-2">
-                    {selectedPriceInfo && !pricesManuallyEdited && (
-                        <StatusBadge variant="doc_requested" size="sm">
-                            {t(locale, "clients.form.auto-filled")}
-                        </StatusBadge>
-                    )}
-                </div>
-
-                <div className="flex flex-wrap items-end gap-4">
-                    <div className="flex-1 space-y-2">
-                        <Label htmlFor="fullPrice" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.full-price")}</Label>
+                <FormGrid data-component="clients-form-dialog-pricing-grid" className="lg:grid-cols-3">
+                    <FormField
+                        data-component="clients-form-dialog-field-full-price"
+                        htmlFor="fullPrice"
+                        label={t(locale, "clients.form.full-price")}
+                    >
                         <div className="relative">
-                            <Input
+                            <FormTextInput
                                 id="fullPrice"
                                 placeholder="0"
                                 value={formatPrice(formData.fullPrice || "")}
                                 onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
-                                className={cn(V3_INPUT_CLASS_NAME, "pr-8")}
+                                className="pr-[calc(32px*var(--v3-ui-scale,1))]"
                             />
-                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                            <span className="absolute right-[calc(12px*var(--v3-ui-scale,1))] top-1/2 -translate-y-1/2 text-[calc(12px*var(--v3-ui-scale,1))] text-v3-text-muted">
                                 원
                             </span>
                         </div>
-                    </div>
-                    <div className="flex-1 space-y-2">
-                        <Label htmlFor="grant" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.grant")}</Label>
+                    </FormField>
+
+                    <FormField
+                        data-component="clients-form-dialog-field-grant"
+                        htmlFor="grant"
+                        label={t(locale, "clients.form.grant")}
+                    >
                         <div className="relative">
-                            <Input
+                            <FormTextInput
                                 id="grant"
                                 placeholder="0"
                                 value={formatPrice(formData.grant || "")}
                                 onChange={(e) => handlePriceChange("grant", e.target.value.replace(/,/g, ""))}
-                                className={cn(V3_INPUT_CLASS_NAME, "pr-8")}
+                                className="pr-[calc(32px*var(--v3-ui-scale,1))]"
                             />
-                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                            <span className="absolute right-[calc(12px*var(--v3-ui-scale,1))] top-1/2 -translate-y-1/2 text-[calc(12px*var(--v3-ui-scale,1))] text-v3-text-muted">
                                 원
                             </span>
                         </div>
-                    </div>
-                    <div className="flex-1 space-y-2">
-                        <Label htmlFor="actualPrice" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.actual-price")}</Label>
+                    </FormField>
+
+                    <FormField
+                        data-component="clients-form-dialog-field-actual-price"
+                        htmlFor="actualPrice"
+                        label={t(locale, "clients.form.actual-price")}
+                    >
                         <div className="relative">
-                            <Input
+                            <FormTextInput
                                 id="actualPrice"
                                 placeholder="0"
                                 value={formatPrice(formData.actualPrice || "")}
                                 onChange={(e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, ""))}
-                                className={cn(V3_INPUT_CLASS_NAME, "pr-8")}
+                                className="pr-[calc(32px*var(--v3-ui-scale,1))]"
                             />
-                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                            <span className="absolute right-[calc(12px*var(--v3-ui-scale,1))] top-1/2 -translate-y-1/2 text-[calc(12px*var(--v3-ui-scale,1))] text-v3-text-muted">
                                 원
                             </span>
                         </div>
-                    </div>
-                </div>
-            </TitleDescChildrenMolecule>
+                    </FormField>
+                </FormGrid>
+            </ClientDialogSection>
         </>
     );
 
     const contractInfoSections = (
         <>
-            <TitleDescChildrenMolecule
+            <ClientDialogSection
+                dataComponent="clients-form-dialog-section-contract"
                 title={t(locale, "clients.form.section-contract")}
                 description="계약 상태와 서비스 일정을 정리해 주세요."
-                className={SECTION_CARD_CLASS_NAME}
-                titleClassName={LABEL_CLASS_NAME}
             >
-                <div className="flex flex-wrap items-end gap-4">
-                    <div className="flex-1 space-y-2">
-                        <Label className={LABEL_CLASS_NAME}>{t(locale, "clients.form.contract-status")}</Label>
-                        <Select
+                <FormGrid data-component="clients-form-dialog-contract-grid" className="lg:grid-cols-3">
+                    <FormField
+                        data-component="clients-form-dialog-field-contract-status"
+                        htmlFor="clients-form-contract-status"
+                        label={t(locale, "clients.form.contract-status")}
+                    >
+                        <FormNativeSelect
+                            id="clients-form-contract-status"
                             value={formData.serviceStatus || ""}
+                            options={serviceStatusOptions}
+                            placeholder={t(locale, "clients.form.contract-status")}
                             onValueChange={(value) => handleChange("serviceStatus", value)}
-                        >
-                            <SelectTrigger className="w-full">
-                                <SelectValue placeholder={t(locale, "clients.form.contract-status")} />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {SERVICE_STATUS_OPTIONS.map((status) => (
-                                    <SelectItem key={status.value} value={status.value}>
-                                        {status.label}
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    </div>
-                    <div className="flex-1 space-y-2">
-                        <Label htmlFor="startDate" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.start-date")}</Label>
-                        <Input
-                            id="startDate"
-                            type="date"
-                            className={V3_INPUT_CLASS_NAME}
-                            value={formData.startDate || ""}
-                            onChange={(e) => handleChange("startDate", e.target.value)}
+                            wrapDataComponent="clients-form-dialog-field-contract-status-select-wrap"
+                            selectDataComponent="clients-form-dialog-field-contract-status-select"
+                            iconDataComponent="clients-form-dialog-field-contract-status-select-icon"
                         />
-                    </div>
-                    <div className="flex-1 space-y-2">
-                        <Label htmlFor="endDate" className={LABEL_CLASS_NAME}>{t(locale, "clients.form.end-date")}</Label>
-                        <Input
-                            id="endDate"
-                            type="date"
-                            className={V3_INPUT_CLASS_NAME}
-                            value={formData.endDate || ""}
-                            onChange={(e) => handleChange("endDate", e.target.value)}
-                        />
-                    </div>
-                </div>
-            </TitleDescChildrenMolecule>
+                    </FormField>
 
-            <TitleDescChildrenMolecule
+                    <FormField
+                        data-component="clients-form-dialog-field-start-date"
+                        htmlFor="startDate"
+                        label={t(locale, "clients.form.start-date")}
+                    >
+                        <FormTextInput
+                            id="startDate"
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={6}
+                            placeholder="YYMMDD"
+                            value={formData.startDate || ""}
+                            onChange={(e) => handleChange("startDate", parseCompactDateInput(e.target.value))}
+                        />
+                    </FormField>
+
+                    <FormField
+                        data-component="clients-form-dialog-field-end-date"
+                        htmlFor="endDate"
+                        label={t(locale, "clients.form.end-date")}
+                    >
+                        <FormTextInput
+                            id="endDate"
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={6}
+                            placeholder="YYMMDD"
+                            value={formData.endDate || ""}
+                            readOnly
+                            aria-readonly="true"
+                        />
+                    </FormField>
+                </FormGrid>
+            </ClientDialogSection>
+
+            <ClientDialogSection
+                dataComponent="clients-form-dialog-section-flags"
                 title={t(locale, "clients.form.section-flags")}
                 description="추가 서비스 옵션을 설정해 주세요."
-                className={SECTION_CARD_CLASS_NAME}
-                titleClassName={LABEL_CLASS_NAME}
             >
-                <div className="flex flex-wrap gap-6">
-                    <div className="flex items-center gap-2">
-                        <Switch
-                            id="voucherClient"
-                            checked={formData.voucherClient}
-                            onCheckedChange={(checked) => handleChange("voucherClient", checked)}
-                        />
-                        <Label htmlFor="voucherClient" className="cursor-pointer">
-                            {t(locale, "clients.form.voucher-client")}
-                        </Label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <Switch
-                            id="careCenter"
-                            checked={formData.careCenter === true}
-                            onCheckedChange={(checked) => handleChange("careCenter", checked)}
-                        />
-                        <Label htmlFor="careCenter" className="cursor-pointer">
-                            {t(locale, "clients.form.care-center")}
-                        </Label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <Switch
-                            id="breastPump"
-                            checked={formData.breastPump}
-                            onCheckedChange={(checked) => handleChange("breastPump", checked)}
-                        />
-                        <Label htmlFor="breastPump" className="cursor-pointer">
-                            {t(locale, "clients.form.breast-pump")}
-                        </Label>
-                    </div>
+                <div className="grid gap-[calc(12px*var(--v3-ui-scale,1))] lg:grid-cols-3">
+                    <FormSwitchRow
+                        data-component="clients-form-dialog-field-voucher-client"
+                        title={t(locale, "clients.form.voucher-client")}
+                        checked={formData.voucherClient}
+                        onToggle={() => handleChange("voucherClient", !formData.voucherClient)}
+                        buttonAriaLabel={t(locale, "clients.form.voucher-client")}
+                    />
+                    <FormSwitchRow
+                        data-component="clients-form-dialog-field-care-center"
+                        title={t(locale, "clients.form.care-center")}
+                        checked={formData.careCenter === true}
+                        onToggle={() => handleChange("careCenter", !formData.careCenter)}
+                        buttonAriaLabel={t(locale, "clients.form.care-center")}
+                    />
+                    <FormSwitchRow
+                        data-component="clients-form-dialog-field-breast-pump"
+                        title={t(locale, "clients.form.breast-pump")}
+                        checked={formData.breastPump}
+                        onToggle={() => handleChange("breastPump", !formData.breastPump)}
+                        buttonAriaLabel={t(locale, "clients.form.breast-pump")}
+                    />
                 </div>
-            </TitleDescChildrenMolecule>
+            </ClientDialogSection>
         </>
     );
 
     const panelBasicInfoStep = (
         <>
-            <TitleTextInputMolecule
-                id="name"
+            <FormField
+                data-component="clients-form-panel-name-input"
+                htmlFor="name"
                 label={t(locale, "clients.form.name")}
-                value={formData.name}
-                onValueChange={(value) => handleChange("name", value)}
                 required
-                dataComponent="clients-form-panel-name-input"
-            />
-            <TitleTextInputMolecule
-                id="birthday"
+            >
+                <FormTextInput
+                    id="name"
+                    value={formData.name}
+                    onChange={(event) => handleChange("name", event.target.value)}
+                />
+            </FormField>
+
+            <FormField
+                data-component="clients-form-panel-birthday-input"
+                htmlFor="birthday"
                 label={t(locale, "clients.form.birthday")}
-                placeholder="YYMMDD"
-                value={formData.birthday ?? ""}
-                onValueChange={(value) => handleChange("birthday", value)}
-                maxLength={6}
-                dataComponent="clients-form-panel-birthday-input"
-            />
-            <TitleTextInputMolecule
-                id="dueDate"
-                type="date"
+            >
+                <FormTextInput
+                    id="birthday"
+                    placeholder="YYMMDD"
+                    value={formData.birthday ?? ""}
+                    onChange={(event) => handleChange("birthday", event.target.value)}
+                    maxLength={6}
+                />
+            </FormField>
+
+            <FormField
+                data-component="clients-form-panel-due-date-input"
+                htmlFor="dueDate"
                 label={t(locale, "clients.form.due-date")}
-                value={formData.dueDate || ""}
-                onValueChange={(value) => handleChange("dueDate", value)}
-                dataComponent="clients-form-panel-due-date-input"
-            />
-            <TitleTextInputMolecule
-                id="phone"
+            >
+                <FormTextInput
+                    id="dueDate"
+                    placeholder="YYMMDD"
+                    inputMode="numeric"
+                    value={formData.dueDate || ""}
+                    onChange={(event) => handleChange("dueDate", parseCompactDateInput(event.target.value))}
+                    maxLength={6}
+                />
+            </FormField>
+
+            <FormField
+                data-component="clients-form-panel-phone-input"
+                htmlFor="phone"
                 label={t(locale, "clients.form.phone")}
-                placeholder="010-1234-5678"
-                value={formData.phone ?? ""}
-                onValueChange={(value) => handleChange("phone", formatPhoneNumber(value))}
-                maxLength={13}
-                dataComponent="clients-form-panel-phone-input"
-            />
-            <TitleTextInputMolecule
-                id="address"
+            >
+                <FormTextInput
+                    id="phone"
+                    placeholder="010-1234-5678"
+                    value={formData.phone ?? ""}
+                    onChange={(event) => handleChange("phone", formatPhoneNumber(event.target.value))}
+                    maxLength={13}
+                />
+            </FormField>
+
+            <FormField
+                data-component="clients-form-panel-address-input"
+                htmlFor="address"
                 label={t(locale, "clients.form.address")}
-                value={formData.address ?? ""}
-                onValueChange={(value) => handleChange("address", value)}
-                dataComponent="clients-form-panel-address-input"
-            />
+                className={PANEL_FULL_FIELD_CLASS_NAME}
+            >
+                <FormTextInput
+                    id="address"
+                    placeholder="상세 주소"
+                    value={formData.address ?? ""}
+                    onChange={(event) => handleChange("address", event.target.value)}
+                />
+            </FormField>
         </>
     );
 
@@ -961,12 +1155,7 @@ function ClientFormContent({
                 excludeIds={formData.secondaryEmployeeId != null ? [formData.secondaryEmployeeId] : []}
                 allowManualEntry
                 onManualEntry={() => {
-                    setDraft({
-                        formData,
-                        pricesManuallyEdited,
-                        client: client ?? null,
-                    });
-                    router.push("/employees/new?returnTo=/clients?openClientForm=1&target=primary");
+                    openEmployeeDialog("primary");
                 }}
             />
             <EmployeeAutocomplete
@@ -976,12 +1165,7 @@ function ClientFormContent({
                 excludeIds={formData.primaryEmployeeId != null ? [formData.primaryEmployeeId] : []}
                 allowManualEntry
                 onManualEntry={() => {
-                    setDraft({
-                        formData,
-                        pricesManuallyEdited,
-                        client: client ?? null,
-                    });
-                    router.push("/employees/new?returnTo=/clients?openClientForm=1&target=secondary");
+                    openEmployeeDialog("secondary");
                 }}
             />
         </>
@@ -989,157 +1173,164 @@ function ClientFormContent({
 
     const panelVoucherInfoStep = (
         <>
-            <div className="flex flex-col gap-2">
-                <Label>{t(locale, "clients.form.voucher-type")}</Label>
-                <Select
+            <FormField
+                data-component="clients-form-panel-voucher-type-field"
+                htmlFor="clients-form-panel-voucher-type"
+                label={t(locale, "clients.form.voucher-type")}
+            >
+                <FormNativeSelect
+                    id="clients-form-panel-voucher-type"
                     value={formData.type || ""}
+                    options={voucherTypeOptions}
+                    placeholder={t(locale, "clients.form.voucher-type")}
                     onValueChange={handleTypeChange}
-                >
-                    <SelectTrigger className="w-full">
-                        <SelectValue placeholder={t(locale, "clients.form.voucher-type")} />
-                    </SelectTrigger>
-                    <SelectContent>
-                        {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
-                            <SelectGroup key={groupName}>
-                                <SelectLabel className="font-semibold">{groupName}</SelectLabel>
-                                {Object.entries(types).map(([typeValue, typeData]) => (
-                                    <SelectItem key={typeValue} value={typeValue} className="pl-6">
-                                        {typeData.label}
-                                    </SelectItem>
-                                ))}
-                            </SelectGroup>
-                        ))}
-                    </SelectContent>
-                </Select>
-            </div>
-            <div className="flex flex-col gap-2">
-                <Label>{t(locale, "clients.form.duration")}</Label>
+                    wrapDataComponent="clients-form-panel-voucher-type-select-wrap"
+                    selectDataComponent="clients-form-panel-voucher-type-select"
+                    iconDataComponent="clients-form-panel-voucher-type-select-icon"
+                />
+            </FormField>
+
+            <FormField
+                data-component="clients-form-panel-duration-field"
+                htmlFor="clients-form-panel-duration"
+                label={t(locale, "clients.form.duration")}
+            >
                 <div className="relative">
-                    <Select
+                    <FormNativeSelect
+                        id="clients-form-panel-duration"
                         value={formData.duration?.toString() || ""}
+                        options={durationOptions}
+                        placeholder={t(locale, "clients.form.duration")}
                         onValueChange={(value) => {
                             handleChange("duration", value ? Number(value) : null);
                             setPricesManuallyEdited(false);
                         }}
                         disabled={!formData.type || isPriceLoading}
-                    >
-                        <SelectTrigger className="w-full">
-                            <SelectValue placeholder={t(locale, "clients.form.duration")} />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {availableDurations.map((duration) => (
-                                <SelectItem key={duration} value={String(duration)}>
-                                    {duration}일
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
+                        wrapDataComponent="clients-form-panel-duration-select-wrap"
+                        selectDataComponent="clients-form-panel-duration-select"
+                        iconDataComponent="clients-form-panel-duration-select-icon"
+                    />
                     {isPriceLoading && (
                         <div className="absolute right-10 top-1/2 -translate-y-1/2">
                             <Spinner className="h-4 w-4" />
                         </div>
                     )}
                 </div>
-            </div>
-            {selectedPriceInfo && !pricesManuallyEdited ? (
-                <StatusBadge variant="doc_requested" size="sm" className="self-start">
-                    {t(locale, "clients.form.auto-filled")}
-                </StatusBadge>
-            ) : null}
-            <TitleTextInputMolecule
-                id="fullPrice"
+            </FormField>
+
+            <FormField
+                data-component="clients-form-panel-full-price-input"
+                htmlFor="fullPrice"
                 label={t(locale, "clients.form.full-price")}
-                placeholder="0"
-                value={formatPrice(formData.fullPrice || "")}
-                onValueChange={(value) => handlePriceChange("fullPrice", value.replace(/,/g, ""))}
-                dataComponent="clients-form-panel-full-price-input"
-            />
-            <TitleTextInputMolecule
-                id="grant"
+            >
+                <FormTextInput
+                    id="fullPrice"
+                    placeholder="0"
+                    value={formatPrice(formData.fullPrice || "")}
+                    onChange={(event) => handlePriceChange("fullPrice", event.target.value.replace(/,/g, ""))}
+                />
+            </FormField>
+
+            <FormField
+                data-component="clients-form-panel-grant-input"
+                htmlFor="grant"
                 label={t(locale, "clients.form.grant")}
-                placeholder="0"
-                value={formatPrice(formData.grant || "")}
-                onValueChange={(value) => handlePriceChange("grant", value.replace(/,/g, ""))}
-                dataComponent="clients-form-panel-grant-input"
-            />
-            <TitleTextInputMolecule
-                id="actualPrice"
+            >
+                <FormTextInput
+                    id="grant"
+                    placeholder="0"
+                    value={formatPrice(formData.grant || "")}
+                    onChange={(event) => handlePriceChange("grant", event.target.value.replace(/,/g, ""))}
+                />
+            </FormField>
+
+            <FormField
+                data-component="clients-form-panel-actual-price-input"
+                htmlFor="actualPrice"
                 label={t(locale, "clients.form.actual-price")}
-                placeholder="0"
-                value={formatPrice(formData.actualPrice || "")}
-                onValueChange={(value) => handlePriceChange("actualPrice", value.replace(/,/g, ""))}
-                dataComponent="clients-form-panel-actual-price-input"
-            />
+            >
+                <FormTextInput
+                    id="actualPrice"
+                    placeholder="0"
+                    value={formatPrice(formData.actualPrice || "")}
+                    onChange={(event) => handlePriceChange("actualPrice", event.target.value.replace(/,/g, ""))}
+                />
+            </FormField>
         </>
     );
 
     const panelContractInfoStep = (
         <>
-            <div className="flex flex-col gap-2">
-                <Label>{t(locale, "clients.form.contract-status")}</Label>
-                <Select
+            <FormField
+                data-component="clients-form-panel-contract-status-field"
+                htmlFor="clients-form-panel-contract-status"
+                label={t(locale, "clients.form.contract-status")}
+            >
+                <FormNativeSelect
+                    id="clients-form-panel-contract-status"
                     value={formData.serviceStatus || ""}
+                    options={serviceStatusOptions}
+                    placeholder={t(locale, "clients.form.contract-status")}
                     onValueChange={(value) => handleChange("serviceStatus", value)}
-                >
-                    <SelectTrigger className="w-full">
-                        <SelectValue placeholder={t(locale, "clients.form.contract-status")} />
-                    </SelectTrigger>
-                    <SelectContent>
-                        {SERVICE_STATUS_OPTIONS.map((status) => (
-                            <SelectItem key={status.value} value={status.value}>
-                                {status.label}
-                            </SelectItem>
-                        ))}
-                    </SelectContent>
-                </Select>
-            </div>
-            <TitleTextInputMolecule
-                id="startDate"
-                type="date"
+                    wrapDataComponent="clients-form-panel-contract-status-select-wrap"
+                    selectDataComponent="clients-form-panel-contract-status-select"
+                    iconDataComponent="clients-form-panel-contract-status-select-icon"
+                />
+            </FormField>
+
+            <FormField
+                data-component="clients-form-panel-start-date-input"
+                htmlFor="startDate"
                 label={t(locale, "clients.form.start-date")}
-                value={formData.startDate || ""}
-                onValueChange={(value) => handleChange("startDate", value)}
-                dataComponent="clients-form-panel-start-date-input"
-            />
-            <TitleTextInputMolecule
-                id="endDate"
-                type="date"
+            >
+                <FormTextInput
+                    id="startDate"
+                    placeholder="YYMMDD"
+                    inputMode="numeric"
+                    value={formData.startDate || ""}
+                    onChange={(event) => handleChange("startDate", parseCompactDateInput(event.target.value))}
+                    maxLength={6}
+                />
+            </FormField>
+
+            <FormField
+                data-component="clients-form-panel-end-date-input"
+                htmlFor="endDate"
                 label={t(locale, "clients.form.end-date")}
-                value={formData.endDate || ""}
-                onValueChange={(value) => handleChange("endDate", value)}
-                dataComponent="clients-form-panel-end-date-input"
-            />
-            <div className="flex flex-wrap gap-6 pt-1">
-                <div className="flex items-center gap-2">
-                    <Switch
-                        id="voucherClientPanel"
-                        checked={formData.voucherClient}
-                        onCheckedChange={(checked) => handleChange("voucherClient", checked)}
-                    />
-                    <Label htmlFor="voucherClientPanel" className="cursor-pointer">
-                        {t(locale, "clients.form.voucher-client")}
-                    </Label>
-                </div>
-                <div className="flex items-center gap-2">
-                    <Switch
-                        id="careCenterPanel"
-                        checked={formData.careCenter === true}
-                        onCheckedChange={(checked) => handleChange("careCenter", checked)}
-                    />
-                    <Label htmlFor="careCenterPanel" className="cursor-pointer">
-                        {t(locale, "clients.form.care-center")}
-                    </Label>
-                </div>
-                <div className="flex items-center gap-2">
-                    <Switch
-                        id="breastPumpPanel"
-                        checked={formData.breastPump}
-                        onCheckedChange={(checked) => handleChange("breastPump", checked)}
-                    />
-                    <Label htmlFor="breastPumpPanel" className="cursor-pointer">
-                        {t(locale, "clients.form.breast-pump")}
-                    </Label>
-                </div>
+            >
+                <FormTextInput
+                    id="endDate"
+                    placeholder="YYMMDD"
+                    inputMode="numeric"
+                    value={formData.endDate || ""}
+                    maxLength={6}
+                    readOnly
+                    aria-readonly="true"
+                />
+            </FormField>
+
+            <div className={cn(PANEL_FULL_FIELD_CLASS_NAME, "grid gap-[calc(12px*var(--v3-ui-scale,1))] lg:grid-cols-3")}>
+                <FormSwitchRow
+                    data-component="clients-form-panel-voucher-client-field"
+                    title={t(locale, "clients.form.voucher-client")}
+                    checked={formData.voucherClient}
+                    onToggle={() => handleChange("voucherClient", !formData.voucherClient)}
+                    buttonAriaLabel={t(locale, "clients.form.voucher-client")}
+                />
+                <FormSwitchRow
+                    data-component="clients-form-panel-care-center-field"
+                    title={t(locale, "clients.form.care-center")}
+                    checked={formData.careCenter === true}
+                    onToggle={() => handleChange("careCenter", !formData.careCenter)}
+                    buttonAriaLabel={t(locale, "clients.form.care-center")}
+                />
+                <FormSwitchRow
+                    data-component="clients-form-panel-breast-pump-field"
+                    title={t(locale, "clients.form.breast-pump")}
+                    checked={formData.breastPump}
+                    onToggle={() => handleChange("breastPump", !formData.breastPump)}
+                    buttonAriaLabel={t(locale, "clients.form.breast-pump")}
+                />
             </div>
         </>
     );
@@ -1167,9 +1358,7 @@ function ClientFormContent({
         <SteppedWizardPanelContent
             ref={contentRef}
             dataComponent="clients-form-panel-content"
-            flattenStepContent
-            className="py-0"
-            stepContentClassName="justify-start gap-4"
+            stepContentClassName={PANEL_STEP_CONTENT_CLASS_NAME}
             feedback={formError}
         >
             {panelFormSteps[activeStep]}
@@ -1185,10 +1374,13 @@ function ClientFormContent({
         </div>
     );
 
-    const panelFooter = (
-        <SteppedWizardPanelFooter>
-            {panelFormActions}
-        </SteppedWizardPanelFooter>
+    const panelFooter = panelFormActions;
+    const employeeRegistrationDialog = (
+        <EmployeeFormDialog
+            open={isEmployeeDialogOpen}
+            onClose={handleEmployeeDialogClose}
+            onSuccess={handleEmployeeCreated}
+        />
     );
 
     if (surface === "panel" && !open) {
@@ -1196,26 +1388,36 @@ function ClientFormContent({
     }
 
     if (surface === "panel") {
-        return renderLayout ? renderLayout({ content: formContent, footer: panelFooter }) : (
+        const panelLayout = renderLayout ? renderLayout({ content: formContent, footer: panelFooter }) : (
             <>
                 {formContent}
-                {panelFooter}
+                <footer data-component="detail-panel-footer" className={DETAIL_PANEL_FOOTER_CLASS_NAME}>
+                    {panelFooter}
+                </footer>
+            </>
+        );
+
+        return (
+            <>
+                {panelLayout}
+                {employeeRegistrationDialog}
             </>
         );
     }
 
     return (
-        <Dialog data-component="clients-form-dialog" open={open} onOpenChange={(isOpen) => !isOpen && handleDialogClose()}>
-            <FormDialogShell
-                dataComponent="clients-form-dialog"
-                title={formTitle}
-                description={formDescription}
-                dialogClassName="w-[85%] max-w-[460px] min-h-[70vh] max-h-[70vh] sm:w-[85%] sm:max-w-[460px]"
-                contentClassName="space-y-5"
-                footer={dialogFormActions}
-            >
-                {formContent}
-            </FormDialogShell>
-        </Dialog>
+        <>
+            <Dialog data-component="clients-form-dialog" open={open} onOpenChange={(isOpen) => !isOpen && handleDialogClose()}>
+                <FormDialogShell
+                    dataComponent="clients-form-dialog"
+                    title={formTitle}
+                    contentClassName="space-y-5"
+                    footer={dialogFormActions}
+                >
+                    {formContent}
+                </FormDialogShell>
+            </Dialog>
+            {employeeRegistrationDialog}
+        </>
     );
 }

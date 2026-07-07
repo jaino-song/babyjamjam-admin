@@ -57,7 +57,7 @@ import { cn } from "@/lib/utils";
 const NAV_SECTIONS = [
   { id: "overview", label: "발송 예정", icon: Send },
   { id: "history", label: "발송 기록", icon: History },
-  { id: "templates", label: "템플릿", icon: FileText },
+  { id: "templates", label: "템플릿", icon: FileText, disabled: true },
   { id: "triggers", label: "자동화", icon: Workflow },
   { id: "settings", label: "설정", icon: Settings },
 ] as const;
@@ -1623,12 +1623,12 @@ function TemplatesSection() {
           activeTab={activeGroup}
           onTabChange={handleGroupChange}
           headerActions={<HeaderActionButton icon={Plus} label="새 템플릿" onClick={() => setMode("create")} />}
-        >
-          {visibleTemplates.length === 0 ? (
+          emptyState={visibleTemplates.length === 0 ? (
             <ListEmptyState message="등록된 템플릿이 없습니다." />
-          ) : (
-            <div data-component="alimtalk-templates-list" className="space-y-2 pb-2">
-              <AnimatedSlotList<TemplateRecord>
+          ) : undefined}
+        >
+          <div data-component="alimtalk-templates-list" className="space-y-2 pb-2">
+            <AnimatedSlotList<TemplateRecord>
                 items={visibleTemplates}
                 isLoading={false}
                 className="space-y-2"
@@ -1645,8 +1645,11 @@ function TemplatesSection() {
                     <AnimatedSlotListItemContent
                       dataComponent="alimtalk-templates-item"
                       icon={FileText}
-                      iconContainerClassName="bg-violet-500/10"
-                      iconClassName="text-violet-500"
+                      iconContainerClassName={cn(
+                        template.status === "승인완료"
+                          ? "border border-[hsl(137,34%,84%)] bg-[hsl(137,60%,94%)] text-v3-green"
+                          : "border border-[hsla(38,92%,35%,0.18)] bg-[hsl(47,100%,92%)] text-[hsl(38,92%,35%)]"
+                      )}
                       title={template.name}
                       subtitle={template.description}
                       status={
@@ -1677,7 +1680,6 @@ function TemplatesSection() {
                 }}
               />
             </div>
-          )}
         </ListPanel>
 
         <DetailPanel
