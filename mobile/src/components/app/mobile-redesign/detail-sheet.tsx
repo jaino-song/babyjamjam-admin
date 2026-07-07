@@ -30,6 +30,116 @@ export type DetailAction = {
   className?: string;
 };
 
+export function MobileDetailStack({
+  name,
+  isOpen,
+  onClose,
+  list,
+  children,
+  sectionDataComponent,
+  sectionClassName,
+  sectionStyle,
+  sectionAriaHidden,
+  stackDataComponent,
+  stackClassName,
+  listDataComponent,
+  listClassName,
+  scrimDataComponent,
+  scrimClassName,
+  scrimDisabled,
+  detailDataComponent,
+  detailClassName,
+  detailRole,
+  detailAriaModal,
+  detailAriaLabelledBy,
+  detailAriaDescribedBy,
+  sheetHeaderDataComponent,
+  sheetHeaderClassName,
+  closeLabel = "상세 닫기",
+  closeDisabled,
+}: {
+  name: string;
+  isOpen: boolean;
+  onClose: () => void;
+  list: ReactNode;
+  children: ReactNode;
+  sectionDataComponent?: string;
+  sectionClassName?: string;
+  sectionStyle?: CSSProperties;
+  sectionAriaHidden?: boolean;
+  stackDataComponent?: string;
+  stackClassName?: string;
+  listDataComponent?: string;
+  listClassName?: string;
+  scrimDataComponent?: string;
+  scrimClassName?: string;
+  scrimDisabled?: boolean;
+  detailDataComponent?: string;
+  detailClassName?: string;
+  detailRole?: "dialog" | "region";
+  detailAriaModal?: boolean;
+  detailAriaLabelledBy?: string;
+  detailAriaDescribedBy?: string;
+  sheetHeaderDataComponent?: string;
+  sheetHeaderClassName?: string;
+  closeLabel?: string;
+  closeDisabled?: boolean;
+}) {
+  return (
+    <section
+      data-component={sectionDataComponent ?? name}
+      className={sectionClassName}
+      style={sectionStyle}
+      aria-hidden={sectionAriaHidden}
+    >
+      <div
+        className={cn("nav-stack", isOpen && "show-detail", stackClassName)}
+        data-component={stackDataComponent ?? `mobile-${name}-stack`}
+      >
+        <div
+          className={cn("nav-page list", listClassName)}
+          data-component={listDataComponent ?? `mobile-${name}-list-page`}
+          aria-hidden={list == null}
+        >
+          {list}
+        </div>
+        <button
+          type="button"
+          aria-label={closeLabel}
+          className={cn("scrim", scrimClassName)}
+          data-component={scrimDataComponent ?? `mobile-${name}-detail-scrim`}
+          onClick={onClose}
+          disabled={scrimDisabled}
+        />
+        <div
+          className={cn("nav-page detail", detailClassName)}
+          data-component={detailDataComponent ?? `mobile-${name}-detail-page`}
+          role={detailRole}
+          aria-modal={detailAriaModal}
+          aria-labelledby={detailAriaLabelledBy}
+          aria-describedby={detailAriaDescribedBy}
+          aria-hidden={!isOpen}
+        >
+          <div className="sheet-handle" />
+          <div className={cn("sheet-header", sheetHeaderClassName)} data-component={sheetHeaderDataComponent}>
+            <button
+              type="button"
+              className="sheet-close"
+              aria-label={closeLabel}
+              onClick={onClose}
+              disabled={closeDisabled}
+              style={{ marginLeft: "auto" }}
+            >
+              <X aria-hidden="true" size={22} strokeWidth={2.5} />
+            </button>
+          </div>
+          {children}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function MobileDetailSheet({
   name,
   isOpen,
@@ -44,39 +154,16 @@ export function MobileDetailSheet({
   detail: ReactNode;
 }) {
   return (
-    <section
-      data-component={name}
-      className="mobile-detail-sheet relative flex flex-col flex-1 min-h-0 overflow-hidden -mx-4 -mb-24"
-      style={{ minHeight: "var(--mobile-detail-sheet-min-height, calc(100dvh - 80px))" }}
+    <MobileDetailStack
+      name={name}
+      isOpen={isOpen}
+      onClose={onClose}
+      list={list}
+      sectionClassName="mobile-detail-sheet relative flex flex-col flex-1 min-h-0 overflow-hidden -mx-4 -mb-24"
+      sectionStyle={{ minHeight: "var(--mobile-detail-sheet-min-height, calc(100dvh - 80px))" }}
     >
-      <div className={cn("nav-stack", isOpen && "show-detail")} data-component={`mobile-${name}-stack`}>
-        <div className="nav-page list" data-component={`mobile-${name}-list-page`}>
-          {list}
-        </div>
-        <button
-          type="button"
-          aria-label="상세 닫기"
-          className="scrim"
-          data-component={`mobile-${name}-detail-scrim`}
-          onClick={onClose}
-        />
-        <div className="nav-page detail" data-component={`mobile-${name}-detail-page`} aria-hidden={!isOpen}>
-          <div className="sheet-handle" />
-          <div className="sheet-header">
-            <button
-              type="button"
-              className="sheet-close"
-              aria-label="상세 닫기"
-              onClick={onClose}
-              style={{ marginLeft: "auto" }}
-            >
-              <X size={22} strokeWidth={2.5} />
-            </button>
-          </div>
-          {detail}
-        </div>
-      </div>
-    </section>
+      {detail}
+    </MobileDetailStack>
   );
 }
 

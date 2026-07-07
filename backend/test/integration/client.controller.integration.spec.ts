@@ -75,6 +75,7 @@ describe("ClientController (Integration)", () => {
             getActionRequiredAlerts: jest.fn(),
             getDashboardOverview: jest.fn(),
             getStats: jest.fn(),
+            checkPhoneExists: jest.fn(),
             update: jest.fn(),
             delete: jest.fn(),
         };
@@ -367,6 +368,23 @@ describe("ClientController (Integration)", () => {
                 expect(response.status).toBe(200);
                 expect(response.body).toEqual([]);
             });
+        });
+    });
+
+    // ============================================
+    // GET /clients/check-phone - Check Phone
+    // ============================================
+    describe("GET /clients/check-phone", () => {
+        it("should check phone duplication against clients only", async () => {
+            clientService.checkPhoneExists.mockResolvedValue(false);
+
+            const response = await request(app.getHttpServer())
+                .get("/clients/check-phone")
+                .query({ phone: "010-1234-5678" });
+
+            expect(response.status).toBe(200);
+            expect(response.body).toEqual({ exists: false });
+            expect(clientService.checkPhoneExists).toHaveBeenCalledWith(expect.any(String), "010-1234-5678");
         });
     });
 

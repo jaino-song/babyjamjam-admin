@@ -372,6 +372,14 @@ export class ClientService {
         };
     }
 
+    async checkPhoneExists(branchid: string, phone: string | null | undefined): Promise<boolean> {
+        const normalizedPhone = normalizePhone(phone);
+        if (!normalizedPhone) return false;
+
+        const existing = await this.clientRepository.findByPhone(branchid, normalizedPhone);
+        return existing !== null;
+    }
+
     async findById(branchid: string, id: number): Promise<ClientWithEmployees | null> {
         const client = await this.findClientByIdUsecase.execute(branchid, id);
         if (!client) return null;

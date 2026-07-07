@@ -1,4 +1,4 @@
-import { calcEndDateBusinessDays, isBusinessDayKr } from "./business-days";
+import { calcEndDateBusinessDays, diffBusinessDaysKr, isBusinessDayKr } from "./business-days";
 
 describe("Korean business-day helpers", () => {
     it("counts the start date as the first service day when it is a business day", () => {
@@ -22,5 +22,12 @@ describe("Korean business-day helpers", () => {
         expect(calcEndDateBusinessDays("", 10)).toBe("");
         expect(calcEndDateBusinessDays("260602", 10)).toBe("");
         expect(calcEndDateBusinessDays("2026-06-02", 0)).toBe("");
+    });
+
+    it("counts business-day distance while skipping weekends and holidays", () => {
+        expect(diffBusinessDaysKr("2026-07-08", "2026-07-07")).toBe(1);
+        expect(diffBusinessDaysKr("2026-07-06", "2026-07-07")).toBe(-1);
+        expect(diffBusinessDaysKr("2026-07-20", "2026-07-07")).toBe(8);
+        expect(diffBusinessDaysKr("2026-06-04", "2026-06-02")).toBe(1);
     });
 });

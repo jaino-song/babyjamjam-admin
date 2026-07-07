@@ -71,7 +71,7 @@ describe("MobileBottomNav", () => {
     expect(callsItem).toHaveTextContent("통화요약");
     expect(callsItem).toHaveAttribute("aria-disabled", "true");
     expect(callsItem).toHaveAttribute("data-disabled", "true");
-    expect(callsItem).toHaveClass("text-gray-400");
+    expect(callsItem).toHaveClass("text-gray-300");
     expect(callsItem).not.toHaveClass("opacity-60");
     expect(screen.queryByRole("link", { name: /통화요약/ })).not.toBeInTheDocument();
   });

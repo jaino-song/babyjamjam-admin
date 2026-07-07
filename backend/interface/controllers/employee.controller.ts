@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { EmployeeService } from "application/services/employee.service";
 import {
     ChangeEmployeeOpenStatusDto,
@@ -24,6 +24,11 @@ export class EmployeeController {
     @Get()
     findAll(@CurrentTenant() tenant: { branchId?: string }) {
         return this.employeeService.findAll(tenant.branchId ?? "");
+    }
+
+    @Get("check-phone")
+    async checkPhone(@CurrentTenant() tenant: { branchId?: string }, @Query("phone") phone?: string) {
+        return { exists: await this.employeeService.checkPhoneExists(tenant.branchId ?? "", phone) };
     }
 
     @Get("work-area")

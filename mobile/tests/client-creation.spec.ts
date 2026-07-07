@@ -199,6 +199,97 @@ test.describe("clients/new wizard", () => {
     await expect(page.locator('[data-component="clients-new-pricing-card"]')).toContainText("자동입력");
   });
 
+  test("opens the mobile employee creation modal from the provider assignment card", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 844 });
+    await mockClientsWizardRoutes(page);
+    await page.goto("/clients/new");
+
+    await goToStepOne(page);
+
+    const employeeInput = page
+      .locator('[data-component="clients-new-employee-card"] [data-component="employee-autocomplete-input"]')
+      .first();
+
+    await employeeInput.click();
+    await employeeInput.fill("김정인");
+    await page.getByTestId("employee-autocomplete-add-button").click();
+
+    const dialog = page.locator('[data-component="employees-form-dialog"]');
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toHaveClass(/nav-page detail/);
+    await expect(page.locator('[data-slot="dialog-content"]')).toHaveCount(0);
+    await expect(dialog.locator('[data-component="employees-form-dialog-header"]')).toContainText("새 제공인력 등록");
+    await expect(dialog.locator('[data-component="employees-form-dialog-header"]')).not.toContainText("고객 생성 중 바로 추가");
+    await expect(dialog.locator('[data-component="employees-form-dialog-content"]')).toHaveClass(/detail-body detail-column/);
+    await expect(dialog.locator('[data-component="employees-form-dialog-content"] > [data-component="employees-form-dialog-header"]')).toHaveCount(1);
+    await expect(dialog.locator('[data-component="employees-form-dialog-content"] > [data-component="employee-form-card"]')).toHaveCount(1);
+    await expect(dialog.locator('[data-component="employees-form-dialog-content"] > [data-component="employees-form-dialog-actions"]')).toHaveCount(1);
+    await expect(dialog.locator('[data-component="employees-form-dialog-actions"]')).toHaveCSS("background-color", "rgb(255, 255, 255)");
+    await expect(dialog.locator('[data-component="employees-form-dialog-actions"]')).toHaveCSS("border-radius", "16px");
+    await expect
+      .poll(async () => dialog.evaluate((element) => {
+        const workSection = element.querySelector('[data-component="employees-form-dialog-section-work"]');
+        const actions = element.querySelector('[data-component="employees-form-dialog-actions"]');
+        if (!workSection || !actions) {
+          return false;
+        }
+        return Boolean(workSection.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING);
+      }))
+      .toBe(true);
+    await expect(dialog.locator('[data-component="employee-form-card-assignment"]')).toContainText("제공인력 1에 배정");
+    await expect(dialog.locator('[data-component="employees-form-dialog-field-name"] input')).toHaveValue("김정인");
+    await expect(dialog.locator('[data-component="employees-form-dialog-field-birthday"] input')).toHaveAttribute("placeholder", "YYMMDD");
+    await expect(dialog.locator('[data-component="employees-form-dialog-submit"]')).toHaveText("등록");
+    await expect(dialog.locator('[data-component="employees-form-dialog-cancel"]')).toHaveClass(/btn-press/);
+    await expect(dialog.locator('[data-component="employees-form-dialog-submit"]')).toHaveClass(/btn-press/);
+    await expect(dialog.locator('[data-component="employees-form-dialog-cancel"]')).toHaveAttribute("data-slot", "button");
+    await expect(dialog.locator('[data-component="employees-form-dialog-cancel"]')).toHaveAttribute("data-size", "md");
+    await expect(dialog.locator('[data-component="employees-form-dialog-cancel"]')).toHaveAttribute("data-width", "lg");
+    await expect(dialog.locator('[data-component="employees-form-dialog-submit"]')).toHaveAttribute("data-slot", "button");
+    await expect(dialog.locator('[data-component="employees-form-dialog-submit"]')).toHaveAttribute("data-size", "md");
+    await expect(dialog.locator('[data-component="employees-form-dialog-submit"]')).toHaveAttribute("data-width", "lg");
+    const cancelButtonBox = await dialog.locator('[data-component="employees-form-dialog-cancel"]').boundingBox();
+    const submitButtonBox = await dialog.locator('[data-component="employees-form-dialog-submit"]').boundingBox();
+    expect(Math.round(cancelButtonBox?.height ?? 0)).toBe(46);
+    expect(Math.round(submitButtonBox?.height ?? 0)).toBe(46);
+
+    const gradeSelect = dialog.locator('[data-component="employees-form-dialog-field-grade"] select');
+    await expect(gradeSelect).toHaveValue("스탠다드");
+    await expect(gradeSelect.locator("option")).toHaveText(["스탠다드", "베스트", "프리미엄"]);
+
+    await expect
+      .poll(async () => dialog.evaluate((element) => getComputedStyle(element).transform))
+      .toBe("matrix(1, 0, 0, 1, 0, 0)");
+
+    const box = await dialog.boundingBox();
+    const shellBox = await page.locator('[data-component="employees-form-dialog-shell"]').boundingBox();
+    const appProvidersBox = await page.locator('[data-component="app-providers"]').boundingBox();
+    expect(Math.round(shellBox?.x ?? 0)).toBe(Math.round(appProvidersBox?.x ?? 0));
+    expect(Math.round(shellBox?.width ?? 0)).toBe(Math.round(appProvidersBox?.width ?? 0));
+    expect(Math.round(box?.x ?? 0)).toBe(Math.round(appProvidersBox?.x ?? 0));
+    expect(Math.round(box?.width ?? 0)).toBe(Math.round(appProvidersBox?.width ?? 0));
+    expect(box?.x).toBeGreaterThanOrEqual(0);
+    expect(box?.y).toBeGreaterThanOrEqual(0);
+    expect(box?.width).toBeLessThanOrEqual(390);
+    expect(Math.round((box?.y ?? 0) + (box?.height ?? 0))).toBe(844);
+    expect(Math.round(box?.y ?? 0)).toBe(42);
+    await expect
+      .poll(async () => Number(await dialog.evaluate((element) => getComputedStyle(element).zIndex)))
+      .toBeGreaterThan(60);
+    await expect
+      .poll(async () => dialog.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return `${style.borderBottomLeftRadius} ${style.borderBottomRightRadius}`;
+      }))
+      .toBe("0px 0px");
+
+    await dialog.locator('[data-component="employees-form-dialog-cancel"]').click();
+    await expect
+      .poll(async () => dialog.evaluate((element) => new DOMMatrixReadOnly(getComputedStyle(element).transform).m42))
+      .toBeGreaterThan(0);
+    await expect(dialog.locator('[data-component="employees-form-dialog-content"]')).toHaveCount(0);
+  });
+
   test("submits the minimal valid wizard payload and navigates back to /clients", async ({ page }) => {
     let createdPayload: CreateClientPayload | null = null;
 

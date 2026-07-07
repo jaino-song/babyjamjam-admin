@@ -2,6 +2,7 @@ import { EmployeeEntity } from "domain/entities/employee.entity";
 
 export interface IEmployeeRepository {
     findById(branchid: string, id: number): Promise<EmployeeEntity | null>;
+    findByPhone(branchid: string, normalizedPhone: string): Promise<EmployeeEntity | null>;
     create(branchid: string, employee: EmployeeEntity): Promise<EmployeeEntity>;
     update(branchid: string, employee: EmployeeEntity): Promise<EmployeeEntity>;
     delete(branchid: string, id: number): Promise<void>;

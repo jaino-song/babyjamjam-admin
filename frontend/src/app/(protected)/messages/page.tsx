@@ -118,6 +118,11 @@ import type { TemplateMessageFormLayout } from "@/components/app/messages/forms/
 import { MessageTenantApplicationSettings } from "@/components/app/messages/MessageTenantApplicationSettings";
 import { TriggerRulesManager } from "@/components/app/alimtalk/TriggerRulesManager";
 import { Button } from "@/components/ui/button";
+import {
+  APP_CONTENT_BODY_CARD_CLASS_NAME,
+  APP_CONTENT_BODY_CARD_OUTLINED_CLASS_NAME,
+  AppContentCard,
+} from "@/components/ui/app-surface";
 
 type BuiltinTemplateType = "greeting" | "service-info" | "price-info" | "reminder" | "thanks" | "survey" | "info";
 type TemplateFilter = "builtin" | "branch";
@@ -835,10 +840,14 @@ function MessageScheduledSection() {
                       title="메시지 내용"
                       data-component="messages-scheduled-detail-message"
                       className="flex min-h-[420px] flex-col"
+                      contentClassName="flex flex-1"
                     >
                       <div
                         data-component="messages-generated-msg-detail-content-body"
-                        className="flex min-h-[320px] flex-1 rounded-[18px] bg-white p-4"
+                        className={cn(
+                          "flex min-h-[320px] flex-1",
+                          APP_CONTENT_BODY_CARD_CLASS_NAME,
+                        )}
                       >
                         <MsgField value={selectedJobMessageBody} />
                       </div>
@@ -1051,22 +1060,18 @@ function MessageSectionPlaceholder({ sectionId }: { sectionId: PlaceholderSectio
                   data-component="messages-section-placeholder-scheduled-detail-grid"
                   className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]"
                 >
-                  <div
+                  <InfoCard
+                    title="메시지 본문"
                     data-component="messages-section-placeholder-scheduled-detail-content"
-                    className="flex flex-col rounded-[20px] border border-v3-border bg-v3-dim-white/30 p-5 xl:row-span-2"
+                    className="flex flex-col xl:row-span-2"
+                    contentClassName="flex flex-1"
                   >
                     <div
-                      data-component="messages-section-placeholder-scheduled-detail-content-header"
-                      className="mb-4"
-                    >
-                      <div data-component="messages-section-placeholder-scheduled-detail-content-title">
-                        <h3 className="text-[0.9rem] font-bold text-v3-dark">메시지 본문</h3>
-                      </div>
-                    </div>
-
-                    <div
                       data-component="messages-section-placeholder-scheduled-detail-content-body"
-                      className="flex min-h-[240px] flex-1 rounded-[18px] border border-v3-border bg-white p-4"
+                      className={cn(
+                        "flex min-h-[240px] flex-1",
+                        APP_CONTENT_BODY_CARD_OUTLINED_CLASS_NAME,
+                      )}
                     >
                       <pre
                         data-component="messages-section-placeholder-scheduled-detail-content-text"
@@ -1075,123 +1080,79 @@ function MessageSectionPlaceholder({ sectionId }: { sectionId: PlaceholderSectio
                         {selectedPreview.messageBody ?? selectedPreview.detailDescription}
                       </pre>
                     </div>
-                  </div>
+                  </InfoCard>
 
-                  <div
+                  <InfoCard
+                    title="메시지 정보"
                     data-component="messages-section-placeholder-scheduled-detail-meta"
-                    className="flex flex-col rounded-[20px] border border-v3-border bg-white p-5"
                   >
-                    <h3 className="text-[0.85rem] font-bold text-v3-dark">메시지 정보</h3>
-                    <div
-                      data-component="messages-section-placeholder-scheduled-detail-meta-list"
-                      className="mt-4 space-y-3"
-                    >
-                      <div
-                        data-component="messages-section-placeholder-scheduled-detail-meta-item"
-                        className="flex items-center justify-between gap-3 text-[0.78rem]"
-                      >
-                        <span className="text-v3-text-muted">수신자 이름</span>
-                        <span className="font-semibold text-v3-dark">{selectedPreview.recipientName ?? "-"}</span>
-                      </div>
-                      <div
-                        data-component="messages-section-placeholder-scheduled-detail-meta-item"
-                        className="flex items-center justify-between gap-3 text-[0.78rem]"
-                      >
-                        <span className="text-v3-text-muted">전화번호</span>
-                        <span className="font-semibold text-v3-dark">{selectedPreview.recipientPhone ?? "-"}</span>
-                      </div>
-                      <div
-                        data-component="messages-section-placeholder-scheduled-detail-meta-item"
-                        className="flex items-center justify-between gap-3 text-[0.78rem]"
-                      >
-                        <span className="text-v3-text-muted">발신 예정 시간</span>
-                        <span className="font-semibold text-v3-dark">{selectedPreview.scheduledAt ?? "-"}</span>
-                      </div>
-                      <div
-                        data-component="messages-section-placeholder-scheduled-detail-meta-item"
-                        className="flex items-center justify-between gap-3 text-[0.78rem]"
-                      >
-                        <span className="text-v3-text-muted">메시지 템플릿 이름</span>
-                        <span className="font-semibold text-v3-dark">{selectedPreview.templateTitle ?? "-"}</span>
-                      </div>
-                    </div>
-                  </div>
+                    <InfoRow
+                      data-component="messages-section-placeholder-scheduled-detail-meta-recipient"
+                      label="수신자 이름"
+                      value={selectedPreview.recipientName ?? "-"}
+                    />
+                    <InfoRow
+                      data-component="messages-section-placeholder-scheduled-detail-meta-phone"
+                      label="전화번호"
+                      value={selectedPreview.recipientPhone ?? "-"}
+                    />
+                    <InfoRow
+                      data-component="messages-section-placeholder-scheduled-detail-meta-scheduled-time"
+                      label="발신 예정 시간"
+                      value={selectedPreview.scheduledAt ?? "-"}
+                    />
+                    <InfoRow
+                      data-component="messages-section-placeholder-scheduled-detail-meta-template"
+                      label="메시지 템플릿 이름"
+                      value={selectedPreview.templateTitle ?? "-"}
+                    />
+                  </InfoCard>
 
-                  <div
+                  <InfoCard
+                    title="변수"
                     data-component="messages-section-placeholder-scheduled-detail-variables"
-                    className="flex flex-col rounded-[20px] border border-v3-border bg-white p-5"
                   >
-                    <h3 className="text-[0.85rem] font-bold text-v3-dark">변수</h3>
-                    <div
-                      data-component="messages-section-placeholder-scheduled-detail-variables-body"
-                      className="mt-4 flex-1"
-                    >
-                      {selectedPreview.variableAssignments?.length ? (
-                        <div
-                          data-component="messages-section-placeholder-scheduled-detail-variable-list"
-                          className="space-y-3"
-                        >
-                          {selectedPreview.variableAssignments.map((variable) => (
-                            <div
-                              key={`${selectedPreview.id}-${variable.token}`}
-                              data-component="messages-section-placeholder-scheduled-detail-variable-item"
-                              className="rounded-[16px] border border-v3-border bg-v3-dim-white/30 px-4 py-3"
-                            >
-                              <div
-                                data-component="messages-section-placeholder-scheduled-detail-variable-meta"
-                                className="flex flex-wrap items-center gap-2"
-                              >
-                                <span
-                                  data-component="messages-section-placeholder-scheduled-detail-variable-token"
-                                  className="inline-flex items-center rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary"
-                                >
-                                  {variable.token}
-                                </span>
-                                <span
-                                  data-component="messages-section-placeholder-scheduled-detail-variable-label"
-                                  className="text-[0.72rem] text-v3-text-muted"
-                                >
-                                  {variable.label}
-                                </span>
-                              </div>
-                              <p
-                                data-component="messages-section-placeholder-scheduled-detail-variable-value"
-                                className="mt-2 text-[0.8rem] font-semibold text-v3-dark"
-                              >
-                                {variable.value}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-[0.75rem] text-v3-text-muted">변수 정보가 없습니다.</p>
-                      )}
-                    </div>
-                  </div>
+                    {selectedPreview.variableAssignments?.length ? (
+                      selectedPreview.variableAssignments.map((variable) => (
+                        <InfoRow
+                          key={`${selectedPreview.id}-${variable.token}`}
+                          data-component={`messages-section-placeholder-scheduled-detail-variable-${variable.token}`}
+                          label={variable.label}
+                          value={variable.value}
+                        />
+                      ))
+                    ) : (
+                      <InfoRow
+                        data-component="messages-section-placeholder-scheduled-detail-variable-empty"
+                        label="변수"
+                        value={<span className="font-normal text-v3-text-muted">변수 정보가 없습니다.</span>}
+                      />
+                    )}
+                  </InfoCard>
                 </div>
               </div>
             ) : (
               <div data-component="messages-section-placeholder-detail" className="space-y-4">
-                <div
+                <AppContentCard
                   data-component="messages-section-placeholder-detail-overview"
-                  className="rounded-[20px] bg-v3-dim-white p-5"
+                  variant="muted"
+                  title="연결 예정 콘텐츠"
+                  titleVariant="eyebrow"
                 >
-                  <p className="text-[0.72rem] font-semibold text-v3-primary">연결 예정 콘텐츠</p>
-                  <p className="mt-2 text-sm font-semibold text-v3-dark">{selectedPreview.detailTitle}</p>
-                  <p className="mt-2 text-[0.82rem] leading-6 text-v3-text-muted">
+                  <p className="text-sm font-semibold text-v3-dark">{selectedPreview.detailTitle}</p>
+                  <p className="text-[0.82rem] leading-6 text-v3-text-muted">
                     {selectedPreview.detailDescription}
                   </p>
-                </div>
+                </AppContentCard>
 
-                <div
+                <AppContentCard
                   data-component="messages-section-placeholder-detail-checklist"
-                  className="rounded-[20px] bg-v3-dim-white p-5"
+                  variant="muted"
+                  title="구성 제안"
+                  titleVariant="eyebrow"
+                  contentClassName="space-y-3"
                 >
-                  <p className="text-[0.72rem] font-semibold text-v3-primary">구성 제안</p>
-                  <div
-                    data-component="messages-section-placeholder-detail-checklist-items"
-                    className="mt-4 space-y-3"
-                  >
+                  <div data-component="messages-section-placeholder-detail-checklist-items" className="space-y-3">
                     {selectedPreview.checklist.map((item) => (
                       <div
                         key={item}
@@ -1206,7 +1167,7 @@ function MessageSectionPlaceholder({ sectionId }: { sectionId: PlaceholderSectio
                       </div>
                     ))}
                   </div>
-                </div>
+                </AppContentCard>
               </div>
             )
           ) : isScheduledSection ? null : (

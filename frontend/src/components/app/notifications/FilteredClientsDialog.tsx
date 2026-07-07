@@ -13,6 +13,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog";
+import { APP_DIALOG_FLUSH_CONTENT_CLASS_NAME } from "@/components/ui/app-surface";
 import {
     Table,
     TableBody,
@@ -124,7 +125,10 @@ export function FilteredClientsDialog({
     return (
         <>
             <Dialog open={open} onOpenChange={(open: boolean) => !open && onClose()}>
-                <DialogContent data-component="admin-filtered-clients-dialog" className="max-w-lg max-h-[80vh] p-0">
+                <DialogContent
+                    data-component="admin-filtered-clients-dialog"
+                    className={`max-w-lg max-h-[80vh] ${APP_DIALOG_FLUSH_CONTENT_CLASS_NAME}`}
+                >
                     <DialogHeader data-component="admin-filtered-clients-header" className="px-4 py-3 flex flex-row items-center justify-between border-b">
                         <DialogTitle className="font-semibold">{title}</DialogTitle>
                         <DialogDescription className="sr-only">

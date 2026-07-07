@@ -333,8 +333,8 @@ export default function ConsultationsPage() {
                                 {
                                     key: "inquiry",
                                     children: (
-                                        <div data-component="consultations-detail-inquiry-grid" className="grid grid-cols-2 gap-4">
-                                            <InfoCard title="문의 정보" className="col-span-2">
+                                        <div data-component="consultations-detail-inquiry-grid" className="grid grid-cols-[repeat(3,minmax(0,1fr))] gap-4">
+                                            <InfoCard title="문의 정보" className="min-w-0">
                                                 <InfoRow label="근무 지역" value={getInquiryRegion(activeInquiry.address)} />
                                                 <InfoRow label="추천 경로" value={activeInquiry.referralSource || "-"} />
                                                 <InfoRow label="선호 매니저" value={activeInquiry.preferredCaregiverName || "-"} />
@@ -366,9 +366,9 @@ export default function ConsultationsPage() {
                                                 ) : null}
                                             </InfoCard>
 
-                                            <SelectedServicesCard inquiry={activeInquiry} className="col-span-2" />
+                                            <SelectedServicesCard inquiry={activeInquiry} className="min-w-0" />
 
-                                            <InfoCard title="문의 상태" className="col-span-2">
+                                            <InfoCard title="문의 상태" className="min-w-0">
                                                 <InfoRow
                                                     label="확인 여부"
                                                     value={

@@ -210,7 +210,12 @@ export function ClientAutocomplete({
 
     return (
         <div data-component="clients-autocomplete" className="space-y-2">
-            <Label className={cn(error && "text-destructive")}>
+            <Label
+                className={cn(
+                    "text-[calc(12px*var(--v3-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted",
+                    error && "text-destructive",
+                )}
+            >
                 {label}
                 {required && <span className="text-destructive ml-1">*</span>}
             </Label>

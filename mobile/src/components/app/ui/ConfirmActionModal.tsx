@@ -2,7 +2,7 @@
 
 import { Dialog as DialogPrimitive } from "radix-ui";
 
-import { Button } from "@/components/ui/button";
+import { Button, type ButtonProps } from "@/components/ui/button";
 
 interface ConfirmActionModalProps {
   open: boolean;
@@ -10,6 +10,8 @@ interface ConfirmActionModalProps {
   description: string;
   cancelLabel: string;
   confirmLabel: string;
+  confirmVariant?: ButtonProps["variant"];
+  actionOrder?: "confirm-cancel" | "cancel-confirm";
   loading?: boolean;
   onOpenChange: (open: boolean) => void;
   onCancel: () => void;
@@ -24,11 +26,34 @@ export function ConfirmActionModal({
   description,
   cancelLabel,
   confirmLabel,
+  confirmVariant = "destructive",
+  actionOrder = "confirm-cancel",
   loading = false,
   onOpenChange,
   onCancel,
   onConfirm,
 }: ConfirmActionModalProps) {
+  const confirmButton = (
+    <Button
+      variant={confirmVariant}
+      onClick={() => void onConfirm()}
+      disabled={loading}
+      className="flex-1"
+    >
+      {confirmLabel}
+    </Button>
+  );
+  const cancelButton = (
+    <Button
+      variant="outline"
+      onClick={onCancel}
+      disabled={loading}
+      className="flex-1"
+    >
+      {cancelLabel}
+    </Button>
+  );
+
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
@@ -55,22 +80,17 @@ export function ConfirmActionModal({
             </DialogPrimitive.Description>
           </div>
           <div className="mt-2 flex gap-2" data-component="confirm-action-modal-actions">
-            <Button
-              variant="destructive"
-              onClick={() => void onConfirm()}
-              disabled={loading}
-              className="flex-1"
-            >
-              {confirmLabel}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={onCancel}
-              disabled={loading}
-              className="flex-1"
-            >
-              {cancelLabel}
-            </Button>
+            {actionOrder === "cancel-confirm" ? (
+              <>
+                {cancelButton}
+                {confirmButton}
+              </>
+            ) : (
+              <>
+                {confirmButton}
+                {cancelButton}
+              </>
+            )}
           </div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>

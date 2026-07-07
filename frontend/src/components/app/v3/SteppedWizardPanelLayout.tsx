@@ -13,8 +13,9 @@ interface SteppedWizardPanelContentProps {
   stepContentClassName?: string;
 }
 
-export const STEPPED_WIZARD_PANEL_CONTENT_CLASS_NAME = "px-[20%] py-6 h-full min-h-0 flex flex-col gap-6";
-export const STEPPED_WIZARD_PANEL_STEP_CONTENT_CLASS_NAME = "flex flex-1 min-h-0 flex-col p-1";
+export const STEPPED_WIZARD_PANEL_CONTENT_CLASS_NAME =
+  "h-full min-h-0 flex flex-col gap-[calc(24px*var(--v3-ui-scale,1))]";
+export const STEPPED_WIZARD_PANEL_STEP_CONTENT_CLASS_NAME = "min-h-0 p-0";
 
 export const SteppedWizardPanelContent = React.forwardRef<
   HTMLDivElement,

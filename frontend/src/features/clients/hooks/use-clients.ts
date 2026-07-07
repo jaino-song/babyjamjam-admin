@@ -12,6 +12,42 @@ import type {
   PaginatedResponse
 } from '../types';
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
+
+const isClientRecord = (value: unknown): value is Client =>
+  isRecord(value) && typeof value.id === 'number';
+
+const isPaginatedClientResponse = (value: unknown): value is PaginatedResponse<Client> =>
+  isRecord(value) && Array.isArray(value.data);
+
+const mergeUpdatedClient = (client: Client, updatedClient: Client): Client =>
+  client.id === updatedClient.id ? { ...client, ...updatedClient } : client;
+
+const mergeUpdatedClientList = (clients: Client[], updatedClient: Client): Client[] =>
+  clients.map((client) => mergeUpdatedClient(client, updatedClient));
+
+const updateClientCacheData = (currentData: unknown, updatedClient: Client): unknown => {
+  if (!currentData) return currentData;
+
+  if (Array.isArray(currentData)) {
+    return mergeUpdatedClientList(currentData, updatedClient);
+  }
+
+  if (isPaginatedClientResponse(currentData)) {
+    return {
+      ...currentData,
+      data: mergeUpdatedClientList(currentData.data, updatedClient),
+    };
+  }
+
+  if (isClientRecord(currentData)) {
+    return mergeUpdatedClient(currentData, updatedClient);
+  }
+
+  return currentData;
+};
+
 interface ScheduleChangeMutationVariables {
   requestId: string;
   clientId: number;
@@ -78,11 +114,14 @@ export function useUpdateClient() {
   return useMutation({
     mutationFn: ({ id, dto }: { id: number; dto: UpdateClientDto }) =>
       clientsApi.update(id, dto).then(r => r.data),
-    onSuccess: (_, { id }) => {
-      // Invalidate all client queries
+    onSuccess: (updatedClient, { id }) => {
+      queryClient.setQueriesData(
+        { queryKey: clientKeys.all },
+        (currentData) => updateClientCacheData(currentData, updatedClient)
+      );
+      queryClient.setQueryData(clientKeys.detail(id), updatedClient);
+
       queryClient.invalidateQueries({ queryKey: clientKeys.all });
-      // Also invalidate the specific detail query
-      queryClient.invalidateQueries({ queryKey: clientKeys.detail(id) });
     },
   });
 }

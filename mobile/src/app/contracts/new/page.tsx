@@ -37,6 +37,7 @@ import {
   type HeadlessProgressState,
 } from "@/lib/eformsign/headless-progress";
 import { HeadlessProgressModal } from "@/components/app/eformsign/HeadlessProgressModal";
+import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
 import { cn } from "@/lib/utils";
 import styles from "./page.module.css";
 
@@ -66,8 +67,19 @@ const WIZARD_STEPS = [
   { title: "계약 정보", desc: "서비스 기간과 본인부담금 수령 날짜를 입력해주세요." },
 ] as const;
 const SUCCESS_REDIRECT_DELAY_MS = 3_000;
+const AREA_TEMPLATE_DISPLAY_LABELS: Record<string, string> = {
+  Namdonggu: "남동구",
+  Seogu: "서구",
+};
 
 type HelperTone = "muted" | "ok" | "err" | "pending";
+
+function getAreaTemplateDisplayLabel(areaId: string, templateName?: string | null): string {
+  const mappedLabel = AREA_TEMPLATE_DISPLAY_LABELS[areaId];
+  if (mappedLabel) return mappedLabel;
+
+  return templateName?.replace(/\s*계약서.*$/, "").trim() || areaId;
+}
 
 function Field({
   label,
@@ -188,6 +200,7 @@ export default function ContractCreationPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isEformsignModalOpen, setIsEformsignModalOpen] = useState(false);
   const [isProgressModalOpen, setIsProgressModalOpen] = useState(false);
+  const [isExistingContractConfirmOpen, setIsExistingContractConfirmOpen] = useState(false);
   const [shouldRegisterMissingClient, setShouldRegisterMissingClient] = useState(true);
   const [creationProgress, setCreationProgress] = useState<HeadlessProgressState>(INITIAL_HEADLESS_PROGRESS);
   const [progressErrorHint, setProgressErrorHint] = useState<string | null>(null);
@@ -287,13 +300,32 @@ export default function ContractCreationPage() {
     ) ?? null;
   }, [allClients, name, phone]);
 
+  const storedClientByPhone = useMemo(() => {
+    const targetPhone = normalizeClientIdentityPhone(phone);
+    if (!targetPhone || !allClients) return null;
+
+    return allClients.find((client) =>
+      normalizeClientIdentityPhone(client.phone) === targetPhone,
+    ) ?? null;
+  }, [allClients, phone]);
+
   const shouldShowClientRegistrationToggle = Boolean(
     activeStep === 3 &&
     clientId === null &&
     name.trim() &&
     phone.trim() &&
-    !storedClientByIdentity,
+    !storedClientByIdentity &&
+    !storedClientByPhone,
   );
+
+  const clientWithExistingContract = useMemo(() => {
+    if (clientId !== null) {
+      return allClients?.find((client) => client.id === clientId) ?? null;
+    }
+
+    return storedClientByIdentity ?? storedClientByPhone ?? null;
+  }, [allClients, clientId, storedClientByIdentity, storedClientByPhone]);
+  const hasExistingContractRecord = Boolean(clientWithExistingContract?.eDocId);
 
   useEffect(() => {
     if (shouldShowClientRegistrationToggle) {
@@ -637,6 +669,10 @@ export default function ContractCreationPage() {
       return;
     }
     if (activeStep === WIZARD_STEPS.length - 1) {
+      if (hasExistingContractRecord) {
+        setIsExistingContractConfirmOpen(true);
+        return;
+      }
       void handleSubmit();
       return;
     }
@@ -700,7 +736,7 @@ export default function ContractCreationPage() {
 
     try {
       // 1. Manual-entry client creation
-      let finalClientId = clientId ?? storedClientByIdentity?.id ?? null;
+      let finalClientId = clientId ?? storedClientByIdentity?.id ?? storedClientByPhone?.id ?? null;
       if (!finalClientId && isManualEntry && shouldRegisterMissingClient) {
         const newClient = await createClientMutation.mutateAsync({
           name,
@@ -987,7 +1023,7 @@ export default function ContractCreationPage() {
                           <option value="">선택하세요</option>
                           {(areaTemplates ?? []).map((tpl) => (
                             <option key={tpl.areaId} value={tpl.areaId}>
-                              {tpl.templateName}
+                              {getAreaTemplateDisplayLabel(tpl.areaId, tpl.templateName)}
                             </option>
                           ))}
                         </select>
@@ -1335,6 +1371,25 @@ export default function ContractCreationPage() {
         progress={creationProgress}
         errorHint={progressErrorHint}
         dataComponentPrefix="contracts-creation-progress"
+      />
+
+      <ConfirmActionModal
+        open={isExistingContractConfirmOpen}
+        title="계약서 재생성 확인"
+        description="이전에 전송된 계약서가 있습니다. 그래도 새로 생성하시겠어요?"
+        cancelLabel="취소"
+        confirmLabel="생성"
+        confirmVariant="default"
+        actionOrder="cancel-confirm"
+        loading={isSubmitting}
+        onOpenChange={(open) => {
+          if (!isSubmitting) setIsExistingContractConfirmOpen(open);
+        }}
+        onCancel={() => setIsExistingContractConfirmOpen(false)}
+        onConfirm={() => {
+          setIsExistingContractConfirmOpen(false);
+          void handleSubmit();
+        }}
       />
 
       {isEformsignModalOpen ? (

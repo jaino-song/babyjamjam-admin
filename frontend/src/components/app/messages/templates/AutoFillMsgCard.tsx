@@ -3,6 +3,11 @@ import { motion } from "framer-motion";
 import { Copy } from "lucide-react";
 
 import { HeaderActionButton, InfoCard, InfoRow } from "@/components/app/v3";
+import {
+  APP_CONTENT_BODY_CARD_CLASS_NAME,
+  APP_CONTENT_CARD_MUTED_CLASS_NAME,
+  AppContentCard,
+} from "@/components/ui/app-surface";
 import { cn } from "@/lib/utils";
 
 import { MsgField } from "./MsgField";
@@ -171,7 +176,10 @@ export const AutoFillMsgCard = memo(function AutoFillMsgCard({
     <>
       <div
         data-component="messages-generated-msg-detail-content"
-        className="scrollbar-hide flex h-full min-h-0 flex-col rounded-[20px] bg-v3-dim-white p-5"
+        className={cn(
+          "scrollbar-hide flex h-full min-h-0 flex-col",
+          APP_CONTENT_CARD_MUTED_CLASS_NAME,
+        )}
       >
         <div
           data-component="messages-generated-msg-detail-content-header"
@@ -192,7 +200,10 @@ export const AutoFillMsgCard = memo(function AutoFillMsgCard({
 
         <div
           data-component="messages-generated-msg-detail-content-body"
-          className="flex min-h-[320px] flex-1 rounded-[18px] bg-white p-4"
+          className={cn(
+            "flex min-h-[320px] flex-1",
+            APP_CONTENT_BODY_CARD_CLASS_NAME,
+          )}
         >
           <MsgField value={message} onChange={onMessageChange} />
         </div>
@@ -218,12 +229,14 @@ export const AutoFillMsgCard = memo(function AutoFillMsgCard({
       <>
         {detailGridContent}
         {children ? (
-          <div
+          <AppContentCard
             data-component="messages-generated-msg-actions"
-            className="rounded-[20px] border border-v3-border bg-white p-5 xl:col-span-2"
+            variant="outlined"
+            className="xl:col-span-2"
+            contentClassName="block"
           >
             {children}
-          </div>
+          </AppContentCard>
         ) : null}
       </>
     );
@@ -245,12 +258,13 @@ export const AutoFillMsgCard = memo(function AutoFillMsgCard({
       </div>
 
       {children ? (
-        <div
+        <AppContentCard
           data-component="messages-generated-msg-actions"
-          className="rounded-[20px] border border-v3-border bg-white p-5"
+          variant="outlined"
+          contentClassName="block"
         >
           {children}
-        </div>
+        </AppContentCard>
       ) : null}
     </motion.div>
   );

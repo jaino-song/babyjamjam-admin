@@ -77,8 +77,8 @@
   align-items: center;
   height: 52px;
   padding: 0 4px;
-  border-bottom: 1px solid hsl(var(--v3-border));
-  background: white;
+  border-bottom: 1px solid hsl(var(--v3-primary));
+  background: hsl(var(--v3-primary));
 }
 
 .detailBack {
@@ -88,7 +88,7 @@
   padding: 8px 10px;
   border: 0;
   background: transparent;
-  color: hsl(var(--v3-primary));
+  color: white;
   cursor: pointer;
   font-family: inherit;
   font-size: 0.95rem;
@@ -99,7 +99,7 @@
   position: absolute;
   top: 50%;
   left: 50%;
-  color: hsl(var(--v3-dark));
+  color: white;
   font-size: 0.95rem;
   font-weight: 700;
   transform: translate(-50%, -50%);

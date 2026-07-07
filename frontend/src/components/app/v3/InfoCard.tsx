@@ -2,12 +2,13 @@
 
 import React from "react";
 
-import { cn } from "@/lib/utils";
+import { AppContentCard } from "@/components/ui/app-surface";
 
 interface InfoCardProps {
   title: string;
   children: React.ReactNode;
   className?: string;
+  contentClassName?: string;
   "data-component"?: string;
 }
 
@@ -15,14 +16,21 @@ export function InfoCard({
   title,
   children,
   className,
+  contentClassName,
   "data-component": dataComponent = "info-card",
 }: InfoCardProps) {
   return (
-    <div data-component={dataComponent} className={cn("rounded-[18px] bg-v3-dim-white p-[calc(16px*var(--v3-ui-scale,1))]", className)}>
-      <h3 data-component="info-card-title" className="mb-[calc(12px*var(--v3-ui-scale,1))] text-[calc(12px*var(--v3-ui-scale,1))] font-semibold uppercase tracking-[0.1em] text-v3-text-muted">
-        {title}
-      </h3>
+    <AppContentCard
+      data-component={dataComponent}
+      variant="muted"
+      title={title}
+      titleVariant="eyebrow"
+      titleElement="h3"
+      titleDataComponent="info-card-title"
+      contentClassName={contentClassName ?? "block"}
+      className={className}
+    >
       {children}
-    </div>
+    </AppContentCard>
   );
 }

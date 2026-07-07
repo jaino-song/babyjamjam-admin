@@ -103,11 +103,19 @@ test.describe("Mobile clients detail labels", () => {
     await page.goto("/clients");
     await expect(page.locator('[data-component="mobile-clients-row"]')).toBeVisible({ timeout: 15000 });
 
+    const filterPills = page.locator('[data-component="mobile-redesign-filter-pill"]');
+    await expect(filterPills.nth(0)).toContainText("전체");
+    await expect(filterPills.nth(0)).toContainText("1");
+    await expect(filterPills.nth(1)).toContainText("계약서 필요");
+    await expect(filterPills.nth(1)).toContainText("1");
+    await filterPills.nth(1).click();
+
     const row = page.locator('[data-component="mobile-clients-row"]', {
       hasText: ACTIVE_CLIENT_WITHOUT_CONTRACT.name,
     });
-    const badges = row.locator('[data-component="mobile-clients-row-badges"] .badge');
+    const badges = row.locator('[data-component="mobile-redesign-list-row-badges"] [data-component="status-badge"]');
 
-    await expect(badges).toHaveText(["진행중", "계약서 없음"]);
+    await expect(badges).toHaveText(["계약서 필요"]);
+    await expect(row.locator('[data-component="mobile-redesign-list-row-badges-more"]')).toHaveText("+1");
   });
 });

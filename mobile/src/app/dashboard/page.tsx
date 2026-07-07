@@ -19,7 +19,6 @@ import { ClientFormDialog } from "@/components/app/clients/ClientFormDialog";
 import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
 import { ClientDetailContent, type DetailTabId } from "@/components/app/clients/client-detail";
 import { DashboardRedesign } from "@/components/app/mobile-redesign/DashboardRedesign";
-import { diffBusinessDaysKr, isoDateInKorea } from "@/lib/date/business-days";
 import { deriveDashboardAnalyticsFromClients } from "@/lib/dashboard/analytics";
 import type {
   DashboardRedesignFilter,
@@ -31,6 +30,15 @@ import type {
   ListRow,
   SectionRows,
 } from "@/components/app/mobile-redesign/mockup-data";
+import { getMobileClientBadges } from "@/lib/client/badges";
+import { compactDashboardBadges, type DashboardStatusBadge } from "./dashboard-badges";
+import {
+  dueForContractRequired,
+  dueForServiceEndDate,
+  dueForServiceStartDate,
+  dueForServiceStatus,
+  type DashboardDueInfo,
+} from "./dashboard-due";
 import "@/components/app/mobile-redesign/redesign.css";
 
 const AVATAR_TONES: NonNullable<ListRow["avatarTone"]>[] = [
@@ -55,49 +63,7 @@ function clientMeta(c: Client) {
   return c.primaryEmployee?.name ? `${type} · ${c.primaryEmployee.name}` : `${type} · 제공인력 미배정`;
 }
 
-function dayDiff(targetISO: string | null) {
-  if (!targetISO) return null;
-  const target = new Date(targetISO);
-  if (Number.isNaN(target.getTime())) return null;
-  target.setHours(0, 0, 0, 0);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return Math.round((target.getTime() - today.getTime()) / 86_400_000);
-}
-
-function formatMonthDay(diff: number) {
-  const d = new Date();
-  d.setDate(d.getDate() + diff);
-  return `${d.getMonth() + 1}/${d.getDate()}`;
-}
-
-function normalizeIsoDate(value: string | null) {
-  if (!value) return null;
-  const match = value.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (match) {
-    return `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return isoDateInKorea(date);
-}
-
-function formatMonthDayFromIso(iso: string) {
-  return `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}`;
-}
-
-interface DueInfo {
-  due: string;
-  dueSub?: string;
-  dueTone?: "urgent" | "soon";
-}
-
-type DashboardStatusBadge = {
-  label: string;
-  tone: ListRow["badgeTone"];
-  order: number;
-};
+type DueInfo = DashboardDueInfo;
 
 type DashboardStatusRow = ListRow & {
   badges: DashboardStatusBadge[];
@@ -113,63 +79,36 @@ const DASHBOARD_STATUS_ORDER = {
   replacementRequested: 60,
 } as const;
 
-function dueForStart(diff: number): DueInfo {
-  if (diff < 0) return { due: `D+${Math.abs(diff)}`, dueSub: "지남" };
-  if (diff === 0) return { due: "오늘", dueSub: "시작", dueTone: "urgent" };
-  if (diff === 1) return { due: "D-1", dueSub: "내일까지", dueTone: "urgent" };
-  if (diff <= 7) return { due: `D-${diff}`, dueSub: formatMonthDay(diff), dueTone: "soon" };
-  return { due: `D-${diff}`, dueSub: formatMonthDay(diff) };
+function dashboardBadgesForClient(client: Client, dueInfo: DueInfo | null): DashboardStatusBadge[] {
+  return getMobileClientBadges(client).map((badge) => ({
+    label: badge.label,
+    tone: badge.tone,
+    order: badge.priority,
+    due: dueInfo?.due,
+    dueSub: dueInfo?.dueSub,
+    dueTone: dueInfo?.dueTone,
+  }));
 }
 
-function dueForUpcomingStart(diff: number): DueInfo {
-  if (diff <= 0) return dueForStart(diff);
-  if (diff === 1) return { due: "1일 남음", dueSub: "내일까지", dueTone: "urgent" };
-  if (diff <= 7) return { due: `${diff}일 남음`, dueSub: formatMonthDay(diff), dueTone: "soon" };
-  return { due: `${diff}일 남음`, dueSub: formatMonthDay(diff) };
-}
-
-function dueForEndDate(endDate: string | null): DueInfo | null {
-  const endIso = normalizeIsoDate(endDate);
-  if (!endIso) return null;
-
-  const diff = diffBusinessDaysKr(endIso);
-  if (diff === null) return null;
-
-  const dueSub = `~${formatMonthDayFromIso(endIso)}`;
-  if (diff < 0) return { due: `D+${Math.abs(diff)}`, dueSub: "지남" };
-  if (diff === 0) return { due: "종료", dueSub: "오늘", dueTone: "urgent" };
-  if (diff <= 3) return { due: `${diff}일 남음`, dueSub, dueTone: "urgent" };
-  if (diff <= 7) return { due: `${diff}일 남음`, dueSub, dueTone: "soon" };
-  return { due: `${diff}일 남음`, dueSub };
-}
-
-function withDashboardStatus(row: ListRow, statusOrder: number): DashboardStatusRow {
+function withDashboardStatus(
+  row: ListRow,
+  statusOrder: number,
+  badges?: DashboardStatusBadge[],
+): DashboardStatusRow {
   return {
     ...row,
-    badges: [{ label: row.badge, tone: row.badgeTone, order: statusOrder }],
+    badges: badges ?? [
+      {
+        label: row.badge,
+        tone: row.badgeTone,
+        order: statusOrder,
+        due: row.due,
+        dueSub: row.dueSub,
+        dueTone: row.dueTone,
+      },
+    ],
     statusOrder,
   };
-}
-
-function compactDashboardBadges(
-  badges: DashboardStatusBadge[],
-): Array<{ label: string; tone: ListRow["badgeTone"] }> {
-  const byLabel = new Map<string, DashboardStatusBadge>();
-
-  for (const badge of badges) {
-    const existing = byLabel.get(badge.label);
-    if (!existing || badge.order >= existing.order) {
-      byLabel.set(badge.label, badge);
-    }
-  }
-
-  const ordered = [...byLabel.values()].sort((a, b) => a.order - b.order);
-  const visible =
-    ordered.length > 2
-      ? [{ label: "...", tone: "muted" as const, order: Number.NEGATIVE_INFINITY }, ...ordered.slice(-2)]
-      : ordered;
-
-  return visible.map(({ label, tone }) => ({ label, tone }));
 }
 
 function mergeDashboardRows(rows: DashboardStatusRow[]): ListRow[] {
@@ -210,20 +149,25 @@ function mergeDashboardRows(rows: DashboardStatusRow[]): ListRow[] {
 
   return mergedRows
     .sort((a, b) => a.sourceIndex - b.sourceIndex)
-    .map((row) => ({
-      id: row.id,
-      name: row.name,
-      meta: row.meta,
-      initial: row.initial,
-      badge: row.badge,
-      badgeTone: row.badgeTone,
-      badges: compactDashboardBadges(row.fullBadges),
-      due: row.due,
-      dueSub: row.dueSub,
-      dueTone: row.dueTone,
-      avatarTone: row.avatarTone,
-      onClick: row.onClick,
-    }));
+    .map((row) => {
+      const compactedBadges = compactDashboardBadges(row.fullBadges);
+      const primaryBadge = compactedBadges[0];
+
+      return {
+        id: row.id,
+        name: row.name,
+        meta: row.meta,
+        initial: row.initial,
+        badge: primaryBadge?.label ?? row.badge,
+        badgeTone: primaryBadge?.tone ?? row.badgeTone,
+        badges: compactedBadges.map(({ label, tone }) => ({ label, tone })),
+        due: primaryBadge?.due ?? row.due,
+        dueSub: primaryBadge?.dueSub ?? row.dueSub,
+        dueTone: primaryBadge?.dueTone ?? row.dueTone,
+        avatarTone: row.avatarTone,
+        onClick: row.onClick,
+      };
+    });
 }
 
 export default function DashboardPage() {
@@ -369,73 +313,76 @@ export default function DashboardPage() {
       .sort((a, b) => new Date(a.endDate!).getTime() - new Date(b.endDate!).getTime());
 
     const toActionRow = (c: Client, i: number): DashboardStatusRow => {
-      let badge: string;
-      let badgeTone: ListRow["badgeTone"];
       let dueInfo: DueInfo | null = null;
       let statusOrder: number;
 
       if (c.serviceStatus === "replacement_requested") {
-        badge = "교체 요청";
-        badgeTone = "burgundy";
-        dueInfo = { due: "긴급", dueSub: "오늘", dueTone: "urgent" };
+        dueInfo = dueForServiceStatus(c);
         statusOrder = DASHBOARD_STATUS_ORDER.replacementRequested;
+      } else if (getMobileClientBadges(c).some((badge) => badge.key === "contract_required")) {
+        dueInfo = dueForContractRequired(c);
+        statusOrder = c.documentStatus && c.documentStatus !== "completed" && c.eDocId
+          ? DASHBOARD_STATUS_ORDER.reviewNeeded
+          : DASHBOARD_STATUS_ORDER.sendPending;
       } else if (c.documentStatus && c.documentStatus !== "completed" && c.eDocId) {
-        badge = "검토 필요";
-        badgeTone = "primary";
-        const diff = dayDiff(c.startDate);
-        if (diff !== null) dueInfo = dueForStart(diff);
+        dueInfo = dueForServiceStatus(c);
         statusOrder = DASHBOARD_STATUS_ORDER.reviewNeeded;
       } else {
-        badge = "발송 대기";
-        badgeTone = "orange";
-        const diff = dayDiff(c.startDate);
-        if (diff !== null) dueInfo = dueForStart(diff);
+        dueInfo = dueForServiceStatus(c);
         statusOrder = DASHBOARD_STATUS_ORDER.sendPending;
       }
 
+      const badges = dashboardBadgesForClient(c, dueInfo);
+      const primaryBadge = badges[0];
+
       return withDashboardStatus({
         id: c.id,
         name: c.name,
         meta: clientMeta(c),
         initial: clientInitial(c.name),
-        badge,
-        badgeTone,
+        badge: primaryBadge?.label ?? "-",
+        badgeTone: primaryBadge?.tone ?? "muted",
         avatarTone: pickAvatarTone(c.name, i),
         onClick: () => openClient(c),
         ...(dueInfo ?? {}),
-      }, statusOrder);
+      }, statusOrder, badges);
     };
 
     const toUpcomingRow = (c: Client, i: number): DashboardStatusRow => {
-      const diff = dayDiff(c.startDate);
-      const dueInfo = diff !== null ? dueForUpcomingStart(diff) : null;
+      const dueInfo = dueForServiceStartDate(c.startDate);
       const hasEmployee = Boolean(c.primaryEmployee);
+      const badges = dashboardBadgesForClient(c, dueInfo);
+      const primaryBadge = badges[0];
+
       return withDashboardStatus({
         id: c.id,
         name: c.name,
         meta: clientMeta(c),
         initial: clientInitial(c.name),
-        badge: hasEmployee ? "예정" : "대기",
-        badgeTone: hasEmployee ? "primary" : "muted",
+        badge: primaryBadge?.label ?? "-",
+        badgeTone: primaryBadge?.tone ?? "muted",
         avatarTone: pickAvatarTone(c.name, i),
         onClick: () => openClient(c),
         ...(dueInfo ?? {}),
-      }, hasEmployee ? DASHBOARD_STATUS_ORDER.upcoming : DASHBOARD_STATUS_ORDER.waiting);
+      }, hasEmployee ? DASHBOARD_STATUS_ORDER.upcoming : DASHBOARD_STATUS_ORDER.waiting, badges);
     };
 
     const toEndingRow = (c: Client, i: number): DashboardStatusRow => {
-      const dueInfo = dueForEndDate(c.endDate);
+      const dueInfo = dueForServiceEndDate(c.endDate);
+      const badges = dashboardBadgesForClient(c, dueInfo);
+      const primaryBadge = badges[0];
+
       return withDashboardStatus({
         id: c.id,
         name: c.name,
         meta: clientMeta(c),
         initial: clientInitial(c.name),
-        badge: "진행중",
-        badgeTone: "primary",
+        badge: primaryBadge?.label ?? "-",
+        badgeTone: primaryBadge?.tone ?? "muted",
         avatarTone: pickAvatarTone(c.name, i),
         onClick: () => openClient(c),
         ...(dueInfo ?? {}),
-      }, DASHBOARD_STATUS_ORDER.active);
+      }, DASHBOARD_STATUS_ORDER.active, badges);
     };
 
     const actionRows = actionRequired.map(toActionRow);

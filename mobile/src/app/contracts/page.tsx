@@ -49,6 +49,7 @@ import {
   customerName,
   mergeDocumentForDisplayData,
 } from "@/lib/eformsign/display-name";
+import { isProviderReviewWorkflowStep } from "@/lib/eformsign/review-step";
 import {
   CONTRACT_FINALIZE_PROGRESS_STEPS,
   INITIAL_HEADLESS_PROGRESS,
@@ -193,21 +194,15 @@ function ContractListLoadingRows() {
 function categorize(doc: EformsignDocument): ContractCategory {
   const cat = getStatusCategory(doc.current_status?.status_type);
   if (cat === "completed" || cat === "rejected" || cat === "unknown") return cat;
-  // 모든 step recipient가 내부자(recipient_type "01")면 staff 최종 확인 대기 → "검토 필요" (in-progress).
-  // 외부 서명자가 남아있으면 → "대기" (drafting bucket: 외부 서명 대기).
-  const recipients = doc.current_status?.step_recipients ?? [];
-  if (recipients.length > 0 && recipients.every((r) => r.recipient_type === "01")) {
-    return "in-progress";
-  }
-  return "drafting";
+  return isProviderReviewStep(doc) ? "in-progress" : "drafting";
 }
 
-// 모든 step recipients가 내부자(recipient_type "01")면 외부 서명은 끝났고 staff 최종 확인 대기.
+function isProviderReviewStep(doc: EformsignDocument): boolean {
+  return isProviderReviewWorkflowStep(doc.current_status);
+}
+
 function isReviewNeeded(doc: EformsignDocument): boolean {
-  if (categorize(doc) !== "in-progress") return false;
-  const recipients = doc.current_status?.step_recipients ?? [];
-  if (recipients.length === 0) return false;
-  return recipients.every((r) => r.recipient_type === "01");
+  return categorize(doc) === "in-progress" && isProviderReviewStep(doc);
 }
 
 function yymmddToIsoDate(value: string): string {

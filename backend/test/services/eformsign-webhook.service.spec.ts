@@ -149,6 +149,8 @@ describe("EformsignWebhookService", () => {
         eformsignApiClient.getDocument.mockResolvedValue({
             current_status: {
                 status_type: "060",
+                step_type: "05",
+                step_name: "이용자",
                 step_recipients: [{ recipient_type: "02" }],
             },
         });
@@ -214,6 +216,8 @@ describe("EformsignWebhookService", () => {
         eformsignApiClient.getDocument.mockResolvedValue({
             current_status: {
                 status_type: "070",
+                step_type: "06",
+                step_name: "제공기관 검토",
                 step_recipients: [{ recipient_type: "01" }],
             },
         });
@@ -244,6 +248,58 @@ describe("EformsignWebhookService", () => {
     });
 
     it("should not notify branch users when the current recipient is still external", async () => {
+        const payload = createDocumentPayload();
+        if (!payload.document) {
+            throw new Error("document payload is required");
+        }
+        payload.document.status = "doc_accept_participant";
+
+        await expect(service.processWebhook(payload)).resolves.toBeUndefined();
+
+        expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+    });
+
+    it("should not notify branch users for a user participant step even when eformsign reports recipient_type 01", async () => {
+        eformsignApiClient.getDocument.mockResolvedValue({
+            current_status: {
+                status_type: "060",
+                status_doc_type: "01",
+                status_doc_detail: "060",
+                step_type: "05",
+                step_index: "2",
+                step_name: "이용자",
+                step_recipients: [{ recipient_type: "01", name: "송진호" }],
+                step_group: 3,
+                expired_date: Date.now() + 1000 * 60 * 60 * 24,
+                _expired: false,
+            },
+        });
+        const payload = createDocumentPayload();
+        if (!payload.document) {
+            throw new Error("document payload is required");
+        }
+        payload.document.status = "doc_accept_participant";
+
+        await expect(service.processWebhook(payload)).resolves.toBeUndefined();
+
+        expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+    });
+
+    it("should not notify branch users for provider drafting steps", async () => {
+        eformsignApiClient.getDocument.mockResolvedValue({
+            current_status: {
+                status_type: "002",
+                status_doc_type: "01",
+                status_doc_detail: "002",
+                step_type: "00",
+                step_index: "1",
+                step_name: "제공기관 작성",
+                step_recipients: [{ recipient_type: "01", name: "작성 담당자" }],
+                step_group: 1,
+                expired_date: Date.now() + 1000 * 60 * 60 * 24,
+                _expired: false,
+            },
+        });
         const payload = createDocumentPayload();
         if (!payload.document) {
             throw new Error("document payload is required");

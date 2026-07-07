@@ -68,25 +68,39 @@ function Field({
   children,
   helper,
   helperTone = "muted",
+  helperPlacement = "below",
 }: {
   label: ReactNode;
   required?: boolean;
   children: ReactNode;
   helper?: ReactNode;
   helperTone?: HelperTone;
+  helperPlacement?: "label" | "below";
 }) {
+  const helperNode = helper ? (
+    <div
+      className={cn(
+        styles.formHelper,
+        helperPlacement === "label" ? styles.formHelperInline : null,
+        styles[`helper_${helperTone}`],
+      )}
+      data-component="clients-new-form-helper"
+    >
+      {helper}
+    </div>
+  ) : null;
+
   return (
     <div className={styles.formRow} data-component="clients-new-form-row">
-      <label className={styles.formLabel}>
-        {label}
-        {required ? <span className={styles.requiredMark}>*</span> : null}
-      </label>
+      <div className={styles.formFieldHeader} data-component="clients-new-form-field-header">
+        <label className={styles.formLabel}>
+          {label}
+          {required ? <span className={styles.requiredMark}>*</span> : null}
+        </label>
+        {helperPlacement === "label" ? helperNode : null}
+      </div>
       {children}
-      {helper ? (
-        <div className={cn(styles.formHelper, styles[`helper_${helperTone}`])} data-component="clients-new-form-helper">
-          {helper}
-        </div>
-      ) : null}
+      {helperPlacement === "below" ? helperNode : null}
     </div>
   );
 }
@@ -844,7 +858,7 @@ export default function NewClientPage() {
                         placeholder="홍길동"
                       />
                     </Field>
-                    <Field label="연락처" required helper={phoneInlineMessage} helperTone={phoneHelperTone}>
+                    <Field label="연락처" required helper={phoneInlineMessage} helperTone={phoneHelperTone} helperPlacement="label">
                       <input
                         className={styles.formInput}
                         value={store.phone}
@@ -1144,6 +1158,7 @@ export default function NewClientPage() {
           setEmployeeDialogTarget(null);
         }}
         onSuccess={handleEmployeeCreated}
+        assignmentLabel={employeeDialogTarget === "secondary" ? "제공인력 2에 배정" : "제공인력 1에 배정"}
       />
     </>
   );
