@@ -16,7 +16,8 @@
     "build:mobile": "pnpm --filter ./mobile build",
     "test": "pnpm -r --workspace-concurrency=1 test",
     "build": "pnpm -r --workspace-concurrency=1 build",
-    "lint": "pnpm -r --workspace-concurrency=1 --if-present run lint"
+    "lint": "pnpm -r --workspace-concurrency=1 --if-present run lint",
+    "lint:ui-architecture": "node packages/shared/scripts/ui-architecture-gate.mjs"
   },
   "pnpm": {
     "overrides": {
