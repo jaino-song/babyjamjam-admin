@@ -35,6 +35,7 @@ describe("SendAligoAlimtalkUsecase", () => {
         }),
         update: jest.fn().mockResolvedValue(undefined),
         findPendingRetries: jest.fn().mockResolvedValue([]),
+        findRetryableServiceFeedbackSmsByScheduleId: jest.fn().mockResolvedValue([]),
         findRecentByBranch: jest.fn().mockResolvedValue([]),
     });
 

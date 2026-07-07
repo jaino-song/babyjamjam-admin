@@ -79,4 +79,26 @@ describe("ClientServiceRecordsTab", () => {
         expect(screen.getByText("발송됨")).toBeInTheDocument();
         expect(screen.getAllByText("제공기록지 작성 링크")).toHaveLength(3);
     });
+
+    it("uses the Korean business-day calendar for empty session placeholders", () => {
+        const assignment = {
+            ...createAssignment(1, "none"),
+            startDate: "2026-09-23T00:00:00.000Z",
+            endDate: "2026-09-29T00:00:00.000Z",
+            totalSessions: 2,
+        };
+
+        render(
+            <ClientServiceRecordsTab
+                overview={{ assignments: [assignment] }}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+            />,
+        );
+
+        expect(screen.getByText("예정일 2026.09.23(수)")).toBeInTheDocument();
+        expect(screen.getByText("예정일 2026.09.29(화)")).toBeInTheDocument();
+        expect(screen.queryByText("예정일 2026.09.24(목)")).not.toBeInTheDocument();
+    });
 });

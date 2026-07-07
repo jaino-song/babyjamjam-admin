@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import { calcEndDateBusinessDays } from "@/lib/date/business-days";
 import { cn } from "@/lib/utils";
 import {
     SERVICE_RECORD_FORM_LAYOUT,
@@ -687,15 +688,9 @@ function buildSessionSlots(assignment: ServiceRecordAssignment): SessionSlot[] {
 }
 
 function getExpectedSessionDate(startDate: string, sessionIndex: number): string | null {
-    const start = parseDateOnly(startDate);
-    if (!start) return null;
-
-    let cursor = toBusinessDay(start);
-    for (let index = 1; index < sessionIndex; index += 1) {
-        cursor = nextBusinessDay(cursor);
-    }
-
-    return toIsoDate(cursor);
+    const datePart = datePartOf(startDate);
+    if (!datePart) return null;
+    return calcEndDateBusinessDays(datePart, sessionIndex) || null;
 }
 
 function getExpectedAutoSendAt(startDate: string): string | null {
@@ -703,38 +698,10 @@ function getExpectedAutoSendAt(startDate: string): string | null {
     return datePart ? `${datePart}T15:00:00+09:00` : null;
 }
 
-function parseDateOnly(value: string | null): Date | null {
-    const datePart = datePartOf(value);
-    if (!datePart) return null;
-    const [year, month, day] = datePart.split("-").map(Number);
-    if (!year || !month || !day) return null;
-    return new Date(year, month - 1, day);
-}
-
 function datePartOf(value: string | null): string | null {
     if (!value) return null;
     const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
     return match?.[0] ?? null;
-}
-
-function toBusinessDay(date: Date): Date {
-    const cursor = new Date(date);
-    while (cursor.getDay() === 0 || cursor.getDay() === 6) {
-        cursor.setDate(cursor.getDate() + 1);
-    }
-    return cursor;
-}
-
-function nextBusinessDay(date: Date): Date {
-    const cursor = new Date(date);
-    do {
-        cursor.setDate(cursor.getDate() + 1);
-    } while (cursor.getDay() === 0 || cursor.getDay() === 6);
-    return cursor;
-}
-
-function toIsoDate(date: Date): string {
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function formatDateKo(value: string | null): string {

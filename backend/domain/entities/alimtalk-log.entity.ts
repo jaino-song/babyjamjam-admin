@@ -68,6 +68,13 @@ export class AlimtalkLogEntity {
         return this.attempts < getMessageDeliveryRetryPolicy(this.provider).maxAttempts;
     }
 
+    markRetrySuperseded(reason: string): void {
+        this.status = "failed";
+        this.errorMessage = reason;
+        this.nextRetryAt = null;
+        this.updatedAt = new Date();
+    }
+
     private scheduleRetry(): void {
         this.nextRetryAt = new Date(Date.now() + getMessageDeliveryRetryPolicy(this.provider).retryDelayMs);
     }
