@@ -35,7 +35,7 @@ import { useEformsign } from "@/hooks/useEformsign";
 import { useEmployees, type Employee } from "@/hooks/useEmployees";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import { useToast } from "@/hooks/use-toast";
-import { fetchAllAlimtalkLogs } from "@/lib/alimtalk/logs";
+import { fetchAllMessageLogs } from "@/lib/messages/logs";
 import { EformsignDocument } from "@/lib/eformsign/types";
 import type { EformsignDocumentOption } from "@/lib/eformsign/types";
 import {
@@ -1143,7 +1143,7 @@ function ContractDetailContent({
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.allDocuments() }),
         queryClient.invalidateQueries({ queryKey: ["eformsign-document-detail", doc.id] }),
-        queryClient.invalidateQueries({ queryKey: ["alimtalk", "logs", "all"] }),
+        queryClient.invalidateQueries({ queryKey: ["messages", "logs", "all"] }),
       ]);
       toast({
         description: `${customerName(doc, metadata)}님에게 전자문서 작성을 재요청했습니다.`,
@@ -1728,8 +1728,8 @@ export default function ContractsPage() {
     staleTime: 1000 * 60 * 5,
   });
   const { data: notificationLogsData = [] } = useQuery<NotificationLogRecord[]>({
-    queryKey: ["alimtalk", "logs", "all"],
-    queryFn: () => fetchAllAlimtalkLogs<NotificationLogRecord>(),
+    queryKey: ["messages", "logs", "all"],
+    queryFn: () => fetchAllMessageLogs<NotificationLogRecord>(),
     enabled: isAuthenticated,
     staleTime: 1000 * 60,
   });

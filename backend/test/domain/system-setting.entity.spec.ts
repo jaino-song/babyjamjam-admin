@@ -7,7 +7,7 @@ import {
 describe("SystemSettingEntity", () => {
     const createSystemSettingProps = (overrides = {}) => ({
         key: "alimtalk_provider",
-        value: "aligo",
+        value: "aligo_alimtalk",
         updatedAt: new Date("2025-01-14T00:00:00Z"),
         ...overrides,
     });
@@ -19,7 +19,7 @@ describe("SystemSettingEntity", () => {
             const entity = new SystemSettingEntity(props.key, props.value, props.updatedAt);
 
             expect(entity.key).toBe("alimtalk_provider");
-            expect(entity.value).toBe("aligo");
+            expect(entity.value).toBe("aligo_alimtalk");
             expect(entity.updatedAt).toEqual(props.updatedAt);
         });
     });
@@ -28,10 +28,10 @@ describe("SystemSettingEntity", () => {
         it("should create a new system setting with current timestamp", () => {
             const beforeCreate = new Date();
 
-            const entity = SystemSettingEntity.create("alimtalk_provider", "channeltalk");
+            const entity = SystemSettingEntity.create("alimtalk_provider", "aligo_alimtalk");
 
             expect(entity.key).toBe("alimtalk_provider");
-            expect(entity.value).toBe("channeltalk");
+            expect(entity.value).toBe("aligo_alimtalk");
             expect(entity.updatedAt.getTime()).toBeGreaterThanOrEqual(beforeCreate.getTime());
         });
     });
@@ -56,7 +56,7 @@ describe("SystemSettingEntity", () => {
                         "invalid" as AlimtalkProvider
                     )
                 ).toThrow(
-                    "Invalid alimtalk provider: invalid. Valid values are: channeltalk, aligo, none"
+                    "Invalid alimtalk provider: invalid. Valid values are: aligo_alimtalk, none"
                 );
             });
 
@@ -72,21 +72,21 @@ describe("SystemSettingEntity", () => {
         it("should update value and timestamp", () => {
             const entity = new SystemSettingEntity(
                 "alimtalk_provider",
-                "aligo",
+                "aligo_alimtalk",
                 new Date("2025-01-01T00:00:00Z")
             );
             const beforeUpdate = new Date();
 
-            entity.update("channeltalk");
+            entity.update("none");
 
-            expect(entity.value).toBe("channeltalk");
+            expect(entity.value).toBe("none");
             expect(entity.updatedAt.getTime()).toBeGreaterThanOrEqual(beforeUpdate.getTime());
         });
     });
 
     describe("isAlimtalkProvider", () => {
         it("should return true when key is alimtalk_provider", () => {
-            const entity = new SystemSettingEntity("alimtalk_provider", "aligo", new Date());
+            const entity = new SystemSettingEntity("alimtalk_provider", "aligo_alimtalk", new Date());
 
             expect(entity.isAlimtalkProvider()).toBe(true);
         });
@@ -116,7 +116,7 @@ describe("SystemSettingEntity", () => {
 
         describe("given non-alimtalk_provider setting", () => {
             it("should throw error", () => {
-                const entity = new SystemSettingEntity("other_key", "aligo", new Date());
+                const entity = new SystemSettingEntity("other_key", "aligo_alimtalk", new Date());
 
                 expect(() => entity.getAlimtalkProvider()).toThrow(
                     "Cannot get alimtalk provider from non-alimtalk_provider setting"
@@ -140,8 +140,8 @@ describe("SystemSettingEntity", () => {
     });
 
     describe("DEFAULT_ALIMTALK_PROVIDER constant", () => {
-        it("should be 'aligo'", () => {
-            expect(SystemSettingEntity.DEFAULT_ALIMTALK_PROVIDER).toBe("aligo");
+        it("should be 'aligo_alimtalk'", () => {
+            expect(SystemSettingEntity.DEFAULT_ALIMTALK_PROVIDER).toBe("aligo_alimtalk");
         });
     });
 });

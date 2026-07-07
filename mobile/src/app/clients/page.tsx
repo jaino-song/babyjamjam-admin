@@ -9,7 +9,7 @@ import { clientQueryKeys, fetchClient, useClient, useDeleteClient } from "@/hook
 import { useEmployees } from "@/hooks/useEmployees";
 import { useInfiniteClients } from "@/hooks/useInfiniteClients";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
-import { fetchAllAlimtalkLogs } from "@/lib/alimtalk/logs";
+import { fetchAllMessageLogs } from "@/lib/messages/logs";
 import { Client } from "@/lib/client/types";
 import { getMobileClientBadges } from "@/lib/client/badges";
 import { getStatusCategory } from "@/lib/eformsign/status-codes";
@@ -212,8 +212,8 @@ export default function ClientsPage() {
   const { data: clientFromParam } = useClient(selectedClientIdFromParam ?? 0);
   const detailClient = selectedClient ?? (selectedClientIdFromParam !== null ? clientFromParam ?? null : null);
   const { data: notificationLogsData = [], isLoading: isNotificationLogsLoading } = useQuery<ClientNotificationLogRecord[]>({
-    queryKey: ["alimtalk", "logs", "all"],
-    queryFn: () => fetchAllAlimtalkLogs<ClientNotificationLogRecord>(),
+    queryKey: ["messages", "logs", "all"],
+    queryFn: () => fetchAllMessageLogs<ClientNotificationLogRecord>(),
     enabled: Boolean(detailClient),
     staleTime: 1000 * 60,
   });

@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { AlimtalkTriggerJobEntity } from "domain/entities/alimtalk-trigger-job.entity";
+import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { AlimtalkTriggerDeliveryService } from "./alimtalk-trigger-delivery.service";
 import { SmsTriggerDeliveryService } from "./sms-trigger-delivery.service";
 
@@ -10,7 +10,7 @@ export class MessageTriggerDeliveryService {
         private readonly alimtalkTriggerDeliveryService: AlimtalkTriggerDeliveryService,
     ) {}
 
-    async sendJob(job: AlimtalkTriggerJobEntity): Promise<boolean> {
+    async sendJob(job: MessageTriggerJobEntity): Promise<boolean> {
         if (this.smsTriggerDeliveryService.canHandle(job.templateKey)) {
             return this.smsTriggerDeliveryService.sendJob(job);
         }

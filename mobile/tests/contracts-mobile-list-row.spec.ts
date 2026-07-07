@@ -204,7 +204,7 @@ const DOCUMENT_CLIENT_SUMMARIES = [
 const NOTIFICATION_LOGS = [
   {
     id: 1,
-    provider: "aligo",
+    provider: "aligo_alimtalk",
     templateKey: "CONTRACT_SENT",
     receiver: "010-1111-2222",
     clientId: 101,
@@ -240,7 +240,7 @@ const NOTIFICATION_LOGS = [
   },
   {
     id: 3,
-    provider: "aligo",
+    provider: "aligo_alimtalk",
     templateKey: "OTHER",
     receiver: "010-9999-9999",
     clientId: 999,
@@ -269,7 +269,7 @@ async function routeDocumentClientSummaries(page: Page, summaries = DOCUMENT_CLI
 }
 
 async function routeNotificationLogs(page: Page, logs = NOTIFICATION_LOGS) {
-  await page.route("**/api/alimtalk-logs**", async (route) => {
+  await page.route("**/api/message-logs**", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",

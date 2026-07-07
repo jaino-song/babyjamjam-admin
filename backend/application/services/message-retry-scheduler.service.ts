@@ -1,9 +1,9 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import {
-    ALIMTALK_LOG_REPOSITORY,
-    IAlimtalkLogRepository,
-} from "domain/repositories/alimtalk-log.repository.interface";
+    MESSAGE_LOG_REPOSITORY,
+    IMessageLogRepository,
+} from "domain/repositories/message-log.repository.interface";
 import { AlimtalkRetryService } from "./alimtalk-retry.service";
 import { SchedulerExecutionGuard } from "./scheduler-execution.guard";
 import { SmsRetryService } from "./sms-retry.service";
@@ -28,8 +28,8 @@ export class MessageRetrySchedulerService {
     });
 
     constructor(
-        @Inject(ALIMTALK_LOG_REPOSITORY)
-        private readonly logRepository: IAlimtalkLogRepository,
+        @Inject(MESSAGE_LOG_REPOSITORY)
+        private readonly logRepository: IMessageLogRepository,
         private readonly smsRetryService: SmsRetryService,
         private readonly alimtalkRetryService: AlimtalkRetryService,
     ) {}
@@ -51,8 +51,12 @@ export class MessageRetrySchedulerService {
                 try {
                     if (log.provider === "aligo_sms") {
                         await this.smsRetryService.retry(log);
-                    } else {
+                    } else if (log.provider === "aligo_alimtalk") {
                         await this.alimtalkRetryService.retry(log);
+                    } else {
+                        this.logger.warn(
+                            `[Retry] Unsupported message provider ${log.provider} for log ${log.id}; skipping retry`,
+                        );
                     }
                 } catch (error) {
                     log.markFailed(error instanceof Error ? error.message : String(error));

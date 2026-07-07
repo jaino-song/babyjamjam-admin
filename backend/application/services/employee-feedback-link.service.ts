@@ -11,25 +11,25 @@ import {
     getServiceFeedbackTokenExpiresAt,
 } from "domain/constants/service-feedback-link-message";
 import {
-    AlimtalkTriggerRecipientType,
-    AlimtalkTriggerTemplateKey,
-} from "domain/constants/alimtalk-trigger-catalog";
-import { AlimtalkTriggerJobEntity } from "domain/entities/alimtalk-trigger-job.entity";
-import { AlimtalkLogEntity } from "domain/entities/alimtalk-log.entity";
+    MessageTriggerRecipientType,
+    MessageTriggerTemplateKey,
+} from "domain/constants/message-trigger-catalog";
+import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { MessageLogEntity } from "domain/entities/message-log.entity";
 import {
-    ALIMTALK_TRIGGER_JOB_REPOSITORY,
-    IAlimtalkTriggerJobRepository,
-} from "domain/repositories/alimtalk-trigger-job.repository.interface";
+    MESSAGE_TRIGGER_JOB_REPOSITORY,
+    IMessageTriggerJobRepository,
+} from "domain/repositories/message-trigger-job.repository.interface";
 import {
-    ALIMTALK_LOG_REPOSITORY,
-    IAlimtalkLogRepository,
-} from "domain/repositories/alimtalk-log.repository.interface";
+    MESSAGE_LOG_REPOSITORY,
+    IMessageLogRepository,
+} from "domain/repositories/message-log.repository.interface";
 import { EmployeeFeedbackTokenService } from "./employee-feedback-token.service";
 
 /**
  * Issues / revokes the no-login 제공기록지 link for an assignment (BJJ-247).
  * Assignment flows schedule the SMS for service-start day 15:00 KST; the existing
- * Alimtalk trigger scheduler later dispatches it and writes retryable SMS logs.
+ * Message trigger scheduler later dispatches it and writes retryable SMS logs.
  */
 @Injectable()
 export class EmployeeFeedbackLinkService {
@@ -39,10 +39,10 @@ export class EmployeeFeedbackLinkService {
         private readonly prisma: PrismaService,
         private readonly tokenService: EmployeeFeedbackTokenService,
         private readonly configService: ConfigService,
-        @Inject(ALIMTALK_TRIGGER_JOB_REPOSITORY)
-        private readonly jobRepository: IAlimtalkTriggerJobRepository,
-        @Inject(ALIMTALK_LOG_REPOSITORY)
-        private readonly logRepository: IAlimtalkLogRepository,
+        @Inject(MESSAGE_TRIGGER_JOB_REPOSITORY)
+        private readonly jobRepository: IMessageTriggerJobRepository,
+        @Inject(MESSAGE_LOG_REPOSITORY)
+        private readonly logRepository: IMessageLogRepository,
     ) {}
 
     /** Backward-compatible wrapper: now schedules the SMS instead of sending immediately. */
@@ -189,15 +189,15 @@ export class EmployeeFeedbackLinkService {
 
         const scheduledFor = options.scheduledFor ?? getServiceFeedbackLinkScheduledFor(schedule.startDate);
         await this.jobRepository.upsertPending(
-            AlimtalkTriggerJobEntity.create({
+            MessageTriggerJobEntity.create({
                 branchId: schedule.branchId,
                 ruleId: SERVICE_FEEDBACK_LINK_RULE_ID,
                 scheduledFor,
                 clientId: schedule.clientId,
                 employeeScheduleId: scheduleId,
-                recipientType: AlimtalkTriggerRecipientType.PRIMARY_EMPLOYEE,
+                recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
                 recipientPhone: employee.phone,
-                templateKey: AlimtalkTriggerTemplateKey.SERVICE_FEEDBACK_LINK,
+                templateKey: MessageTriggerTemplateKey.SERVICE_FEEDBACK_LINK,
                 dedupeKey: `${SERVICE_FEEDBACK_LINK_RULE_ID}:schedule:${scheduleId}:primary`,
                 payload: {
                     clientId: schedule.clientId,
@@ -235,7 +235,7 @@ export class EmployeeFeedbackLinkService {
     }): Promise<void> {
         const now = new Date();
         await this.logRepository.save(
-            AlimtalkLogEntity.reconstitute(
+            MessageLogEntity.reconstitute(
                 0,
                 params.branchId,
                 "aligo_sms",

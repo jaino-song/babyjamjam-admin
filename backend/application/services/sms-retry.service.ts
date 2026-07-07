@@ -2,24 +2,24 @@ import { Inject, Injectable, Logger } from "@nestjs/common";
 import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { maskPhone } from "application/utils/mask";
-import { AlimtalkLogEntity, SMS_DELIVERY_RETRY_DELAY_MS } from "domain/entities/alimtalk-log.entity";
+import { MessageLogEntity, SMS_DELIVERY_RETRY_DELAY_MS } from "domain/entities/message-log.entity";
 import {
-    ALIMTALK_LOG_REPOSITORY,
-    IAlimtalkLogRepository,
-} from "domain/repositories/alimtalk-log.repository.interface";
+    MESSAGE_LOG_REPOSITORY,
+    IMessageLogRepository,
+} from "domain/repositories/message-log.repository.interface";
 
 @Injectable()
 export class SmsRetryService {
     private readonly logger = new Logger(SmsRetryService.name);
 
     constructor(
-        @Inject(ALIMTALK_LOG_REPOSITORY)
-        private readonly logRepository: IAlimtalkLogRepository,
+        @Inject(MESSAGE_LOG_REPOSITORY)
+        private readonly logRepository: IMessageLogRepository,
         private readonly aligoService: AligoService,
         private readonly messageSenderApprovalService: MessageSenderApprovalService,
     ) {}
 
-    async retry(log: AlimtalkLogEntity): Promise<void> {
+    async retry(log: MessageLogEntity): Promise<void> {
         if (log.branchId) {
             try {
                 await this.messageSenderApprovalService.ensureApproved(log.branchId);
@@ -91,7 +91,7 @@ export class SmsRetryService {
         return Number.isNaN(ms) ? null : ms;
     }
 
-    private markSmsRetryFailed(log: AlimtalkLogEntity, errorMessage: string): void {
+    private markSmsRetryFailed(log: MessageLogEntity, errorMessage: string): void {
         log.status = "failed";
         log.errorMessage = errorMessage;
         log.attempts += 1;
@@ -107,20 +107,20 @@ export class SmsRetryService {
         return resultCode === 1 && errorCount === 0;
     }
 
-    private stringVariable(log: AlimtalkLogEntity, key: string): string | undefined {
+    private stringVariable(log: MessageLogEntity, key: string): string | undefined {
         const value = log.variables[key];
         return typeof value === "string" && value.trim() ? value : undefined;
     }
 
     private smsMessageTypeVariable(
-        log: AlimtalkLogEntity,
+        log: MessageLogEntity,
         key: string,
     ): "SMS" | "LMS" | "AUTO" | undefined {
         const value = this.stringVariable(log, key);
         return value === "SMS" || value === "LMS" || value === "AUTO" ? value : undefined;
     }
 
-    private booleanVariable(log: AlimtalkLogEntity, key: string): boolean {
+    private booleanVariable(log: MessageLogEntity, key: string): boolean {
         return this.stringVariable(log, key) === "true";
     }
 }

@@ -12,11 +12,11 @@ import {
 
 // Mirrors backend UpdateAlimtalkProviderDto: provider is @IsString()
 // @IsNotEmpty() @IsIn(ALIMTALK_PROVIDERS) required. The provider enum mirrors
-// backend ALIMTALK_PROVIDERS = ["channeltalk", "aligo", "none"]. Passthrough
+// backend ALIMTALK_PROVIDERS = ["aligo_alimtalk", "none"]. Passthrough
 // preserves any forward-compatible fields.
 const updateAlimtalkProviderSchema = z
     .object({
-        provider: z.enum(["channeltalk", "aligo", "none"]),
+        provider: z.enum(["aligo_alimtalk", "none"]),
     })
     .passthrough();
 

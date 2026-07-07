@@ -13,10 +13,10 @@ describe("AdminServiceRecordService", () => {
             findMany: jest.fn(),
             findFirst: jest.fn(),
         },
-        alimtalk_trigger_job: {
+        message_trigger_job: {
             findMany: jest.fn(),
         },
-        alimtalk_log: {
+        message_log: {
             findMany: jest.fn(),
         },
     });
@@ -59,7 +59,7 @@ describe("AdminServiceRecordService", () => {
             createSchedule(3, "2026-07-02T00:00:00.000Z"),
             createSchedule(4, "2026-07-01T00:00:00.000Z"),
         ]);
-        prisma.alimtalk_trigger_job.findMany.mockResolvedValue([
+        prisma.message_trigger_job.findMany.mockResolvedValue([
             {
                 id: "job-4",
                 branchId: "branch-1",
@@ -88,7 +88,7 @@ describe("AdminServiceRecordService", () => {
                 createdAt: new Date("2026-07-02T00:00:00.000Z"),
             },
         ]);
-        prisma.alimtalk_log.findMany.mockResolvedValue([
+        prisma.message_log.findMany.mockResolvedValue([
             {
                 id: 400,
                 branchId: "branch-1",
@@ -140,8 +140,8 @@ describe("AdminServiceRecordService", () => {
             createSchedule(1, "2026-07-04T00:00:00.000Z"),
             createSchedule(2, "2026-07-03T00:00:00.000Z"),
         ]);
-        prisma.alimtalk_trigger_job.findMany.mockResolvedValue([]);
-        prisma.alimtalk_log.findMany.mockResolvedValue([
+        prisma.message_trigger_job.findMany.mockResolvedValue([]);
+        prisma.message_log.findMany.mockResolvedValue([
             {
                 id: 500,
                 branchId: "branch-1",

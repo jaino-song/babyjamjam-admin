@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-type ProviderValue = "aligo" | "channeltalk" | "none";
+type ProviderValue = "aligo_alimtalk" | "none";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -12,7 +12,7 @@ async function mockNotificationSettingsRoutes(
   }
 ) {
   let providerState: { provider: ProviderValue; updatedAt: string } = {
-    provider: options?.initialProvider ?? "aligo",
+    provider: options?.initialProvider ?? "aligo_alimtalk",
     updatedAt: "2026-06-07T09:00:00.000Z",
   };
 
@@ -54,7 +54,6 @@ test.describe("notification settings surface", () => {
     await expect(page.getByText("알림톡 서비스")).toBeVisible();
     await expect(page.locator('[data-component="settings-alimtalk-provider"]')).toBeVisible();
     await expect(page.getByRole("radio", { name: "알리고 (Aligo) 선택" })).toBeVisible();
-    await expect(page.getByRole("radio", { name: "채널톡 (Channel Talk) 선택" })).toBeVisible();
     await expect(page.getByRole("radio", { name: "사용 안함 선택" })).toBeVisible();
   });
 
@@ -84,12 +83,12 @@ test.describe("notification settings surface", () => {
     });
     await page.goto("/notification");
 
-    const channelTalkOption = page.getByRole("radio", { name: "채널톡 (Channel Talk) 선택" });
-    await channelTalkOption.click();
+    const noneOption = page.getByRole("radio", { name: "사용 안함 선택" });
+    await noneOption.click();
 
-    await expect(channelTalkOption).toHaveAttribute("aria-checked", "true");
+    await expect(noneOption).toHaveAttribute("aria-checked", "true");
     await expect(page.locator('[data-component="notification-alimtalk-updated-at"]')).toContainText("마지막 수정:");
-    expect(updatedProvider).toBe("channeltalk");
+    expect(updatedProvider).toBe("none");
   });
 
   test("reflects the mocked saved provider state on first render", async ({ page }) => {

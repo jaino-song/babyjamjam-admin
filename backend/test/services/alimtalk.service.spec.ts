@@ -1,6 +1,5 @@
 import { AlimtalkService } from "application/services/alimtalk.service";
 import { SystemSettingService } from "application/services/system-setting.service";
-import { ChannelTalkService } from "application/services/channeltalk.service";
 import { AligoService } from "application/services/aligo.service";
 import { ClientEntity } from "domain/entities/client.entity";
 
@@ -8,10 +7,6 @@ describe("AlimtalkService", () => {
     const createMockSystemSettingService = () => ({
         getAlimtalkProvider: jest.fn(),
         isAlimtalkEnabled: jest.fn(),
-    });
-
-    const createMockChannelTalkService = () => ({
-        sendContractSignedAlimtalk: jest.fn(),
     });
 
     const createMockAligoService = () => ({
@@ -41,17 +36,14 @@ describe("AlimtalkService", () => {
 
     let service: AlimtalkService;
     let systemSettingService: ReturnType<typeof createMockSystemSettingService>;
-    let channelTalkService: ReturnType<typeof createMockChannelTalkService>;
     let aligoService: ReturnType<typeof createMockAligoService>;
 
     beforeEach(() => {
         systemSettingService = createMockSystemSettingService();
-        channelTalkService = createMockChannelTalkService();
         aligoService = createMockAligoService();
 
         service = new AlimtalkService(
             systemSettingService as unknown as SystemSettingService,
-            channelTalkService as unknown as ChannelTalkService,
             aligoService as unknown as AligoService
         );
     });
@@ -68,30 +60,22 @@ describe("AlimtalkService", () => {
             employeeName: "김직원",
         };
 
-        it("should route to Aligo when provider is aligo", async () => {
-            systemSettingService.getAlimtalkProvider.mockResolvedValue("aligo");
+        it("should route to Aligo when provider is aligo_alimtalk", async () => {
+            systemSettingService.getAlimtalkProvider.mockResolvedValue("aligo_alimtalk");
 
             await service.sendContractSignedAlimtalk(createMockClient(), contractInfo);
 
             expect(aligoService.sendContractSignedAlimtalk).toHaveBeenCalled();
         });
-
-        it("should route to ChannelTalk when provider is channeltalk", async () => {
-            systemSettingService.getAlimtalkProvider.mockResolvedValue("channeltalk");
-
-            await service.sendContractSignedAlimtalk(createMockClient(), contractInfo);
-
-            expect(channelTalkService.sendContractSignedAlimtalk).toHaveBeenCalled();
-        });
     });
 
     describe("getProvider", () => {
         it("should return current provider", async () => {
-            systemSettingService.getAlimtalkProvider.mockResolvedValue("aligo");
+            systemSettingService.getAlimtalkProvider.mockResolvedValue("aligo_alimtalk");
 
             const result = await service.getProvider();
 
-            expect(result).toBe("aligo");
+            expect(result).toBe("aligo_alimtalk");
         });
     });
 

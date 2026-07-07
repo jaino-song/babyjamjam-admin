@@ -25,7 +25,7 @@ describe("GetSettingUsecase", () => {
             it("should return the setting value", async () => {
                 const entity = new SystemSettingEntity(
                     "alimtalk_provider",
-                    "aligo",
+                    "aligo_alimtalk",
                     new Date()
                 );
                 repository.findByKey.mockResolvedValue(entity);
@@ -33,7 +33,7 @@ describe("GetSettingUsecase", () => {
                 const result = await usecase.execute("alimtalk_provider");
 
                 expect(repository.findByKey).toHaveBeenCalledWith("alimtalk_provider");
-                expect(result).toBe("aligo");
+                expect(result).toBe("aligo_alimtalk");
             });
         });
 
@@ -52,7 +52,7 @@ describe("GetSettingUsecase", () => {
         it("should return the setting entity with its updatedAt", async () => {
             const entity = new SystemSettingEntity(
                 "alimtalk_provider",
-                "aligo",
+                "aligo_alimtalk",
                 new Date("2026-05-28T12:00:00.000Z")
             );
             repository.findByKey.mockResolvedValue(entity);
@@ -69,17 +69,17 @@ describe("GetSettingUsecase", () => {
             it("should return the setting value", async () => {
                 const entity = new SystemSettingEntity(
                     "alimtalk_provider",
-                    "channeltalk",
+                    "aligo_alimtalk",
                     new Date()
                 );
                 repository.findByKey.mockResolvedValue(entity);
 
                 const result = await usecase.executeWithDefault(
                     "alimtalk_provider",
-                    "aligo"
+                    "aligo_alimtalk"
                 );
 
-                expect(result).toBe("channeltalk");
+                expect(result).toBe("aligo_alimtalk");
             });
         });
 
@@ -89,10 +89,10 @@ describe("GetSettingUsecase", () => {
 
                 const result = await usecase.executeWithDefault(
                     "alimtalk_provider",
-                    "aligo"
+                    "aligo_alimtalk"
                 );
 
-                expect(result).toBe("aligo");
+                expect(result).toBe("aligo_alimtalk");
             });
         });
     });

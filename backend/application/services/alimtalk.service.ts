@@ -1,9 +1,15 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { SystemSettingService } from "application/services/system-setting.service";
-import { ChannelTalkService, ContractSignedInfo } from "application/services/channeltalk.service";
 import { AligoService } from "application/services/aligo.service";
 import { ClientEntity } from "domain/entities/client.entity";
 import { AlimtalkProvider } from "domain/entities/system-setting.entity";
+
+interface ContractSignedInfo {
+    contractType: string;
+    signedDate: string;
+    serviceStartDate: string;
+    employeeName: string;
+}
 
 @Injectable()
 export class AlimtalkService {
@@ -11,7 +17,6 @@ export class AlimtalkService {
 
     constructor(
         private readonly systemSettingService: SystemSettingService,
-        private readonly channelTalkService: ChannelTalkService,
         private readonly aligoService: AligoService
     ) {}
 
@@ -30,18 +35,15 @@ export class AlimtalkService {
     }
 
     private async routeToProvider(
-        action: (service: ChannelTalkService | AligoService) => Promise<void>,
+        action: (service: AligoService) => Promise<void>,
         methodName: string
     ): Promise<void> {
         try {
             const provider = await this.systemSettingService.getAlimtalkProvider();
 
             switch (provider) {
-                case "aligo":
+                case "aligo_alimtalk":
                     await action(this.aligoService);
-                    break;
-                case "channeltalk":
-                    await action(this.channelTalkService);
                     break;
                 case "none":
                     this.logger.debug(`[Alimtalk] Provider is 'none', skipping ${methodName}`);

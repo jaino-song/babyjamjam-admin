@@ -1,7 +1,7 @@
 import { Module } from "@nestjs/common";
 import { DatabaseModule } from "infrastructure/database/database.module";
 import { AligoModule } from "module/aligo.module";
-import { AlimtalkModule } from "module/alimtalk.module";
+import { MessageModule } from "module/message.module";
 import { EformsignDocModule } from "module/eformsign-doc.module";
 import { AdminServiceRecordController } from "interface/controllers/admin-service-record.controller";
 import { ServiceFeedbackController } from "interface/controllers/service-feedback.controller";
@@ -19,7 +19,7 @@ import { EmployeeFeedbackGuard } from "infrastructure/auth/employee-feedback.gua
  * hooks (employee-schedule + client modules) can issue and revoke links.
  */
 @Module({
-    imports: [DatabaseModule, AligoModule, AlimtalkModule, EformsignDocModule],
+    imports: [DatabaseModule, AligoModule, MessageModule, EformsignDocModule],
     controllers: [ServiceFeedbackController, ScheduleChangeController, AdminServiceRecordController],
     providers: [
         AdminServiceRecordService,

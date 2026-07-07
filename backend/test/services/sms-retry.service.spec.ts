@@ -2,8 +2,8 @@ import { ForbiddenException } from "@nestjs/common";
 import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SmsRetryService } from "application/services/sms-retry.service";
-import { AlimtalkLogEntity } from "domain/entities/alimtalk-log.entity";
-import { IAlimtalkLogRepository } from "domain/repositories/alimtalk-log.repository.interface";
+import { MessageLogEntity } from "domain/entities/message-log.entity";
+import { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
 
 describe("SmsRetryService", () => {
     const createMockLogRepository = () => ({
@@ -16,7 +16,7 @@ describe("SmsRetryService", () => {
         ensureApproved: jest.fn().mockResolvedValue(undefined),
     });
     const createSmsRetryLog = () =>
-        AlimtalkLogEntity.reconstitute(
+        MessageLogEntity.reconstitute(
             77,
             "11111111-1111-1111-1111-111111111111",
             "aligo_sms",
@@ -55,7 +55,7 @@ describe("SmsRetryService", () => {
         aligoService = createMockAligoService();
         messageSenderApprovalService = createMockMessageSenderApprovalService();
         service = new SmsRetryService(
-            logRepository as unknown as IAlimtalkLogRepository,
+            logRepository as unknown as IMessageLogRepository,
             aligoService as unknown as AligoService,
             messageSenderApprovalService as unknown as MessageSenderApprovalService,
         );

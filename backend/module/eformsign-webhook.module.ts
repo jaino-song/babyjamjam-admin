@@ -18,12 +18,12 @@ import { SbEmployeeRepository } from "infrastructure/database/repositories/sb.em
 import { DatabaseModule } from "infrastructure/database/database.module";
 import { WebhookGuard } from "infrastructure/auth/webhook.guard";
 import { createEformsignClientRepository } from "infrastructure/vendor-stubs/e2e-vendor-stubs";
-import { AlimtalkModule } from "./alimtalk.module";
+import { MessageModule } from "./message.module";
 import { EformsignDocModule } from "./eformsign-doc.module";
 import { NotificationModule } from "./notification.module";
 
 @Module({
-    imports: [DatabaseModule, AlimtalkModule, EformsignDocModule, NotificationModule],
+    imports: [DatabaseModule, MessageModule, EformsignDocModule, NotificationModule],
     controllers: [EformsignWebhookController],
     providers: [
         WebhookGuard,

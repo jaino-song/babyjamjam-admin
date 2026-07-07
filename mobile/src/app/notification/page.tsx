@@ -22,14 +22,9 @@ const PROVIDER_OPTIONS: {
   description: string;
 }[] = [
   {
-    value: "aligo",
+    value: "aligo_alimtalk",
     label: "알리고 (Aligo)",
     description: "알리고 알림톡 API를 통해 카카오 알림톡을 발송합니다.",
-  },
-  {
-    value: "channeltalk",
-    label: "채널톡 (Channel Talk)",
-    description: "채널톡 마케팅 자동화를 통해 알림톡을 발송합니다.",
   },
   {
     value: "none",
@@ -75,8 +70,7 @@ function formatKoreaDateTime(value: string): string | null {
 }
 
 function providerTone(value: AlimtalkProvider): "primary" | "orange" | "muted" {
-  if (value === "aligo") return "primary";
-  if (value === "channeltalk") return "orange";
+  if (value === "aligo_alimtalk") return "primary";
   return "muted";
 }
 
@@ -217,7 +211,7 @@ export default function NotificationPage() {
     queryKey: ALIMTALK_PROVIDER_QUERY_KEY,
     queryFn: settingsApi.getAlimtalkProvider,
   });
-  const selectedAlimtalkProvider = alimtalkSettings?.provider || "aligo";
+  const selectedAlimtalkProvider = alimtalkSettings?.provider || "aligo_alimtalk";
   const alimtalkUpdatedAtText = alimtalkSettings?.updatedAt
     ? formatKoreaDateTime(alimtalkSettings.updatedAt)
     : null;

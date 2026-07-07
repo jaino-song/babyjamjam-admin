@@ -28,8 +28,8 @@ type ScheduleForOverview = Prisma.employee_scheduleGetPayload<{
     };
 }>;
 
-type FeedbackLinkJob = Prisma.alimtalk_trigger_jobGetPayload<{}>;
-type FeedbackLinkLog = Prisma.alimtalk_logGetPayload<{}>;
+type FeedbackLinkJob = Prisma.message_trigger_jobGetPayload<{}>;
+type FeedbackLinkLog = Prisma.message_logGetPayload<{}>;
 
 @Injectable()
 export class AdminServiceRecordService {
@@ -56,7 +56,7 @@ export class AdminServiceRecordService {
         }
 
         const scheduleIds = schedules.map((schedule) => schedule.id);
-        const jobs = await this.prisma.alimtalk_trigger_job.findMany({
+        const jobs = await this.prisma.message_trigger_job.findMany({
             where: {
                 branchId,
                 employeeScheduleId: { in: scheduleIds },
@@ -65,7 +65,7 @@ export class AdminServiceRecordService {
             orderBy: { createdAt: "desc" },
         });
         const jobIds = jobs.map((job) => job.id);
-        const logs = await this.prisma.alimtalk_log.findMany({
+        const logs = await this.prisma.message_log.findMany({
             where: {
                 branchId,
                 templateKey: SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,

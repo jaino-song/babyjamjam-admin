@@ -8,8 +8,8 @@ import {
     SendAligoSmsUsecase,
 } from "application/usecases/aligo";
 import { AligoService } from "application/services/aligo.service";
-import { ALIMTALK_LOG_REPOSITORY } from "domain/repositories/alimtalk-log.repository.interface";
-import { SbAlimtalkLogRepository } from "infrastructure/database/repositories/sb.alimtalk-log.repository";
+import { MESSAGE_LOG_REPOSITORY } from "domain/repositories/message-log.repository.interface";
+import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
 import { DatabaseModule } from "infrastructure/database/database.module";
 import { createAligoPortClient } from "infrastructure/vendor-stubs/e2e-vendor-stubs";
 
@@ -23,11 +23,18 @@ import { createAligoPortClient } from "infrastructure/vendor-stubs/e2e-vendor-st
         },
         { provide: ALIGO_API_PORT, useExisting: AligoApiClient },
         { provide: ALIGO_SMS_API_PORT, useExisting: AligoApiClient },
-        { provide: ALIMTALK_LOG_REPOSITORY, useClass: SbAlimtalkLogRepository },
+        { provide: MESSAGE_LOG_REPOSITORY, useClass: SbMessageLogRepository },
         SendAligoAlimtalkUsecase,
         SendAligoSmsUsecase,
         AligoService,
     ],
-    exports: [AligoService, SendAligoAlimtalkUsecase, SendAligoSmsUsecase, ALIMTALK_LOG_REPOSITORY, ALIGO_API_PORT, ALIGO_SMS_API_PORT],
+    exports: [
+        AligoService,
+        SendAligoAlimtalkUsecase,
+        SendAligoSmsUsecase,
+        MESSAGE_LOG_REPOSITORY,
+        ALIGO_API_PORT,
+        ALIGO_SMS_API_PORT,
+    ],
 })
 export class AligoModule {}

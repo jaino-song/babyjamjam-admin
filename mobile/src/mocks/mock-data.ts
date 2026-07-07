@@ -1637,7 +1637,7 @@ export const mockChatFeedbacks: ChatFeedback[] = [
 // SYSTEM SETTINGS
 // ============================================================================
 
-export type AlimtalkProvider = 'aligo' | 'channeltalk' | 'none';
+export type AlimtalkProvider = 'aligo_alimtalk' | 'none';
 
 export interface SystemSetting {
   key: string;
@@ -1648,7 +1648,7 @@ export interface SystemSetting {
 export const mockSystemSettings: SystemSetting[] = [
   {
     key: 'alimtalk_provider',
-    value: 'aligo',
+    value: 'aligo_alimtalk',
     updatedAt: '2024-06-01T00:00:00.000Z',
   },
   {

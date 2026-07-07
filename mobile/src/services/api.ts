@@ -1,7 +1,7 @@
 import type {
     AlimtalkProvider,
     AlimtalkProviderResponse,
-} from "@babyjamjam/shared/types/alimtalk";
+} from "@babyjamjam/shared/types/message";
 import { api } from "@/lib/api/client";
 import { PUBLIC_BACKEND_BASE_URL } from "@/lib/env";
 import {

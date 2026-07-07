@@ -2,14 +2,14 @@ import { AlimtalkTriggerDeliveryService } from "application/services/alimtalk-tr
 import { MessageTriggerDeliveryService } from "application/services/message-trigger-delivery.service";
 import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
 import {
-    AlimtalkTriggerRecipientType,
-    AlimtalkTriggerTemplateKey,
-} from "domain/constants/alimtalk-trigger-catalog";
-import { AlimtalkTriggerJobEntity } from "domain/entities/alimtalk-trigger-job.entity";
+    MessageTriggerRecipientType,
+    MessageTriggerTemplateKey,
+} from "domain/constants/message-trigger-catalog";
+import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 
 describe("MessageTriggerDeliveryService", () => {
-    const createJob = (templateKey: AlimtalkTriggerTemplateKey) =>
-        AlimtalkTriggerJobEntity.reconstitute(
+    const createJob = (templateKey: MessageTriggerTemplateKey) =>
+        MessageTriggerJobEntity.reconstitute(
             `job-${templateKey}`,
             "branch-1",
             "rule-1",
@@ -20,7 +20,7 @@ describe("MessageTriggerDeliveryService", () => {
             null,
             7,
             null,
-            AlimtalkTriggerRecipientType.CLIENT,
+            MessageTriggerRecipientType.CLIENT,
             "010-1234-5678",
             templateKey,
             `rule-1:${templateKey}:7`,
@@ -48,11 +48,11 @@ describe("MessageTriggerDeliveryService", () => {
             smsTriggerDeliveryService as unknown as SmsTriggerDeliveryService,
             alimtalkTriggerDeliveryService as unknown as AlimtalkTriggerDeliveryService,
         );
-        const job = createJob(AlimtalkTriggerTemplateKey.SERVICE_INFO);
+        const job = createJob(MessageTriggerTemplateKey.SERVICE_INFO);
 
         await expect(service.sendJob(job)).resolves.toBe(true);
 
-        expect(smsTriggerDeliveryService.canHandle).toHaveBeenCalledWith(AlimtalkTriggerTemplateKey.SERVICE_INFO);
+        expect(smsTriggerDeliveryService.canHandle).toHaveBeenCalledWith(MessageTriggerTemplateKey.SERVICE_INFO);
         expect(smsTriggerDeliveryService.sendJob).toHaveBeenCalledWith(job);
         expect(alimtalkTriggerDeliveryService.sendJob).not.toHaveBeenCalled();
     });
@@ -69,11 +69,11 @@ describe("MessageTriggerDeliveryService", () => {
             smsTriggerDeliveryService as unknown as SmsTriggerDeliveryService,
             alimtalkTriggerDeliveryService as unknown as AlimtalkTriggerDeliveryService,
         );
-        const job = createJob(AlimtalkTriggerTemplateKey.CLIENT_WELCOME);
+        const job = createJob(MessageTriggerTemplateKey.CLIENT_WELCOME);
 
         await expect(service.sendJob(job)).resolves.toBe(true);
 
-        expect(smsTriggerDeliveryService.canHandle).toHaveBeenCalledWith(AlimtalkTriggerTemplateKey.CLIENT_WELCOME);
+        expect(smsTriggerDeliveryService.canHandle).toHaveBeenCalledWith(MessageTriggerTemplateKey.CLIENT_WELCOME);
         expect(smsTriggerDeliveryService.sendJob).not.toHaveBeenCalled();
         expect(alimtalkTriggerDeliveryService.sendJob).toHaveBeenCalledWith(job);
     });

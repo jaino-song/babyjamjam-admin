@@ -1,4 +1,4 @@
-import type { AlimtalkHistoryRecord } from "@/features/alimtalk-triggers/types";
+import type { MessageLogRecord } from "@/features/message-triggers/types";
 
 import {
   findRecentDuplicateSend,
@@ -6,8 +6,8 @@ import {
 } from "../TemplateSendForm";
 
 function createHistoryRecord(
-  overrides: Partial<AlimtalkHistoryRecord> = {},
-): AlimtalkHistoryRecord {
+  overrides: Partial<MessageLogRecord> = {},
+): MessageLogRecord {
   return {
     id: 1,
     provider: "aligo_sms",

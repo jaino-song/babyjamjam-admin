@@ -2,7 +2,7 @@ import axios from "axios";
 import type {
     AlimtalkProvider,
     AlimtalkProviderResponse,
-} from "@babyjamjam/shared/types/alimtalk";
+} from "@babyjamjam/shared/types/message";
 import { api } from "@/lib/api/client";
 import { ContractDataDto } from '@/backend/application/dto/contract.dto';
 import {

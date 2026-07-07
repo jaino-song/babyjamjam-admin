@@ -7,7 +7,7 @@ import {
     ListClientsUsecase,
     UpdateClientUsecase,
 } from "../../application/usecases/client";
-import { AlimtalkTriggerService } from "../../application/services/alimtalk-trigger.service";
+import { MessageTriggerService } from "../../application/services/message-trigger.service";
 import { EmployeeFeedbackLinkService } from "../../application/services/employee-feedback-link.service";
 import { ClientEntity } from "../../domain/entities/client.entity";
 import { IClientRepository } from "../../domain/repositories/client.repository.interface";
@@ -147,7 +147,7 @@ describe("ClientService", () => {
             deleteClientUsecase as unknown as DeleteClientUsecase,
             prismaService as unknown as PrismaService,
             clientRepository,
-            triggerService as unknown as AlimtalkTriggerService,
+            triggerService as unknown as MessageTriggerService,
             employeeFeedbackLinkService as unknown as EmployeeFeedbackLinkService,
         );
     });
