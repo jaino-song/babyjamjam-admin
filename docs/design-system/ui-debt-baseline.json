@@ -187,12 +187,6 @@
       "data-component/require-data-component": 5,
       "ui-architecture/no-page-local-components": 1
     },
-    "mobile/src/app/contracts/new/page.tsx": {
-      "data-component/require-data-component": 40,
-      "ui-architecture/no-page-local-components": 1,
-      "ui-architecture/no-raw-ui-in-pages": 23,
-      "ui-architecture/no-visual-tailwind-in-pages": 5
-    },
     "mobile/src/app/contracts/page.tsx": {
       "data-component/require-data-component": 13,
       "ui-architecture/no-page-local-components": 3,

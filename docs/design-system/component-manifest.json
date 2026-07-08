@@ -1368,6 +1368,34 @@
         ]
       },
       {
+        "name": "ToggleRow",
+        "layer": "molecule",
+        "import": "@/components/app/ui/toggle-row",
+        "file": "mobile/src/components/app/ui/toggle-row.tsx",
+        "exports": [
+          "ToggleRow"
+        ],
+        "replaces": [
+          "page-local switch rows",
+          "custom toggle buttons"
+        ]
+      },
+      {
+        "name": "ContractCreationScreen",
+        "layer": "organism",
+        "import": "@/components/app/contracts",
+        "file": "mobile/src/components/app/contracts/ContractCreationScreen.tsx",
+        "exports": [
+          "ContractCreationScreen"
+        ],
+        "replaces": [
+          "contracts/new page-local form assembly"
+        ],
+        "requiredFor": [
+          "contracts/new route assembly"
+        ]
+      },
+      {
         "name": "ActivityTimeline",
         "layer": "organism",
         "import": "@/components/app/v3",

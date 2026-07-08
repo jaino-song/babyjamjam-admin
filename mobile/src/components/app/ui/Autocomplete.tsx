@@ -46,6 +46,7 @@ export interface AutocompleteProps<T> {
     helperText?: ReactNode;
     emptyMessage?: ReactNode;
     manualEntry?: AutocompleteManualEntry;
+    disabled?: boolean;
     className?: string;
 }
 
@@ -70,6 +71,7 @@ export function Autocomplete<T>({
     helperText,
     emptyMessage,
     manualEntry,
+    disabled = false,
     className,
 }: AutocompleteProps<T>) {
     const [uncontrolledInputValue, setUncontrolledInputValue] = useState("");
@@ -87,6 +89,7 @@ export function Autocomplete<T>({
         onInputValueChange?.(next);
     };
     const openDropdown = () => {
+        if (disabled) return;
         setIsFocused(true);
         setIsToggledOpen(true);
     };
@@ -115,12 +118,13 @@ export function Autocomplete<T>({
         );
     }, [items, displayInputValue, filter, getItemLabel]);
 
-    const showDropdown = isFocused || isToggledOpen;
+    const showDropdown = !disabled && (isFocused || isToggledOpen);
     const optionCount = filteredItems.length + (manualEntry ? 1 : 0);
     const activeHighlightedIndex =
         highlightedIndex >= 0 && highlightedIndex < optionCount ? highlightedIndex : -1;
 
     const handleSelect = (item: T) => {
+        if (disabled) return;
         updateInputValue(getItemLabel(item));
         onChange(item);
         setIsFocused(false);
@@ -129,12 +133,14 @@ export function Autocomplete<T>({
     };
 
     const handleClear = () => {
+        if (disabled) return;
         updateInputValue("");
         onChange(null);
         inputRef.current?.focus();
     };
 
     const handleManualEntry = () => {
+        if (disabled) return;
         const query = currentInputValue;
         setIsFocused(false);
         setIsToggledOpen(false);
@@ -160,6 +166,7 @@ export function Autocomplete<T>({
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (disabled) return;
         if (!showDropdown) return;
         const total = filteredItems.length + (manualEntry ? 1 : 0);
         if (total === 0) return;
@@ -204,6 +211,7 @@ export function Autocomplete<T>({
         <div
             data-component={containerDc}
             data-testid={containerDc}
+            data-disabled={disabled ? "true" : undefined}
             className={cn("space-y-2", className)}
         >
             {label && (
@@ -231,6 +239,7 @@ export function Autocomplete<T>({
                     }}
                     onKeyDown={handleKeyDown}
                     placeholder={placeholder}
+                    disabled={disabled}
                     data-component={inputDc}
                     data-state={showDropdown ? "open" : "closed"}
                     className={cn(
@@ -241,7 +250,7 @@ export function Autocomplete<T>({
                     )}
                 />
                 <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                    {value && !isLoading && (
+                    {value && !isLoading && !disabled && (
                         <button
                             type="button"
                             onClick={handleClear}
@@ -257,6 +266,7 @@ export function Autocomplete<T>({
                     <button
                         type="button"
                         onClick={() => {
+                            if (disabled) return;
                             if (showDropdown) {
                                 setIsToggledOpen(false);
                                 setIsFocused(false);
@@ -270,6 +280,7 @@ export function Autocomplete<T>({
                         }}
                         className="p-1 rounded-2xl"
                         aria-label="목록 열기"
+                        disabled={disabled}
                         data-component={toggleDc}
                     >
                         <ChevronDown
