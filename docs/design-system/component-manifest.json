@@ -570,6 +570,7 @@
           "FormGrid",
           "FormField",
           "FormTextInput",
+          "FormTextInputWithSuffix",
           "FormHelperText",
           "FormNativeSelect",
           "FormChip",
@@ -610,6 +611,15 @@
             ],
             "requiredFor": [
               "text input in forms"
+            ]
+          },
+          "FormTextInputWithSuffix": {
+            "replaces": [
+              "custom relative input wrapper with unit suffix",
+              "INPUT_CLS plus absolute suffix span"
+            ],
+            "requiredFor": [
+              "text input with inline unit suffix in forms"
             ]
           },
           "FormHelperText": {

@@ -165,6 +165,39 @@ const FormTextInput = React.forwardRef<HTMLInputElement, FormTextInputProps>(
 );
 FormTextInput.displayName = "FormTextInput";
 
+export interface FormTextInputWithSuffixProps extends FormTextInputProps {
+  suffix: React.ReactNode;
+  inputDataComponent?: string;
+  suffixDataComponent?: string;
+}
+
+const FormTextInputWithSuffix = React.forwardRef<HTMLInputElement, FormTextInputWithSuffixProps>(
+  ({
+    suffix,
+    className,
+    inputDataComponent,
+    suffixDataComponent,
+    "data-component": dataComponent = "form-text-input-with-suffix",
+    ...props
+  }, ref) => (
+    <div data-component={dataComponent} className="relative">
+      <FormTextInput
+        ref={ref}
+        data-component={inputDataComponent ?? `${dataComponent}-input`}
+        className={cn("pr-[calc(38px*var(--v3-ui-scale,1))]", className)}
+        {...props}
+      />
+      <span
+        data-component={suffixDataComponent ?? `${dataComponent}-suffix`}
+        className="pointer-events-none absolute right-[calc(14px*var(--v3-ui-scale,1))] top-1/2 -translate-y-1/2 text-[calc(12px*var(--v3-ui-scale,1))] font-semibold text-v3-text-muted"
+      >
+        {suffix}
+      </span>
+    </div>
+  ),
+);
+FormTextInputWithSuffix.displayName = "FormTextInputWithSuffix";
+
 export interface FormHelperTextProps extends React.HTMLAttributes<HTMLParagraphElement> {
   tone?: "default" | "error";
   "data-component"?: string;
@@ -380,6 +413,7 @@ export {
   FormGrid,
   FormField,
   FormTextInput,
+  FormTextInputWithSuffix,
   FormHelperText,
   FormNativeSelect,
   FormChip,

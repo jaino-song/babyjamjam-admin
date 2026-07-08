@@ -41,11 +41,6 @@
       "ui-architecture/no-page-local-components": 1,
       "ui-architecture/no-visual-tailwind-in-pages": 11
     },
-    "frontend/src/app/(protected)/clients/new/page.tsx": {
-      "ui-architecture/no-page-style-constants": 4,
-      "ui-architecture/no-raw-ui-in-pages": 10,
-      "ui-architecture/no-visual-tailwind-in-pages": 44
-    },
     "frontend/src/app/(protected)/clients/page.tsx": {
       "ui-architecture/no-page-local-components": 3,
       "ui-architecture/no-raw-ui-in-pages": 1,
