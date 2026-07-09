@@ -6,6 +6,7 @@ import {
     NotFoundException,
     ServiceUnavailableException,
 } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
     MESSAGE_TRIGGER_TEMPLATE_CATALOG,
@@ -72,6 +73,10 @@ const DEFAULT_CLIENT_GREETING_TRIGGER: UpsertRuleParams = {
 };
 
 const MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON = "메시지 발송 승인 필요";
+
+function isPrismaUniqueViolation(error: unknown): boolean {
+    return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+}
 
 export interface UpcomingMessageTriggerJobView {
     id: string;
@@ -514,29 +519,47 @@ export class MessageTriggerService {
         defaults: UpsertRuleParams,
         matchTemplateKeyOnly = false,
     ): Promise<{ rules: MessageTriggerRuleEntity[]; created: MessageTriggerRuleEntity | null }> {
-        // For IMMEDIATE-greeting-style defaults, ANY existing rule with the same templateKey
-        // counts as "the default already exists". Otherwise an admin-created greeting rule with
-        // a non-default offset (e.g. AFTER_DAYS) would not match the full tuple, the IMMEDIATE
-        // default would be auto-created on next panel load, and the client would get two
-        // greetings per registration.
-        const existing = matchTemplateKeyOnly
-            ? rules.find((rule) => rule.templateKey === defaults.templateKey)
-            : rules.find((rule) => (
+        const matchesDefault = (rule: MessageTriggerRuleEntity): boolean => {
+            if (matchTemplateKeyOnly) {
+                return rule.templateKey === defaults.templateKey;
+            }
+
+            return (
                 rule.eventType === defaults.eventType &&
                 rule.offsetType === defaults.offsetType &&
                 rule.offsetDays === (defaults.offsetDays ?? 0) &&
                 rule.recipientType === defaults.recipientType &&
                 rule.templateKey === defaults.templateKey
-            ));
+            );
+        };
+
+        // Once a provisioned default exists, admin edits must be respected. Template-key-only
+        // matching prevents an edited default from being silently recreated with the old tuple.
+        const existing = rules.find(matchesDefault);
         if (existing) return { rules, created: null };
 
-        const created = await this.ruleRepository.create(
-            branchId,
-            MessageTriggerRuleEntity.create({
+        let created: MessageTriggerRuleEntity;
+        try {
+            created = await this.ruleRepository.create(
                 branchId,
-                ...defaults,
-            }),
-        );
+                MessageTriggerRuleEntity.create({
+                    branchId,
+                    ...defaults,
+                    isDefault: true,
+                }),
+            );
+        } catch (error) {
+            if (!isPrismaUniqueViolation(error)) {
+                throw error;
+            }
+
+            const latestRules = await this.ruleRepository.findAll(branchId);
+            const existingAfterRace = latestRules.find(matchesDefault);
+            if (existingAfterRace) {
+                return { rules: latestRules, created: null };
+            }
+            throw error;
+        }
         await this.rebuildJobsForRule(branchId, created, false);
         return { rules: [created, ...rules], created };
     }
@@ -551,6 +574,7 @@ export class MessageTriggerService {
             branchId,
             rules,
             DEFAULT_SERVICE_INFO_TRIGGER,
+            true,
         );
 
         const { rules: finalRules } = await this.ensureDefaultTrigger(

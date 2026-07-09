@@ -57,6 +57,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 offsetDays: rule.offsetDays,
                 recipientType: rule.recipientType,
                 templateKey: rule.templateKey,
+                isDefault: rule.isDefault,
             },
         });
         return this.toDomain(row);
@@ -77,6 +78,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 offsetDays: rule.offsetDays,
                 recipientType: rule.recipientType,
                 templateKey: rule.templateKey,
+                isDefault: rule.isDefault,
             },
         });
         return this.toDomain(row);
@@ -98,6 +100,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         offsetDays: number;
         recipientType: string;
         templateKey: string;
+        isDefault?: boolean;
         createdAt: Date;
         updatedAt: Date;
     }): MessageTriggerRuleEntity {
@@ -113,6 +116,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
             row.templateKey as MessageTriggerTemplateKey,
             row.createdAt,
             row.updatedAt,
+            row.isDefault ?? false,
         );
     }
 }

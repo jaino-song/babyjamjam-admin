@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import {
     MessageTriggerEventType,
@@ -701,6 +702,107 @@ describe("MessageTriggerService", () => {
         // active greeting rules and double-greet every new client.
         expect(ruleRepository.create).not.toHaveBeenCalled();
         expect(internals.rebuildJobsForRule).not.toHaveBeenCalled();
+    });
+
+    it("does not re-create the SERVICE_INFO default after the default rule was edited", async () => {
+        const { service, ruleRepository, internals } = createService();
+
+        const editedServiceInfo = createRule({
+            id: "rule-service-info-edited",
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
+            offsetDays: 3,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+        });
+        const existingGreeting = createRule({
+            id: "rule-existing-greeting",
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            offsetDays: 0,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+        });
+        ruleRepository.findAll.mockResolvedValue([editedServiceInfo, existingGreeting]);
+
+        const rules = await service.listRules(branchId);
+
+        expect(ruleRepository.create).not.toHaveBeenCalled();
+        expect(internals.rebuildJobsForRule).not.toHaveBeenCalled();
+        expect(rules).toEqual([editedServiceInfo, existingGreeting]);
+    });
+
+    it("provisioning race: P2002 on create resolves to the existing default instead of throwing", async () => {
+        const { service, ruleRepository, internals } = createService();
+        const existingServiceInfo = createRule({
+            id: "rule-service-info-winner",
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
+            offsetDays: 7,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+        });
+        const existingGreeting = createRule({
+            id: "rule-existing-greeting",
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            offsetDays: 0,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+        });
+        const p2002 = new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+            code: "P2002",
+            clientVersion: "test",
+        });
+        ruleRepository.findAll
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([existingServiceInfo, existingGreeting]);
+        ruleRepository.create.mockRejectedValueOnce(p2002);
+
+        await expect(service.listRules(branchId)).resolves.toEqual([
+            existingServiceInfo,
+            existingGreeting,
+        ]);
+        expect(ruleRepository.create).toHaveBeenCalledTimes(1);
+        expect(ruleRepository.findAll).toHaveBeenCalledTimes(2);
+        expect(internals.rebuildJobsForRule).not.toHaveBeenCalled();
+    });
+
+    it("provisioned defaults are created with isDefault true", async () => {
+        const { service, ruleRepository } = createService();
+        const createdServiceInfo = createRule({
+            id: "rule-service-info-new",
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
+            offsetDays: 7,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+        });
+        const createdGreeting = createRule({
+            id: "rule-greeting-new",
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            offsetDays: 0,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+        });
+        ruleRepository.findAll.mockResolvedValue([]);
+        ruleRepository.create
+            .mockResolvedValueOnce(createdServiceInfo)
+            .mockResolvedValueOnce(createdGreeting);
+
+        await service.listRules(branchId);
+
+        expect(ruleRepository.create).toHaveBeenNthCalledWith(
+            1,
+            branchId,
+            expect.objectContaining({
+                templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+                isDefault: true,
+            }),
+        );
+        expect(ruleRepository.create).toHaveBeenNthCalledWith(
+            2,
+            branchId,
+            expect.objectContaining({
+                templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+                isDefault: true,
+            }),
+        );
     });
 
     it("ensureDefaultRulesForBranch creates missing default rules (same logic as listRules)", async () => {

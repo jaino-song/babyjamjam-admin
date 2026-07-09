@@ -18,6 +18,7 @@ export class MessageTriggerRuleEntity {
         public templateKey: MessageTriggerTemplateKey,
         public createdAt: Date,
         public updatedAt: Date,
+        public isDefault = false,
     ) {}
 
     static create(params: {
@@ -29,6 +30,7 @@ export class MessageTriggerRuleEntity {
         offsetDays?: number;
         recipientType: MessageTriggerRecipientType;
         templateKey: MessageTriggerTemplateKey;
+        isDefault?: boolean;
     }): MessageTriggerRuleEntity {
         const now = new Date();
         return new MessageTriggerRuleEntity(
@@ -43,6 +45,7 @@ export class MessageTriggerRuleEntity {
             params.templateKey,
             now,
             now,
+            params.isDefault ?? false,
         );
     }
 
@@ -58,6 +61,7 @@ export class MessageTriggerRuleEntity {
         templateKey: MessageTriggerTemplateKey,
         createdAt: Date,
         updatedAt: Date,
+        isDefault = false,
     ): MessageTriggerRuleEntity {
         return new MessageTriggerRuleEntity(
             id,
@@ -71,6 +75,7 @@ export class MessageTriggerRuleEntity {
             templateKey,
             createdAt,
             updatedAt,
+            isDefault,
         );
     }
 
