@@ -65,13 +65,17 @@ export class ClientDueDateSchedulerService {
     }
 
     async copyUpcomingDueDatesToStartDates(referenceDate = new Date()): Promise<number> {
+        const kstToday = this.getKstDateOnly(referenceDate, 0);
         const upcomingDueDate = this.getKstDateOnly(referenceDate, START_DATE_COPY_LEAD_DAYS);
         const candidates = await this.prisma.client.findMany({
             where: {
-                dueDate: upcomingDueDate,
+                dueDate: {
+                    gte: kstToday,
+                    lte: upcomingDueDate,
+                },
                 startDate: null,
             },
-            select: { id: true, branchId: true },
+            select: { id: true, branchId: true, dueDate: true },
         });
 
         let updatedCount = 0;
@@ -79,11 +83,11 @@ export class ClientDueDateSchedulerService {
             const result = await this.prisma.client.updateMany({
                 where: {
                     id: client.id,
-                    dueDate: upcomingDueDate,
+                    dueDate: client.dueDate,
                     startDate: null,
                 },
                 data: {
-                    startDate: upcomingDueDate,
+                    startDate: client.dueDate,
                 },
             });
 
