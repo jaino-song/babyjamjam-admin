@@ -70,6 +70,10 @@ jobs:
           pnpm exec prisma db execute --schema prisma/schema.prisma --stdin <<'SQL'
           ALTER TABLE "client" ALTER COLUMN "care_center" DROP NOT NULL;
           ALTER TABLE "client_draft" ADD COLUMN IF NOT EXISTS "confirming_started_at" TIMESTAMPTZ(6);
+          ALTER TABLE "message_trigger_job"  ADD COLUMN IF NOT EXISTS "attempts" INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE "message_trigger_job"  ADD COLUMN IF NOT EXISTS "next_attempt_at" TIMESTAMPTZ(6);
+          ALTER TABLE "message_trigger_rule" ADD COLUMN IF NOT EXISTS "is_default" BOOLEAN NOT NULL DEFAULT false;
+          ALTER TABLE "message_trigger_rule" ADD COLUMN IF NOT EXISTS "jobs_stale" BOOLEAN NOT NULL DEFAULT false;
           SQL
 
       - name: Verify database patches
@@ -99,6 +103,57 @@ jobs:
                 AND is_nullable = 'YES'
             ) THEN
               RAISE EXCEPTION 'client_draft.confirming_started_at is missing or has the wrong shape';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'message_trigger_job'
+                AND column_name = 'attempts'
+                AND data_type = 'integer'
+                AND is_nullable = 'NO'
+                AND column_default = '0'
+            ) THEN
+              RAISE EXCEPTION 'message_trigger_job.attempts is missing or has the wrong shape';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'message_trigger_job'
+                AND column_name = 'next_attempt_at'
+                AND data_type = 'timestamp with time zone'
+                AND is_nullable = 'YES'
+            ) THEN
+              RAISE EXCEPTION 'message_trigger_job.next_attempt_at is missing or has the wrong shape';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'message_trigger_rule'
+                AND column_name = 'is_default'
+                AND data_type = 'boolean'
+                AND is_nullable = 'NO'
+                AND column_default = 'false'
+            ) THEN
+              RAISE EXCEPTION 'message_trigger_rule.is_default is missing or has the wrong shape';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'message_trigger_rule'
+                AND column_name = 'jobs_stale'
+                AND data_type = 'boolean'
+                AND is_nullable = 'NO'
+                AND column_default = 'false'
+            ) THEN
+              RAISE EXCEPTION 'message_trigger_rule.jobs_stale is missing or has the wrong shape';
             END IF;
           END $$;
           SQL
@@ -151,6 +206,10 @@ jobs:
           pnpm exec prisma db execute --schema prisma/schema.prisma --stdin <<'SQL'
           ALTER TABLE "client" ALTER COLUMN "care_center" DROP NOT NULL;
           ALTER TABLE "client_draft" ADD COLUMN IF NOT EXISTS "confirming_started_at" TIMESTAMPTZ(6);
+          ALTER TABLE "message_trigger_job"  ADD COLUMN IF NOT EXISTS "attempts" INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE "message_trigger_job"  ADD COLUMN IF NOT EXISTS "next_attempt_at" TIMESTAMPTZ(6);
+          ALTER TABLE "message_trigger_rule" ADD COLUMN IF NOT EXISTS "is_default" BOOLEAN NOT NULL DEFAULT false;
+          ALTER TABLE "message_trigger_rule" ADD COLUMN IF NOT EXISTS "jobs_stale" BOOLEAN NOT NULL DEFAULT false;
           SQL
 
       - name: Verify database patches
@@ -180,6 +239,57 @@ jobs:
                 AND is_nullable = 'YES'
             ) THEN
               RAISE EXCEPTION 'client_draft.confirming_started_at is missing or has the wrong shape';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'message_trigger_job'
+                AND column_name = 'attempts'
+                AND data_type = 'integer'
+                AND is_nullable = 'NO'
+                AND column_default = '0'
+            ) THEN
+              RAISE EXCEPTION 'message_trigger_job.attempts is missing or has the wrong shape';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'message_trigger_job'
+                AND column_name = 'next_attempt_at'
+                AND data_type = 'timestamp with time zone'
+                AND is_nullable = 'YES'
+            ) THEN
+              RAISE EXCEPTION 'message_trigger_job.next_attempt_at is missing or has the wrong shape';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'message_trigger_rule'
+                AND column_name = 'is_default'
+                AND data_type = 'boolean'
+                AND is_nullable = 'NO'
+                AND column_default = 'false'
+            ) THEN
+              RAISE EXCEPTION 'message_trigger_rule.is_default is missing or has the wrong shape';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'message_trigger_rule'
+                AND column_name = 'jobs_stale'
+                AND data_type = 'boolean'
+                AND is_nullable = 'NO'
+                AND column_default = 'false'
+            ) THEN
+              RAISE EXCEPTION 'message_trigger_rule.jobs_stale is missing or has the wrong shape';
             END IF;
           END $$;
           SQL
