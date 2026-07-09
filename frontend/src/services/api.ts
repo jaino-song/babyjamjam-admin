@@ -376,6 +376,10 @@ export const settingsApi = {
         const { data } = await api.get("/settings/message-sender-approval");
         return data;
     },
+    requestMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {
+        const { data } = await api.post("/settings/message-sender-approval/request");
+        return data;
+    },
     getNotificationPreferences: async (): Promise<NotificationPreferencesResponse> => {
         const { data } = await api.get('/settings/notification-preferences');
         return data;

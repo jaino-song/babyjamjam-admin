@@ -1,12 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Building2,
+  CalendarClock,
   CheckCircle2,
   Clock3,
   ExternalLink,
+  History,
   Repeat2,
   Send,
   ShieldCheck,
@@ -23,6 +25,7 @@ import {
 } from "@/components/app/v3";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -30,6 +33,25 @@ import { settingsApi } from "@/services/api";
 
 const UNIFIED_SENDER_PHONE = "010-9641-1878";
 const DUPLICATE_SEND_POLICY_ITEM_ID = "duplicate-send-confirmation";
+const SERVICE_FEEDBACK_LINK_POLICY_ITEM_ID = "service-feedback-link-policy";
+const SMS_RETRY_POLICY_ITEM_ID = "sms-retry-policy";
+const PAST_TRIGGER_POLICY_ITEM_ID = "past-trigger-policy";
+const SERVICE_FEEDBACK_LINK_POLICY_TITLE = "제공기록지 전송 자동화 규칙";
+const SERVICE_FEEDBACK_LINK_POLICY_DESCRIPTION =
+  "서비스 시작일 오후 3시에 주 담당 제공인력에게 작성 링크를 SMS로 발송합니다.";
+const SMS_RETRY_POLICY_TITLE = "SMS 재시도 규칙";
+const SMS_RETRY_POLICY_DESCRIPTION =
+  "SMS 전송 실패 시 5분 후 자동 재시도하며, 최초 발송 이후 최대 2번까지 다시 시도합니다.";
+const PAST_TRIGGER_POLICY_TITLE = "지난 자동 전송 처리 규칙";
+const PAST_TRIGGER_POLICY_DESCRIPTION =
+  "고객 추가 시점보다 이미 지난 자동 전송 루틴은 실행하지 않습니다.";
+
+const SERVICE_FEEDBACK_LINK_POLICY_DETAIL_VALUES = [
+  { id: "send-time", label: "발송 시점", value: "서비스 시작일 오후 3시" },
+  { id: "recipient", label: "수신 대상", value: "주 담당 제공인력" },
+  { id: "retry", label: "실패 재시도", value: "SMS 재시도 규칙 적용" },
+  { id: "expiry", label: "토큰 만료", value: "서비스 종료일 오후 8시" },
+] as const;
 
 const ALIGO_POLICY_ITEMS = [
   {
@@ -60,7 +82,12 @@ type TenantApplicationListItem = {
   subtitle: string;
   statusLabel: string;
   icon: typeof Building2;
-  kind: "tenant-application" | "duplicate-send-policy";
+  kind:
+    | "tenant-application"
+    | "duplicate-send-policy"
+    | "service-feedback-link-policy"
+    | "sms-retry-policy"
+    | "past-trigger-policy";
 };
 
 const DUPLICATE_SEND_POLICY_ITEM: TenantApplicationListItem = {
@@ -70,6 +97,40 @@ const DUPLICATE_SEND_POLICY_ITEM: TenantApplicationListItem = {
   statusLabel: "활성",
   icon: Repeat2,
   kind: "duplicate-send-policy",
+};
+
+const SERVICE_FEEDBACK_LINK_POLICY_ITEM: TenantApplicationListItem = {
+  id: SERVICE_FEEDBACK_LINK_POLICY_ITEM_ID,
+  title: SERVICE_FEEDBACK_LINK_POLICY_TITLE,
+  subtitle: SERVICE_FEEDBACK_LINK_POLICY_DESCRIPTION,
+  statusLabel: "활성",
+  icon: CalendarClock,
+  kind: "service-feedback-link-policy",
+};
+
+const SMS_RETRY_POLICY_ITEM: TenantApplicationListItem = {
+  id: SMS_RETRY_POLICY_ITEM_ID,
+  title: SMS_RETRY_POLICY_TITLE,
+  subtitle: SMS_RETRY_POLICY_DESCRIPTION,
+  statusLabel: "활성",
+  icon: Repeat2,
+  kind: "sms-retry-policy",
+};
+
+const PAST_TRIGGER_POLICY_ITEM: TenantApplicationListItem = {
+  id: PAST_TRIGGER_POLICY_ITEM_ID,
+  title: PAST_TRIGGER_POLICY_TITLE,
+  subtitle: PAST_TRIGGER_POLICY_DESCRIPTION,
+  statusLabel: "미실행",
+  icon: History,
+  kind: "past-trigger-policy",
+};
+
+const DEFAULT_POLICY_TOGGLE_STATE: Record<string, boolean> = {
+  [DUPLICATE_SEND_POLICY_ITEM_ID]: true,
+  [SERVICE_FEEDBACK_LINK_POLICY_ITEM_ID]: true,
+  [SMS_RETRY_POLICY_ITEM_ID]: true,
+  [PAST_TRIGGER_POLICY_ITEM_ID]: true,
 };
 
 function formatRequestedAt(date: Date) {
@@ -84,6 +145,7 @@ function formatRequestedAt(date: Date) {
 export function MessageTenantApplicationSettings() {
   const { data: authUser } = useGetAuthUser();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const { data: messageSenderApproval, isLoading: isMessageSenderApprovalLoading } = useQuery({
     queryKey: ["settings", "message-sender-approval"],
     queryFn: settingsApi.getMessageSenderApproval,
@@ -93,6 +155,9 @@ export function MessageTenantApplicationSettings() {
   );
   const [requestedAt, setRequestedAt] = useState<string | null>(null);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [policyToggleState, setPolicyToggleState] = useState<Record<string, boolean>>(
+    DEFAULT_POLICY_TOGGLE_STATE,
+  );
 
   const tenantName = authUser?.branchName?.trim() || "현재 선택된 지점";
   const allAgreed = ALIGO_POLICY_ITEMS.every((item) => agreements[item.id]);
@@ -107,8 +172,7 @@ export function MessageTenantApplicationSettings() {
       const items: TenantApplicationListItem[] = [];
 
       if (!isMessageSenderApproved) {
-        items.push(
-        {
+        items.push({
           id: CURRENT_TENANT_ITEM_ID,
           title: "메시지 발송 기능 신청",
           subtitle: requestedAt
@@ -117,18 +181,22 @@ export function MessageTenantApplicationSettings() {
           statusLabel: requestedAt ? "접수됨" : canSubmit ? "준비 완료" : "작성 중",
           icon: Building2,
           kind: "tenant-application",
-        },
-        );
+        });
       }
 
-      items.push(DUPLICATE_SEND_POLICY_ITEM);
+      items.push(
+        SERVICE_FEEDBACK_LINK_POLICY_ITEM,
+        PAST_TRIGGER_POLICY_ITEM,
+        SMS_RETRY_POLICY_ITEM,
+        DUPLICATE_SEND_POLICY_ITEM,
+      );
 
       return items;
     },
     [canSubmit, isMessageSenderApprovalLoading, isMessageSenderApproved, requestedAt],
   );
   const fallbackSelectedItemId = isMessageSenderApproved
-    ? DUPLICATE_SEND_POLICY_ITEM_ID
+    ? SERVICE_FEEDBACK_LINK_POLICY_ITEM_ID
     : CURRENT_TENANT_ITEM_ID;
   const selectedItem = listItems.find((item) => item.id === (selectedItemId ?? fallbackSelectedItemId))
     ?? listItems[0]
@@ -141,15 +209,35 @@ export function MessageTenantApplicationSettings() {
     }));
   };
 
+  const togglePolicy = (id: string, checked: boolean) => {
+    setPolicyToggleState((previous) => ({
+      ...previous,
+      [id]: checked,
+    }));
+  };
+
+  const requestApprovalMutation = useMutation({
+    mutationFn: settingsApi.requestMessageSenderApproval,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["settings", "message-sender-approval"] });
+      setRequestedAt(formatRequestedAt(new Date()));
+      toast({ description: `${tenantName} 메시지 발송 신청이 접수되었습니다.` });
+    },
+    onError: () => {
+      toast({
+        variant: "destructive",
+        description: "메시지 발송 신청 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
+      });
+    },
+  });
+
   const handleSubmit = () => {
     if (!allAgreed) {
       toast({ variant: "destructive", description: "알리고 정책 동의 항목을 모두 확인해 주세요." });
       return;
     }
 
-    const now = new Date();
-    setRequestedAt(formatRequestedAt(now));
-    toast({ description: `${tenantName} 메시지 발송 신청이 접수되었습니다.` });
+    requestApprovalMutation.mutate();
   };
   const emptyListMessage = isMessageSenderApprovalLoading
     ? "설정 정보를 불러오는 중입니다."
@@ -225,9 +313,24 @@ export function MessageTenantApplicationSettings() {
                 title={item.title}
                 subtitle={item.subtitle}
                 status={
-                  <span className="inline-flex items-center rounded-full bg-white/85 px-2 py-0.5 text-[0.68rem] font-semibold text-v3-primary">
-                    {item.statusLabel}
-                  </span>
+                  item.kind === "tenant-application" ? (
+                    <span className="inline-flex items-center rounded-full bg-white/85 px-2 py-0.5 text-[0.68rem] font-semibold text-v3-primary">
+                      {item.statusLabel}
+                    </span>
+                  ) : (
+                    <Switch
+                      aria-label={`${item.title} 활성화`}
+                      checked={isMessageSenderApproved ? (policyToggleState[item.id] ?? false) : false}
+                      disabled={!isMessageSenderApproved}
+                      onClick={(event) => event.stopPropagation()}
+                      onCheckedChange={
+                        isMessageSenderApproved
+                          ? (checked) => togglePolicy(item.id, checked)
+                          : undefined
+                      }
+                      className="ml-auto shrink-0"
+                    />
+                  )
                 }
               />
             );
@@ -235,7 +338,120 @@ export function MessageTenantApplicationSettings() {
         />
       </ListPanel>
 
-      {selectedItem?.kind === "duplicate-send-policy" ? (
+      {selectedItem?.kind === "service-feedback-link-policy" ? (
+        <DetailPanel
+          avatar={
+            <div className="flex h-12 w-12 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+              <CalendarClock className="h-5 w-5" />
+            </div>
+          }
+          title={SERVICE_FEEDBACK_LINK_POLICY_TITLE}
+          subtitle={SERVICE_FEEDBACK_LINK_POLICY_DESCRIPTION}
+          trailing={
+            <span className="inline-flex items-center rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary">
+              활성
+            </span>
+          }
+        >
+          <div data-component="messages-settings-service-feedback-link-policy" className="space-y-4">
+            <InfoCard
+              data-component="messages-settings-service-feedback-link-policy-card"
+              title="규칙"
+            >
+              <div className="-mt-1">
+                {SERVICE_FEEDBACK_LINK_POLICY_DETAIL_VALUES.map((item) => (
+                  <InfoRow
+                    key={item.label}
+                    data-component={`messages-settings-service-feedback-link-policy-${item.id}`}
+                    label={item.label}
+                    value={item.value}
+                  />
+                ))}
+              </div>
+            </InfoCard>
+          </div>
+        </DetailPanel>
+      ) : selectedItem?.kind === "past-trigger-policy" ? (
+        <DetailPanel
+          avatar={
+            <div className="flex h-12 w-12 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+              <History className="h-5 w-5" />
+            </div>
+          }
+          title={PAST_TRIGGER_POLICY_TITLE}
+          subtitle={PAST_TRIGGER_POLICY_DESCRIPTION}
+          trailing={
+            <span className="inline-flex items-center rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary">
+              미실행
+            </span>
+          }
+        >
+          <div data-component="messages-settings-past-trigger-policy" className="space-y-4">
+            <InfoCard
+              data-component="messages-settings-past-trigger-policy-card"
+              title="규칙"
+            >
+              <div className="-mt-1">
+                <InfoRow
+                  data-component="messages-settings-past-trigger-policy-condition"
+                  label="조건"
+                  value="고객 추가 시점이 자동 전송 트리거 시점 이후"
+                />
+                <InfoRow
+                  data-component="messages-settings-past-trigger-policy-action"
+                  label="동작"
+                  value="지난 루틴 미실행"
+                />
+                <InfoRow
+                  data-component="messages-settings-past-trigger-policy-scope"
+                  label="적용 범위"
+                  value="자동 메시지 템플릿 전송 루틴"
+                />
+              </div>
+            </InfoCard>
+          </div>
+        </DetailPanel>
+      ) : selectedItem?.kind === "sms-retry-policy" ? (
+        <DetailPanel
+          avatar={
+            <div className="flex h-12 w-12 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+              <Repeat2 className="h-5 w-5" />
+            </div>
+          }
+          title={SMS_RETRY_POLICY_TITLE}
+          subtitle={SMS_RETRY_POLICY_DESCRIPTION}
+          trailing={
+            <span className="inline-flex items-center rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary">
+              활성
+            </span>
+          }
+        >
+          <div data-component="messages-settings-sms-retry-policy" className="space-y-4">
+            <InfoCard
+              data-component="messages-settings-sms-retry-policy-card"
+              title="규칙"
+            >
+              <div className="-mt-1">
+                <InfoRow
+                  data-component="messages-settings-sms-retry-policy-count"
+                  label="재시도 횟수"
+                  value="최대 2회"
+                />
+                <InfoRow
+                  data-component="messages-settings-sms-retry-policy-interval"
+                  label="재시도 간격"
+                  value="실패 후 5분"
+                />
+                <InfoRow
+                  data-component="messages-settings-sms-retry-policy-action"
+                  label="동작"
+                  value="전송 실패 시 자동 재시도"
+                />
+              </div>
+            </InfoCard>
+          </div>
+        </DetailPanel>
+      ) : selectedItem?.kind === "duplicate-send-policy" ? (
         <DetailPanel
           avatar={
             <div className="flex h-12 w-12 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
