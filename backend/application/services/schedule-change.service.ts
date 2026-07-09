@@ -2,6 +2,7 @@ import {
     BadRequestException,
     ConflictException,
     Injectable,
+    Logger,
     NotFoundException,
     Optional,
 } from "@nestjs/common";
@@ -64,6 +65,8 @@ interface ScheduleChangeRequestForSerialization {
 
 @Injectable()
 export class ScheduleChangeService {
+    private readonly logger = new Logger(ScheduleChangeService.name);
+
     constructor(
         private readonly prisma: PrismaService,
         private readonly tokenService: EmployeeFeedbackTokenService,
@@ -202,6 +205,7 @@ export class ScheduleChangeService {
     async approve(requestId: string, tenant: { branchId?: string; userId?: string }) {
         let scheduleIdForSync: number | null = null;
         let branchIdForSync: string | null = null;
+        let clientIdForSync: number | null = null;
 
         try {
             const result = await this.prisma.$transaction(async (tx) => {
@@ -292,6 +296,7 @@ export class ScheduleChangeService {
 
             scheduleIdForSync = result.scheduleId;
             branchIdForSync = result.branchId;
+            clientIdForSync = result.clientId;
             return this.serializeRequest(result);
         } catch (error) {
             if (error instanceof StaleRequestError) {
@@ -307,6 +312,16 @@ export class ScheduleChangeService {
                 this.triggerService
                     ?.syncEmployeeAssignmentRulesForSchedule(branchIdForSync, scheduleIdForSync, true)
                     ?.catch(() => undefined);
+            }
+            if (clientIdForSync && branchIdForSync) {
+                this.triggerService
+                    ?.syncClientRulesForClient(branchIdForSync, clientIdForSync, false)
+                    ?.catch((error) => {
+                        this.logger.error(
+                            `Failed to resync client trigger rules for client ${clientIdForSync}`,
+                            error instanceof Error ? error.stack : String(error),
+                        );
+                    });
             }
         }
     }

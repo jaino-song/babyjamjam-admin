@@ -39,6 +39,7 @@ const createMockTokenService = () => ({
 
 const createMockTriggerService = () => ({
     syncEmployeeAssignmentRulesForSchedule: jest.fn(() => Promise.resolve()),
+    syncClientRulesForClient: jest.fn(() => Promise.resolve()),
 });
 
 const createSchedule = (overrides: Record<string, unknown> = {}) => ({
@@ -347,6 +348,72 @@ describe("ScheduleChangeService", () => {
                 true,
             );
             expect(events).toEqual(["transaction:start", "transaction:commit", "sync"]);
+        });
+
+        it("approval resyncs client trigger rules after the transaction commits", async () => {
+            txPrismaService.schedule_change_request.findFirst.mockResolvedValue(createRequest());
+            txPrismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+            txPrismaService.service_record_day.findMany
+                .mockResolvedValueOnce([
+                    createDay(1, "2026-07-01", true),
+                    createDay(2, "2026-07-02", true),
+                    createDay(3, "2026-07-03", false),
+                ])
+                .mockResolvedValueOnce([createDay(4, "2026-07-04", false)]);
+            txPrismaService.service_record_day.upsert.mockResolvedValue(createDay(3, "2026-07-06", false));
+            txPrismaService.service_record_day.update.mockResolvedValue(createDay(4, "2026-07-07", false));
+            txPrismaService.employee_schedule.update.mockResolvedValue(createSchedule({ endDate: toDbDate("2026-07-15") }));
+            txPrismaService.client.update.mockResolvedValue({ id: CLIENT_ID, endDate: toDbDate("2026-07-15") });
+            txPrismaService.schedule_change_request.update.mockResolvedValue(
+                createRequest({
+                    status: "approved",
+                    decidedBy: USER_ID,
+                    decidedAt: toDbDate("2026-07-02"),
+                }),
+            );
+            triggerService.syncClientRulesForClient.mockImplementation(() => {
+                events.push("client-sync");
+                return Promise.resolve();
+            });
+
+            await service.approve("request-1", tenant);
+
+            expect(triggerService.syncClientRulesForClient).toHaveBeenCalledWith(
+                BRANCH_ID,
+                CLIENT_ID,
+                false,
+            );
+            expect(events).toEqual(["transaction:start", "transaction:commit", "sync", "client-sync"]);
+        });
+
+        it("approval still succeeds when the client resync throws", async () => {
+            txPrismaService.schedule_change_request.findFirst.mockResolvedValue(createRequest());
+            txPrismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+            txPrismaService.service_record_day.findMany
+                .mockResolvedValueOnce([
+                    createDay(1, "2026-07-01", true),
+                    createDay(2, "2026-07-02", true),
+                    createDay(3, "2026-07-03", false),
+                ])
+                .mockResolvedValueOnce([createDay(4, "2026-07-04", false)]);
+            txPrismaService.service_record_day.upsert.mockResolvedValue(createDay(3, "2026-07-06", false));
+            txPrismaService.service_record_day.update.mockResolvedValue(createDay(4, "2026-07-07", false));
+            txPrismaService.employee_schedule.update.mockResolvedValue(createSchedule({ endDate: toDbDate("2026-07-15") }));
+            txPrismaService.client.update.mockResolvedValue({ id: CLIENT_ID, endDate: toDbDate("2026-07-15") });
+            txPrismaService.schedule_change_request.update.mockResolvedValue(
+                createRequest({
+                    status: "approved",
+                    decidedBy: USER_ID,
+                    decidedAt: toDbDate("2026-07-02"),
+                }),
+            );
+            triggerService.syncClientRulesForClient.mockRejectedValueOnce(new Error("sync failed"));
+
+            await expect(service.approve("request-1", tenant)).resolves.toMatchObject({
+                id: "request-1",
+                status: "approved",
+                decidedBy: USER_ID,
+            });
         });
 
         it("should create the target draft row when it is missing", async () => {
