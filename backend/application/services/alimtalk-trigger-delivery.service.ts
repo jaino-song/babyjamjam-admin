@@ -1,38 +1,41 @@
 import { Injectable } from "@nestjs/common";
 import { SystemSettingService } from "application/services/system-setting.service";
-import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SendAligoAlimtalkUsecase } from "application/usecases/aligo";
 import {
     MESSAGE_TRIGGER_TEMPLATE_CATALOG,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import { AligoTemplateKey } from "application/dto/aligo/alimtalk-template.dto";
 
 @Injectable()
 export class AlimtalkTriggerDeliveryService {
     constructor(
         private readonly systemSettingService: SystemSettingService,
-        private readonly messageSenderApprovalService: MessageSenderApprovalService,
         private readonly sendAligoAlimtalkUsecase: SendAligoAlimtalkUsecase,
     ) {}
 
     async sendJob(job: MessageTriggerJobEntity): Promise<boolean> {
         if (!job.branchId) {
-            return false;
+            throw new Error(`Alimtalk trigger job ${job.id} is missing branchId`);
         }
-
-        await this.messageSenderApprovalService.ensureApproved(job.branchId);
 
         const provider = await this.systemSettingService.getAlimtalkProvider();
         if (provider === "none") {
-            return false;
+            throw new TriggerJobDeferredError(
+                "config",
+                "Alimtalk provider is not configured for trigger delivery",
+            );
         }
 
         const template = MESSAGE_TRIGGER_TEMPLATE_CATALOG[job.templateKey];
         const providerMapping = template.providers[provider];
         if (!providerMapping) {
-            throw new Error(`Template ${job.templateKey} is not available for provider ${provider}`);
+            throw new TriggerJobDeferredError(
+                "config",
+                `Template ${job.templateKey} is not available for provider ${provider}`,
+            );
         }
 
         const payload = job.payload;

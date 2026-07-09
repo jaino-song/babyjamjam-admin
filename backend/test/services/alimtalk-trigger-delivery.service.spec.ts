@@ -1,17 +1,20 @@
 import { AlimtalkTriggerDeliveryService } from "application/services/alimtalk-trigger-delivery.service";
-import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SystemSettingService } from "application/services/system-setting.service";
 import {
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 
 describe("AlimtalkTriggerDeliveryService", () => {
-    const createJob = (templateKey: MessageTriggerTemplateKey) =>
+    const createJob = (
+        templateKey: MessageTriggerTemplateKey,
+        branchId: string | null = "branch-1",
+    ) =>
         MessageTriggerJobEntity.reconstitute(
             `job-${templateKey}`,
-            "branch-1",
+            branchId,
             "rule-1",
             "pending",
             new Date("2026-06-12T00:00:00.000Z"),
@@ -40,20 +43,29 @@ describe("AlimtalkTriggerDeliveryService", () => {
             new Date("2026-06-05T00:00:00.000Z"),
         );
 
-    it("keeps true alimtalk templates on the alimtalk provider path", async () => {
+    const captureError = async (promise: Promise<unknown>): Promise<unknown> => {
+        try {
+            await promise;
+            return undefined;
+        } catch (error) {
+            return error;
+        }
+    };
+
+    const createService = (provider: "aligo_alimtalk" | "none" = "aligo_alimtalk") => {
         const sendAligoAlimtalkUsecase = { execute: jest.fn().mockResolvedValue(undefined) };
-        const messageSenderApprovalService = {
-            ensureApproved: jest.fn().mockResolvedValue(undefined),
-        };
         const service = new AlimtalkTriggerDeliveryService(
-            { getAlimtalkProvider: jest.fn().mockResolvedValue("aligo_alimtalk") } as unknown as SystemSettingService,
-            messageSenderApprovalService as unknown as MessageSenderApprovalService,
+            { getAlimtalkProvider: jest.fn().mockResolvedValue(provider) } as unknown as SystemSettingService,
             sendAligoAlimtalkUsecase as never,
         );
+        return { sendAligoAlimtalkUsecase, service };
+    };
+
+    it("keeps true alimtalk templates on the alimtalk provider path", async () => {
+        const { sendAligoAlimtalkUsecase, service } = createService();
 
         await expect(service.sendJob(createJob(MessageTriggerTemplateKey.CLIENT_WELCOME))).resolves.toBe(true);
 
-        expect(messageSenderApprovalService.ensureApproved).toHaveBeenCalledWith("branch-1");
         expect(sendAligoAlimtalkUsecase.execute).toHaveBeenCalledWith(expect.objectContaining({
             templateKey: "CLIENT_CREATED",
             receiver: "010-1234-5678",
@@ -61,5 +73,44 @@ describe("AlimtalkTriggerDeliveryService", () => {
             clientId: 7,
             triggerJobId: "job-CLIENT_WELCOME",
         }));
+    });
+
+    it("throws a config deferred error when the provider is none", async () => {
+        const { sendAligoAlimtalkUsecase, service } = createService("none");
+
+        const error = await captureError(service.sendJob(createJob(MessageTriggerTemplateKey.CLIENT_WELCOME)));
+
+        expect(error).toBeInstanceOf(TriggerJobDeferredError);
+        expect(error).toMatchObject({
+            kind: "config",
+            message: "Alimtalk provider is not configured for trigger delivery",
+        });
+        expect(sendAligoAlimtalkUsecase.execute).not.toHaveBeenCalled();
+    });
+
+    it("throws a config deferred error when the template is unmapped for the provider", async () => {
+        const { sendAligoAlimtalkUsecase, service } = createService();
+
+        const error = await captureError(service.sendJob(createJob(MessageTriggerTemplateKey.SERVICE_FEEDBACK_LINK)));
+
+        expect(error).toBeInstanceOf(TriggerJobDeferredError);
+        expect(error).toMatchObject({
+            kind: "config",
+            message: "Template SERVICE_FEEDBACK_LINK is not available for provider aligo_alimtalk",
+        });
+        expect(sendAligoAlimtalkUsecase.execute).not.toHaveBeenCalled();
+    });
+
+    it("throws a plain error when branchId is missing", async () => {
+        const { sendAligoAlimtalkUsecase, service } = createService();
+
+        const error = await captureError(service.sendJob(createJob(MessageTriggerTemplateKey.CLIENT_WELCOME, null)));
+
+        expect(error).toBeInstanceOf(Error);
+        expect(error).not.toBeInstanceOf(TriggerJobDeferredError);
+        expect(error).toMatchObject({
+            message: "Alimtalk trigger job job-CLIENT_WELCOME is missing branchId",
+        });
+        expect(sendAligoAlimtalkUsecase.execute).not.toHaveBeenCalled();
     });
 });

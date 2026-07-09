@@ -1,6 +1,5 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { AligoService } from "application/services/aligo.service";
-import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SystemTemplateService } from "application/services/system-template.service";
 import { SendAligoSmsResult } from "application/dto/aligo/send-sms.dto";
 import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey } from "domain/constants/system-template-registry";
@@ -95,7 +94,6 @@ export class SmsTriggerDeliveryService {
     private readonly logger = new Logger(SmsTriggerDeliveryService.name);
 
     constructor(
-        private readonly messageSenderApprovalService: MessageSenderApprovalService,
         private readonly aligoService: AligoService,
         private readonly systemTemplateService: SystemTemplateService,
         @Inject(MESSAGE_LOG_REPOSITORY)
@@ -108,7 +106,7 @@ export class SmsTriggerDeliveryService {
 
     async sendJob(job: MessageTriggerJobEntity): Promise<boolean> {
         if (!job.branchId) {
-            return false;
+            throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
 
         const config = SMS_TEMPLATE_DELIVERY[job.templateKey];
@@ -116,7 +114,6 @@ export class SmsTriggerDeliveryService {
             return false;
         }
 
-        await this.messageSenderApprovalService.ensureApproved(job.branchId);
         return this.sendSmsJob(job, config);
     }
 

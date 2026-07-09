@@ -3,7 +3,6 @@ import {
     SmsTriggerDeliveryService,
     SMS_TEMPLATE_DELIVERY,
 } from "application/services/sms-trigger-delivery.service";
-import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SystemTemplateService } from "application/services/system-template.service";
 import { SystemTemplateKey } from "domain/constants/system-template-registry";
 import {
@@ -11,6 +10,7 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
 // Canonical SMS template set lives in the shared package (frontend/mobile source of truth).
@@ -20,6 +20,15 @@ import { SMS_TRIGGER_TEMPLATE_KEYS } from "../../../packages/shared/src/types/me
 
 describe("SmsTriggerDeliveryService", () => {
     const branchId = "branch-1";
+
+    const captureError = async (promise: Promise<unknown>): Promise<unknown> => {
+        try {
+            await promise;
+            return undefined;
+        } catch (error) {
+            return error;
+        }
+    };
 
     const createServiceInfoJob = () =>
         MessageTriggerJobEntity.reconstitute(
@@ -53,9 +62,6 @@ describe("SmsTriggerDeliveryService", () => {
         );
 
     it("sends the service information trigger through SMS instead of alimtalk", async () => {
-        const messageSenderApprovalService = {
-            ensureApproved: jest.fn().mockResolvedValue(undefined),
-        };
         const aligoService = {
             sendSms: jest.fn().mockResolvedValue({
                 request: {
@@ -83,7 +89,6 @@ describe("SmsTriggerDeliveryService", () => {
             save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log),
         };
         const service = new SmsTriggerDeliveryService(
-            messageSenderApprovalService as unknown as MessageSenderApprovalService,
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
@@ -91,7 +96,6 @@ describe("SmsTriggerDeliveryService", () => {
 
         await expect(service.sendJob(createServiceInfoJob())).resolves.toBe(true);
 
-        expect(messageSenderApprovalService.ensureApproved).toHaveBeenCalledWith(branchId);
         expect(systemTemplateService.getByKey).toHaveBeenCalledWith(SystemTemplateKey.SERVICE_INFO);
         expect(aligoService.sendSms).toHaveBeenCalledWith({
             receiver: "010-1234-5678",
@@ -148,9 +152,6 @@ describe("SmsTriggerDeliveryService", () => {
             new Date("2026-06-27T00:00:00.000Z"),
         );
 
-        const messageSenderApprovalService = {
-            ensureApproved: jest.fn().mockResolvedValue(undefined),
-        };
         const aligoService = {
             sendSms: jest.fn().mockResolvedValue({
                 request: {
@@ -178,7 +179,6 @@ describe("SmsTriggerDeliveryService", () => {
             save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log),
         };
         const service = new SmsTriggerDeliveryService(
-            messageSenderApprovalService as unknown as MessageSenderApprovalService,
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
@@ -186,7 +186,6 @@ describe("SmsTriggerDeliveryService", () => {
 
         await expect(service.sendJob(greetingJob)).resolves.toBe(true);
 
-        expect(messageSenderApprovalService.ensureApproved).toHaveBeenCalledWith(branchId);
         expect(systemTemplateService.getByKey).toHaveBeenCalledWith(SystemTemplateKey.GREETING);
         expect(aligoService.sendSms).toHaveBeenCalledWith({
             receiver: "010-5678-1234",
@@ -211,6 +210,29 @@ describe("SmsTriggerDeliveryService", () => {
             recipientName: "김산모",
         }));
     });
+
+    it("throws a plain error when branchId is missing", async () => {
+        const aligoService = { sendSms: jest.fn() };
+        const systemTemplateService = { getByKey: jest.fn() };
+        const logRepository = { save: jest.fn() };
+        const service = new SmsTriggerDeliveryService(
+            aligoService as unknown as AligoService,
+            systemTemplateService as unknown as SystemTemplateService,
+            logRepository as unknown as IMessageLogRepository,
+        );
+        const job = createServiceInfoJob();
+        job.branchId = null;
+
+        const error = await captureError(service.sendJob(job));
+
+        expect(error).toBeInstanceOf(Error);
+        expect(error).not.toBeInstanceOf(TriggerJobDeferredError);
+        expect(error).toMatchObject({
+            message: "SMS trigger job job-service-info is missing branchId",
+        });
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+        expect(logRepository.save).not.toHaveBeenCalled();
+    });
 });
 
 describe("SMS delivery routing drift guard", () => {
@@ -227,7 +249,6 @@ describe("SMS delivery routing drift guard", () => {
 describe("SERVICE_FEEDBACK_LINK delivery", () => {
     const buildService = (overrides: { aligoService: any; logRepository: any }) =>
         new SmsTriggerDeliveryService(
-            { ensureApproved: jest.fn().mockResolvedValue(undefined) } as unknown as MessageSenderApprovalService,
             overrides.aligoService as unknown as AligoService,
             { getByKey: jest.fn() } as unknown as SystemTemplateService,
             overrides.logRepository as unknown as IMessageLogRepository,
@@ -267,6 +288,15 @@ describe("SERVICE_FEEDBACK_LINK delivery", () => {
             new Date("2026-07-02T00:00:00.000Z"),
             new Date("2026-07-02T00:00:00.000Z"),
         );
+
+    const captureError = async (promise: Promise<unknown>): Promise<unknown> => {
+        try {
+            await promise;
+            return undefined;
+        } catch (error) {
+            return error;
+        }
+    };
 
     it("sends the payload message and records it in SMS history", async () => {
         const aligoService = {
@@ -316,6 +346,24 @@ describe("SERVICE_FEEDBACK_LINK delivery", () => {
         expect(savedLog.errorMessage).toBe("잔액 부족");
         expect(savedLog.nextRetryAt).toBeInstanceOf(Date);
     });
+
+    it("throws a plain error when payload messageBody is missing", async () => {
+        const aligoService = { sendSms: jest.fn() };
+        const logRepository = { save: jest.fn() };
+        const service = buildService({ aligoService, logRepository });
+        const job = createFeedbackJob();
+        job.payload.messageBody = "   ";
+
+        const error = await captureError(service.sendJob(job));
+
+        expect(error).toBeInstanceOf(Error);
+        expect(error).not.toBeInstanceOf(TriggerJobDeferredError);
+        expect(error).toMatchObject({
+            message: "SMS payload message is missing for job job-feedback-link",
+        });
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+        expect(logRepository.save).not.toHaveBeenCalled();
+    });
 });
 
 describe("PRICE_INFO data guard", () => {
@@ -349,7 +397,6 @@ describe("PRICE_INFO data guard", () => {
 
     const buildService = (overrides: { aligoService: any; logRepository: any; systemTemplateService?: any }) =>
         new SmsTriggerDeliveryService(
-            { ensureApproved: jest.fn().mockResolvedValue(undefined) } as unknown as MessageSenderApprovalService,
             overrides.aligoService as unknown as AligoService,
             (overrides.systemTemplateService ?? {
                 getByKey: jest.fn().mockResolvedValue({ content: "총 금액 {{fullPrice}}원 / {{bankName}} {{accNum}}" }),
