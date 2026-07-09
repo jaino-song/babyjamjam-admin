@@ -172,6 +172,17 @@ describe("SbMessageTriggerJobRepository", () => {
             },
         });
 
+    const getSqlText = (value: unknown): string => {
+        if (typeof value === "object" && value !== null && "strings" in value) {
+            const strings = (value as { strings?: unknown }).strings;
+            if (Array.isArray(strings)) {
+                return strings.join("");
+            }
+        }
+
+        return String(value);
+    };
+
     let messageTriggerJobModel: ReturnType<typeof createMockPrismaMessageTriggerJob>;
     let queryRaw: jest.Mock;
     let prisma: PrismaService;
@@ -234,11 +245,37 @@ describe("SbMessageTriggerJobRepository", () => {
         const result = await repository.upsertPending(createJob());
 
         expect(queryRaw).toHaveBeenCalledTimes(1);
+        const sqlText = getSqlText(queryRaw.mock.calls[0][0]);
+        expect(sqlText).toMatch(
+            /INSERT INTO "message_trigger_job" \([\s\S]*next_attempt_at,\s*updated_at[\s\S]*\)\s*VALUES/,
+        );
+        expect(sqlText).toMatch(/0,\s*NULL,\s*now\(\)/);
         expect(messageTriggerJobModel.findUnique).toHaveBeenCalledWith({
             where: { dedupeKey: "rule-1:client:1" },
         });
         expect(result.status).toBe("sent");
         expect(result.attempts).toBe(2);
+    });
+
+    it("findSentByRuleIdAndEmployeeScheduleId queries sent rows for the schedule", async () => {
+        messageTriggerJobModel.findMany.mockResolvedValue([
+            createRow({
+                ruleId: "rule-employee",
+                status: "sent",
+                employeeScheduleId: 77,
+            }),
+        ]);
+
+        const result = await repository.findSentByRuleIdAndEmployeeScheduleId("rule-employee", 77);
+
+        expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith({
+            where: {
+                ruleId: "rule-employee",
+                employeeScheduleId: 77,
+                status: "sent",
+            },
+        });
+        expect(result[0]?.status).toBe("sent");
     });
 
     it("cancelPendingByRuleId issues one batch updateMany with reason", async () => {

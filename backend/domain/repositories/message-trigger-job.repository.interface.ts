@@ -17,6 +17,10 @@ export interface IMessageTriggerJobRepository {
         ruleIds: string[],
         employeeScheduleId: number,
     ): Promise<MessageTriggerJobEntity[]>;
+    findSentByRuleIdAndEmployeeScheduleId(
+        ruleId: string,
+        employeeScheduleId: number,
+    ): Promise<MessageTriggerJobEntity[]>;
     cancelPendingByRuleId(ruleId: string, reason: string): Promise<number>;
     upsertPending(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;
 }

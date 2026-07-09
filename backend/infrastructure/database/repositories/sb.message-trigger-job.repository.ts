@@ -167,6 +167,20 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         return rows.map((row) => this.toDomain(row));
     }
 
+    async findSentByRuleIdAndEmployeeScheduleId(
+        ruleId: string,
+        employeeScheduleId: number,
+    ): Promise<MessageTriggerJobEntity[]> {
+        const rows = await this.prisma.message_trigger_job.findMany({
+            where: {
+                ruleId,
+                employeeScheduleId,
+                status: "sent",
+            },
+        });
+        return rows.map((row) => this.toDomain(row));
+    }
+
     async cancelPendingByRuleId(ruleId: string, reason: string): Promise<number> {
         const result = await this.prisma.message_trigger_job.updateMany({
             where: { ruleId, status: "pending" },
@@ -197,7 +211,8 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 dedupe_key,
                 payload,
                 attempts,
-                next_attempt_at
+                next_attempt_at,
+                updated_at
             )
             VALUES (
                 ${job.branchId},
@@ -215,7 +230,8 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 ${job.dedupeKey},
                 ${JSON.stringify(job.payload)}::jsonb,
                 0,
-                NULL
+                NULL,
+                now()
             )
             ON CONFLICT ("dedupe_key") DO UPDATE SET
                 status = 'pending',

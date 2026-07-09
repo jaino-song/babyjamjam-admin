@@ -18,6 +18,17 @@ jest.mock("infrastructure/database/schema-capabilities", () => ({
 
 describe("MessageTriggerService", () => {
     const branchId = "branch-1";
+    type EmployeeAssignmentScheduleSource = {
+        id: number;
+        clientId: number;
+        startDate: Date;
+        primaryEmployeeId: number;
+        secondaryEmployeeId: number | null;
+        client: { id: number; name: string };
+        primaryEmployee: { id: number; name: string; phone: string } | null;
+        secondaryEmployee: { id: number; name: string; phone: string } | null;
+    };
+
     type ServiceInternals = {
         hasTriggerSchema: () => Promise<boolean>;
         rebuildJobsForRule: (
@@ -41,6 +52,10 @@ describe("MessageTriggerService", () => {
                 area?: { bankAccountInfo: { bankName: string | null; accNum: string | null } | null } | null;
             },
         ) => Record<string, string>;
+        buildEmployeeAssignmentJob: (
+            rule: MessageTriggerRuleEntity,
+            schedule: EmployeeAssignmentScheduleSource,
+        ) => MessageTriggerJobEntity | null;
     };
 
     const createRule = (overrides: Partial<{
@@ -72,8 +87,11 @@ describe("MessageTriggerService", () => {
         status: "pending" | "processing" | "sent" | "failed" | "canceled";
         scheduledFor: Date;
         clientId: number | null;
+        employeeScheduleId: number | null;
+        recipientType: MessageTriggerRecipientType;
         recipientPhone: string | null;
         templateKey: MessageTriggerTemplateKey;
+        dedupeKey: string;
         payload: MessageTriggerJobEntity["payload"];
         attempts: number;
         nextAttemptAt: Date | null;
@@ -88,11 +106,11 @@ describe("MessageTriggerService", () => {
             null,
             null,
             overrides.clientId ?? 1,
-            null,
-            MessageTriggerRecipientType.CLIENT,
+            overrides.employeeScheduleId ?? null,
+            overrides.recipientType ?? MessageTriggerRecipientType.CLIENT,
             overrides.recipientPhone ?? "010-1234-5678",
             overrides.templateKey ?? MessageTriggerTemplateKey.CLIENT_GREETING,
-            `dedupe-${overrides.id ?? "job-1"}`,
+            overrides.dedupeKey ?? `dedupe-${overrides.id ?? "job-1"}`,
             overrides.payload ?? {
                 memberId: "member-1",
                 recipientName: "김산모",
@@ -592,6 +610,58 @@ describe("MessageTriggerService", () => {
         };
     };
 
+    const createEmployeeSchedule = (
+        overrides: Partial<EmployeeAssignmentScheduleSource> = {},
+    ): EmployeeAssignmentScheduleSource => ({
+        id: 77,
+        clientId: 1,
+        startDate: new Date("2026-07-15T00:00:00.000Z"),
+        primaryEmployeeId: 30,
+        secondaryEmployeeId: null,
+        client: { id: 1, name: "김산모" },
+        primaryEmployee: { id: 30, name: "홍제공", phone: "010-1111-2222" },
+        secondaryEmployee: null,
+        ...overrides,
+    });
+
+    const createEmployeeSyncService = (
+        scheduleOverrides: Partial<EmployeeAssignmentScheduleSource> = {},
+    ) => {
+        const ruleRepository = {
+            findAll: jest.fn(),
+            findActiveByEventTypes: jest.fn(),
+            create: jest.fn(),
+        };
+        const jobRepository = {
+            upsertPending: jest.fn().mockResolvedValue(undefined),
+            findPendingByRuleIdsAndEmployeeScheduleId: jest.fn().mockResolvedValue([]),
+            findSentByRuleIdAndEmployeeScheduleId: jest.fn().mockResolvedValue([]),
+            update: jest.fn().mockResolvedValue(undefined),
+        };
+        const prisma = {
+            employee_schedule: {
+                findFirst: jest.fn().mockResolvedValue(createEmployeeSchedule(scheduleOverrides)),
+            },
+        };
+        const messageLogRepository = createMessageLogRepository();
+        const messageSenderApprovalService = createMessageSenderApprovalService();
+        const service = new MessageTriggerService(
+            prisma as never,
+            {} as never,
+            messageSenderApprovalService as never,
+            ruleRepository as never,
+            jobRepository as never,
+            messageLogRepository as never,
+        );
+        return {
+            service,
+            ruleRepository,
+            jobRepository,
+            prisma,
+            messageSenderApprovalService,
+        };
+    };
+
     it("syncClientRulesForClient is a no-op for an unapproved branch", async () => {
         const sync = createSyncService();
         sync.messageSenderApprovalService.isApproved.mockResolvedValue(false);
@@ -825,6 +895,111 @@ describe("MessageTriggerService", () => {
         expect(reSync.jobRepository.upsertPending).toHaveBeenCalledTimes(1);
         const persistedJob = reSync.jobRepository.upsertPending.mock.calls[0][0];
         expect(persistedJob.scheduledFor.getTime()).toBeLessThanOrEqual(Date.now());
+    });
+
+    it("re-approving a schedule change for the same employee does not create a second assignment job", async () => {
+        const employeeRule = createRule({
+            id: "rule-employee-assigned",
+            eventType: MessageTriggerEventType.EMPLOYEE_ASSIGNED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            templateKey: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
+        });
+        const sentOldFormatJob = createJob({
+            id: "job-sent-old-format",
+            ruleId: employeeRule.id,
+            status: "sent",
+            employeeScheduleId: 77,
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            recipientPhone: "010-1111-2222",
+            templateKey: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
+            dedupeKey: "rule-employee-assigned:schedule:77:PRIMARY_EMPLOYEE:2026-07-09T00:00:00.000Z",
+            payload: {
+                memberId: "employee:30",
+                recipientName: "홍제공",
+                recipientPhone: "010-1111-2222",
+                templateVariables: {},
+            },
+        });
+        const sync = createEmployeeSyncService();
+        sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([employeeRule]);
+        sync.jobRepository.findSentByRuleIdAndEmployeeScheduleId.mockResolvedValue([sentOldFormatJob]);
+
+        await sync.service.syncEmployeeAssignmentRulesForSchedule(branchId, 77, true);
+
+        expect(sync.jobRepository.findSentByRuleIdAndEmployeeScheduleId).toHaveBeenCalledWith(
+            employeeRule.id,
+            77,
+        );
+        expect(sync.jobRepository.upsertPending).not.toHaveBeenCalled();
+    });
+
+    it("re-assignment to a new employee creates a new assignment job", async () => {
+        const employeeRule = createRule({
+            id: "rule-employee-assigned",
+            eventType: MessageTriggerEventType.EMPLOYEE_ASSIGNED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            templateKey: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
+        });
+        const sentOldEmployeeJob = createJob({
+            id: "job-sent-old-employee",
+            ruleId: employeeRule.id,
+            status: "sent",
+            employeeScheduleId: 77,
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            recipientPhone: "010-1111-2222",
+            templateKey: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
+            dedupeKey: "rule-employee-assigned:schedule:77:PRIMARY_EMPLOYEE:2026-07-09T00:00:00.000Z",
+            payload: {
+                memberId: "employee:30",
+                recipientName: "홍제공",
+                recipientPhone: "010-1111-2222",
+                templateVariables: {},
+            },
+        });
+        const sync = createEmployeeSyncService({
+            primaryEmployeeId: 31,
+            primaryEmployee: { id: 31, name: "박신규", phone: "010-2222-3333" },
+        });
+        sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([employeeRule]);
+        sync.jobRepository.findSentByRuleIdAndEmployeeScheduleId.mockResolvedValue([sentOldEmployeeJob]);
+
+        await sync.service.syncEmployeeAssignmentRulesForSchedule(branchId, 77, true);
+
+        expect(sync.jobRepository.upsertPending).toHaveBeenCalledTimes(1);
+        const persistedJob = sync.jobRepository.upsertPending.mock.calls[0][0];
+        expect(persistedJob.dedupeKey).toBe(
+            "rule-employee-assigned:schedule:77:employee:31:PRIMARY_EMPLOYEE",
+        );
+        expect(persistedJob.payload.employeeId).toBe(31);
+        expect(persistedJob.recipientPhone).toBe("010-2222-3333");
+    });
+
+    it("assignment dedupe key is deterministic for the same rule/schedule/employee/recipient", () => {
+        jest.useFakeTimers().setSystemTime(new Date("2026-07-09T00:00:00.000Z"));
+        try {
+            const { internals } = createService();
+            const employeeRule = createRule({
+                id: "rule-employee-assigned",
+                eventType: MessageTriggerEventType.EMPLOYEE_ASSIGNED,
+                offsetType: MessageTriggerOffsetType.IMMEDIATE,
+                recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+                templateKey: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
+            });
+            const schedule = createEmployeeSchedule();
+
+            const firstJob = internals.buildEmployeeAssignmentJob(employeeRule, schedule);
+            jest.setSystemTime(new Date("2026-07-09T00:05:00.000Z"));
+            const secondJob = internals.buildEmployeeAssignmentJob(employeeRule, schedule);
+
+            expect(firstJob?.dedupeKey).toBe(secondJob?.dedupeKey);
+            expect(firstJob?.dedupeKey).toBe(
+                "rule-employee-assigned:schedule:77:employee:30:PRIMARY_EMPLOYEE",
+            );
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     it("does not re-create the CLIENT_GREETING default when a non-default (AFTER_DAYS) greeting rule already exists", async () => {

@@ -521,6 +521,10 @@ export class MessageTriggerService {
 
         for (const rule of rules) {
             const job = this.buildEmployeeAssignmentJob(rule, schedule);
+            if (!job) continue;
+            if (await this.hasSentEmployeeAssignmentJobForSameEmployee(job)) {
+                continue;
+            }
             await this.persistPendingJob(job, rule, includePast);
         }
     }
@@ -766,12 +770,7 @@ export class MessageTriggerService {
             recipientType: rule.recipientType,
             recipientPhone: employee.phone,
             templateKey: rule.templateKey,
-            dedupeKey: this.buildDedupeKey(
-                rule.id,
-                `schedule:${schedule.id}:${rule.recipientType}`,
-                scheduledFor,
-                rule.recipientType,
-            ),
+            dedupeKey: `${rule.id}:schedule:${schedule.id}:employee:${employee.id}:${rule.recipientType}`,
             payload: {
                 clientId: schedule.clientId,
                 clientName: schedule.client.name,
@@ -787,6 +786,37 @@ export class MessageTriggerService {
                 },
             },
         });
+    }
+
+    private async hasSentEmployeeAssignmentJobForSameEmployee(
+        job: MessageTriggerJobEntity,
+    ): Promise<boolean> {
+        if (job.employeeScheduleId === null) return false;
+
+        const sentJobs = await this.jobRepository.findSentByRuleIdAndEmployeeScheduleId(
+            job.ruleId,
+            job.employeeScheduleId,
+        );
+        return sentJobs.some((sentJob) => this.isSameEmployeeAssignmentRecipient(sentJob, job));
+    }
+
+    private isSameEmployeeAssignmentRecipient(
+        sentJob: MessageTriggerJobEntity,
+        newJob: MessageTriggerJobEntity,
+    ): boolean {
+        if (sentJob.recipientType !== newJob.recipientType) return false;
+
+        const sentEmployeeId = sentJob.payload.employeeId;
+        const newEmployeeId = newJob.payload.employeeId;
+        if (typeof sentEmployeeId === "number" && typeof newEmployeeId === "number") {
+            return sentEmployeeId === newEmployeeId;
+        }
+
+        return Boolean(
+            sentJob.recipientPhone &&
+            newJob.recipientPhone &&
+            sentJob.recipientPhone === newJob.recipientPhone,
+        );
     }
 
     private buildClientTemplateVariables(
