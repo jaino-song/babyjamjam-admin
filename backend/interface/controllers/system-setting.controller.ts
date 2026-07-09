@@ -14,6 +14,7 @@ import {
 import {
     MessageSenderApprovalResponseDto,
 } from "interface/dto/message-sender-approval.dto";
+import { MessageAutomationPoliciesResponseDto } from "interface/dto/message-automation-policy.dto";
 import { TenantGuard, CurrentTenant } from "infrastructure/tenant";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 
@@ -86,6 +87,12 @@ export class SystemSettingController {
             ...state,
             canRequest: this.messageSenderApprovalService.canRequest(tenant.branchRole),
         });
+    }
+
+    @Get("message-automation-policies")
+    @UseGuards(TenantGuard)
+    async getMessageAutomationPolicies(): Promise<MessageAutomationPoliciesResponseDto> {
+        return MessageAutomationPoliciesResponseDto.from();
     }
 
     @Put("ribbon-config")
