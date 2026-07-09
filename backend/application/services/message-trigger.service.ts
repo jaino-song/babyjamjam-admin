@@ -71,6 +71,8 @@ const DEFAULT_CLIENT_GREETING_TRIGGER: UpsertRuleParams = {
     templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
 };
 
+const MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON = "메시지 발송 승인 필요";
+
 export interface UpcomingMessageTriggerJobView {
     id: string;
     ruleId: string;
@@ -158,11 +160,16 @@ export class MessageTriggerService {
             return [];
         }
         const rules = await this.ruleRepository.findAll(branchId);
+        if (!(await this.messageSenderApprovalService.isApproved(branchId))) {
+            return rules;
+        }
         return this.ensureDefaultServiceInfoTrigger(branchId, rules);
     }
 
     async ensureDefaultRulesForBranch(branchId: string): Promise<void> {
         if (!(await this.hasTriggerSchema())) return;
+        if (!(await this.messageSenderApprovalService.isApproved(branchId))) return;
+
         const rules = await this.ruleRepository.findAll(branchId);
         await this.ensureDefaultServiceInfoTrigger(branchId, rules);
     }
@@ -377,12 +384,15 @@ export class MessageTriggerService {
             return;
         }
 
+        const approvedBranchIds = await this.messageSenderApprovalService.getApprovedBranchIds(
+            [...new Set(jobs.map((job) => job.branchId).filter((id): id is string => !!id))],
+        );
         const sentIds = await this.messageLogRepository.findSentTriggerJobIds(
             jobs.map((job) => job.id),
         );
         for (const job of jobs) {
             try {
-                await this.dispatchClaimedJob(job, sentIds);
+                await this.dispatchClaimedJob(job, sentIds, approvedBranchIds);
             } catch (error) {
                 this.logger.error(
                     `[Message Automation] Failed to dispatch trigger job ${job.id}`,
@@ -399,6 +409,10 @@ export class MessageTriggerService {
         suppressGreeting = false,
     ): Promise<void> {
         if (!(await this.hasTriggerSchema())) {
+            return;
+        }
+
+        if (!(await this.messageSenderApprovalService.isApproved(branchId))) {
             return;
         }
 
@@ -453,6 +467,10 @@ export class MessageTriggerService {
         if (!(await this.hasTriggerSchema())) {
             return;
         }
+        if (!(await this.messageSenderApprovalService.isApproved(branchId))) {
+            return;
+        }
+
         const schedule = await this.prisma.employee_schedule.findFirst({
             where: { id: employeeScheduleId, branchId },
             include: {
@@ -551,6 +569,10 @@ export class MessageTriggerService {
         includePast: boolean,
     ): Promise<void> {
         if (!rule.isActive) return;
+
+        if (!(await this.messageSenderApprovalService.isApproved(branchId))) {
+            return;
+        }
 
         if (rule.eventType === MessageTriggerEventType.EMPLOYEE_ASSIGNED) {
             return;
@@ -882,9 +904,16 @@ export class MessageTriggerService {
     private async dispatchClaimedJob(
         job: MessageTriggerJobEntity,
         sentIds: ReadonlySet<string>,
+        approvedBranchIds: ReadonlySet<string>,
     ): Promise<void> {
         const claimed = await this.jobRepository.claimPending(job.id);
         if (!claimed) {
+            return;
+        }
+
+        if (!job.branchId || !approvedBranchIds.has(job.branchId)) {
+            job.cancel(MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON);
+            await this.persistTriggerJobStatus(job, "persist sender approval canceled trigger job");
             return;
         }
 

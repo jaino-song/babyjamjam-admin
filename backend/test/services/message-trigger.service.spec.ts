@@ -105,17 +105,26 @@ describe("MessageTriggerService", () => {
         findRecentByBranch: jest.fn(),
     });
 
+    const createMessageSenderApprovalService = () => ({
+        ensureApproved: jest.fn().mockResolvedValue(undefined),
+        isApproved: jest.fn().mockResolvedValue(true),
+        getApprovedBranchIds: jest
+            .fn<Promise<Set<string>>, [string[]]>()
+            .mockImplementation(async (branchIds) => new Set(branchIds)),
+    });
+
     const createService = () => {
         const ruleRepository = {
             findAll: jest.fn(),
             findActiveByEventTypes: jest.fn(),
             create: jest.fn(),
         };
+        const messageSenderApprovalService = createMessageSenderApprovalService();
         const messageLogRepository = createMessageLogRepository();
         const service = new MessageTriggerService(
             {} as never,
             {} as never,
-            {} as never,
+            messageSenderApprovalService as never,
             ruleRepository as never,
             {} as never,
             messageLogRepository as never,
@@ -125,7 +134,7 @@ describe("MessageTriggerService", () => {
         jest.spyOn(internals, "hasTriggerSchema").mockResolvedValue(true);
         jest.spyOn(internals, "rebuildJobsForRule").mockResolvedValue(undefined);
 
-        return { service, internals, ruleRepository };
+        return { service, internals, ruleRepository, messageSenderApprovalService };
     };
 
     const createDispatchService = () => {
@@ -138,11 +147,12 @@ describe("MessageTriggerService", () => {
             claimPending: jest.fn().mockResolvedValue(true),
             update: jest.fn().mockResolvedValue(undefined),
         };
+        const messageSenderApprovalService = createMessageSenderApprovalService();
         const messageLogRepository = createMessageLogRepository();
         const service = new MessageTriggerService(
             {} as never,
             deliveryService as never,
-            {} as never,
+            messageSenderApprovalService as never,
             {} as never,
             jobRepository as never,
             messageLogRepository as never,
@@ -150,7 +160,13 @@ describe("MessageTriggerService", () => {
 
         jest.spyOn(service as unknown as ServiceInternals, "hasTriggerSchema").mockResolvedValue(true);
 
-        return { service, deliveryService, jobRepository, messageLogRepository };
+        return {
+            service,
+            deliveryService,
+            jobRepository,
+            messageLogRepository,
+            messageSenderApprovalService,
+        };
     };
 
     it("ensures the default service information trigger on rule listing", async () => {
@@ -258,14 +274,35 @@ describe("MessageTriggerService", () => {
         expect(rules).toEqual([existingServiceInfo, existingGreeting]);
     });
 
+    it("does not provision default rules for an unapproved branch", async () => {
+        const { service, internals, ruleRepository, messageSenderApprovalService } = createService();
+        const existingRule = createRule({
+            id: "rule-existing",
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
+            offsetDays: 3,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+        });
+        ruleRepository.findAll.mockResolvedValue([existingRule]);
+        messageSenderApprovalService.isApproved.mockResolvedValue(false);
+
+        const rules = await service.listRules(branchId);
+
+        expect(messageSenderApprovalService.isApproved).toHaveBeenCalledWith(branchId);
+        expect(ruleRepository.create).not.toHaveBeenCalled();
+        expect(internals.rebuildJobsForRule).not.toHaveBeenCalled();
+        expect(rules).toEqual([existingRule]);
+    });
+
     it("does not enqueue jobs for existing clients when an IMMEDIATE CLIENT_GREETING rule is created", async () => {
         // Do NOT spy on rebuildJobsForRule — let the real guard run.
         const jobRepository = { upsertPending: jest.fn() };
+        const messageSenderApprovalService = createMessageSenderApprovalService();
         const messageLogRepository = createMessageLogRepository();
         const service = new MessageTriggerService(
             {} as never,  // prisma — should not be reached past the IMMEDIATE guard
             {} as never,
-            {} as never,
+            messageSenderApprovalService as never,
             {} as never,
             jobRepository as never,
             messageLogRepository as never,
@@ -308,6 +345,38 @@ describe("MessageTriggerService", () => {
         await service.dispatchDueJobs();
 
         expect(deliveryService.sendJob).not.toHaveBeenCalled();
+        expect(job.status).toBe("sent");
+        expect(jobRepository.update).toHaveBeenCalledWith(job);
+    });
+
+    it("dispatch cancels a claimed job whose branch is unapproved without calling the provider", async () => {
+        const { service, deliveryService, jobRepository, messageSenderApprovalService } =
+            createDispatchService();
+        const job = createJob();
+        jobRepository.findDuePending.mockResolvedValue([job]);
+        messageSenderApprovalService.getApprovedBranchIds.mockResolvedValue(new Set());
+
+        await service.dispatchDueJobs();
+
+        expect(messageSenderApprovalService.getApprovedBranchIds).toHaveBeenCalledWith([branchId]);
+        expect(jobRepository.claimPending).toHaveBeenCalledWith(job.id);
+        expect(deliveryService.sendJob).not.toHaveBeenCalled();
+        expect(job.status).toBe("canceled");
+        expect(job.cancelReason).toBe("메시지 발송 승인 필요");
+        expect(jobRepository.update).toHaveBeenCalledWith(job);
+    });
+
+    it("dispatch sends normally for approved branches", async () => {
+        const { service, deliveryService, jobRepository, messageSenderApprovalService } =
+            createDispatchService();
+        const job = createJob();
+        jobRepository.findDuePending.mockResolvedValue([job]);
+        messageSenderApprovalService.getApprovedBranchIds.mockResolvedValue(new Set([branchId]));
+
+        await service.dispatchDueJobs();
+
+        expect(messageSenderApprovalService.getApprovedBranchIds).toHaveBeenCalledWith([branchId]);
+        expect(deliveryService.sendJob).toHaveBeenCalledWith(job);
         expect(job.status).toBe("sent");
         expect(jobRepository.update).toHaveBeenCalledWith(job);
     });
@@ -498,16 +567,71 @@ describe("MessageTriggerService", () => {
             },
         };
         const messageLogRepository = createMessageLogRepository();
+        const messageSenderApprovalService = createMessageSenderApprovalService();
         const service = new MessageTriggerService(
             prisma as never,
             {} as never,
-            {} as never,
+            messageSenderApprovalService as never,
             ruleRepository as never,
             jobRepository as never,
             messageLogRepository as never,
         );
-        return { service, ruleRepository, jobRepository, prisma };
+        return {
+            service,
+            ruleRepository,
+            jobRepository,
+            prisma,
+            messageSenderApprovalService,
+        };
     };
+
+    it("syncClientRulesForClient is a no-op for an unapproved branch", async () => {
+        const sync = createSyncService();
+        sync.messageSenderApprovalService.isApproved.mockResolvedValue(false);
+
+        await sync.service.syncClientRulesForClient(branchId, 1, true);
+
+        expect(sync.messageSenderApprovalService.isApproved).toHaveBeenCalledWith(branchId);
+        expect(sync.prisma.client.findFirst).not.toHaveBeenCalled();
+        expect(sync.ruleRepository.findActiveByEventTypes).not.toHaveBeenCalled();
+        expect(sync.jobRepository.upsertPending).not.toHaveBeenCalled();
+    });
+
+    it("rebuildJobsForRule is a no-op for an unapproved branch", async () => {
+        const prisma = {
+            client: {
+                findMany: jest.fn(),
+            },
+        };
+        const jobRepository = { upsertPending: jest.fn() };
+        const messageSenderApprovalService = createMessageSenderApprovalService();
+        messageSenderApprovalService.isApproved.mockResolvedValue(false);
+        const service = new MessageTriggerService(
+            prisma as never,
+            {} as never,
+            messageSenderApprovalService as never,
+            {} as never,
+            jobRepository as never,
+            createMessageLogRepository() as never,
+        );
+        const serviceInfoRule = createRule({
+            id: "rule-service-info",
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
+            offsetDays: 7,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+        });
+
+        await (service as unknown as ServiceInternals).rebuildJobsForRule(
+            branchId,
+            serviceInfoRule,
+            false,
+        );
+
+        expect(messageSenderApprovalService.isApproved).toHaveBeenCalledWith(branchId);
+        expect(prisma.client.findMany).not.toHaveBeenCalled();
+        expect(jobRepository.upsertPending).not.toHaveBeenCalled();
+    });
 
     it("drops the IMMEDIATE greeting on re-sync (includePast=false) but fires it on create (includePast=true)", async () => {
         const greetingRule = createRule({

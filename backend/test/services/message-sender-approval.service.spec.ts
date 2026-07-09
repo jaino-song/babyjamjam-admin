@@ -4,6 +4,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 
 const createMockPrisma = () => ({
     branch: {
+        findMany: jest.fn(),
         findUnique: jest.fn(),
         update: jest.fn(),
     },
@@ -117,6 +118,48 @@ describe("MessageSenderApprovalService", () => {
                 }),
             ).rejects.toThrow("승인 대기 중인 메시지 발송 권한 신청이 없습니다.");
             expect(prisma.branch.update).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("getApprovedBranchIds", () => {
+        it("should return an empty set without querying when no branch ids are provided", async () => {
+            const result = await service.getApprovedBranchIds([]);
+
+            expect(result.size).toBe(0);
+            expect(prisma.branch.findMany).not.toHaveBeenCalled();
+        });
+
+        it("should query unique branch ids and return only approved matches", async () => {
+            prisma.branch.findMany.mockResolvedValue([{ id: "branch-1" }]);
+
+            const result = await service.getApprovedBranchIds([
+                "branch-1",
+                "branch-1",
+                "branch-2",
+            ]);
+
+            expect(prisma.branch.findMany).toHaveBeenCalledWith({
+                where: {
+                    id: { in: ["branch-1", "branch-2"] },
+                    smsSenderApprovalStatus: "approved",
+                },
+                select: { id: true },
+            });
+            expect(result).toEqual(new Set(["branch-1"]));
+        });
+    });
+
+    describe("isApproved", () => {
+        it("should resolve true only when the branch is approved", async () => {
+            prisma.branch.findMany.mockResolvedValue([{ id: "branch-1" }]);
+
+            await expect(service.isApproved("branch-1")).resolves.toBe(true);
+        });
+
+        it("should resolve false when the branch is not approved", async () => {
+            prisma.branch.findMany.mockResolvedValue([]);
+
+            await expect(service.isApproved("branch-1")).resolves.toBe(false);
         });
     });
 
