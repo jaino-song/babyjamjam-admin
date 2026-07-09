@@ -2,6 +2,7 @@ import {
     BadRequestException,
     Inject,
     Injectable,
+    Logger,
     NotFoundException,
     ServiceUnavailableException,
 } from "@nestjs/common";
@@ -18,9 +19,11 @@ import {
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
+import { TRIGGER_JOB_PROCESSING_RECLAIM_MS } from "domain/constants/message-automation-policy";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
+import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import {
     MESSAGE_TRIGGER_RULE_REPOSITORY,
     IMessageTriggerRuleRepository,
@@ -136,6 +139,8 @@ interface ClientTriggerSource {
 
 @Injectable()
 export class MessageTriggerService {
+    private readonly logger = new Logger(MessageTriggerService.name);
+
     constructor(
         private readonly prisma: PrismaService,
         private readonly deliveryService: MessageTriggerDeliveryService,
@@ -145,7 +150,7 @@ export class MessageTriggerService {
         @Inject(MESSAGE_TRIGGER_JOB_REPOSITORY)
         private readonly jobRepository: IMessageTriggerJobRepository,
         @Inject(MESSAGE_LOG_REPOSITORY)
-        private readonly logRepository: IMessageLogRepository,
+        private readonly messageLogRepository: IMessageLogRepository,
     ) {}
 
     async listRules(branchId: string): Promise<MessageTriggerRuleEntity[]> {
@@ -214,7 +219,7 @@ export class MessageTriggerService {
             return [];
         }
 
-        const logs = await this.logRepository.findRecentByBranch(branchId, limit, skip);
+        const logs = await this.messageLogRepository.findRecentByBranch(branchId, limit, skip);
         if (logs.length === 0) {
             return [];
         }
@@ -365,19 +370,25 @@ export class MessageTriggerService {
         if (!(await this.hasTriggerSchema())) {
             return;
         }
-        const jobs = await this.jobRepository.findDuePending(100);
-        for (const job of jobs) {
-            const sent = await this.deliveryService.sendJob(job).catch((error) => {
-                job.markFailed(error instanceof Error ? error.message : String(error));
-                return false;
-            });
 
-            if (sent) {
-                job.markSent();
-            } else if (job.status === "pending") {
-                job.markFailed("Provider disabled or delivery failed");
+        await this.reclaimStaleProcessingJobs();
+        const jobs = await this.jobRepository.findDuePending(100);
+        if (jobs.length === 0) {
+            return;
+        }
+
+        const sentIds = await this.messageLogRepository.findSentTriggerJobIds(
+            jobs.map((job) => job.id),
+        );
+        for (const job of jobs) {
+            try {
+                await this.dispatchClaimedJob(job, sentIds);
+            } catch (error) {
+                this.logger.error(
+                    `[Message Automation] Failed to dispatch trigger job ${job.id}`,
+                    error instanceof Error ? error.stack : String(error),
+                );
             }
-            await this.jobRepository.update(job);
         }
     }
 
@@ -865,6 +876,74 @@ export class MessageTriggerService {
         for (const job of jobs) {
             job.cancel(reason);
             await this.jobRepository.update(job);
+        }
+    }
+
+    private async dispatchClaimedJob(
+        job: MessageTriggerJobEntity,
+        sentIds: ReadonlySet<string>,
+    ): Promise<void> {
+        const claimed = await this.jobRepository.claimPending(job.id);
+        if (!claimed) {
+            return;
+        }
+
+        job.markProcessing();
+        if (sentIds.has(job.id)) {
+            job.markSent();
+            await this.persistTriggerJobStatus(job, "persist sent trigger job reconciliation");
+            return;
+        }
+
+        try {
+            const sent = await this.deliveryService.sendJob(job);
+            if (sent) {
+                job.markSent();
+            } else if (job.status === "processing") {
+                job.markFailed("Provider disabled or delivery failed");
+            }
+        } catch (error) {
+            if (error instanceof TriggerJobDeferredError) {
+                job.defer(error.kind, error.message);
+            } else {
+                job.markFailed(error instanceof Error ? error.message : String(error));
+            }
+        }
+
+        await this.persistTriggerJobStatus(job, "persist dispatched trigger job");
+    }
+
+    private async reclaimStaleProcessingJobs(): Promise<void> {
+        const cutoff = new Date(Date.now() - TRIGGER_JOB_PROCESSING_RECLAIM_MS);
+        const stale = await this.jobRepository.findStaleProcessing(cutoff);
+        if (stale.length === 0) {
+            return;
+        }
+
+        const sentIds = await this.messageLogRepository.findSentTriggerJobIds(
+            stale.map((job) => job.id),
+        );
+        for (const job of stale) {
+            if (sentIds.has(job.id)) {
+                job.markSent();
+            } else {
+                job.defer("transient", "Reclaimed stale processing job");
+            }
+            await this.persistTriggerJobStatus(job, "persist reclaimed trigger job");
+        }
+    }
+
+    private async persistTriggerJobStatus(
+        job: MessageTriggerJobEntity,
+        action: string,
+    ): Promise<void> {
+        try {
+            await this.jobRepository.update(job);
+        } catch (error) {
+            this.logger.error(
+                `[Message Automation] Failed to ${action} ${job.id}`,
+                error instanceof Error ? error.stack : String(error),
+            );
         }
     }
 

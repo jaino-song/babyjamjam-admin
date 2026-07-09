@@ -5,7 +5,10 @@ import {
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
+import { TRIGGER_JOB_MAX_ATTEMPTS } from "domain/constants/message-automation-policy";
+import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
+import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 
 jest.mock("infrastructure/database/schema-capabilities", () => ({
     hasColumn: jest.fn().mockResolvedValue(true),
@@ -62,19 +65,60 @@ describe("MessageTriggerService", () => {
             new Date("2026-06-01T00:00:00.000Z"),
         );
 
+    const createJob = (overrides: Partial<{
+        id: string;
+        status: "pending" | "processing" | "sent" | "failed" | "canceled";
+        attempts: number;
+        nextAttemptAt: Date | null;
+    }> = {}) =>
+        MessageTriggerJobEntity.reconstitute(
+            overrides.id ?? "job-1",
+            branchId,
+            "rule-1",
+            overrides.status ?? "pending",
+            new Date("2026-06-15T00:00:00.000Z"),
+            null,
+            null,
+            null,
+            1,
+            null,
+            MessageTriggerRecipientType.CLIENT,
+            "010-1234-5678",
+            MessageTriggerTemplateKey.CLIENT_GREETING,
+            `dedupe-${overrides.id ?? "job-1"}`,
+            {
+                memberId: "member-1",
+                recipientName: "김산모",
+                recipientPhone: "010-1234-5678",
+                templateVariables: {},
+            },
+            new Date("2026-06-01T00:00:00.000Z"),
+            new Date("2026-06-01T00:00:00.000Z"),
+            overrides.attempts ?? 0,
+            overrides.nextAttemptAt ?? null,
+        );
+
+    const createMessageLogRepository = () => ({
+        findSentTriggerJobIds: jest.fn<Promise<Set<string>>, [string[]]>().mockResolvedValue(
+            new Set<string>(),
+        ),
+        findRecentByBranch: jest.fn(),
+    });
+
     const createService = () => {
         const ruleRepository = {
             findAll: jest.fn(),
             findActiveByEventTypes: jest.fn(),
             create: jest.fn(),
         };
+        const messageLogRepository = createMessageLogRepository();
         const service = new MessageTriggerService(
             {} as never,
             {} as never,
             {} as never,
             ruleRepository as never,
             {} as never,
-            {} as never,
+            messageLogRepository as never,
         );
 
         const internals = service as unknown as ServiceInternals;
@@ -82,6 +126,31 @@ describe("MessageTriggerService", () => {
         jest.spyOn(internals, "rebuildJobsForRule").mockResolvedValue(undefined);
 
         return { service, internals, ruleRepository };
+    };
+
+    const createDispatchService = () => {
+        const deliveryService = {
+            sendJob: jest.fn().mockResolvedValue(true),
+        };
+        const jobRepository = {
+            findDuePending: jest.fn().mockResolvedValue([]),
+            findStaleProcessing: jest.fn().mockResolvedValue([]),
+            claimPending: jest.fn().mockResolvedValue(true),
+            update: jest.fn().mockResolvedValue(undefined),
+        };
+        const messageLogRepository = createMessageLogRepository();
+        const service = new MessageTriggerService(
+            {} as never,
+            deliveryService as never,
+            {} as never,
+            {} as never,
+            jobRepository as never,
+            messageLogRepository as never,
+        );
+
+        jest.spyOn(service as unknown as ServiceInternals, "hasTriggerSchema").mockResolvedValue(true);
+
+        return { service, deliveryService, jobRepository, messageLogRepository };
     };
 
     it("ensures the default service information trigger on rule listing", async () => {
@@ -192,13 +261,14 @@ describe("MessageTriggerService", () => {
     it("does not enqueue jobs for existing clients when an IMMEDIATE CLIENT_GREETING rule is created", async () => {
         // Do NOT spy on rebuildJobsForRule — let the real guard run.
         const jobRepository = { upsertPending: jest.fn() };
+        const messageLogRepository = createMessageLogRepository();
         const service = new MessageTriggerService(
             {} as never,  // prisma — should not be reached past the IMMEDIATE guard
             {} as never,
             {} as never,
             {} as never,
             jobRepository as never,
-            {} as never,
+            messageLogRepository as never,
         );
 
         const greetingRule = createRule({
@@ -213,6 +283,98 @@ describe("MessageTriggerService", () => {
         await (service as unknown as ServiceInternals).rebuildJobsForRule(branchId, greetingRule, false);
 
         expect(jobRepository.upsertPending).not.toHaveBeenCalled();
+    });
+
+    it("skips a job whose claim was lost to another instance", async () => {
+        const { service, deliveryService, jobRepository } = createDispatchService();
+        const job = createJob();
+        jobRepository.findDuePending.mockResolvedValue([job]);
+        jobRepository.claimPending.mockResolvedValue(false);
+
+        await service.dispatchDueJobs();
+
+        expect(jobRepository.claimPending).toHaveBeenCalledWith(job.id);
+        expect(deliveryService.sendJob).not.toHaveBeenCalled();
+        expect(jobRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("marks a job sent without calling the provider when a sent message_log exists", async () => {
+        const { service, deliveryService, jobRepository, messageLogRepository } =
+            createDispatchService();
+        const job = createJob();
+        jobRepository.findDuePending.mockResolvedValue([job]);
+        messageLogRepository.findSentTriggerJobIds.mockResolvedValue(new Set([job.id]));
+
+        await service.dispatchDueJobs();
+
+        expect(deliveryService.sendJob).not.toHaveBeenCalled();
+        expect(job.status).toBe("sent");
+        expect(jobRepository.update).toHaveBeenCalledWith(job);
+    });
+
+    it("defers with kind config without incrementing attempts", async () => {
+        const { service, deliveryService, jobRepository } = createDispatchService();
+        const job = createJob({ attempts: 2 });
+        jobRepository.findDuePending.mockResolvedValue([job]);
+        deliveryService.sendJob.mockRejectedValue(
+            new TriggerJobDeferredError("config", "Missing sender approval"),
+        );
+
+        await service.dispatchDueJobs();
+
+        expect(job.status).toBe("pending");
+        expect(job.attempts).toBe(2);
+        expect(job.nextAttemptAt).toBeInstanceOf(Date);
+    });
+
+    it("terminal-fails after TRIGGER_JOB_MAX_ATTEMPTS transient defers", async () => {
+        const { service, deliveryService, jobRepository } = createDispatchService();
+        const job = createJob({ attempts: TRIGGER_JOB_MAX_ATTEMPTS - 1 });
+        jobRepository.findDuePending.mockResolvedValue([job]);
+        deliveryService.sendJob.mockRejectedValue(
+            new TriggerJobDeferredError("transient", "Provider timeout"),
+        );
+
+        await service.dispatchDueJobs();
+
+        expect(job.status).toBe("failed");
+        expect(job.attempts).toBe(TRIGGER_JOB_MAX_ATTEMPTS);
+        expect(job.cancelReason).toBe("Provider timeout");
+    });
+
+    it("reclaim marks stale processing job sent when a sent log exists; re-queues pending otherwise", async () => {
+        const { service, jobRepository, messageLogRepository } = createDispatchService();
+        const deliveredJob = createJob({ id: "job-delivered", status: "processing" });
+        const unsentJob = createJob({ id: "job-unsent", status: "processing" });
+        jobRepository.findStaleProcessing.mockResolvedValue([deliveredJob, unsentJob]);
+        messageLogRepository.findSentTriggerJobIds.mockResolvedValue(new Set([deliveredJob.id]));
+
+        await service.dispatchDueJobs();
+
+        expect(deliveredJob.status).toBe("sent");
+        expect(unsentJob.status).toBe("pending");
+        expect(unsentJob.attempts).toBe(1);
+        expect(unsentJob.nextAttemptAt).toBeInstanceOf(Date);
+        expect(jobRepository.update).toHaveBeenCalledTimes(2);
+    });
+
+    it("a failing per-job status write does not abort the rest of the batch", async () => {
+        const { service, deliveryService, jobRepository } = createDispatchService();
+        const firstJob = createJob({ id: "job-first" });
+        const secondJob = createJob({ id: "job-second" });
+        const logger = (service as unknown as {
+            logger: { error: (message: string, stack?: string) => void };
+        }).logger;
+        jest.spyOn(logger, "error").mockImplementation(() => undefined);
+        jobRepository.findDuePending.mockResolvedValue([firstJob, secondJob]);
+        jobRepository.update.mockRejectedValueOnce(new Error("write failed"));
+
+        await service.dispatchDueJobs();
+
+        expect(deliveryService.sendJob).toHaveBeenCalledTimes(2);
+        expect(firstJob.status).toBe("sent");
+        expect(secondJob.status).toBe("sent");
+        expect(jobRepository.update).toHaveBeenCalledTimes(2);
     });
 
     it("maps the service information name variable from the client name", () => {
@@ -335,13 +497,14 @@ describe("MessageTriggerService", () => {
                 }),
             },
         };
+        const messageLogRepository = createMessageLogRepository();
         const service = new MessageTriggerService(
             prisma as never,
             {} as never,
             {} as never,
             ruleRepository as never,
             jobRepository as never,
-            {} as never,
+            messageLogRepository as never,
         );
         return { service, ruleRepository, jobRepository, prisma };
     };
