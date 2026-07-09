@@ -193,6 +193,22 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         return result.count;
     }
 
+    async cancelPendingOlderThan(ruleId: string, cutoff: Date, reason: string): Promise<number> {
+        const result = await this.prisma.message_trigger_job.updateMany({
+            where: {
+                ruleId,
+                status: "pending",
+                scheduledFor: { lt: cutoff },
+            },
+            data: {
+                status: "canceled",
+                canceledAt: new Date(),
+                cancelReason: reason,
+            },
+        });
+        return result.count;
+    }
+
     async upsertPending(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity> {
         const rows = await this.prisma.$queryRaw<MessageTriggerJobRawRow[]>(Prisma.sql`
             INSERT INTO "message_trigger_job" (

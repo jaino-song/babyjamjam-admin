@@ -8,6 +8,7 @@ export interface IMessageTriggerRuleRepository {
         branchId: string,
         eventTypes: MessageTriggerEventType[],
     ): Promise<MessageTriggerRuleEntity[]>;
+    findInactiveDefaultRules(limit?: number): Promise<MessageTriggerRuleEntity[]>;
     findStaleRules(limit?: number): Promise<MessageTriggerRuleEntity[]>;
     create(branchId: string, rule: MessageTriggerRuleEntity): Promise<MessageTriggerRuleEntity>;
     update(branchId: string, rule: MessageTriggerRuleEntity): Promise<MessageTriggerRuleEntity>;

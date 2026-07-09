@@ -43,6 +43,18 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         return rows.map((row) => this.toDomain(row));
     }
 
+    async findInactiveDefaultRules(limit = 50): Promise<MessageTriggerRuleEntity[]> {
+        const rows = await this.prisma.message_trigger_rule.findMany({
+            where: {
+                isDefault: true,
+                isActive: false,
+            },
+            orderBy: { updatedAt: "asc" },
+            take: limit,
+        });
+        return rows.map((row) => this.toDomain(row));
+    }
+
     async findStaleRules(limit = 10): Promise<MessageTriggerRuleEntity[]> {
         const rows = await this.prisma.message_trigger_rule.findMany({
             where: { jobsStale: true },

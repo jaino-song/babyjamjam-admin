@@ -293,6 +293,28 @@ describe("SbMessageTriggerJobRepository", () => {
         });
     });
 
+    it("cancelPendingOlderThan issues one batch updateMany scoped to old pending jobs", async () => {
+        const cutoff = new Date("2026-07-08T00:00:00.000Z");
+        messageTriggerJobModel.updateMany.mockResolvedValue({ count: 2 });
+
+        await expect(
+            repository.cancelPendingOlderThan("rule-1", cutoff, "승인 전 예정 시각 경과"),
+        ).resolves.toBe(2);
+
+        expect(messageTriggerJobModel.updateMany).toHaveBeenCalledWith({
+            where: {
+                ruleId: "rule-1",
+                status: "pending",
+                scheduledFor: { lt: cutoff },
+            },
+            data: {
+                status: "canceled",
+                canceledAt: now,
+                cancelReason: "승인 전 예정 시각 경과",
+            },
+        });
+    });
+
     it("findStaleProcessing queries processing rows older than cutoff", async () => {
         const cutoff = new Date("2026-07-09T00:10:00.000Z");
         messageTriggerJobModel.findMany.mockResolvedValue([createRow({

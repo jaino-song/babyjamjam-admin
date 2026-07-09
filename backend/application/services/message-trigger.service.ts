@@ -20,7 +20,10 @@ import {
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
-import { TRIGGER_JOB_PROCESSING_RECLAIM_MS } from "domain/constants/message-automation-policy";
+import {
+    PAST_OCCURRENCE_GRACE_MS,
+    TRIGGER_JOB_PROCESSING_RECLAIM_MS,
+} from "domain/constants/message-automation-policy";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
@@ -402,6 +405,7 @@ export class MessageTriggerService {
             }
         }
 
+        await this.recoverApprovedBranches();
         await this.processStaleRuleRebuilds();
     }
 
@@ -1052,12 +1056,45 @@ export class MessageTriggerService {
                     await this.jobRepository.cancelPendingByRuleId(rule.id, "Rule deactivated");
                 } else {
                     await this.rebuildJobsForRule(rule.branchId, rule, false);
+                    await this.jobRepository.cancelPendingOlderThan(
+                        rule.id,
+                        new Date(Date.now() - PAST_OCCURRENCE_GRACE_MS),
+                        "승인 전 예정 시각 경과",
+                    );
                 }
 
                 await this.ruleRepository.clearJobsStaleIfUnchanged(rule.id, readUpdatedAt);
             } catch (error) {
                 this.logger.error(
                     `[Message Automation] Failed to process stale trigger rule ${rule.id}`,
+                    error instanceof Error ? error.stack : String(error),
+                );
+            }
+        }
+    }
+
+    private async recoverApprovedBranches(): Promise<void> {
+        const candidates = await this.ruleRepository.findInactiveDefaultRules(50);
+        if (candidates.length === 0) return;
+
+        const branchIds = [
+            ...new Set(candidates.map((rule) => rule.branchId).filter((id): id is string => !!id)),
+        ];
+        const approvedBranchIds =
+            await this.messageSenderApprovalService.getApprovedBranchIds(branchIds);
+
+        for (const rule of candidates) {
+            if (!rule.branchId || !approvedBranchIds.has(rule.branchId)) {
+                continue;
+            }
+
+            try {
+                rule.update({ isActive: true });
+                await this.ruleRepository.update(rule.branchId, rule);
+                await this.ruleRepository.markJobsStale(rule.id);
+            } catch (error) {
+                this.logger.error(
+                    `[Message Automation] Failed to recover approved default trigger rule ${rule.id}`,
                     error instanceof Error ? error.stack : String(error),
                 );
             }
