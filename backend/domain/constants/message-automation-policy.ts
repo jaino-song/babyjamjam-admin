@@ -1,0 +1,7 @@
+// Single source for automation policy values. A later endpoint exposes these
+// values to the 설정 UI, so runtime code must import from here rather than
+// inlining numbers.
+export const TRIGGER_JOB_MAX_ATTEMPTS = 3;
+export const TRIGGER_JOB_RETRY_DELAY_MS = 5 * 60 * 1000;
+export const TRIGGER_JOB_CONFIG_RETRY_DELAY_MS = 30 * 60 * 1000;
+export const TRIGGER_JOB_PROCESSING_RECLAIM_MS = 10 * 60 * 1000;
