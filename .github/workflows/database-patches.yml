@@ -74,6 +74,26 @@ jobs:
           ALTER TABLE "message_trigger_job"  ADD COLUMN IF NOT EXISTS "next_attempt_at" TIMESTAMPTZ(6);
           ALTER TABLE "message_trigger_rule" ADD COLUMN IF NOT EXISTS "is_default" BOOLEAN NOT NULL DEFAULT false;
           ALTER TABLE "message_trigger_rule" ADD COLUMN IF NOT EXISTS "jobs_stale" BOOLEAN NOT NULL DEFAULT false;
+          UPDATE "message_trigger_rule"
+          SET "is_active" = false
+          WHERE "is_active" = true
+            AND "branch_id" IN (SELECT "id" FROM "branch" WHERE "sms_sender_approval_status" IS DISTINCT FROM 'approved');
+          UPDATE "message_trigger_rule" r
+          SET "is_default" = true
+          WHERE r."is_default" = false
+            AND r."template_key" IN ('SERVICE_INFO', 'CLIENT_GREETING')
+            AND r."branch_id" IN (SELECT "id" FROM "branch" WHERE "sms_sender_approval_status" IS DISTINCT FROM 'approved')
+            AND r."id" = (
+              SELECT r2."id" FROM "message_trigger_rule" r2
+              WHERE r2."branch_id" = r."branch_id" AND r2."template_key" = r."template_key"
+              ORDER BY r2."created_at" ASC LIMIT 1
+            );
+          UPDATE "message_trigger_job"
+          SET "status" = 'canceled', "canceled_at" = now(), "cancel_reason" = '메시지 발송 승인 전 자동 생성 취소'
+          WHERE "status" = 'pending'
+            AND "branch_id" IN (SELECT "id" FROM "branch" WHERE "sms_sender_approval_status" IS DISTINCT FROM 'approved');
+          CREATE UNIQUE INDEX IF NOT EXISTS "uniq_message_trigger_rule_default"
+          ON "message_trigger_rule" ("branch_id", "template_key") WHERE "is_default" = true;
           SQL
 
       - name: Verify database patches
@@ -154,6 +174,16 @@ jobs:
                 AND column_default = 'false'
             ) THEN
               RAISE EXCEPTION 'message_trigger_rule.jobs_stale is missing or has the wrong shape';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM pg_indexes
+              WHERE schemaname = 'public'
+                AND tablename = 'message_trigger_rule'
+                AND indexname = 'uniq_message_trigger_rule_default'
+            ) THEN
+              RAISE EXCEPTION 'message_trigger_rule.uniq_message_trigger_rule_default index is missing';
             END IF;
           END $$;
           SQL
@@ -210,6 +240,26 @@ jobs:
           ALTER TABLE "message_trigger_job"  ADD COLUMN IF NOT EXISTS "next_attempt_at" TIMESTAMPTZ(6);
           ALTER TABLE "message_trigger_rule" ADD COLUMN IF NOT EXISTS "is_default" BOOLEAN NOT NULL DEFAULT false;
           ALTER TABLE "message_trigger_rule" ADD COLUMN IF NOT EXISTS "jobs_stale" BOOLEAN NOT NULL DEFAULT false;
+          UPDATE "message_trigger_rule"
+          SET "is_active" = false
+          WHERE "is_active" = true
+            AND "branch_id" IN (SELECT "id" FROM "branch" WHERE "sms_sender_approval_status" IS DISTINCT FROM 'approved');
+          UPDATE "message_trigger_rule" r
+          SET "is_default" = true
+          WHERE r."is_default" = false
+            AND r."template_key" IN ('SERVICE_INFO', 'CLIENT_GREETING')
+            AND r."branch_id" IN (SELECT "id" FROM "branch" WHERE "sms_sender_approval_status" IS DISTINCT FROM 'approved')
+            AND r."id" = (
+              SELECT r2."id" FROM "message_trigger_rule" r2
+              WHERE r2."branch_id" = r."branch_id" AND r2."template_key" = r."template_key"
+              ORDER BY r2."created_at" ASC LIMIT 1
+            );
+          UPDATE "message_trigger_job"
+          SET "status" = 'canceled', "canceled_at" = now(), "cancel_reason" = '메시지 발송 승인 전 자동 생성 취소'
+          WHERE "status" = 'pending'
+            AND "branch_id" IN (SELECT "id" FROM "branch" WHERE "sms_sender_approval_status" IS DISTINCT FROM 'approved');
+          CREATE UNIQUE INDEX IF NOT EXISTS "uniq_message_trigger_rule_default"
+          ON "message_trigger_rule" ("branch_id", "template_key") WHERE "is_default" = true;
           SQL
 
       - name: Verify database patches
@@ -290,6 +340,16 @@ jobs:
                 AND column_default = 'false'
             ) THEN
               RAISE EXCEPTION 'message_trigger_rule.jobs_stale is missing or has the wrong shape';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM pg_indexes
+              WHERE schemaname = 'public'
+                AND tablename = 'message_trigger_rule'
+                AND indexname = 'uniq_message_trigger_rule_default'
+            ) THEN
+              RAISE EXCEPTION 'message_trigger_rule.uniq_message_trigger_rule_default index is missing';
             END IF;
           END $$;
           SQL
