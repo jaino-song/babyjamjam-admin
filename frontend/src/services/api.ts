@@ -281,6 +281,25 @@ export interface MessageSenderApprovalResponse {
     approvedAt: string | null;
 }
 
+export interface MessageAutomationPolicyRow {
+    id: string;
+    label: string;
+    value: string;
+}
+
+export interface MessageAutomationPolicy {
+    id: string;
+    title: string;
+    description: string;
+    active: boolean;
+    requiresApproval: boolean;
+    rows: MessageAutomationPolicyRow[];
+}
+
+export interface MessageAutomationPoliciesResponse {
+    policies: MessageAutomationPolicy[];
+}
+
 export interface NotificationPreferencesResponse {
     emailNotificationsEnabled: boolean;
     updatedAt?: string;
@@ -374,6 +393,10 @@ export const settingsApi = {
     },
     getMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {
         const { data } = await api.get("/settings/message-sender-approval");
+        return data;
+    },
+    getMessageAutomationPolicies: async (): Promise<MessageAutomationPoliciesResponse> => {
+        const { data } = await api.get("/settings/message-automation-policies");
         return data;
     },
     requestMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {
