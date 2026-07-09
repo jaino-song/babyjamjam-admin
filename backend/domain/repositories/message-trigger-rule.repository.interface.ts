@@ -8,8 +8,11 @@ export interface IMessageTriggerRuleRepository {
         branchId: string,
         eventTypes: MessageTriggerEventType[],
     ): Promise<MessageTriggerRuleEntity[]>;
+    findStaleRules(limit?: number): Promise<MessageTriggerRuleEntity[]>;
     create(branchId: string, rule: MessageTriggerRuleEntity): Promise<MessageTriggerRuleEntity>;
     update(branchId: string, rule: MessageTriggerRuleEntity): Promise<MessageTriggerRuleEntity>;
+    markJobsStale(ruleId: string): Promise<void>;
+    clearJobsStaleIfUnchanged(ruleId: string, updatedAtAtReadTime: Date): Promise<boolean>;
     delete(branchId: string, id: string): Promise<void>;
 }
 

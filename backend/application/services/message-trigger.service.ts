@@ -39,6 +39,7 @@ import {
 } from "domain/repositories/message-log.repository.interface";
 import { MessageTriggerDeliveryService } from "./message-trigger-delivery.service";
 import { hasColumn, hasTable } from "infrastructure/database/schema-capabilities";
+import { isTransientPrismaConnectivityError } from "infrastructure/database/prisma-error.utils";
 import { MessageSenderApprovalService } from "./message-sender-approval.service";
 import { buildSmsClientVariables } from "./sms-client-variables";
 
@@ -334,9 +335,7 @@ export class MessageTriggerService {
                 offsetDays: this.normalizeOffsetDays(params.offsetType, params.offsetDays),
             }),
         );
-        if (rule.isActive) {
-            await this.rebuildJobsForRule(branchId, rule, false);
-        }
+        await this.ruleRepository.markJobsStale(rule.id);
         return rule;
     }
 
@@ -365,9 +364,7 @@ export class MessageTriggerService {
         });
         const updated = await this.ruleRepository.update(branchId, rule);
         await this.cancelPendingJobsForRule(updated.id, "Rule updated");
-        if (updated.isActive) {
-            await this.rebuildJobsForRule(branchId, updated, false);
-        }
+        await this.ruleRepository.markJobsStale(updated.id);
         return updated;
     }
 
@@ -385,26 +382,27 @@ export class MessageTriggerService {
 
         await this.reclaimStaleProcessingJobs();
         const jobs = await this.jobRepository.findDuePending(100);
-        if (jobs.length === 0) {
-            return;
-        }
 
-        const approvedBranchIds = await this.messageSenderApprovalService.getApprovedBranchIds(
-            [...new Set(jobs.map((job) => job.branchId).filter((id): id is string => !!id))],
-        );
-        const sentIds = await this.messageLogRepository.findSentTriggerJobIds(
-            jobs.map((job) => job.id),
-        );
-        for (const job of jobs) {
-            try {
-                await this.dispatchClaimedJob(job, sentIds, approvedBranchIds);
-            } catch (error) {
-                this.logger.error(
-                    `[Message Automation] Failed to dispatch trigger job ${job.id}`,
-                    error instanceof Error ? error.stack : String(error),
-                );
+        if (jobs.length > 0) {
+            const approvedBranchIds = await this.messageSenderApprovalService.getApprovedBranchIds(
+                [...new Set(jobs.map((job) => job.branchId).filter((id): id is string => !!id))],
+            );
+            const sentIds = await this.messageLogRepository.findSentTriggerJobIds(
+                jobs.map((job) => job.id),
+            );
+            for (const job of jobs) {
+                try {
+                    await this.dispatchClaimedJob(job, sentIds, approvedBranchIds);
+                } catch (error) {
+                    this.logger.error(
+                        `[Message Automation] Failed to dispatch trigger job ${job.id}`,
+                        error instanceof Error ? error.stack : String(error),
+                    );
+                }
             }
         }
+
+        await this.processStaleRuleRebuilds();
     }
 
     async syncClientRulesForClient(
@@ -615,11 +613,12 @@ export class MessageTriggerService {
     }
 
     private async rebuildJobsForRule(
-        branchId: string,
+        branchId: string | null,
         rule: MessageTriggerRuleEntity,
         includePast: boolean,
     ): Promise<void> {
         if (!rule.isActive) return;
+        if (!branchId) return;
 
         if (!(await this.messageSenderApprovalService.isApproved(branchId))) {
             return;
@@ -970,11 +969,7 @@ export class MessageTriggerService {
     }
 
     private async cancelPendingJobsForRule(ruleId: string, reason: string): Promise<void> {
-        const jobs = await this.jobRepository.findPendingByRuleId(ruleId);
-        for (const job of jobs) {
-            job.cancel(reason);
-            await this.jobRepository.update(job);
-        }
+        await this.jobRepository.cancelPendingByRuleId(ruleId, reason);
     }
 
     private async cancelPendingJobsForClient(
@@ -1037,12 +1032,36 @@ export class MessageTriggerService {
         } catch (error) {
             if (error instanceof TriggerJobDeferredError) {
                 job.defer(error.kind, error.message);
+            } else if (isTransientPrismaConnectivityError(error)) {
+                job.defer("transient", error instanceof Error ? error.message : String(error));
             } else {
                 job.markFailed(error instanceof Error ? error.message : String(error));
             }
         }
 
         await this.persistTriggerJobStatus(job, "persist dispatched trigger job");
+    }
+
+    private async processStaleRuleRebuilds(): Promise<void> {
+        const staleRules = await this.ruleRepository.findStaleRules(10);
+
+        for (const rule of staleRules) {
+            const readUpdatedAt = rule.updatedAt;
+            try {
+                if (!rule.isActive) {
+                    await this.jobRepository.cancelPendingByRuleId(rule.id, "Rule deactivated");
+                } else {
+                    await this.rebuildJobsForRule(rule.branchId, rule, false);
+                }
+
+                await this.ruleRepository.clearJobsStaleIfUnchanged(rule.id, readUpdatedAt);
+            } catch (error) {
+                this.logger.error(
+                    `[Message Automation] Failed to process stale trigger rule ${rule.id}`,
+                    error instanceof Error ? error.stack : String(error),
+                );
+            }
+        }
     }
 
     private async reclaimStaleProcessingJobs(): Promise<void> {

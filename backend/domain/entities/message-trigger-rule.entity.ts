@@ -19,6 +19,7 @@ export class MessageTriggerRuleEntity {
         public createdAt: Date,
         public updatedAt: Date,
         public isDefault = false,
+        public jobsStale = false,
     ) {}
 
     static create(params: {
@@ -31,6 +32,7 @@ export class MessageTriggerRuleEntity {
         recipientType: MessageTriggerRecipientType;
         templateKey: MessageTriggerTemplateKey;
         isDefault?: boolean;
+        jobsStale?: boolean;
     }): MessageTriggerRuleEntity {
         const now = new Date();
         return new MessageTriggerRuleEntity(
@@ -46,6 +48,7 @@ export class MessageTriggerRuleEntity {
             now,
             now,
             params.isDefault ?? false,
+            params.jobsStale ?? false,
         );
     }
 
@@ -62,6 +65,7 @@ export class MessageTriggerRuleEntity {
         createdAt: Date,
         updatedAt: Date,
         isDefault = false,
+        jobsStale = false,
     ): MessageTriggerRuleEntity {
         return new MessageTriggerRuleEntity(
             id,
@@ -76,6 +80,7 @@ export class MessageTriggerRuleEntity {
             createdAt,
             updatedAt,
             isDefault,
+            jobsStale,
         );
     }
 

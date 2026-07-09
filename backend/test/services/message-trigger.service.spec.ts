@@ -32,10 +32,11 @@ describe("MessageTriggerService", () => {
     type ServiceInternals = {
         hasTriggerSchema: () => Promise<boolean>;
         rebuildJobsForRule: (
-            branchId: string,
+            branchId: string | null,
             rule: MessageTriggerRuleEntity,
             includePast: boolean,
         ) => Promise<void>;
+        processStaleRuleRebuilds: () => Promise<void>;
         buildClientTemplateVariables: (
             rule: MessageTriggerRuleEntity,
             client: {
@@ -66,19 +67,27 @@ describe("MessageTriggerService", () => {
         offsetDays: number;
         recipientType: MessageTriggerRecipientType;
         templateKey: MessageTriggerTemplateKey;
+        isActive: boolean;
+        branchId: string | null;
+        isDefault: boolean;
+        jobsStale: boolean;
+        createdAt: Date;
+        updatedAt: Date;
     }> = {}) =>
         MessageTriggerRuleEntity.reconstitute(
             overrides.id ?? "rule-1",
-            branchId,
+            overrides.branchId ?? branchId,
             overrides.name ?? "기존 규칙",
-            true,
+            overrides.isActive ?? true,
             overrides.eventType ?? MessageTriggerEventType.CLIENT_CREATED,
             overrides.offsetType ?? MessageTriggerOffsetType.IMMEDIATE,
             overrides.offsetDays ?? 0,
             overrides.recipientType ?? MessageTriggerRecipientType.CLIENT,
             overrides.templateKey ?? MessageTriggerTemplateKey.CLIENT_WELCOME,
-            new Date("2026-06-01T00:00:00.000Z"),
-            new Date("2026-06-01T00:00:00.000Z"),
+            overrides.createdAt ?? new Date("2026-06-01T00:00:00.000Z"),
+            overrides.updatedAt ?? new Date("2026-06-01T00:00:00.000Z"),
+            overrides.isDefault ?? false,
+            overrides.jobsStale ?? false,
         );
 
     const createJob = (overrides: Partial<{
@@ -141,8 +150,17 @@ describe("MessageTriggerService", () => {
     const createService = () => {
         const ruleRepository = {
             findAll: jest.fn(),
+            findById: jest.fn(),
             findActiveByEventTypes: jest.fn(),
             create: jest.fn(),
+            update: jest.fn(),
+            delete: jest.fn(),
+            markJobsStale: jest.fn().mockResolvedValue(undefined),
+            findStaleRules: jest.fn().mockResolvedValue([]),
+            clearJobsStaleIfUnchanged: jest.fn().mockResolvedValue(true),
+        };
+        const jobRepository = {
+            cancelPendingByRuleId: jest.fn().mockResolvedValue(0),
         };
         const messageSenderApprovalService = createMessageSenderApprovalService();
         const messageLogRepository = createMessageLogRepository();
@@ -151,7 +169,7 @@ describe("MessageTriggerService", () => {
             {} as never,
             messageSenderApprovalService as never,
             ruleRepository as never,
-            {} as never,
+            jobRepository as never,
             messageLogRepository as never,
         );
 
@@ -159,7 +177,7 @@ describe("MessageTriggerService", () => {
         jest.spyOn(internals, "hasTriggerSchema").mockResolvedValue(true);
         jest.spyOn(internals, "rebuildJobsForRule").mockResolvedValue(undefined);
 
-        return { service, internals, ruleRepository, messageSenderApprovalService };
+        return { service, internals, ruleRepository, jobRepository, messageSenderApprovalService };
     };
 
     const createDispatchService = () => {
@@ -171,6 +189,11 @@ describe("MessageTriggerService", () => {
             findStaleProcessing: jest.fn().mockResolvedValue([]),
             claimPending: jest.fn().mockResolvedValue(true),
             update: jest.fn().mockResolvedValue(undefined),
+            cancelPendingByRuleId: jest.fn().mockResolvedValue(0),
+        };
+        const ruleRepository = {
+            findStaleRules: jest.fn().mockResolvedValue([]),
+            clearJobsStaleIfUnchanged: jest.fn().mockResolvedValue(true),
         };
         const messageSenderApprovalService = createMessageSenderApprovalService();
         const messageLogRepository = createMessageLogRepository();
@@ -178,7 +201,7 @@ describe("MessageTriggerService", () => {
             {} as never,
             deliveryService as never,
             messageSenderApprovalService as never,
-            {} as never,
+            ruleRepository as never,
             jobRepository as never,
             messageLogRepository as never,
         );
@@ -188,6 +211,7 @@ describe("MessageTriggerService", () => {
         return {
             service,
             deliveryService,
+            ruleRepository,
             jobRepository,
             messageLogRepository,
             messageSenderApprovalService,
@@ -319,6 +343,66 @@ describe("MessageTriggerService", () => {
         expect(rules).toEqual([existingRule]);
     });
 
+    it("createRule returns without rebuilding jobs and marks the rule stale", async () => {
+        const { service, internals, ruleRepository, jobRepository } = createService();
+        const createdRule = createRule({
+            id: "rule-created",
+            name: "신규 고객 인사",
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            offsetDays: 0,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+        });
+        ruleRepository.create.mockResolvedValue(createdRule);
+
+        const result = await service.createRule(branchId, {
+            name: "신규 고객 인사",
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            recipientType: MessageTriggerRecipientType.CLIENT,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+        });
+
+        expect(result).toBe(createdRule);
+        expect(ruleRepository.markJobsStale).toHaveBeenCalledWith(createdRule.id);
+        expect(internals.rebuildJobsForRule).not.toHaveBeenCalled();
+        expect(jobRepository.cancelPendingByRuleId).not.toHaveBeenCalled();
+    });
+
+    it("updateRule batch-cancels pending jobs and marks stale without rebuilding in-request", async () => {
+        const { service, internals, ruleRepository, jobRepository } = createService();
+        const existingRule = createRule({
+            id: "rule-updated",
+            name: "기존 규칙",
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            offsetDays: 0,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+        });
+        const updatedRule = createRule({
+            id: existingRule.id,
+            name: "수정된 규칙",
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            offsetDays: 0,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+        });
+        ruleRepository.findById.mockResolvedValue(existingRule);
+        ruleRepository.update.mockResolvedValue(updatedRule);
+
+        const result = await service.updateRule(branchId, existingRule.id, {
+            name: "수정된 규칙",
+        });
+
+        expect(result).toBe(updatedRule);
+        expect(jobRepository.cancelPendingByRuleId).toHaveBeenCalledWith(
+            existingRule.id,
+            "Rule updated",
+        );
+        expect(ruleRepository.markJobsStale).toHaveBeenCalledWith(existingRule.id);
+        expect(internals.rebuildJobsForRule).not.toHaveBeenCalled();
+    });
+
     it("does not enqueue jobs for existing clients when an IMMEDIATE CLIENT_GREETING rule is created", async () => {
         // Do NOT spy on rebuildJobsForRule — let the real guard run.
         const jobRepository = { upsertPending: jest.fn() };
@@ -436,6 +520,25 @@ describe("MessageTriggerService", () => {
         expect(job.cancelReason).toBe("Provider timeout");
     });
 
+    it("defers transiently when the delivery path throws a transient Prisma connectivity error", async () => {
+        const { service, deliveryService, jobRepository } = createDispatchService();
+        const job = createJob({ attempts: 0 });
+        const prismaError = new Prisma.PrismaClientKnownRequestError("Can't reach database server", {
+            code: "P1001",
+            clientVersion: "test",
+        });
+        jobRepository.findDuePending.mockResolvedValue([job]);
+        deliveryService.sendJob.mockRejectedValue(prismaError);
+
+        await service.dispatchDueJobs();
+
+        expect(job.status).toBe("pending");
+        expect(job.attempts).toBe(1);
+        expect(job.nextAttemptAt).toBeInstanceOf(Date);
+        expect(job.cancelReason).toBeNull();
+        expect(jobRepository.update).toHaveBeenCalledWith(job);
+    });
+
     it("reclaim marks stale processing job sent when a sent log exists; re-queues pending otherwise", async () => {
         const { service, jobRepository, messageLogRepository } = createDispatchService();
         const deliveredJob = createJob({ id: "job-delivered", status: "processing" });
@@ -469,6 +572,128 @@ describe("MessageTriggerService", () => {
         expect(firstJob.status).toBe("sent");
         expect(secondJob.status).toBe("sent");
         expect(jobRepository.update).toHaveBeenCalledTimes(2);
+    });
+
+    it("processStaleRuleRebuilds rebuilds an active stale rule and clears the flag when unchanged", async () => {
+        const { service, ruleRepository, jobRepository } = createDispatchService();
+        const staleRule = createRule({
+            id: "rule-stale-active",
+            jobsStale: true,
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
+            offsetDays: 7,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            updatedAt: new Date("2026-06-02T00:00:00.000Z"),
+        });
+        ruleRepository.findStaleRules.mockResolvedValue([staleRule]);
+        const internals = service as unknown as ServiceInternals;
+        const rebuildSpy = jest.spyOn(internals, "rebuildJobsForRule").mockResolvedValue(undefined);
+
+        await internals.processStaleRuleRebuilds();
+
+        expect(ruleRepository.findStaleRules).toHaveBeenCalledWith(10);
+        expect(rebuildSpy).toHaveBeenCalledWith(staleRule.branchId, staleRule, false);
+        expect(ruleRepository.clearJobsStaleIfUnchanged).toHaveBeenCalledWith(
+            staleRule.id,
+            staleRule.updatedAt,
+        );
+        expect(jobRepository.cancelPendingByRuleId).not.toHaveBeenCalled();
+    });
+
+    it("processStaleRuleRebuilds leaves the flag set when the rule changed mid-rebuild", async () => {
+        const { service, ruleRepository } = createDispatchService();
+        const staleRule = createRule({
+            id: "rule-stale-changed",
+            jobsStale: true,
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
+            offsetDays: 7,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            updatedAt: new Date("2026-06-03T00:00:00.000Z"),
+        });
+        ruleRepository.findStaleRules.mockResolvedValue([staleRule]);
+        ruleRepository.clearJobsStaleIfUnchanged.mockResolvedValue(false);
+        const internals = service as unknown as ServiceInternals;
+        jest.spyOn(internals, "rebuildJobsForRule").mockResolvedValue(undefined);
+
+        await internals.processStaleRuleRebuilds();
+
+        expect(ruleRepository.clearJobsStaleIfUnchanged).toHaveBeenCalledWith(
+            staleRule.id,
+            staleRule.updatedAt,
+        );
+    });
+
+    it("processStaleRuleRebuilds re-cancels pending jobs for a deactivated stale rule", async () => {
+        const { service, ruleRepository, jobRepository } = createDispatchService();
+        const inactiveRule = createRule({
+            id: "rule-stale-inactive",
+            isActive: false,
+            jobsStale: true,
+            updatedAt: new Date("2026-06-04T00:00:00.000Z"),
+        });
+        ruleRepository.findStaleRules.mockResolvedValue([inactiveRule]);
+        const internals = service as unknown as ServiceInternals;
+        const rebuildSpy = jest.spyOn(internals, "rebuildJobsForRule").mockResolvedValue(undefined);
+
+        await internals.processStaleRuleRebuilds();
+
+        expect(jobRepository.cancelPendingByRuleId).toHaveBeenCalledWith(
+            inactiveRule.id,
+            "Rule deactivated",
+        );
+        expect(rebuildSpy).not.toHaveBeenCalled();
+        expect(ruleRepository.clearJobsStaleIfUnchanged).toHaveBeenCalledWith(
+            inactiveRule.id,
+            inactiveRule.updatedAt,
+        );
+    });
+
+    it("a throwing rebuild for one stale rule does not block the others", async () => {
+        const { service, ruleRepository } = createDispatchService();
+        const firstRule = createRule({
+            id: "rule-stale-first",
+            jobsStale: true,
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
+            offsetDays: 7,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            updatedAt: new Date("2026-06-05T00:00:00.000Z"),
+        });
+        const secondRule = createRule({
+            id: "rule-stale-second",
+            jobsStale: true,
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
+            offsetDays: 7,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            updatedAt: new Date("2026-06-06T00:00:00.000Z"),
+        });
+        ruleRepository.findStaleRules.mockResolvedValue([firstRule, secondRule]);
+        const internals = service as unknown as ServiceInternals;
+        jest.spyOn(internals, "rebuildJobsForRule")
+            .mockRejectedValueOnce(new Error("rebuild failed"))
+            .mockResolvedValueOnce(undefined);
+        const logger = (service as unknown as {
+            logger: { error: (message: string, stack?: string) => void };
+        }).logger;
+        jest.spyOn(logger, "error").mockImplementation(() => undefined);
+
+        await internals.processStaleRuleRebuilds();
+
+        expect(internals.rebuildJobsForRule).toHaveBeenCalledTimes(2);
+        expect(ruleRepository.clearJobsStaleIfUnchanged).not.toHaveBeenCalledWith(
+            firstRule.id,
+            firstRule.updatedAt,
+        );
+        expect(ruleRepository.clearJobsStaleIfUnchanged).toHaveBeenCalledWith(
+            secondRule.id,
+            secondRule.updatedAt,
+        );
+        expect(logger.error).toHaveBeenCalledWith(
+            expect.stringContaining(firstRule.id),
+            expect.any(String),
+        );
     });
 
     it("maps the service information name variable from the client name", () => {
