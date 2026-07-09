@@ -1230,24 +1230,114 @@ describe("MessageTriggerService", () => {
         });
     });
 
-    it("persists overdue non-immediate client jobs on re-sync so missed automations can run", async () => {
-        const serviceInfoRule = createRule({
-            id: "rule-service-info-active",
-            eventType: MessageTriggerEventType.SERVICE_START,
-            offsetType: MessageTriggerOffsetType.SAME_DAY,
-            offsetDays: 0,
-            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
-        });
-        const reSync = createSyncService({
-            startDate: new Date(Date.now() - 24 * 60 * 60 * 1000),
-        });
-        reSync.ruleRepository.findActiveByEventTypes.mockResolvedValue([serviceInfoRule]);
+    it("schedules offset jobs at 09:00 KST regardless of process timezone", async () => {
+        const originalTimeZone = process.env["TZ"];
+        process.env["TZ"] = "UTC";
+        jest.useFakeTimers().setSystemTime(new Date("2026-07-09T00:00:00.000Z"));
+        try {
+            const serviceInfoRule = createRule({
+                id: "rule-service-info-active",
+                eventType: MessageTriggerEventType.SERVICE_START,
+                offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
+                offsetDays: 1,
+                templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            });
+            const reSync = createSyncService({
+                startDate: new Date("2026-07-14T16:30:00.000Z"),
+            });
+            reSync.ruleRepository.findActiveByEventTypes.mockResolvedValue([serviceInfoRule]);
 
-        await reSync.service.syncClientRulesForClient(branchId, 1, false);
+            await reSync.service.syncClientRulesForClient(branchId, 1, false);
 
-        expect(reSync.jobRepository.upsertPending).toHaveBeenCalledTimes(1);
-        const persistedJob = reSync.jobRepository.upsertPending.mock.calls[0][0];
-        expect(persistedJob.scheduledFor.getTime()).toBeLessThanOrEqual(Date.now());
+            expect(reSync.jobRepository.upsertPending).toHaveBeenCalledTimes(1);
+            const expectedDate = "2026-07-14";
+            const expectedScheduledFor = new Date(`${expectedDate}T09:00:00+09:00`);
+            const persistedJob = reSync.jobRepository.upsertPending.mock.calls[0][0];
+            expect(persistedJob.scheduledFor).toEqual(expectedScheduledFor);
+            expect(persistedJob.dedupeKey).toContain(expectedScheduledFor.toISOString());
+        } finally {
+            if (originalTimeZone === undefined) {
+                delete process.env["TZ"];
+            } else {
+                process.env["TZ"] = originalTimeZone;
+            }
+            jest.useRealTimers();
+        }
+    });
+
+    it("includePast=false resync does not materialize occurrences older than the grace window", async () => {
+        jest.useFakeTimers().setSystemTime(new Date("2026-07-09T12:00:00.000Z"));
+        try {
+            const serviceInfoRule = createRule({
+                id: "rule-service-info-active",
+                eventType: MessageTriggerEventType.SERVICE_START,
+                offsetType: MessageTriggerOffsetType.SAME_DAY,
+                offsetDays: 0,
+                templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            });
+            const reSync = createSyncService({
+                startDate: new Date("2026-07-07T00:00:00.000Z"),
+            });
+            reSync.ruleRepository.findActiveByEventTypes.mockResolvedValue([serviceInfoRule]);
+
+            await reSync.service.syncClientRulesForClient(branchId, 1, false);
+
+            expect(reSync.jobRepository.upsertPending).not.toHaveBeenCalled();
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("includePast=false resync still materializes an occurrence due within the grace window", async () => {
+        jest.useFakeTimers().setSystemTime(new Date("2026-07-09T01:00:00.000Z"));
+        try {
+            const serviceInfoRule = createRule({
+                id: "rule-service-info-active",
+                eventType: MessageTriggerEventType.SERVICE_START,
+                offsetType: MessageTriggerOffsetType.SAME_DAY,
+                offsetDays: 0,
+                templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            });
+            const reSync = createSyncService({
+                startDate: new Date("2026-07-09T00:00:00.000Z"),
+            });
+            reSync.ruleRepository.findActiveByEventTypes.mockResolvedValue([serviceInfoRule]);
+
+            await reSync.service.syncClientRulesForClient(branchId, 1, false);
+
+            expect(reSync.jobRepository.upsertPending).toHaveBeenCalledTimes(1);
+            const persistedJob = reSync.jobRepository.upsertPending.mock.calls[0][0];
+            expect(persistedJob.scheduledFor).toEqual(new Date("2026-07-09T09:00:00+09:00"));
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("includePast=true still materializes past non-immediate client jobs", async () => {
+        jest.useFakeTimers().setSystemTime(new Date("2026-07-09T12:00:00.000Z"));
+        try {
+            const serviceInfoRule = createRule({
+                id: "rule-service-info-active",
+                eventType: MessageTriggerEventType.SERVICE_START,
+                offsetType: MessageTriggerOffsetType.SAME_DAY,
+                offsetDays: 0,
+                templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            });
+            const create = createSyncService({
+                startDate: new Date("2026-07-07T00:00:00.000Z"),
+            });
+            create.ruleRepository.findActiveByEventTypes.mockResolvedValue([serviceInfoRule]);
+
+            await create.service.syncClientRulesForClient(branchId, 1, true);
+
+            expect(create.jobRepository.upsertPending).toHaveBeenCalledTimes(1);
+            const persistedJob = create.jobRepository.upsertPending.mock.calls[0][0];
+            expect(persistedJob.scheduledFor.getTime()).toBeLessThan(
+                Date.now() - PAST_OCCURRENCE_GRACE_MS,
+            );
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     it("re-approving a schedule change for the same employee does not create a second assignment job", async () => {

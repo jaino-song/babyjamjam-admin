@@ -672,15 +672,20 @@ export class MessageTriggerService {
         includePast: boolean,
     ): Promise<void> {
         if (!job) return;
-        // IMMEDIATE jobs must fire only on the live create/assign path (includePast=true).
-        // Delayed lifecycle jobs that are already overdue should still be persisted so the
-        // due-job scheduler can send missed automations in scheduledFor order.
-        if (
-            !includePast &&
-            rule.offsetType === MessageTriggerOffsetType.IMMEDIATE &&
-            job.scheduledFor.getTime() <= Date.now()
-        ) {
-            return;
+        if (!includePast) {
+            const now = Date.now();
+            const scheduledForTime = job.scheduledFor.getTime();
+            if (scheduledForTime < now - PAST_OCCURRENCE_GRACE_MS) {
+                return;
+            }
+
+            // IMMEDIATE jobs must fire only on the live create/assign path (includePast=true).
+            if (
+                rule.offsetType === MessageTriggerOffsetType.IMMEDIATE &&
+                scheduledForTime <= now
+            ) {
+                return;
+            }
         }
         await this.jobRepository.upsertPending(job);
     }
@@ -882,16 +887,37 @@ export class MessageTriggerService {
             return new Date();
         }
 
-        const targetDate = new Date(anchorDate);
-        targetDate.setHours(9, 0, 0, 0);
-
+        let offsetDays = 0;
         if (rule.offsetType === MessageTriggerOffsetType.BEFORE_DAYS) {
-            targetDate.setDate(targetDate.getDate() - rule.offsetDays);
+            offsetDays = -rule.offsetDays;
         } else if (rule.offsetType === MessageTriggerOffsetType.AFTER_DAYS) {
-            targetDate.setDate(targetDate.getDate() + rule.offsetDays);
+            offsetDays = rule.offsetDays;
         }
 
-        return targetDate;
+        const targetDate = this.getKstCalendarDate(anchorDate, offsetDays);
+        return new Date(`${targetDate}T09:00:00+09:00`);
+    }
+
+    private getKstCalendarDate(referenceDate: Date, offsetDays: number): string {
+        const formatter = new Intl.DateTimeFormat("en-CA", {
+            timeZone: "Asia/Seoul",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+        });
+        const parts = new Map(
+            formatter.formatToParts(referenceDate).map((part) => [part.type, part.value]),
+        );
+        const year = Number(parts.get("year"));
+        const month = Number(parts.get("month"));
+        const day = Number(parts.get("day"));
+        const date = new Date(Date.UTC(year, month - 1, day));
+        date.setUTCDate(date.getUTCDate() + offsetDays);
+        return [
+            date.getUTCFullYear(),
+            String(date.getUTCMonth() + 1).padStart(2, "0"),
+            String(date.getUTCDate()).padStart(2, "0"),
+        ].join("-");
     }
 
     private buildDedupeKey(
