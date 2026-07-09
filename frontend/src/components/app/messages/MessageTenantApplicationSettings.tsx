@@ -68,6 +68,7 @@ type TenantApplicationListItem = {
   icon: typeof Building2;
   kind: "tenant-application" | "automation-policy" | "duplicate-send-policy";
   active: boolean;
+  requiresApproval: boolean;
   rows?: MessageAutomationPolicy["rows"];
 };
 
@@ -79,6 +80,7 @@ const DUPLICATE_SEND_POLICY_ITEM: TenantApplicationListItem = {
   icon: Repeat2,
   kind: "duplicate-send-policy",
   active: true,
+  requiresApproval: true,
 };
 
 function formatRequestedAt(date: Date) {
@@ -155,6 +157,7 @@ export function MessageTenantApplicationSettings() {
           icon: Building2,
           kind: "tenant-application",
           active: true,
+          requiresApproval: true,
         });
       }
 
@@ -167,6 +170,7 @@ export function MessageTenantApplicationSettings() {
           icon: getAutomationPolicyIcon(policy.id),
           kind: "automation-policy",
           active: policy.active,
+          requiresApproval: policy.requiresApproval,
           rows: policy.rows,
         }),
       );
@@ -302,7 +306,7 @@ export function MessageTenantApplicationSettings() {
                   ) : (
                     <Switch
                       aria-label={`${item.title} 활성화`}
-                      checked={isMessageSenderApproved && item.active}
+                      checked={item.requiresApproval ? (isMessageSenderApproved && item.active) : item.active}
                       disabled
                       onClick={(event) => event.stopPropagation()}
                       className="ml-auto shrink-0"

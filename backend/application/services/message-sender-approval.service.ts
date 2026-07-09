@@ -158,6 +158,31 @@ export class MessageSenderApprovalService {
         return new Set(branches.map((branch) => branch.id));
     }
 
+    async getApprovedBranches(branchIds: string[]): Promise<Map<string, Date | null>> {
+        const uniqueBranchIds = [...new Set(branchIds)];
+        if (uniqueBranchIds.length === 0) {
+            return new Map();
+        }
+
+        const branches = await this.prisma.branch.findMany({
+            where: {
+                id: { in: uniqueBranchIds },
+                smsSenderApprovalStatus: "approved",
+            },
+            select: {
+                id: true,
+                smsSenderApprovalApprovedAt: true,
+            },
+        });
+
+        return new Map(
+            branches.map((branch) => [
+                branch.id,
+                branch.smsSenderApprovalApprovedAt ?? null,
+            ]),
+        );
+    }
+
     async ensureApproved(branchId: string): Promise<void> {
         const state = await this.getState(branchId);
         if (state.approvalStatus !== "approved") {

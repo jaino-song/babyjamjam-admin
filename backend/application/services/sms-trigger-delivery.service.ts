@@ -11,6 +11,7 @@ import {
     SERVICE_FEEDBACK_LINK_SMS_TRIGGER_TYPE,
 } from "domain/constants/service-feedback-link-message";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import {
     MessageLogEntity,
     MessageLogStatus,
@@ -20,6 +21,7 @@ import {
     MESSAGE_LOG_REPOSITORY,
     IMessageLogRepository,
 } from "domain/repositories/message-log.repository.interface";
+import { isTransientPrismaConnectivityError } from "infrastructure/database/prisma-error.utils";
 
 interface SmsTemplateDeliveryConfig {
     smsLogTemplateKey: string;
@@ -197,6 +199,13 @@ export class SmsTriggerDeliveryService {
             const template = await this.systemTemplateService.getByKey(systemTemplateKey);
             return this.renderTemplate(template.content, variables);
         } catch (error) {
+            if (isTransientPrismaConnectivityError(error)) {
+                throw new TriggerJobDeferredError(
+                    "transient",
+                    error instanceof Error ? error.message : String(error),
+                );
+            }
+
             this.logger.warn(
                 `[SMS Automation] Failed to load system template ${systemTemplateKey}, using registry default: ${
                     error instanceof Error ? error.message : String(error)

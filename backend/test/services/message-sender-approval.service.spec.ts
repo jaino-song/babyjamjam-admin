@@ -149,6 +149,45 @@ describe("MessageSenderApprovalService", () => {
         });
     });
 
+    describe("getApprovedBranches", () => {
+        it("should return an empty map without querying when no branch ids are provided", async () => {
+            const result = await service.getApprovedBranches([]);
+
+            expect(result.size).toBe(0);
+            expect(prisma.branch.findMany).not.toHaveBeenCalled();
+        });
+
+        it("should query unique approved branch ids and return approval timestamps", async () => {
+            const approvedAt = new Date("2026-06-05T00:00:00.000Z");
+            prisma.branch.findMany.mockResolvedValue([
+                { id: "branch-1", smsSenderApprovalApprovedAt: approvedAt },
+                { id: "branch-3", smsSenderApprovalApprovedAt: null },
+            ]);
+
+            const result = await service.getApprovedBranches([
+                "branch-1",
+                "branch-1",
+                "branch-2",
+                "branch-3",
+            ]);
+
+            expect(prisma.branch.findMany).toHaveBeenCalledWith({
+                where: {
+                    id: { in: ["branch-1", "branch-2", "branch-3"] },
+                    smsSenderApprovalStatus: "approved",
+                },
+                select: {
+                    id: true,
+                    smsSenderApprovalApprovedAt: true,
+                },
+            });
+            expect(result).toEqual(new Map([
+                ["branch-1", approvedAt],
+                ["branch-3", null],
+            ]));
+        });
+    });
+
     describe("isApproved", () => {
         it("should resolve true only when the branch is approved", async () => {
             prisma.branch.findMany.mockResolvedValue([{ id: "branch-1" }]);

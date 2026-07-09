@@ -250,6 +250,11 @@ describe("SbMessageTriggerJobRepository", () => {
             /INSERT INTO "message_trigger_job" \([\s\S]*next_attempt_at,\s*updated_at[\s\S]*\)\s*VALUES/,
         );
         expect(sqlText).toMatch(/0,\s*NULL,\s*now\(\)/);
+        const normalizedSqlText = sqlText.replace(/\s+/g, " ");
+        expect(normalizedSqlText).toContain('ON CONFLICT ("dedupe_key") DO UPDATE SET');
+        expect(normalizedSqlText).toContain(
+            'WHERE "message_trigger_job"."status" NOT IN (\'sent\', \'processing\')',
+        );
         expect(messageTriggerJobModel.findUnique).toHaveBeenCalledWith({
             where: { dedupeKey: "rule-1:client:1" },
         });

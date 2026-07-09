@@ -8,6 +8,7 @@ import {
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import { AligoTemplateKey } from "application/dto/aligo/alimtalk-template.dto";
+import { isTransientPrismaConnectivityError } from "infrastructure/database/prisma-error.utils";
 
 @Injectable()
 export class AlimtalkTriggerDeliveryService {
@@ -21,7 +22,19 @@ export class AlimtalkTriggerDeliveryService {
             throw new Error(`Alimtalk trigger job ${job.id} is missing branchId`);
         }
 
-        const provider = await this.systemSettingService.getAlimtalkProvider();
+        let provider: Awaited<ReturnType<SystemSettingService["getAlimtalkProvider"]>>;
+        try {
+            provider = await this.systemSettingService.getAlimtalkProvider();
+        } catch (error) {
+            if (isTransientPrismaConnectivityError(error)) {
+                throw new TriggerJobDeferredError(
+                    "transient",
+                    error instanceof Error ? error.message : String(error),
+                );
+            }
+            throw error;
+        }
+
         if (provider === "none") {
             throw new TriggerJobDeferredError(
                 "config",

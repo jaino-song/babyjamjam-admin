@@ -22,6 +22,7 @@ import {
 } from "domain/constants/message-trigger-catalog";
 import {
     PAST_OCCURRENCE_GRACE_MS,
+    SEND_HOUR_KST,
     TRIGGER_JOB_PROCESSING_RECLAIM_MS,
 } from "domain/constants/message-automation-policy";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
@@ -42,7 +43,6 @@ import {
 } from "domain/repositories/message-log.repository.interface";
 import { MessageTriggerDeliveryService } from "./message-trigger-delivery.service";
 import { hasColumn, hasTable } from "infrastructure/database/schema-capabilities";
-import { isTransientPrismaConnectivityError } from "infrastructure/database/prisma-error.utils";
 import { MessageSenderApprovalService } from "./message-sender-approval.service";
 import { buildSmsClientVariables } from "./sms-client-variables";
 
@@ -895,7 +895,8 @@ export class MessageTriggerService {
         }
 
         const targetDate = this.getKstCalendarDate(anchorDate, offsetDays);
-        return new Date(`${targetDate}T09:00:00+09:00`);
+        const sendHour = String(SEND_HOUR_KST).padStart(2, "0");
+        return new Date(`${targetDate}T${sendHour}:00:00+09:00`);
     }
 
     private getKstCalendarDate(referenceDate: Date, offsetDays: number): string {
@@ -1062,8 +1063,6 @@ export class MessageTriggerService {
         } catch (error) {
             if (error instanceof TriggerJobDeferredError) {
                 job.defer(error.kind, error.message);
-            } else if (isTransientPrismaConnectivityError(error)) {
-                job.defer("transient", error instanceof Error ? error.message : String(error));
             } else {
                 job.markFailed(error instanceof Error ? error.message : String(error));
             }
@@ -1081,12 +1080,8 @@ export class MessageTriggerService {
                 if (!rule.isActive) {
                     await this.jobRepository.cancelPendingByRuleId(rule.id, "Rule deactivated");
                 } else {
+                    await this.jobRepository.cancelPendingByRuleId(rule.id, "규칙 재생성");
                     await this.rebuildJobsForRule(rule.branchId, rule, false);
-                    await this.jobRepository.cancelPendingOlderThan(
-                        rule.id,
-                        new Date(Date.now() - PAST_OCCURRENCE_GRACE_MS),
-                        "승인 전 예정 시각 경과",
-                    );
                 }
 
                 await this.ruleRepository.clearJobsStaleIfUnchanged(rule.id, readUpdatedAt);
@@ -1106,11 +1101,21 @@ export class MessageTriggerService {
         const branchIds = [
             ...new Set(candidates.map((rule) => rule.branchId).filter((id): id is string => !!id)),
         ];
-        const approvedBranchIds =
-            await this.messageSenderApprovalService.getApprovedBranchIds(branchIds);
+        const approvedBranches =
+            await this.messageSenderApprovalService.getApprovedBranches(branchIds);
 
         for (const rule of candidates) {
-            if (!rule.branchId || !approvedBranchIds.has(rule.branchId)) {
+            if (!rule.branchId) {
+                continue;
+            }
+
+            const approvedAt = approvedBranches.get(rule.branchId);
+            if (approvedAt === undefined) {
+                continue;
+            }
+
+            // 규칙 관리는 승인 후에만 가능하므로, 승인 전 비활성화 기록만 cleanup patch가 만든 상태로 본다.
+            if (approvedAt !== null && rule.updatedAt >= approvedAt) {
                 continue;
             }
 

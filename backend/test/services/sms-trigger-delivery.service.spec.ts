@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { AligoService } from "application/services/aligo.service";
 import {
     SmsTriggerDeliveryService,
@@ -60,6 +61,12 @@ describe("SmsTriggerDeliveryService", () => {
             new Date("2026-06-05T00:00:00.000Z"),
             new Date("2026-06-05T00:00:00.000Z"),
         );
+
+    const createTransientPrismaError = () =>
+        new Prisma.PrismaClientKnownRequestError("Can't reach database server", {
+            code: "P1001",
+            clientVersion: "test",
+        });
 
     it("sends the service information trigger through SMS instead of alimtalk", async () => {
         const aligoService = {
@@ -232,6 +239,70 @@ describe("SmsTriggerDeliveryService", () => {
         });
         expect(aligoService.sendSms).not.toHaveBeenCalled();
         expect(logRepository.save).not.toHaveBeenCalled();
+    });
+
+    it("sms pre-provider transient DB error defers the job transiently", async () => {
+        const prismaError = createTransientPrismaError();
+        const aligoService = { sendSms: jest.fn() };
+        const systemTemplateService = {
+            getByKey: jest.fn().mockRejectedValue(prismaError),
+        };
+        const logRepository = { save: jest.fn() };
+        const service = new SmsTriggerDeliveryService(
+            aligoService as unknown as AligoService,
+            systemTemplateService as unknown as SystemTemplateService,
+            logRepository as unknown as IMessageLogRepository,
+        );
+
+        const error = await captureError(service.sendJob(createServiceInfoJob()));
+
+        expect(error).toBeInstanceOf(TriggerJobDeferredError);
+        expect(error).toMatchObject({
+            kind: "transient",
+            message: expect.stringContaining("Can't reach database server"),
+        });
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+        expect(logRepository.save).not.toHaveBeenCalled();
+    });
+
+    it("sms post-provider transient DB error does not defer after sendSms is invoked", async () => {
+        const prismaError = createTransientPrismaError();
+        const aligoService = {
+            sendSms: jest.fn().mockResolvedValue({
+                request: {
+                    senderPhone: "01099998888",
+                    receiver: "01012345678",
+                    msgType: "LMS",
+                    testModeYn: "N",
+                },
+                response: {
+                    result_code: 1,
+                    message: "성공적으로 전송요청 하였습니다.",
+                    msg_id: 321,
+                    success_cnt: 1,
+                    error_cnt: 0,
+                    msg_type: "LMS",
+                },
+            }),
+        };
+        const systemTemplateService = {
+            getByKey: jest.fn().mockResolvedValue({
+                content: "{{name}} 산모님 서비스 안내",
+            }),
+        };
+        const logRepository = { save: jest.fn().mockRejectedValue(prismaError) };
+        const service = new SmsTriggerDeliveryService(
+            aligoService as unknown as AligoService,
+            systemTemplateService as unknown as SystemTemplateService,
+            logRepository as unknown as IMessageLogRepository,
+        );
+
+        const error = await captureError(service.sendJob(createServiceInfoJob()));
+
+        expect(error).toBe(prismaError);
+        expect(error).not.toBeInstanceOf(TriggerJobDeferredError);
+        expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+        expect(logRepository.save).toHaveBeenCalledTimes(2);
     });
 });
 

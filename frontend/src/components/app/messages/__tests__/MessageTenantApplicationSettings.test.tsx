@@ -67,7 +67,18 @@ const DEFAULT_AUTOMATION_POLICIES: MessageAutomationPoliciesResponse = {
       title: "SMS 재시도 규칙",
       description: "API에서 내려준 SMS 재시도 설명",
       active: true,
-      requiresApproval: true,
+      requiresApproval: false,
+      rows: [
+        { id: "count", label: "재시도 횟수", value: "최대 2회" },
+        { id: "interval", label: "재시도 간격", value: "실패 후 5분" },
+      ],
+    },
+    {
+      id: "alimtalk-retry",
+      title: "알림톡 재시도 규칙",
+      description: "API에서 내려준 알림톡 재시도 설명",
+      active: true,
+      requiresApproval: false,
       rows: [
         { id: "count", label: "재시도 횟수", value: "최대 2회" },
         { id: "interval", label: "재시도 간격", value: "실패 후 5분" },
@@ -176,7 +187,7 @@ describe("MessageTenantApplicationSettings", () => {
           title: "API SMS 재시도 정책",
           description: "API SMS 재시도 설명",
           active: true,
-          requiresApproval: true,
+          requiresApproval: false,
           rows: [
             { id: "count", label: "재시도 횟수", value: "API 최대 4회" },
           ],
@@ -226,7 +237,7 @@ describe("MessageTenantApplicationSettings", () => {
           title: "SMS 재시도 규칙",
           description: "API에서 내려준 SMS 재시도 설명",
           active: true,
-          requiresApproval: true,
+          requiresApproval: false,
           rows: [
             { id: "count", label: "재시도 횟수", value: "최대 9회" },
             { id: "interval", label: "재시도 간격", value: "실패 후 1분" },
@@ -250,32 +261,43 @@ describe("MessageTenantApplicationSettings", () => {
     expect(screen.getByText("제공기록지 전송 자동화 규칙")).toBeInTheDocument();
     expect(screen.getByText("지난 자동 전송 처리 규칙")).toBeInTheDocument();
     expect(screen.getByText("SMS 재시도 규칙")).toBeInTheDocument();
+    expect(screen.getByText("알림톡 재시도 규칙")).toBeInTheDocument();
     expect(screen.getByText("중복 전송 확인")).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "제공기록지 전송 자동화 규칙 활성화" })).toBeInTheDocument();
     expect(container.querySelector('[data-component="messages-settings-tenant-application"]')).toBeInTheDocument();
   });
 
-  it("policy switches stay disabled and off when unapproved even if the API says active", () => {
+  it("policy switches stay disabled while unapproved and only approval-gated active policies render off", () => {
     mockSettingsQueries(false);
 
     render(<MessageTenantApplicationSettings />);
 
-    const policySwitchNames = [
+    const approvalGatedSwitchNames = [
       "제공기록지 전송 자동화 규칙 활성화",
       "지난 자동 전송 처리 규칙 활성화",
-      "SMS 재시도 규칙 활성화",
       "중복 전송 확인 활성화",
     ];
 
-    for (const name of policySwitchNames) {
+    for (const name of approvalGatedSwitchNames) {
       const policySwitch = screen.getByRole("switch", { name });
       expect(policySwitch).toBeDisabled();
       expect(policySwitch).toHaveAttribute("aria-checked", "false");
     }
 
+    const nonApprovalGatedSwitchNames = [
+      "SMS 재시도 규칙 활성화",
+      "알림톡 재시도 규칙 활성화",
+    ];
+
+    for (const name of nonApprovalGatedSwitchNames) {
+      const policySwitch = screen.getByRole("switch", { name });
+      expect(policySwitch).toBeDisabled();
+      expect(policySwitch).toHaveAttribute("aria-checked", "true");
+    }
+
     // Clicking a disabled switch must not toggle it on.
-    fireEvent.click(screen.getByRole("switch", { name: policySwitchNames[0] }));
-    expect(screen.getByRole("switch", { name: policySwitchNames[0] })).toHaveAttribute(
+    fireEvent.click(screen.getByRole("switch", { name: approvalGatedSwitchNames[0] }));
+    expect(screen.getByRole("switch", { name: approvalGatedSwitchNames[0] })).toHaveAttribute(
       "aria-checked",
       "false",
     );

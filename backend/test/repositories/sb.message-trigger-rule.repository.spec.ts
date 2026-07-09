@@ -94,4 +94,51 @@ describe("SbMessageTriggerRuleRepository", () => {
             }),
         );
     });
+
+    it("markJobsStale sets jobsStale true for the rule id", async () => {
+        messageTriggerRuleModel.updateMany.mockResolvedValue({ count: 1 });
+
+        await repository.markJobsStale("rule-1");
+
+        expect(messageTriggerRuleModel.updateMany).toHaveBeenCalledWith({
+            where: { id: "rule-1" },
+            data: { jobsStale: true },
+        });
+    });
+
+    it("findStaleRules queries stale rules oldest updated first with limit", async () => {
+        messageTriggerRuleModel.findMany.mockResolvedValue([createRow({ jobsStale: true })]);
+
+        const result = await repository.findStaleRules(7);
+
+        expect(messageTriggerRuleModel.findMany).toHaveBeenCalledWith({
+            where: { jobsStale: true },
+            orderBy: { updatedAt: "asc" },
+            take: 7,
+        });
+        expect(result[0]?.jobsStale).toBe(true);
+    });
+
+    it("clearJobsStaleIfUnchanged clears only when jobsStale and updatedAt still match", async () => {
+        const readUpdatedAt = new Date("2026-07-08T01:00:00.000Z");
+        messageTriggerRuleModel.updateMany
+            .mockResolvedValueOnce({ count: 1 })
+            .mockResolvedValueOnce({ count: 0 });
+
+        await expect(
+            repository.clearJobsStaleIfUnchanged("rule-1", readUpdatedAt),
+        ).resolves.toBe(true);
+        await expect(
+            repository.clearJobsStaleIfUnchanged("rule-1", readUpdatedAt),
+        ).resolves.toBe(false);
+
+        expect(messageTriggerRuleModel.updateMany).toHaveBeenCalledWith({
+            where: {
+                id: "rule-1",
+                jobsStale: true,
+                updatedAt: readUpdatedAt,
+            },
+            data: { jobsStale: false },
+        });
+    });
 });
