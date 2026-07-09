@@ -450,7 +450,30 @@ export class MessageTriggerService {
             MessageTriggerEventType.SERVICE_END,
         ]);
 
-        await this.cancelPendingJobsForClient(rules.map((rule) => rule.id), clientId, "Client data changed");
+        if (includePast) {
+            await this.cancelPendingJobsForClient(
+                rules.map((rule) => rule.id),
+                clientId,
+                "Client data changed",
+            );
+        } else {
+            const immediateRules = rules.filter(
+                (rule) => rule.offsetType === MessageTriggerOffsetType.IMMEDIATE,
+            );
+            const nonImmediateRules = rules.filter(
+                (rule) => rule.offsetType !== MessageTriggerOffsetType.IMMEDIATE,
+            );
+
+            if (nonImmediateRules.length > 0) {
+                await this.cancelPendingJobsForClient(
+                    nonImmediateRules.map((rule) => rule.id),
+                    clientId,
+                    "Client data changed",
+                );
+            }
+
+            await this.refreshPendingImmediateClientJobs(immediateRules, clientId, client);
+        }
 
         for (const rule of rules) {
             if (rule.eventType === MessageTriggerEventType.CLIENT_CREATED && !supportsCreatedAt) {
@@ -653,6 +676,32 @@ export class MessageTriggerService {
             return;
         }
         await this.jobRepository.upsertPending(job);
+    }
+
+    private async refreshPendingImmediateClientJobs(
+        rules: MessageTriggerRuleEntity[],
+        clientId: number,
+        client: ClientTriggerSource,
+    ): Promise<void> {
+        if (rules.length === 0) return;
+
+        const rulesById = new Map(rules.map((rule) => [rule.id, rule]));
+        const jobs = await this.jobRepository.findPendingByRuleIdsAndClientId(
+            rules.map((rule) => rule.id),
+            clientId,
+        );
+
+        for (const job of jobs) {
+            const rule = rulesById.get(job.ruleId);
+            if (!rule) continue;
+
+            const refreshedJob = this.buildClientJob(rule, client);
+            if (!refreshedJob) continue;
+
+            job.recipientPhone = refreshedJob.recipientPhone;
+            job.payload = refreshedJob.payload;
+            await this.jobRepository.update(job);
+        }
     }
 
     private buildClientJob(

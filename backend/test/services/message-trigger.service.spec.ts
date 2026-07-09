@@ -68,29 +68,35 @@ describe("MessageTriggerService", () => {
 
     const createJob = (overrides: Partial<{
         id: string;
+        ruleId: string;
         status: "pending" | "processing" | "sent" | "failed" | "canceled";
+        scheduledFor: Date;
+        clientId: number | null;
+        recipientPhone: string | null;
+        templateKey: MessageTriggerTemplateKey;
+        payload: MessageTriggerJobEntity["payload"];
         attempts: number;
         nextAttemptAt: Date | null;
     }> = {}) =>
         MessageTriggerJobEntity.reconstitute(
             overrides.id ?? "job-1",
             branchId,
-            "rule-1",
+            overrides.ruleId ?? "rule-1",
             overrides.status ?? "pending",
-            new Date("2026-06-15T00:00:00.000Z"),
+            overrides.scheduledFor ?? new Date("2026-06-15T00:00:00.000Z"),
             null,
             null,
             null,
-            1,
+            overrides.clientId ?? 1,
             null,
             MessageTriggerRecipientType.CLIENT,
-            "010-1234-5678",
-            MessageTriggerTemplateKey.CLIENT_GREETING,
+            overrides.recipientPhone ?? "010-1234-5678",
+            overrides.templateKey ?? MessageTriggerTemplateKey.CLIENT_GREETING,
             `dedupe-${overrides.id ?? "job-1"}`,
-            {
+            overrides.payload ?? {
                 memberId: "member-1",
                 recipientName: "김산모",
-                recipientPhone: "010-1234-5678",
+                recipientPhone: overrides.recipientPhone ?? "010-1234-5678",
                 templateVariables: {},
             },
             new Date("2026-06-01T00:00:00.000Z"),
@@ -634,7 +640,7 @@ describe("MessageTriggerService", () => {
         expect(jobRepository.upsertPending).not.toHaveBeenCalled();
     });
 
-    it("drops the IMMEDIATE greeting on re-sync (includePast=false) but fires it on create (includePast=true)", async () => {
+    it("does not enqueue a new IMMEDIATE greeting on re-sync (includePast=false) but fires it on create (includePast=true)", async () => {
         const greetingRule = createRule({
             id: "rule-greeting-active",
             eventType: MessageTriggerEventType.CLIENT_CREATED,
@@ -643,7 +649,7 @@ describe("MessageTriggerService", () => {
             templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
         });
 
-        // Re-sync path (client update / due-date scheduler): greeting must be dropped.
+        // Re-sync path (client update / due-date scheduler): no new greeting job is created.
         const reSync = createSyncService();
         reSync.ruleRepository.findActiveByEventTypes.mockResolvedValue([greetingRule]);
         await reSync.service.syncClientRulesForClient(branchId, 1, false);
@@ -654,6 +660,151 @@ describe("MessageTriggerService", () => {
         create.ruleRepository.findActiveByEventTypes.mockResolvedValue([greetingRule]);
         await create.service.syncClientRulesForClient(branchId, 1, true);
         expect(create.jobRepository.upsertPending).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the still-pending IMMEDIATE greeting alive on an includePast=false resync", async () => {
+        const greetingRule = createRule({
+            id: "rule-greeting-active",
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            offsetDays: 0,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+        });
+        const pendingGreeting = createJob({
+            id: "job-greeting-pending",
+            ruleId: greetingRule.id,
+        });
+        const reSync = createSyncService();
+        reSync.ruleRepository.findActiveByEventTypes.mockResolvedValue([greetingRule]);
+        reSync.jobRepository.findPendingByRuleIdsAndClientId.mockResolvedValue([pendingGreeting]);
+
+        await reSync.service.syncClientRulesForClient(branchId, 1, false);
+
+        expect(reSync.jobRepository.findPendingByRuleIdsAndClientId).toHaveBeenCalledWith(
+            [greetingRule.id],
+            1,
+        );
+        expect(pendingGreeting.status).toBe("pending");
+        expect(pendingGreeting.canceledAt).toBeNull();
+        expect(pendingGreeting.cancelReason).toBeNull();
+        expect(reSync.jobRepository.upsertPending).not.toHaveBeenCalled();
+    });
+
+    it("refreshes the pending IMMEDIATE job's recipient phone and payload from the edited client", async () => {
+        const greetingRule = createRule({
+            id: "rule-greeting-active",
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            offsetDays: 0,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+        });
+        const scheduledFor = new Date("2026-06-27T00:00:00.000Z");
+        const pendingGreeting = createJob({
+            id: "job-greeting-pending",
+            ruleId: greetingRule.id,
+            scheduledFor,
+            recipientPhone: "010-0000-0000",
+            payload: {
+                memberId: "1",
+                recipientName: "김산모",
+                recipientPhone: "010-0000-0000",
+                templateVariables: {
+                    name: "김산모",
+                    clientName: "김산모",
+                    phone: "010-0000-0000",
+                },
+            },
+        });
+        const reSync = createSyncService({
+            name: "김수정",
+            phone: "010-9999-0000",
+        });
+        reSync.ruleRepository.findActiveByEventTypes.mockResolvedValue([greetingRule]);
+        reSync.jobRepository.findPendingByRuleIdsAndClientId.mockResolvedValue([pendingGreeting]);
+
+        await reSync.service.syncClientRulesForClient(branchId, 1, false);
+
+        expect(reSync.jobRepository.update).toHaveBeenCalledWith(pendingGreeting);
+        expect(pendingGreeting.recipientPhone).toBe("010-9999-0000");
+        expect(pendingGreeting.payload).toMatchObject({
+            clientId: 1,
+            clientName: "김수정",
+            memberId: "1",
+            recipientName: "김수정",
+            recipientPhone: "010-9999-0000",
+            templateVariables: {
+                name: "김수정",
+                clientName: "김수정",
+                phone: "010-9999-0000",
+            },
+        });
+        expect(pendingGreeting.status).toBe("pending");
+        expect(pendingGreeting.scheduledFor).toBe(scheduledFor);
+        expect(pendingGreeting.dedupeKey).toBe("dedupe-job-greeting-pending");
+        expect(pendingGreeting.attempts).toBe(0);
+    });
+
+    it("still cancels and rebuilds non-IMMEDIATE jobs on the same resync", async () => {
+        const greetingRule = createRule({
+            id: "rule-greeting-active",
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            offsetDays: 0,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+        });
+        const serviceInfoRule = createRule({
+            id: "rule-service-info-active",
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.SAME_DAY,
+            offsetDays: 0,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+        });
+        const pendingGreeting = createJob({
+            id: "job-greeting-pending",
+            ruleId: greetingRule.id,
+        });
+        const pendingServiceInfo = createJob({
+            id: "job-service-info-pending",
+            ruleId: serviceInfoRule.id,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+        });
+        const reSync = createSyncService({
+            startDate: new Date("2026-07-15T00:00:00.000Z"),
+        });
+        reSync.ruleRepository.findActiveByEventTypes.mockResolvedValue([
+            greetingRule,
+            serviceInfoRule,
+        ]);
+        reSync.jobRepository.findPendingByRuleIdsAndClientId.mockImplementation(
+            async (ruleIds: string[]) => {
+                if (ruleIds.includes(serviceInfoRule.id)) return [pendingServiceInfo];
+                if (ruleIds.includes(greetingRule.id)) return [pendingGreeting];
+                return [];
+            },
+        );
+
+        await reSync.service.syncClientRulesForClient(branchId, 1, false);
+
+        expect(reSync.jobRepository.findPendingByRuleIdsAndClientId).toHaveBeenNthCalledWith(
+            1,
+            [serviceInfoRule.id],
+            1,
+        );
+        expect(reSync.jobRepository.findPendingByRuleIdsAndClientId).toHaveBeenNthCalledWith(
+            2,
+            [greetingRule.id],
+            1,
+        );
+        expect(pendingServiceInfo.status).toBe("canceled");
+        expect(pendingServiceInfo.cancelReason).toBe("Client data changed");
+        expect(pendingGreeting.status).toBe("pending");
+        expect(reSync.jobRepository.upsertPending).toHaveBeenCalledTimes(1);
+        expect(reSync.jobRepository.upsertPending.mock.calls[0][0]).toMatchObject({
+            ruleId: serviceInfoRule.id,
+            status: "pending",
+            clientId: 1,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+        });
     });
 
     it("persists overdue non-immediate client jobs on re-sync so missed automations can run", async () => {
