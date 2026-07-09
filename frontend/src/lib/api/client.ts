@@ -105,9 +105,15 @@ api.interceptors.response.use(
     (res) => res,
     async (err: AxiosError) => {
         const originalRequest = err.config as AxiosRequestConfig & { _retry?: boolean };
+        const originalRequestMethod = (originalRequest?.method ?? "get").toLowerCase();
 
         // Network error - single retry
-        if (err.message === "Network Error" && originalRequest && !originalRequest._retry) {
+        if (
+            err.message === "Network Error" &&
+            originalRequest &&
+            !originalRequest._retry &&
+            (originalRequestMethod === "get" || originalRequestMethod === "head")
+        ) {
             originalRequest._retry = true;
             return axios(originalRequest);
         }

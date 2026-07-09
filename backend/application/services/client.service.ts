@@ -749,6 +749,11 @@ export class ClientService {
             serviceStatus: SERVICE_STATUS.TERMINATED,
             endDate: new Date(),
         });
+        if (this.triggerService) {
+            this.triggerService.syncClientRulesForClient(branchid, clientId, false).catch((error) => {
+                this.logger.error(`Failed to sync client trigger rules: ${error}`);
+            });
+        }
 
         // Also mark the current schedule as ended
         await this.prismaService.employee_schedule.updateMany({

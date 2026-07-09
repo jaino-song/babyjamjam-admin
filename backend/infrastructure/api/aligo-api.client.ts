@@ -16,6 +16,7 @@ import {
 import { maskPhone } from "application/utils/mask";
 
 export const DEFAULT_ALIGO_SENDER_PHONE = "010-9641-1878";
+const ALIGO_SEND_TIMEOUT_MS = 30_000;
 
 @Injectable()
 export class AligoApiClient implements IAligoApiPort, IAligoSmsApiPort {
@@ -82,6 +83,7 @@ export class AligoApiClient implements IAligoApiPort, IAligoSmsApiPort {
         const response = await fetch(url, {
             method: "POST",
             body: formData,
+            signal: AbortSignal.timeout(ALIGO_SEND_TIMEOUT_MS),
         });
 
         if (!response.ok) {
@@ -136,6 +138,7 @@ export class AligoApiClient implements IAligoApiPort, IAligoSmsApiPort {
         const response = await fetch(url, {
             method: "POST",
             body: formData,
+            signal: AbortSignal.timeout(ALIGO_SEND_TIMEOUT_MS),
         });
 
         if (!response.ok) {

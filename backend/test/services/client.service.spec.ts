@@ -786,6 +786,25 @@ describe("ClientService", () => {
                     serviceStatus: "terminated",
                 }));
             });
+
+            it("should sync client trigger rules with includePast=false", async () => {
+                // Arrange
+                const mockClient = createClientEntity();
+                const terminatedClient = new ClientEntity(
+                    1, "Test Client", "Test Address", "010-1234-5678", "A형", 15,
+                    "100000", "50000", "50000", new Date(), new Date(),
+                    false, true, "900101", "terminated", false, null
+                );
+                findClientByIdUsecase.execute.mockResolvedValue(mockClient);
+                updateClientUsecase.execute.mockResolvedValue(terminatedClient);
+                prismaService.employee_schedule.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+
+                // Act
+                await service.terminateService(branchId, 1);
+
+                // Assert
+                expect(triggerService.syncClientRulesForClient).toHaveBeenCalledWith(branchId, 1, false);
+            });
         });
 
         describe("given non-existent client", () => {
