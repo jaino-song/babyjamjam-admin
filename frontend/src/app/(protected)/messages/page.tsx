@@ -116,6 +116,7 @@ import {
 } from "@/components/app/messages/forms/TemplateSendForm";
 import type { TemplateMessageFormLayout } from "@/components/app/messages/forms/form-components/TemplateMessageFormLayout";
 import { MessageTenantApplicationSettings } from "@/components/app/messages/MessageTenantApplicationSettings";
+import { MessageApprovalGate } from "@/components/app/messages/MessageApprovalGate";
 import { TriggerRulesManager } from "@/components/app/alimtalk/TriggerRulesManager";
 import { Button } from "@/components/ui/button";
 import {
@@ -174,7 +175,7 @@ const MESSAGE_SECTIONS = [
   { id: "scheduled", label: "발송 예정", icon: Clock3 },
   { id: "history", label: "발송 기록", icon: History },
   { id: "templates", label: "템플릿", icon: FileText, disabled: true },
-  { id: "triggers", label: "자동화", icon: Workflow },
+  { id: "triggers", label: "자동 전송", icon: Workflow },
   { id: "settings", label: "설정", icon: Settings2 },
 ] as const;
 
@@ -1755,10 +1756,13 @@ export default function MessagesPage() {
 
         <div data-component="messages-section-content" className="flex min-h-0 min-w-0 flex-1 flex-col">
           {activeSection === "scheduled" ? (
-            <section data-component="messages-scheduled-section" className="flex min-h-0 flex-1 flex-col">
-              <MessageScheduledSection />
-            </section>
+            <MessageApprovalGate>
+              <section data-component="messages-scheduled-section" className="flex min-h-0 flex-1 flex-col">
+                <MessageScheduledSection />
+              </section>
+            </MessageApprovalGate>
           ) : activeSection === "send" || activeSection === "templates" ? (
+            <MessageApprovalGate>
             <section
               data-component={activeSection === "send" ? "messages-send-section" : "messages-templates-section"}
               className="flex min-h-0 flex-1 flex-col"
@@ -1946,25 +1950,32 @@ export default function MessagesPage() {
                 </DetailPanel>
               </SplitLayout>
             </section>
+            </MessageApprovalGate>
           ) : activeSection === "history" ? (
-            <section data-component="messages-history-section" className="flex min-h-0 flex-1 flex-col">
-              <MessageHistorySection />
-            </section>
+            <MessageApprovalGate>
+              <section data-component="messages-history-section" className="flex min-h-0 flex-1 flex-col">
+                <MessageHistorySection />
+              </section>
+            </MessageApprovalGate>
           ) : activeSection === "triggers" ? (
-            <section data-component="messages-triggers-section" className="flex h-full min-h-0 flex-1 flex-col">
-              <TriggerRulesManager dataComponentPrefix="message" channel="sms" />
-            </section>
+            <MessageApprovalGate>
+              <section data-component="messages-triggers-section" className="flex h-full min-h-0 flex-1 flex-col">
+                <TriggerRulesManager dataComponentPrefix="message" channel="sms" />
+              </section>
+            </MessageApprovalGate>
           ) : activeSection === "settings" ? (
             <section data-component="messages-settings-section" className="flex min-h-0 flex-1 flex-col">
               <MessageTenantApplicationSettings />
             </section>
           ) : (
-            <section
-              data-component={`messages-${activeSection}-section`}
-              className="flex min-h-0 flex-1 flex-col"
-            >
-              <MessageSectionPlaceholder sectionId={activeSection} />
-            </section>
+            <MessageApprovalGate>
+              <section
+                data-component={`messages-${activeSection}-section`}
+                className="flex min-h-0 flex-1 flex-col"
+              >
+                <MessageSectionPlaceholder sectionId={activeSection} />
+              </section>
+            </MessageApprovalGate>
           )}
         </div>
       </div>

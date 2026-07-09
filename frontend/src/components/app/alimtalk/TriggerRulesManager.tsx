@@ -48,6 +48,7 @@ import {
 } from "@/features/message-triggers/channel";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { serviceInfoMsgTemplate } from "@/components/app/messages/templates/messageTemplate/serviceInfoMsg";
+import { MessageApprovalRequiredNotice } from "@/components/app/messages/MessageApprovalRequiredNotice";
 import { AlimtalkPhonePreview } from "./AlimtalkPhonePreview";
 import type {
   MessageTriggerRule,
@@ -57,17 +58,6 @@ import type {
   TriggerRecipientType,
   TriggerTemplateKey,
 } from "@/features/message-triggers/types";
-
-const RETRY_POLICY_SELECTION_ID = "retry-policy";
-const SERVICE_FEEDBACK_LINK_SELECTION_ID = "service-feedback-link";
-const SERVICE_FEEDBACK_LINK_TITLE = "제공기록지 전송 자동화 규칙";
-const SERVICE_FEEDBACK_LINK_DESCRIPTION = "서비스 시작일 오후 3시에 주 담당 제공인력에게 작성 링크를 SMS로 발송합니다.";
-const SERVICE_FEEDBACK_LINK_DETAIL_VALUES = [
-  { label: "발송 시점", value: "서비스 시작일 오후 3시" },
-  { label: "수신 대상", value: "주 담당 제공인력" },
-  { label: "실패 재시도", value: "SMS 재시도 규칙 적용" },
-  { label: "토큰 만료", value: "서비스 종료일 오후 8시" },
-] as const;
 
 type RuleSelection = string | "new" | null;
 type RuleStatusFilter = "active" | "inactive";
@@ -85,25 +75,7 @@ type TriggerRuleListItem = {
   rule: MessageTriggerRule;
 };
 
-type RetryPolicyListItem = {
-  kind: "retry-policy";
-  id: typeof RETRY_POLICY_SELECTION_ID;
-  title: string;
-  subtitle: string;
-  active: boolean;
-  icon: typeof CalendarClock;
-};
-
-type ServiceFeedbackLinkListItem = {
-  kind: "service-feedback-link";
-  id: typeof SERVICE_FEEDBACK_LINK_SELECTION_ID;
-  title: typeof SERVICE_FEEDBACK_LINK_TITLE;
-  subtitle: typeof SERVICE_FEEDBACK_LINK_DESCRIPTION;
-  active: true;
-  icon: typeof CalendarClock;
-};
-
-type RuleListItem = TriggerRuleListItem | RetryPolicyListItem | ServiceFeedbackLinkListItem;
+type RuleListItem = TriggerRuleListItem;
 
 const EVENT_OPTIONS: Array<{ value: TriggerEventType; label: string; icon: typeof BellRing }> = [
   { value: "CLIENT_CREATED", label: "고객 등록", icon: UserPlus },
@@ -178,25 +150,19 @@ const CHANNEL_COPY: Record<
     listSubtitle: string;
     detailSubtitle: string;
     emptySelection: string;
-    retryTitle: string;
-    retryDescription: string;
   }
 > = {
   sms: {
-    listTitle: "SMS 발송 규칙",
-    listSubtitle: "SMS 자동 발송 규칙을 설정할 수 있어요",
-    detailSubtitle: "이벤트 시점, 수신자, SMS 템플릿을 조합해 자동 발송 동작을 정의합니다.",
+    listTitle: "자동 전송 루틴",
+    listSubtitle: "메시지 템플릿을 자동으로 보내는 루틴만 관리합니다.",
+    detailSubtitle: "메시지 발송 시점, 수신자, 메시지 템플릿을 설정해서 자동 전송을 설정할 수 있어요.",
     emptySelection: "왼쪽 목록에서 SMS 규칙을 선택하거나 새 규칙을 만들어 주세요.",
-    retryTitle: "SMS 재시도 규칙",
-    retryDescription: "SMS 전송 실패 시 5분 후 자동 재시도하며, 최초 발송 이후 최대 2번까지 다시 시도합니다.",
   },
   alimtalk: {
     listTitle: "알림톡 발송 규칙",
     listSubtitle: "알림톡 자동 발송 규칙을 설정할 수 있어요",
     detailSubtitle: "이벤트 시점, 수신자, 알림톡 템플릿을 조합해 자동 발송 동작을 정의합니다.",
     emptySelection: "왼쪽 목록에서 알림톡 규칙을 선택하거나 새 규칙을 만들어 주세요.",
-    retryTitle: "알림톡 재시도 규칙",
-    retryDescription: "알림톡 전송 실패 시 5분 후 자동 재시도하며, 최초 발송 이후 최대 2번까지 다시 시도합니다.",
   },
 };
 
@@ -313,7 +279,6 @@ export function TriggerRulesManager({
   const [statusFilter, setStatusFilter] = useState<RuleStatusFilter>("active");
   const [activeDetailTab, setActiveDetailTab] = useState<TriggerRuleDetailTab>("settings");
   const [formState, setFormState] = useState<RuleFormState>(() => getDefaultFormState(channel));
-  const [isRetryPolicyEnabled, setIsRetryPolicyEnabled] = useState(true);
   const component = (suffix: string) => `${dataComponentPrefix}-${suffix}`;
   const isCompactSplitLayout = splitLayoutMode === "compact";
   const copy = CHANNEL_COPY[channel];
@@ -331,16 +296,12 @@ export function TriggerRulesManager({
   });
   const isTriggerRulesLocked = !isSenderApprovalLoading && senderApproval?.isApproved === false;
   const effectiveSelectedRuleId = isTriggerRulesLocked ? null : selectedRuleId;
-  const isRetryPolicySelected = effectiveSelectedRuleId === RETRY_POLICY_SELECTION_ID;
-  const isServiceFeedbackLinkSelected = effectiveSelectedRuleId === SERVICE_FEEDBACK_LINK_SELECTION_ID;
 
   const resolvedProvider = "aligo_alimtalk" as const;
 
   const selectedRule =
     effectiveSelectedRuleId &&
-    effectiveSelectedRuleId !== "new" &&
-    effectiveSelectedRuleId !== RETRY_POLICY_SELECTION_ID &&
-    effectiveSelectedRuleId !== SERVICE_FEEDBACK_LINK_SELECTION_ID
+    effectiveSelectedRuleId !== "new"
       ? rules.find((rule) => rule.id === effectiveSelectedRuleId) ?? null
       : null;
 
@@ -388,8 +349,6 @@ export function TriggerRulesManager({
   const selectedTemplateMessage = selectedSystemTemplate?.content?.trim()
     ? selectedSystemTemplate.content
     : TRIGGER_TEMPLATE_MESSAGE_FALLBACKS[formState.templateKey];
-  const shouldShowRetryPolicy = isRetryPolicyEnabled === (statusFilter === "active");
-  const shouldShowServiceFeedbackLink = channel === "sms" && statusFilter === "active";
   const filteredRules = useMemo(() => {
     return rules.filter((rule) =>
       rule.isActive === (statusFilter === "active") &&
@@ -401,16 +360,6 @@ export function TriggerRulesManager({
     if (isTriggerRulesLocked) return;
 
     if (selectedRuleId === "new") return;
-    if (selectedRuleId === RETRY_POLICY_SELECTION_ID) {
-      if (shouldShowRetryPolicy) return;
-      setSelectedRuleId(splitLayoutMode === "desktop" && !isRuleDetailDismissed ? (filteredRules[0]?.id ?? null) : null);
-      return;
-    }
-    if (selectedRuleId === SERVICE_FEEDBACK_LINK_SELECTION_ID) {
-      if (shouldShowServiceFeedbackLink) return;
-      setSelectedRuleId(splitLayoutMode === "desktop" && !isRuleDetailDismissed ? (filteredRules[0]?.id ?? null) : null);
-      return;
-    }
     if (selectedRuleId === null && filteredRules.length > 0) {
       if (splitLayoutMode === null) return;
       if (isCompactSplitLayout) return;
@@ -437,14 +386,10 @@ export function TriggerRulesManager({
     isTriggerRulesLocked,
     rules,
     selectedRuleId,
-    shouldShowServiceFeedbackLink,
-    shouldShowRetryPolicy,
     splitLayoutMode,
   ]);
 
   useEffect(() => {
-    if (effectiveSelectedRuleId === RETRY_POLICY_SELECTION_ID) return;
-    if (effectiveSelectedRuleId === SERVICE_FEEDBACK_LINK_SELECTION_ID) return;
     if (effectiveSelectedRuleId === "new") {
       setFormState(getDefaultFormState(channel));
       return;
@@ -498,49 +443,18 @@ export function TriggerRulesManager({
   }, [availableTemplates, formState.templateKey]);
 
   const listItems = useMemo<RuleListItem[]>(() => {
-    const retryPolicyItem: RetryPolicyListItem = {
-      kind: "retry-policy",
-      id: RETRY_POLICY_SELECTION_ID,
-      title: copy.retryTitle,
-      subtitle: copy.retryDescription,
-      active: isRetryPolicyEnabled,
-      icon: CalendarClock,
-    };
-    const serviceFeedbackLinkItem: ServiceFeedbackLinkListItem = {
-      kind: "service-feedback-link",
-      id: SERVICE_FEEDBACK_LINK_SELECTION_ID,
-      title: SERVICE_FEEDBACK_LINK_TITLE,
-      subtitle: SERVICE_FEEDBACK_LINK_DESCRIPTION,
-      active: true,
-      icon: CalendarClock,
-    };
-
-    return [
-      ...(shouldShowServiceFeedbackLink ? [serviceFeedbackLinkItem] : []),
-      ...(shouldShowRetryPolicy ? [retryPolicyItem] : []),
-      ...filteredRules.map((rule): TriggerRuleListItem => ({
-        kind: "trigger-rule",
-        id: rule.id,
-        title: rule.name,
-        subtitle: getRuleSummary(toFormState(rule, channel)),
-        active: rule.isActive,
-        icon: getRuleIcon(rule.eventType),
-        rule,
-      })),
-    ];
-  }, [
-    channel,
-    copy.retryDescription,
-    copy.retryTitle,
-    filteredRules,
-    isRetryPolicyEnabled,
-    shouldShowRetryPolicy,
-    shouldShowServiceFeedbackLink,
-  ]);
+    return filteredRules.map((rule): TriggerRuleListItem => ({
+      kind: "trigger-rule",
+      id: rule.id,
+      title: rule.name,
+      subtitle: getRuleSummary(toFormState(rule, channel)),
+      active: rule.isActive,
+      icon: getRuleIcon(rule.eventType),
+      rule,
+    }));
+  }, [channel, filteredRules]);
 
   const hasChanges = useMemo(() => {
-    if (effectiveSelectedRuleId === RETRY_POLICY_SELECTION_ID) return false;
-    if (effectiveSelectedRuleId === SERVICE_FEEDBACK_LINK_SELECTION_ID) return false;
     if (effectiveSelectedRuleId === "new") {
       return !!formState.name.trim();
     }
@@ -569,20 +483,6 @@ export function TriggerRulesManager({
   const handleRuleSelect = (ruleId: string) => {
     setIsRuleDetailDismissed(false);
     setSelectedRuleId(ruleId);
-  };
-
-  const handleRetryPolicySelect = () => {
-    setIsRuleDetailDismissed(false);
-    setSelectedRuleId(RETRY_POLICY_SELECTION_ID);
-  };
-
-  const handleServiceFeedbackLinkSelect = () => {
-    setIsRuleDetailDismissed(false);
-    setSelectedRuleId(SERVICE_FEEDBACK_LINK_SELECTION_ID);
-  };
-
-  const handleRetryPolicyToggle = (checked: boolean) => {
-    setIsRetryPolicyEnabled(checked);
   };
 
   const handleRuleActiveToggle = async (rule: MessageTriggerRule, checked: boolean) => {
@@ -667,12 +567,7 @@ export function TriggerRulesManager({
             onTabChange={isTriggerRulesLocked ? undefined : (value) => setStatusFilter(value as RuleStatusFilter)}
             disabled={isTriggerRulesLocked}
             disabledOverlay={isTriggerRulesLocked ? (
-              <div
-                data-component={component("trigger-rules-disabled-copy")}
-                className="max-w-[240px] rounded-[18px] border border-v3-burgundy/15 bg-white/90 px-4 py-3 text-center text-[0.78rem] font-semibold leading-5 text-v3-burgundy shadow-sm"
-              >
-                {TRIGGER_RULE_APPROVAL_MESSAGE}
-              </div>
+              <MessageApprovalRequiredNotice dataComponent={component("trigger-rules-disabled-copy")} />
             ) : undefined}
             headerActions={isLoading || isTriggerRulesLocked ? undefined : (
               <HeaderActionButton
@@ -696,15 +591,6 @@ export function TriggerRulesManager({
                       isInteractive: !slotLoading && Boolean(item),
                     })}
                     onSlotClick={(item) => {
-                      if (item.kind === "retry-policy") {
-                        handleRetryPolicySelect();
-                        return;
-                      }
-                      if (item.kind === "service-feedback-link") {
-                        handleServiceFeedbackLinkSelect();
-                        return;
-                      }
-
                       handleRuleSelect(item.id);
                     }}
                     getItemKey={(item) => item.id}
@@ -724,46 +610,6 @@ export function TriggerRulesManager({
                       }
 
                       if (!item) return null;
-
-                      if (item.kind === "retry-policy") {
-                        return (
-                          <AnimatedSlotListItemContent
-                            dataComponent={component("trigger-rules-retry-policy")}
-                            icon={item.icon}
-                            title={item.title}
-                            subtitle={item.subtitle}
-                            status={
-                              <Switch
-                                aria-label={`${item.title} 활성화`}
-                                checked={item.active}
-                                onClick={(event) => event.stopPropagation()}
-                                onCheckedChange={handleRetryPolicyToggle}
-                                className="ml-auto shrink-0"
-                              />
-                            }
-                          />
-                        );
-                      }
-
-                      if (item.kind === "service-feedback-link") {
-                        return (
-                          <AnimatedSlotListItemContent
-                            dataComponent={component("trigger-rules-service-feedback-link")}
-                            icon={item.icon}
-                            title={item.title}
-                            subtitle={item.subtitle}
-                            status={
-                              <Switch
-                                aria-label={`${item.title} 활성화`}
-                                checked={item.active}
-                                disabled
-                                onClick={(event) => event.stopPropagation()}
-                                className="ml-auto shrink-0"
-                              />
-                            }
-                          />
-                        );
-                      }
 
                       return (
                         <AnimatedSlotListItemContent
@@ -821,74 +667,6 @@ export function TriggerRulesManager({
               )}
             >
               {null}
-            </DetailPanel>
-          ) : isServiceFeedbackLinkSelected && !isDetailLoading ? (
-            <DetailPanel
-              title={SERVICE_FEEDBACK_LINK_TITLE}
-              subtitle={SERVICE_FEEDBACK_LINK_DESCRIPTION}
-            >
-              <SteppedWizardPanelContent
-                dataComponent={component("trigger-rules-service-feedback-link-form")}
-                flattenStepContent
-                className="py-0"
-                stepContentClassName="justify-start gap-4"
-              >
-                <div
-                  data-component={component("trigger-rules-service-feedback-link-values")}
-                  className="grid gap-4 sm:grid-cols-2"
-                >
-                  {SERVICE_FEEDBACK_LINK_DETAIL_VALUES.map((item) => (
-                    <div key={item.label} className="rounded-[18px] bg-v3-dim-white p-4">
-                      <p className="text-[0.72rem] font-semibold text-v3-text-muted">{item.label}</p>
-                      <p className="mt-1 text-[0.92rem] font-bold text-v3-dark">{item.value}</p>
-                    </div>
-                  ))}
-                </div>
-              </SteppedWizardPanelContent>
-            </DetailPanel>
-          ) : isRetryPolicySelected && !isDetailLoading ? (
-            <DetailPanel
-              title={copy.retryTitle}
-              subtitle={copy.retryDescription}
-            >
-              <SteppedWizardPanelContent
-                dataComponent={component("trigger-rules-retry-policy-form")}
-                flattenStepContent
-                className="py-0"
-                stepContentClassName="justify-start gap-4"
-              >
-                <div
-                  data-component={component("trigger-rules-retry-policy-toggle")}
-                  className="flex items-center justify-between gap-4 rounded-[18px] bg-v3-dim-white p-4"
-                >
-                  <div className="min-w-0">
-                    <p className="text-[0.84rem] font-bold text-v3-dark">재시도 활성화</p>
-                    <p className="mt-1 text-[0.72rem] leading-5 text-v3-text-muted">
-                      전송 실패 시 자동으로 다시 발송합니다.
-                    </p>
-                  </div>
-                  <Switch
-                    aria-label={`${copy.retryTitle} 상세 활성화`}
-                    checked={isRetryPolicyEnabled}
-                    onCheckedChange={handleRetryPolicyToggle}
-                    className="shrink-0"
-                  />
-                </div>
-
-                <div
-                  data-component={component("trigger-rules-retry-policy-values")}
-                  className="grid gap-4 sm:grid-cols-2"
-                >
-                  <div className="rounded-[18px] bg-v3-dim-white p-4">
-                    <p className="text-[0.72rem] font-semibold text-v3-text-muted">재시도 횟수</p>
-                    <p className="mt-1 text-[0.92rem] font-bold text-v3-dark">최대 2회</p>
-                  </div>
-                  <div className="rounded-[18px] bg-v3-dim-white p-4">
-                    <p className="text-[0.72rem] font-semibold text-v3-text-muted">재시도 간격</p>
-                    <p className="mt-1 text-[0.92rem] font-bold text-v3-dark">실패 후 5분</p>
-                  </div>
-                </div>
-              </SteppedWizardPanelContent>
             </DetailPanel>
           ) : (
             <DetailPanel
