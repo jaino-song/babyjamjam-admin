@@ -45,7 +45,7 @@ export interface AdminServiceRecordSessionDto {
     etcService: string | null;
     notes: string | null;
     paymentConfirmed: boolean;
-    hasMomSignature: boolean;
+    hasMomApproval: boolean;
 }
 
 export interface AdminServiceRecordSignatureDocDto {

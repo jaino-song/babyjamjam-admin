@@ -523,8 +523,8 @@ function renderFieldValue(
                 ? <span className="font-semibold text-v3-green">✓ 완료</span>
                 : <span className="text-[#b3bcc5]">미확인</span>;
         }
-        if (field.key === "hasMomSignature") {
-            return record.hasMomSignature
+        if (field.key === "hasMomApproval") {
+            return record.hasMomApproval
                 ? <span className="font-semibold text-v3-green">✓ 서명함</span>
                 : <span className="text-[#b3bcc5]">서명 전</span>;
         }
