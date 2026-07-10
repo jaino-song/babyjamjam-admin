@@ -442,6 +442,7 @@ export default function ContractsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [serviceRecordActiveTab, setServiceRecordActiveTab] = useState("all");
   const [serviceRecordSearchQuery, setServiceRecordSearchQuery] = useState("");
+  const [selectedServiceRecordDocId, setSelectedServiceRecordDocId] = useState<string | null>(null);
 
   const { isAuthenticated, isLoading: isLoadingAuth, error: authError } = useEformsignAuth({
     syncOnWindowFocus: false,
@@ -449,7 +450,8 @@ export default function ContractsPage() {
   useEformsignDocsLiveStream(isAuthenticated);
   const { toast } = useToast();
   const deleteDocument = useDeleteEformsignDocument();
-  const filterType: DocumentFilterType = activeTab === "all" ? null : (activeTab as DocumentFilterType);
+  const activeListTab = activeSection === "service-records" ? serviceRecordActiveTab : activeTab;
+  const filterType: DocumentFilterType = activeListTab === "all" ? null : (activeListTab as DocumentFilterType);
 
   // Fetch filtered docs with infinite scroll for the current tab
   const {
@@ -473,6 +475,19 @@ export default function ContractsPage() {
     enabled: isAuthenticated,
     staleTime: 1000 * 60 * 5,
   });
+  // 제공기록지 template id — documents from this template render ONLY in the
+  // service-records section, split by template.id (never by renamable name).
+  const { data: feedbackTemplateConfig, isLoading: isFeedbackTemplateLoading } = useQuery({
+    queryKey: ["eformsign-docs", "feedback-template-id"],
+    queryFn: () => eformsignApi.getFeedbackTemplateId(),
+    enabled: isAuthenticated,
+    staleTime: 1000 * 60 * 60,
+  });
+  const feedbackTemplateId = feedbackTemplateConfig?.templateId ?? null;
+  const isServiceRecordDoc = useCallback(
+    (doc: EformsignDocument) => Boolean(feedbackTemplateId && doc.template?.id === feedbackTemplateId),
+    [feedbackTemplateId],
+  );
 
   const isBootstrappingAuth = isLoadingAuth && !isAuthenticated;
   // Initial loading: first auth bootstrap or first "all" data fetch
@@ -503,17 +518,46 @@ export default function ContractsPage() {
     [clientNamesMap],
   );
 
-  // Use infinite scroll documents, with optional local search filter
-  const documents = useMemo(() => {
-    if (!searchQuery.trim()) return infiniteDocuments;
-    return infiniteDocuments.filter((doc) => {
+  const matchesDocumentSearch = useCallback(
+    (doc: EformsignDocument, query: string): boolean => {
+      const q = query.trim();
+      if (!q) return true;
       const customerName = resolveCustomerName(doc);
-      const q = searchQuery.trim();
       if (customerName && matchesKoreanSearch(customerName, q)) return true;
       if (doc.document_name?.toLowerCase().includes(q.toLowerCase())) return true;
       return false;
-    });
-  }, [infiniteDocuments, searchQuery, resolveCustomerName]);
+    },
+    [resolveCustomerName],
+  );
+
+  // Contract (산모계약서) list: everything EXCEPT feedback-template docs.
+  // While the template id hasn't loaded yet, all docs count as contracts
+  // (brief flicker beats blocking the list on the config query).
+  const documents = useMemo(() => {
+    const contractDocuments = feedbackTemplateId
+      ? infiniteDocuments.filter((doc) => !isServiceRecordDoc(doc))
+      : infiniteDocuments;
+    return contractDocuments.filter((doc) => matchesDocumentSearch(doc, searchQuery));
+  }, [feedbackTemplateId, infiniteDocuments, isServiceRecordDoc, matchesDocumentSearch, searchQuery]);
+
+  // 제공기록지 list: ONLY feedback-template docs, with its own tab/search state.
+  const serviceRecordDocuments = useMemo(() => {
+    if (!feedbackTemplateId) return [];
+    return infiniteDocuments.filter(
+      (doc) =>
+        isServiceRecordDoc(doc) &&
+        (serviceRecordActiveTab === "all" ||
+          getStatusCategory(doc.current_status?.status_type) === serviceRecordActiveTab) &&
+        matchesDocumentSearch(doc, serviceRecordSearchQuery),
+    );
+  }, [
+    feedbackTemplateId,
+    infiniteDocuments,
+    isServiceRecordDoc,
+    matchesDocumentSearch,
+    serviceRecordActiveTab,
+    serviceRecordSearchQuery,
+  ]);
 
   const stats = useMemo(
     () => foldContractStats(statusCounts?.documents ?? []),
@@ -529,9 +573,19 @@ export default function ContractsPage() {
     );
   }, [selectedDocId, documents, allDocuments]);
 
+  const selectedServiceRecordDocument = useMemo(() => {
+    if (!selectedServiceRecordDocId) return null;
+    return serviceRecordDocuments.find((d) => d.id === selectedServiceRecordDocId) ?? null;
+  }, [selectedServiceRecordDocId, serviceRecordDocuments]);
+
   const handleTabChange = (value: string) => {
     setActiveTab(value);
     setSelectedDocId(null);
+  };
+
+  const handleServiceRecordTabChange = (value: string) => {
+    setServiceRecordActiveTab(value);
+    setSelectedServiceRecordDocId(null);
   };
 
   const handleStartContractCreation = useCallback(() => {
@@ -582,6 +636,9 @@ export default function ContractsPage() {
       if (selectedDocId === deleteTargetDocumentId) {
         setSelectedDocId(null);
       }
+      if (selectedServiceRecordDocId === deleteTargetDocumentId) {
+        setSelectedServiceRecordDocId(null);
+      }
 
       setDeleteTargetDocumentId(null);
       toast({
@@ -615,6 +672,7 @@ export default function ContractsPage() {
 
   return (
     <PageSection name="contracts">
+      {/* TODO: 통계 카운트는 아직 제공기록지 문서를 포함한다 — status-counts 엔드포인트가 템플릿을 모르므로 후속 분리 필요. */}
       <StatsBar
         name="contracts"
         isLoading={isStatsLoading}
@@ -767,20 +825,67 @@ export default function ContractsPage() {
 
           {activeSection === "service-records" ? (
             <section data-component="contracts-service-records" className="flex flex-1 min-h-0 flex-col">
-              <SplitLayout hasSelection={false}>
+              <SplitLayout
+                hasSelection={!!selectedServiceRecordDocument}
+                onBack={() => setSelectedServiceRecordDocId(null)}
+              >
                 <ListPanel
                   title="제공기록지 목록"
                   tabs={SERVICE_RECORD_TAB_ITEMS}
                   activeTab={serviceRecordActiveTab}
-                  onTabChange={setServiceRecordActiveTab}
+                  onTabChange={handleServiceRecordTabChange}
                   searchValue={serviceRecordSearchQuery}
                   onSearchChange={setServiceRecordSearchQuery}
-                  searchPlaceholder="고객명 검색..."
-                  emptyState={<ListEmptyState message="아직 제공기록지가 없습니다" />}
+                  searchPlaceholder="고객명, 문서명 검색..."
+                  isLoading={isInitialLoading || isFeedbackTemplateLoading}
+                  isContentLoading={isContentLoading}
+                  emptyState={
+                    serviceRecordDocuments.length === 0 &&
+                    !isInitialLoading &&
+                    !isFeedbackTemplateLoading &&
+                    !isContentLoading ? (
+                      <ListEmptyState
+                        message={serviceRecordSearchQuery.trim() ? "검색 결과가 없습니다" : "아직 제공기록지가 없습니다"}
+                      />
+                    ) : undefined
+                  }
                 >
-                  {null}
+                  <AnimatedSlotList<EformsignDocument>
+                    items={serviceRecordDocuments}
+                    isLoading={isInitialLoading || isFeedbackTemplateLoading || isContentLoading}
+                    loadingCount={3}
+                    className="space-y-2"
+                    getItemKey={(doc) => doc.id}
+                    itemVariant="card"
+                    getSlotState={({ item, isLoading }) => {
+                      const isActive = !isLoading && item && selectedServiceRecordDocument?.id === item.id;
+                      return {
+                        isActive: Boolean(isActive),
+                        isInteractive: !isLoading && Boolean(item),
+                      };
+                    }}
+                    onSlotClick={(doc) => setSelectedServiceRecordDocId(doc.id)}
+                    hasMore={hasNextPage}
+                    onLoadMore={() => fetchNextPage()}
+                    isFetchingMore={isFetchingNextPage}
+                    render={({ item: doc, isLoading }) => (
+                      <ContractsListItem
+                        document={doc}
+                        customerName={resolveCustomerName(doc)}
+                        isLoading={isLoading}
+                      />
+                    )}
+                  />
                 </ListPanel>
-                <EmptyState icon={ClipboardList} message="제공기록지를 선택하면 상세 정보가 표시됩니다" />
+                {selectedServiceRecordDocument ? (
+                  <ContractDetail
+                    key={selectedServiceRecordDocument.id}
+                    document={selectedServiceRecordDocument}
+                    onDeleteRequest={handleDeleteRequest}
+                  />
+                ) : (
+                  <EmptyState icon={ClipboardList} message="제공기록지를 선택하면 상세 정보가 표시됩니다" />
+                )}
               </SplitLayout>
             </section>
           ) : null}

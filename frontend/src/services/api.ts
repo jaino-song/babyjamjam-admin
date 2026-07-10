@@ -262,6 +262,11 @@ export const eformsignApi = {
         const { data } = await api.get('/eformsign-docs/client-names');
         return data;
     },
+    // 제공기록지 템플릿 id — UI가 계약서/제공기록지 문서를 템플릿 기준으로 분리할 때 사용.
+    getFeedbackTemplateId: async (): Promise<{ templateId: string | null }> => {
+        const { data } = await api.get('/eformsign-docs/feedback-template-id');
+        return data;
+    },
     // 전체 탭 StatsBar 카운터용 원시 신호. 토큰은 프록시가 서버에서 주입.
     getDocumentStatusCounts: async (): Promise<EformsignStatusCountsResponse> => {
         const { data } = await api.get('/eformsign/documents/status-counts');
