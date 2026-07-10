@@ -13,13 +13,17 @@ export type V3ScaleStyle = CSSProperties & {
   "--v3-ui-scale": string;
 };
 
-function getViewportScaleValue(): string {
-  return String(Number((
+export function getV3UiScaleForViewport(width: number, height: number): number {
+  return Number((
     Math.min(
-      window.innerWidth / BASE_VIEWPORT_WIDTH,
-      window.innerHeight / BASE_VIEWPORT_HEIGHT,
+      width / BASE_VIEWPORT_WIDTH,
+      height / BASE_VIEWPORT_HEIGHT,
     ) * CONTRACTS_UI_SCALE_MULTIPLIER
-  ).toFixed(4)));
+  ).toFixed(4));
+}
+
+function getViewportScaleValue(): string {
+  return String(getV3UiScaleForViewport(window.innerWidth, window.innerHeight));
 }
 
 function useStableV3ScaleValue(enabled: boolean): string {

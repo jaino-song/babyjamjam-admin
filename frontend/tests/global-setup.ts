@@ -17,6 +17,7 @@ function readJwtSecret(): string {
   if (!line) {
     throw new Error("JWT_SECRET not found in env or ../backend/.env");
   }
+
   return line.slice("JWT_SECRET=".length);
 }
 

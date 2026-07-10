@@ -42,7 +42,7 @@ import { ContactInput } from "./form-components/ContactInput";
 import { ClientAutocomplete } from "../../clients/ClientAutocomplete";
 import { EmployeeAutocomplete } from "../../clients/EmployeeAutocomplete";
 import { ClientFormDialog } from "../../clients/ClientFormDialog";
-import { useCreateClient } from "@/hooks/useClients";
+import { useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useEmployees } from "@/hooks/useEmployees";
 import type { Client } from "@/lib/client/types";
 import type { Employee } from "@/hooks/useEmployees";
@@ -125,13 +125,11 @@ export const ContractCreationForm = () => {
     dueDate,
     // Employee 1 selection
     employeeId,
-    isEmployeeManualEntry,
     employeeName,
     employeePhone,
     // Employee 2 selection
     showEmployee2,
     employee2Id,
-    isEmployee2ManualEntry,
     employee2Name,
     employee2Phone,
     // Contract details
@@ -156,15 +154,11 @@ export const ContractCreationForm = () => {
     resetClientFields,
     // Employee 1 selection setters
     setIsEmployeeManualEntry,
-    setEmployeeName,
-    setEmployeePhone,
     setEmployeeSelection,
     resetEmployeeFields,
     // Employee 2 selection setters
     setShowEmployee2,
     setIsEmployee2ManualEntry,
-    setEmployee2Name,
-    setEmployee2Phone,
     setEmployee2Selection,
     resetEmployee2Fields,
     // Contract details setters
@@ -194,6 +188,7 @@ export const ContractCreationForm = () => {
 
   // Client creation mutation - for creating new clients from manual entry
   const createClientMutation = useCreateClient();
+  const updateClientMutation = useUpdateClient();
 
   // Ref to store selected client for delayed employee auto-population
   const selectedClientRef = useRef<Client | null>(null);
@@ -242,6 +237,8 @@ export const ContractCreationForm = () => {
   // Client selection handlers
   const handleClientSelect = (selectedClientId: number | null, client: Client | null) => {
     setClientId(selectedClientId);
+    resetEmployeeFields();
+    resetEmployee2Fields();
 
     // Store client in ref for delayed employee auto-population (useEffect handles this)
     selectedClientRef.current = client;
@@ -346,11 +343,6 @@ export const ContractCreationForm = () => {
     }
   };
 
-  const handleToggleEmployeeManualEntry = () => {
-    resetEmployeeFields();
-    setIsEmployeeManualEntry(!isEmployeeManualEntry);
-  };
-
   // Employee 2 selection handlers
   const handleEmployee2Select = (selectedEmployeeId: number | null, employee: Employee | null) => {
     if (employee) {
@@ -360,12 +352,6 @@ export const ContractCreationForm = () => {
       // Clear all employee 2 fields atomically
       setEmployee2Selection(null, "", "");
     }
-  };
-
-  const handleToggleEmployee2ManualEntry = () => {
-    resetEmployee2Fields();
-    setShowEmployee2(true);
-    setIsEmployee2ManualEntry(!isEmployee2ManualEntry);
   };
 
   const handleToggleShowEmployee2 = () => {
@@ -378,6 +364,11 @@ export const ContractCreationForm = () => {
   };
 
   const handleContractCreation = async () => {
+    if (employeeId === null || (showEmployee2 && employee2Id === null)) {
+      setActiveStep(1);
+      setSubmitError("등록된 제공인력을 목록에서 선택해 주세요.");
+      return;
+    }
     if (!isEformsignLoaded) {
       setSubmitError("eformsign SDK가 아직 로드되지 않았습니다. 잠시 후 다시 시도해주세요.");
       return;
@@ -389,6 +380,26 @@ export const ContractCreationForm = () => {
     try {
       // Determine final clientId - create new client if in manual entry mode
       let finalClientId = clientId;
+      const assignment = {
+        primaryEmployeeId: employeeId,
+        secondaryEmployeeId: showEmployee2 ? employee2Id : null,
+      };
+      const clientData = {
+        ...assignment,
+        name,
+        phone,
+        birthday: birthday || undefined,
+        address: address || null,
+        dueDate: dueDate || startDate || undefined,
+        type: voucherType || null,
+        duration: Number(voucherDuration) || null,
+        fullPrice: fullPrice || null,
+        grant: grant || null,
+        actualPrice: actualPrice || null,
+        startDate: startDate || null,
+        endDate: endDate || null,
+        areaId: area || null,
+      };
 
       if (isManualEntry && !clientId) {
         if (!window.confirm(MANUAL_CLIENT_CREATION_CONFIRM_MESSAGE)) {
@@ -397,12 +408,7 @@ export const ContractCreationForm = () => {
 
         // Create new client from manual entry data
         const newClient = await createClientMutation.mutateAsync({
-          name,
-          phone,
-          birthday: birthday || undefined,
-          address: address || undefined,
-          dueDate: dueDate || startDate || undefined,
-          primaryEmployeeId: null,
+          ...clientData,
           careCenter: false,
           voucherClient: true,
           breastPump: false,
@@ -410,6 +416,15 @@ export const ContractCreationForm = () => {
         });
         finalClientId = newClient.id;
         setClientId(newClient.id);
+      }
+      if (finalClientId === null) {
+        throw new Error("고객 정보를 먼저 선택하거나 등록해 주세요.");
+      }
+      if (clientId !== null) {
+        await updateClientMutation.mutateAsync({
+          id: clientId,
+          dto: clientData,
+        });
       }
 
       // Authenticate first - tokens are stored in httpOnly cookies
@@ -455,7 +470,7 @@ export const ContractCreationForm = () => {
       // Pass clientId to link the document with the client
       const documentOption: EformsignDocumentOption = await eformsignApi.generateDocument(
         contractData,
-        finalClientId ?? undefined
+        finalClientId
       );
 
       console.log("Document option generated:", documentOption);
@@ -510,12 +525,8 @@ export const ContractCreationForm = () => {
   };
 
   const isStep1Valid = Boolean((isManualEntry ? name.trim() && phone.trim() : clientId !== null) && area);
-  const isEmployee1Valid = Boolean(
-    isEmployeeManualEntry ? employeeName.trim() && employeePhone.trim() : employeeId !== null
-  );
-  const isEmployee2Valid = Boolean(
-    !showEmployee2 || (isEmployee2ManualEntry ? employee2Name.trim() && employee2Phone.trim() : employee2Id !== null)
-  );
+  const isEmployee1Valid = employeeId !== null;
+  const isEmployee2Valid = !showEmployee2 || employee2Id !== null;
   const isStep2Valid = isEmployee1Valid && isEmployee2Valid;
   const isStep3Valid = Boolean(voucherType && voucherDuration && fullPrice && grant && actualPrice);
   const isStep4Valid = Boolean(startDate && endDate && paymentDate);
@@ -527,7 +538,7 @@ export const ContractCreationForm = () => {
       return "고객 정보와 계약서를 선택해 주세요.";
     }
     if (step === 1 && !isStep2Valid) {
-      return "제공인력 정보를 모두 입력해 주세요.";
+      return "등록된 제공인력을 목록에서 선택해 주세요.";
     }
     if (step === 2 && !isStep3Valid) {
       return "바우처 유형/기간과 금액 정보를 입력해 주세요.";
@@ -707,53 +718,19 @@ export const ContractCreationForm = () => {
       label: stepLabels[1] ?? "제공인력 정보",
       content: (
         <div className="flex flex-col gap-6">
-          {!isEmployeeManualEntry ? (
-            <>
-              <EmployeeAutocomplete
-                value={employeeId}
-                onChange={handleEmployeeSelect}
-                label={t(locale, "contract-msg.employee-select-label")}
-                required
-                allowManualEntry
-                onManualEntry={handleToggleEmployeeManualEntry}
-                excludeIds={employee2Id !== null ? [employee2Id] : []}
-              />
-              {employeeId !== null && (
-                <div className="pl-3 border-l-[3px] border-primary">
-                  <p className="text-sm text-muted-foreground">
-                    <strong>{t(locale, "contract-msg.employee-phone-label")}:</strong> {employeePhone || "-"}
-                  </p>
-                </div>
-              )}
-            </>
-          ) : (
-            <>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground font-medium">
-                  {t(locale, "contract-msg.employee-manual-entry-mode")}
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={handleToggleEmployeeManualEntry}
-                >
-                  {t(locale, "contract-msg.switch-to-employee-search")}
-                </Button>
-              </div>
-              <NameInput
-                name={employeeName}
-                setName={setEmployeeName}
-                label={t(locale, "contract-msg.employee-name-label")}
-                placeholder={t(locale, "contract-msg.employee-name-placeholder")}
-              />
-              <ContactInput
-                phone={employeePhone}
-                setPhone={setEmployeePhone}
-                label={t(locale, "contract-msg.employee-phone-label")}
-                placeholder={t(locale, "contract-msg.employee-phone-placeholder")}
-              />
-            </>
+          <EmployeeAutocomplete
+            value={employeeId}
+            onChange={handleEmployeeSelect}
+            label={t(locale, "contract-msg.employee-select-label")}
+            required
+            excludeIds={employee2Id !== null ? [employee2Id] : []}
+          />
+          {employeeId !== null && (
+            <div className="pl-3 border-l-[3px] border-primary">
+              <p className="text-sm text-muted-foreground">
+                <strong>{t(locale, "contract-msg.employee-phone-label")}:</strong> {employeePhone || "-"}
+              </p>
+            </div>
           )}
 
           <Separator className="my-1" />
@@ -770,52 +747,18 @@ export const ContractCreationForm = () => {
 
           {showEmployee2 && (
             <div className="flex flex-col gap-6">
-              {!isEmployee2ManualEntry ? (
-                <>
-                  <EmployeeAutocomplete
-                    value={employee2Id}
-                    onChange={handleEmployee2Select}
-                    label={t(locale, "contract-msg.employee2-select-label")}
-                    allowManualEntry
-                    onManualEntry={handleToggleEmployee2ManualEntry}
-                    excludeIds={employeeId !== null ? [employeeId] : []}
-                  />
-                  {employee2Id !== null && (
-                    <div className="pl-3 border-l-[3px] border-secondary">
-                      <p className="text-sm text-muted-foreground">
-                        <strong>{t(locale, "contract-msg.employee2-phone-label")}:</strong> {employee2Phone || "-"}
-                      </p>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-muted-foreground font-medium">
-                      {t(locale, "contract-msg.employee2-manual-entry-mode")}
-                    </span>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      onClick={handleToggleEmployee2ManualEntry}
-                    >
-                      {t(locale, "contract-msg.switch-to-employee2-search")}
-                    </Button>
-                  </div>
-                  <NameInput
-                    name={employee2Name}
-                    setName={setEmployee2Name}
-                    label={t(locale, "contract-msg.employee2-name-label")}
-                    placeholder={t(locale, "contract-msg.employee-name-placeholder")}
-                  />
-                  <ContactInput
-                    phone={employee2Phone}
-                    setPhone={setEmployee2Phone}
-                    label={t(locale, "contract-msg.employee2-phone-label")}
-                    placeholder={t(locale, "contract-msg.employee-phone-placeholder")}
-                  />
-                </>
+              <EmployeeAutocomplete
+                value={employee2Id}
+                onChange={handleEmployee2Select}
+                label={t(locale, "contract-msg.employee2-select-label")}
+                excludeIds={employeeId !== null ? [employeeId] : []}
+              />
+              {employee2Id !== null && (
+                <div className="pl-3 border-l-[3px] border-secondary">
+                  <p className="text-sm text-muted-foreground">
+                    <strong>{t(locale, "contract-msg.employee2-phone-label")}:</strong> {employee2Phone || "-"}
+                  </p>
+                </div>
               )}
             </div>
           )}

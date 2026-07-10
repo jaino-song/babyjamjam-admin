@@ -96,7 +96,10 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 scheduledFor: { lte: now },
                 OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
             },
-            orderBy: { scheduledFor: "asc" },
+            orderBy: [
+                { scheduledFor: "asc" },
+                { createdAt: "asc" },
+            ],
             take: limit,
         });
         return rows.map((row) => this.toDomain(row));
@@ -231,8 +234,8 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 updated_at
             )
             VALUES (
-                ${job.branchId},
-                ${job.ruleId},
+                ${job.branchId}::uuid,
+                ${job.ruleId}::uuid,
                 'pending',
                 ${job.scheduledFor},
                 NULL,

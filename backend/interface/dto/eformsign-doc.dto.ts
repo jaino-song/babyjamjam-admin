@@ -1,6 +1,7 @@
-import { IsBoolean, IsDateString, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, Matches } from "class-validator";
+import { IsBoolean, IsDateString, IsIn, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, Matches } from "class-validator";
 import { ContractDataDto } from "application/dto/contract.dto";
 import type { EformsignHeadlessProgressStep } from "application/services/eformsign-headless-progress.service";
+import { EFORMSIGN_DOCUMENT_KIND, type EformsignDocumentKind } from "domain/entities/eformsign-doc.entity";
 
 /**
  * DTO for getting access token
@@ -92,6 +93,18 @@ export class CreateEformsignDocLocalDto {
     @IsOptional()
     @IsBoolean()
     linkToClient?: boolean; // If true, also update client.e_doc_id
+
+    @IsOptional()
+    @IsIn(Object.values(EFORMSIGN_DOCUMENT_KIND))
+    documentKind?: EformsignDocumentKind | null;
+
+    @IsOptional()
+    @IsNumber()
+    employeeScheduleId?: number | null;
+
+    @IsOptional()
+    @IsString()
+    templateId?: string | null;
 }
 
 /**
@@ -101,9 +114,8 @@ export class DispatchHeadlessRequestDto {
     @IsObject()
     contractData!: ContractDataDto;
 
-    @IsOptional()
     @IsNumber()
-    clientId?: number;
+    clientId!: number;
 
     @IsOptional()
     @IsString()

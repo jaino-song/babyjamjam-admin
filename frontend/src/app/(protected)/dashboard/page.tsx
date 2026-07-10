@@ -1,6 +1,7 @@
 "use client";
 
 import { redirect, useRouter, useSearchParams } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
@@ -59,6 +60,8 @@ import {
 import Link from "next/link";
 
 import { Block } from "@/components/app/v3/Block";
+import { mapStatusToLabel } from "@/lib/eformsign/status-codes";
+import { eformsignApi, type LocalEformsignDocRecord } from "@/services/api";
 
 const DASHBOARD_STAT_KEYS = [
   { icon: Users, valueKey: "activeClients" as const, label: "서비스 진행 중", colorIndex: 0, counter: "명" },
@@ -100,6 +103,14 @@ const getDocumentStatusLabel = (status: Client["documentStatus"], locale: Return
   };
 
   return labelMap[status];
+};
+
+const isContractDocumentRecord = (doc: LocalEformsignDocRecord): boolean =>
+  doc.documentKind !== "service_feedback_snapshot";
+
+const getDocumentTime = (dateStr: string): number => {
+  const time = new Date(dateStr).getTime();
+  return Number.isNaN(time) ? 0 : time;
 };
 
 function isToday(dateStr: string): boolean {
@@ -411,6 +422,19 @@ export default function DashboardPage() {
     if (!selectedClient) return null;
     return clients.find((client) => client.id === selectedClient.id) ?? selectedClient;
   }, [clients, selectedClient]);
+  const selectedClientId = selectedClientData?.id ?? null;
+
+  const {
+    data: selectedClientDocs = [],
+  } = useQuery({
+    queryKey: ["eformsign-docs", "client", selectedClientId],
+    queryFn: () => {
+      if (selectedClientId === null) return Promise.resolve([]);
+      return eformsignApi.getDocumentsByClientId(selectedClientId);
+    },
+    enabled: activeDetailTab === "contracts" && selectedClientId !== null,
+    staleTime: 1000 * 60,
+  });
 
   const selectedClientBadges = useMemo(() => {
     return getClientBadges(selectedClientData);
@@ -437,9 +461,22 @@ export default function DashboardPage() {
     }
 
     const isDummyClient = selectedClientData.name.includes("[더미]");
-    const hasContractSignal = Boolean(selectedClientData.eDocId || selectedClientData.documentStatus);
+    const newestContractDoc = selectedClientDocs
+      .filter(isContractDocumentRecord)
+      .sort((left, right) => getDocumentTime(right.createdDate) - getDocumentTime(left.createdDate))[0] ?? null;
 
-    if (!isDummyClient && !hasContractSignal) {
+    if (newestContractDoc) {
+      return {
+        contractName: "산모신생아 서비스 계약서",
+        documentId: newestContractDoc.documentId,
+        documentStatus: mapStatusToLabel(newestContractDoc.statusType),
+        sentDate: formatDate(newestContractDoc.createdDate),
+        contractPeriod: `${formatDate(selectedClientData.startDate)} ~ ${formatDate(selectedClientData.endDate)}`,
+        contractAmount: formatPrice(selectedClientData.fullPrice),
+      };
+    }
+
+    if (!isDummyClient) {
       return null;
     }
 
@@ -455,7 +492,7 @@ export default function DashboardPage() {
       contractPeriod: `${formatDate(selectedClientData.startDate)} ~ ${formatDate(selectedClientData.endDate)}`,
       contractAmount: formatPrice(selectedClientData.fullPrice),
     };
-  }, [selectedClientData, locale]);
+  }, [selectedClientData, selectedClientDocs, locale]);
 
   if (!user) {
     redirect("/logout");
@@ -466,6 +503,7 @@ export default function DashboardPage() {
       data-component="dashboard"
       className="flex flex-col gap-4 h-[calc(100dvh-11rem)] md:h-[calc(100dvh-4rem)]"
     >
+      <h1 className="sr-only">대시보드</h1>
       <Block name="dashboard-stats" className="shrink-0">
         <StatsBar
           name="dashboard"
@@ -553,8 +591,12 @@ export default function DashboardPage() {
               trailing={
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <button className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors">
-                      <MoreVertical className="w-5 h-5 text-v3-text-muted" />
+                    <button
+                      type="button"
+                      aria-label="고객 상세 메뉴"
+                      className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2"
+                    >
+                      <MoreVertical className="w-5 h-5 text-v3-text-muted" aria-hidden="true" />
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="min-w-[140px]">
@@ -576,6 +618,8 @@ export default function DashboardPage() {
                   ]}
                   activeTab={activeDetailTab}
                   onTabChange={setActiveDetailTab}
+                  ariaLabel="고객 상세 정보"
+                  idPrefix="dashboard-client-detail"
                 />
               }
             >
@@ -584,6 +628,7 @@ export default function DashboardPage() {
                 className="flex min-h-0 flex-1 flex-col"
                 dataComponent="dashboard-detail-content"
                 panelDataComponent="dashboard-detail-content-panel"
+                idPrefix="dashboard-client-detail"
                 trackClassName="min-h-0 flex-1"
                 panels={[
                   {

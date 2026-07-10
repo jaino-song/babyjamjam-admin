@@ -14,7 +14,11 @@ import {
 import {
     MessageSenderApprovalResponseDto,
 } from "interface/dto/message-sender-approval.dto";
-import { MessageAutomationPoliciesResponseDto } from "interface/dto/message-automation-policy.dto";
+import {
+    MessageAutomationPastTriggerConfigDto,
+    MessageAutomationPoliciesResponseDto,
+    UpdateMessageAutomationPastTriggerConfigDto,
+} from "interface/dto/message-automation-policy.dto";
 import { TenantGuard, CurrentTenant } from "infrastructure/tenant";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 
@@ -91,8 +95,29 @@ export class SystemSettingController {
 
     @Get("message-automation-policies")
     @UseGuards(TenantGuard)
-    async getMessageAutomationPolicies(): Promise<MessageAutomationPoliciesResponseDto> {
-        return MessageAutomationPoliciesResponseDto.from();
+    async getMessageAutomationPolicies(
+        @CurrentTenant() tenant?: { branchId?: string },
+    ): Promise<MessageAutomationPoliciesResponseDto> {
+        const pastTriggerConfig = await this.systemSettingService.getMessageAutomationPastTriggerConfig(
+            tenant?.branchId ?? "",
+        );
+        return MessageAutomationPoliciesResponseDto.from(pastTriggerConfig);
+    }
+
+    @Put("message-automation-policies/past-trigger")
+    @UseGuards(TenantGuard)
+    async updateMessageAutomationPastTriggerConfig(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Body() dto: UpdateMessageAutomationPastTriggerConfigDto,
+    ): Promise<MessageAutomationPastTriggerConfigDto> {
+        const entity = await this.systemSettingService.setMessageAutomationPastTriggerConfig(
+            tenant.branchId ?? "",
+            {
+                sendIntervalMinutes: dto.sendIntervalMinutes,
+                ruleOrder: dto.ruleOrder,
+            },
+        );
+        return MessageAutomationPastTriggerConfigDto.from(JSON.parse(entity.value));
     }
 
     @Put("ribbon-config")

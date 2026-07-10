@@ -17,6 +17,7 @@ import {
 import { filterHistoryRecordsByChannel } from "@/features/message-triggers/channel";
 import { useMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
 import type { MessageLogRecord } from "@/features/message-triggers/types";
+import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { messageDeliveryApi } from "@/services/api";
 import type { Client } from "@/lib/client/types";
 import {
@@ -28,6 +29,7 @@ import { cn } from "@/lib/utils";
 import { useFormStore } from "@/stores/form-store";
 import { ContactInput } from "./form-components/ContactInput";
 import { TemplateFieldGrid, TemplateFieldGridItem } from "./form-components/TemplateFieldGrid";
+import type { TemplateMessageDeliveryMode } from "./form-components/TemplateMessageFormLayout";
 
 const SMS_BYTE_LIMIT = 90;
 const MAX_LMS_TITLE_BYTES = 44;
@@ -61,6 +63,7 @@ interface TemplateSendFormProps {
   templateName: string;
   message: string;
   requiresRecipientName?: boolean;
+  deliveryMode?: TemplateMessageDeliveryMode;
   children?: ReactNode;
   className?: string;
   formId?: string;
@@ -134,7 +137,7 @@ export function findRecentDuplicateSend(
   return history
     .filter((record) => {
       if (record.status !== "sent") return false;
-      if (normalizeKoreanPhoneLookupKey(record.receiver) !== receiver) return false;
+      if (normalizeKoreanPhoneLookupKey(record.recipientPhone ?? record.receiver) !== receiver) return false;
       if (normalizeDuplicateMessage(record.messageBody) !== message) return false;
 
       const sentAt = new Date(getHistoryTimestamp(record));
@@ -150,6 +153,7 @@ export function TemplateSendForm({
   templateName,
   message,
   requiresRecipientName = false,
+  deliveryMode = "sms",
   children,
   className,
   formId,
@@ -164,8 +168,12 @@ export function TemplateSendForm({
   const [recipientQueue, setRecipientQueue] = useState<RecipientQueueItem[]>([]);
   const { data: historyData = [], refetch: refetchHistory } = useMessageHistory();
   const {
+    clientId,
     name,
     phone,
+    employeeId,
+    employeeName,
+    employeePhone,
     voucherType,
     voucherDuration,
     voucherYear,
@@ -184,8 +192,11 @@ export function TemplateSendForm({
     setStartDate,
     setVoucherDuration,
     setVoucherType,
+    resetClientFields,
+    resetEmployeeFields,
   } = useFormStore();
 
+  const isServiceFeedbackLinkDelivery = deliveryMode === "service-feedback-link";
   const recipientPhone = useMemo(
     () => normalizeKoreanPhoneLookupKey(phone),
     [phone],
@@ -195,6 +206,7 @@ export function TemplateSendForm({
     [historyData],
   );
   const formattedRecipientPhone = recipientPhone ? formatKoreanPhoneNumber(recipientPhone) : "";
+  const normalizedEmployeePhone = normalizeKoreanPhoneLookupKey(employeePhone);
   const recipientName = name.trim();
   const trimmedMessage = message.trim();
   const isBodyTooLong = trimmedMessage.length > MAX_BODY_LENGTH;
@@ -218,12 +230,23 @@ export function TemplateSendForm({
         : requiresPriceInfoFields && !voucherYear
           ? "바우처 연도를 선택해 주세요."
           : null;
+  const serviceFeedbackValidationMessage = !employeeId || !employeeName.trim()
+    ? "관리사님을 선택해 주세요."
+    : !normalizedEmployeePhone
+      ? "관리사님 전화번호를 선택해 주세요."
+      : !isValidKoreanPhoneNumber(normalizedEmployeePhone)
+        ? "관리사님 전화번호 형식이 올바르지 않습니다."
+        : !clientId
+          ? "산모님을 선택해 주세요."
+          : null;
   const messageValidationMessage = !trimmedMessage
     ? "메시지 본문을 입력해 주세요."
     : isBodyTooLong
       ? `본문은 최대 ${MAX_BODY_LENGTH}자까지 입력할 수 있습니다.`
       : null;
   const currentQueueItem = useMemo<RecipientQueueItem | null>(() => {
+    if (isServiceFeedbackLinkDelivery) return null;
+
     if (recipientValidationMessage || templateFieldValidationMessage || messageValidationMessage) {
       return null;
     }
@@ -238,6 +261,7 @@ export function TemplateSendForm({
     };
   }, [
     formattedRecipientPhone,
+    isServiceFeedbackLinkDelivery,
     messageValidationMessage,
     recipientName,
     recipientPhone,
@@ -247,9 +271,11 @@ export function TemplateSendForm({
     trimmedMessage,
   ]);
   const hasQueuedRecipients = recipientQueue.length > 0;
-  const validationMessage = hasQueuedRecipients
-    ? null
-    : recipientValidationMessage ?? templateFieldValidationMessage ?? messageValidationMessage;
+  const validationMessage = isServiceFeedbackLinkDelivery
+    ? serviceFeedbackValidationMessage
+    : hasQueuedRecipients
+      ? null
+      : recipientValidationMessage ?? templateFieldValidationMessage ?? messageValidationMessage;
   const isSubmitDisabled = Boolean(validationMessage) || isSending || isCheckingDuplicate;
   const resolvedFormId = formId ?? `messages-template-send-form-${templateId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 
@@ -502,11 +528,56 @@ export function TemplateSendForm({
     }
   };
 
+  const sendServiceFeedbackLink = async () => {
+    if (!clientId || !employeeId) {
+      setFeedback({
+        tone: "error",
+        message: serviceFeedbackValidationMessage ?? "관리사님과 산모님을 선택해 주세요.",
+      });
+      return;
+    }
+
+    setIsSending(true);
+    setFeedback(null);
+
+    try {
+      const overviewResponse = await serviceRecordsApi.getClientOverview(clientId);
+      const assignment = overviewResponse.data.assignments.find(
+        (item) => !item.replaced && item.employee.id === employeeId,
+      );
+
+      if (!assignment) {
+        setFeedback({
+          tone: "error",
+          message: "선택한 관리사님과 산모님의 배정 일정을 찾을 수 없습니다.",
+        });
+        return;
+      }
+
+      await serviceRecordsApi.sendLink(assignment.scheduleId);
+      setFeedback({
+        tone: "success",
+        message: "제공기록지 링크 발송 요청이 접수되었습니다.",
+      });
+      resetEmployeeFields();
+      resetClientFields();
+    } catch {
+      setFeedback({ tone: "error", message: "제공기록지 링크 발송에 실패했습니다." });
+    } finally {
+      setIsSending(false);
+    }
+  };
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     if (validationMessage) {
       setFeedback({ tone: "error", message: validationMessage });
+      return;
+    }
+
+    if (isServiceFeedbackLinkDelivery) {
+      await sendServiceFeedbackLink();
       return;
     }
 
@@ -540,8 +611,8 @@ export function TemplateSendForm({
     >
       <div data-component="messages-template-send-form-header" className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-[0.9rem] font-bold text-v3-dark">전송 정보</h3>
-          <p className="mt-0.5 text-[0.75rem] text-v3-text-muted">
+          <h3 className="text-[calc(14.4px*var(--v3-ui-scale,1))] font-bold text-v3-dark">전송 정보</h3>
+          <p className="mt-0.5 text-[calc(12px*var(--v3-ui-scale,1))] text-v3-text-muted">
             메시지 전송에 필요한 정보를 입력해 주세요.
           </p>
         </div>
@@ -556,18 +627,28 @@ export function TemplateSendForm({
             ) : (
               <Send className="h-4 w-4" aria-hidden="true" />
             )}
-            {isSending ? "발송 중..." : isCheckingDuplicate ? "확인 중..." : "즉시 발송"}
+            {isSending ? "발송 중…" : isCheckingDuplicate ? "확인 중…" : "즉시 발송"}
           </Button>
         ) : null}
       </div>
 
-      {shouldUseInlinePhoneRecipient ? (
+      {isServiceFeedbackLinkDelivery ? (
+        children ? <TemplateFieldGrid>{children}</TemplateFieldGrid> : null
+      ) : shouldUseInlinePhoneRecipient ? (
         <>
           <div
             data-component="messages-template-send-form-phone-field"
             className="min-w-0 w-full"
           >
-            {phoneAutocompleteField}
+            {templateId === "builtin:greeting" ? (
+              <ContactInput
+                phone={phone}
+                setPhone={handlePhoneChange}
+                label="휴대 전화번호"
+                placeholder="010-0000-0000"
+                required
+              />
+            ) : phoneAutocompleteField}
           </div>
           {children ? <TemplateFieldGrid>{children}</TemplateFieldGrid> : null}
         </>
@@ -607,13 +688,13 @@ export function TemplateSendForm({
         </TemplateFieldGrid>
       )}
 
-      {recipientPills}
+      {isServiceFeedbackLinkDelivery ? null : recipientPills}
 
       {feedback ? (
         <div
           data-component="messages-template-send-form-feedback"
           className={cn(
-            "mt-4 rounded-[14px] px-4 py-3 text-[0.78rem] font-semibold",
+            "mt-4 rounded-[14px] px-4 py-3 text-[calc(12.48px*var(--v3-ui-scale,1))] font-semibold",
             feedback.tone === "success"
               ? "bg-v3-primary-light text-v3-primary"
               : "bg-v3-burgundy-light text-v3-burgundy",
@@ -648,7 +729,7 @@ export function TemplateSendForm({
             </DialogDescription>
           </DialogHeader>
 
-          <main data-component="messages-duplicate-send-confirm-main">
+          <div data-component="messages-duplicate-send-confirm-main">
             {duplicateSendCandidates && duplicateSendCandidates.length > 0 ? (
               <div
                 data-component="messages-duplicate-send-confirm-list"
@@ -677,7 +758,7 @@ export function TemplateSendForm({
                 ))}
               </div>
             ) : null}
-          </main>
+          </div>
 
           <DialogFooter
             data-component="messages-duplicate-send-confirm-footer"

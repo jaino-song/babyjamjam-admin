@@ -27,6 +27,31 @@ import type {
 const DEFAULT_EFORMSIGN_LIMIT = 100;
 const DEFAULT_EFORMSIGN_SKIP = 0;
 
+export interface FeedbackTemplateIdResponse {
+    templateId: string | null;
+}
+
+export interface LocalEformsignDocRecord {
+    id?: number;
+    documentId: string;
+    createdDate: string;
+    updatedDate: string;
+    statusType: string;
+    statusDetail: string;
+    stepType: string;
+    stepIndex: string;
+    stepName: string;
+    stepRecipientType: string;
+    stepRecipientName: string;
+    stepRecipientSms: string;
+    expiredDate: string;
+    expired: boolean;
+    clientId: number;
+    documentKind: "contract" | "service_feedback_snapshot" | null;
+    employeeScheduleId: number | null;
+    templateId: string | null;
+}
+
 function normalizeDocumentListResponse(
     response: EformsignApiListResponse,
     params?: { limit?: number; skip?: number },
@@ -161,7 +186,7 @@ export const eformsignApi = {
         });
         return data as { clientId?: number | null } | null;
     },
-    generateDocument: async (contractData: ContractDataDto, clientId?: number) => {
+    generateDocument: async (contractData: ContractDataDto, clientId: number) => {
         const { data } = await api.post('/generate-document', { contractData, clientId });
         return data;
     },
@@ -232,7 +257,7 @@ export const eformsignApi = {
      */
     dispatchHeadless: async (
         contractData: ContractDataDto,
-        clientId?: number,
+        clientId: number,
         progressId?: string,
     ): Promise<HeadlessDispatchResponse> => {
         const { data } = await api.post('/eformsign-docs/dispatch-headless', {
@@ -260,6 +285,16 @@ export const eformsignApi = {
     },
     getDocumentClientNames: async (): Promise<EformsignDocClientSummary[]> => {
         const { data } = await api.get('/eformsign-docs/client-names');
+        return data;
+    },
+    getFeedbackTemplateId: async (): Promise<FeedbackTemplateIdResponse> => {
+        const { data } = await api.get('/eformsign-docs/feedback-template-id');
+        return data;
+    },
+    getDocumentsByClientId: async (clientId: number): Promise<LocalEformsignDocRecord[]> => {
+        const { data } = await api.get('/eformsign-docs/client', {
+            params: { clientId },
+        });
         return data;
     },
     // 전체 탭 StatsBar 카운터용 원시 신호. 토큰은 프록시가 서버에서 주입.
@@ -296,8 +331,14 @@ export interface MessageAutomationPolicy {
     rows: MessageAutomationPolicyRow[];
 }
 
+export interface MessageAutomationPastTriggerConfig {
+    sendIntervalMinutes: number;
+    ruleOrder: string[];
+}
+
 export interface MessageAutomationPoliciesResponse {
     policies: MessageAutomationPolicy[];
+    pastTriggerConfig: MessageAutomationPastTriggerConfig;
 }
 
 export interface NotificationPreferencesResponse {
@@ -397,6 +438,12 @@ export const settingsApi = {
     },
     getMessageAutomationPolicies: async (): Promise<MessageAutomationPoliciesResponse> => {
         const { data } = await api.get("/settings/message-automation-policies");
+        return data;
+    },
+    updateMessageAutomationPastTriggerConfig: async (
+        config: MessageAutomationPastTriggerConfig,
+    ): Promise<MessageAutomationPastTriggerConfig> => {
+        const { data } = await api.put("/settings/message-automation-policies/past-trigger", config);
         return data;
     },
     requestMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {

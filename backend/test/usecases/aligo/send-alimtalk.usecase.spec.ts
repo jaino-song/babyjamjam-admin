@@ -33,6 +33,8 @@ describe("SendAligoAlimtalkUsecase", () => {
                 log.nextRetryAt,
                 log.createdAt,
                 log.updatedAt,
+                log.recipientName,
+                log.recipientPhone,
             ));
         }),
         update: jest.fn().mockResolvedValue(undefined),
@@ -73,6 +75,7 @@ describe("SendAligoAlimtalkUsecase", () => {
                 const result = await usecase.execute({
                     templateKey: "CLIENT_CREATED",
                     receiver: "01012345678",
+                    recipientName: "홍길동",
                     variables: {
                         고객명: "홍길동",
                         등록일: "2025-01-14",
@@ -89,7 +92,11 @@ describe("SendAligoAlimtalkUsecase", () => {
                 expect(result.code).toBe(0);
                 expect(logRepository.save).toHaveBeenCalledTimes(1);
                 expect(logRepository.save).toHaveBeenCalledWith(
-                    expect.objectContaining({ provider: "aligo_alimtalk" }),
+                    expect.objectContaining({
+                        provider: "aligo_alimtalk",
+                        recipientName: "홍길동",
+                        recipientPhone: "01012345678",
+                    }),
                 );
                 expect(logRepository.update).toHaveBeenCalledTimes(1);
             });

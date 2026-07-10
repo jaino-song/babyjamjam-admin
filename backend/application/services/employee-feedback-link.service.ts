@@ -183,9 +183,18 @@ export class EmployeeFeedbackLinkService {
             .replace(/\/+$/, "");
         const url = `${base}/feedback/${linkToken}`;
         const clientName = schedule.client?.name ?? "고객";
-        const message =
-            `[아가잼잼] ${clientName}님 산모·신생아 서비스 제공기록지 작성 링크입니다.\n` +
-            `링크 접속 후 휴대폰 번호로 본인확인하고, 방문일마다 기록을 남겨주세요.\n${url}`;
+        const message = `[사회서비스 제공자 품질평가 A등급]
+안녕하세요, 인천 아이미래로 입니다 :)
+
+${employee.name} 관리사님, ${clientName} 산모님의 서비스 제공기록지 작성 링크입니다.
+매일 서비스 제공 완료 직전에 서비스 세부사항 기록 후에, 산모님께 승인을 받으시면 됩니다.
+
+최초 접속 시에 관리사님의 전화번호 인증이 필요합니다. 링크 접속 후 휴대폰 번호로 본인확인하고, 방문일마다 기록을 남겨주세요.
+
+감사합니다.
+
+제공기록지 링크
+${url}`;
 
         const scheduledFor = options.scheduledFor ?? getServiceFeedbackLinkScheduledFor(schedule.startDate);
         await this.jobRepository.upsertPending(
@@ -263,6 +272,8 @@ export class EmployeeFeedbackLinkService {
                 null,
                 now,
                 now,
+                params.employeeName,
+                params.receiver,
             ),
         );
     }

@@ -210,7 +210,7 @@ function matchesHistorySearch(record: MessageLogRecord, query: string) {
   if (!trimmedQuery) return true;
 
   const digitQuery = trimmedQuery.replace(/\D/g, "");
-  const receiverDigits = record.receiver.replace(/\D/g, "");
+  const receiverDigits = (record.recipientPhone ?? record.receiver).replace(/\D/g, "");
   if (digitQuery && receiverDigits.includes(digitQuery)) {
     return true;
   }
@@ -220,6 +220,7 @@ function matchesHistorySearch(record: MessageLogRecord, query: string) {
     record.recipientName ?? "",
     record.clientName ?? "",
     record.employeeName ?? "",
+    record.recipientPhone ?? "",
     record.receiver,
     getTemplateLabel(record.templateKey),
     getEventMeta(record.eventType).label,

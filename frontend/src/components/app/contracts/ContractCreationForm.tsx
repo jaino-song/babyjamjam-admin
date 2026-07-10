@@ -155,14 +155,26 @@ function isFutureDate(value: string): boolean {
   if (!parsed.isValid()) return false;
   return parsed.startOf("day").isAfter(dayjs().startOf("day"));
 }
+
+const AREA_TEMPLATE_DISPLAY_LABELS: Record<string, string> = {
+  Namdonggu: "남동구",
+  Seogu: "서구",
+};
+
+function getAreaTemplateDisplayLabel(areaId: string, templateName?: string | null): string {
+  const mappedLabel = AREA_TEMPLATE_DISPLAY_LABELS[areaId];
+  if (mappedLabel) return mappedLabel;
+
+  return templateName?.replace(/\s*계약서.*$/, "").trim() || areaId;
+}
 import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
 import { useVoucherPriceInfos, useVoucherYears, useAreaTemplates } from "@/hooks";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { ContactInput } from "@/components/app/messages/forms/form-components/ContactInput";
 import { TitleTextInputMolecule } from "@/components/app/messages/forms/form-components/TitleTextInputMolecule";
-import { ClientAutocomplete } from "@/components/app/clients/ClientAutocomplete";
-import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocomplete";
-import { useCreateClient } from "@/hooks/useClients";
+import { ContractClientSelector } from "@/components/app/contracts/ContractClientSelector";
+import { ContractEmployeeSelector } from "@/components/app/contracts/ContractEmployeeSelector";
+import { useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useEmployees } from "@/hooks/useEmployees";
 import type { Client } from "@/lib/client/types";
 import type { Employee } from "@/hooks/useEmployees";
@@ -229,7 +241,6 @@ const PANEL_GRID_CLASS_NAME =
   "grid w-full grid-cols-1 gap-[calc(16px*var(--v3-ui-scale,1))] pb-[calc(24px*var(--v3-ui-scale,1))] md:grid-cols-2";
 const PANEL_THREE_COLUMN_GRID_CLASS_NAME =
   "grid w-full grid-cols-1 gap-[calc(16px*var(--v3-ui-scale,1))] md:grid-cols-3";
-const PANEL_FULL_FIELD_CLASS_NAME = "md:col-span-2";
 
 const SELECT_CLS =
   cn(
@@ -357,12 +368,10 @@ export const ContractCreationForm = ({
     address,
     dueDate,
     employeeId,
-    isEmployeeManualEntry,
     employeeName,
     employeePhone,
     showEmployee2,
     employee2Id,
-    isEmployee2ManualEntry,
     employee2Name,
     employee2Phone,
     startDate,
@@ -452,6 +461,7 @@ export const ContractCreationForm = ({
   const { data: voucherYears = [], isLoading: isVoucherYearsLoading } = useVoucherYears();
   const { data: employees } = useEmployees();
   const createClientMutation = useCreateClient();
+  const updateClientMutation = useUpdateClient();
   const stepLabels = t(locale, "contract-msg.pagination-steps") as unknown as string[];
 
   const handleVoucherYearChange = (value: number) => {
@@ -512,6 +522,8 @@ export const ContractCreationForm = ({
 
   const handleClientSelect = (selectedClientId: number | null, client: Client | null) => {
     setClientId(selectedClientId);
+    resetEmployeeFields();
+    resetEmployee2Fields();
 
     if (client) {
       setName(client.name);
@@ -589,18 +601,6 @@ export const ContractCreationForm = ({
     }
   };
 
-  const handleEmployeeManualNameChange = (value: string) => {
-    const nextName = value.trimStart();
-    if (!nextName.trim()) {
-      setEmployeeSelection(null, "", "");
-      setIsEmployeeManualEntry(false);
-      return;
-    }
-
-    setEmployeeSelection(null, nextName, employeePhone);
-    setIsEmployeeManualEntry(true);
-  };
-
   const handleEmployee2Select = (selectedEmployeeId: number | null, employee: Employee | null) => {
     if (employee) {
       setEmployee2Selection(selectedEmployeeId, employee.name, employee.phone);
@@ -609,18 +609,6 @@ export const ContractCreationForm = ({
       setEmployee2Selection(null, "", "");
       setIsEmployee2ManualEntry(false);
     }
-  };
-
-  const handleEmployee2ManualNameChange = (value: string) => {
-    const nextName = value.trimStart();
-    if (!nextName.trim()) {
-      setEmployee2Selection(null, "", "");
-      setIsEmployee2ManualEntry(false);
-      return;
-    }
-
-    setEmployee2Selection(null, nextName, employee2Phone);
-    setIsEmployee2ManualEntry(true);
   };
 
   const handleToggleShowEmployee2 = () => {
@@ -642,6 +630,12 @@ export const ContractCreationForm = ({
   const handleContractCreation = async ({ mode = "auto" }: ContractCreationRunOptions = {}) => {
     const shouldAttemptHeadless = mode !== "manual" && isFeatureEnabled("headlessDispatch");
 
+    if (employeeId === null || (showEmployee2 && employee2Id === null)) {
+      setSubmitError("등록된 제공인력을 목록에서 선택해 주세요.");
+      setActiveStep(1);
+      return;
+    }
+
     if (!shouldAttemptHeadless && !isEformsignLoaded) {
       setSubmitError("eformsign SDK가 아직 로드되지 않았습니다. 잠시 후 다시 시도해주세요.");
       setActiveStep(CONTRACT_INFO_STEP_INDEX);
@@ -656,6 +650,10 @@ export const ContractCreationForm = ({
     try {
       let finalClientId = clientId;
       const normalizedDueDate = parseYymmddInputToIso(dueDateInput) ?? "";
+      const assignment = {
+        primaryEmployeeId: employeeId,
+        secondaryEmployeeId: showEmployee2 ? employee2Id : null,
+      };
 
       if (!clientId) {
         const newClient = await createClientMutation.mutateAsync({
@@ -664,8 +662,7 @@ export const ContractCreationForm = ({
           birthday: birthday || undefined,
           address: address || undefined,
           dueDate: normalizedDueDate || undefined,
-          primaryEmployeeId: isEmployeeManualEntry ? null : employeeId,
-          secondaryEmployeeId: showEmployee2 && !isEmployee2ManualEntry ? employee2Id : null,
+          ...assignment,
           type: voucherType || null,
           duration: parseOptionalInteger(voucherDuration),
           fullPrice: fullPrice || null,
@@ -681,6 +678,30 @@ export const ContractCreationForm = ({
         });
         finalClientId = newClient.id;
         setClientId(newClient.id);
+      } else {
+        await updateClientMutation.mutateAsync({
+          id: clientId,
+          dto: {
+            ...assignment,
+            name,
+            phone,
+            birthday: birthday || undefined,
+            address: address || null,
+            dueDate: normalizedDueDate || undefined,
+            type: voucherType || null,
+            duration: parseOptionalInteger(voucherDuration),
+            fullPrice: fullPrice || null,
+            grant: grant || null,
+            actualPrice: actualPrice || null,
+            startDate: startDate || null,
+            endDate: endDate || null,
+            voucherClient: hasPositivePrice(grant),
+            areaId: area || null,
+          },
+        });
+      }
+      if (finalClientId === null) {
+        throw new Error("고객 정보를 먼저 선택하거나 등록해 주세요.");
       }
 
       const executionTime = Date.now();
@@ -774,7 +795,7 @@ export const ContractCreationForm = ({
 
           const headless = await eformsignApi.dispatchHeadless(
             contractData,
-            finalClientId ?? undefined,
+            finalClientId,
             progressId,
           );
 
@@ -820,7 +841,7 @@ export const ContractCreationForm = ({
 
       const documentOption: EformsignDocumentOption = await eformsignApi.generateDocument(
         contractData,
-        finalClientId ?? undefined
+        finalClientId
       );
 
       setIsDialogOpen(true);
@@ -845,6 +866,8 @@ export const ContractCreationForm = ({
                   stepRecipientSms: phone,
                   expiredDate: (end ?? start.add(60, "day")).add(30, "day").toISOString(),
                   linkToClient: true,
+                  documentKind: "contract",
+                  templateId: documentOption.mode.template_id ?? null,
                 });
               } catch (docError) {
                 console.error("Failed to create eformsign doc record:", docError);
@@ -884,12 +907,8 @@ export const ContractCreationForm = ({
   };
 
   const isStep1Valid = Boolean(name.trim() && phone.trim() && area);
-  const isEmployee1Valid = Boolean(
-    isEmployeeManualEntry ? employeeName.trim() && employeePhone.trim() : employeeId !== null
-  );
-  const isEmployee2Valid = Boolean(
-    !showEmployee2 || (isEmployee2ManualEntry ? employee2Name.trim() && employee2Phone.trim() : employee2Id !== null)
-  );
+  const isEmployee1Valid = employeeId !== null;
+  const isEmployee2Valid = !showEmployee2 || employee2Id !== null;
   const isStep2Valid = isEmployee1Valid && isEmployee2Valid;
   const isStep3Valid = Boolean(voucherType && voucherDuration && fullPrice && grant && actualPrice);
   // endDate는 이용자 서명 후 직원이 Step 3에서 사후 입력하므로 발급 시점에는 옵셔널.
@@ -910,6 +929,7 @@ export const ContractCreationForm = ({
       Boolean(paymentDate),
     ].filter(Boolean).length
   }개 입력됨`;
+  const canSelectVoucherDuration = Boolean(voucherType && voucherPriceInfos.length > 0);
   const hasVoucherPricingSelection = Boolean(voucherType && voucherDuration);
 
   const handleStepChange = (nextStep: number) => {
@@ -965,7 +985,7 @@ export const ContractCreationForm = ({
       label: stepLabels[0] ?? "이용자 정보",
       content: (
         <div className={PANEL_GRID_CLASS_NAME}>
-          <ClientAutocomplete
+          <ContractClientSelector
             value={clientId}
             onChange={handleClientSelect}
             label="산모님 성함"
@@ -1006,7 +1026,7 @@ export const ContractCreationForm = ({
             dataComponent="contract-creation-client-due-date-input"
           />
 
-          <div className={cn(PANEL_FULL_FIELD_CLASS_NAME, "grid gap-[calc(7px*var(--v3-ui-scale,1))]")} data-component="contract-creation-doc-type-field">
+          <div className="grid gap-[calc(7px*var(--v3-ui-scale,1))]" data-component="contract-creation-doc-type-field">
             <Label className={LABEL_CLS} data-component="contract-creation-doc-type-label">
               {t(locale, "contract-msg.doc-type-label")}
               <span className="text-destructive ml-1">*</span>
@@ -1018,6 +1038,7 @@ export const ContractCreationForm = ({
               data-component="contract-creation-doc-type-select"
             >
               <SelectTrigger
+                aria-label={t(locale, "contract-msg.doc-type-label")}
                 className="w-full"
                 data-component="contract-creation-doc-type-trigger"
               >
@@ -1030,7 +1051,7 @@ export const ContractCreationForm = ({
                     value={template.areaId}
                     data-component="contract-creation-doc-type-option"
                   >
-                    {template.templateName || template.areaId}
+                    {getAreaTemplateDisplayLabel(template.areaId, template.templateName)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -1055,7 +1076,10 @@ export const ContractCreationForm = ({
           {area && (
             <span className={COMPLETED_PILL}>
               <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {areaTemplates.find((template) => template.areaId === area)?.templateName || area}
+              {getAreaTemplateDisplayLabel(
+                area,
+                areaTemplates.find((template) => template.areaId === area)?.templateName,
+              )}
             </span>
           )}
         </div>
@@ -1066,14 +1090,11 @@ export const ContractCreationForm = ({
       content: (
         <div className="grid gap-[calc(18px*var(--v3-ui-scale,1))]">
           <div className={PANEL_GRID_CLASS_NAME}>
-            <EmployeeAutocomplete
-              value={isEmployeeManualEntry ? null : employeeId}
+            <ContractEmployeeSelector
+              value={employeeId}
               onChange={handleEmployeeSelect}
               label={t(locale, "contract-msg.employee-select-label")}
               required
-              allowManualInput
-              manualValue={isEmployeeManualEntry ? employeeName : ""}
-              onManualInputChange={handleEmployeeManualNameChange}
               excludeIds={employee2Id !== null ? [employee2Id] : []}
             />
             <ContactInput
@@ -1081,7 +1102,7 @@ export const ContractCreationForm = ({
               setPhone={setEmployeePhone}
               label={t(locale, "contract-msg.employee-phone-label")}
               placeholder={t(locale, "contract-msg.employee-phone-placeholder")}
-              disabled={!isEmployeeManualEntry && employeeId !== null}
+              disabled
             />
           </div>
 
@@ -1095,13 +1116,10 @@ export const ContractCreationForm = ({
 
           {showEmployee2 && (
             <div className={PANEL_GRID_CLASS_NAME}>
-              <EmployeeAutocomplete
-                value={isEmployee2ManualEntry ? null : employee2Id}
+              <ContractEmployeeSelector
+                value={employee2Id}
                 onChange={handleEmployee2Select}
                 label={t(locale, "contract-msg.employee2-select-label")}
-                allowManualInput
-                manualValue={isEmployee2ManualEntry ? employee2Name : ""}
-                onManualInputChange={handleEmployee2ManualNameChange}
                 excludeIds={employeeId !== null ? [employeeId] : []}
               />
               <ContactInput
@@ -1109,7 +1127,7 @@ export const ContractCreationForm = ({
                 setPhone={setEmployee2Phone}
                 label={t(locale, "contract-msg.employee2-phone-label")}
                 placeholder={t(locale, "contract-msg.employee-phone-placeholder")}
-                disabled={!isEmployee2ManualEntry && employee2Id !== null}
+                disabled
               />
             </div>
           )}
@@ -1180,35 +1198,37 @@ export const ContractCreationForm = ({
               </div>
             </div>
 
-            {voucherType && voucherPriceInfos.length > 0 && (
-              <div className="space-y-2 flex-1 min-w-0">
-                <Label className={LABEL_CLS}>{t(locale, "price-info-msg.duration-label")}</Label>
-                <select
-                  className={SELECT_CLS}
-                  value={voucherDuration}
-                  onChange={(e) => handleDurationChange(e.target.value)}
-                  disabled={isVoucherPriceInfosLoading}
-                >
-                  <option value="" disabled hidden>{t(locale, "price-info-msg.duration-label")}</option>
-                  {voucherPriceInfos.map((v) => (
-                    <option key={v.duration} value={v.duration}>
-                      {v.duration}일
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+            <div className="space-y-2 flex-1 min-w-0">
+              <Label className={LABEL_CLS}>{t(locale, "price-info-msg.duration-label")}</Label>
+              <select
+                className={SELECT_CLS}
+                value={voucherDuration}
+                onChange={(e) => handleDurationChange(e.target.value)}
+                disabled={!canSelectVoucherDuration || isVoucherPriceInfosLoading}
+              >
+                <option value="" disabled hidden>{t(locale, "price-info-msg.duration-label")}</option>
+                {voucherPriceInfos.map((v) => (
+                  <option key={v.duration} value={v.duration}>
+                    {v.duration}일
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
-          <div className={PANEL_THREE_COLUMN_GRID_CLASS_NAME}>
+          <div
+            data-component="contract-creation-price-fields"
+            className={cn(PANEL_THREE_COLUMN_GRID_CLASS_NAME, "animate-v3-slide-up")}
+          >
             <div className="space-y-2">
               <Label className={LABEL_CLS}>{t(locale, "contract-msg.full-price-label")}</Label>
               <div className="relative">
                 <Input
                   variant="v3"
-                  value={formatPrice(hasVoucherPricingSelection ? fullPrice : 0)}
+                  value={formatPrice(hasVoucherPricingSelection ? fullPrice : "")}
                   onChange={(e) => setFullPrice(parsePrice(e.target.value))}
                   placeholder="0"
+                  disabled={!hasVoucherPricingSelection}
                   className={`${INPUT_CLS} pr-12`}
                 />
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">원</span>
@@ -1219,9 +1239,10 @@ export const ContractCreationForm = ({
               <div className="relative">
                 <Input
                   variant="v3"
-                  value={formatPrice(hasVoucherPricingSelection ? grant : 0)}
+                  value={formatPrice(hasVoucherPricingSelection ? grant : "")}
                   onChange={(e) => setGrant(parsePrice(e.target.value))}
                   placeholder="0"
+                  disabled={!hasVoucherPricingSelection}
                   className={`${INPUT_CLS} pr-12`}
                 />
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">원</span>
@@ -1232,9 +1253,10 @@ export const ContractCreationForm = ({
               <div className="relative">
                 <Input
                   variant="v3"
-                  value={formatPrice(hasVoucherPricingSelection ? actualPrice : 0)}
+                  value={formatPrice(hasVoucherPricingSelection ? actualPrice : "")}
                   onChange={(e) => setActualPrice(parsePrice(e.target.value))}
                   placeholder="0"
+                  disabled={!hasVoucherPricingSelection}
                   className={`${INPUT_CLS} pr-12`}
                 />
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">원</span>
@@ -1349,7 +1371,7 @@ export const ContractCreationForm = ({
     {
       label: "전자문서 생성",
       content: (
-        <div className="flex min-h-full items-start justify-center py-2">
+        <div className="flex h-full w-full items-center justify-center py-2">
           <HeadlessProgressStepper
             steps={CONTRACT_CREATION_PROGRESS_STEPS}
             progress={creationProgress}
@@ -1369,7 +1391,7 @@ export const ContractCreationForm = ({
     <SteppedWizardPanelContent
       dataComponent="contract-creation-form"
       className={contentClassName}
-      stepContentClassName={stepContentClassName}
+      stepContentClassName={cn(stepContentClassName, isProcessingStep && "flex min-h-0 flex-1")}
       feedback={
         <>
           {(submitError || eformsignError) && (
@@ -1394,9 +1416,7 @@ export const ContractCreationForm = ({
     <div className="flex w-full flex-wrap items-center justify-between gap-[calc(12px*var(--v3-ui-scale,1))]">
       <span className={DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME}>{requiredFieldProgressText}</span>
       <div className={DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME}>
-        {hasProcessingSuccess ? (
-          null
-        ) : (
+        {activeStep === 0 && !hasProcessingSuccess ? (
           <Button
             type="button"
             variant="neutral"
@@ -1407,6 +1427,8 @@ export const ContractCreationForm = ({
           >
             취소
           </Button>
+        ) : (
+          null
         )}
         {activeStep > 0 && !isProcessingStep && (
           <Button

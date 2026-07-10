@@ -1,6 +1,7 @@
 import { Injectable, Inject, Logger, NotFoundException, BadRequestException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { EFORMSIGN_CLIENT_REPOSITORY, IEformsignClientRepository } from "domain/repositories/eformsign.client.interface";
+import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { CreateEformsignDocUsecase } from "./create-eformsign-doc.usecase";
 import { GetEformsignAccessTokenUsecase } from "./get-eformsign-access-token.usecase";
@@ -75,6 +76,9 @@ export class CreateAndSendFeedbackSnapshotUsecase {
             stepRecipientName: schedule.primaryEmployee.name,
             stepRecipientSms: schedule.primaryEmployee.phone,
             expiredDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+            documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_FEEDBACK_SNAPSHOT,
+            employeeScheduleId: schedule.id,
+            templateId,
         });
 
         this.logger.log(`Feedback snapshot created+sent: documentId=${result.documentId}, schedule=${scheduleId}`);

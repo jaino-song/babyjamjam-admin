@@ -105,6 +105,7 @@ import {
 } from "lucide-react";
 import { GreetingMessageForm } from "@/components/app/messages/forms/GreetingMessageForm";
 import { ServiceInfoMessageForm } from "@/components/app/messages/forms/service-info-message-form";
+import { ServiceFeedbackLinkMessageForm } from "@/components/app/messages/forms/ServiceFeedbackLinkMessageForm";
 import { PriceInfoMessageForm } from "@/components/app/messages/forms/PriceInfoMessageForm";
 import { ReminderMessageForm } from "@/components/app/messages/forms/ReminderMessageForm";
 import { ThanksMessageForm } from "@/components/app/messages/forms/ThanksMessageForm";
@@ -125,7 +126,15 @@ import {
   AppContentCard,
 } from "@/components/ui/app-surface";
 
-type BuiltinTemplateType = "greeting" | "service-info" | "price-info" | "reminder" | "thanks" | "survey" | "info";
+type BuiltinTemplateType =
+  | "greeting"
+  | "service-info"
+  | "service-feedback-link"
+  | "price-info"
+  | "reminder"
+  | "thanks"
+  | "survey"
+  | "info";
 type TemplateFilter = "builtin" | "branch";
 
 interface TemplateListItem {
@@ -158,6 +167,7 @@ interface PlaceholderPreviewItem {
 const BUILTIN_TEMPLATES: TemplateListItem[] = [
   { id: "builtin:greeting", label: "인사 메시지", icon: MessageCircle },
   { id: "builtin:service-info", label: "서비스 안내", icon: Briefcase },
+  { id: "builtin:service-feedback-link", label: "제공기록지 작성 링크", icon: FileText },
   { id: "builtin:price-info", label: "요금 안내", icon: CreditCard },
   { id: "builtin:reminder", label: "리마인더", icon: Bell },
   { id: "builtin:thanks", label: "감사 메시지", icon: Heart },
@@ -346,6 +356,7 @@ const TEMPLATE_DETAIL_TABS = [
 const BUILTIN_TEMPLATE_SYSTEM_KEYS: Record<BuiltinTemplateType, SystemTemplateKey> = {
   greeting: "GREETING",
   "service-info": "SERVICE_INFO",
+  "service-feedback-link": "SERVICE_FEEDBACK_LINK",
   "price-info": "PRICE_INFO",
   reminder: "REMINDER",
   thanks: "THANKS",
@@ -366,6 +377,11 @@ const BUILTIN_TEMPLATE_PREVIEW_META: Record<
     headline: "서비스를 안내드릴게요",
     subtitle: "기본 안내 메시지",
     buttons: ["서비스 보기"],
+  },
+  "service-feedback-link": {
+    headline: "제공기록지를 작성해 주세요",
+    subtitle: "제공기록지 작성 링크",
+    buttons: ["기록지 열기"],
   },
   "price-info": {
     headline: "이용 요금을 확인해 주세요",
@@ -523,6 +539,7 @@ const FormComponents: Record<
 > = {
   greeting: GreetingMessageForm,
   "service-info": ServiceInfoMessageForm,
+  "service-feedback-link": ServiceFeedbackLinkMessageForm,
   "price-info": PriceInfoMessageForm,
   reminder: ReminderMessageForm,
   thanks: ThanksMessageForm,
@@ -603,7 +620,7 @@ function MessageScheduledSection() {
             setSelectedJobId(null);
             setScheduledDetailTab("info");
           }}
-          searchPlaceholder="이름, 연락처, 템플릿 검색..."
+          searchPlaceholder="이름, 연락처, 템플릿 검색…"
           headerActions={
             <span
               data-component="messages-scheduled-list-badge"
@@ -850,7 +867,7 @@ function MessageScheduledSection() {
                           APP_CONTENT_BODY_CARD_CLASS_NAME,
                         )}
                       >
-                        <MsgField value={selectedJobMessageBody} />
+                        <MsgField label="메시지 내용" value={selectedJobMessageBody} />
                       </div>
                     </InfoCard>
                   ),
@@ -946,7 +963,7 @@ function MessageSectionPlaceholder({ sectionId }: { sectionId: PlaceholderSectio
                 }
               : undefined
           }
-          searchPlaceholder={isScheduledSection ? "이름, 연락처, 템플릿 검색..." : undefined}
+          searchPlaceholder={isScheduledSection ? "이름, 연락처, 템플릿 검색…" : undefined}
           headerActions={
             <span
               data-component="messages-section-placeholder-list-badge"
@@ -1343,7 +1360,7 @@ function MessageHistorySection() {
         }}
         searchValue={searchValue}
         onSearchChange={setSearchValue}
-        searchPlaceholder="고객명, 연락처, 템플릿, 내용 검색..."
+        searchPlaceholder="고객명, 연락처, 템플릿, 내용 검색…"
         headerActions={
           <span
             data-component="messages-history-list-count"
@@ -1365,6 +1382,7 @@ function MessageHistorySection() {
               <div data-component="messages-history-list-filter-relative" className="w-[110px] shrink-0">
                 <Select value={relativeDateFilter} onValueChange={(value) => setRelativeDateFilter(value as MessageHistoryRelativeDateFilter)}>
                   <SelectTrigger
+                    aria-label="발송 기간"
                     size="sm"
                     data-component="messages-history-list-filter-relative-trigger"
                     className="w-full"
@@ -1401,6 +1419,7 @@ function MessageHistorySection() {
                   </button>
                 )}
                 <CompactDateSelect
+                  ariaLabel="발송 연도"
                   value={dateYear || "year"}
                   onValueChange={handleDateYearChange}
                   placeholder="연"
@@ -1416,6 +1435,7 @@ function MessageHistorySection() {
                 />
 
                 <CompactDateSelect
+                  ariaLabel="발송 월"
                   value={dateMonth || "month"}
                   onValueChange={handleDateMonthChange}
                   placeholder="월"
@@ -1656,6 +1676,7 @@ export default function MessagesPage() {
     fields,
     messageCard,
     requiresRecipientName,
+    deliveryMode,
   }) => {
     const flattenedMessageCard = isValidElement(messageCard)
       ? cloneElement(messageCard as ReactElement<{ layout?: "flat" }>, { layout: "flat" })
@@ -1672,6 +1693,7 @@ export default function MessagesPage() {
           templateName={selectedTemplateTitle}
           message={templatePreviewMessage}
           requiresRecipientName={requiresRecipientName}
+          deliveryMode={deliveryMode}
           className="h-full"
           formId={TEMPLATE_SEND_FORM_ID}
           showSubmitButton={false}
@@ -1709,7 +1731,7 @@ export default function MessagesPage() {
           ) : (
             <Send className="h-4 w-4" aria-hidden="true" />
           )}
-          {templateSendSubmitState?.isSending ? "발송 중..." : "즉시 발송"}
+          {templateSendSubmitState?.isSending ? "발송 중…" : "즉시 발송"}
         </Button>
       ) : null}
     </>
@@ -1749,6 +1771,7 @@ export default function MessagesPage() {
         className="flex flex-1 min-h-0 flex-col gap-4 lg:flex-row lg:items-stretch"
       >
         <SectionNav
+          ariaLabel="메시지 기능"
           items={MESSAGE_SECTIONS}
           activeId={activeSection}
           onSelect={(id) => setActiveSection(id as MessageSectionId)}

@@ -17,18 +17,20 @@ interface ExpandableSearchProps {
   overlay?: boolean;
   openLabel?: string;
   closeLabel?: string;
+  inputLabel?: string;
 }
 
 export function ExpandableSearch({
   value,
   onChange,
-  placeholder = "검색...",
+  placeholder = "검색…",
   expandedWidth = "w-20",
   className,
   disabled = false,
   overlay = false,
   openLabel = "검색 열기",
   closeLabel = "검색 닫기",
+  inputLabel = "검색어",
 }: ExpandableSearchProps) {
   const [expanded, setExpanded] = useState(false);
   const [overlayExpandedWidth, setOverlayExpandedWidth] = useState("7rem");
@@ -127,6 +129,8 @@ export function ExpandableSearch({
             ref={inputRef}
             data-slot="input"
             type="text"
+            aria-label={inputLabel}
+            autoComplete="off"
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onBlur={handleBlur}
@@ -168,6 +172,8 @@ export function ExpandableSearch({
         ref={inputRef}
         data-slot="input"
         type="text"
+        aria-label={inputLabel}
+        autoComplete="off"
         placeholder={expanded ? placeholder : undefined}
         value={value}
         onChange={(e) => onChange(e.target.value)}

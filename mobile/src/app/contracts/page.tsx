@@ -40,6 +40,7 @@ import { EformsignDocument } from "@/lib/eformsign/types";
 import type { EformsignDocumentOption } from "@/lib/eformsign/types";
 import {
   getStatusCategory,
+  isProviderReviewWorkflowStep,
   isDeletedStatusCode,
   normalizeStatusCode,
 } from "@/lib/eformsign/status-codes";
@@ -49,7 +50,6 @@ import {
   customerName,
   mergeDocumentForDisplayData,
 } from "@/lib/eformsign/display-name";
-import { isProviderReviewWorkflowStep } from "@/lib/eformsign/review-step";
 import {
   CONTRACT_FINALIZE_PROGRESS_STEPS,
   INITIAL_HEADLESS_PROGRESS,
@@ -92,7 +92,7 @@ import "@/components/app/mobile-redesign/redesign.css";
 
 const STAFF_COMPLETION_IFRAME_ID = "contracts_staff_completion_iframe";
 
-type ContractCategory = "in-progress" | "drafting" | "completed" | "rejected" | "unknown";
+type ContractCategory = "in-progress" | "drafting" | "completed" | "expired" | "unknown";
 type FilterKey = "전체" | "대기" | "검토 필요" | "완료" | "기간 만료" | "상태 확인";
 type DetailTabId = "basic" | "signers" | "alimtalk";
 type NotificationStatus = "pending" | "sent" | "failed";
@@ -193,7 +193,7 @@ function ContractListLoadingRows() {
 
 function categorize(doc: EformsignDocument): ContractCategory {
   const cat = getStatusCategory(doc.current_status?.status_type);
-  if (cat === "completed" || cat === "rejected" || cat === "unknown") return cat;
+  if (cat === "completed" || cat === "expired" || cat === "unknown") return cat;
   return isProviderReviewStep(doc) ? "in-progress" : "drafting";
 }
 
@@ -231,7 +231,7 @@ function categoryTones(category: ContractCategory): {
         badgeMini: "green",
         infoTone: "green",
       };
-    case "rejected":
+    case "expired":
       return {
         badge: "만료",
         badgeTone: "muted",
@@ -413,7 +413,7 @@ function canReRequestDocument(doc: EformsignDocument): boolean {
 function progressLabel(doc: EformsignDocument): string {
   const category = categorize(doc);
   if (category === "completed") return "6/6 - 계약서 완료";
-  if (category === "rejected") return "기간 만료";
+  if (category === "expired") return "기간 만료";
   if (category === "unknown") return "상태 확인 필요";
   if (hasDocumentSendFailure(doc)) return "이용자 문서 전송 실패";
   if (isReviewNeeded(doc)) return "5/6 - 제공기관 검토 필요";
@@ -478,10 +478,7 @@ function documentFieldValue(doc: EformsignDocument, fieldIds: readonly string[])
   return null;
 }
 
-function providerName(doc: EformsignDocument, metadata?: EformsignDocClientSummary): string {
-  const metadataProvider = metadata?.providerName?.trim();
-  if (metadataProvider) return metadataProvider;
-
+function providerName(doc: EformsignDocument): string {
   const fieldProvider = documentFieldValue(doc, [
     "제공인력 1 성명",
     "제공인력1성명",
@@ -499,7 +496,7 @@ function providerName(doc: EformsignDocument, metadata?: EformsignDocClientSumma
   ]);
   if (fieldProvider) return fieldProvider;
 
-  const customer = customerName(doc, metadata);
+  const customer = customerName(doc);
   const recipients = doc.current_status?.step_recipients ?? [];
   const providerRecipient = recipients.find((recipient) => {
     const name = recipient.name?.trim();
@@ -690,10 +687,9 @@ const PAYMENT_RECEIPT_DATE_PART_IDS = {
 
 function contractRecipientPhone(
   doc: EformsignDocument,
-  metadata?: EformsignDocClientSummary,
 ): string | null {
   const recipients = doc.current_status?.step_recipients ?? [];
-  const customer = customerName(doc, metadata);
+  const customer = customerName(doc);
   const customerRecipient =
     recipients.find((recipient) => recipient.name?.trim() === customer && recipient.sms?.trim()) ??
     recipients.find((recipient) => recipient.recipient_type !== "01" && recipient.sms?.trim()) ??
@@ -703,11 +699,10 @@ function contractRecipientPhone(
 
 function providerRecipientPhone(
   doc: EformsignDocument,
-  metadata?: EformsignDocClientSummary,
 ): string | null {
   const recipients = doc.current_status?.step_recipients ?? [];
-  const customer = customerName(doc, metadata);
-  const provider = providerName(doc, metadata);
+  const customer = customerName(doc);
+  const provider = providerName(doc);
   const providerRecipient =
     recipients.find((recipient) => recipient.name?.trim() === provider && recipient.sms?.trim()) ??
     recipients.find((recipient) => {
@@ -719,13 +714,11 @@ function providerRecipientPhone(
 
 function buildClientPrefillFromContract(
   doc: EformsignDocument,
-  metadata?: EformsignDocClientSummary,
 ): ClientWizardPrefill {
   const prefill: ClientWizardPrefill = {};
-  const name = customerName(doc, metadata);
+  const name = customerName(doc);
   const phone = formatClientPhone(
-    metadata?.clientPhone?.trim() ||
-      contractRecipientPhone(doc, metadata) ||
+    contractRecipientPhone(doc) ||
       documentFieldValue(doc, ["연락처", "휴대폰", "전화번호", "customerContact", "customerPhone"]),
   );
 
@@ -800,9 +793,8 @@ function buildClientPrefillFromContract(
 
 function contractEndDateInputValue(
   doc: EformsignDocument,
-  metadata?: EformsignDocClientSummary,
 ): string {
-  const clientPrefill = buildClientPrefillFromContract(doc, metadata);
+  const clientPrefill = buildClientPrefillFromContract(doc);
   if (clientPrefill.endDate) return clientPrefill.endDate;
 
   const endDateIso = documentDateFieldToIso(
@@ -823,7 +815,7 @@ function buildContractCreationPrefillFromContract(
   metadata: EformsignDocClientSummary | undefined,
   employees: readonly Employee[],
 ): ContractCreationPrefill {
-  const clientPrefill = buildClientPrefillFromContract(doc, metadata);
+  const clientPrefill = buildClientPrefillFromContract(doc);
   const startDate =
     yymmddPrefillToIso(clientPrefill.startDate) ??
     documentDateFieldToIso(
@@ -852,7 +844,7 @@ function buildContractCreationPrefillFromContract(
       [...PAYMENT_RECEIPT_DATE_FIELD_IDS],
       PAYMENT_RECEIPT_DATE_PART_IDS,
     );
-  const provider = providerName(doc, metadata);
+  const provider = providerName(doc);
   const providerPhone = formatClientPhone(
     documentFieldValue(doc, [
       "제공인력 1 연락처",
@@ -865,7 +857,7 @@ function buildContractCreationPrefillFromContract(
       "caretakerContact",
       "employeePhone",
       "providerPhone",
-    ]) || providerRecipientPhone(doc, metadata),
+    ]) || providerRecipientPhone(doc),
   );
   const normalizedProviderPhone = normalizePhone(providerPhone);
   const matchedEmployee =
@@ -939,7 +931,7 @@ function notificationMatchesDocument(
 ): boolean {
   if (metadata?.clientId && log.clientId === metadata.clientId) return true;
 
-  const customer = customerName(doc, metadata);
+  const customer = customerName(doc);
   const names = new Set(
     [customer, metadata?.clientName]
       .map((value) => value?.trim())
@@ -1024,7 +1016,7 @@ function contractStageItems(
     return items;
   }
 
-  if (category === "rejected") {
+  if (category === "expired") {
     items.push({
       icon: AlertTriangle,
       iconVariant: "danger",
@@ -1106,7 +1098,11 @@ function ContractDetailContent({
     category === "drafting" && !hasDocumentSendFailure(doc) && canReRequestDocument(doc);
   const shouldShareReceipt = category === "completed";
   const contractNum = contractNumber(doc);
-  const name = contractDisplayName(doc, metadata, true);
+  const name = contractDisplayName(doc, undefined, true);
+  const customerPhone =
+    contractRecipientPhone(doc) ||
+    documentFieldValue(doc, ["연락처", "휴대폰", "전화번호", "customerContact", "customerPhone"]) ||
+    null;
   const downloadUrl = eformsignApi.getDocumentDownloadUrl(doc.id);
   const receiptDownloadUrl = eformsignApi.getDocumentReceiptDownloadUrl(doc.id);
   const previewUrl = eformsignApi.getDocumentPreviewUrl(doc.id);
@@ -1146,7 +1142,7 @@ function ContractDetailContent({
         queryClient.invalidateQueries({ queryKey: ["messages", "logs", "all"] }),
       ]);
       toast({
-        description: `${customerName(doc, metadata)}님에게 전자문서 작성을 재요청했습니다.`,
+        description: `${customerName(doc)}님에게 전자문서 작성을 재요청했습니다.`,
       });
     } catch (error) {
       toast({
@@ -1368,11 +1364,11 @@ function ContractDetailContent({
 
           <MobileDetailTabPanel name="contracts" tabId="basic" activeTab={activeTab}>
             <InfoCard title="이용자 정보">
-              <InfoRow label="이용자" value={customerName(doc, metadata)} />
-              {metadata?.clientPhone ? (
-                <InfoRow label="연락처" value={formatClientPhone(metadata.clientPhone) ?? metadata.clientPhone} />
+              <InfoRow label="이용자" value={customerName(doc)} />
+              {customerPhone ? (
+                <InfoRow label="연락처" value={formatClientPhone(customerPhone) ?? customerPhone} />
               ) : null}
-              <InfoRow label="제공인력" value={providerName(doc, metadata)} />
+              <InfoRow label="제공인력" value={providerName(doc)} />
             </InfoCard>
             <InfoCard title="계약 정보" delay={60}>
               <InfoRow
@@ -1508,10 +1504,9 @@ export default function ContractsPage() {
 
   const openFinalize = (
     doc: EformsignDocument,
-    metadata?: EformsignDocClientSummary,
   ) => {
     setFinalizeDoc(doc);
-    setFinalizeEndDateInput(contractEndDateInputValue(doc, metadata));
+    setFinalizeEndDateInput(contractEndDateInputValue(doc));
     setFinalizeErrorHint(null);
     setFinalizeProgress(INITIAL_HEADLESS_PROGRESS);
     setIsFinalizeDialogOpen(true);
@@ -1531,7 +1526,7 @@ export default function ContractsPage() {
       return;
     }
 
-    setPrefillClient(buildClientPrefillFromContract(doc, metadata));
+    setPrefillClient(buildClientPrefillFromContract(doc));
     router.push("/clients/new");
   };
 
@@ -1753,10 +1748,10 @@ export default function ContractsPage() {
     () =>
       (allData?.documents ?? [])
         .filter((doc) => !isDeletedStatusCode(doc.current_status?.status_type))
-        .filter((doc) => customerName(doc, documentClientSummaryById.get(doc.id)) === UNKNOWN_CUSTOMER_NAME)
+        .filter((doc) => customerName(doc) === UNKNOWN_CUSTOMER_NAME)
         .map((doc) => doc.id)
         .filter((id): id is string => Boolean(id)),
-    [allData?.documents, documentClientSummaryById],
+    [allData?.documents],
   );
 
   const { data: missingCustomerNameDetails = [] } = useQuery<EformsignDocument[]>({
@@ -1823,10 +1818,9 @@ export default function ContractsPage() {
     () =>
       displayDocuments.filter((doc) => {
         if (isDeletedStatusCode(doc.current_status?.status_type)) return false;
-        const metadata = documentClientSummaryById.get(doc.id);
-        return !EXCLUDED_CUSTOMER_NAMES.includes(customerName(doc, metadata));
+        return !EXCLUDED_CUSTOMER_NAMES.includes(customerName(doc));
       }),
-    [displayDocuments, documentClientSummaryById],
+    [displayDocuments],
   );
 
   const filteredDocuments = useMemo(() => {
@@ -1834,23 +1828,22 @@ export default function ContractsPage() {
     if (!q) return allDocuments;
     return allDocuments.filter(
       (doc) => {
-        const metadata = documentClientSummaryById.get(doc.id);
         return (
-          matchesKoreanSearch(customerName(doc, metadata), q) ||
+          matchesKoreanSearch(customerName(doc), q) ||
           matchesKoreanSearch(doc.document_name ?? "", q) ||
           matchesKoreanSearch(templateName(doc), q) ||
           matchesKoreanSearch(contractNumber(doc), q)
         );
       },
     );
-  }, [allDocuments, documentClientSummaryById, searchQuery]);
+  }, [allDocuments, searchQuery]);
 
   const grouped = useMemo(() => {
     const groups: Record<ContractCategory, EformsignDocument[]> = {
       "in-progress": [],
       drafting: [],
       completed: [],
-      rejected: [],
+      expired: [],
       unknown: [],
     };
     for (const doc of filteredDocuments) {
@@ -1869,7 +1862,7 @@ export default function ContractsPage() {
       대기: grouped.drafting.length,
       "검토 필요": grouped["in-progress"].length,
       완료: grouped.completed.length,
-      "기간 만료": grouped.rejected.length,
+      "기간 만료": grouped.expired.length,
       "상태 확인": grouped.unknown.length,
     };
     return FILTER_LABELS.map((label) => ({ label, count: String(counts[label]) }));
@@ -1913,8 +1906,8 @@ export default function ContractsPage() {
         : [];
     }
     if (activeFilter === "기간 만료") {
-      return grouped.rejected.length > 0
-        ? [section("rejected", "기간 만료/반려", grouped.rejected, "rejected")]
+      return grouped.expired.length > 0
+        ? [section("expired", "기간 만료/반려", grouped.expired, "expired")]
         : [];
     }
     if (activeFilter === "상태 확인") {
@@ -2015,8 +2008,7 @@ export default function ContractsPage() {
                     const cat = categorize(doc);
                     const tones = categoryTones(cat);
                     const meta = progressLabel(doc);
-                    const metadata = documentClientSummaryById.get(doc.id);
-                    const name = contractDisplayName(doc, metadata);
+                    const name = contractDisplayName(doc);
 
                     return (
                       <ListItemRow

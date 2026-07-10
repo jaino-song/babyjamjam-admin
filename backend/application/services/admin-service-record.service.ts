@@ -1,10 +1,11 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
+import { Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { message_log, message_trigger_job, Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
     SERVICE_FEEDBACK_LINK_RULE_ID,
     SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
 } from "domain/constants/service-feedback-link-message";
+import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { EmployeeFeedbackLinkService } from "./employee-feedback-link.service";
 import {
     AdminServiceRecordAssignmentDto,
@@ -28,11 +29,23 @@ type ScheduleForOverview = Prisma.employee_scheduleGetPayload<{
     };
 }>;
 
-type FeedbackLinkJob = Prisma.message_trigger_jobGetPayload<{}>;
-type FeedbackLinkLog = Prisma.message_logGetPayload<{}>;
+type FeedbackLinkJob = message_trigger_job;
+type FeedbackLinkLog = message_log;
+type SignatureDocRow = Prisma.eformsign_docGetPayload<{
+    select: {
+        employeeScheduleId: true;
+        documentId: true;
+        statusDetail: true;
+        stepName: true;
+        createdDate: true;
+        updatedDate: true;
+    };
+}>;
 
 @Injectable()
 export class AdminServiceRecordService {
+    private readonly logger = new Logger(AdminServiceRecordService.name);
+
     constructor(
         private readonly prisma: PrismaService,
         private readonly employeeFeedbackLinkService: EmployeeFeedbackLinkService,
@@ -76,6 +89,9 @@ export class AdminServiceRecordService {
             },
             orderBy: { createdAt: "desc" },
         });
+        const signatureDocs = await this.findServiceFeedbackSignatureDocs(branchId, scheduleIds);
+        const signatureDocByScheduleId = latestSignatureDocByScheduleId(signatureDocs);
+
         return {
             assignments: schedules.map((schedule) => this.mapAssignment(
                 schedule,
@@ -84,7 +100,7 @@ export class AdminServiceRecordService {
                     (log.triggerJobId !== null && jobIdsForSchedule(jobs, schedule.id).has(log.triggerJobId))
                     || (log.triggerJobId === null && logScheduleId(log) === schedule.id)
                 )),
-                null,
+                signatureDocByScheduleId.get(schedule.id) ?? null,
             )),
         };
     }
@@ -207,6 +223,59 @@ export class AdminServiceRecordService {
     private logActivityTime(log: FeedbackLinkLog): number {
         return (log.lastAttemptAt ?? log.createdAt).getTime();
     }
+
+    private async findServiceFeedbackSignatureDocs(
+        branchId: string,
+        scheduleIds: number[],
+    ): Promise<SignatureDocRow[]> {
+        try {
+            return await this.prisma.eformsign_doc.findMany({
+                where: {
+                    branchId,
+                    employeeScheduleId: { in: scheduleIds },
+                    documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_FEEDBACK_SNAPSHOT,
+                },
+                select: {
+                    employeeScheduleId: true,
+                    documentId: true,
+                    statusDetail: true,
+                    stepName: true,
+                    createdDate: true,
+                    updatedDate: true,
+                },
+                orderBy: [
+                    { employeeScheduleId: "asc" },
+                    { updatedDate: "desc" },
+                    { createdDate: "desc" },
+                ],
+            });
+        } catch (error) {
+            if (!isPendingEformsignFeedbackColumnError(error)) {
+                throw error;
+            }
+
+            this.logger.warn(
+                "Skipping service feedback signature docs because eformsign_doc feedback columns are not migrated yet.",
+            );
+            return [];
+        }
+    }
+}
+
+function isPendingEformsignFeedbackColumnError(error: unknown): boolean {
+    const code = typeof error === "object" && error !== null && "code" in error
+        ? (error as { code?: unknown }).code
+        : undefined;
+    if (code === "P2022") {
+        return true;
+    }
+
+    const column = typeof error === "object" && error !== null && "meta" in error
+        ? (error as { meta?: { column?: unknown } }).meta?.column
+        : undefined;
+    const message = error instanceof Error ? error.message : String(error);
+    const haystack = `${message} ${typeof column === "string" ? column : ""}`;
+    return /document_kind|employee_schedule_id|template_id|documentKind|employeeScheduleId|templateId/i.test(haystack);
 }
 
 function jobIdsForSchedule(jobs: FeedbackLinkJob[], scheduleId: number): Set<string> {
@@ -224,4 +293,19 @@ function logScheduleId(log: FeedbackLinkLog): number | null {
     const raw = (variables as Record<string, unknown>)["scheduleId"];
     const parsed = typeof raw === "string" ? Number.parseInt(raw, 10) : typeof raw === "number" ? raw : Number.NaN;
     return Number.isNaN(parsed) ? null : parsed;
+}
+
+function latestSignatureDocByScheduleId(docs: SignatureDocRow[]): Map<number, AdminServiceRecordSignatureDocDto> {
+    const byScheduleId = new Map<number, AdminServiceRecordSignatureDocDto>();
+    for (const doc of docs) {
+        if (doc.employeeScheduleId === null || byScheduleId.has(doc.employeeScheduleId)) continue;
+        byScheduleId.set(doc.employeeScheduleId, {
+            documentId: doc.documentId,
+            statusDetail: doc.statusDetail,
+            stepName: doc.stepName,
+            createdDate: doc.createdDate,
+            updatedDate: doc.updatedDate,
+        });
+    }
+    return byScheduleId;
 }

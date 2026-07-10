@@ -1,6 +1,4 @@
 import {
-    ALIMTALK_DELIVERY_MAX_ATTEMPTS,
-    ALIMTALK_DELIVERY_RETRY_DELAY_MS,
     PAST_OCCURRENCE_GRACE_MS,
     SEND_HOUR_KST,
     SMS_DELIVERY_MAX_ATTEMPTS,
@@ -11,6 +9,7 @@ import {
     TRIGGER_JOB_PROCESSING_RECLAIM_MS,
     TRIGGER_JOB_RETRY_DELAY_MS,
 } from "domain/constants/message-automation-policy";
+import { IsArray, IsInt, IsString, Max, Min } from "class-validator";
 import {
     getServiceFeedbackLinkScheduledFor,
     getServiceFeedbackTokenExpiresAt,
@@ -20,6 +19,10 @@ import {
     SERVICE_FEEDBACK_LINK_SMS_TITLE,
     SERVICE_FEEDBACK_LINK_SMS_TRIGGER_TYPE,
 } from "domain/constants/service-feedback-link-message";
+import {
+    DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
+    MessageAutomationPastTriggerConfig,
+} from "domain/entities/system-setting.entity";
 
 const MS_PER_MINUTE = 60 * 1000;
 const MS_PER_HOUR = 60 * MS_PER_MINUTE;
@@ -40,15 +43,46 @@ export interface MessageAutomationPolicyDto {
     rows: MessageAutomationPolicyRowDto[];
 }
 
+export class MessageAutomationPastTriggerConfigDto {
+    sendIntervalMinutes!: number;
+    ruleOrder!: string[];
+
+    static from(
+        config: MessageAutomationPastTriggerConfig,
+    ): MessageAutomationPastTriggerConfigDto {
+        const dto = new MessageAutomationPastTriggerConfigDto();
+        dto.sendIntervalMinutes = config.sendIntervalMinutes;
+        dto.ruleOrder = config.ruleOrder;
+        return dto;
+    }
+}
+
+export class UpdateMessageAutomationPastTriggerConfigDto {
+    @IsInt()
+    @Min(1)
+    @Max(1440)
+    sendIntervalMinutes!: number;
+
+    @IsArray()
+    @IsString({ each: true })
+    ruleOrder!: string[];
+}
+
 export class MessageAutomationPoliciesResponseDto {
     policies!: MessageAutomationPolicyDto[];
+    pastTriggerConfig!: MessageAutomationPastTriggerConfigDto;
 
-    static from(): MessageAutomationPoliciesResponseDto {
-        return MessageAutomationPoliciesResponseDto.build();
+    static from(
+        pastTriggerConfig: MessageAutomationPastTriggerConfig = DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
+    ): MessageAutomationPoliciesResponseDto {
+        return MessageAutomationPoliciesResponseDto.build(pastTriggerConfig);
     }
 
-    static build(): MessageAutomationPoliciesResponseDto {
+    static build(
+        pastTriggerConfig: MessageAutomationPastTriggerConfig = DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
+    ): MessageAutomationPoliciesResponseDto {
         const dto = new MessageAutomationPoliciesResponseDto();
+        dto.pastTriggerConfig = MessageAutomationPastTriggerConfigDto.from(pastTriggerConfig);
         dto.policies = [
             {
                 id: "trigger-dispatch",
@@ -128,30 +162,6 @@ export class MessageAutomationPoliciesResponseDto {
                 ],
             },
             {
-                id: "alimtalk-retry",
-                title: "알림톡 재시도",
-                description: "재시도 가능한 알림톡 발송 로그는 자동 전송과 수동 발송 모두 같은 정책으로 다시 처리합니다.",
-                active: true,
-                requiresApproval: false,
-                rows: [
-                    {
-                        id: "max-attempts",
-                        label: "최대 시도 횟수",
-                        value: `최대 ${ALIMTALK_DELIVERY_MAX_ATTEMPTS}회`,
-                    },
-                    {
-                        id: "retry-delay",
-                        label: "재시도 간격",
-                        value: `${formatMinutes(ALIMTALK_DELIVERY_RETRY_DELAY_MS)} 후`,
-                    },
-                    {
-                        id: "coverage",
-                        label: "적용 범위",
-                        value: "자동/수동 알림톡 발송 로그",
-                    },
-                ],
-            },
-            {
                 id: "past-trigger",
                 title: "지난 자동 전송 처리",
                 description: "예정 시각이 기준 시간을 넘긴 자동 전송은 다시 만들거나 발송하지 않습니다.",
@@ -167,25 +177,6 @@ export class MessageAutomationPoliciesResponseDto {
                         id: "handling",
                         label: "처리 방식",
                         value: "재생성/발송 안 함",
-                    },
-                ],
-            },
-            {
-                id: "approval-gate",
-                title: "발송 승인",
-                description: "발송 승인 전에는 자동 전송이 생성되거나 발송되지 않습니다.",
-                active: true,
-                requiresApproval: false,
-                rows: [
-                    {
-                        id: "approval-state",
-                        label: "승인 기준",
-                        value: "발송 승인 완료",
-                    },
-                    {
-                        id: "pre-approval",
-                        label: "승인 전 처리",
-                        value: "자동 전송 생성/발송 차단",
                     },
                 ],
             },

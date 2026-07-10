@@ -256,7 +256,7 @@ export function normalizeMessageHistoryRecord(
     title: getHistoryRecordTitle(record),
     templateLabel: getMessageHistoryTemplateLabel(record.templateKey, record.variables),
     recipientName: record.recipientName?.trim() || record.clientName?.trim() || record.employeeName?.trim() || fallbackRecipientName || "-",
-    recipientPhone: record.receiver,
+    recipientPhone: record.recipientPhone?.trim() || record.receiver,
     recipientListLabel: registeredClientName || fallbackListLabel || record.receiver,
     channelLabel: getHistoryChannelLabel(record.provider),
     sentAt,

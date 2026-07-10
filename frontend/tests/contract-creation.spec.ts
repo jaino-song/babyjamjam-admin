@@ -56,6 +56,7 @@ const MOCK_AREA_TEMPLATES = [
     templateName: "남동구 계약서",
   },
 ];
+const MOCK_AREA_TEMPLATE_DISPLAY_LABEL = "남동구";
 const MOCK_VOUCHER_PRICE_INFOS = [
   {
     id: 2,
@@ -332,6 +333,7 @@ async function selectDocType(page: Page, label: string) {
 async function selectEmployee(page: Page, index: number, name: string) {
   const autocomplete = page.getByTestId("employee-autocomplete").nth(index);
   await autocomplete.locator('[data-component="employee-autocomplete-input"]').click();
+  await page.locator('[data-component="employee-autocomplete-dropdown"] input').fill(name);
   await page.locator('[data-component="employee-autocomplete-dropdown"]').getByText(name, { exact: true }).click();
   await expect(autocomplete.locator('[data-component="employee-autocomplete-input"]')).toContainText(name);
 }
@@ -356,7 +358,7 @@ async function fillContractDates(page: Page, values: { startDate: string; endDat
 
 async function completeContractWizard(page: Page) {
   await selectClient(page, MOCK_CLIENT.name);
-  await selectDocType(page, MOCK_AREA_TEMPLATES[0].templateName);
+  await selectDocType(page, MOCK_AREA_TEMPLATE_DISPLAY_LABEL);
   await page.getByTestId("contract-creation-next").click();
 
   await selectEmployee(page, 0, MOCK_EMPLOYEES[0].name);
@@ -375,12 +377,106 @@ async function completeContractWizard(page: Page) {
 test.describe("Contract creation iframe + success flow", () => {
   test.describe.configure({ mode: "serial" });
 
+  test("persists the selected provider assignment before creating an electronic document", async ({ page }) => {
+    await stubEformsignSdk(page);
+    await installCommonRoutes(page);
+
+    const requestOrder: string[] = [];
+    let capturedClientUpdateBody: Record<string, unknown> | null = null;
+    await page.route("**/api/clients/1", async (route) => {
+      if (route.request().method() === "PATCH") {
+        requestOrder.push("assignment");
+        capturedClientUpdateBody = route.request().postDataJSON() as Record<string, unknown>;
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(MOCK_CLIENT),
+        });
+      }
+      return route.fallback();
+    });
+    await page.route("**/api/eformsign-docs/dispatch-headless", (route) => {
+      requestOrder.push("document");
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: false,
+          reason: "stop after request ordering assertion",
+          fallbackHint: "iframe",
+          durationMs: 1,
+        }),
+      });
+    });
+
+    await openContractCreationForm(page);
+    await completeContractWizard(page);
+    await page.getByTestId("contract-creation-submit").click();
+
+    await expect.poll(() => requestOrder).toEqual(["assignment", "document"]);
+    expect(capturedClientUpdateBody).toEqual(expect.objectContaining({
+      primaryEmployeeId: MOCK_EMPLOYEES[0].id,
+      secondaryEmployeeId: null,
+      startDate: "2026-06-01",
+      endDate: "2026-06-15",
+    }));
+  });
+
+  test("keeps voucher duration and price fields visible but disabled before voucher selections", async ({ page }) => {
+    await installCommonRoutes(page);
+    await openContractCreationForm(page);
+    await selectClient(page, MOCK_CLIENT.name);
+    await selectDocType(page, MOCK_AREA_TEMPLATE_DISPLAY_LABEL);
+    await page.getByTestId("contract-creation-next").click();
+
+    await selectEmployee(page, 0, MOCK_EMPLOYEES[0].name);
+    await page.getByTestId("contract-creation-next").click();
+
+    const stepContent = page.locator('[data-component="stepped-wizard-step-content"]');
+    const selects = stepContent.locator("select");
+    await expect(selects).toHaveCount(3);
+    await expect(selects.nth(2)).toBeVisible();
+    await expect(selects.nth(2)).toBeDisabled();
+
+    const priceFields = page.locator('[data-component="contract-creation-price-fields"]');
+    await expect(priceFields).toBeVisible();
+
+    const priceInputs = priceFields.locator("input");
+    await expect(priceInputs).toHaveCount(3);
+    await expect(priceInputs.nth(0)).toBeDisabled();
+    await expect(priceInputs.nth(1)).toBeDisabled();
+    await expect(priceInputs.nth(2)).toBeDisabled();
+
+    await selects.nth(1).selectOption("A가1형");
+    await expect(selects.nth(2)).toBeEnabled();
+    await expect(priceInputs.nth(0)).toBeDisabled();
+    await expect(priceInputs.nth(1)).toBeDisabled();
+    await expect(priceInputs.nth(2)).toBeDisabled();
+
+    await selects.nth(2).selectOption("10");
+    await expect(priceInputs.nth(0)).toBeEnabled();
+    await expect(priceInputs.nth(1)).toBeEnabled();
+    await expect(priceInputs.nth(2)).toBeEnabled();
+  });
+
   test("walks the wizard, opens the SDK iframe, and persists the doc record after success", async ({ page }) => {
     await stubEformsignSdk(page);
     let capturedGenerateBody: Record<string, unknown> | null = null;
     let capturedCreateDocRecordBody: Record<string, unknown> | null = null;
+    let capturedClientUpdateBody: Record<string, unknown> | null = null;
 
     await installCommonRoutes(page);
+    await page.route("**/api/clients/1", async (route) => {
+      if (route.request().method() === "PATCH") {
+        capturedClientUpdateBody = route.request().postDataJSON() as Record<string, unknown>;
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(MOCK_CLIENT),
+        });
+      }
+      return route.fallback();
+    });
     await page.route("**/api/generate-document", async (route) => {
       capturedGenerateBody = route.request().postDataJSON() as Record<string, unknown>;
       return route.fulfill({
@@ -413,6 +509,14 @@ test.describe("Contract creation iframe + success flow", () => {
     await expect(page.getByTestId("contract-creation-submit")).toBeEnabled();
     await page.getByTestId("contract-creation-submit").click();
 
+    await expect.poll(() => capturedClientUpdateBody).not.toBeNull();
+    expect(capturedClientUpdateBody).toEqual(expect.objectContaining({
+      primaryEmployeeId: MOCK_EMPLOYEES[0].id,
+      secondaryEmployeeId: null,
+      startDate: "2026-06-01",
+      endDate: "2026-06-15",
+    }));
+
     await expect(page.getByTestId("contract-creation-progress-step-client-started")).toHaveAttribute(
       "data-state",
       "error"
@@ -434,11 +538,11 @@ test.describe("Contract creation iframe + success flow", () => {
       clientId: MOCK_CLIENT.id,
       contractData: expect.objectContaining({
         customerName: MOCK_CLIENT.name,
-        customerContact: MOCK_CLIENT.phone,
+        customerContact: "010-1234-5678",
         customerDOB: MOCK_CLIENT.birthday,
         customerAddress: MOCK_CLIENT.address,
         caretaker1Name: MOCK_EMPLOYEES[0].name,
-        caretaker1Contact: MOCK_EMPLOYEES[0].phone,
+        caretaker1Contact: "010-0000-0000",
         type: "A가1형",
         days: "10",
         area: MOCK_AREA_TEMPLATES[0].areaId,
@@ -530,7 +634,7 @@ test.describe("Contract creation iframe + success flow", () => {
     await selectClient(page, MOCK_CLIENT.name);
     await expect(nextButton).toBeDisabled();
 
-    await selectDocType(page, MOCK_AREA_TEMPLATES[0].templateName);
+    await selectDocType(page, MOCK_AREA_TEMPLATE_DISPLAY_LABEL);
     await expect(nextButton).toBeEnabled();
   });
 

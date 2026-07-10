@@ -78,6 +78,7 @@ describe("MessageDeliveryController", () => {
             { branchId: "org-1" },
             {
                 receiver: "010-1234-5678",
+                recipientName: "김산모",
                 message: "장문 테스트 메시지",
                 title: "안내",
                 triggerType: "scheduled",
@@ -90,7 +91,7 @@ describe("MessageDeliveryController", () => {
         expect(aligoService.sendSms).toHaveBeenCalledWith({
             receiver: "010-1234-5678",
             message: "장문 테스트 메시지",
-            recipientName: undefined,
+            recipientName: "김산모",
             title: "안내",
             msgType: undefined,
             scheduledDate: "20260309",
@@ -123,6 +124,8 @@ describe("MessageDeliveryController", () => {
                 templateKey: "안내",
                 receiver: "01012345678",
                 clientId: null,
+                recipientName: "김산모",
+                recipientPhone: "01012345678",
                 messageBody: "장문 테스트 메시지",
                 status: "pending",
                 aligoMid: "321",
@@ -212,6 +215,7 @@ describe("MessageDeliveryController", () => {
                 provider: "aligo_sms",
                 templateKey: "안내",
                 receiver: "01012345678",
+                recipientPhone: "01012345678",
                 messageBody: "테스트 발송 본문",
                 status: "failed",
                 errorMessage: "수신번호 형식이 올바르지 않습니다.",
@@ -255,6 +259,7 @@ describe("MessageDeliveryController", () => {
         expect(prismaService.message_log.create).toHaveBeenCalledWith({
             data: expect.objectContaining({
                 status: "failed",
+                recipientPhone: "01012345678,01099999999",
                 nextRetryAt: null,
                 errorMessage: expect.stringContaining("부분 발송"),
             }),
@@ -286,6 +291,7 @@ describe("MessageDeliveryController", () => {
                 provider: "aligo_sms",
                 templateKey: "안내",
                 receiver: "01012345678",
+                recipientPhone: "01012345678",
                 messageBody: "테스트 발송 본문",
                 status: "failed",
                 aligoMid: null,

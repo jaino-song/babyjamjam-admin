@@ -243,6 +243,94 @@ export class ClientService {
         }
     }
 
+    private async assertAllowedEmployees(
+        branchid: string,
+        primaryEmployeeId: number | null,
+        secondaryEmployeeId: number | null,
+    ): Promise<void> {
+        if (primaryEmployeeId === null) {
+            if (secondaryEmployeeId !== null) {
+                throw new BadRequestException("primary employee is required when a secondary employee is selected");
+            }
+            return;
+        }
+        if (primaryEmployeeId === secondaryEmployeeId) {
+            throw new BadRequestException("primary and secondary employees must be different");
+        }
+
+        const employeeIds = [primaryEmployeeId, secondaryEmployeeId].filter(
+            (employeeId): employeeId is number => employeeId !== null,
+        );
+        const employees = await this.prismaService.employee.findMany({
+            where: {
+                id: { in: employeeIds },
+                branchId: branchid,
+            },
+            select: { id: true },
+        });
+        if (employees.length !== employeeIds.length) {
+            throw new BadRequestException("selected employees must belong to the client branch");
+        }
+    }
+
+    private async syncEmployeeAssignment(branchid: string, params: {
+        clientId: number;
+        primaryEmployeeId?: number;
+        secondaryEmployeeId?: number | null;
+        workAddress: string;
+        startDate: Date;
+        endDate: Date;
+    }): Promise<{ createdScheduleId: number | null; replacedScheduleId: number | null }> {
+        const currentSchedule = await this.prismaService.employee_schedule.findFirst({
+            where: { clientId: params.clientId, branchId: branchid, replaced: false },
+            orderBy: { id: "desc" },
+        });
+        const currentPrimaryEmployeeId = currentSchedule?.primaryEmployeeId ?? null;
+        const currentSecondaryEmployeeId = currentSchedule?.secondaryEmployeeId ?? null;
+        const newPrimaryEmployeeId = params.primaryEmployeeId ?? currentPrimaryEmployeeId;
+        const newSecondaryEmployeeId = params.secondaryEmployeeId !== undefined
+            ? params.secondaryEmployeeId
+            : currentSecondaryEmployeeId;
+
+        if (
+            newPrimaryEmployeeId === currentPrimaryEmployeeId &&
+            newSecondaryEmployeeId === currentSecondaryEmployeeId
+        ) {
+            return { createdScheduleId: null, replacedScheduleId: null };
+        }
+
+        await this.assertAllowedEmployees(branchid, newPrimaryEmployeeId, newSecondaryEmployeeId);
+        if (newPrimaryEmployeeId === null) {
+            throw new BadRequestException("primary employee is required to create an assignment");
+        }
+
+        const newSchedule = await this.prismaService.$transaction(async (transaction) => {
+            if (currentSchedule) {
+                await transaction.employee_schedule.update({
+                    where: { id: currentSchedule.id },
+                    data: { replaced: true, endDate: new Date() },
+                });
+            }
+            return transaction.employee_schedule.create({
+                data: {
+                    clientId: params.clientId,
+                    branchId: branchid,
+                    primaryEmployeeId: newPrimaryEmployeeId,
+                    secondaryEmployeeId: newSecondaryEmployeeId,
+                    workAddress: params.workAddress,
+                    startDate: params.startDate,
+                    endDate: params.endDate,
+                    replaced: false,
+                },
+            });
+        });
+
+        return {
+            createdScheduleId: newSchedule.id,
+            replacedScheduleId: currentSchedule?.id ?? null,
+        };
+    }
+
     async create(branchid: string, params: {
         name: string;
         primaryEmployeeId?: number | null;
@@ -277,12 +365,38 @@ export class ClientService {
             const existing = await this.clientRepository.findByPhone(branchid, normalizedPhone);
             if (existing) {
                 this.logger.log(`[Client] Reusing existing client ${existing.id} for duplicate phone in branch ${branchid}`);
+                if (params.primaryEmployeeId !== undefined || params.secondaryEmployeeId !== undefined) {
+                    const assignment = await this.syncEmployeeAssignment(branchid, {
+                        clientId: existing.id,
+                        primaryEmployeeId: params.primaryEmployeeId ?? undefined,
+                        secondaryEmployeeId: params.secondaryEmployeeId,
+                        workAddress: params.address ?? existing.address ?? "",
+                        startDate: startDate ?? existing.startDate ?? new Date(),
+                        endDate: endDate ?? existing.endDate ?? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+                    });
+                    if (assignment.replacedScheduleId !== null) {
+                        this.employeeFeedbackLinkService
+                            ?.revoke(assignment.replacedScheduleId)
+                            ?.catch(() => undefined);
+                    }
+                    if (assignment.createdScheduleId !== null) {
+                        this.triggerService
+                            ?.syncEmployeeAssignmentRulesForSchedule(branchid, assignment.createdScheduleId, true)
+                            ?.catch((error) => {
+                                this.logger.error(`Failed to sync employee assignment triggers: ${error}`);
+                            });
+                        this.employeeFeedbackLinkService
+                            ?.scheduleForServiceStart(assignment.createdScheduleId)
+                            ?.catch((error) => {
+                                this.logger.error(`Failed to schedule feedback link SMS: ${error}`);
+                            });
+                    }
+                }
                 return existing;
             }
         }
 
-        // First create the client
-        const client = await this.createClientUsecase.execute(branchid, {
+        const createParams = {
             name: params.name,
             address: params.address ?? null,
             phone: params.phone ?? null,
@@ -301,24 +415,26 @@ export class ClientService {
             breastPump: params.breastPump,
             eDocId: params.eDocId ?? null,
             areaId: params.areaId ?? null,
-        });
+        };
 
-        // Then create employee_schedule (optional - only when primary employee is assigned)
+        const primaryEmployeeId = params.primaryEmployeeId ?? null;
+        const secondaryEmployeeId = params.secondaryEmployeeId ?? null;
+        await this.assertAllowedEmployees(branchid, primaryEmployeeId, secondaryEmployeeId);
+
+        let client: ClientEntity;
         let createdScheduleId: number | null = null;
-        if (params.primaryEmployeeId !== undefined && params.primaryEmployeeId !== null) {
-            const schedule = await this.prismaService.employee_schedule.create({
-                data: {
-                    clientId: client.id,
-                    branchId: branchid,
-                    primaryEmployeeId: params.primaryEmployeeId,
-                    secondaryEmployeeId: params.secondaryEmployeeId ?? null,
-                    workAddress: params.address ?? "",
-                    startDate: startDate ?? new Date(),
-                    endDate: endDate ?? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
-                    replaced: false,
-                },
+        if (primaryEmployeeId !== null) {
+            const result = await this.createClientUsecase.executeWithInitialSchedule(branchid, createParams, {
+                primaryEmployeeId,
+                secondaryEmployeeId,
+                workAddress: params.address ?? "",
+                startDate: startDate ?? new Date(),
+                endDate: endDate ?? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
             });
-            createdScheduleId = schedule.id;
+            client = result.client;
+            createdScheduleId = result.scheduleId;
+        } else {
+            client = await this.createClientUsecase.execute(branchid, createParams);
         }
 
         if (this.triggerService) {
@@ -634,53 +750,21 @@ export class ClientService {
         const employeeChanged = params.primaryEmployeeId !== undefined || params.secondaryEmployeeId !== undefined;
 
         let createdScheduleId: number | null = null;
+        let replacedScheduleId: number | null = null;
         if (employeeChanged) {
-            // Get current schedule for this client
-            const currentSchedule = await this.prismaService.employee_schedule.findFirst({
-                where: { clientId: id, branchId: branchid, replaced: false },
-                orderBy: { id: 'desc' },
+            const assignment = await this.syncEmployeeAssignment(branchid, {
+                clientId: id,
+                primaryEmployeeId: params.primaryEmployeeId,
+                secondaryEmployeeId: params.secondaryEmployeeId,
+                workAddress: params.address ?? existingClient.address ?? "",
+                startDate,
+                endDate,
             });
-
-            const currentPrimaryEmployeeId = currentSchedule?.primaryEmployeeId ?? null;
-            const currentSecondaryEmployeeId = currentSchedule?.secondaryEmployeeId ?? null;
-
-            // Determine new employee values
-            const newPrimaryEmployeeId = params.primaryEmployeeId !== undefined 
-                ? params.primaryEmployeeId 
-                : currentPrimaryEmployeeId;
-            const newSecondaryEmployeeId = params.secondaryEmployeeId !== undefined 
-                ? params.secondaryEmployeeId 
-                : currentSecondaryEmployeeId;
-
-            // Only create new schedule if employees actually changed
-            const actuallyChanged = newPrimaryEmployeeId !== currentPrimaryEmployeeId || 
-                                   newSecondaryEmployeeId !== currentSecondaryEmployeeId;
-
-            if (actuallyChanged && newPrimaryEmployeeId !== null) {
-                // Mark old schedule as replaced if exists
-                if (currentSchedule) {
-                    await this.prismaService.employee_schedule.update({
-                        where: { id: currentSchedule.id },
-                        data: { replaced: true, endDate: new Date() },
-                    });
-                    this.employeeFeedbackLinkService?.revoke(currentSchedule.id)?.catch(() => undefined);
-                }
-
-                // Create new schedule
-                const newSchedule = await this.prismaService.employee_schedule.create({
-                    data: {
-                        clientId: id,
-                        branchId: branchid,
-                        primaryEmployeeId: newPrimaryEmployeeId,
-                        secondaryEmployeeId: newSecondaryEmployeeId,
-                        workAddress: params.address ?? existingClient.address ?? "",
-                        startDate: startDate,
-                        endDate: endDate,
-                        replaced: false,
-                    },
-                });
-                createdScheduleId = newSchedule.id;
-            }
+            createdScheduleId = assignment.createdScheduleId;
+            replacedScheduleId = assignment.replacedScheduleId;
+        }
+        if (replacedScheduleId !== null) {
+            this.employeeFeedbackLinkService?.revoke(replacedScheduleId)?.catch(() => undefined);
         }
 
         const updatedClient = await this.updateClientUsecase.execute(branchid, id, {

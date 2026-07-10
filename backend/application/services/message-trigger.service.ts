@@ -4,6 +4,7 @@ import {
     Injectable,
     Logger,
     NotFoundException,
+    Optional,
     ServiceUnavailableException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
@@ -45,6 +46,11 @@ import { MessageTriggerDeliveryService } from "./message-trigger-delivery.servic
 import { hasColumn, hasTable } from "infrastructure/database/schema-capabilities";
 import { MessageSenderApprovalService } from "./message-sender-approval.service";
 import { buildSmsClientVariables } from "./sms-client-variables";
+import { SystemSettingService } from "./system-setting.service";
+import {
+    DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
+    MessageAutomationPastTriggerConfig,
+} from "domain/entities/system-setting.entity";
 
 interface UpsertRuleParams {
     name: string;
@@ -77,6 +83,7 @@ const DEFAULT_CLIENT_GREETING_TRIGGER: UpsertRuleParams = {
 };
 
 const MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON = "메시지 발송 승인 필요";
+const MS_PER_MINUTE = 60 * 1000;
 
 function isPrismaUniqueViolation(error: unknown): boolean {
     return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
@@ -111,6 +118,7 @@ export interface MessageLogRecordView {
     triggerJobId: string | null;
     receiver: string;
     clientId: number | null;
+    recipientPhone: string | null;
     messageBody: string;
     variables: Record<string, string>;
     status: MessageLogEntity["status"];
@@ -148,6 +156,11 @@ interface ClientTriggerSource {
     area?: { bankAccountInfo: { bankName: string | null; accNum: string | null } | null } | null;
 }
 
+type ClientRuleJobCandidate = {
+    rule: MessageTriggerRuleEntity;
+    job: MessageTriggerJobEntity;
+};
+
 @Injectable()
 export class MessageTriggerService {
     private readonly logger = new Logger(MessageTriggerService.name);
@@ -162,6 +175,8 @@ export class MessageTriggerService {
         private readonly jobRepository: IMessageTriggerJobRepository,
         @Inject(MESSAGE_LOG_REPOSITORY)
         private readonly messageLogRepository: IMessageLogRepository,
+        @Optional()
+        private readonly systemSettingService?: SystemSettingService,
     ) {}
 
     async listRules(branchId: string): Promise<MessageTriggerRuleEntity[]> {
@@ -273,6 +288,7 @@ export class MessageTriggerService {
                 triggerJobId: log.triggerJobId,
                 receiver: log.receiver,
                 clientId: log.clientId,
+                recipientPhone: log.recipientPhone ?? log.receiver,
                 messageBody: log.messageBody,
                 variables: log.variables,
                 status: log.status,
@@ -290,7 +306,7 @@ export class MessageTriggerService {
                 offsetDays: rule?.offsetDays ?? 0,
                 scheduledFor: job?.scheduledFor ?? null,
                 recipientType: (job?.recipientType as MessageTriggerRecipientType | undefined) ?? null,
-                recipientName: payload?.recipientName ?? null,
+                recipientName: log.recipientName ?? payload?.recipientName ?? null,
                 clientName: payload?.clientName ?? null,
                 employeeName: payload?.employeeName ?? null,
             };
@@ -477,6 +493,7 @@ export class MessageTriggerService {
             await this.refreshPendingImmediateClientJobs(immediateRules, clientId, client);
         }
 
+        const candidateJobs: ClientRuleJobCandidate[] = [];
         for (const rule of rules) {
             if (rule.eventType === MessageTriggerEventType.CLIENT_CREATED && !supportsCreatedAt) {
                 continue;
@@ -485,6 +502,15 @@ export class MessageTriggerService {
                 continue;
             }
             const job = this.buildClientJob(rule, client);
+            if (!job) continue;
+            candidateJobs.push({ rule, job });
+        }
+
+        const jobsToPersist = includePast
+            ? await this.applyRetroactiveSendConfig(branchId, candidateJobs)
+            : candidateJobs;
+
+        for (const { rule, job } of jobsToPersist) {
             await this.persistPendingJob(job, rule, includePast);
         }
     }
@@ -688,6 +714,75 @@ export class MessageTriggerService {
             }
         }
         await this.jobRepository.upsertPending(job);
+    }
+
+    private async applyRetroactiveSendConfig(
+        branchId: string,
+        candidates: ClientRuleJobCandidate[],
+    ): Promise<ClientRuleJobCandidate[]> {
+        if (candidates.length === 0) return candidates;
+
+        const config = await this.getRetroactiveSendConfig(branchId);
+        const now = Date.now();
+        const baseScheduledFor = new Date(now);
+        const dueCandidates = candidates.filter(({ job }) => job.scheduledFor.getTime() <= now);
+        const futureCandidates = candidates
+            .filter(({ job }) => job.scheduledFor.getTime() > now)
+            .sort((left, right) => left.job.scheduledFor.getTime() - right.job.scheduledFor.getTime());
+
+        const orderedDueCandidates = this.orderRetroactiveCandidates(
+            dueCandidates,
+            config.ruleOrder,
+        );
+
+        orderedDueCandidates.forEach(({ rule, job }, index) => {
+            const scheduledFor = new Date(
+                baseScheduledFor.getTime() + (index * config.sendIntervalMinutes * MS_PER_MINUTE),
+            );
+            job.scheduledFor = scheduledFor;
+            if (job.clientId !== null) {
+                job.dedupeKey = this.buildDedupeKey(
+                    rule.id,
+                    `client:${job.clientId}`,
+                    scheduledFor,
+                    rule.recipientType,
+                );
+            }
+        });
+
+        return [...orderedDueCandidates, ...futureCandidates];
+    }
+
+    private async getRetroactiveSendConfig(
+        branchId: string,
+    ): Promise<MessageAutomationPastTriggerConfig> {
+        if (!this.systemSettingService) {
+            return DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG;
+        }
+        return this.systemSettingService.getMessageAutomationPastTriggerConfig(branchId);
+    }
+
+    private orderRetroactiveCandidates(
+        candidates: ClientRuleJobCandidate[],
+        ruleOrder: string[],
+    ): ClientRuleJobCandidate[] {
+        const orderMap = new Map(ruleOrder.map((ruleId, index) => [ruleId, index]));
+
+        return [...candidates].sort((left, right) => {
+            const leftOrder = orderMap.get(left.rule.id);
+            const rightOrder = orderMap.get(right.rule.id);
+
+            if (leftOrder !== undefined && rightOrder !== undefined) {
+                return leftOrder - rightOrder;
+            }
+            if (leftOrder !== undefined) return -1;
+            if (rightOrder !== undefined) return 1;
+
+            const scheduledForDiff = left.job.scheduledFor.getTime() - right.job.scheduledFor.getTime();
+            if (scheduledForDiff !== 0) return scheduledForDiff;
+
+            return left.rule.createdAt.getTime() - right.rule.createdAt.getTime();
+        });
     }
 
     private async refreshPendingImmediateClientJobs(

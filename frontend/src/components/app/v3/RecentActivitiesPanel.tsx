@@ -286,6 +286,7 @@ export function RecentActivitiesPanel({
       tabs={tabs}
       activeTab={activeTab}
       onTabChange={(nextTab) => setActiveTab(nextTab as RecentActivitiesPanelTab)}
+      tabsAriaLabel={`${title} 필터`}
       emptyState={
         isListEmpty ? (
           <ListEmptyState message={getFilterEmptyMessage(activeTab)} />

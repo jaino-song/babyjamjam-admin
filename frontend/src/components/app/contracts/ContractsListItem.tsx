@@ -71,6 +71,11 @@ function ContractsListItemComponent({
   const sentDate = formatDate(document.created_date);
   const signedDate =
     category === "completed" ? formatDate(document.updated_date) : null;
+  const normalizedCustomerName = customerName?.trim();
+  const recipientName =
+    normalizedCustomerName && normalizedCustomerName !== "-"
+      ? normalizedCustomerName
+      : "이름 없음";
 
   return (
     <AnimatedSlotListItemContent
@@ -94,7 +99,7 @@ function ContractsListItemComponent({
               ? "text-v3-primary"
               : "text-v3-orange"
       )}
-      title={customerName ?? "-"}
+      title={recipientName}
       subtitle={document.document_name}
       meta={
         <>

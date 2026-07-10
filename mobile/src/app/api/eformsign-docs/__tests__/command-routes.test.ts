@@ -98,6 +98,18 @@ describe("eformsign-docs command API routes", () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
+  it("rejects dispatch payloads missing clientId before proxying", async () => {
+    const response = await dispatchHeadless(
+      createRequest(
+        "/api/eformsign-docs/dispatch-headless",
+        JSON.stringify({ contractData: { customerName: "홍길동" } }),
+      ),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
   it("forwards validated dispatch payload to the backend", async () => {
     mockPost.mockResolvedValue({ status: 200, data: { ok: true } });
 

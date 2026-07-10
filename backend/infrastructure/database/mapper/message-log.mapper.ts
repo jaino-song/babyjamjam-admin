@@ -10,6 +10,8 @@ type MessageLogRow = {
     triggerJobId: string | null;
     receiver: string;
     clientId: number | null;
+    recipientName: string | null;
+    recipientPhone: string | null;
     messageBody: string;
     variables: Prisma.JsonValue;
     status: string;
@@ -42,6 +44,8 @@ export class MessageLogMapper {
             row.nextRetryAt,
             row.createdAt,
             row.updatedAt,
+            row.recipientName,
+            row.recipientPhone,
         );
     }
 
@@ -53,6 +57,8 @@ export class MessageLogMapper {
             triggerJobId: entity.triggerJobId,
             receiver: entity.receiver,
             clientId: entity.clientId,
+            recipientName: entity.recipientName,
+            recipientPhone: entity.recipientPhone,
             messageBody: entity.messageBody,
             variables: entity.variables as Prisma.InputJsonValue,
             status: entity.status,
@@ -72,6 +78,8 @@ export class MessageLogMapper {
             attempts: entity.attempts,
             lastAttemptAt: entity.lastAttemptAt,
             nextRetryAt: entity.nextRetryAt,
+            recipientName: entity.recipientName,
+            recipientPhone: entity.recipientPhone,
         };
     }
 }

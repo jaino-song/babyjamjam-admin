@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { settingsApi, type MessageAutomationPoliciesResponse } from "@/services/api";
+import type { MessageTriggerRule } from "@/features/message-triggers/types";
 
 import { MessageTenantApplicationSettings } from "../MessageTenantApplicationSettings";
 
@@ -26,6 +27,7 @@ jest.mock("@/services/api", () => ({
   settingsApi: {
     getMessageSenderApproval: jest.fn(),
     getMessageAutomationPolicies: jest.fn(),
+    updateMessageAutomationPastTriggerConfig: jest.fn(),
     requestMessageSenderApproval: jest.fn(),
   },
 }));
@@ -37,8 +39,94 @@ const mockedUseGetAuthUser = jest.mocked(useGetAuthUser);
 const mockedSettingsApi = jest.mocked(settingsApi);
 
 const mockInvalidateQueries = jest.fn();
+const mockSetQueryData = jest.fn();
+
+const DEFAULT_TRIGGER_RULES: MessageTriggerRule[] = [
+  {
+    id: "trigger-rule-1",
+    branchId: "branch-1",
+    name: "인사 메시지",
+    isActive: true,
+    eventType: "CLIENT_CREATED",
+    offsetType: "IMMEDIATE",
+    offsetDays: 0,
+    recipientType: "CLIENT",
+    templateKey: "CLIENT_GREETING",
+    createdAt: "2026-07-09T00:00:00.000Z",
+    updatedAt: "2026-07-09T00:00:00.000Z",
+  },
+  {
+    id: "trigger-rule-2",
+    branchId: "branch-1",
+    name: "서비스 안내",
+    isActive: true,
+    eventType: "SERVICE_START",
+    offsetType: "BEFORE_DAYS",
+    offsetDays: 7,
+    recipientType: "CLIENT",
+    templateKey: "SERVICE_INFO",
+    createdAt: "2026-07-09T00:00:00.000Z",
+    updatedAt: "2026-07-09T00:00:00.000Z",
+  },
+  {
+    id: "trigger-rule-3",
+    branchId: "branch-1",
+    name: "리마인더",
+    isActive: true,
+    eventType: "SERVICE_START",
+    offsetType: "BEFORE_DAYS",
+    offsetDays: 1,
+    recipientType: "CLIENT",
+    templateKey: "REMINDER",
+    createdAt: "2026-07-09T00:00:00.000Z",
+    updatedAt: "2026-07-09T00:00:00.000Z",
+  },
+  {
+    id: "trigger-rule-4",
+    branchId: "branch-1",
+    name: "비용 안내",
+    isActive: true,
+    eventType: "SERVICE_START",
+    offsetType: "SAME_DAY",
+    offsetDays: 0,
+    recipientType: "CLIENT",
+    templateKey: "PRICE_INFO",
+    createdAt: "2026-07-09T00:00:00.000Z",
+    updatedAt: "2026-07-09T00:00:00.000Z",
+  },
+  {
+    id: "trigger-rule-5",
+    branchId: "branch-1",
+    name: "감사 메시지",
+    isActive: true,
+    eventType: "SERVICE_END",
+    offsetType: "AFTER_DAYS",
+    offsetDays: 1,
+    recipientType: "CLIENT",
+    templateKey: "THANKS",
+    createdAt: "2026-07-09T00:00:00.000Z",
+    updatedAt: "2026-07-09T00:00:00.000Z",
+  },
+  {
+    id: "trigger-rule-6",
+    branchId: "branch-1",
+    name: "설문 요청",
+    isActive: true,
+    eventType: "SERVICE_END",
+    offsetType: "AFTER_DAYS",
+    offsetDays: 2,
+    recipientType: "CLIENT",
+    templateKey: "SURVEY",
+    createdAt: "2026-07-09T00:00:00.000Z",
+    updatedAt: "2026-07-09T00:00:00.000Z",
+  },
+];
 
 const DEFAULT_AUTOMATION_POLICIES: MessageAutomationPoliciesResponse = {
+  pastTriggerConfig: {
+    sendIntervalMinutes: 1,
+    ruleOrder: [],
+  },
   policies: [
     {
       id: "service-feedback-link",
@@ -73,17 +161,6 @@ const DEFAULT_AUTOMATION_POLICIES: MessageAutomationPoliciesResponse = {
         { id: "interval", label: "재시도 간격", value: "실패 후 5분" },
       ],
     },
-    {
-      id: "alimtalk-retry",
-      title: "알림톡 재시도 규칙",
-      description: "API에서 내려준 알림톡 재시도 설명",
-      active: true,
-      requiresApproval: false,
-      rows: [
-        { id: "count", label: "재시도 횟수", value: "최대 2회" },
-        { id: "interval", label: "재시도 간격", value: "실패 후 5분" },
-      ],
-    },
   ],
 };
 
@@ -98,6 +175,7 @@ function getQueryKey(options: unknown) {
 function mockSettingsQueries(
   isApproved: boolean,
   automationPolicies: MessageAutomationPoliciesResponse = DEFAULT_AUTOMATION_POLICIES,
+  triggerRules: MessageTriggerRule[] = DEFAULT_TRIGGER_RULES,
 ) {
   mockedUseQuery.mockImplementation(((options: unknown) => {
     const queryKey = getQueryKey(options);
@@ -122,6 +200,13 @@ function mockSettingsQueries(
       } as unknown as ReturnType<typeof useQuery>;
     }
 
+    if (queryKey?.[0] === "message-triggers" && queryKey[1] === "list") {
+      return {
+        data: triggerRules,
+        isLoading: false,
+      } as unknown as ReturnType<typeof useQuery>;
+    }
+
     return {
       data: undefined,
       isLoading: false,
@@ -140,8 +225,10 @@ beforeEach(() => {
   } as unknown as ReturnType<typeof useGetAuthUser>);
   mockedUseQueryClient.mockReturnValue({
     invalidateQueries: mockInvalidateQueries,
+    setQueryData: mockSetQueryData,
   } as unknown as ReturnType<typeof useQueryClient>);
   mockedSettingsApi.getMessageAutomationPolicies.mockResolvedValue(DEFAULT_AUTOMATION_POLICIES);
+  mockedSettingsApi.updateMessageAutomationPastTriggerConfig.mockImplementation(async (config) => config);
   mockedUseMutation.mockImplementation(((options: {
     mutationFn?: (variables?: unknown) => unknown;
     onSuccess?: (data: unknown, variables: unknown, context: unknown) => unknown;
@@ -159,8 +246,9 @@ beforeEach(() => {
 });
 
 describe("MessageTenantApplicationSettings", () => {
-  it("renders automation policy items from the API", () => {
+  it("renders automation policy items from the API", async () => {
     mockSettingsQueries(true, {
+      pastTriggerConfig: DEFAULT_AUTOMATION_POLICIES.pastTriggerConfig,
       policies: [
         {
           id: "service-feedback-link",
@@ -222,6 +310,25 @@ describe("MessageTenantApplicationSettings", () => {
     fireEvent.click(screen.getByText("API 지난 루틴 정책"));
 
     expect(screen.getByText("API 지난 루틴 미실행")).toBeInTheDocument();
+    expect(screen.getByText("전송 간격")).toBeInTheDocument();
+    const intervalInput = screen.getByRole("spinbutton", { name: "지난 자동 전송 간격" });
+    expect(intervalInput).toHaveValue(1);
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+    fireEvent.change(intervalInput, { target: { value: "10" } });
+    expect(intervalInput).toHaveValue(10);
+    expect(screen.getByText("지난 자동 전송 순서")).toBeInTheDocument();
+    for (const rule of DEFAULT_TRIGGER_RULES) {
+      expect(screen.getByText(rule.name)).toBeInTheDocument();
+    }
+    expect(container.querySelectorAll('[data-component^="messages-settings-past-trigger-policy-order-trigger-rule-"]')).toHaveLength(6);
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+
+    await waitFor(() => {
+      expect(mockedSettingsApi.updateMessageAutomationPastTriggerConfig).toHaveBeenCalledWith({
+        sendIntervalMinutes: 10,
+        ruleOrder: DEFAULT_TRIGGER_RULES.map((rule) => rule.id),
+      });
+    });
 
     fireEvent.click(screen.getAllByText("중복 전송 확인")[0]);
 
@@ -231,6 +338,7 @@ describe("MessageTenantApplicationSettings", () => {
 
   it("SMS retry row shows the API-provided value, not hardcoded copy", () => {
     mockSettingsQueries(true, {
+      pastTriggerConfig: DEFAULT_AUTOMATION_POLICIES.pastTriggerConfig,
       policies: [
         {
           id: "sms-retry",
@@ -252,6 +360,50 @@ describe("MessageTenantApplicationSettings", () => {
     expect(screen.queryByText("최대 2회")).not.toBeInTheDocument();
   });
 
+  it("excludes inactive trigger rules from the retroactive order settings and save payload", async () => {
+    const inactiveReminder = {
+      ...DEFAULT_TRIGGER_RULES[2],
+      isActive: false,
+    };
+    const triggerRules = [
+      DEFAULT_TRIGGER_RULES[0],
+      DEFAULT_TRIGGER_RULES[1],
+      inactiveReminder,
+      DEFAULT_TRIGGER_RULES[3],
+    ];
+    mockSettingsQueries(true, {
+      ...DEFAULT_AUTOMATION_POLICIES,
+      pastTriggerConfig: {
+        sendIntervalMinutes: 1,
+        ruleOrder: triggerRules.map((rule) => rule.id),
+      },
+    }, triggerRules);
+
+    render(<MessageTenantApplicationSettings />);
+
+    fireEvent.click(screen.getByText("지난 자동 전송 처리 규칙"));
+
+    expect(screen.getByText(DEFAULT_TRIGGER_RULES[0].name)).toBeInTheDocument();
+    expect(screen.getByText(DEFAULT_TRIGGER_RULES[1].name)).toBeInTheDocument();
+    expect(screen.queryByText(inactiveReminder.name)).not.toBeInTheDocument();
+    expect(screen.getByText(DEFAULT_TRIGGER_RULES[3].name)).toBeInTheDocument();
+
+    const intervalInput = screen.getByRole("spinbutton", { name: "지난 자동 전송 간격" });
+    fireEvent.change(intervalInput, { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+
+    await waitFor(() => {
+      expect(mockedSettingsApi.updateMessageAutomationPastTriggerConfig).toHaveBeenCalledWith({
+        sendIntervalMinutes: 2,
+        ruleOrder: [
+          DEFAULT_TRIGGER_RULES[0].id,
+          DEFAULT_TRIGGER_RULES[1].id,
+          DEFAULT_TRIGGER_RULES[3].id,
+        ],
+      });
+    });
+  });
+
   it("shows the sender application item and duplicate send policy before approval", () => {
     mockSettingsQueries(false);
 
@@ -261,7 +413,6 @@ describe("MessageTenantApplicationSettings", () => {
     expect(screen.getByText("제공기록지 전송 자동화 규칙")).toBeInTheDocument();
     expect(screen.getByText("지난 자동 전송 처리 규칙")).toBeInTheDocument();
     expect(screen.getByText("SMS 재시도 규칙")).toBeInTheDocument();
-    expect(screen.getByText("알림톡 재시도 규칙")).toBeInTheDocument();
     expect(screen.getByText("중복 전송 확인")).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "제공기록지 전송 자동화 규칙 활성화" })).toBeInTheDocument();
     expect(container.querySelector('[data-component="messages-settings-tenant-application"]')).toBeInTheDocument();
@@ -286,7 +437,6 @@ describe("MessageTenantApplicationSettings", () => {
 
     const nonApprovalGatedSwitchNames = [
       "SMS 재시도 규칙 활성화",
-      "알림톡 재시도 규칙 활성화",
     ];
 
     for (const name of nonApprovalGatedSwitchNames) {

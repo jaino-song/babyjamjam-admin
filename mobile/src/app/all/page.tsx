@@ -6,6 +6,7 @@ import {
   Bell,
   Calculator,
   Calendar,
+  FileText,
   MessageCircle,
   MessageSquareText,
   Send,
@@ -73,6 +74,12 @@ export default function AllMenuPage() {
             value: isEmployeesInitialLoading ? undefined : `${employees.length}명`,
             valueLoading: isEmployeesInitialLoading,
             valueSkeletonWidth: "28px",
+          },
+          {
+            label: "전자문서",
+            href: "/contracts",
+            icon: FileText,
+            tone: "green",
           },
           {
             label: "일정 캘린더",

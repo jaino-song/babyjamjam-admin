@@ -87,7 +87,7 @@ export const SMS_TEMPLATE_DELIVERY: Partial<Record<MessageTriggerTemplateKey, Sm
         automationKey: SERVICE_FEEDBACK_LINK_SMS_AUTOMATION_KEY,
         triggerType: SERVICE_FEEDBACK_LINK_SMS_TRIGGER_TYPE,
         title: SERVICE_FEEDBACK_LINK_SMS_TITLE,
-        usePayloadMessage: true,
+        systemTemplateKey: SystemTemplateKey.SERVICE_FEEDBACK_LINK,
     },
 };
 
@@ -126,7 +126,10 @@ export class SmsTriggerDeliveryService {
         const payload = job.payload;
         const baseVariables: Record<string, string> = {
             name: payload.recipientName,
+            employeeName: payload.recipientName,
             clientName: payload.recipientName,
+            buttonUrl: payload.buttonUrl ?? "",
+            feedbackUrl: payload.buttonUrl ?? "",
             ...payload.templateVariables,
         };
         if (config.systemTemplateKey === SystemTemplateKey.PRICE_INFO) {
@@ -275,6 +278,8 @@ export class SmsTriggerDeliveryService {
                     : null,
                 now,
                 now,
+                params.job.payload.recipientName,
+                params.job.payload.recipientPhone,
             ),
         );
     }

@@ -20,6 +20,7 @@ describe("ClientService", () => {
     
     const createMockCreateClientUsecase = () => ({
         execute: jest.fn(),
+        executeWithInitialSchedule: jest.fn(),
     });
 
     const createMockUpdateClientUsecase = () => ({
@@ -42,27 +43,37 @@ describe("ClientService", () => {
         execute: jest.fn(),
     });
 
-    const createMockPrismaService = () => ({
-        employee_schedule: {
+    const createMockPrismaService = () => {
+        const prisma = {
+            employee_schedule: {
             create: jest.fn(),
             update: jest.fn(),
             updateMany: jest.fn(),
             findFirst: jest.fn(),
             findMany: jest.fn().mockResolvedValue([]),
-        },
-        client: {
-            update: jest.fn(),
-        },
-        eformsign_doc: {
-            findMany: jest.fn().mockResolvedValue([]),
-        },
-        schedule_change_request: {
-            findMany: jest.fn().mockResolvedValue([]),
-        },
-        area: {
-            findFirst: jest.fn().mockResolvedValue({ id: "incheon" }),
-        },
-    });
+            },
+            employee: {
+                findMany: jest.fn().mockImplementation(({ where }) =>
+                    Promise.resolve(where.id.in.map((id: number) => ({ id }))),
+                ),
+            },
+            client: {
+                update: jest.fn(),
+            },
+            eformsign_doc: {
+                findMany: jest.fn().mockResolvedValue([]),
+            },
+            schedule_change_request: {
+                findMany: jest.fn().mockResolvedValue([]),
+            },
+            area: {
+                findFirst: jest.fn().mockResolvedValue({ id: "incheon" }),
+            },
+            $transaction: jest.fn(),
+        };
+        prisma.$transaction.mockImplementation(async (callback) => callback(prisma));
+        return prisma;
+    };
 
     const createMockTriggerService = () => ({
         ensureDefaultRulesForBranch: jest.fn().mockResolvedValue(undefined),
@@ -80,6 +91,7 @@ describe("ClientService", () => {
         findAll: jest.fn(),
         findAllPaginated: jest.fn(),
         create: jest.fn(),
+        createWithInitialSchedule: jest.fn(),
         update: jest.fn(),
         delete: jest.fn(),
         findByStartDate: jest.fn(),
@@ -183,12 +195,14 @@ describe("ClientService", () => {
     // ============================================
     describe("create", () => {
         describe("given valid client data with primary employee", () => {
-            it("should create client first, then create employee_schedule with clientId", async () => {
+            it("should create the client and employee schedule atomically", async () => {
                 // Arrange
                 const mockClient = createClientEntity();
                 const mockSchedule = { id: 10, clientId: 1 };
-                createClientUsecase.execute.mockResolvedValue(mockClient);
-                prismaService.employee_schedule.create.mockResolvedValue(mockSchedule);
+                createClientUsecase.executeWithInitialSchedule.mockResolvedValue({
+                    client: mockClient,
+                    scheduleId: mockSchedule.id,
+                });
 
                 const params = {
                     name: "New Client",
@@ -206,23 +220,20 @@ describe("ClientService", () => {
                 const result = await service.create(branchId, params);
 
                 // Assert
-                // Client should be created first
-                expect(createClientUsecase.execute).toHaveBeenCalledWith(
+                expect(createClientUsecase.executeWithInitialSchedule).toHaveBeenCalledWith(
                     branchId,
                     expect.objectContaining({
                         name: "New Client",
                         address: "123 Main St",
-                    })
-                );
-                // Then schedule with clientId
-                expect(prismaService.employee_schedule.create).toHaveBeenCalledWith({
-                    data: expect.objectContaining({
-                        clientId: 1,
-                        primaryEmployeeId: 5,
-                        workAddress: "123 Main St",
-                        replaced: false,
                     }),
-                });
+                    expect.objectContaining({
+                        primaryEmployeeId: 5,
+                        secondaryEmployeeId: null,
+                        workAddress: "123 Main St",
+                    }),
+                );
+                expect(createClientUsecase.execute).not.toHaveBeenCalled();
+                expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
                 expect(employeeFeedbackLinkService.scheduleForServiceStart).toHaveBeenCalledWith(10);
                 expect(result).toBe(mockClient);
             });
@@ -351,8 +362,10 @@ describe("ClientService", () => {
                 // Arrange
                 const mockClient = createClientEntity();
                 const mockSchedule = { id: 10, clientId: 1 };
-                createClientUsecase.execute.mockResolvedValue(mockClient);
-                prismaService.employee_schedule.create.mockResolvedValue(mockSchedule);
+                createClientUsecase.executeWithInitialSchedule.mockResolvedValue({
+                    client: mockClient,
+                    scheduleId: mockSchedule.id,
+                });
 
                 const params = {
                     name: "New Client",
@@ -368,14 +381,14 @@ describe("ClientService", () => {
                 await service.create(branchId, params);
 
                 // Assert
-                expect(prismaService.employee_schedule.create).toHaveBeenCalledTimes(1);
-                expect(prismaService.employee_schedule.create).toHaveBeenCalledWith({
-                    data: expect.objectContaining({
-                        clientId: 1,
+                expect(createClientUsecase.executeWithInitialSchedule).toHaveBeenCalledWith(
+                    branchId,
+                    expect.any(Object),
+                    expect.objectContaining({
                         primaryEmployeeId: 5,
                         secondaryEmployeeId: 6,
                     }),
-                });
+                );
                 expect(employeeFeedbackLinkService.scheduleForServiceStart).toHaveBeenCalledWith(10);
             });
         });
@@ -405,6 +418,49 @@ describe("ClientService", () => {
                 // Assert: no side-effects fired
                 expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
+            });
+
+            it("creates the missing assignment when a duplicate client is reused with a selected employee", async () => {
+                const existingClient = createClientEntity();
+                clientRepository.findByPhone.mockResolvedValue(existingClient);
+                prismaService.employee_schedule.findFirst.mockResolvedValue(null);
+                prismaService.employee_schedule.create.mockResolvedValue({ id: 33, clientId: existingClient.id });
+
+                const result = await service.create(branchId, {
+                    name: "New Client",
+                    phone: "010-1234-5678",
+                    primaryEmployeeId: 5,
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                });
+
+                expect(result).toBe(existingClient);
+                expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
+                expect(prismaService.employee_schedule.create).toHaveBeenCalledWith({
+                    data: expect.objectContaining({
+                        clientId: existingClient.id,
+                        branchId,
+                        primaryEmployeeId: 5,
+                        replaced: false,
+                    }),
+                });
+                expect(employeeFeedbackLinkService.scheduleForServiceStart).toHaveBeenCalledWith(33);
+            });
+
+            it("rejects an employee that does not belong to the client branch", async () => {
+                prismaService.employee.findMany.mockResolvedValue([]);
+
+                await expect(service.create(branchId, {
+                    name: "New Client",
+                    primaryEmployeeId: 999,
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                })).rejects.toThrow("selected employees must belong to the client branch");
+
+                expect(createClientUsecase.execute).not.toHaveBeenCalled();
+                expect(createClientUsecase.executeWithInitialSchedule).not.toHaveBeenCalled();
             });
 
             it("creates a new client when no client with that phone exists in the branch", async () => {
@@ -501,6 +557,26 @@ describe("ClientService", () => {
                 });
                 expect(employeeFeedbackLinkService.revoke).toHaveBeenCalledWith(10);
                 expect(employeeFeedbackLinkService.scheduleForServiceStart).toHaveBeenCalledWith(20);
+            });
+
+            it("keeps feedback access for the old assignment when replacement creation fails", async () => {
+                const existingClient = createClientEntity();
+                findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+                prismaService.employee_schedule.findFirst.mockResolvedValue({
+                    id: 10,
+                    clientId: 1,
+                    primaryEmployeeId: 5,
+                    secondaryEmployeeId: null,
+                });
+                prismaService.employee_schedule.create.mockRejectedValue(new Error("schedule insert failed"));
+
+                await expect(
+                    service.update(branchId, 1, { primaryEmployeeId: 7 }),
+                ).rejects.toThrow("schedule insert failed");
+
+                expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
+                expect(employeeFeedbackLinkService.revoke).not.toHaveBeenCalled();
+                expect(updateClientUsecase.execute).not.toHaveBeenCalled();
             });
 
             it("should NOT create new schedule if same employee is selected", async () => {

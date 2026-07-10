@@ -8,6 +8,19 @@ export interface PaginatedResult<T> {
     totalPages: number;
 }
 
+export interface InitialClientSchedule {
+    primaryEmployeeId: number;
+    secondaryEmployeeId: number | null;
+    workAddress: string;
+    startDate: Date;
+    endDate: Date;
+}
+
+export interface ClientWithInitialSchedule {
+    client: ClientEntity;
+    scheduleId: number;
+}
+
 export interface IClientRepository {
     findById(branchid: string, id: number): Promise<ClientEntity | null>;
     findAll(branchid: string): Promise<ClientEntity[]>;
@@ -18,6 +31,11 @@ export interface IClientRepository {
         search?: string
     ): Promise<PaginatedResult<ClientEntity>>;
     create(branchid: string, client: ClientEntity): Promise<ClientEntity>;
+    createWithInitialSchedule(
+        branchid: string,
+        client: ClientEntity,
+        schedule: InitialClientSchedule,
+    ): Promise<ClientWithInitialSchedule>;
     update(branchid: string, client: ClientEntity): Promise<ClientEntity>;
     delete(branchid: string, id: number): Promise<void>;
 

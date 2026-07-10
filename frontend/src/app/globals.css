@@ -609,7 +609,32 @@
 }
 
 /* V3: animate direct children of a container (used for page sections and SplitLayout). */
+.v3-ui-scale-scope {
+  --v3-ui-scope-scale: var(
+    --v3-ui-scale,
+    calc(min(calc(100vw / 1920px), calc(100vh / 1080px)) * 1.1)
+  );
+  --spacing: calc(4px * var(--v3-ui-scope-scale));
+  --text-xs: calc(12px * var(--v3-ui-scope-scale));
+  --text-sm: calc(14px * var(--v3-ui-scope-scale));
+  --text-base: calc(16px * var(--v3-ui-scope-scale));
+  --text-lg: calc(18px * var(--v3-ui-scope-scale));
+  --text-xl: calc(20px * var(--v3-ui-scope-scale));
+  --text-2xl: calc(24px * var(--v3-ui-scope-scale));
+  --text-3xl: calc(30px * var(--v3-ui-scope-scale));
+  --radius-xs: calc(2px * var(--v3-ui-scope-scale));
+  --radius-sm: calc(4px * var(--v3-ui-scope-scale));
+  --radius-md: calc(6px * var(--v3-ui-scope-scale));
+  --radius-lg: calc(8px * var(--v3-ui-scope-scale));
+  --radius-xl: calc(24px * var(--v3-ui-scope-scale));
+  --radius-2xl: calc(28px * var(--v3-ui-scope-scale));
+  --radius-3xl: calc(32px * var(--v3-ui-scope-scale));
+  --radius-pill: calc(50px * var(--v3-ui-scope-scale));
+  font-size: calc(16px * var(--v3-ui-scope-scale));
+}
+
 @layer utilities {
+
   .v3-slide-up-children > * {
     animation: var(--animate-v3-slide-up);
     /* Critical for staggered delays: apply the 0% keyframe during the delay. */

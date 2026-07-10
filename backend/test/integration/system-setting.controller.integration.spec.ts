@@ -11,8 +11,6 @@ import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { TenantGuard } from "infrastructure/tenant";
 import { SystemSettingEntity } from "domain/entities/system-setting.entity";
 import {
-    ALIMTALK_DELIVERY_MAX_ATTEMPTS,
-    ALIMTALK_DELIVERY_RETRY_DELAY_MS,
     PAST_OCCURRENCE_GRACE_MS,
     SEND_HOUR_KST,
     SMS_DELIVERY_MAX_ATTEMPTS,
@@ -49,6 +47,8 @@ describe("SystemSettingController (Integration)", () => {
             getAlimtalkProviderSetting: jest.fn(),
             setAlimtalkProvider: jest.fn(),
             isAlimtalkEnabled: jest.fn(),
+            getMessageAutomationPastTriggerConfig: jest.fn(),
+            setMessageAutomationPastTriggerConfig: jest.fn(),
         };
         const mockMessageSenderApprovalService = {
             approvePendingRequest: jest.fn(),
@@ -94,6 +94,10 @@ describe("SystemSettingController (Integration)", () => {
         systemSettingService = moduleFixture.get(SystemSettingService);
         messageSenderApprovalService = moduleFixture.get(MessageSenderApprovalService);
         controller = moduleFixture.get(SystemSettingController);
+        systemSettingService.getMessageAutomationPastTriggerConfig.mockResolvedValue({
+            sendIntervalMinutes: 1,
+            ruleOrder: [],
+        });
     });
 
     afterEach(async () => {
@@ -170,6 +174,13 @@ describe("SystemSettingController (Integration)", () => {
             expect(guards).toContain(TenantGuard);
         });
 
+        it("should expose a PUT route for past trigger config", () => {
+            const method = SystemSettingController.prototype.updateMessageAutomationPastTriggerConfig;
+
+            expect(Reflect.getMetadata(PATH_METADATA, method)).toBe("message-automation-policies/past-trigger");
+            expect(Reflect.getMetadata(METHOD_METADATA, method)).toBe(RequestMethod.PUT);
+        });
+
         it("should return policies with values computed from runtime constants", async () => {
             const response = await controller.getMessageAutomationPolicies();
 
@@ -177,9 +188,7 @@ describe("SystemSettingController (Integration)", () => {
                 "trigger-dispatch",
                 "trigger-job-retry",
                 "sms-retry",
-                "alimtalk-retry",
                 "past-trigger",
-                "approval-gate",
                 "service-feedback-link",
             ]);
 
@@ -195,21 +204,17 @@ describe("SystemSettingController (Integration)", () => {
                 active: true,
                 requiresApproval: false,
             });
-            expect(getPolicy(response, "alimtalk-retry")).toMatchObject({
-                active: true,
-                requiresApproval: false,
-            });
             expect(getPolicy(response, "past-trigger")).toMatchObject({
                 active: true,
                 requiresApproval: true,
             });
-            expect(getPolicy(response, "approval-gate")).toMatchObject({
-                active: true,
-                requiresApproval: false,
-            });
             expect(getPolicy(response, "service-feedback-link")).toMatchObject({
                 active: true,
                 requiresApproval: true,
+            });
+            expect(response.pastTriggerConfig).toEqual({
+                sendIntervalMinutes: 1,
+                ruleOrder: [],
             });
 
             expect(getRowValue(response, "trigger-dispatch", "dispatch-interval"))
@@ -228,10 +233,6 @@ describe("SystemSettingController (Integration)", () => {
                 .toBe(`최대 ${SMS_DELIVERY_MAX_ATTEMPTS}회`);
             expect(getRowValue(response, "sms-retry", "retry-delay"))
                 .toBe(`${formatMinutes(SMS_DELIVERY_RETRY_DELAY_MS)} 후`);
-            expect(getRowValue(response, "alimtalk-retry", "max-attempts"))
-                .toBe(`최대 ${ALIMTALK_DELIVERY_MAX_ATTEMPTS}회`);
-            expect(getRowValue(response, "alimtalk-retry", "retry-delay"))
-                .toBe(`${formatMinutes(ALIMTALK_DELIVERY_RETRY_DELAY_MS)} 후`);
             expect(getRowValue(response, "past-trigger", "grace-window"))
                 .toBe(`${formatHours(PAST_OCCURRENCE_GRACE_MS)} 이상`);
             expect(getRowValue(response, "service-feedback-link", "message-title"))
@@ -248,6 +249,39 @@ describe("SystemSettingController (Integration)", () => {
                 .toBe(SERVICE_FEEDBACK_LINK_SMS_AUTOMATION_KEY);
             expect(getRowValue(response, "service-feedback-link", "template-key"))
                 .toBe(SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY);
+        });
+
+        it("should update the branch-scoped past trigger config", async () => {
+            systemSettingService.setMessageAutomationPastTriggerConfig.mockResolvedValue(
+                new SystemSettingEntity(
+                    "branch:branch-1:message_automation:past_trigger",
+                    JSON.stringify({
+                        sendIntervalMinutes: 3,
+                        ruleOrder: ["rule-2", "rule-1"],
+                    }),
+                    new Date("2026-07-09T00:00:00.000Z"),
+                ),
+            );
+
+            const response = await controller.updateMessageAutomationPastTriggerConfig(
+                { branchId: "branch-1" },
+                {
+                    sendIntervalMinutes: 3,
+                    ruleOrder: ["rule-2", "rule-1"],
+                },
+            );
+
+            expect(systemSettingService.setMessageAutomationPastTriggerConfig).toHaveBeenCalledWith(
+                "branch-1",
+                {
+                    sendIntervalMinutes: 3,
+                    ruleOrder: ["rule-2", "rule-1"],
+                },
+            );
+            expect(response).toEqual({
+                sendIntervalMinutes: 3,
+                ruleOrder: ["rule-2", "rule-1"],
+            });
         });
     });
 

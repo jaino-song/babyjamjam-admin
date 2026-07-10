@@ -229,7 +229,10 @@ describe("SbMessageTriggerJobRepository", () => {
                 scheduledFor: { lte: now },
                 OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
             },
-            orderBy: { scheduledFor: "asc" },
+            orderBy: [
+                { scheduledFor: "asc" },
+                { createdAt: "asc" },
+            ],
             take: 25,
         });
     });
@@ -249,6 +252,7 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(sqlText).toMatch(
             /INSERT INTO "message_trigger_job" \([\s\S]*next_attempt_at,\s*updated_at[\s\S]*\)\s*VALUES/,
         );
+        expect(sqlText).toContain("::uuid");
         expect(sqlText).toMatch(/0,\s*NULL,\s*now\(\)/);
         const normalizedSqlText = sqlText.replace(/\s+/g, " ");
         expect(normalizedSqlText).toContain('ON CONFLICT ("dedupe_key") DO UPDATE SET');

@@ -1,5 +1,10 @@
 import { ClientEntity } from "domain/entities/client.entity";
-import { IClientRepository, PaginatedResult } from "domain/repositories/client.repository.interface";
+import {
+    ClientWithInitialSchedule,
+    IClientRepository,
+    InitialClientSchedule,
+    PaginatedResult,
+} from "domain/repositories/client.repository.interface";
 
 /**
  * 테스트용 Mock Client Repository
@@ -103,6 +108,16 @@ export class MockClientRepository implements IClientRepository {
         );
         this.clients.set(id, newClient);
         return newClient;
+    }
+
+    async createWithInitialSchedule(
+        branchid: string,
+        client: ClientEntity,
+        _schedule: InitialClientSchedule,
+    ): Promise<ClientWithInitialSchedule> {
+        void _schedule;
+        const created = await this.create(branchid, client);
+        return { client: created, scheduleId: created.id };
     }
 
     async update(_branchid: string, client: ClientEntity): Promise<ClientEntity> {

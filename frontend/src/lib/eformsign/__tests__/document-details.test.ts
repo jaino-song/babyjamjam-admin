@@ -108,6 +108,26 @@ describe("document detail helpers", () => {
     });
   });
 
+  it("prefers customer contact fields over the current workflow recipient", () => {
+    const document = createDocument({
+      current_status: {
+        ...createDocument().current_status,
+        step_recipients: [
+          { recipient_type: "01", name: "제공기관", sms: "01099998888" },
+        ],
+      },
+      fields: [
+        { id: "이용자 연락처", value: "01011112222", type: "text" },
+        { id: "이용자 이메일", value: "client@test.com", type: "text" },
+      ],
+    });
+
+    expect(extractDocumentContactInfo(document)).toEqual({
+      phone: "01011112222",
+      email: "client@test.com",
+    });
+  });
+
   it("extracts a re-request event from histories with status code 063", () => {
     const timestamp = 1_760_000_555_000;
     const document = createDocument({

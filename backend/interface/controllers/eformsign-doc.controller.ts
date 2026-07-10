@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Logger, MessageEvent, Post, Query, Sse, UseGuards } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { Observable, filter, interval, map, merge } from "rxjs";
 import { EformsignDocService } from "application/services/eformsign-doc.service";
 import { EformsignDocsEventBus } from "application/services/eformsign-docs-event-bus.service";
@@ -34,6 +35,7 @@ export class EformsignDocController {
         private readonly finalizeHeadlessUsecase: FinalizeDocumentHeadlessUsecase,
         private readonly eventBus: EformsignDocsEventBus,
         private readonly headlessProgressService: EformsignHeadlessProgressService,
+        private readonly configService: ConfigService,
     ) {}
 
     /**
@@ -110,6 +112,9 @@ export class EformsignDocController {
                 stepRecipientSms: dto.stepRecipientSms,
                 expiredDate: new Date(dto.expiredDate),
                 linkToClient: dto.linkToClient,
+                documentKind: dto.documentKind,
+                employeeScheduleId: dto.employeeScheduleId,
+                templateId: dto.templateId,
             });
             this.logger.log(`[POST /eformsign-docs] Successfully created record id=${result.id}`);
             return result;
@@ -158,6 +163,16 @@ export class EformsignDocController {
     @Get("client-names")
     listClientNames(@CurrentTenant() tenant: { branchId?: string }) {
         return this.listClientNamesByBranchUsecase.execute(tenant.branchId ?? "");
+    }
+
+    /**
+     * GET /eformsign-docs/feedback-template-id
+     * Exposes the configured service-record feedback template id for UI-only filtering.
+     */
+    @Get("feedback-template-id")
+    getFeedbackTemplateId(): { templateId: string | null } {
+        const templateId = this.configService.get<string>("EFORMSIGN_FEEDBACK_TEMPLATE_ID")?.trim();
+        return { templateId: templateId || null };
     }
 
     /**

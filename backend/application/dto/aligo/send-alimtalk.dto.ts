@@ -3,6 +3,7 @@ import { AligoTemplateKey, ALIGO_TEMPLATES } from "./alimtalk-template.dto";
 export interface SendAligoAlimtalkDto {
     templateKey: AligoTemplateKey;
     receiver: string;
+    recipientName?: string;
     variables: Record<string, string>;
     buttonUrl?: string;
     branchId?: string;

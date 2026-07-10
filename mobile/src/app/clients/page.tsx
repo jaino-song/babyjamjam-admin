@@ -132,7 +132,7 @@ function documentStatusFromStatusType(statusType: string | null | undefined): Cl
 
   const category = getStatusCategory(normalized);
   if (category === "completed") return "completed";
-  if (category === "rejected") return "rejected";
+  if (category === "expired") return "rejected";
   if (normalized === "020") return "opened";
   if (["001", "002", "010", "043"].includes(normalized)) return "created";
   if (["030", "060", "070"].includes(normalized)) return "requested";

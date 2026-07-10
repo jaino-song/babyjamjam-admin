@@ -41,6 +41,7 @@ interface DetailPanelProps {
   footer?: React.ReactNode;
   footerClassName?: string;
   isLoading?: boolean;
+  mainAnimationKey?: React.Key;
   children: React.ReactNode;
 }
 
@@ -87,12 +88,14 @@ export function DetailPanel({
   footer,
   footerClassName,
   isLoading = false,
+  mainAnimationKey,
   children,
 }: DetailPanelProps) {
   const splitLayoutNav = useSplitLayoutNavOptional();
   const { isScrollActive, handleScroll } = useScrollActivity();
   const resolvedOverlay = overlay ?? emptyState;
   const showCompactBackButton = splitLayoutNav?.isMobile ?? false;
+  const shouldAnimateMain = mainAnimationKey !== undefined && !showCompactBackButton;
   const resolvedBackAction = backAction ?? (
     showCompactBackButton && splitLayoutNav
       ? { label: compactBackLabel, onClick: splitLayoutNav.goToList }
@@ -177,7 +180,14 @@ export function DetailPanel({
           {resolvedOverlay}
         </div>
       ) : null}
-      <main data-component="detail-panel-main" className="relative flex min-h-0 flex-1 flex-col">
+      <div
+        key={shouldAnimateMain ? mainAnimationKey : undefined}
+        data-component="detail-panel-main"
+        className={cn(
+          "v3-ui-scale-scope relative flex min-h-0 flex-1 flex-col",
+          shouldAnimateMain && "animate-v3-slide-up",
+        )}
+      >
         <div
           data-component="detail-panel-scroll-content"
           className="scrollbar-on-scroll flex min-h-0 flex-1 flex-col overflow-y-auto p-[calc(24px*var(--v3-ui-scale,1))]"
@@ -190,7 +200,7 @@ export function DetailPanel({
           data-component="detail-panel-bottom-spacer"
           className="h-[calc(24px*var(--v3-ui-scale,1))] shrink-0 bg-white"
         />
-      </main>
+      </div>
       {footer ? (
         <footer
           data-component="detail-panel-footer"

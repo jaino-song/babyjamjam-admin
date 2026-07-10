@@ -135,4 +135,71 @@ describe("SystemSettingService", () => {
             expect(result).toBe(false);
         });
     });
+
+    describe("message automation past trigger config", () => {
+        it("should return the default config when no setting is stored", async () => {
+            getSettingUsecase.execute.mockResolvedValue(null);
+
+            const result = await service.getMessageAutomationPastTriggerConfig("branch-1");
+
+            expect(getSettingUsecase.execute).toHaveBeenCalledWith(
+                "branch:branch-1:message_automation:past_trigger"
+            );
+            expect(result).toEqual({
+                sendIntervalMinutes: 1,
+                ruleOrder: [],
+            });
+        });
+
+        it("should parse and normalize the stored config", async () => {
+            getSettingUsecase.execute.mockResolvedValue(JSON.stringify({
+                sendIntervalMinutes: 3,
+                ruleOrder: ["rule-2", "rule-1", "rule-2"],
+            }));
+
+            const result = await service.getMessageAutomationPastTriggerConfig("branch-1");
+
+            expect(result).toEqual({
+                sendIntervalMinutes: 3,
+                ruleOrder: ["rule-2", "rule-1"],
+            });
+        });
+
+        it("should fall back to the default config when stored JSON is invalid", async () => {
+            getSettingUsecase.execute.mockResolvedValue("{");
+
+            const result = await service.getMessageAutomationPastTriggerConfig("branch-1");
+
+            expect(result).toEqual({
+                sendIntervalMinutes: 1,
+                ruleOrder: [],
+            });
+        });
+
+        it("should persist a normalized branch-scoped config", async () => {
+            const entity = new SystemSettingEntity(
+                "branch:branch-1:message_automation:past_trigger",
+                JSON.stringify({
+                    sendIntervalMinutes: 1440,
+                    ruleOrder: ["rule-1", "rule-2"],
+                }),
+                new Date(),
+            );
+            updateSettingUsecase.execute.mockResolvedValue(entity);
+
+            const result = await service.setMessageAutomationPastTriggerConfig("branch-1", {
+                sendIntervalMinutes: 2000,
+                ruleOrder: ["rule-1", "rule-2", "rule-1"],
+            });
+
+            expect(updateSettingUsecase.execute).toHaveBeenCalledWith(
+                "branch:branch-1:message_automation:past_trigger",
+                JSON.stringify({
+                    sendIntervalMinutes: 1440,
+                    ruleOrder: ["rule-1", "rule-2"],
+                }),
+            );
+            expect(result).toBe(entity);
+        });
+    });
 });

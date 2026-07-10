@@ -4,11 +4,13 @@ import { EformsignService } from "application/services/eformsign.service";
 import { EformsignHeadlessService } from "infrastructure/automation/eformsign-headless.service";
 import { AreaTemplateService } from "application/services/area-template.service";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
+import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { GetEformsignAccessTokenUsecase } from "./get-eformsign-access-token.usecase";
 import { CreateEformsignDocUsecase } from "./create-eformsign-doc.usecase";
 import { FetchEformsignDocFromApiUsecase } from "./fetch-eformsign-doc-from-api.usecase";
 import { EformsignHeadlessProgressService } from "application/services/eformsign-headless-progress.service";
 import type { EformsignHeadlessProgressStep } from "application/services/eformsign-headless-progress.service";
+import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
 
 const DEFAULT_DOCUMENT_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
 const COMPLETED_STATUS_CODES = new Set(["003", "012", "022", "032", "050", "062", "072", "092"]);
@@ -16,7 +18,7 @@ const REJECTED_STATUS_CODES = new Set(["011", "021", "031", "040", "042", "045",
 
 export interface DispatchHeadlessParams {
     contractData: ContractDataDto;
-    clientId?: number;
+    clientId: number;
     progressId?: string;
 }
 
@@ -66,12 +68,18 @@ export class DispatchDocumentHeadlessUsecase {
         private readonly fetchEformsignDocFromApiUsecase: FetchEformsignDocFromApiUsecase,
         private readonly progressService: EformsignHeadlessProgressService,
         @Inject(CLIENT_REPOSITORY) private readonly clientRepository: IClientRepository,
+        private readonly assignmentGuard: ContractClientAssignmentGuardService,
     ) {}
 
     async execute(branchId: string, params: DispatchHeadlessParams): Promise<DispatchHeadlessResult> {
         const start = Date.now();
         let latestProgressStep: EformsignHeadlessProgressStep | undefined;
         try {
+            await this.assignmentGuard.assertAssignedProvider(
+                branchId,
+                params.clientId,
+                params.contractData.caretaker1Contact,
+            );
             const tokenResponse = await this.getAccessTokenUsecase.execute(Date.now());
             const accessToken = tokenResponse.oauth_token.access_token;
             const refreshToken = tokenResponse.oauth_token.refresh_token;
@@ -150,6 +158,8 @@ export class DispatchDocumentHeadlessUsecase {
                     stepRecipientSms: params.contractData.customerContact || client?.phone || "",
                     expiredDate: createdDocumentStatus.expiredDate,
                     linkToClient: true,
+                    documentKind: EFORMSIGN_DOCUMENT_KIND.CONTRACT,
+                    templateId: templateId ?? null,
                 }).catch((error) => {
                     this.logger.error(`Failed to persist doc record for ${documentId}: ${error}`);
                 });

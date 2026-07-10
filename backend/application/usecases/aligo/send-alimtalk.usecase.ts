@@ -35,6 +35,8 @@ export class SendAligoAlimtalkUsecase {
             triggerJobId: dto.triggerJobId,
             receiver: dto.receiver,
             clientId: dto.clientId,
+            recipientName: dto.recipientName ?? null,
+            recipientPhone: dto.receiver,
             messageBody: message,
             variables: dto.variables,
         });

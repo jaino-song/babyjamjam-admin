@@ -15,6 +15,7 @@ import {
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import { EMPLOYEE_SCHEDULE_REPOSITORY, IEmployeeScheduleRepository } from "domain/repositories/employee-schedule.repository.interface";
 import { EMPLOYEE_REPOSITORY, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
+import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 
 /**
  * Eformsign document status codes (from document.status field)
@@ -195,7 +196,7 @@ export class EformsignWebhookService {
 
         const { statusType, statusDetail } = this.mapStatus(status);
         try {
-            await this.updateStatusUsecase.execute(branchid, {
+            await this.updateStatusAndLinkClient(branchid, {
                 documentId,
                 statusType,
                 statusDetail,
@@ -235,7 +236,7 @@ export class EformsignWebhookService {
         const statusDetail = isOpenAction ? "서명 페이지 열림" : `액션: ${action}`;
 
         try {
-            await this.updateStatusUsecase.execute(branchid, {
+            await this.updateStatusAndLinkClient(branchid, {
                 documentId,
                 statusType: "020", // In-progress/opened
                 statusDetail,
@@ -280,7 +281,7 @@ export class EformsignWebhookService {
             }
         } else {
             try {
-                await this.updateStatusUsecase.execute(branchid, {
+                await this.updateStatusAndLinkClient(branchid, {
                     documentId,
                     statusType,
                     statusDetail,
@@ -349,12 +350,32 @@ export class EformsignWebhookService {
         return false;
     }
 
+    private async updateStatusAndLinkClient(
+        branchid: string,
+        params: Parameters<UpdateEformsignDocStatusUsecase["execute"]>[1],
+    ): Promise<void> {
+        await this.updateStatusUsecase.execute(branchid, params);
+        try {
+            await this.linkDocumentUsecase.execute(branchid, params.documentId);
+        } catch (error) {
+            this.logger.warn(`Failed to keep client linked for document ${params.documentId}: ${error}`);
+        }
+    }
+
     private async handleCompletedDocument(
         branchid: string,
         documentId: string,
         workflowName: string,
         source: string,
     ): Promise<void> {
+        const doc = await this.eformsignDocRepository.findByDocumentId(branchid, documentId);
+        if (doc?.documentKind === EFORMSIGN_DOCUMENT_KIND.SERVICE_FEEDBACK_SNAPSHOT) {
+            this.logger.log(
+                `Document ${documentId} is a feedback snapshot row; skipping contract-completion side effects (${source}).`,
+            );
+            return;
+        }
+
         this.logger.log(`Document ${documentId} completed (${source}), linking to client`);
 
         try {

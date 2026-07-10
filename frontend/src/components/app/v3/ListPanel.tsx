@@ -22,6 +22,7 @@ interface ListPanelProps {
   tabs?: TabItem[];
   activeTab?: string;
   onTabChange?: (value: string) => void;
+  tabsAriaLabel?: string;
   tabsVariant?: "inline" | "dropdown";
   headerPadding?: "auto" | "compact" | "default";
   overlay?: React.ReactNode;
@@ -32,6 +33,7 @@ interface ListPanelProps {
   searchValue?: string;
   onSearchChange?: (value: string) => void;
   searchPlaceholder?: string;
+  searchAriaLabel?: string;
   isLoading?: boolean;
   isContentLoading?: boolean;
   contentSkeleton?: React.ReactNode;
@@ -48,6 +50,7 @@ export function ListPanel({
   tabs,
   activeTab,
   onTabChange,
+  tabsAriaLabel,
   tabsVariant = "inline",
   headerPadding = "auto",
   overlay,
@@ -56,7 +59,8 @@ export function ListPanel({
   headerActions,
   searchValue,
   onSearchChange,
-  searchPlaceholder = "검색...",
+  searchPlaceholder = "검색…",
+  searchAriaLabel,
   isLoading = false,
   isContentLoading = false,
   contentSkeleton,
@@ -259,6 +263,8 @@ export function ListPanel({
                   <div
                     ref={inlineTabsRef}
                     data-component="list-panel-tab-list"
+                    role={tabsAriaLabel ? "group" : undefined}
+                    aria-label={tabsAriaLabel}
                     className="relative flex w-max gap-[calc(4px*var(--v3-ui-scale,1))]"
                   >
                     {(tabs ?? []).map((tab) => (
@@ -271,8 +277,9 @@ export function ListPanel({
                         }}
                         disabled={disabled}
                         onClick={() => onTabChange?.(tab.value)}
+                        aria-pressed={tabsAriaLabel ? activeTab === tab.value : undefined}
                         className={cn(
-                          "relative shrink-0 px-[calc(12px*var(--v3-ui-scale,1))] pb-[calc(8px*var(--v3-ui-scale,1))] text-[calc(12px*var(--v3-ui-scale,1))] transition-colors",
+                          "relative shrink-0 px-[calc(12px*var(--v3-ui-scale,1))] pb-[calc(8px*var(--v3-ui-scale,1))] text-[calc(12px*var(--v3-ui-scale,1))] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-v3-primary",
                           activeTab === tab.value
                             ? cn("font-semibold", tab.activeClassName ?? "text-primary")
                             : "text-v3-text-muted hover:text-v3-text",
@@ -305,6 +312,7 @@ export function ListPanel({
                 value={searchValue!}
                 onChange={onSearchChange!}
                 placeholder={searchPlaceholder}
+                inputLabel={searchAriaLabel}
                 className={tabsVariant === "inline" ? "pb-[calc(8px*var(--v3-ui-scale,1))]" : undefined}
                 disabled={disabled}
                 overlay={tabsVariant === "inline"}

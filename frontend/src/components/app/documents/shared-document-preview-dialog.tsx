@@ -495,6 +495,7 @@ export function SharedDocumentPreviewDialog({
           <Button
             variant="ghost"
             size="icon"
+            aria-label="미리보기 닫기"
             onClick={handleClose}
             className="h-8 w-8 text-muted-foreground hover:text-foreground"
           >

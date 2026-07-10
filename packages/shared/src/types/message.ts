@@ -61,6 +61,7 @@ export const SMS_TRIGGER_TO_SYSTEM_TEMPLATE: Partial<
   Record<MessageTriggerTemplateKey, SystemTemplateKey>
 > = {
   SERVICE_INFO: "SERVICE_INFO",
+  SERVICE_FEEDBACK_LINK: "SERVICE_FEEDBACK_LINK",
   CLIENT_GREETING: "GREETING",
   PRICE_INFO: "PRICE_INFO",
   REMINDER: "REMINDER",
@@ -190,6 +191,7 @@ export interface MessageLogRecord {
   triggerJobId: string | null;
   receiver: string;
   clientId: number | null;
+  recipientPhone: string | null;
   messageBody: string;
   variables: Record<string, string>;
   status: MessageLogStatus;

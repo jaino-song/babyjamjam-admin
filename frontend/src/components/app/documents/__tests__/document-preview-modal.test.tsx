@@ -3,7 +3,7 @@
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import DocumentPreviewModal from "../document-preview-modal";
-import { getDownloadFileName, getPreviewKind } from "../document-preview-utils";
+import { getDownloadFileName, getFileFormatLabel, getPreviewKind } from "../document-preview-utils";
 import type { Document } from "@/hooks/use-documents";
 import type { DocumentCategory } from "@/hooks/use-document-categories";
 
@@ -163,6 +163,22 @@ afterAll(() => {
 });
 
 describe("DocumentPreviewModal", () => {
+  it("names the preview dialog actions", async () => {
+    render(
+      <DocumentPreviewModal
+        open={true}
+        onClose={jest.fn()}
+        doc={baseDocument}
+        categories={categories}
+        onEdit={jest.fn()}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "미리보기 닫기" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "문서 작업 더보기" })).toBeInTheDocument();
+    await screen.findByTestId("pdf-page-1");
+  });
+
   it("renders a zoom slider for pdf previews and updates the page width", async () => {
     render(
       <DocumentPreviewModal
@@ -404,7 +420,9 @@ describe("DocumentPreviewModal", () => {
 
     expect(getPreviewKind(hwpDoc)).toBe("hwp");
     expect(getDownloadFileName(hwpDoc)).toBe("신청서.hwp");
+    expect(getFileFormatLabel(hwpDoc)).toBe("hwp");
     expect(getPreviewKind(hwpxDoc)).toBe("hwp");
     expect(getDownloadFileName(hwpxDoc)).toBe("신청서.hwpx");
+    expect(getFileFormatLabel(hwpxDoc)).toBe("hwpx");
   });
 });

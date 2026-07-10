@@ -19,10 +19,17 @@ describe("AutoFillMsgCard", () => {
       />,
     );
 
-    const textbox = screen.getByRole("textbox");
+    const textbox = screen.getByRole("textbox", { name: "메시지 본문" });
 
-    expect(screen.getByText("메시지 본문")).toBeInTheDocument();
+    expect(screen.getByText("메시지 본문")).toHaveClass(
+      "text-[calc(14.4px*var(--v3-ui-scale,1))]",
+    );
     expect(textbox).toHaveValue("안녕하세요\n반갑습니다");
+    expect(textbox).toHaveClass(
+      "min-h-[calc(280px*var(--v3-ui-scale,1))]",
+      "text-[calc(14.08px*var(--v3-ui-scale,1))]",
+    );
+    expect(screen.getByRole("button", { name: "복사" })).toHaveClass("shrink-0", "whitespace-nowrap");
     expect(screen.getByText("템플릿 유형")).toBeInTheDocument();
     expect(screen.getByText("{{name}}")).toBeInTheDocument();
 

@@ -29,8 +29,11 @@ import {
 import { Label } from "@/components/ui/label";
 import { StatusBadge } from "@/components/app/ui/status-badge";
 import { V3_INPUT_CONTROL_CLASS_NAME } from "@/components/ui/input";
+import { getV3UiScaleForViewport } from "@/components/app/v3/useV3UiScale";
+import { ClientFormDialog } from "./ClientFormDialog";
 
 interface ClientAutocompleteProps {
+    containerClassName?: string;
     value: number | null;
     onChange: (clientId: number | null, client: Client | null) => void;
     label: string;
@@ -48,6 +51,7 @@ interface ClientAutocompleteProps {
 }
 
 export function ClientAutocomplete({
+    containerClassName,
     value,
     onChange,
     label,
@@ -56,7 +60,7 @@ export function ClientAutocomplete({
     helperText,
     placeholder,
     excludeIds = [],
-    allowManualEntry = false,
+    allowManualEntry = true,
     onManualEntry,
     manualValue,
     onManualValueChange,
@@ -66,14 +70,21 @@ export function ClientAutocomplete({
     const locale = useLocale();
     const { data: clients, isLoading } = useAllClients();
     const setPrefillName = useClientDialogStore((state) => state.setPrefillName);
+    const clearPrefillName = useClientDialogStore((state) => state.clearPrefillName);
     const allowsInlineManualValue = typeof onManualValueChange === "function";
 
     // Track input value for display synchronization
     const [inputValue, setInputValue] = useState("");
     // Track open state for controlled dropdown behavior
     const [isOpen, setIsOpen] = useState(false);
+    const [isRegistrationDialogOpen, setIsRegistrationDialogOpen] = useState(false);
     // Ref for focusing input after clear
     const triggerRef = useRef<HTMLButtonElement>(null);
+    const popoverSideOffset = -44 * (
+        typeof window === "undefined"
+            ? 1
+            : getV3UiScaleForViewport(window.innerWidth, window.innerHeight)
+    );
 
     // Filter out excluded clients
     const availableClients = useMemo(() => {
@@ -165,8 +176,21 @@ export function ClientAutocomplete({
         setTimeout(() => {
             if (onManualEntry) {
                 onManualEntry();
+                return;
             }
+
+            setIsRegistrationDialogOpen(true);
         }, 100);
+    };
+
+    const handleRegistrationDialogClose = () => {
+        setIsRegistrationDialogOpen(false);
+        clearPrefillName();
+    };
+
+    const handleRegistrationSuccess = (client: Client) => {
+        handleRegistrationDialogClose();
+        handleSelect(client);
     };
 
     const commitInlineManualValue = () => {
@@ -209,7 +233,10 @@ export function ClientAutocomplete({
     const searchPlaceholder = placeholder ?? t(locale, "contract-msg.client-search-placeholder");
 
     return (
-        <div data-component="clients-autocomplete" className="space-y-2">
+        <div
+            data-component="clients-autocomplete"
+            className={cn("space-y-2", containerClassName)}
+        >
             <Label
                 className={cn(
                     "text-[calc(12px*var(--v3-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted",
@@ -226,6 +253,7 @@ export function ClientAutocomplete({
                             ref={triggerRef}
                             variant="outline"
                             role="combobox"
+                            aria-label={label}
                             aria-expanded={isOpen}
                             data-component="clients-autocomplete-input"
                             className={cn(
@@ -272,11 +300,13 @@ export function ClientAutocomplete({
                 </div>
                 <PopoverContent
                     data-component="clients-autocomplete-dropdown"
-                    className="w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-[22px] border-none bg-white p-0 text-v3-dark shadow-[0_0_0_2px_hsla(214,30%,40%,0.12),0_0_12px_hsla(214,30%,40%,0.05)]"
+                    className="v3-ui-scale-scope w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-[22px] border-none bg-white p-0 text-v3-dark shadow-[0_0_0_2px_hsla(214,30%,40%,0.12),0_0_12px_hsla(214,30%,40%,0.05)]"
                     align="start"
+                    sideOffset={popoverSideOffset}
                 >
-                    <Command shouldFilter={false}>
+                    <Command shouldFilter={false} label={`${label} 검색`}>
                         <CommandInput
+                            aria-label={`${label} 검색`}
                             placeholder={searchPlaceholder}
                             value={commandInputValue}
                             onValueChange={handleInputValueChange}
@@ -363,8 +393,10 @@ export function ClientAutocomplete({
                                 <CommandSeparator />
                                 <button
                                     type="button"
+                                    aria-label={t(locale, "contract-msg.manual-entry")}
                                     className="group flex w-full flex-col rounded-[16px] px-3 py-3 text-left transition-colors hover:bg-accent hover:text-white hover:rounded-t-none"
                                     onClick={handleManualEntry}
+                                    data-testid="client-autocomplete-add-button"
                                 >
                                     <div className="flex items-center gap-2">
                                         <UserPlus className="h-4 w-4" />
@@ -386,6 +418,14 @@ export function ClientAutocomplete({
                     {helperText}
                 </p>
             )}
+
+            {isRegistrationDialogOpen ? (
+                <ClientFormDialog
+                    open
+                    onClose={handleRegistrationDialogClose}
+                    onSuccess={handleRegistrationSuccess}
+                />
+            ) : null}
         </div>
     );
 }

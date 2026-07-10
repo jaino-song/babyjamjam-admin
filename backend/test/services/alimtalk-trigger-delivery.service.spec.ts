@@ -69,6 +69,7 @@ describe("AlimtalkTriggerDeliveryService", () => {
         expect(sendAligoAlimtalkUsecase.execute).toHaveBeenCalledWith(expect.objectContaining({
             templateKey: "CLIENT_CREATED",
             receiver: "010-1234-5678",
+            recipientName: "김지니",
             branchId: "branch-1",
             clientId: 7,
             triggerJobId: "job-CLIENT_WELCOME",

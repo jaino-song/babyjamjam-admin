@@ -82,6 +82,7 @@ function FormGrid({
 
 export interface FormFieldProps extends React.HTMLAttributes<HTMLDivElement> {
   label: React.ReactNode;
+  labelAccessory?: React.ReactNode;
   htmlFor?: string;
   required?: boolean;
   labelDataComponent?: string;
@@ -91,6 +92,7 @@ export interface FormFieldProps extends React.HTMLAttributes<HTMLDivElement> {
 
 function FormField({
   label,
+  labelAccessory,
   htmlFor,
   required = false,
   labelDataComponent,
@@ -113,6 +115,22 @@ function FormField({
       ) : null}
     </>
   );
+  const labelNode = htmlFor ? (
+    <Label
+      data-component={labelDataComponent ?? `${dataComponent}-label`}
+      htmlFor={htmlFor}
+      className="text-[calc(12px*var(--v3-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted"
+    >
+      {labelContent}
+    </Label>
+  ) : (
+    <div
+      data-component={labelDataComponent ?? `${dataComponent}-label`}
+      className="text-[calc(12px*var(--v3-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted"
+    >
+      {labelContent}
+    </div>
+  );
 
   return (
     <div
@@ -120,21 +138,21 @@ function FormField({
       className={cn("grid gap-[calc(7px*var(--v3-ui-scale,1))]", className)}
       {...props}
     >
-      {htmlFor ? (
-        <Label
-          data-component={labelDataComponent ?? `${dataComponent}-label`}
-          htmlFor={htmlFor}
-          className="text-[calc(12px*var(--v3-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted"
-        >
-          {labelContent}
-        </Label>
-      ) : (
+      {labelAccessory ? (
         <div
-          data-component={labelDataComponent ?? `${dataComponent}-label`}
-          className="text-[calc(12px*var(--v3-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted"
+          data-component={`${dataComponent}-label-row`}
+          className="flex min-w-0 items-center justify-between gap-2"
         >
-          {labelContent}
+          {labelNode}
+          <div
+            data-component={`${dataComponent}-label-accessory`}
+            className="ml-auto min-w-0 text-right"
+          >
+            {labelAccessory}
+          </div>
         </div>
+      ) : (
+        labelNode
       )}
 
       {children}
@@ -310,6 +328,8 @@ export interface FormSwitchRowProps extends Omit<React.HTMLAttributes<HTMLDivEle
   descriptionDataComponent?: string;
   buttonDataComponent?: string;
   thumbDataComponent?: string;
+  buttonClassName?: string;
+  thumbClassName?: string;
   "data-component"?: string;
 }
 
@@ -325,6 +345,8 @@ function FormSwitchRow({
   descriptionDataComponent,
   buttonDataComponent,
   thumbDataComponent,
+  buttonClassName,
+  thumbClassName,
   className,
   "data-component": dataComponent = "form-switch-row",
   ...props
@@ -360,6 +382,7 @@ function FormSwitchRow({
         className={cn(
           "flex h-[calc(26px*var(--v3-ui-scale,1))] w-[calc(46px*var(--v3-ui-scale,1))] flex-none items-center justify-start rounded-full border-0 bg-v3-border p-[calc(3px*var(--v3-ui-scale,1))] transition-colors disabled:cursor-not-allowed disabled:opacity-55",
           checked && "justify-end bg-v3-primary",
+          buttonClassName,
         )}
         onClick={onToggle}
         aria-pressed={checked}
@@ -368,7 +391,10 @@ function FormSwitchRow({
       >
         <span
           data-component={thumbDataComponent ?? `${dataComponent}-thumb`}
-          className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))] rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.2)]"
+          className={cn(
+            "h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))] rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.2)]",
+            thumbClassName,
+          )}
         />
       </button>
     </div>

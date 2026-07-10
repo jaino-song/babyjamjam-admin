@@ -135,7 +135,7 @@ describe("SystemTemplateController (Integration)", () => {
     });
 
     describe("GET /system-templates", () => {
-        it("returns 7 templates", async () => {
+        it("returns all registered templates", async () => {
             const templates = (Object.values(SystemTemplateKey) as SystemTemplateKey[]).map((key, idx) =>
                 createMockTemplateWithRegistry({
                     id: `template-${idx + 1}`,
@@ -149,7 +149,7 @@ describe("SystemTemplateController (Integration)", () => {
                 .get("/system-templates");
 
             expect(response.status).toBe(200);
-            expect(response.body).toHaveLength(7);
+            expect(response.body).toHaveLength(Object.values(SystemTemplateKey).length);
             expect(service.getAll).toHaveBeenCalled();
         });
 

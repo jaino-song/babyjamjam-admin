@@ -9,10 +9,11 @@ on:
         default: preview
         type: choice
         options:
+          - dev
           - preview
           - production
   push:
-    branches: [ preview, main ]
+    branches: [ dev, preview, main ]
     paths:
       - 'backend/prisma/**'
       - '.github/workflows/database-patches.yml'
@@ -22,6 +23,58 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  apply-dev:
+    name: apply dev database patches
+    if: >-
+      (github.event_name == 'push' && github.ref_name == 'dev') ||
+      (github.event_name == 'workflow_dispatch' && inputs.target == 'dev')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: dev
+    env:
+      DATABASE_URL: ${{ secrets.DEV_DATABASE_URL || secrets.DEVELOPMENT_DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DEV_DIRECT_URL || secrets.DEVELOPMENT_DIRECT_URL || secrets.DEV_DATABASE_URL || secrets.DEVELOPMENT_DATABASE_URL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check database secrets
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "DEV_DATABASE_URL or DEVELOPMENT_DATABASE_URL secret is required."
+            exit 1
+          fi
+
+          if [ -z "$DIRECT_URL" ]; then
+            echo "DEV_DIRECT_URL, DEVELOPMENT_DIRECT_URL, DEV_DATABASE_URL, or DEVELOPMENT_DATABASE_URL secret is required."
+            exit 1
+          fi
+
+      - name: Apply eformsign document relation patches
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260709100000_link_eformsign_and_message_relations/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260709110000_add_message_log_recipient_snapshot/migration.sql
+
+      - name: Verify eformsign document relation patches
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-eformsign-document-relations.sql
+
   apply-preview:
     name: apply preview database patches
     if: >-
@@ -188,6 +241,16 @@ jobs:
           END $$;
           SQL
 
+      - name: Apply eformsign document relation patches
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260709100000_link_eformsign_and_message_relations/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260709110000_add_message_log_recipient_snapshot/migration.sql
+
+      - name: Verify eformsign document relation patches
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-eformsign-document-relations.sql
+
   apply-production:
     name: apply production database patches
     if: >-
@@ -353,3 +416,13 @@ jobs:
             END IF;
           END $$;
           SQL
+
+      - name: Apply eformsign document relation patches
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260709100000_link_eformsign_and_message_relations/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260709110000_add_message_log_recipient_snapshot/migration.sql
+
+      - name: Verify eformsign document relation patches
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-eformsign-document-relations.sql

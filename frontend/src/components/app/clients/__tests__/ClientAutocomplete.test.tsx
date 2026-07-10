@@ -18,6 +18,11 @@ jest.mock("@/stores/client-dialog-store", () => ({
     selector({ setPrefillName: mockSetPrefillName }),
 }));
 
+jest.mock("../ClientFormDialog", () => ({
+  ClientFormDialog: ({ open }: { open: boolean }) =>
+    open ? <div role="dialog" aria-label="새 고객 등록" /> : null,
+}));
+
 const client: Client = {
   id: 1,
   name: "송진호",
@@ -61,6 +66,25 @@ describe("ClientAutocomplete", () => {
     mockClients = [client];
   });
 
+  it("shows the registration action without listing clients before search", async () => {
+    render(
+      <ClientAutocomplete
+        value={null}
+        onChange={jest.fn()}
+        label="고객 선택"
+      />
+    );
+
+    fireEvent.click(screen.getByRole("combobox", { name: "고객 선택" }));
+
+    expect(screen.queryByText("송진호")).not.toBeInTheDocument();
+    expect(document.querySelector('[data-component="clients-autocomplete-dropdown"]')).toHaveClass(
+      "v3-ui-scale-scope",
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "새 고객 등록" }));
+    expect(await screen.findByRole("dialog", { name: "새 고객 등록" })).toBeInTheDocument();
+  });
+
   it("renders the trigger with the shared compact input shape", async () => {
     render(
       <ClientAutocomplete
@@ -72,7 +96,7 @@ describe("ClientAutocomplete", () => {
 
     const trigger = screen.getByRole("combobox");
     await waitFor(() => expect(trigger).toHaveTextContent("송진호"));
-    expect(trigger).toHaveClass("h-[38px]");
+    expect(trigger).toHaveClass("h-[calc(38px*var(--v3-ui-scale,1))]");
     expect(trigger).toHaveClass("rounded-[13px]");
     expect(trigger).toHaveClass("border-[1.35px]");
     expect(trigger).toHaveClass("text-v3-dark");

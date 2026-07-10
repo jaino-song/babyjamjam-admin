@@ -10,7 +10,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useFormStore } from "@/stores/form-store";
 import { useEformsign } from "@/hooks/useEformsign";
 import { useVoucherYears, useVoucherPriceInfos, useAreaTemplates, useAllVoucherPrices } from "@/hooks";
-import { useAllClients, useCreateClient } from "@/hooks/useClients";
+import { useAllClients, useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useEmployees, type Employee } from "@/hooks/useEmployees";
 import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
 import { eformsignApi } from "@/services/api";
@@ -167,6 +167,7 @@ export default function ContractCreationPage() {
   const prefersReducedMotion = useReducedMotion();
 
   const createClientMutation = useCreateClient();
+  const updateClientMutation = useUpdateClient();
   const { isLoaded: isEformsignLoaded, openDocument } = useEformsign();
   const { data: allClients } = useAllClients();
   const { data: voucherYears } = useVoucherYears();
@@ -175,15 +176,15 @@ export default function ContractCreationPage() {
 
   const {
     clientId, isManualEntry, name, phone, birthday, address, dueDate, area,
-    employeeId, isEmployeeManualEntry, employeeName, employeePhone,
-    showEmployee2, employee2Id, isEmployee2ManualEntry, employee2Name, employee2Phone,
+    employeeId, employeeName, employeePhone,
+    showEmployee2, employee2Id, employee2Phone,
     voucherType, voucherDuration, voucherYear,
     fullPrice, grant, actualPrice,
     startDate, endDate, paymentDate,
     preservePrefilledPrices,
     setClientId, setIsManualEntry, setName, setPhone, setBirthday, setAddress, setDueDate, setArea,
-    setIsEmployeeManualEntry, setEmployeeName, setEmployeePhone, setEmployeeSelection,
-    setShowEmployee2, setIsEmployee2ManualEntry, setEmployee2Name, setEmployee2Phone, setEmployee2Selection,
+    setIsEmployeeManualEntry, setEmployeeSelection,
+    setShowEmployee2, setIsEmployee2ManualEntry, setEmployee2Selection,
     setVoucherType, setVoucherDuration, setVoucherYear,
     setFullPrice, setGrant, setActualPrice,
     setStartDate, setEndDate, setPaymentDate,
@@ -201,14 +202,11 @@ export default function ContractCreationPage() {
   const [isEformsignModalOpen, setIsEformsignModalOpen] = useState(false);
   const [isProgressModalOpen, setIsProgressModalOpen] = useState(false);
   const [isExistingContractConfirmOpen, setIsExistingContractConfirmOpen] = useState(false);
-  const [shouldRegisterMissingClient, setShouldRegisterMissingClient] = useState(true);
   const [creationProgress, setCreationProgress] = useState<HeadlessProgressState>(INITIAL_HEADLESS_PROGRESS);
   const [progressErrorHint, setProgressErrorHint] = useState<string | null>(null);
   const progressSourceRef = useRef<EventSource | null>(null);
   const floatingErrorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedClientRef = useRef<Pick<Client, "id" | "name"> | null>(null);
-  const selectedEmployeeRef = useRef<Pick<Employee, "id" | "name"> | null>(null);
-  const selectedEmployee2Ref = useRef<Pick<Employee, "id" | "name"> | null>(null);
   const defaultPaymentDate = useMemo(() => todayIsoDate(), []);
   const hasAppliedPaymentStepDefaultRef = useRef(false);
 
@@ -246,20 +244,6 @@ export default function ContractCreationPage() {
       selectedClientRef.current = null;
     }
   }, [clientId, name]);
-  useEffect(() => {
-    if (employeeId !== null && employeeName.trim()) {
-      selectedEmployeeRef.current = { id: employeeId, name: employeeName };
-    } else if (employeeId === null) {
-      selectedEmployeeRef.current = null;
-    }
-  }, [employeeId, employeeName]);
-  useEffect(() => {
-    if (employee2Id !== null && employee2Name.trim()) {
-      selectedEmployee2Ref.current = { id: employee2Id, name: employee2Name };
-    } else if (employee2Id === null) {
-      selectedEmployee2Ref.current = null;
-    }
-  }, [employee2Id, employee2Name]);
 
   const handleDateInputChange = (
     setLocal: (v: string) => void,
@@ -309,15 +293,6 @@ export default function ContractCreationPage() {
     ) ?? null;
   }, [allClients, phone]);
 
-  const shouldShowClientRegistrationToggle = Boolean(
-    activeStep === 3 &&
-    clientId === null &&
-    name.trim() &&
-    phone.trim() &&
-    !storedClientByIdentity &&
-    !storedClientByPhone,
-  );
-
   const clientWithExistingContract = useMemo(() => {
     if (clientId !== null) {
       return allClients?.find((client) => client.id === clientId) ?? null;
@@ -326,12 +301,6 @@ export default function ContractCreationPage() {
     return storedClientByIdentity ?? storedClientByPhone ?? null;
   }, [allClients, clientId, storedClientByIdentity, storedClientByPhone]);
   const hasExistingContractRecord = Boolean(clientWithExistingContract?.eDocId);
-
-  useEffect(() => {
-    if (shouldShowClientRegistrationToggle) {
-      setShouldRegisterMissingClient(true);
-    }
-  }, [name, phone, shouldShowClientRegistrationToggle]);
 
   useEffect(() => {
     if (!allClients) return;
@@ -478,6 +447,9 @@ export default function ContractCreationPage() {
   const handleClientSelect = (selectedClientId: number | null, client: Client | null) => {
     setClientId(selectedClientId);
     selectedClientRef.current = client;
+    setEmployeeSelection(null, "", "");
+    setEmployee2Selection(null, "", "");
+    setShowEmployee2(false);
     if (client) {
       setName(client.name);
       setPhone(formatPhoneNumber(client.phone || ""));
@@ -551,11 +523,9 @@ export default function ContractCreationPage() {
 
   const handleEmployeeSelect = (selectedEmployeeId: number | null, employee: Employee | null) => {
     if (employee) {
-      selectedEmployeeRef.current = { id: employee.id, name: employee.name };
       setEmployeeSelection(selectedEmployeeId, employee.name, employee.phone);
       setIsEmployeeManualEntry(false);
     } else {
-      selectedEmployeeRef.current = null;
       setEmployeeSelection(null, "", "");
       setIsEmployeeManualEntry(false);
     }
@@ -563,56 +533,12 @@ export default function ContractCreationPage() {
 
   const handleEmployee2Select = (selectedEmployeeId: number | null, employee: Employee | null) => {
     if (employee) {
-      selectedEmployee2Ref.current = { id: employee.id, name: employee.name };
       setEmployee2Selection(selectedEmployeeId, employee.name, employee.phone);
       setIsEmployee2ManualEntry(false);
     } else {
-      selectedEmployee2Ref.current = null;
       setEmployee2Selection(null, "", "");
       setIsEmployee2ManualEntry(false);
     }
-  };
-
-  const handleEmployeeNameInputChange = (nextName: string) => {
-    setEmployeeName(nextName);
-    const matchesSelectedEmployee = employeeId !== null && selectedEmployeeRef.current?.name === nextName;
-    const hasSelectedEmployeeSnapshot = employeeId !== null && selectedEmployeeRef.current !== null;
-    const willClearSelectedEmployee = hasSelectedEmployeeSnapshot && !matchesSelectedEmployee;
-    if (willClearSelectedEmployee) {
-      setEmployeeSelection(null, nextName, employeePhone);
-      selectedEmployeeRef.current = null;
-    }
-    setIsEmployeeManualEntry(
-      Boolean(nextName.trim()) && !matchesSelectedEmployee && (employeeId === null || willClearSelectedEmployee),
-    );
-  };
-
-  const handleEmployeeManualEntry = (query?: string) => {
-    const nextName = query?.trim() || employeeName;
-    setEmployeeSelection(null, nextName, employeePhone);
-    selectedEmployeeRef.current = null;
-    setIsEmployeeManualEntry(Boolean(nextName));
-  };
-
-  const handleEmployee2NameInputChange = (nextName: string) => {
-    setEmployee2Name(nextName);
-    const matchesSelectedEmployee = employee2Id !== null && selectedEmployee2Ref.current?.name === nextName;
-    const hasSelectedEmployeeSnapshot = employee2Id !== null && selectedEmployee2Ref.current !== null;
-    const willClearSelectedEmployee = hasSelectedEmployeeSnapshot && !matchesSelectedEmployee;
-    if (willClearSelectedEmployee) {
-      setEmployee2Selection(null, nextName, employee2Phone);
-      selectedEmployee2Ref.current = null;
-    }
-    setIsEmployee2ManualEntry(
-      Boolean(nextName.trim()) && !matchesSelectedEmployee && (employee2Id === null || willClearSelectedEmployee),
-    );
-  };
-
-  const handleEmployee2ManualEntry = (query?: string) => {
-    const nextName = query?.trim() || employee2Name;
-    setEmployee2Selection(null, nextName, employee2Phone);
-    selectedEmployee2Ref.current = null;
-    setIsEmployee2ManualEntry(Boolean(nextName));
   };
 
   const handlePriceChange = (field: "fullPrice" | "grant" | "actualPrice", value: string) => {
@@ -638,13 +564,8 @@ export default function ContractCreationPage() {
   const isStep1Valid = Boolean(
     (clientId !== null || (isManualEntry && name.trim() && phone.trim())) && area
   );
-  const isEmployee1Valid = Boolean(
-    employeeName.trim() && employeePhone.trim() && (employeeId !== null || isEmployeeManualEntry)
-  );
-  const isEmployee2Valid = Boolean(
-    !showEmployee2 ||
-      (employee2Name.trim() && employee2Phone.trim() && (employee2Id !== null || isEmployee2ManualEntry))
-  );
+  const isEmployee1Valid = employeeId !== null;
+  const isEmployee2Valid = !showEmployee2 || employee2Id !== null;
   const isStep2Valid = isEmployee1Valid && isEmployee2Valid;
   const isStep3Valid = Boolean(voucherType && voucherDuration && fullPrice && grant && actualPrice);
   const isStep4Valid = Boolean(
@@ -656,7 +577,7 @@ export default function ContractCreationPage() {
 
   const getStepValidationMessage = (step: number): string | null => {
     if (step === 0 && !isStep1Valid) return "고객 정보와 계약서를 선택해 주세요.";
-    if (step === 1 && !isStep2Valid) return "제공인력 정보를 모두 입력해 주세요.";
+    if (step === 1 && !isStep2Valid) return "등록된 제공인력을 목록에서 선택해 주세요.";
     if (step === 2 && !isStep3Valid) return "바우처 유형/기간과 금액 정보를 입력해 주세요.";
     if (step === 3 && !isStep4Valid) return "계약 시작일, 종료일, 본인부담금 수령 날짜를 입력해 주세요.";
     return null;
@@ -686,7 +607,7 @@ export default function ContractCreationPage() {
 
   const runIframeFallback = async (
     contractData: ContractDataDto,
-    finalClientId: number | null,
+    finalClientId: number,
     expiry: dayjs.Dayjs,
   ) => {
     if (!isEformsignLoaded) {
@@ -695,7 +616,7 @@ export default function ContractCreationPage() {
     }
     const documentOption: EformsignDocumentOption = await eformsignApi.generateDocument(
       contractData as unknown as Parameters<typeof eformsignApi.generateDocument>[0],
-      finalClientId ?? undefined,
+      finalClientId,
     );
     setIsEformsignModalOpen(true);
     setTimeout(() => {
@@ -731,20 +652,40 @@ export default function ContractCreationPage() {
   };
 
   const handleSubmit = async () => {
+    if (employeeId === null || (showEmployee2 && employee2Id === null)) {
+      setActiveStep(1);
+      showFloatingError("등록된 제공인력을 목록에서 선택해 주세요.");
+      return;
+    }
     setIsSubmitting(true);
     setProgressErrorHint(null);
 
     try {
       // 1. Manual-entry client creation
       let finalClientId = clientId ?? storedClientByIdentity?.id ?? storedClientByPhone?.id ?? null;
-      if (!finalClientId && isManualEntry && shouldRegisterMissingClient) {
+      const assignment = {
+        primaryEmployeeId: employeeId,
+        secondaryEmployeeId: showEmployee2 ? employee2Id : null,
+      };
+      const clientData = {
+        ...assignment,
+        name,
+        phone,
+        birthday: birthday || undefined,
+        address: address || null,
+        dueDate: dueDate || startDate || undefined,
+        type: voucherType || null,
+        duration: Number(voucherDuration) || null,
+        fullPrice: fullPrice || null,
+        grant: grant || null,
+        actualPrice: actualPrice || null,
+        startDate: startDate || null,
+        endDate: endDate || null,
+        areaId: area || null,
+      };
+      if (!finalClientId && isManualEntry) {
         const newClient = await createClientMutation.mutateAsync({
-          name,
-          phone,
-          birthday: birthday || undefined,
-          address: address || undefined,
-          dueDate: dueDate || startDate || undefined,
-          primaryEmployeeId: null,
+          ...clientData,
           careCenter: false,
           voucherClient: true,
           breastPump: false,
@@ -752,6 +693,15 @@ export default function ContractCreationPage() {
         });
         finalClientId = newClient.id;
         setClientId(newClient.id);
+      }
+      if (!finalClientId) {
+        throw new Error("고객 정보를 먼저 선택하거나 등록해 주세요.");
+      }
+      if (clientId !== null || storedClientByIdentity || storedClientByPhone) {
+        await updateClientMutation.mutateAsync({
+          id: finalClientId,
+          dto: clientData,
+        });
       }
 
       // 2. Eformsign auth (cookies)
@@ -823,7 +773,7 @@ export default function ContractCreationPage() {
 
         const headless = await eformsignApi.dispatchHeadless(
           contractData as unknown as Parameters<typeof eformsignApi.dispatchHeadless>[0],
-          finalClientId ?? undefined,
+          finalClientId,
           progressId,
         );
 
@@ -1043,25 +993,19 @@ export default function ContractCreationPage() {
                       <EmployeeAutocomplete
                         value={employeeId}
                         onChange={handleEmployeeSelect}
-                        inputValue={employeeName}
-                        onInputValueChange={handleEmployeeNameInputChange}
                         label=""
                         excludeIds={employee2Id != null ? [employee2Id] : []}
-                        allowManualEntry
-                        manualEntryLabel="직접 입력으로 진행"
-                        manualEntryDescription="입력한 이름으로 제공인력을 지정합니다"
-                        onManualEntry={handleEmployeeManualEntry}
                       />
                     </div>
                     <Field label="연락처" required>
                       <input
                         className={styles.formInput}
                         value={employeePhone}
-                        onChange={(e) => setEmployeePhone(formatPhoneNumber(e.target.value))}
                         type="tel"
                         inputMode="numeric"
                         maxLength={13}
                         placeholder="010-1234-5678"
+                        readOnly
                       />
                     </Field>
                   </div>
@@ -1100,25 +1044,19 @@ export default function ContractCreationPage() {
                           <EmployeeAutocomplete
                             value={employee2Id}
                             onChange={handleEmployee2Select}
-                            inputValue={employee2Name}
-                            onInputValueChange={handleEmployee2NameInputChange}
                             label=""
                             excludeIds={employeeId != null ? [employeeId] : []}
-                            allowManualEntry
-                            manualEntryLabel="직접 입력으로 진행"
-                            manualEntryDescription="입력한 이름으로 제공인력 2를 지정합니다"
-                            onManualEntry={handleEmployee2ManualEntry}
                           />
                         </div>
                         <Field label="연락처" required>
                           <input
                             className={styles.formInput}
                             value={employee2Phone}
-                            onChange={(e) => setEmployee2Phone(formatPhoneNumber(e.target.value))}
                             type="tel"
                             inputMode="numeric"
                             maxLength={13}
                             placeholder="010-1234-5678"
+                            readOnly
                           />
                         </Field>
                       </>
@@ -1306,36 +1244,6 @@ export default function ContractCreationPage() {
                         <span className={styles.amount}>{actualPrice ? `${formatPrice(actualPrice)} 원` : "-"}</span>
                       </div>
                     </div>
-                    {shouldShowClientRegistrationToggle ? (
-                      <button
-                        type="button"
-                        className={styles.toggleRow}
-                        data-component="contracts-creation-client-registration-toggle"
-                        role="switch"
-                        aria-checked={shouldRegisterMissingClient}
-                        onClick={() => setShouldRegisterMissingClient((current) => !current)}
-                      >
-                        <div className={styles.toggleText} data-component="contracts-creation-client-registration-toggle-text">
-                          <div
-                            className={styles.toggleLabel}
-                            data-component="contracts-creation-client-registration-toggle-label"
-                          >
-                            고객 정보 등록
-                          </div>
-                          <div
-                            className={styles.toggleSub}
-                            data-component="contracts-creation-client-registration-toggle-helper"
-                          >
-                            새로운 고객으로 등록합니다.
-                          </div>
-                        </div>
-                        <span
-                          className={cn(styles.toggleSwitch, shouldRegisterMissingClient && styles.on)}
-                          data-component="contracts-creation-client-registration-toggle-switch"
-                          aria-hidden="true"
-                        />
-                      </button>
-                    ) : null}
                   </div>
 
                 </>

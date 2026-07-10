@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCreateClient, useUpdateClient } from "@/hooks/useClients";
+import { useClientPhoneDuplicateCheck } from "@/hooks/useClientPhoneDuplicateCheck";
 import { useVoucherPriceInfos } from "@/hooks/useVoucherData";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
@@ -127,6 +128,19 @@ const formatPhoneNumber = (value: string): string => {
         return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
     }
 };
+
+const getPhoneDuplicateCheckFailedMessage = (locale: "ko" | "en"): string =>
+    locale === "ko"
+        ? "문제가 발생했어요. 새로고침 해주세요."
+        : "Something went wrong. Please refresh and try again.";
+
+const getPhoneDuplicateCheckPendingMessage = (locale: "ko" | "en"): string =>
+    locale === "ko"
+        ? "연락처 중복 확인 중입니다. 잠시만 기다려주세요."
+        : "Checking for duplicate phone number. Please wait.";
+
+const getPhoneAvailableMessage = (locale: "ko" | "en"): string =>
+    locale === "ko" ? "등록 가능한 번호입니다." : "This phone number is available.";
 
 // Format ISO date string to yyyy-MM-dd for HTML date input
 const formatDateForInput = (dateString: string | null | undefined): string => {
@@ -253,6 +267,39 @@ function ClientFormContent({
         breastPump: false,
         serviceStatus: "waiting",
     });
+
+    const {
+        phoneDigits,
+        isCheckingPhoneDuplicate,
+        isPhoneDuplicate,
+        hasPhoneDuplicateCheckFailed,
+        lastCheckedPhoneDigits,
+        isUsingOriginalPhone,
+        isPhoneCheckReady,
+    } = useClientPhoneDuplicateCheck({
+        phone: formData.phone,
+        originalPhone: client?.phone,
+        enabled: open,
+    });
+    const phoneInlineMessage = phoneDigits.length === 11
+        ? isUsingOriginalPhone || isPhoneCheckReady
+            ? getPhoneAvailableMessage(locale)
+            : isCheckingPhoneDuplicate
+                ? getPhoneDuplicateCheckPendingMessage(locale)
+                : hasPhoneDuplicateCheckFailed
+                    ? getPhoneDuplicateCheckFailedMessage(locale)
+                    : lastCheckedPhoneDigits !== phoneDigits
+                        ? getPhoneDuplicateCheckPendingMessage(locale)
+                        : isPhoneDuplicate
+                            ? t(locale, "clients.form.error-phone-duplicate")
+                            : null
+        : null;
+    const hasPhoneStatusError =
+        phoneDigits.length === 11 &&
+        !isUsingOriginalPhone &&
+        (hasPhoneDuplicateCheckFailed ||
+            (lastCheckedPhoneDigits === phoneDigits && isPhoneDuplicate));
+    const isPhoneCheckBlockingSubmit = phoneDigits.length === 11 && !isPhoneCheckReady;
 
     const [error, setError] = useState<string | null>(null);
     const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
@@ -514,9 +561,27 @@ function ClientFormContent({
             setErrorAndScroll(t(locale, "clients.form.error-address-required"));
             return;
         }
-        if (!formData.phone?.trim()) {
+        if (phoneDigits.length !== 11) {
             setErrorAndScroll(t(locale, "clients.form.error-phone-required"));
             return;
+        }
+        if (!isUsingOriginalPhone) {
+            if (isCheckingPhoneDuplicate) {
+                setErrorAndScroll(getPhoneDuplicateCheckPendingMessage(locale));
+                return;
+            }
+            if (hasPhoneDuplicateCheckFailed) {
+                setErrorAndScroll(getPhoneDuplicateCheckFailedMessage(locale));
+                return;
+            }
+            if (lastCheckedPhoneDigits !== phoneDigits) {
+                setErrorAndScroll(getPhoneDuplicateCheckPendingMessage(locale));
+                return;
+            }
+            if (isPhoneDuplicate) {
+                setErrorAndScroll(t(locale, "clients.form.error-phone-duplicate"));
+                return;
+            }
         }
         // Check for null/undefined specifically, as 0 can be a valid ID
         // In edit mode, skip this validation if employee hasn't been selected
@@ -606,7 +671,7 @@ function ClientFormContent({
         formData.birthday?.trim() &&
         isValidCompactDateInput(formData.dueDate ?? "") &&
         formData.address?.trim() &&
-        formData.phone?.trim()
+        isPhoneCheckReady
     );
     const isEmployeeStepValid = true;
     const isVoucherStepValid = Boolean(
@@ -668,7 +733,7 @@ function ClientFormContent({
                 variant="positive"
                 size="sm"
                 onClick={handleSubmit}
-                disabled={isSubmitting}
+                disabled={isSubmitting || isPhoneCheckBlockingSubmit}
                 data-component="clients-form-dialog-submit"
                 className="w-full sm:flex-1"
             >
@@ -800,13 +865,31 @@ function ClientFormContent({
                     data-component="clients-form-dialog-field-phone"
                     htmlFor="phone"
                     label={t(locale, "clients.form.phone")}
+                    labelAccessory={phoneInlineMessage ? (
+                        <FormHelperText
+                            id="clients-form-dialog-phone-helper"
+                            data-component="clients-form-dialog-phone-helper"
+                            tone={hasPhoneStatusError ? "error" : "default"}
+                            className={cn("m-0 text-right", isPhoneCheckReady && "text-v3-green")}
+                            aria-live="polite"
+                        >
+                            {phoneInlineMessage}
+                        </FormHelperText>
+                    ) : null}
                 >
                     <FormTextInput
                         id="phone"
+                        type="tel"
+                        inputMode="numeric"
                         placeholder="010-1234-5678"
                         value={formData.phone ?? ""}
-                        onChange={(e) => handleChange("phone", formatPhoneNumber(e.target.value))}
+                        onChange={(e) => {
+                            handleChange("phone", formatPhoneNumber(e.target.value));
+                            setError(null);
+                        }}
                         maxLength={13}
+                        error={hasPhoneStatusError}
+                        aria-describedby={phoneInlineMessage ? "clients-form-dialog-phone-helper" : undefined}
                     />
                 </FormField>
 
@@ -1120,13 +1203,31 @@ function ClientFormContent({
                 data-component="clients-form-panel-phone-input"
                 htmlFor="phone"
                 label={t(locale, "clients.form.phone")}
+                labelAccessory={phoneInlineMessage ? (
+                    <FormHelperText
+                        id="clients-form-panel-phone-helper"
+                        data-component="clients-form-panel-phone-helper"
+                        tone={hasPhoneStatusError ? "error" : "default"}
+                        className={cn("m-0 text-right", isPhoneCheckReady && "text-v3-green")}
+                        aria-live="polite"
+                    >
+                        {phoneInlineMessage}
+                    </FormHelperText>
+                ) : null}
             >
                 <FormTextInput
                     id="phone"
+                    type="tel"
+                    inputMode="numeric"
                     placeholder="010-1234-5678"
                     value={formData.phone ?? ""}
-                    onChange={(event) => handleChange("phone", formatPhoneNumber(event.target.value))}
+                    onChange={(event) => {
+                        handleChange("phone", formatPhoneNumber(event.target.value));
+                        setError(null);
+                    }}
                     maxLength={13}
+                    error={hasPhoneStatusError}
+                    aria-describedby={phoneInlineMessage ? "clients-form-panel-phone-helper" : undefined}
                 />
             </FormField>
 

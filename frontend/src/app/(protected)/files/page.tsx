@@ -15,7 +15,7 @@ import DocumentPreviewModal from "@/components/app/documents/document-preview-mo
 import { DocumentEditModal } from "@/components/app/documents/document-edit-modal";
 import { AddCategoryModal } from "@/components/app/documents/add-category-modal";
 import { formatDate } from "@/components/app/documents/document-list";
-import { isHangulDocument } from "@/components/app/documents/document-preview-utils";
+import { getFileFormatLabel, isHangulDocument } from "@/components/app/documents/document-preview-utils";
 import { toast } from "@/hooks/use-toast";
 
 const FILES_UPLOAD_FORM_ID = "files-upload-form";
@@ -264,6 +264,9 @@ export default function FilesPage() {
                 <Upload className="h-5 w-5 text-v3-primary" />
                 파일 업로드
               </DialogTitle>
+              <DialogDescription className="sr-only">
+                파일을 선택하고 문서 정보를 입력해 저장소에 업로드합니다.
+              </DialogDescription>
             </div>
           </DialogHeader>
           <div data-component="files-upload-content" className="min-h-0 flex-1 overflow-y-auto bg-white px-6 py-6">
@@ -394,7 +397,7 @@ function FileDetail({ document: doc, getCategoryLabel, onPreview, onEdit, onDele
       <div data-component="files-detail-content" className="space-y-5">
         <InfoCard title="파일 정보">
           <InfoRow label="파일명" value={doc.name} />
-          <InfoRow label="형식" value={doc.mimeType} />
+          <InfoRow label="형식" value={getFileFormatLabel(doc).toUpperCase()} />
           <InfoRow label="카테고리" value={getCategoryLabel(doc.categoryId)} />
           <InfoRow label="등록일" value={formatDate(doc.createdAt)} />
           <InfoRow label="수정일" value={formatDate(doc.updatedAt)} />

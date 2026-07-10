@@ -73,6 +73,7 @@ describe("AligoService", () => {
                     // GET /message-logs history.
                     branchId: "branch-1",
                     clientId: 1,
+                    recipientName: "홍길동",
                     variables: expect.objectContaining({
                         계약유형: "방문요양",
                         담당자명: "김직원",

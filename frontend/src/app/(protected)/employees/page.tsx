@@ -355,6 +355,7 @@ function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
                     <DropdownMenuTrigger asChild>
                         <button
                             type="button"
+                            aria-label="직원 작업 메뉴 열기"
                             className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors"
                         >
                             <MoreVertical className="w-5 h-5 text-v3-text-muted" />

@@ -561,8 +561,8 @@ export default function EmployeesPage() {
 
       <ConfirmActionModal
         open={deleteTarget != null}
-        title={t(locale, "common.delete")}
-        description={t(locale, "employees.delete-confirm")}
+        title={t(locale, "employees.delete-confirm.title")}
+        description={t(locale, "employees.delete-confirm.message")}
         cancelLabel={t(locale, "common.cancel")}
         confirmLabel={t(locale, "common.delete")}
         loading={deleteEmployee.isPending}

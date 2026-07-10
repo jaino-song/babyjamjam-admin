@@ -86,7 +86,10 @@ describe("ListPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "검색 열기" }));
 
-    expect(screen.getByPlaceholderText("검색...")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "검색어" })).toHaveAttribute(
+      "placeholder",
+      "검색…",
+    );
     expect(container.querySelector('[data-component="expandable-search-overlay"]')).toHaveClass(
       "bg-[linear-gradient(to_right,rgb(255_255_255_/_0)_0%,rgb(255_255_255)_10%,rgb(255_255_255)_100%)]",
     );
@@ -103,5 +106,34 @@ describe("ListPanel", () => {
       "border-0",
       "expandable-search-overlay-input",
     );
+  });
+
+  it("exposes the active filter state when a tab group label is provided", () => {
+    const onTabChange = jest.fn();
+
+    render(
+      <ListPanel
+        title="최근 현황"
+        tabs={[
+          { label: "전체", value: "all" },
+          { label: "조치 필요", value: "action-required" },
+        ]}
+        activeTab="all"
+        onTabChange={onTabChange}
+        tabsAriaLabel="최근 현황 필터"
+      >
+        {null}
+      </ListPanel>,
+    );
+
+    expect(screen.getByRole("group", { name: "최근 현황 필터" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "전체" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "조치 필요" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "조치 필요" }));
+    expect(onTabChange).toHaveBeenCalledWith("action-required");
   });
 });

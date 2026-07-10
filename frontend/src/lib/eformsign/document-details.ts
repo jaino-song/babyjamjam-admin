@@ -17,18 +17,20 @@ const ADDRESS_FIELD_IDENTIFIERS = new Set([
   "고객주소",
   "산모주소",
 ]);
-const CONTACT_PHONE_ALIASES = [
-  "연락처",
-  "전화번호",
-  "휴대폰",
-  "휴대전화",
-  "이동전화",
+const CUSTOMER_CONTACT_PHONE_ALIASES = [
   "고객 연락처",
   "고객연락처",
   "고객 전화번호",
   "고객전화번호",
   "고객 휴대폰",
   "고객휴대폰",
+  "customerContact",
+  "customerPhone",
+  "clientContact",
+  "clientPhone",
+  "recipientPhone",
+  "inputOutsiderNumber",
+  "outsiderNumber",
   "이용자 연락처",
   "이용자연락처",
   "이용자 전화번호",
@@ -37,23 +39,41 @@ const CONTACT_PHONE_ALIASES = [
   "이용자휴대폰",
   "산모 연락처",
   "산모연락처",
+  "산모님 연락처",
+  "산모님연락처",
   "산모 전화번호",
   "산모전화번호",
   "산모 휴대폰",
   "산모휴대폰",
 ];
-const CONTACT_EMAIL_ALIASES = [
+const GENERIC_CONTACT_PHONE_ALIASES = [
+  "연락처",
+  "전화번호",
+  "휴대폰",
+  "휴대전화",
+  "이동전화",
+];
+const CUSTOMER_CONTACT_EMAIL_ALIASES = [
+  "고객 이메일",
+  "고객이메일",
+  "customerEmail",
+  "clientEmail",
+  "recipientEmail",
+  "inputOutsiderEmail",
+  "outsiderEmail",
+  "이용자 이메일",
+  "이용자이메일",
+  "산모 이메일",
+  "산모이메일",
+  "산모님 이메일",
+  "산모님이메일",
+];
+const GENERIC_CONTACT_EMAIL_ALIASES = [
   "이메일",
   "email",
   "e-mail",
   "mail",
   "전자우편",
-  "고객 이메일",
-  "고객이메일",
-  "이용자 이메일",
-  "이용자이메일",
-  "산모 이메일",
-  "산모이메일",
 ];
 
 const REREQUEST_CODES = new Set(["063"]);
@@ -350,8 +370,14 @@ export function extractDocumentContactInfo(
   const currentRecipientFallbackPhone =
     currentRecipientId && !isEmailAddress(currentRecipientId) ? currentRecipientId : undefined;
 
-  const fieldPhone = extractDocumentFieldValue(document, CONTACT_PHONE_ALIASES) ?? undefined;
-  const fieldEmail = extractDocumentFieldValue(document, CONTACT_EMAIL_ALIASES) ?? undefined;
+  const fieldPhone =
+    extractDocumentFieldValue(document, CUSTOMER_CONTACT_PHONE_ALIASES) ??
+    extractDocumentFieldValue(document, GENERIC_CONTACT_PHONE_ALIASES) ??
+    undefined;
+  const fieldEmail =
+    extractDocumentFieldValue(document, CUSTOMER_CONTACT_EMAIL_ALIASES) ??
+    extractDocumentFieldValue(document, GENERIC_CONTACT_EMAIL_ALIASES) ??
+    undefined;
   const recipientContacts = extractRecipientContacts(document.recipients);
 
   const lastEditorId = stringFromUnknown(document.last_editor?.id) ?? undefined;
@@ -365,13 +391,14 @@ export function extractDocumentContactInfo(
       : undefined;
 
   return {
+    // The current workflow recipient changes by step, so explicit customer fields must win.
     phone:
-      currentRecipientPhone ??
-      currentRecipientFallbackPhone ??
       fieldPhone ??
       recipientContacts.phone ??
+      currentRecipientPhone ??
+      currentRecipientFallbackPhone ??
       lastEditorPhone,
-    email: currentRecipientEmail ?? fieldEmail ?? recipientContacts.email ?? lastEditorEmail,
+    email: fieldEmail ?? recipientContacts.email ?? currentRecipientEmail ?? lastEditorEmail,
   };
 }
 

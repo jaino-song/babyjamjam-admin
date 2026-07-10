@@ -90,11 +90,13 @@ import {
   extractOpenEvents,
   extractReRequestEvents,
 } from "@/lib/eformsign/document-details";
+import {
+  UNKNOWN_CUSTOMER_NAME,
+  customerName as getEformsignCustomerName,
+} from "@/lib/eformsign/display-name";
 import { formatIsoDateInput } from "@/lib/date/format-iso-input";
 import { useAllVoucherPriceInfos } from "@/hooks/useVoucherData";
 import { inferVoucherDurationFromAmounts } from "@/lib/voucher/duration";
-import { clientsApi } from "@/features/clients/api/clients.api";
-import type { Client, PaginatedResponse } from "@/lib/client/types";
 import { ContractsListItem } from "@/components/app/contracts/ContractsListItem";
 import {
   ContractCreationForm,
@@ -172,23 +174,25 @@ type InfoCardRow = {
   value: React.ReactNode;
 };
 
-function getCustomerName(doc: EformsignDocument): string | null {
-  type Recipientish = { recipient_type?: string; name?: string };
-  const buckets: Recipientish[][] = [
-    (doc.recipients as Recipientish[]) ?? [],
-    (doc.current_status?.step_recipients as Recipientish[]) ?? [],
-  ];
-  for (const list of buckets) {
-    const outsider = list.find((r) => r?.recipient_type === "02" && r.name);
-    if (outsider?.name) return outsider.name;
-  }
-  const fallback = (doc.current_status?.step_recipients as Recipientish[] | undefined)?.find(
-    (r) => r?.name && r?.recipient_type !== "01",
-  );
-  if (fallback?.name) return fallback.name;
-  if (doc.last_editor?.name) return doc.last_editor.name;
-  if (doc.creator?.name) return doc.creator.name;
-  return null;
+function displayCustomerName(doc: EformsignDocument | null): string | null {
+  if (!doc) return null;
+  const name = getEformsignCustomerName(doc);
+  return name === UNKNOWN_CUSTOMER_NAME ? null : name;
+}
+
+function matchesDocumentSearch(doc: EformsignDocument, query: string): boolean {
+  const q = query.trim();
+  if (!q) return true;
+
+  const customerName = displayCustomerName(doc);
+  if (customerName && matchesKoreanSearch(customerName, q)) return true;
+  if (doc.document_name?.toLowerCase().includes(q.toLowerCase())) return true;
+  return false;
+}
+
+function matchesDocumentStatusTab(doc: EformsignDocument, tab: string): boolean {
+  if (tab === "all") return true;
+  return getStatusCategory(doc.current_status?.status_type) === tab;
 }
 
 function formatDate(timestamp: number): string {
@@ -442,6 +446,7 @@ export default function ContractsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [serviceRecordActiveTab, setServiceRecordActiveTab] = useState("all");
   const [serviceRecordSearchQuery, setServiceRecordSearchQuery] = useState("");
+  const [selectedServiceRecordDocId, setSelectedServiceRecordDocId] = useState<string | null>(null);
 
   const { isAuthenticated, isLoading: isLoadingAuth, error: authError } = useEformsignAuth({
     syncOnWindowFocus: false,
@@ -449,12 +454,12 @@ export default function ContractsPage() {
   useEformsignDocsLiveStream(isAuthenticated);
   const { toast } = useToast();
   const deleteDocument = useDeleteEformsignDocument();
-  const filterType: DocumentFilterType = activeTab === "all" ? null : (activeTab as DocumentFilterType);
+  const activeListTab = activeSection === "service-records" ? serviceRecordActiveTab : activeTab;
+  const filterType: DocumentFilterType = activeListTab === "all" ? null : (activeListTab as DocumentFilterType);
 
   // Fetch filtered docs with infinite scroll for the current tab
   const {
     documents: infiniteDocuments,
-    allDocuments,
     isLoading: isLoadingInfinite,
     isFetchingNextPage,
     hasNextPage,
@@ -473,6 +478,17 @@ export default function ContractsPage() {
     enabled: isAuthenticated,
     staleTime: 1000 * 60 * 5,
   });
+  const { data: feedbackTemplateConfig, isLoading: isFeedbackTemplateLoading } = useQuery({
+    queryKey: ["eformsign-docs", "feedback-template-id"],
+    queryFn: () => eformsignApi.getFeedbackTemplateId(),
+    enabled: isAuthenticated,
+    staleTime: 1000 * 60 * 60,
+  });
+  const feedbackTemplateId = feedbackTemplateConfig?.templateId ?? null;
+  const isServiceRecordDoc = useCallback(
+    (doc: EformsignDocument) => Boolean(feedbackTemplateId && doc.template?.id === feedbackTemplateId),
+    [feedbackTemplateId],
+  );
 
   const isBootstrappingAuth = isLoadingAuth && !isAuthenticated;
   // Initial loading: first auth bootstrap or first "all" data fetch
@@ -483,37 +499,31 @@ export default function ContractsPage() {
   // tab is currently being fetched — only show the skeleton until the very
   // first stats payload lands.
   const isStatsLoading = isBootstrappingAuth || isCountsLoading;
-
-  // documentId → clientName lookup from our DB. Required because eformsign's
-  // list_document response loses outsider info once the doc progresses past
-  // step 1 — we always want the customer's name surfaced in the UI.
-  const { data: clientNamesData = [] } = useQuery({
-    queryKey: ["eformsign-client-names"],
-    queryFn: () => eformsignApi.getDocumentClientNames(),
-    enabled: isAuthenticated,
-  });
-  const clientNamesMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const r of clientNamesData) map.set(r.documentId, r.clientName);
-    return map;
-  }, [clientNamesData]);
-  const resolveCustomerName = useCallback(
-    (doc: EformsignDocument | null): string | null =>
-      doc ? (clientNamesMap.get(doc.id) ?? getCustomerName(doc)) : null,
-    [clientNamesMap],
-  );
+  const isServiceRecordListLoading = isInitialLoading || isFeedbackTemplateLoading;
 
   // Use infinite scroll documents, with optional local search filter
   const documents = useMemo(() => {
-    if (!searchQuery.trim()) return infiniteDocuments;
-    return infiniteDocuments.filter((doc) => {
-      const customerName = resolveCustomerName(doc);
-      const q = searchQuery.trim();
-      if (customerName && matchesKoreanSearch(customerName, q)) return true;
-      if (doc.document_name?.toLowerCase().includes(q.toLowerCase())) return true;
-      return false;
-    });
-  }, [infiniteDocuments, searchQuery, resolveCustomerName]);
+    const contractDocuments = feedbackTemplateId
+      ? infiniteDocuments.filter((doc) => !isServiceRecordDoc(doc))
+      : infiniteDocuments;
+    return contractDocuments.filter((doc) => matchesDocumentSearch(doc, searchQuery));
+  }, [feedbackTemplateId, infiniteDocuments, isServiceRecordDoc, searchQuery]);
+
+  const serviceRecordDocuments = useMemo(() => {
+    if (!feedbackTemplateId) return [];
+    return infiniteDocuments.filter(
+      (doc) =>
+        isServiceRecordDoc(doc) &&
+        matchesDocumentStatusTab(doc, serviceRecordActiveTab) &&
+        matchesDocumentSearch(doc, serviceRecordSearchQuery),
+    );
+  }, [
+    feedbackTemplateId,
+    infiniteDocuments,
+    isServiceRecordDoc,
+    serviceRecordActiveTab,
+    serviceRecordSearchQuery,
+  ]);
 
   const stats = useMemo(
     () => foldContractStats(statusCounts?.documents ?? []),
@@ -522,16 +532,22 @@ export default function ContractsPage() {
 
   const selectedDocument = useMemo(() => {
     if (!selectedDocId) return null;
-    return (
-      documents.find((d) => d.id === selectedDocId) ??
-      allDocuments.find((d) => d.id === selectedDocId) ??
-      null
-    );
-  }, [selectedDocId, documents, allDocuments]);
+    return documents.find((d) => d.id === selectedDocId) ?? null;
+  }, [selectedDocId, documents]);
+
+  const selectedServiceRecordDocument = useMemo(() => {
+    if (!selectedServiceRecordDocId) return null;
+    return serviceRecordDocuments.find((d) => d.id === selectedServiceRecordDocId) ?? null;
+  }, [selectedServiceRecordDocId, serviceRecordDocuments]);
 
   const handleTabChange = (value: string) => {
     setActiveTab(value);
     setSelectedDocId(null);
+  };
+
+  const handleServiceRecordTabChange = (value: string) => {
+    setServiceRecordActiveTab(value);
+    setSelectedServiceRecordDocId(null);
   };
 
   const handleStartContractCreation = useCallback(() => {
@@ -582,6 +598,9 @@ export default function ContractsPage() {
       if (selectedDocId === deleteTargetDocumentId) {
         setSelectedDocId(null);
       }
+      if (selectedServiceRecordDocId === deleteTargetDocumentId) {
+        setSelectedServiceRecordDocId(null);
+      }
 
       setDeleteTargetDocumentId(null);
       toast({
@@ -615,6 +634,7 @@ export default function ContractsPage() {
 
   return (
     <PageSection name="contracts">
+      {/* TODO: 통계 카운트는 아직 제공기록지 문서를 포함한다. 후속 작업에서 통계 엔드포인트를 분리한다. */}
       <StatsBar
         name="contracts"
         isLoading={isStatsLoading}
@@ -670,13 +690,15 @@ export default function ContractsPage() {
               />
             }
             emptyState={documents.length === 0 && !isInitialLoading && !isContentLoading ? (
-              <ListEmptyState message="계약 문서가 없습니다" />
+              <ListEmptyState
+                message={searchQuery.trim() ? "검색 결과가 없습니다" : "계약 문서가 없습니다"}
+              />
             ) : undefined}
           >
             <AnimatedSlotList<EformsignDocument>
                 items={documents}
                 isLoading={isInitialLoading || isContentLoading}
-                loadingCount={6}
+                loadingCount={3}
                 className="space-y-2"
                 getItemKey={(doc) => doc.id}
                 itemVariant="card"
@@ -693,10 +715,12 @@ export default function ContractsPage() {
                 onLoadMore={() => fetchNextPage()}
                 isFetchingMore={isFetchingNextPage}
                 render={({ item: doc, isLoading }) => {
+                  const customerName = displayCustomerName(doc);
+
                   return (
                     <ContractsListItem
                       document={doc}
-                      customerName={resolveCustomerName(doc)}
+                      customerName={customerName}
                       isLoading={isLoading}
                     />
                   );
@@ -734,6 +758,7 @@ export default function ContractsPage() {
                       }
                       footerClassName={footerClassName}
                       footer={footer}
+                      mainAnimationKey={contractCreationActiveStep}
                     >
                       {content}
                     </DetailPanel>
@@ -767,20 +792,76 @@ export default function ContractsPage() {
 
           {activeSection === "service-records" ? (
             <section data-component="contracts-service-records" className="flex flex-1 min-h-0 flex-col">
-              <SplitLayout hasSelection={false}>
+              <SplitLayout
+                hasSelection={!!selectedServiceRecordDocument}
+                onBack={() => setSelectedServiceRecordDocId(null)}
+              >
                 <ListPanel
                   title="제공기록지 목록"
                   tabs={SERVICE_RECORD_TAB_ITEMS}
                   activeTab={serviceRecordActiveTab}
-                  onTabChange={setServiceRecordActiveTab}
+                  onTabChange={handleServiceRecordTabChange}
                   searchValue={serviceRecordSearchQuery}
                   onSearchChange={setServiceRecordSearchQuery}
-                  searchPlaceholder="고객명 검색..."
-                  emptyState={<ListEmptyState message="아직 제공기록지가 없습니다" />}
+                  searchPlaceholder="고객명, 문서명 검색..."
+                  isLoading={isServiceRecordListLoading}
+                  isContentLoading={isContentLoading}
+                  emptyState={
+                    serviceRecordDocuments.length === 0 && !isServiceRecordListLoading && !isContentLoading ? (
+                      <ListEmptyState
+                        message={serviceRecordSearchQuery.trim() ? "검색 결과가 없습니다" : "아직 제공기록지가 없습니다"}
+                      />
+                    ) : undefined
+                  }
                 >
-                  {null}
+                  <AnimatedSlotList<EformsignDocument>
+                    items={serviceRecordDocuments}
+                    isLoading={isServiceRecordListLoading || isContentLoading}
+                    loadingCount={3}
+                    className="space-y-2"
+                    getItemKey={(doc) => doc.id}
+                    itemVariant="card"
+                    getSlotState={({ item, isLoading }) => {
+                      const isActive =
+                        !isLoading && item && selectedServiceRecordDocument?.id === item.id;
+                      return {
+                        isActive: Boolean(isActive),
+                        isInteractive: !isLoading && Boolean(item),
+                      };
+                    }}
+                    onSlotClick={(doc) => setSelectedServiceRecordDocId(doc.id)}
+                    hasMore={hasNextPage}
+                    onLoadMore={() => fetchNextPage()}
+                    isFetchingMore={isFetchingNextPage}
+                    render={({ item: doc, isLoading }) => (
+                      <ContractsListItem
+                        document={doc}
+                        customerName={displayCustomerName(doc)}
+                        isLoading={isLoading}
+                      />
+                    )}
+                  />
                 </ListPanel>
-                <EmptyState icon={ClipboardList} message="제공기록지를 선택하면 상세 정보가 표시됩니다" />
+                {isServiceRecordListLoading ? (
+                  <DetailSkeleton
+                    name="contracts-service-record-detail-skeleton"
+                    headerBadge
+                    headerBanner
+                    sections={[
+                      { titleWidth: "w-16", rows: ["w-1/2", "w-2/3"] },
+                      { titleWidth: "w-16", rows: ["w-3/4", "w-1/2", "w-2/3"] },
+                      { titleWidth: "w-20", rows: ["w-full"] },
+                    ]}
+                  />
+                ) : selectedServiceRecordDocument ? (
+                  <ContractDetail
+                    key={selectedServiceRecordDocument.id}
+                    document={selectedServiceRecordDocument}
+                    onDeleteRequest={handleDeleteRequest}
+                  />
+                ) : (
+                  <EmptyState icon={ClipboardList} message="제공기록지를 선택하면 상세 정보가 표시됩니다" />
+                )}
               </SplitLayout>
             </section>
           ) : null}
@@ -924,7 +1005,6 @@ function ContractDetail({
   const isMobile = useIsMobile();
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const customerName = getCustomerName(doc) ?? "–";
   const detailQuery = useQuery<EformsignDocument>({
     queryKey: ["eformsign-documents", "detail", doc.id],
     queryFn: async () => eformsignApi.getDocument(doc.id),
@@ -934,6 +1014,7 @@ function ContractDetail({
   });
   const detailedDocument = detailQuery.data ?? doc;
   const isBaseDetailLoading = detailQuery.isFetching || detailQuery.isPlaceholderData;
+  const customerName = displayCustomerName(detailedDocument) ?? "–";
   const category = getStatusCategory(detailedDocument.current_status?.status_type);
   const statusLabel = mapDocStatusLabel(detailedDocument.current_status);
   const statusType: StatusType =
@@ -961,40 +1042,8 @@ function ContractDetail({
   const isRecipientPhoneValid =
     !hasEditedRecipientPhone || (recipientPhoneDigits.length >= 10 && recipientPhoneDigits.length <= 11);
   const documentAddress = extractDocumentAddress(detailedDocument);
-  const clientAddressQuery = useQuery<string | null>({
-    queryKey: ["clients", "contract-address", doc.id, customerName],
-    queryFn: async () => {
-      const localDocRecord = await eformsignApi.getLocalDocumentRecord(doc.id).catch(() => null);
-      const linkedClientId = localDocRecord?.clientId;
-
-      if (linkedClientId) {
-        const clientResponse = await clientsApi.getById(linkedClientId);
-        return clientResponse.data.address ?? null;
-      }
-
-      const response = await clientsApi.list({
-        page: 1,
-        limit: 100,
-        search: customerName,
-      });
-      const { data } = response.data as PaginatedResponse<Client>;
-      const matchedClient =
-        data.find((client) => client.eDocId === doc.id) ??
-        data.find(
-          (client) =>
-            client.name === customerName &&
-            normalizePhoneNumber(client.phone) === normalizePhoneNumber(contactInfo.phone)
-        ) ??
-        null;
-
-      return matchedClient?.address ?? null;
-    },
-    enabled: !documentAddress && customerName !== "–",
-    staleTime: 1000 * 60 * 5,
-    refetchOnWindowFocus: false,
-  });
-  const customerAddress = documentAddress ?? clientAddressQuery.data ?? null;
-  const isCustomerInfoLoading = isBaseDetailLoading || (!documentAddress && clientAddressQuery.isLoading);
+  const customerAddress = documentAddress ?? null;
+  const isCustomerInfoLoading = isBaseDetailLoading;
   const customerBirthDate =
     extractDocumentFieldValue(detailedDocument, [
       "이용자 생년월일",
@@ -1204,7 +1253,6 @@ function ContractDetail({
     onSuccess: () => {
       handleReRequestDialogChange(false);
       queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
-      queryClient.invalidateQueries({ queryKey: ["clients", "contract-address", doc.id] });
       toast({
         description: `${customerName}님에게 전자문서 작성을 재요청했습니다.`,
       });
@@ -1502,8 +1550,8 @@ function ContractDetail({
         { label: "템플릿", value: detailedDocument.template?.name ?? "–" },
         { label: "문서번호", value: detailedDocument.document_number ?? "–" },
         { label: "발송일", value: sentDate },
-        { label: "이용자 서명완료일", value: customerSignedDate ?? "" },
-        { label: "제공기관 최종확인일", value: contractCompletedDate ?? "" },
+        { label: "이용자 서명완료일", value: customerSignedDate ?? "–" },
+        { label: "제공기관 최종확인일", value: contractCompletedDate ?? "–" },
         ...(contractCompletedDate
           ? [{ label: "서명 완료일", value: contractCompletedDate }]
           : []),

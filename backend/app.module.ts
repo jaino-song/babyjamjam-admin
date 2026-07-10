@@ -30,6 +30,7 @@ import { ConsultationInquiryModule } from "module/consultation-inquiry.module";
 import { SystemAdminModule } from "module/system-admin.module";
 import { ServiceFeedbackModule } from "module/service-feedback.module";
 import { getJwtSecret } from "./infrastructure/auth/jwt-secret";
+import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
 
 const ENV_FILE_PATHS = [
     resolve(process.cwd(), "backend/.env.local"),
@@ -78,6 +79,6 @@ const ENV_FILE_PATHS = [
         ServiceFeedbackModule,
     ],
     controllers: [EformsignController],
-    providers: [EformsignService, JwtStrategy],
+    providers: [EformsignService, JwtStrategy, ContractClientAssignmentGuardService],
 })
 export class AppModule {}

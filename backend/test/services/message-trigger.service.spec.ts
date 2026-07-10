@@ -7,7 +7,6 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import {
-    PAST_OCCURRENCE_GRACE_MS,
     SEND_HOUR_KST,
     TRIGGER_JOB_MAX_ATTEMPTS,
 } from "domain/constants/message-automation-policy";
@@ -1037,6 +1036,12 @@ describe("MessageTriggerService", () => {
         };
         const messageLogRepository = createMessageLogRepository();
         const messageSenderApprovalService = createMessageSenderApprovalService();
+        const systemSettingService = {
+            getMessageAutomationPastTriggerConfig: jest.fn().mockResolvedValue({
+                sendIntervalMinutes: 1,
+                ruleOrder: [],
+            }),
+        };
         const service = new MessageTriggerService(
             prisma as never,
             {} as never,
@@ -1044,6 +1049,7 @@ describe("MessageTriggerService", () => {
             ruleRepository as never,
             jobRepository as never,
             messageLogRepository as never,
+            systemSettingService as never,
         );
         return {
             service,
@@ -1051,6 +1057,7 @@ describe("MessageTriggerService", () => {
             jobRepository,
             prisma,
             messageSenderApprovalService,
+            systemSettingService,
         };
     };
 
@@ -1405,7 +1412,7 @@ describe("MessageTriggerService", () => {
         }
     });
 
-    it("includePast=true still materializes past non-immediate client jobs", async () => {
+    it("includePast=true schedules a past non-immediate client job for immediate retroactive dispatch", async () => {
         jest.useFakeTimers().setSystemTime(new Date("2026-07-09T12:00:00.000Z"));
         try {
             const serviceInfoRule = createRule({
@@ -1424,9 +1431,51 @@ describe("MessageTriggerService", () => {
 
             expect(create.jobRepository.upsertPending).toHaveBeenCalledTimes(1);
             const persistedJob = create.jobRepository.upsertPending.mock.calls[0][0];
-            expect(persistedJob.scheduledFor.getTime()).toBeLessThan(
-                Date.now() - PAST_OCCURRENCE_GRACE_MS,
-            );
+            expect(persistedJob.scheduledFor).toEqual(new Date("2026-07-09T12:00:00.000Z"));
+            expect(persistedJob.dedupeKey).toContain("2026-07-09T12:00:00.000Z");
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("includePast=true applies saved retroactive order and interval to due client jobs", async () => {
+        jest.useFakeTimers().setSystemTime(new Date("2026-07-09T12:00:00.000Z"));
+        try {
+            const firstRule = createRule({
+                id: "rule-first",
+                eventType: MessageTriggerEventType.SERVICE_START,
+                offsetType: MessageTriggerOffsetType.SAME_DAY,
+                offsetDays: 0,
+                templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+                createdAt: new Date("2026-06-02T00:00:00.000Z"),
+            });
+            const secondRule = createRule({
+                id: "rule-second",
+                eventType: MessageTriggerEventType.CLIENT_CREATED,
+                offsetType: MessageTriggerOffsetType.IMMEDIATE,
+                offsetDays: 0,
+                templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+                createdAt: new Date("2026-06-01T00:00:00.000Z"),
+            });
+            const create = createSyncService({
+                startDate: new Date("2026-07-07T00:00:00.000Z"),
+                createdAt: new Date("2026-07-01T00:00:00.000Z"),
+            });
+            create.systemSettingService.getMessageAutomationPastTriggerConfig.mockResolvedValue({
+                sendIntervalMinutes: 3,
+                ruleOrder: [secondRule.id, firstRule.id],
+            });
+            create.ruleRepository.findActiveByEventTypes.mockResolvedValue([firstRule, secondRule]);
+
+            await create.service.syncClientRulesForClient(branchId, 1, true);
+
+            expect(create.jobRepository.upsertPending).toHaveBeenCalledTimes(2);
+            const firstPersistedJob = create.jobRepository.upsertPending.mock.calls[0][0];
+            const secondPersistedJob = create.jobRepository.upsertPending.mock.calls[1][0];
+            expect(firstPersistedJob.ruleId).toBe(secondRule.id);
+            expect(firstPersistedJob.scheduledFor).toEqual(new Date("2026-07-09T12:00:00.000Z"));
+            expect(secondPersistedJob.ruleId).toBe(firstRule.id);
+            expect(secondPersistedJob.scheduledFor).toEqual(new Date("2026-07-09T12:03:00.000Z"));
         } finally {
             jest.useRealTimers();
         }

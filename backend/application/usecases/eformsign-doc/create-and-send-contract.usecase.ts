@@ -1,8 +1,10 @@
 import { Injectable, Inject, Logger } from "@nestjs/common";
 import { EFORMSIGN_CLIENT_REPOSITORY, IEformsignClientRepository } from "domain/repositories/eformsign.client.interface";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
+import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { CreateEformsignDocUsecase } from "./create-eformsign-doc.usecase";
 import { GetEformsignAccessTokenUsecase } from "./get-eformsign-access-token.usecase";
+import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
 
 export interface CreateAndSendContractParams {
     clientId: number;
@@ -27,6 +29,7 @@ export class CreateAndSendContractUsecase {
         private readonly clientRepository: IClientRepository,
         private readonly getAccessTokenUsecase: GetEformsignAccessTokenUsecase,
         private readonly createEformsignDocUsecase: CreateEformsignDocUsecase,
+        private readonly assignmentGuard: ContractClientAssignmentGuardService,
     ) {}
 
     async execute(
@@ -45,6 +48,7 @@ export class CreateAndSendContractUsecase {
         }
 
         try {
+            await this.assignmentGuard.assertAssignedClient(branchid, clientId);
             const executionTime = Date.now();
             const tokenResponse = await this.getAccessTokenUsecase.execute(executionTime);
             const accessToken = tokenResponse.oauth_token.access_token;
@@ -113,6 +117,8 @@ export class CreateAndSendContractUsecase {
                 stepRecipientName: client.name,
                 stepRecipientSms: client.phone,
                 expiredDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+                documentKind: EFORMSIGN_DOCUMENT_KIND.CONTRACT,
+                templateId,
             });
 
             this.logger.log(`Contract created and sent: documentId=${result.documentId}, clientId=${clientId}`);

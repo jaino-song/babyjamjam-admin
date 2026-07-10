@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
     Workflow,
     Users,
@@ -53,6 +54,7 @@ import {
     ClientFormPanel,
 } from "@/components/app/clients/ClientFormDialog";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
+import { clientKeys } from "@/features/clients/hooks/keys";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -79,8 +81,10 @@ import {
     SteppedWizardStepper,
 } from "@/components/app/v3";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
-import { normalizeKoreanPhoneLookupKey } from "@/lib/phone";
+import { formatKoreanPhoneNumber, normalizeKoreanPhoneLookupKey } from "@/lib/phone";
 import { matchesMessageHistoryClient } from "@/lib/message-history/client-match";
+import { mapStatusToLabel, type DocumentStatusLabel } from "@/lib/eformsign/status-codes";
+import { eformsignApi, type LocalEformsignDocRecord } from "@/services/api";
 
 const FILTER_CHIPS = [
     { label: "전체", value: "all" },
@@ -140,6 +144,26 @@ const formatDate = (dateStr: string | null): string => {
     if (!dateStr) return "-";
     return new Date(dateStr).toLocaleDateString("ko-KR");
 };
+
+const formatDateTime = (dateStr: string | null): string => {
+    if (!dateStr) return "-";
+    const date = new Date(dateStr);
+    if (Number.isNaN(date.getTime())) return "-";
+    return date.toLocaleString("ko-KR", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+    });
+};
+
+const DOCUMENT_STATUS_BADGE_STATUS = {
+    "대기": "pending",
+    "검토 필요": "review",
+    "완료": "signed",
+    "기간 만료": "expired",
+} satisfies Record<DocumentStatusLabel, Parameters<typeof StatusBadge>[0]["status"]>;
 
 const formatScheduleChangeMonthDay = (dateStr: string): string => {
     const [, month, day] = dateStr.split("-");
@@ -337,6 +361,88 @@ function ClientMessageHistoryList({
     );
 }
 
+function ClientContractsList({
+    docs,
+    isError,
+    isLoading,
+}: {
+    docs: LocalEformsignDocRecord[];
+    isError: boolean;
+    isLoading: boolean;
+}) {
+    if (isLoading) {
+        return (
+            <div data-component="clients-detail-contracts-skeleton-list" className="space-y-3">
+                {[0, 1].map((index) => (
+                    <div
+                        key={index}
+                        data-component="clients-detail-contracts-skeleton-card"
+                        className="rounded-[18px] bg-v3-dim-white p-[calc(16px*var(--v3-ui-scale,1))]"
+                    >
+                        <div data-component="clients-detail-contracts-skeleton-card-head" className="flex items-center justify-between gap-3">
+                            <Skeleton className="h-[calc(14px*var(--v3-ui-scale,1))] w-[calc(112px*var(--v3-ui-scale,1))] bg-white/70" />
+                            <Skeleton className="h-[calc(24px*var(--v3-ui-scale,1))] w-[calc(64px*var(--v3-ui-scale,1))] rounded-full bg-white/70" />
+                        </div>
+                        <div data-component="clients-detail-contracts-skeleton-card-body" className="mt-3 space-y-2">
+                            <Skeleton className="h-[calc(14px*var(--v3-ui-scale,1))] w-full bg-white/70" />
+                            <Skeleton className="h-[calc(14px*var(--v3-ui-scale,1))] w-3/4 bg-white/70" />
+                        </div>
+                    </div>
+                ))}
+            </div>
+        );
+    }
+
+    if (isError && docs.length === 0) {
+        return (
+            <div data-component="clients-detail-contracts-error" className="py-12 text-center text-[0.85rem] text-v3-text-muted">
+                계약서 정보를 불러오지 못했습니다
+            </div>
+        );
+    }
+
+    if (docs.length === 0) {
+        return (
+            <DetailEmptyState
+                name="clients-detail-contracts-empty"
+                message="계약서 정보가 없습니다"
+            />
+        );
+    }
+
+    return (
+        <div data-component="clients-detail-contracts-list" className="space-y-3">
+            {docs.map((doc) => {
+                const statusLabel = mapStatusToLabel(doc.statusType);
+                return (
+                    <InfoCard
+                        key={doc.documentId}
+                        title={doc.stepRecipientName || "계약서"}
+                        data-component="clients-detail-contracts-card"
+                    >
+                        <InfoRow
+                            label="상태"
+                            value={
+                                <StatusBadge
+                                    status={DOCUMENT_STATUS_BADGE_STATUS[statusLabel]}
+                                    label={statusLabel}
+                                />
+                            }
+                        />
+                        <InfoRow label="문서 ID" value={doc.documentId} />
+                        <InfoRow label="생성일" value={formatDateTime(doc.createdDate)} />
+                        <InfoRow label="현재 단계" value={doc.stepName || "-"} />
+                        <InfoRow
+                            label="수신 연락처"
+                            value={doc.stepRecipientSms ? formatKoreanPhoneNumber(doc.stepRecipientSms) : "-"}
+                        />
+                    </InfoCard>
+                );
+            })}
+        </div>
+    );
+}
+
 function ClientMessageDetailSlide({
     isMessageDetailActive,
     selectedRecord,
@@ -477,7 +583,7 @@ function ClientAutomationSection() {
                         title={selectedAutomation.title}
                         subtitle={selectedAutomation.subtitle}
                     >
-                        <InfoCard title="임시 안내">
+                        <InfoCard title="자동화 안내">
                             <p data-component="clients-automation-detail-temporary-copy" className="text-[0.85rem] leading-6 text-v3-text-muted">
                                 {selectedAutomationEnabled
                                     ? "전자문서 생성 시에 자동으로 고객이 등록됩니다."
@@ -508,6 +614,7 @@ export default function ClientsPage() {
     const locale = useLocale();
     const router = useRouter();
     const searchParams = useSearchParams();
+    const queryClient = useQueryClient();
     const { toast } = useToast();
     const clientIdParam = searchParams.get("id");
     const shouldOpenClientFormFromUrl = searchParams.get("openClientForm") === "1";
@@ -599,6 +706,39 @@ export default function ClientsPage() {
     };
 
     const isScheduleChangeActionPending = approveScheduleChange.isPending || rejectScheduleChange.isPending;
+
+    const {
+        data: activeClientContracts,
+        isLoading: isClientContractsLoading,
+        isError: isClientContractsError,
+        isSuccess: isClientContractsSuccess,
+        dataUpdatedAt: activeClientContractsUpdatedAt,
+    } = useQuery({
+        queryKey: ["eformsign-docs", "client", activeSelectedClientId],
+        queryFn: () => {
+            if (activeSelectedClientId === null) return Promise.resolve([]);
+            return eformsignApi.getDocumentsByClientId(activeSelectedClientId);
+        },
+        enabled: activeSelectedClientId !== null,
+        staleTime: 0,
+        refetchOnMount: "always",
+        refetchOnReconnect: true,
+        refetchOnWindowFocus: true,
+    });
+
+    const activeClientContractDocs = useMemo(
+        () => (activeClientContracts ?? []).filter((doc) => doc.documentKind !== "service_feedback_snapshot"),
+        [activeClientContracts],
+    );
+
+    useEffect(() => {
+        if (!isClientContractsSuccess || activeSelectedClientId === null) {
+            return;
+        }
+
+        void queryClient.invalidateQueries({ queryKey: clientKeys.all });
+        void queryClient.invalidateQueries({ queryKey: clientKeys.detail(activeSelectedClientId) });
+    }, [activeClientContractsUpdatedAt, activeSelectedClientId, isClientContractsSuccess, queryClient]);
 
     const activeClientMessageHistory = useMemo(
         () =>
@@ -1014,7 +1154,7 @@ export default function ClientsPage() {
 	                                                title={client.name}
 	                                                subtitle={
 	                                                    <>
-	                                                        {client.phone ? <span>{client.phone}</span> : null}
+	                                                        {client.phone ? <span>{formatKoreanPhoneNumber(client.phone)}</span> : null}
 	                                                        {client.address ? (
 	                                                            <span className="truncate">
 	                                                                {client.address.split(" ")[1] || client.address}
@@ -1126,7 +1266,11 @@ export default function ClientsPage() {
                             trailing={
                                 <DropdownMenu>
                                     <DropdownMenuTrigger asChild>
-                                        <button type="button" className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors">
+                                        <button
+                                            type="button"
+                                            aria-label="고객 작업 메뉴 열기"
+                                            className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors"
+                                        >
                                             <MoreVertical className="w-5 h-5 text-v3-text-muted" />
                                         </button>
                                     </DropdownMenuTrigger>
@@ -1154,7 +1298,9 @@ export default function ClientsPage() {
                                 activeTab={activeDetailTab}
                                 dataComponent="clients-detail-content"
                                 panelDataComponent="clients-detail-content-panel"
-                                className="shrink-0"
+                                className="min-h-full shrink-0"
+                                trackClassName="min-h-full"
+                                panelClassName="[&[aria-hidden=false]]:min-h-full"
                                 panels={[
                                     ...(activeScheduleChange
                                         ? [
@@ -1223,7 +1369,9 @@ export default function ClientsPage() {
                                                     />
                                                     <InfoRow
                                                         label={t(locale, "clients.form.phone")}
-                                                        value={activeSelectedClient.phone || "-"}
+                                                        value={activeSelectedClient.phone
+                                                            ? formatKoreanPhoneNumber(activeSelectedClient.phone)
+                                                            : "-"}
                                                     />
                                                     <InfoRow
                                                         label={t(locale, "clients.form.address")}
@@ -1292,9 +1440,10 @@ export default function ClientsPage() {
                                     {
                                         key: "contracts",
                                         children: (
-                                            <DetailEmptyState
-                                                name="clients-detail-contracts-empty"
-                                                message="계약서 정보가 없습니다"
+                                            <ClientContractsList
+                                                docs={activeClientContractDocs}
+                                                isLoading={isClientContractsLoading}
+                                                isError={isClientContractsError}
                                             />
                                         ),
                                     },

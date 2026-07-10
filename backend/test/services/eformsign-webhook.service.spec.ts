@@ -259,6 +259,25 @@ describe("EformsignWebhookService", () => {
         expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
     });
 
+    it("should keep the client contract pointer linked on non-complete document status updates", async () => {
+        const payload = createDocumentPayload();
+        if (!payload.document) {
+            throw new Error("document payload is required");
+        }
+        payload.document.status = "doc_request_participant";
+
+        await expect(service.processWebhook(payload)).resolves.toBeUndefined();
+
+        expect(updateStatusUsecase.execute).toHaveBeenCalledWith(
+            branchId,
+            expect.objectContaining({
+                documentId,
+                statusType: "060",
+            }),
+        );
+        expect(linkDocumentUsecase.execute).toHaveBeenCalledWith(branchId, documentId);
+    });
+
     it("should not notify branch users for a user participant step even when eformsign reports recipient_type 01", async () => {
         eformsignApiClient.getDocument.mockResolvedValue({
             current_status: {

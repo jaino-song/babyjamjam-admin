@@ -18,6 +18,11 @@ jest.mock("@/stores/employee-dialog-store", () => ({
     selector({ setPrefillName: mockSetPrefillName }),
 }));
 
+jest.mock("@/components/app/employees/EmployeeFormDialog", () => ({
+  EmployeeFormDialog: ({ open }: { open: boolean }) =>
+    open ? <div role="dialog" aria-label="새 제공인력 등록" /> : null,
+}));
+
 const employee: Employee = {
   id: 1,
   name: "김제공",
@@ -44,6 +49,51 @@ describe("EmployeeAutocomplete", () => {
     mockEmployees = [employee];
   });
 
+  it("shows the registration action without listing providers before search", async () => {
+    render(
+      <EmployeeAutocomplete
+        value={null}
+        onChange={jest.fn()}
+        label="제공인력 1 성함"
+        allowManualInput
+        manualValue=""
+      />
+    );
+
+    fireEvent.click(screen.getByRole("combobox", { name: "제공인력 1 성함" }));
+
+    expect(await screen.findByText("일치하는 제공인력이 없습니다.")).toBeInTheDocument();
+    expect(document.querySelector('[data-component="employee-autocomplete-dropdown"]')).toHaveClass(
+      "v3-ui-scale-scope",
+    );
+    expect(screen.queryByText("김제공")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "수동 입력으로 진행" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "새 제공인력 등록" }));
+    expect(await screen.findByRole("dialog", { name: "새 제공인력 등록" })).toBeInTheDocument();
+  });
+
+  it("shows provider results after typing a search term", async () => {
+    render(
+      <EmployeeAutocomplete
+        value={null}
+        onChange={jest.fn()}
+        label="제공인력 1 성함"
+        allowManualInput
+        manualValue=""
+      />
+    );
+
+    fireEvent.click(screen.getByRole("combobox", { name: "제공인력 1 성함" }));
+    expect(await screen.findByRole("combobox", { name: "제공인력 1 성함 검색" })).toBeInTheDocument();
+    fireEvent.change(await screen.findByPlaceholderText("이름으로 검색..."), {
+      target: { value: "김제공" },
+    });
+
+    expect(await screen.findByText("김제공")).toBeInTheDocument();
+    expect(screen.getByText("서울 · 010-1111-2222")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "수동 입력으로 진행" })).not.toBeDisabled();
+  });
+
   it("notifies parent while typing a manual provider name", async () => {
     const onChange = jest.fn();
     const onManualInputChange = jest.fn();
@@ -59,7 +109,7 @@ describe("EmployeeAutocomplete", () => {
       />
     );
 
-    fireEvent.click(screen.getByRole("combobox"));
+    fireEvent.click(screen.getByRole("combobox", { name: "제공인력 1 성함" }));
     fireEvent.change(await screen.findByPlaceholderText("이름으로 검색..."), {
       target: { value: "홍길동" },
     });
@@ -79,9 +129,9 @@ describe("EmployeeAutocomplete", () => {
       />
     );
 
-    const trigger = screen.getByRole("combobox");
+    const trigger = screen.getByRole("combobox", { name: "제공인력 1 성함" });
     expect(trigger).toHaveTextContent("홍길동");
-    expect(trigger).toHaveClass("h-[38px]");
+    expect(trigger).toHaveClass("h-[calc(38px*var(--v3-ui-scale,1))]");
     expect(trigger).toHaveClass("rounded-[13px]");
     expect(trigger).toHaveClass("border-[1.35px]");
   });
@@ -100,7 +150,7 @@ describe("EmployeeAutocomplete", () => {
       />
     );
 
-    fireEvent.click(screen.getByRole("combobox"));
+    fireEvent.click(screen.getByRole("combobox", { name: "제공인력 1 성함" }));
     fireEvent.change(await screen.findByPlaceholderText("이름으로 검색..."), {
       target: { value: "새 이름" },
     });
@@ -125,5 +175,42 @@ describe("EmployeeAutocomplete", () => {
 
     expect(onChange).toHaveBeenCalledWith(null, null);
     expect(onManualInputChange).toHaveBeenCalledWith("");
+  });
+
+  it("displays and searches employee phone numbers in phone mode", async () => {
+    const onChange = jest.fn();
+    const { rerender } = render(
+      <EmployeeAutocomplete
+        value={null}
+        onChange={onChange}
+        label="관리사님 전화번호"
+        placeholder="관리사님 전화번호 검색"
+        displayValueMode="phone"
+        searchMode="phone"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("combobox", { name: "관리사님 전화번호" }));
+    fireEvent.change(
+      await screen.findByPlaceholderText("관리사님 전화번호 검색"),
+      { target: { value: "1111" } },
+    );
+    fireEvent.click(await screen.findByText("김제공"));
+
+    expect(onChange).toHaveBeenCalledWith(employee.id, employee);
+
+    rerender(
+      <EmployeeAutocomplete
+        value={employee.id}
+        onChange={onChange}
+        label="관리사님 전화번호"
+        placeholder="관리사님 전화번호 검색"
+        displayValueMode="phone"
+        searchMode="phone"
+      />,
+    );
+    expect(
+      screen.getByRole("combobox", { name: "관리사님 전화번호" }),
+    ).toHaveTextContent("010-1111-2222");
   });
 });

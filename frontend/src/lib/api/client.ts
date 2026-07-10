@@ -1,6 +1,8 @@
 import axios, { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } from "axios";
 import { parse } from "cookie";
+
 import { isPublicAuthPath } from "@/lib/auth/routes";
+import { captureApiError } from "@/lib/observability/capture-api-error";
 import { safeStorageRemoveItem, safeStorageSetItem } from "@/lib/safe-storage";
 
 const API_BASE_URL = typeof window === 'undefined'
@@ -98,7 +100,10 @@ api.interceptors.request.use(
         }
         return config;
     },
-    (err: AxiosError) => Promise.reject(err),
+    (err: AxiosError) => {
+        captureApiError(err);
+        return Promise.reject(err);
+    },
 );
 
 api.interceptors.response.use(
@@ -115,7 +120,12 @@ api.interceptors.response.use(
             (originalRequestMethod === "get" || originalRequestMethod === "head")
         ) {
             originalRequest._retry = true;
-            return axios(originalRequest);
+            try {
+                return await axios(originalRequest);
+            } catch (retryError) {
+                captureApiError(retryError);
+                return Promise.reject(retryError);
+            }
         }
 
         // 401 Unauthorized - handle eformsign token refresh only for eformsign-related endpoints
@@ -156,6 +166,7 @@ api.interceptors.response.use(
                     return axios(originalRequest);
                 } catch (refreshError) {
                     processQueue(refreshError as AxiosError);
+                    captureApiError(refreshError);
                     if (typeof window !== 'undefined') {
                         safeStorageRemoveItem("session", "eformsign_auth_time");
                     }
@@ -172,6 +183,7 @@ api.interceptors.response.use(
             return Promise.reject(err);
         }
 
+        captureApiError(err);
         return Promise.reject(err);
     }
 );

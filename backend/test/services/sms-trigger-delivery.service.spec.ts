@@ -116,6 +116,8 @@ describe("SmsTriggerDeliveryService", () => {
         expect(savedLog.templateKey).toBe("service_info_sms");
         expect(savedLog.triggerJobId).toBe("job-service-info");
         expect(savedLog.receiver).toBe("01012345678");
+        expect(savedLog.recipientName).toBe("김지니");
+        expect(savedLog.recipientPhone).toBe("010-1234-5678");
         expect(savedLog.messageBody).toBe("김지니 산모님 서비스 안내");
         expect(savedLog.status).toBe("sent");
         expect(savedLog.aligoMid).toBe("321");
@@ -207,6 +209,8 @@ describe("SmsTriggerDeliveryService", () => {
         expect(savedLog.provider).toBe("aligo_sms");
         expect(savedLog.templateKey).toBe("client_greeting_sms");
         expect(savedLog.triggerJobId).toBe("job-greeting-1");
+        expect(savedLog.recipientName).toBe("김산모");
+        expect(savedLog.recipientPhone).toBe("010-5678-1234");
         expect(savedLog.status).toBe("sent");
         expect(savedLog.aligoMid).toBe("999");
         expect(savedLog.variables).toEqual(expect.objectContaining({
@@ -318,10 +322,39 @@ describe("SMS delivery routing drift guard", () => {
 });
 
 describe("SERVICE_FEEDBACK_LINK delivery", () => {
-    const buildService = (overrides: { aligoService: any; logRepository: any }) =>
+    const serviceFeedbackLinkTemplate = `[사회서비스 제공자 품질평가 A등급]
+안녕하세요, 인천 아이미래로 입니다 :)
+
+{{employeeName}} 관리사님, {{clientName}} 산모님의 서비스 제공기록지 작성 링크입니다.
+매일 서비스 제공 완료 직전에 서비스 세부사항 기록 후에, 산모님께 승인을 받으시면 됩니다.
+
+최초 접속 시에 관리사님의 전화번호 인증이 필요합니다. 링크 접속 후 휴대폰 번호로 본인확인하고, 방문일마다 기록을 남겨주세요.
+
+감사합니다.
+
+제공기록지 링크
+{{feedbackUrl}}`;
+    const renderedServiceFeedbackLinkMessage = `[사회서비스 제공자 품질평가 A등급]
+안녕하세요, 인천 아이미래로 입니다 :)
+
+홍제공 관리사님, 김산모 산모님의 서비스 제공기록지 작성 링크입니다.
+매일 서비스 제공 완료 직전에 서비스 세부사항 기록 후에, 산모님께 승인을 받으시면 됩니다.
+
+최초 접속 시에 관리사님의 전화번호 인증이 필요합니다. 링크 접속 후 휴대폰 번호로 본인확인하고, 방문일마다 기록을 남겨주세요.
+
+감사합니다.
+
+제공기록지 링크
+https://mobile.test/feedback/efl_token`;
+
+    const buildService = (overrides: {
+        aligoService: unknown;
+        logRepository: unknown;
+        systemTemplateService?: unknown;
+    }) =>
         new SmsTriggerDeliveryService(
             overrides.aligoService as unknown as AligoService,
-            { getByKey: jest.fn() } as unknown as SystemTemplateService,
+            (overrides.systemTemplateService ?? { getByKey: jest.fn() }) as unknown as SystemTemplateService,
             overrides.logRepository as unknown as IMessageLogRepository,
         );
 
@@ -360,30 +393,27 @@ describe("SERVICE_FEEDBACK_LINK delivery", () => {
             new Date("2026-07-02T00:00:00.000Z"),
         );
 
-    const captureError = async (promise: Promise<unknown>): Promise<unknown> => {
-        try {
-            await promise;
-            return undefined;
-        } catch (error) {
-            return error;
-        }
-    };
-
-    it("sends the payload message and records it in SMS history", async () => {
+    it("renders the editable service feedback system template and records it in SMS history", async () => {
         const aligoService = {
             sendSms: jest.fn().mockResolvedValue({
                 request: { receiver: "01011112222", msgType: "LMS", testModeYn: "N" },
                 response: { result_code: 1, message: "성공", msg_id: 123, success_cnt: 1, error_cnt: 0 },
             }),
         };
+        const systemTemplateService = {
+            getByKey: jest.fn().mockResolvedValue({
+                content: serviceFeedbackLinkTemplate,
+            }),
+        };
         const logRepository = { save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log) };
-        const service = buildService({ aligoService, logRepository });
+        const service = buildService({ aligoService, logRepository, systemTemplateService });
 
         await expect(service.sendJob(createFeedbackJob())).resolves.toBe(true);
 
+        expect(systemTemplateService.getByKey).toHaveBeenCalledWith(SystemTemplateKey.SERVICE_FEEDBACK_LINK);
         expect(aligoService.sendSms).toHaveBeenCalledWith({
             receiver: "010-1111-2222",
-            message: "[아가잼잼] 김산모님 제공기록지 링크\nhttps://mobile.test/feedback/efl_token",
+            message: renderedServiceFeedbackLinkMessage,
             recipientName: "홍제공",
             title: "제공기록지 작성 링크",
             msgType: "AUTO",
@@ -395,6 +425,8 @@ describe("SERVICE_FEEDBACK_LINK delivery", () => {
         expect(savedLog.variables).toEqual(expect.objectContaining({
             automationKey: "SERVICE_FEEDBACK_LINK_SMS",
             triggerType: "service_start_at_15",
+            systemTemplateKey: SystemTemplateKey.SERVICE_FEEDBACK_LINK,
+            employeeName: "홍제공",
             feedbackUrl: "https://mobile.test/feedback/efl_token",
         }));
     });
@@ -406,8 +438,13 @@ describe("SERVICE_FEEDBACK_LINK delivery", () => {
                 response: { result_code: -1, message: "잔액 부족", msg_id: null, success_cnt: 0, error_cnt: 1 },
             }),
         };
+        const systemTemplateService = {
+            getByKey: jest.fn().mockResolvedValue({
+                content: serviceFeedbackLinkTemplate,
+            }),
+        };
         const logRepository = { save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log) };
-        const service = buildService({ aligoService, logRepository });
+        const service = buildService({ aligoService, logRepository, systemTemplateService });
 
         await expect(service.sendJob(createFeedbackJob())).resolves.toBe(false);
 
@@ -418,22 +455,27 @@ describe("SERVICE_FEEDBACK_LINK delivery", () => {
         expect(savedLog.nextRetryAt).toBeInstanceOf(Date);
     });
 
-    it("throws a plain error when payload messageBody is missing", async () => {
-        const aligoService = { sendSms: jest.fn() };
-        const logRepository = { save: jest.fn() };
-        const service = buildService({ aligoService, logRepository });
+    it("uses the registry default when the editable feedback link template row is unavailable", async () => {
+        const aligoService = {
+            sendSms: jest.fn().mockResolvedValue({
+                request: { receiver: "01011112222", msgType: "LMS", testModeYn: "N" },
+                response: { result_code: 1, message: "성공", msg_id: 123, success_cnt: 1, error_cnt: 0 },
+            }),
+        };
+        const systemTemplateService = {
+            getByKey: jest.fn().mockRejectedValue(new Error("template row unavailable")),
+        };
+        const logRepository = { save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log) };
+        const service = buildService({ aligoService, logRepository, systemTemplateService });
         const job = createFeedbackJob();
         job.payload.messageBody = "   ";
 
-        const error = await captureError(service.sendJob(job));
+        await expect(service.sendJob(job)).resolves.toBe(true);
 
-        expect(error).toBeInstanceOf(Error);
-        expect(error).not.toBeInstanceOf(TriggerJobDeferredError);
-        expect(error).toMatchObject({
-            message: "SMS payload message is missing for job job-feedback-link",
-        });
-        expect(aligoService.sendSms).not.toHaveBeenCalled();
-        expect(logRepository.save).not.toHaveBeenCalled();
+        expect(aligoService.sendSms).toHaveBeenCalledWith(expect.objectContaining({
+            message: renderedServiceFeedbackLinkMessage,
+            title: "제공기록지 작성 링크",
+        }));
     });
 });
 

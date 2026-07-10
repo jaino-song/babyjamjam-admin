@@ -51,6 +51,9 @@ describe("DispatchDocumentHeadlessUsecase", () => {
                 phone: "010-1234-5678",
             }),
         };
+        const assignmentGuard = {
+            assertAssignedProvider: jest.fn().mockResolvedValue({ scheduleId: 10 }),
+        };
 
         const usecase = new DispatchDocumentHeadlessUsecase(
             eformsignService as never,
@@ -61,6 +64,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             fetchEformsignDocFromApiUsecase as never,
             progressService as never,
             clientRepository as never,
+            assignmentGuard as never,
         );
 
         await expect(usecase.execute("branch-1", {
@@ -124,6 +128,9 @@ describe("DispatchDocumentHeadlessUsecase", () => {
         const clientRepository = {
             findById: jest.fn().mockResolvedValue(null),
         };
+        const assignmentGuard = {
+            assertAssignedProvider: jest.fn().mockResolvedValue({ scheduleId: 11 }),
+        };
 
         const usecase = new DispatchDocumentHeadlessUsecase(
             eformsignService as never,
@@ -134,6 +141,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             fetchEformsignDocFromApiUsecase as never,
             progressService as never,
             clientRepository as never,
+            assignmentGuard as never,
         );
 
         await expect(usecase.execute("branch-1", {
@@ -160,5 +168,44 @@ describe("DispatchDocumentHeadlessUsecase", () => {
                 stepName: "서명 요청",
             }),
         );
+    });
+
+    it("stops before eformsign authentication when the client assignment is missing", async () => {
+        const getAccessTokenUsecase = { execute: jest.fn() };
+        const headlessService = { dispatchCreation: jest.fn() };
+        const assignmentGuard = {
+            assertAssignedProvider: jest.fn().mockRejectedValue(
+                new Error("고객의 제공인력 배정을 먼저 저장해 주세요."),
+            ),
+        };
+        const usecase = new DispatchDocumentHeadlessUsecase(
+            { generateDocumentOptions: jest.fn() } as never,
+            headlessService as never,
+            { findByArea: jest.fn() } as never,
+            getAccessTokenUsecase as never,
+            { execute: jest.fn() } as never,
+            { execute: jest.fn() } as never,
+            { emit: jest.fn() } as never,
+            { findById: jest.fn() } as never,
+            assignmentGuard as never,
+        );
+
+        await expect(usecase.execute("branch-1", {
+            clientId: 55,
+            contractData: {
+                caretaker1Contact: "010-1111-2222",
+            } as never,
+        })).resolves.toEqual(expect.objectContaining({
+            ok: false,
+            reason: "고객의 제공인력 배정을 먼저 저장해 주세요.",
+        }));
+
+        expect(assignmentGuard.assertAssignedProvider).toHaveBeenCalledWith(
+            "branch-1",
+            55,
+            "010-1111-2222",
+        );
+        expect(getAccessTokenUsecase.execute).not.toHaveBeenCalled();
+        expect(headlessService.dispatchCreation).not.toHaveBeenCalled();
     });
 });

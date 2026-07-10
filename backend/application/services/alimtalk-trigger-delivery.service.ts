@@ -56,6 +56,7 @@ export class AlimtalkTriggerDeliveryService {
         await this.sendAligoAlimtalkUsecase.execute({
             templateKey: providerMapping.templateKey as AligoTemplateKey,
             receiver: payload.recipientPhone,
+            recipientName: payload.recipientName,
             variables: this.toAligoVariables(job.templateKey, payload.templateVariables),
             buttonUrl: payload.buttonUrl ?? undefined,
             branchId: job.branchId ?? undefined,

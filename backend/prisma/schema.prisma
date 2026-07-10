@@ -105,6 +105,8 @@ model client {
   callRecords          call_record[]
   clientDrafts         client_draft[]
   scheduleChangeRequests schedule_change_request[]
+  messageLogs          message_log[]
+  messageTriggerJobs   message_trigger_job[]
 
   @@unique([branchId, phone], map: "client_branch_phone_key")
   @@index([areaId], map: "idx_client_area")
@@ -175,11 +177,18 @@ model eformsign_doc {
   expired           Boolean  @default(false)
   clientId          Int      @map("client_id")
   branchId          String?  @map("branch_id") @db.Uuid
+  documentKind      String?  @map("document_kind")
+  employeeScheduleId Int?    @map("employee_schedule_id")
+  templateId        String?  @map("template_id")
   clientByEDocId    client?  @relation("client_e_doc_idToeformsign_doc")
   client            client   @relation("eformsign_doc_client_idToclient", fields: [clientId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  employeeSchedule  employee_schedule? @relation(fields: [employeeScheduleId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   branch            branch?  @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([branchId], map: "idx_eformsign_doc_branch")
+  @@index([documentKind], map: "idx_eformsign_doc_document_kind")
+  @@index([employeeScheduleId], map: "idx_eformsign_doc_employee_schedule_id")
+  @@index([templateId], map: "idx_eformsign_doc_template_id")
 }
 
 model employee {
@@ -218,6 +227,8 @@ model employee_schedule {
   serviceRecord       service_record?
   serviceRecordDays   service_record_day[]
   scheduleChangeRequests schedule_change_request[]
+  eformsignDocs       eformsign_doc[]
+  messageTriggerJobs  message_trigger_job[]
 
   @@index([branchId], map: "idx_employee_schedule_branch")
 }
@@ -294,6 +305,9 @@ model branch {
   employeeSchedules            employee_schedule[]
   messages                     message[]
   messageTemplates             message_template[]
+  messageLogs                  message_log[]
+  messageTriggerRules          message_trigger_rule[]
+  messageTriggerJobs           message_trigger_job[]
   notifications                notification[]
   consultationInquiries        consultation_inquiry[]
   callIngestTokens             call_ingest_token[]
@@ -488,6 +502,8 @@ model message_log {
   triggerJobId  String?   @map("trigger_job_id")
   receiver      String
   clientId      Int?      @map("client_id")
+  recipientName String?   @map("recipient_name")
+  recipientPhone String?  @map("recipient_phone")
   messageBody   String    @map("message_body")
   variables     Json      @default("{}")
   status        String    @default("pending") // "pending" | "sent" | "failed"
@@ -498,11 +514,15 @@ model message_log {
   nextRetryAt   DateTime? @map("next_retry_at") @db.Timestamptz(6)
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  branch        branch?   @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  client        client?   @relation(fields: [clientId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  triggerJob    message_trigger_job? @relation(fields: [triggerJobId], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
   @@index([branchId], map: "idx_message_log_branch")
   @@index([triggerJobId], map: "idx_message_log_trigger_job_id")
   @@index([status], map: "idx_message_log_status")
   @@index([receiver], map: "idx_message_log_receiver")
+  @@index([recipientPhone], map: "idx_message_log_recipient_phone")
   @@index([createdAt], map: "idx_message_log_created_at")
   @@index([nextRetryAt], map: "idx_message_log_next_retry_at")
 }
@@ -524,6 +544,8 @@ model message_trigger_rule {
   jobsStale     Boolean  @default(false) @map("jobs_stale")
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  branch        branch?  @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  jobs          message_trigger_job[]
 
   @@index([branchId], map: "idx_message_trigger_rule_branch")
   @@index([branchId, isActive], map: "idx_message_trigger_rule_active")
@@ -550,6 +572,11 @@ model message_trigger_job {
   payload            Json      @default("{}")
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  branch             branch?  @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  rule               message_trigger_rule @relation(fields: [ruleId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  client             client?   @relation(fields: [clientId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  employeeSchedule   employee_schedule? @relation(fields: [employeeScheduleId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  logs               message_log[]
 
   @@index([branchId], map: "idx_message_trigger_job_branch")
   @@index([ruleId], map: "idx_message_trigger_job_rule_id")

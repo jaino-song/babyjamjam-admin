@@ -104,6 +104,7 @@ describe("MessageTriggerController (Integration)", () => {
         triggerJobId: overrides.triggerJobId ?? "job-1",
         receiver: overrides.receiver ?? "010-1234-5678",
         clientId: overrides.clientId ?? 101,
+        recipientPhone: overrides.recipientPhone ?? "010-1234-5678",
         messageBody: overrides.messageBody ?? "고객 등록 안내 메시지",
         variables: overrides.variables ?? { clientName: "김고객" },
         status: overrides.status ?? "sent",

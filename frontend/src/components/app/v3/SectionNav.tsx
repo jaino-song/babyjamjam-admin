@@ -15,11 +15,19 @@ interface SectionNavProps {
   activeId: string;
   onSelect: (id: string) => void;
   footer?: React.ReactNode;
+  ariaLabel?: string;
 }
 
-export function SectionNav({ items, activeId, onSelect, footer }: SectionNavProps) {
+export function SectionNav({
+  items,
+  activeId,
+  onSelect,
+  footer,
+  ariaLabel = "페이지 섹션",
+}: SectionNavProps) {
   return (
     <nav
+      aria-label={ariaLabel}
       data-component="section-nav"
       data-mode="desktop"
       className="w-full shrink-0 self-start animate-v3-slide-up lg:w-max"
@@ -36,9 +44,11 @@ export function SectionNav({ items, activeId, onSelect, footer }: SectionNavProp
             return (
               <button
                 key={item.id}
+                type="button"
+                aria-pressed={isActive}
                 onClick={() => !item.disabled && onSelect(item.id)}
                 disabled={item.disabled}
-                className={`flex items-center gap-[calc(12px*var(--v3-ui-scale,1))] whitespace-nowrap rounded-xl px-[calc(16px*var(--v3-ui-scale,1))] py-[calc(10px*var(--v3-ui-scale,1))] text-left text-[calc(14px*var(--v3-ui-scale,1))] font-medium transition-all duration-200 ${
+                className={`flex items-center gap-[calc(12px*var(--v3-ui-scale,1))] whitespace-nowrap rounded-xl px-[calc(16px*var(--v3-ui-scale,1))] py-[calc(10px*var(--v3-ui-scale,1))] text-left text-[calc(14px*var(--v3-ui-scale,1))] font-medium transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2 ${
                   item.disabled
                     ? "text-[hsl(var(--v3-text-muted))]/40 cursor-not-allowed"
                     : isActive
@@ -67,9 +77,11 @@ export function SectionNav({ items, activeId, onSelect, footer }: SectionNavProp
             return (
               <button
                 key={item.id}
+                type="button"
+                aria-pressed={isActive}
                 onClick={() => !item.disabled && onSelect(item.id)}
                 disabled={item.disabled}
-                className={`flex items-center gap-[calc(8px*var(--v3-ui-scale,1))] rounded-full px-[calc(16px*var(--v3-ui-scale,1))] py-[calc(8px*var(--v3-ui-scale,1))] text-[calc(14px*var(--v3-ui-scale,1))] font-medium whitespace-nowrap transition-all duration-200 ${
+                className={`flex items-center gap-[calc(8px*var(--v3-ui-scale,1))] rounded-full px-[calc(16px*var(--v3-ui-scale,1))] py-[calc(8px*var(--v3-ui-scale,1))] text-[calc(14px*var(--v3-ui-scale,1))] font-medium whitespace-nowrap transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2 ${
                   item.disabled
                     ? "text-[hsl(var(--v3-text-muted))]/40 cursor-not-allowed bg-[hsl(var(--v3-bg))]"
                     : isActive

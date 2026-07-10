@@ -14,7 +14,7 @@ describe("DetailPanel", () => {
     };
   });
 
-  it("renders semantic header, main, and footer regions", () => {
+  it("renders semantic header and footer without nesting a main landmark", () => {
     const { container } = render(
       <DetailPanel title="상세" footer={<button type="button">저장</button>}>
         본문
@@ -22,7 +22,8 @@ describe("DetailPanel", () => {
     );
 
     expect(container.querySelector('header[data-component="detail-panel-header"]')).toBeInTheDocument();
-    expect(container.querySelector('main[data-component="detail-panel-main"]')).toBeInTheDocument();
+    expect(container.querySelector('main[data-component="detail-panel-main"]')).not.toBeInTheDocument();
+    expect(container.querySelector('div[data-component="detail-panel-main"]')).toBeInTheDocument();
     expect(container.querySelector('footer[data-component="detail-panel-footer"]')).toBeInTheDocument();
   });
 
@@ -35,12 +36,55 @@ describe("DetailPanel", () => {
 
     expect(main).toBeInTheDocument();
     expect(main).toHaveClass("flex-col");
+    expect(main).toHaveClass("v3-ui-scale-scope");
     expect(scrollContent).toHaveClass("flex-1");
     expect(spacer).toBeInTheDocument();
     expect(spacer?.parentElement).toBe(main);
     expect(spacer?.previousElementSibling).toBe(scrollContent);
     expect(spacer).toHaveClass("shrink-0");
     expect(spacer).not.toHaveClass("absolute");
+  });
+
+  it("remounts and animates the main region when the main animation key changes", () => {
+    const { container, rerender } = render(
+      <DetailPanel title="상세" mainAnimationKey="step-1">
+        1단계
+      </DetailPanel>,
+    );
+    const firstMain = container.querySelector('[data-component="detail-panel-main"]');
+
+    expect(firstMain).toHaveClass("animate-v3-slide-up");
+
+    rerender(
+      <DetailPanel title="상세" mainAnimationKey="step-2">
+        2단계
+      </DetailPanel>,
+    );
+
+    const secondMain = container.querySelector('[data-component="detail-panel-main"]');
+    expect(secondMain).toHaveClass("animate-v3-slide-up");
+    expect(secondMain).not.toBe(firstMain);
+  });
+
+  it("does not remount or animate the main region in compact split layout", () => {
+    const goToList = jest.fn();
+    const renderCompactPanel = (animationKey: string, content: string) => (
+      <SplitLayoutContext.Provider value={{ goToList, isMobile: true }}>
+        <DetailPanel title="상세" mainAnimationKey={animationKey}>
+          {content}
+        </DetailPanel>
+      </SplitLayoutContext.Provider>
+    );
+    const { container, rerender } = render(renderCompactPanel("step-1", "1단계"));
+    const firstMain = container.querySelector('[data-component="detail-panel-main"]');
+
+    expect(firstMain).not.toHaveClass("animate-v3-slide-up");
+
+    rerender(renderCompactPanel("step-2", "2단계"));
+
+    const secondMain = container.querySelector('[data-component="detail-panel-main"]');
+    expect(secondMain).not.toHaveClass("animate-v3-slide-up");
+    expect(secondMain).toBe(firstMain);
   });
 
   it("renders emptyState through the root overlay layer", () => {
