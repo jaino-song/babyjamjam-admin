@@ -303,9 +303,14 @@ export class EformsignApiClient implements IEformsignClientRepository {
         }
 
         const data = await response.json();
+        // Live response shape: { template_id, document: { id, document_name, document_status } }.
+        const documentId = data.document?.id ?? data.document_id ?? data.id ?? "";
+        if (!documentId) {
+            throw new Error(`createDocument: no document id in response: ${JSON.stringify(data).slice(0, 300)}`);
+        }
         return {
-            documentId: data.document_id || data.id,
-            status: data.status || "created",
+            documentId,
+            status: data.document?.document_status || data.status || "created",
         };
     }
 

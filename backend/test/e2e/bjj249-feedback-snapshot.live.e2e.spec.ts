@@ -1,5 +1,6 @@
 import { Test } from "@nestjs/testing";
 import { ConfigModule } from "@nestjs/config";
+import { TenantModule } from "infrastructure/tenant/tenant.module";
 import { ServiceFeedbackModule } from "module/service-feedback.module";
 import { EformsignWebhookModule } from "module/eformsign-webhook.module";
 import { ServiceFeedbackService } from "application/services/service-feedback.service";
@@ -50,7 +51,9 @@ const d = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
         expect(process.env["E2E_VENDOR_STUBS"]).not.toBe("1"); // must run against real vendors
 
         moduleRef = await Test.createTestingModule({
-            imports: [ConfigModule.forRoot({ isGlobal: true }), ServiceFeedbackModule, EformsignWebhookModule],
+            // TenantModule is @Global in the real app — imported here so guards on
+            // transitively-imported controllers (SystemSettingModule etc.) resolve.
+            imports: [ConfigModule.forRoot({ isGlobal: true }), TenantModule, ServiceFeedbackModule, EformsignWebhookModule],
         }).compile();
 
         prisma = moduleRef.get(PrismaService, { strict: false });

@@ -98,25 +98,26 @@ export function buildFeedbackDocumentFields(input: {
         const value = asText(raw);
         if (value !== "") fields.push({ id, value });
     };
+    // Required-at-creation fields must be PRESENT in every request (creation 400s otherwise);
+    // an empty value passes the required check and renders blank — verified live.
+    const pushRequired = (id: string, raw: unknown) => {
+        fields.push({ id, value: asText(raw) });
+    };
     const pushCheck = (id: string, checked: boolean) => {
         fields.push({ id, value: checked ? CHECKBOX_CHECKED_VALUE : CHECKBOX_UNCHECKED_VALUE });
     };
 
-    // ── Header (once per document) ──
-    // 제공기관 이름 is required at creation; the rest are optional and omitted when empty.
-    pushText(FEEDBACK_HEADER_FIELD_IDS.orgName, orgName);
-    pushText(FEEDBACK_HEADER_FIELD_IDS.employeeName, employeeName);
-    if (header) {
-        pushText(FEEDBACK_HEADER_FIELD_IDS.momName, header.momName);
-        const momIso = yymmddToIso(header.momBirth);
-        if (momIso) fields.push({ id: FEEDBACK_HEADER_FIELD_IDS.momBirth, value: momIso });
-        pushText(FEEDBACK_HEADER_FIELD_IDS.babyName, header.babyName);
-        const babyIso = yymmddToIso(header.babyBirth);
-        if (babyIso) fields.push({ id: FEEDBACK_HEADER_FIELD_IDS.babyBirth, value: babyIso });
-        pushText(FEEDBACK_HEADER_FIELD_IDS.babyWeight, header.babyWeight);
-        if (header.deliveryType === "자연분만") pushCheck(FEEDBACK_HEADER_FIELD_IDS.deliveryNatural, true);
-        else if (header.deliveryType === "제왕절개") pushCheck(FEEDBACK_HEADER_FIELD_IDS.deliveryCSection, true);
-    }
+    // ── Header (once per document) — every header field is required at creation ──
+    pushRequired(FEEDBACK_HEADER_FIELD_IDS.orgName, orgName);
+    pushRequired(FEEDBACK_HEADER_FIELD_IDS.employeeName, employeeName);
+    pushRequired(FEEDBACK_HEADER_FIELD_IDS.momName, header?.momName);
+    pushRequired(FEEDBACK_HEADER_FIELD_IDS.momBirth, yymmddToIso(header?.momBirth));
+    pushRequired(FEEDBACK_HEADER_FIELD_IDS.babyName, header?.babyName);
+    pushRequired(FEEDBACK_HEADER_FIELD_IDS.babyBirth, yymmddToIso(header?.babyBirth));
+    pushRequired(FEEDBACK_HEADER_FIELD_IDS.babyWeight, header?.babyWeight);
+    // Both delivery-type marks are required — send the pair, checked per deliveryType.
+    pushCheck(FEEDBACK_HEADER_FIELD_IDS.deliveryNatural, header?.deliveryType === "자연분만");
+    pushCheck(FEEDBACK_HEADER_FIELD_IDS.deliveryCSection, header?.deliveryType === "제왕절개");
 
     // ── Session slots 1..5 ──
     for (let slot = 1; slot <= FEEDBACK_TEMPLATE_SESSIONS_PER_DOCUMENT; slot++) {
@@ -124,7 +125,9 @@ export function buildFeedbackDocumentFields(input: {
         const day = days[slot - 1];
 
         if (!day) {
-            // Unused slot: only the required creation marks, unchecked.
+            // Unused slot: required creation fields only — dates blank, marks unchecked.
+            pushRequired(ids.month, "");
+            pushRequired(ids.day, "");
             pushCheck(ids.paymentConfirmed, false);
             pushCheck(ids.momApproval, false);
             continue;

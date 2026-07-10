@@ -101,10 +101,10 @@ describe("buildFeedbackDocumentFields", () => {
         expect(map.get("신생아 출생일자")).toBe("2026-06-15");
         expect(map.get("신생아 몸무게")).toBe("3.2");
         expect(map.get("자연분만")).toBe(CHECKED);
-        expect(map.has("제왕절개")).toBe(false);
+        expect(map.get("제왕절개")).toBe(UNCHECKED);
     });
 
-    it("maps 제왕절개 and omits header fields that are empty", () => {
+    it("maps 제왕절개 and sends empty header fields (required at creation)", () => {
         const map = toMap(buildFeedbackDocumentFields({
             header: { momName: null, momBirth: null, babyName: null, babyBirth: null, deliveryType: "제왕절개", babyWeight: null },
             orgName: "기관",
@@ -112,16 +112,17 @@ describe("buildFeedbackDocumentFields", () => {
             days: [day()],
         }));
         expect(map.get("제왕절개")).toBe(CHECKED);
-        expect(map.has("자연분만")).toBe(false);
-        expect(map.has("산모 이름")).toBe(false);
-        expect(map.has("산모 생년월일")).toBe(false);
+        expect(map.get("자연분만")).toBe(UNCHECKED);
+        expect(map.get("산모 이름")).toBe("");
+        expect(map.get("산모 생년월일")).toBe("");
     });
 
-    it("works with a null header (제공기관/제공인력 still emitted)", () => {
+    it("works with a null header — required header fields sent blank, delivery marks unchecked", () => {
         const map = toMap(buildFeedbackDocumentFields({ header: null, orgName: "기관", employeeName: "인력", days: [day()] }));
         expect(map.get("제공기관 이름")).toBe("기관");
-        expect(map.has("산모 이름")).toBe(false);
-        expect(map.has("자연분만")).toBe(false);
+        expect(map.get("산모 이름")).toBe("");
+        expect(map.get("자연분만")).toBe(UNCHECKED);
+        expect(map.get("제왕절개")).toBe(UNCHECKED);
     });
 
     it("maps a fully-answered session onto slot-1 fields", () => {
@@ -231,8 +232,9 @@ describe("buildFeedbackDocumentFields", () => {
         for (const n of [3, 4, 5]) {
             expect(map.get(`결제 확인 ${n}`)).toBe(UNCHECKED);
             expect(map.get(`산모확인서명 ${n}`)).toBe(UNCHECKED);
-            expect(map.has(`월 ${n}`)).toBe(false); // no other fields for unused slots
-            expect(map.has(`식사 ${n}`)).toBe(false);
+            expect(map.get(`월 ${n}`)).toBe(""); // required date slots sent blank
+            expect(map.get(`일 ${n}`)).toBe("");
+            expect(map.has(`식사 ${n}`)).toBe(false); // non-required fields still omitted
         }
         // all 5 required-mark pairs present regardless of session count
         for (const n of [1, 2, 3, 4, 5]) {
