@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
+<title>제공기록지 · 산모 확인 페이지 목업</title>
+<style>
+  :root{--bg:#eef1f6;--card:#fff;--ink:#1c2430;--muted:#7c8798;--line:#e4e8ef;--primary:#3b6fe0;--soft:#f3f6fb;--ok:#2faa6b;--lock:#9aa6b6;--warn:#c9803a;--danger:#d64545;--shadow:0 10px 30px rgba(28,36,48,.12);}
+  *{box-sizing:border-box} html,body{margin:0;height:100%}
+  body{background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard",Roboto,"Segoe UI",sans-serif;color:var(--ink);display:flex;flex-direction:column;align-items:center;padding:18px 12px 40px}
+  .ribbon{width:100%;max-width:440px;background:#fff7ec;border:1px solid #f0dcc0;color:var(--warn);font-size:12px;border-radius:10px;padding:7px 12px;margin-bottom:12px;text-align:center}
+  .phone{width:100%;max-width:440px;background:var(--card);border-radius:26px;box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;min-height:760px}
+  .top{background:linear-gradient(135deg,#3b6fe0,#5a86ea);color:#fff;padding:16px 18px 14px}
+  .top h1{font-size:15px;margin:0;font-weight:700;letter-spacing:-.2px} .top .org{font-size:12px;opacity:.9;margin-top:3px}
+  .bar{height:5px;background:rgba(255,255,255,.28);border-radius:99px;margin-top:12px;overflow:hidden} .bar>i{display:block;height:100%;background:#fff;border-radius:99px;width:88%}
+  .crumbs{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--muted);padding:10px 18px 0} .crumbs b{color:var(--ink)}
+  .body{flex:1;padding:14px 18px 8px;overflow:auto}
+  .step-title{font-size:18px;font-weight:750;margin:6px 0 2px;letter-spacing:-.3px} .step-sub{font-size:12.5px;color:var(--muted);margin-bottom:14px}
+  .datechip{display:inline-block;font-size:12px;font-weight:700;background:#eaf1ff;color:#3b6fe0;border-radius:99px;padding:4px 12px;margin-bottom:10px}
+  .section-tag{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.4px;border-radius:6px;padding:3px 8px;margin:14px 0 8px}
+  .tag-mom{background:#fde9ef;color:#c2456e} .tag-baby{background:#e7f1ff;color:#3b6fe0} .tag-etc{background:#eef0f4;color:#6b7686} .tag-confirm{background:#e6f7ee;color:#1d8a55}
+  .handover{display:flex;gap:10px;align-items:flex-start;background:#e6f7ee;border:1px solid #bfe7cf;border-radius:12px;padding:12px 14px;margin-bottom:6px;font-size:13px;color:#1d8a55;font-weight:600}
+  .handover .ico{font-size:18px;line-height:1}
+  .ro-row{display:flex;justify-content:space-between;gap:12px;font-size:13px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#f9fbfe}
+  .ro-row span{color:var(--muted);flex:0 0 auto} .ro-row b{color:var(--ink);text-align:right;font-weight:700;word-break:keep-all}
+  .ro-row b .chk{color:var(--ok)} .ro-row b.none{color:#b6bfcc;font-weight:600}
+  .ro-note{font-size:13px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#f9fbfe}
+  .ro-note span{display:block;color:var(--muted);margin-bottom:4px} .ro-note b{font-weight:600;line-height:1.5}
+  .lockmsg{font-size:12px;color:var(--lock);text-align:center;padding:6px 18px 0}
+  .nav{display:flex;gap:10px;padding:12px 18px 18px;border-top:1px solid var(--line);background:#fff}
+  button{font-family:inherit;font-size:15px;font-weight:700;border-radius:12px;border:none;padding:14px 16px;cursor:pointer}
+  .btn-approve{background:var(--ok);color:#fff;flex:1.6} .btn-reject{background:#fdeeee;color:var(--danger);flex:1;border:1.5px solid #f3cccc}
+  .sheet{position:fixed;inset:0;background:rgba(28,36,48,.45);display:none;align-items:flex-end;justify-content:center;z-index:9}
+  .sheet.on{display:flex}
+  .sheet .card{width:100%;max-width:440px;background:#fff;border-radius:22px 22px 0 0;padding:20px 18px 24px}
+  .sheet h2{font-size:16px;margin:0 0 6px} .sheet p{font-size:12.5px;color:var(--muted);margin:0 0 12px;line-height:1.5}
+  .sheet textarea{width:100%;min-height:76px;border:1.5px solid var(--line);border-radius:12px;padding:12px 13px;font-size:14px;outline:none;resize:vertical}
+  .sheet .row{display:flex;gap:10px;margin-top:12px}
+  .btn-ghost{background:var(--soft);color:var(--ink);flex:1} .btn-danger{background:var(--danger);color:#fff;flex:1.4}
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:#1c2430;color:#fff;font-size:13px;border-radius:99px;padding:11px 20px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:10}
+  .toast.on{opacity:1}
+</style>
+</head>
+<body>
+  <div class="ribbon">🅿️ 목업 · <b>산모 확인</b> 페이지 — 회차 제출 직전, 제공인력 입력 내용을 산모가 확인 후 승인/거부 (기존 서명패드 대체)</div>
+  <div class="phone">
+    <div class="top"><h1>산모·신생아 건강관리 서비스 제공기록지</h1><div class="org">제공기관 인천 아이미래로 · 제공시간 평일 09시~18시</div><div class="bar"><i></i></div></div>
+    <div class="crumbs">제공 <b>3회차</b> · 산모 확인 (4/4)</div>
+    <div class="body">
+      <div class="datechip">📅 2026-07-09 · 3회차</div>
+      <span class="section-tag tag-confirm">산모 확인</span>
+      <div class="step-title">기록 내용 확인</div>
+      <div class="step-sub">제공인력이 작성한 오늘의 기록입니다. 내용을 확인하신 후 아래에서 <b>승인</b> 또는 <b>거부</b>를 선택해 주세요. 승인하시면 서명을 대신하는 확인 처리가 됩니다.</div>
+
+      <div class="handover"><span class="ico">🤱</span><span>제공인력님, 이 화면을 산모님께 전달해 주세요.</span></div>
+
+      <span class="section-tag tag-mom">산모 상태</span>
+      <div class="ro-row"><span>① 회음절개부위</span><b>이상없음</b></div>
+      <div class="ro-row"><span>② 유방상태</span><b>울혈, 통증</b></div>
+      <div class="ro-row"><span>③ 배뇨/배변</span><b>이상없음</b></div>
+      <div class="ro-row"><span>④ 좌욕</span><b>실시</b></div>
+      <div class="ro-row"><span>⑤ 식사/간식</span><b>식사 3회 · 간식 2회</b></div>
+
+      <span class="section-tag tag-baby">신생아 상태</span>
+      <div class="ro-row"><span>⑥ 체온</span><b>36.8℃</b></div>
+      <div class="ro-row"><span>⑦ 수면 양상</span><b>잘 잠</b></div>
+      <div class="ro-row"><span>⑧ 모유수유</span><b>5회</b></div>
+      <div class="ro-row"><span>⑨ 분유수유</span><b>2회 · 회당 60ml</b></div>
+      <div class="ro-row"><span>⑩ 배변양상</span><b>이상변 (녹색변)</b></div>
+      <div class="ro-row"><span>⑪ 목욕·제대관리</span><b>실시</b></div>
+
+      <span class="section-tag tag-etc">마무리</span>
+      <div class="ro-note"><span>기타 서비스</span><b>신생아 예방접종 일정 안내</b></div>
+      <div class="ro-note"><span>특이사항</span><b>산모 수면 부족 호소, 낮 휴식 권장. 신생아 배꼽 상태 양호.</b></div>
+      <div class="ro-row"><span>결제 확인</span><b><span class="chk">✓</span> 확인 완료</b></div>
+    </div>
+    <div class="lockmsg">승인하면 이 회차 기록이 제출·잠금되어 수정할 수 없습니다 · 거부하면 제공인력이 내용을 수정한 뒤 다시 확인을 요청합니다</div>
+    <div class="nav">
+      <button class="btn-reject" onclick="openReject()">거부</button>
+      <button class="btn-approve" onclick="approve()">확인했습니다 · 승인</button>
+    </div>
+  </div>
+
+  <div class="sheet" id="sheet">
+    <div class="card">
+      <h2>기록 내용 거부</h2>
+      <p>거부하시면 이 회차는 제출되지 않고, 제공인력이 내용을 수정한 뒤 다시 확인을 요청합니다. 수정이 필요한 부분을 알려주세요. <b>(선택)</b></p>
+      <textarea placeholder="예) 분유수유 횟수가 실제와 달라요"></textarea>
+      <div class="row">
+        <button class="btn-ghost" onclick="closeReject()">취소</button>
+        <button class="btn-danger" onclick="doReject()">거부하고 수정 요청</button>
+      </div>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+
+<script>
+const sheet=document.getElementById('sheet'),toast=document.getElementById('toast');
+function openReject(){sheet.classList.add('on');}
+function closeReject(){sheet.classList.remove('on');}
+function doReject(){closeReject();say('목업: 거부됨 → 마무리 페이지로 돌아가 제공인력이 수정합니다');}
+function approve(){say('목업: 승인됨 ✓ → 회차 제출·잠금, eformsign 문서의 "산모확인" 체크로 반영됩니다');}
+function say(t){toast.textContent=t;toast.classList.add('on');setTimeout(()=>toast.classList.remove('on'),2600);}
+</script>
+</body>
+</html>
