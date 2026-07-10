@@ -503,8 +503,8 @@ function formatFieldValue(
                 ? { value: "✓ 완료", tone: "green" }
                 : { value: "미확인", tone: "muted" };
         }
-        if (field.key === "hasMomSignature") {
-            return record.hasMomSignature
+        if (field.key === "hasMomApproval") {
+            return record.hasMomApproval
                 ? { value: "✓ 서명함", tone: "green" }
                 : { value: "서명 전", tone: "muted" };
         }

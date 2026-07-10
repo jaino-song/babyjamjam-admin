@@ -653,7 +653,7 @@ model service_record_day {
   etcService       String?           @map("etc_service")
   notes            String?
   paymentConfirmed Boolean           @default(false) @map("payment_confirmed")
-  momSignature     String?           @map("mom_signature")
+  momApproval      String?           @map("mom_approval")
   locked           Boolean           @default(false)
   submittedAt      DateTime?         @map("submitted_at") @db.Timestamptz(6)
   createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)

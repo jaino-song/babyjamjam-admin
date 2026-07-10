@@ -24,6 +24,7 @@ import {
     CreateDocumentResponse,
     EformsignApiDocumentResponse,
     EformsignApiListResponse,
+    EformsignReviewerMember,
     EformsignTokenResponse,
     IEformsignClientRepository,
 } from "domain/repositories/eformsign.client.interface";
@@ -337,7 +338,8 @@ function buildFallbackStubDocument(documentId: string): EformsignStubDocument {
 }
 
 function buildCreatedStubDocumentId(payload: CreateDocumentPayload): string {
-    const source = `${payload.templateId}:${payload.documentName}:${payload.recipient.sms}`;
+    const recipientKey = payload.recipient?.sms ?? payload.reviewer?.id ?? "";
+    const source = `${payload.templateId}:${payload.documentName}:${recipientKey}`;
     return `doc-stub-${Buffer.from(source).toString("hex").slice(0, 16)}`;
 }
 
@@ -455,6 +457,12 @@ export class E2eEformsignClientStub implements IEformsignClientRepository {
     createDocument(accessToken: string, payload: CreateDocumentPayload): Promise<CreateDocumentResponse> {
         void accessToken;
         return Promise.resolve(buildEformsignStubCreateDocumentResponse(payload));
+    }
+
+    getTemplateReviewer(accessToken: string, templateId: string): Promise<EformsignReviewerMember | null> {
+        void accessToken;
+        void templateId;
+        return Promise.resolve({ name: "E2E 검토자", id: "e2e-reviewer@example.com", phoneNumber: "01000000000" });
     }
 }
 

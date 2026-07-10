@@ -138,7 +138,7 @@ describe("ClientServiceRecords", () => {
                         etcService: "피부 트러블 없음",
                         notes: "산모 회복 양호",
                         paymentConfirmed: true,
-                        hasMomSignature: true,
+                        hasMomApproval: true,
                     },
                 ]),
             ],

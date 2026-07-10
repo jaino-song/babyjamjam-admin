@@ -3,12 +3,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 
+import {
+    SERVICE_RECORD_FORM_LAYOUT,
+    type ServiceRecordFieldDescriptor,
+    type ServiceRecordFormSection,
+} from "@babyjamjam/shared/constants/service-record-form-layout";
+
 import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
 import { isBusinessDayKr, nextBusinessDayKr } from "@/lib/date/business-days";
 
 /* ───────────────────────── form definition (mirrors the 제공기록지) ───────────────────────── */
 
-type ItemType = "multi" | "radio" | "counts" | "stool" | "textarea" | "confirm" | "sign";
+type ItemType = "multi" | "radio" | "counts" | "stool" | "textarea" | "confirm";
 interface DailyItem {
     key: string;
     label: string;
@@ -32,13 +38,30 @@ const DAILY_ITEMS: DailyItem[] = [
     { key: "etcService", label: "기타 서비스 (필요시 직접기재)", type: "textarea" },
     { key: "notes", label: "특이사항", type: "textarea" },
     { key: "paymentConfirmed", label: "결제 확인", type: "confirm" },
-    { key: "momSignature", label: "산모 확인서명", type: "sign" },
 ];
-const DAY_PAGES = [
+interface DayPage {
+    tag: "산모" | "신생아" | "마무리" | "산모 확인";
+    title: string;
+    sub: string;
+    items: number[];
+    confirmation?: boolean;
+}
+
+const DAY_PAGES: DayPage[] = [
     { tag: "산모", title: "산모 기록", sub: "① ~ ⑤", items: [0, 1, 2, 3, 4] },
     { tag: "신생아", title: "신생아 기록", sub: "⑥ ~ ⑪", items: [5, 6, 7, 8, 9, 10] },
-    { tag: "마무리", title: "마무리 · 확인", sub: "기타 · 특이사항 · 결제 확인 · 산모 확인서명", items: [11, 12, 13, 14] },
+    { tag: "마무리", title: "마무리 · 확인", sub: "기타 · 특이사항 · 결제 확인", items: [11, 12, 13] },
+    {
+        tag: "산모 확인",
+        title: "기록 내용 확인",
+        sub: "제공인력이 작성한 오늘의 기록입니다. 내용을 확인하신 후 아래에서 승인 또는 거부를 선택해 주세요.",
+        items: [],
+        confirmation: true,
+    },
 ];
+
+const MOM_APPROVAL_APPROVED = "approved";
+const REVIEW_EMPTY_LABEL = "입력 없음";
 
 /* ───────────────────────── types from the backend ───────────────────────── */
 
@@ -50,7 +73,7 @@ interface SessionRow {
     etcService?: string | null;
     notes?: string | null;
     paymentConfirmed?: boolean;
-    momSignature?: string | null;
+    momApproval?: string | null;
 }
 interface FeedbackContext {
     org: { name: string; hours: string };
@@ -85,6 +108,78 @@ const monthDayKo = (iso: string) => {
     const [, month = "", day = ""] = iso.match(/^\d{4}-(\d{2})-(\d{2})$/) ?? [];
     return `${Number(month)}월 ${Number(day)}일`;
 };
+const hasDisplayValue = (value: unknown): boolean => {
+    if (value === null || value === undefined) return false;
+    if (Array.isArray(value)) return value.some(hasDisplayValue);
+    if (typeof value === "string") return value.trim().length > 0;
+    return true;
+};
+const REVIEW_SECTIONS = SERVICE_RECORD_FORM_LAYOUT.map((section) => ({
+    ...section,
+    fields: section.id === "finish"
+        ? section.fields.filter((field) => field.key !== "hasMomApproval")
+        : section.fields,
+}));
+
+function dayPageTagClass(tag: DayPage["tag"]) {
+    if (tag === "산모") return "mom";
+    if (tag === "신생아") return "baby";
+    if (tag === "산모 확인") return "confirm";
+    return "etc";
+}
+
+function sectionToneClass(tone: ServiceRecordFormSection["tone"]) {
+    if (tone === "mom") return "mom";
+    if (tone === "baby") return "baby";
+    return "etc";
+}
+
+function formatReviewFieldValue(
+    field: ServiceRecordFieldDescriptor,
+    draft: Record<string, unknown>,
+): { value: string; ok?: boolean } {
+    if (field.source === "session") {
+        if (field.key === "paymentConfirmed") {
+            return Boolean(draft[field.key]) ? { value: "✓ 확인 완료", ok: true } : { value: "" };
+        }
+        const value = draft[field.key];
+        return { value: hasDisplayValue(value) ? String(value).trim() : "" };
+    }
+
+    if (field.kind === "multi") {
+        const value = draft[field.key];
+        const values = Array.isArray(value) ? value.filter(hasDisplayValue).map((item) => String(item).trim()) : [];
+        return { value: values.join(", ") };
+    }
+
+    if (field.kind === "radio") {
+        const value = hasDisplayValue(draft[field.key]) ? String(draft[field.key]).trim() : "";
+        const colorValue = field.key === "stool" && hasDisplayValue(draft.stool_color)
+            ? String(draft.stool_color).trim()
+            : "";
+        if (value && colorValue) return { value: `${value} (${colorValue})` };
+        return { value };
+    }
+
+    if (field.kind === "counts") {
+        const parts = (field.subKeys ?? [])
+            .map((subKey) => {
+                const value = draft[subKey.key];
+                if (!hasDisplayValue(value)) return null;
+                const prefix = subKey.label === "횟수" || subKey.label === "체온" ? "" : `${subKey.label} `;
+                return `${prefix}${String(value).trim()}${subKey.unit}`;
+            })
+            .filter((part): part is string => Boolean(part));
+        return { value: parts.join(" · ") };
+    }
+
+    if (field.kind === "check") {
+        return Boolean(draft[field.key]) ? { value: "✓ 확인 완료", ok: true } : { value: "" };
+    }
+
+    const value = draft[field.key];
+    return { value: hasDisplayValue(value) ? String(value).trim() : "" };
+}
 
 type Screen = "loading" | "invalid" | "phone" | "service" | "overview" | "day" | "done";
 
@@ -105,6 +200,10 @@ export default function FeedbackPage() {
     const [scheduleChangePreview, setScheduleChangePreview] = useState<ScheduleChangePreview | null>(null);
     const [scheduleChangeModalOpen, setScheduleChangeModalOpen] = useState(false);
     const [scheduleChangeBusy, setScheduleChangeBusy] = useState(false);
+    const [rejectionRequests, setRejectionRequests] = useState<Record<number, string>>({});
+    const [dismissedRejectionDays, setDismissedRejectionDays] = useState<Set<number>>(() => new Set());
+    const [rejectSheetOpen, setRejectSheetOpen] = useState(false);
+    const [rejectNoteDraft, setRejectNoteDraft] = useState("");
 
     const api = useCallback(
         async (path: string, init: RequestInit = {}) => {
@@ -216,7 +315,7 @@ export default function FeedbackPage() {
                 etcService: (draft["etcService"] as string) ?? undefined,
                 notes: (draft["notes"] as string) ?? undefined,
                 paymentConfirmed: Boolean(draft["paymentConfirmed"]),
-                momSignature: (draft["momSignature"] as string) ?? undefined,
+                momApproval: MOM_APPROVAL_APPROVED,
             };
             const res = await api(`/sessions/${day}/submit`, { method: "POST", body: JSON.stringify(body) });
             if (!res.ok) {
@@ -225,8 +324,51 @@ export default function FeedbackPage() {
                 return;
             }
             await loadContext();
+            setRejectionRequests((requests) => {
+                if (!Object.prototype.hasOwnProperty.call(requests, day)) return requests;
+                const next = { ...requests };
+                delete next[day];
+                return next;
+            });
+            setDismissedRejectionDays((days) => {
+                if (!days.has(day)) return days;
+                const next = new Set(days);
+                next.delete(day);
+                return next;
+            });
             setScreen("overview");
         } finally { setBusy(false); }
+    }
+
+    function openRejectSheet() {
+        setRejectNoteDraft(rejectionRequests[day] ?? "");
+        setRejectSheetOpen(true);
+    }
+
+    function closeRejectSheet() {
+        setRejectSheetOpen(false);
+    }
+
+    function submitRejectionRequest() {
+        const note = rejectNoteDraft.trim();
+        setRejectionRequests((requests) => ({ ...requests, [day]: note }));
+        setDismissedRejectionDays((days) => {
+            if (!days.has(day)) return days;
+            const next = new Set(days);
+            next.delete(day);
+            return next;
+        });
+        setRejectSheetOpen(false);
+        setRejectNoteDraft("");
+        setPageIdx(0);
+    }
+
+    function dismissRejectionNotice() {
+        setDismissedRejectionDays((days) => {
+            const next = new Set(days);
+            next.add(day);
+            return next;
+        });
     }
 
     async function finalize() {
@@ -234,7 +376,7 @@ export default function FeedbackPage() {
         try {
             const res = await api("/finalize", { method: "POST" });
             if (res.ok) setScreen("done");
-            else alert("서명 요청 전송에 실패했습니다.");
+            else alert("제출 처리에 실패했습니다.");
         } finally { setBusy(false); }
     }
 
@@ -343,13 +485,15 @@ export default function FeedbackPage() {
                 </div>
             );
         }
-        // sign
-        return (
-            <div data-component="feedback-signature" className="sign" onClick={() => setField(it.key, v ? "" : "signed")}>
-                {v ? "✍️ 서명 완료 (탭하여 지움)" : "✍️ 산모 확인서명 (산모님께 화면 전달 · 탭하여 서명)"}
-            </div>
-        );
+        return null;
     }
+
+    const currentDayPage = DAY_PAGES[pageIdx] ?? DAY_PAGES[0];
+    const isMomConfirmationPage = Boolean(currentDayPage.confirmation);
+    const currentServiceDate = ((draft["_date"] as string | undefined) || defaultDate(day));
+    const hasRejectionRequest = Object.prototype.hasOwnProperty.call(rejectionRequests, day);
+    const showRejectionNotice = hasRejectionRequest && !dismissedRejectionDays.has(day) && !isMomConfirmationPage;
+    const rejectionNoticeText = (rejectionRequests[day] ?? "").trim() || "내용을 다시 확인해 주세요.";
 
     return (
         <div data-component="feedback-wizard" className="efb">
@@ -425,7 +569,7 @@ export default function FeedbackPage() {
                             })}
                         </div>
                         {lockedDays.size === ctx.totalSessions ? (
-                            <button className="btn submit" disabled={busy} onClick={finalize}>{busy ? "전송 중…" : "서비스 종료 · 서명 요청 보내기"}</button>
+                            <button className="btn submit" disabled={busy} onClick={finalize}>{busy ? "전송 중…" : "서비스 종료 · 기록지 제출"}</button>
                         ) : (
                             <>
                                 <button className="btn primary" onClick={() => openDay(nextOpenDay())}>{lockedDays.size ? "다음 회차 입력" : "기록 시작"}</button>
@@ -443,35 +587,65 @@ export default function FeedbackPage() {
 
                 {screen === "day" && (
                     <>
-                        <div data-component="feedback-date-chip" className="datechip">📅 제공일자
-                            <input type="date" className="dateinput" value={(draft["_date"] as string) ?? defaultDate(day)} min={day <= 1 ? (ctx?.startDate?.slice(0, 10) ?? undefined) : defaultDate(day)} onChange={(e) => setField("_date", e.target.value)} />
+                        <div data-component="feedback-day-crumb" className="crumb">
+                            제공 <b>{day}회차</b> · {currentDayPage.tag} ({pageIdx + 1}/{DAY_PAGES.length})
+                        </div>
+                        <div data-component="feedback-date-chip" className="datechip">📅 {isMomConfirmationPage ? currentServiceDate : "제공일자"}
+                            {isMomConfirmationPage ? null : (
+                                <input type="date" className="dateinput" value={currentServiceDate} min={day <= 1 ? (ctx?.startDate?.slice(0, 10) ?? undefined) : defaultDate(day)} onChange={(e) => setField("_date", e.target.value)} />
+                            )}
                             · {day}회차
                         </div>
-                        <div data-component="feedback-section-tag" className={`tag ${DAY_PAGES[pageIdx].tag === "산모" ? "mom" : DAY_PAGES[pageIdx].tag === "신생아" ? "baby" : "etc"}`}>{DAY_PAGES[pageIdx].tag}</div>
-                        <div data-component="feedback-day-title" className="step-title">{DAY_PAGES[pageIdx].title}</div>
-                        <p className="muted">{DAY_PAGES[pageIdx].sub}</p>
-                        {DAY_PAGES[pageIdx].items.map((idx) => (
-                            <div data-component="feedback-day-field" className="fld" key={DAILY_ITEMS[idx].key}>
-                                <label className="lab">{DAILY_ITEMS[idx].label}</label>
-                                {renderField(DAILY_ITEMS[idx])}
+                        {showRejectionNotice && (
+                            <div data-component="feedback-rejection-notice" className="notice">
+                                <span>산모 수정 요청: {rejectionNoticeText}</span>
+                                <button type="button" onClick={dismissRejectionNotice}>닫기</button>
                             </div>
-                        ))}
+                        )}
+                        <div data-component="feedback-section-tag" className={`tag ${dayPageTagClass(currentDayPage.tag)}`}>{currentDayPage.tag}</div>
+                        <div data-component="feedback-day-title" className="step-title">{currentDayPage.title}</div>
+                        <p className="muted">{currentDayPage.sub}</p>
+                        {isMomConfirmationPage ? (
+                            <>
+                                <div data-component="feedback-handover-banner" className="handover">
+                                    <span aria-hidden="true">🤱</span>
+                                    <b>제공인력님, 이 화면을 산모님께 전달해 주세요.</b>
+                                </div>
+                                <MomConfirmationReview draft={draft} />
+                                <p className="lock">승인하면 이 회차 기록이 제출·잠금되어 수정할 수 없습니다 · 거부하면 제공인력이 내용을 수정한 뒤 다시 확인을 요청합니다</p>
+                            </>
+                        ) : (
+                            <>
+                                {currentDayPage.items.map((idx) => {
+                                    const item = DAILY_ITEMS[idx];
+                                    if (!item) return null;
+                                    return (
+                                        <div data-component="feedback-day-field" className="fld" key={item.key}>
+                                            <label className="lab">{item.label}</label>
+                                            {renderField(item)}
+                                        </div>
+                                    );
+                                })}
+                            </>
+                        )}
                         <div data-component="feedback-nav" className="nav">
                             <button className="btn ghost" onClick={() => (pageIdx > 0 ? setPageIdx(pageIdx - 1) : setScreen("overview"))}>이전</button>
-                            {pageIdx < DAY_PAGES.length - 1 ? (
-                                <button className="btn primary" onClick={() => setPageIdx(pageIdx + 1)}>다음</button>
+                            {isMomConfirmationPage ? (
+                                <>
+                                    <button className="btn reject" type="button" onClick={openRejectSheet}>거부</button>
+                                    <button className="btn submit" disabled={busy} onClick={submitDay}>{busy ? "제출 중…" : "확인했습니다 · 승인"}</button>
+                                </>
                             ) : (
-                                <button className="btn submit" disabled={busy} onClick={submitDay}>{busy ? "제출 중…" : "제출 · 잠금"}</button>
+                                <button className="btn primary" onClick={() => setPageIdx(pageIdx + 1)}>다음</button>
                             )}
                         </div>
-                        {pageIdx === DAY_PAGES.length - 1 && <p className="lock">제출하면 이 회차 기록은 잠기며 수정할 수 없습니다.</p>}
                     </>
                 )}
 
                 {screen === "done" && (
                     <div data-component="feedback-done-center" className="center">
                         <div data-component="feedback-done-title" className="step-title">제공기록지 작성 완료 ✅</div>
-                        <p className="muted">전체 기록이 하나의 문서로 만들어져 서명 요청 문자가 발송되었습니다. 문자의 링크에서 서명해 주세요.</p>
+                        <p className="muted">전체 기록이 제공기록지 문서로 만들어져 제공기관 확인 단계로 전송되었습니다. 별도로 하실 일은 없습니다.</p>
                     </div>
                 )}
             </div>
@@ -490,6 +664,71 @@ export default function FeedbackPage() {
                 onCancel={closeScheduleChangeModal}
                 onConfirm={submitScheduleChangeRequest}
             />
+            {rejectSheetOpen && (
+                <div data-component="feedback-rejection-sheet" className="sheet" role="dialog" aria-modal="true" aria-labelledby="feedback-rejection-title">
+                    <div data-component="feedback-rejection-sheet-card" className="sheet-card">
+                        <h2 id="feedback-rejection-title">기록 내용 거부</h2>
+                        <p>
+                            거부하시면 이 회차는 제출되지 않고, 제공인력이 내용을 수정한 뒤 다시 확인을 요청합니다.
+                            수정이 필요한 부분을 알려주세요. <b>(선택)</b>
+                        </p>
+                        <textarea
+                            className="ta"
+                            placeholder="예) 분유수유 횟수가 실제와 달라요"
+                            value={rejectNoteDraft}
+                            onChange={(event) => setRejectNoteDraft(event.target.value)}
+                        />
+                        <div data-component="feedback-rejection-sheet-actions" className="sheet-actions">
+                            <button className="btn ghost" type="button" onClick={closeRejectSheet}>취소</button>
+                            <button className="btn danger" type="button" onClick={submitRejectionRequest}>거부하고 수정 요청</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function MomConfirmationReview({ draft }: { draft: Record<string, unknown> }) {
+    return (
+        <div data-component="feedback-mom-confirmation-review" className="review">
+            {REVIEW_SECTIONS.map((section) => (
+                <section data-component="feedback-review-section" className="review-section" key={section.id}>
+                    <span className={`tag ${sectionToneClass(section.tone)}`}>{section.title}</span>
+                    {section.fields.map((field) => (
+                        <ReviewFieldRow key={field.key} field={field} draft={draft} />
+                    ))}
+                </section>
+            ))}
+        </div>
+    );
+}
+
+function ReviewFieldRow({
+    field,
+    draft,
+}: {
+    field: ServiceRecordFieldDescriptor;
+    draft: Record<string, unknown>;
+}) {
+    const display = formatReviewFieldValue(field, draft);
+    const isText = field.kind === "text";
+    const valueClassName = display.value ? (display.ok ? "ok" : "") : "empty";
+    const value = display.value || REVIEW_EMPTY_LABEL;
+
+    if (isText) {
+        return (
+            <div data-component="feedback-review-note" className="review-note">
+                <span>{field.label}</span>
+                <b className={valueClassName}>{value}</b>
+            </div>
+        );
+    }
+
+    return (
+        <div data-component="feedback-review-row" className="review-row">
+            <span>{field.label}</span>
+            <b className={valueClassName}>{value}</b>
         </div>
     );
 }
@@ -497,7 +736,7 @@ export default function FeedbackPage() {
 function Styles() {
     return (
         <style>{`
-.efb{--ink:#1c2430;--muted:#7c8798;--line:#e4e8ef;--primary:#3b6fe0;--soft:#f3f6fb;--ok:#2faa6b;max-width:480px;margin:0 auto;min-height:100vh;background:#fff;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard",Roboto,sans-serif;color:var(--ink);display:flex;flex-direction:column}
+	.efb{--ink:#1c2430;--muted:#7c8798;--line:#e4e8ef;--primary:#3b6fe0;--soft:#f3f6fb;--ok:#2faa6b;--danger:#d64545;--warn:#c9803a;max-width:480px;margin:0 auto;min-height:100vh;background:#fff;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard",Roboto,sans-serif;color:var(--ink);display:flex;flex-direction:column}
 .efb .top{background:linear-gradient(135deg,#3b6fe0,#5a86ea);color:#fff;padding:18px 18px 16px}
 .efb .top h1{font-size:16px;margin:0;font-weight:700}
 .efb .top .org{font-size:12px;opacity:.9;margin-top:4px}
@@ -519,15 +758,27 @@ function Styles() {
 .efb .opt.radio .box{border-radius:50%}
 .efb .opt.sel{border-color:var(--primary);background:#f1f6ff}
 .efb .opt.sel .box{background:var(--primary);border-color:var(--primary)}
-.efb .segnum{display:flex;align-items:center;gap:8px;border:1.5px solid var(--line);border-radius:12px;padding:8px 12px;margin-bottom:8px}
-.efb .segnum span{font-size:14px;color:var(--muted);white-space:nowrap}
-.efb .segnum input{flex:1;border:none;text-align:right;font-size:15px;outline:none}
-.efb .sign{height:120px;border:1.5px dashed #c4cdda;border-radius:12px;display:grid;place-items:center;color:var(--muted);font-size:13px;text-align:center;cursor:pointer;padding:0 12px}
-.efb .datechip{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;font-weight:700;background:#eaf1ff;color:#3b6fe0;border-radius:10px;padding:8px 12px;margin-bottom:10px}
-.efb .dateinput{border:1px solid #cfe0ff;border-radius:8px;padding:4px 8px;font-size:13px}
-.efb .tag{display:inline-block;font-size:11px;font-weight:800;border-radius:6px;padding:3px 8px;margin-bottom:8px}
-.efb .tag.mom{background:#fde9ef;color:#c2456e}.efb .tag.baby{background:#e7f1ff;color:#3b6fe0}.efb .tag.etc{background:#eef0f4;color:#6b7686}
-.efb .days{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:8px 0 16px}
+	.efb .segnum{display:flex;align-items:center;gap:8px;border:1.5px solid var(--line);border-radius:12px;padding:8px 12px;margin-bottom:8px}
+	.efb .segnum span{font-size:14px;color:var(--muted);white-space:nowrap}
+	.efb .segnum input{flex:1;border:none;text-align:right;font-size:15px;outline:none}
+	.efb .crumb{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--muted);margin-bottom:10px}
+	.efb .crumb b{color:var(--ink)}
+	.efb .datechip{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;font-weight:700;background:#eaf1ff;color:#3b6fe0;border-radius:10px;padding:8px 12px;margin-bottom:10px}
+	.efb .dateinput{border:1px solid #cfe0ff;border-radius:8px;padding:4px 8px;font-size:13px}
+	.efb .tag{display:inline-block;font-size:11px;font-weight:800;border-radius:6px;padding:3px 8px;margin-bottom:8px}
+	.efb .tag.mom{background:#fde9ef;color:#c2456e}.efb .tag.baby{background:#e7f1ff;color:#3b6fe0}.efb .tag.etc{background:#eef0f4;color:#6b7686}.efb .tag.confirm{background:#e6f7ee;color:#1d8a55}
+	.efb .notice{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;background:#fff7ec;border:1px solid #f0dcc0;color:var(--warn);font-size:12.5px;border-radius:10px;padding:10px 12px;margin-bottom:12px}
+	.efb .notice button{border:0;background:transparent;color:var(--warn);font:inherit;font-weight:800;cursor:pointer;padding:0;white-space:nowrap}
+	.efb .handover{display:flex;gap:10px;align-items:flex-start;background:#e6f7ee;border:1px solid #bfe7cf;border-radius:12px;padding:12px 14px;margin-bottom:10px;font-size:13px;color:#1d8a55}
+	.efb .handover span{font-size:18px;line-height:1}
+	.efb .review-section{margin-top:14px}
+	.efb .review-row{display:flex;justify-content:space-between;gap:12px;font-size:13px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#f9fbfe}
+	.efb .review-row span{color:var(--muted);flex:0 0 auto}.efb .review-row b{color:var(--ink);text-align:right;font-weight:700;word-break:keep-all}
+	.efb .review-note{font-size:13px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#f9fbfe}
+	.efb .review-note span{display:block;color:var(--muted);margin-bottom:4px}.efb .review-note b{font-weight:600;line-height:1.5}
+	.efb .review-row b.empty,.efb .review-note b.empty{color:#b6bfcc;font-weight:600}
+	.efb .review-row b.ok,.efb .review-note b.ok{color:var(--ok)}
+	.efb .days{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:8px 0 16px}
 .efb .day{border:1.5px solid var(--line);border-radius:14px;padding:14px 6px;text-align:center;background:#fff;cursor:pointer;color:var(--ink)}
 .efb .day .d{font-size:11px;color:var(--muted)}.efb .day .n{font-size:20px;font-weight:800;margin-top:2px}.efb .day .st{font-size:11px;margin-top:6px;color:var(--muted)}
 .efb .day.done{background:#f0faf4;border-color:#bfe7cf}.efb .day.done .st{color:var(--ok);font-weight:700}
@@ -536,12 +787,20 @@ function Styles() {
 .efb .nav{display:flex;gap:10px;margin-top:18px}
 .efb .btn{font-family:inherit;font-size:15px;font-weight:700;border-radius:12px;border:none;padding:14px 16px;cursor:pointer;width:100%;margin-top:16px}
 .efb .nav .btn{margin-top:0}
-.efb .btn.primary{background:var(--primary);color:#fff;flex:1}
-.efb .btn.ghost{background:var(--soft);color:var(--ink);flex:0 0 92px;width:auto}
-.efb .btn.ghost.schedule-change{width:100%;flex:1;margin-top:10px}
-.efb .btn.submit{background:var(--ok);color:#fff;flex:1}
-.efb .btn:disabled{opacity:.6}
-.efb .lock{font-size:12px;color:#9aa6b6;text-align:center;margin-top:10px}
-`}</style>
+	.efb .btn.primary{background:var(--primary);color:#fff;flex:1}
+	.efb .btn.ghost{background:var(--soft);color:var(--ink);flex:0 0 92px;width:auto}
+	.efb .btn.ghost.schedule-change{width:100%;flex:1;margin-top:10px}
+	.efb .btn.submit{background:var(--ok);color:#fff;flex:1}
+	.efb .btn.reject{background:#fdeeee;color:var(--danger);border:1.5px solid #f3cccc;flex:1}
+	.efb .btn.danger{background:var(--danger);color:#fff;flex:1.4}
+	.efb .btn:disabled{opacity:.6}
+	.efb .lock{font-size:12px;color:#9aa6b6;text-align:center;margin-top:10px}
+	.efb .sheet{position:fixed;inset:0;background:rgba(28,36,48,.45);display:flex;align-items:flex-end;justify-content:center;z-index:50}
+	.efb .sheet-card{width:100%;max-width:480px;background:#fff;border-radius:22px 22px 0 0;padding:20px 18px 24px}
+	.efb .sheet-card h2{font-size:16px;margin:0 0 6px}.efb .sheet-card p{font-size:12.5px;color:var(--muted);margin:0 0 12px;line-height:1.5}
+	.efb .sheet-card .ta{min-height:76px}
+	.efb .sheet-actions{display:flex;gap:10px;margin-top:12px}
+	.efb .sheet-actions .btn{margin-top:0}.efb .sheet-actions .btn.ghost{flex:1;width:100%}
+	`}</style>
     );
 }

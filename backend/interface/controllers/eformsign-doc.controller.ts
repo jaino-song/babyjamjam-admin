@@ -39,6 +39,17 @@ export class EformsignDocController {
     ) {}
 
     /**
+     * GET /eformsign-docs/feedback-template-id
+     * Exposes the 제공기록지 template id so the UI can split feedback documents
+     * from contract documents by template — never by (renamable) template name.
+     */
+    @Get("feedback-template-id")
+    getFeedbackTemplateId(): { templateId: string | null } {
+        const templateId = this.configService.get<string>("EFORMSIGN_FEEDBACK_TEMPLATE_ID")?.trim();
+        return { templateId: templateId || null };
+    }
+
+    /**
      * GET /eformsign-docs/events
      * Server-Sent Events stream of doc-list mutations for the current branch.
      * Emits a `docs-changed` event after each webhook completes; sends a `ping`

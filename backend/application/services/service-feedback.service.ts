@@ -140,7 +140,7 @@ export class ServiceFeedbackService {
             etcService: dto.etcService ?? null,
             notes: dto.notes ?? null,
             paymentConfirmed: dto.paymentConfirmed ?? false,
-            momSignature: dto.momSignature ?? null,
+            momApproval: dto.momApproval ?? null,
             locked: lock,
             submittedAt: lock ? new Date() : null,
         };

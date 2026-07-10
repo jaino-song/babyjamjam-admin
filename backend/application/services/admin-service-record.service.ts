@@ -216,7 +216,7 @@ export class AdminServiceRecordService {
             etcService: session.etcService,
             notes: session.notes,
             paymentConfirmed: session.paymentConfirmed,
-            hasMomSignature: Boolean(session.momSignature),
+            hasMomApproval: Boolean(session.momApproval),
         };
     }
 

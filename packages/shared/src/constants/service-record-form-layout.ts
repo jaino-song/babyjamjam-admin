@@ -125,7 +125,7 @@ export const SERVICE_RECORD_FORM_LAYOUT: ServiceRecordFormSection[] = [
             { key: "etcService", label: "기타 서비스", kind: "text", source: "session" },
             { key: "notes", label: "특이사항", kind: "text", source: "session" },
             { key: "paymentConfirmed", label: "결제 확인", kind: "check", source: "session" },
-            { key: "hasMomSignature", label: "산모 확인서명", kind: "check", source: "session" },
+            { key: "hasMomApproval", label: "산모 확인", kind: "check", source: "session" },
         ],
     },
 ];
