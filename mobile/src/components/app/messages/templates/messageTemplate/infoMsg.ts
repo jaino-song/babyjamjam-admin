@@ -1,0 +1,28 @@
+/**
+ * @deprecated Use SystemTemplate from database instead.
+ * This file is kept as fallback only.
+ * See: /system-templates API and useSystemTemplate hook
+ * 
+ * To edit this template, go to: /messages/system-templates
+ */
+
+export const infoMsgTemplate = (): string => 
+`[사회서비스 제공자 품질평가 A등급]
+안녕하세요, 인천 아이미래로 입니다 :)
+        
+서비스 진행 전 산모님과 아기의 정보를 파악하여 만족스런 서비스를 제공해드릴 수 있도록 하고 있습니다.
+
+아래의 내용들은 서비스 진행에 필요하오니 작성을 부탁드립니다. 질문에 해당사항이 없는 것은 작성하지 않으셔도 됩니다.
+        
+*산모님 성함 :
+*산모님 생년월일 :
+*산모님 주소 :
+*산모님 연락처 :
+*조리원 여부 :
+*출산일 :
+*자연분만/제왕절개 :
+*초산/경산 :
+*남아/여아 :
+*모유수유/분유수유/혼합수유 :
+        
+아기의 건강과 엄마의 안정을 위해 최선을 다하겠습니다. 감사합니다.`;

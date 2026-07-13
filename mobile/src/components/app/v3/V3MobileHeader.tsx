@@ -1,0 +1,37 @@
+"use client";
+
+import { usePathname } from "next/navigation";
+import { isLayoutExcluded } from "@/lib/constants/v3-layout";
+import { NotificationBell } from "@/components/app/notifications/NotificationBell";
+import { useInitialUser } from "@/providers/UserProvider";
+import "@/components/app/mobile-redesign/redesign.css";
+
+const DEFAULT_USER_LABEL = "사용자";
+const DEFAULT_BRANCH_LABEL = "지점 미선택";
+
+export function V3MobileHeader() {
+  const pathname = usePathname();
+  const user = useInitialUser();
+
+  if (!pathname || isLayoutExcluded(pathname)) return null;
+
+  const userLabel = user?.name ? `${user.name} 님` : DEFAULT_USER_LABEL;
+  const branchLabel = user?.branchName ?? DEFAULT_BRANCH_LABEL;
+
+  return (
+    <header
+      data-component="mobile-header"
+      className="existing-navbar fixed top-0 left-1/2 z-40 w-full max-w-[430px] -translate-x-1/2"
+    >
+      <div className="navbar-identity" data-component="mobile-header-identity">
+        <div className="navbar-text" data-component="mobile-header-text">
+          <span className="navbar-user">{userLabel}</span>
+          <span className="navbar-branch">{branchLabel}</span>
+        </div>
+      </div>
+      <div className="navbar-icons" data-component="mobile-header-icons">
+        <NotificationBell className="!h-[38px] !w-[38px] !rounded-xl bg-transparent hover:bg-transparent hover:scale-100 active:scale-100 text-v3-text" />
+      </div>
+    </header>
+  );
+}

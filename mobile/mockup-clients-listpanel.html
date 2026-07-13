@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clients ListPanel Mockup</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f7; padding: 24px; }
+
+  .list-panel {
+    background: #fff;
+    border-radius: 28px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    max-width: 400px;
+    overflow: hidden;
+  }
+
+  /* Header row */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 24px 24px 0;
+  }
+  .header h2 {
+    font-size: 1.1rem;
+    font-weight: 800;
+    color: #1a1a2e;
+  }
+
+  /* Inline search */
+  .inline-search {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .search-icon {
+    width: 32px; height: 32px;
+    border-radius: 10px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+  }
+  .search-icon:hover { background: #f0f0f5; }
+  .search-icon svg { width: 18px; height: 18px; color: #8b8fa3; }
+  .search-input {
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 0.85rem;
+    width: 0;
+    transition: width 0.25s ease;
+    color: #1a1a2e;
+    caret-color: #4a6cf7;
+  }
+  .search-input::placeholder { color: #c0c4d6; }
+  .inline-search.expanded .search-input {
+    width: 120px;
+  }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    padding: 16px 24px 0;
+  }
+  .tab {
+    font-size: 0.8rem;
+    padding: 0 12px 8px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: #8b8fa3;
+    transition: color 0.2s;
+    position: relative;
+  }
+  .tab:hover { color: #1a1a2e; }
+  .tab.active {
+    color: #4a6cf7;
+    font-weight: 600;
+  }
+  .tab.active::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 12px; right: 12px;
+    height: 2px;
+    background: #4a6cf7;
+    border-radius: 1px;
+  }
+
+  /* List content */
+  .list-content {
+    padding: 24px;
+    max-height: 400px;
+    overflow-y: auto;
+  }
+  .list-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border-radius: 18px;
+    transition: background 0.15s;
+    cursor: pointer;
+    border: 2px solid transparent;
+  }
+  .list-item:hover { background: rgba(74,108,247,0.04); border-color: rgba(74,108,247,0.15); }
+  .list-item.selected { background: rgba(74,108,247,0.08); border-color: #4a6cf7; }
+  .avatar {
+    width: 44px; height: 44px;
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 14px; color: #fff;
+    flex-shrink: 0;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  }
+  .info { flex: 1; min-width: 0; }
+  .info .name-row { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+  .info .name { font-weight: 700; font-size: 0.85rem; color: #1a1a2e; }
+  .info .type-badge {
+    background: hsl(270,60%,94%);
+    color: hsl(270,60%,55%);
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 8px;
+    border-radius: 50px;
+  }
+  .info .sub { font-size: 0.7rem; color: #8b8fa3; }
+  .status-badge {
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 50px;
+    flex-shrink: 0;
+  }
+  .status-active { background: #e8f5e9; color: #2e7d32; }
+  .status-pending { background: #fff3e0; color: #e65100; }
+  .status-completed { background: #e3f2fd; color: #1565c0; }
+
+  /* States label */
+  .state-label {
+    text-align: center;
+    padding: 20px;
+    color: #8b8fa3;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  .demo-container {
+    display: flex;
+    gap: 32px;
+    flex-wrap: wrap;
+  }
+  .demo-box { flex: 1; min-width: 360px; }
+  .demo-box h3 {
+    font-size: 0.75rem;
+    color: #8b8fa3;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 12px;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+
+<div class="demo-container">
+  <!-- State 1: Search collapsed -->
+  <div class="demo-box">
+    <h3>Default — search collapsed</h3>
+    <div class="list-panel">
+      <div class="header">
+        <h2>고객 목록</h2>
+        <div class="inline-search" id="search1">
+          <button class="search-icon" onclick="toggleSearch('search1')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          </button>
+          <input class="search-input" placeholder="검색..." />
+        </div>
+      </div>
+
+      <div class="tabs">
+        <button class="tab active">전체</button>
+        <button class="tab">진행중</button>
+        <button class="tab">대기</button>
+        <button class="tab">완료</button>
+        <button class="tab">만료</button>
+      </div>
+
+      <div class="list-content">
+        <div class="list-item selected">
+          <div class="avatar" style="background: linear-gradient(135deg, hsl(214,100%,34%), hsl(214,100%,28%))">김</div>
+          <div class="info">
+            <div class="name-row"><span class="name">김미영</span><span class="type-badge">산후</span></div>
+            <div class="sub">010-1234-5678 · 인천 미추홀구</div>
+          </div>
+          <span class="status-badge status-active">진행중</span>
+        </div>
+        <div class="list-item">
+          <div class="avatar" style="background: linear-gradient(135deg, hsl(137,34%,31%), hsl(137,34%,25%))">이</div>
+          <div class="info">
+            <div class="name-row"><span class="name">이수진</span><span class="type-badge">일반</span></div>
+            <div class="sub">010-9876-5432 · 서울 강남구</div>
+          </div>
+          <span class="status-badge status-pending">대기</span>
+        </div>
+        <div class="list-item">
+          <div class="avatar" style="background: linear-gradient(135deg, hsl(355,36%,45%), hsl(355,36%,38%))">박</div>
+          <div class="info">
+            <div class="name-row"><span class="name">박지현</span><span class="type-badge">산후</span></div>
+            <div class="sub">010-5555-1234 · 부산 해운대구</div>
+          </div>
+          <span class="status-badge status-completed">완료</span>
+        </div>
+        <div class="list-item">
+          <div class="avatar" style="background: linear-gradient(135deg, hsl(34,100%,55%), hsl(34,100%,45%))">최</div>
+          <div class="info">
+            <div class="name-row"><span class="name">최은서</span><span class="type-badge">일반</span></div>
+            <div class="sub">010-3333-7890 · 인천 연수구</div>
+          </div>
+          <span class="status-badge status-active">진행중</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- State 2: Search expanded -->
+  <div class="demo-box">
+    <h3>Search expanded — transparent input</h3>
+    <div class="list-panel">
+      <div class="header">
+        <h2>고객 목록</h2>
+        <div class="inline-search expanded" id="search2">
+          <button class="search-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          </button>
+          <input class="search-input" placeholder="검색..." value="김미" autofocus style="width:120px" />
+        </div>
+      </div>
+
+      <div class="tabs">
+        <button class="tab active">전체</button>
+        <button class="tab">진행중</button>
+        <button class="tab">대기</button>
+        <button class="tab">완료</button>
+        <button class="tab">만료</button>
+      </div>
+
+      <div class="list-content">
+        <div class="list-item">
+          <div class="avatar" style="background: linear-gradient(135deg, hsl(214,100%,34%), hsl(214,100%,28%))">김</div>
+          <div class="info">
+            <div class="name-row"><span class="name">김미영</span><span class="type-badge">산후</span></div>
+            <div class="sub">010-1234-5678 · 인천 미추홀구</div>
+          </div>
+          <span class="status-badge status-active">진행중</span>
+        </div>
+        <div style="padding: 32px; text-align: center; color: #c0c4d6; font-size: 0.8rem;">
+          1건의 검색 결과
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function toggleSearch(id) {
+  const el = document.getElementById(id);
+  el.classList.toggle('expanded');
+  if (el.classList.contains('expanded')) {
+    el.querySelector('.search-input').focus();
+  }
+}
+</script>
+
+</body>
+</html>

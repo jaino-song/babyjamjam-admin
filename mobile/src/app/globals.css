@@ -1,0 +1,1289 @@
+@import "tailwindcss";
+
+/* ========================================
+   Design System Color Variables (HSL)
+   Primary: Navy | Accent: Blue
+   ======================================== */
+
+:root {
+  /* Motion duration scale - by intent, not magnitude */
+  --duration-instant: 100ms;
+  --duration-affordance: 150ms;
+  --duration-feedback: 200ms;
+  --duration-pop: 300ms;
+  --duration-spatial: 320ms;
+  --duration-emphasis: 420ms;
+
+  /* Motion easing scale - by motion character */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spatial: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-entrance: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-overshoot: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-spring-soft: cubic-bezier(0.32, 1.4, 0.5, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  /* Background & Foreground - Gray-blue tint for subtle warmth */
+  --background: 210 20% 98%;
+  --foreground: 220 20% 10%;
+
+  /* Card */
+  --card: 0 0% 100%;
+  --card-foreground: 220 20% 10%;
+
+  /* Popover */
+  --popover: 0 0% 100%;
+  --popover-foreground: 220 20% 10%;
+
+  /* Primary: Blue #004aad */
+  --primary: 214 100% 34%;
+  --primary-foreground: 210 40% 98%;
+
+  /* Secondary */
+  --secondary: 210 40% 96%;
+  --secondary-foreground: 217 71% 24%;
+
+  /* Muted */
+  --muted: 210 20% 96%;
+  --muted-foreground: 215 16% 47%;
+
+  /* Accent: Blue */
+  --accent: 217 91% 60%;
+  --accent-foreground: 0 0% 100%;
+
+  /* Destructive */
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 210 40% 98%;
+
+  /* Success - Adjusted saturation */
+  --success: 142 76% 36%;
+  --success-foreground: 0 0% 100%;
+
+  /* Warning */
+  --warning: 38 92% 50%;
+  --warning-foreground: 220 20% 10%;
+
+  /* Info - Blue to match accent (not cyan) */
+  --info: 217 91% 60%;
+  --info-foreground: 0 0% 100%;
+
+  /* Border & Input */
+  --border: 214 32% 85%;
+  --input: 214 32% 85%;
+  --ring: 217 71% 24%;
+
+  /* Radius */
+  --radius: 0.5rem;
+
+  /* Sidebar - 진한 네이비 */
+  --sidebar-background: 217 71% 18%;
+  --sidebar-foreground: 210 40% 98%;
+  --sidebar-primary: 217 91% 60%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 217 71% 24%;
+  --sidebar-accent-foreground: 210 40% 98%;
+  --sidebar-border: 217 71% 24%;
+  --sidebar-ring: 217 91% 60%;
+
+  /* Chart Colors */
+  --chart-1: 217 91% 60%;
+  --chart-2: 142 76% 36%;
+  --chart-3: 38 92% 50%;
+  --chart-4: 280 65% 60%;
+  --chart-5: 0 84% 60%;
+
+  /* OAuth Brand Colors */
+  --kakao: 54 100% 50%;
+  --kakao-foreground: 0 0% 0%;
+  --google: 0 0% 100%;
+  --google-foreground: 0 0% 20%;
+
+  /* Custom Brand Colors */
+  --navy: 217 71% 24%;
+  --green: 137 34% 31%;
+  --burgundy: 355 36% 45%;
+  --gray: 0 0% 47%;
+  --dim-white: 0 0% 93%;
+  --orange: 34 100% 55%;
+
+  /* V3 Colors */
+  --v3-primary: 214 100% 34%;
+  --v3-primary-light: 214 80% 95%;
+  --v3-green: 137 34% 31%;
+  --v3-burgundy: 355 36% 45%;
+  --v3-orange: 34 100% 55%;
+  --v3-purple: 270 50% 50%;
+  --v3-teal: 180 50% 40%;
+  --v3-dim-white: 220 20% 97%;
+  --v3-primary-medium: 214 70% 88%;
+  --v3-primary-hover: 214 100% 28%;
+  --v3-green-light: 137 40% 93%;
+  --v3-burgundy-light: 355 40% 94%;
+  --v3-orange-light: 34 100% 94%;
+  --v3-purple-light: 270 60% 94%;
+  --v3-teal-light: 175 60% 93%;
+  --v3-gold: 45 100% 50%;
+  --v3-gold-light: 45 100% 94%;
+  --v3-dark: 214 40% 18%;
+  --v3-text: 214 25% 28%;
+  --v3-text-muted: 214 10% 55%;
+  --v3-border: 214 20% 92%;
+}
+
+/* Dark Mode */
+@custom-variant dark (&:is(.dark *));
+
+.dark {
+  --background: 220 20% 10%;
+  --foreground: 210 40% 98%;
+
+  --card: 220 20% 14%;
+  --card-foreground: 210 40% 98%;
+
+  --popover: 220 20% 14%;
+  --popover-foreground: 210 40% 98%;
+
+  --primary: 214 100% 45%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 217 32% 18%;
+  --secondary-foreground: 210 40% 98%;
+
+  --muted: 217 32% 18%;
+  --muted-foreground: 215 20% 65%;
+
+  --accent: 217 71% 24%;
+  --accent-foreground: 210 40% 98%;
+
+  --destructive: 0 62.8% 50.6%;
+  --destructive-foreground: 210 40% 98%;
+
+  --success: 142 76% 36%;
+  --success-foreground: 210 40% 98%;
+
+  --warning: 38 92% 50%;
+  --warning-foreground: 220 20% 10%;
+
+  --info: 217 91% 60%;
+  --info-foreground: 210 40% 98%;
+
+  --border: 217 32% 18%;
+  --input: 217 32% 18%;
+  --ring: 217 91% 60%;
+
+  /* Sidebar - Dark mode */
+  --sidebar-background: 220 20% 8%;
+  --sidebar-foreground: 210 40% 98%;
+  --sidebar-primary: 217 91% 60%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 217 32% 18%;
+  --sidebar-accent-foreground: 210 40% 98%;
+  --sidebar-border: 217 32% 18%;
+  --sidebar-ring: 217 91% 60%;
+
+  /* Chart Colors - Dark mode */
+  --chart-1: 217 91% 60%;
+  --chart-2: 142 76% 36%;
+  --chart-3: 38 92% 50%;
+  --chart-4: 280 65% 60%;
+  --chart-5: 0 84% 60%;
+
+  /* Custom Brand Colors - Dark mode */
+  --navy: 217 71% 35%;
+  --green: 137 40% 38%;
+  --burgundy: 355 40% 52%;
+  --gray: 0 0% 55%;
+  --dim-white: 0 0% 20%;
+  --orange: 34 100% 60%;
+
+  /* V3 Colors - Dark Mode */
+  --v3-primary: 214 100% 50%;
+  --v3-primary-light: 214 30% 20%;
+  --v3-dim-white: 220 15% 15%;
+}
+
+/* ========================================
+   Tailwind v4 Theme Configuration
+   ======================================== */
+
+@theme inline {
+  /* Colors from CSS Variables */
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-success: hsl(var(--success));
+  --color-success-foreground: hsl(var(--success-foreground));
+  --color-warning: hsl(var(--warning));
+  --color-warning-foreground: hsl(var(--warning-foreground));
+  --color-info: hsl(var(--info));
+  --color-info-foreground: hsl(var(--info-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+
+  /* OAuth Brand Colors */
+  --color-kakao: hsl(var(--kakao));
+  --color-kakao-foreground: hsl(var(--kakao-foreground));
+  --color-google: hsl(var(--google));
+  --color-google-foreground: hsl(var(--google-foreground));
+
+  /* Sidebar Colors */
+  --color-sidebar: hsl(var(--sidebar-background));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-primary: hsl(var(--sidebar-primary));
+  --color-sidebar-primary-foreground: hsl(var(--sidebar-primary-foreground));
+  --color-sidebar-accent: hsl(var(--sidebar-accent));
+  --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+  --color-sidebar-ring: hsl(var(--sidebar-ring));
+
+  /* Chart Colors */
+  --color-chart-1: hsl(var(--chart-1));
+  --color-chart-2: hsl(var(--chart-2));
+  --color-chart-3: hsl(var(--chart-3));
+  --color-chart-4: hsl(var(--chart-4));
+  --color-chart-5: hsl(var(--chart-5));
+
+  /* Custom Brand Colors */
+  --color-navy: hsl(217 71% 24%);
+  --color-green: hsl(137 34% 31%);
+  --color-burgundy: hsl(355 36% 45%);
+  --color-gray: hsl(0 0% 47%);
+  --color-dim-white: hsl(0 0% 93%);
+  --color-orange: hsl(34 100% 55%);
+
+  /* V3 Design System Colors */
+  --color-v3-primary: hsl(var(--v3-primary));
+  --color-v3-primary-light: hsl(var(--v3-primary-light));
+  --color-v3-primary-medium: hsl(var(--v3-primary-medium));
+  --color-v3-primary-hover: hsl(var(--v3-primary-hover));
+  --color-v3-green: hsl(var(--v3-green));
+  --color-v3-green-light: hsl(var(--v3-green-light));
+  --color-v3-burgundy: hsl(var(--v3-burgundy));
+  --color-v3-burgundy-light: hsl(var(--v3-burgundy-light));
+  --color-v3-orange: hsl(var(--v3-orange));
+  --color-v3-orange-light: hsl(var(--v3-orange-light));
+  --color-v3-purple: hsl(var(--v3-purple));
+  --color-v3-purple-light: hsl(var(--v3-purple-light));
+  --color-v3-teal: hsl(var(--v3-teal));
+  --color-v3-teal-light: hsl(var(--v3-teal-light));
+  --color-v3-gold: hsl(var(--v3-gold));
+  --color-v3-gold-light: hsl(var(--v3-gold-light));
+  --color-v3-dark: hsl(var(--v3-dark));
+  --color-v3-text: hsl(var(--v3-text));
+  --color-v3-text-muted: hsl(var(--v3-text-muted));
+  --color-v3-border: hsl(var(--v3-border));
+  --color-v3-dim-white: hsl(var(--v3-dim-white));
+
+  /* Border Radius */
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-xl: 24px;
+  --radius-2xl: 28px;
+  --radius-3xl: 32px;
+  --radius-pill: 50px;
+
+  /* V3 Shadows */
+  --shadow-v3: 0 4px 24px hsla(214, 50%, 20%, 0.06);
+  --shadow-v3-hover: 0 12px 48px hsla(214, 50%, 20%, 0.12);
+  --shadow-v3-float: 0 20px 60px hsla(214, 50%, 20%, 0.15);
+
+  /* Fonts */
+  --font-sans: var(--font-geist-sans), Poppins, Helvetica, sans-serif;
+  --font-mono: var(--font-geist-mono), monospace;
+
+  /* Custom Animations */
+  --animate-fade-in: fade-in 0.4s ease-out forwards;
+  --animate-fade-in-up: fade-in-up 0.5s ease-out forwards;
+  --animate-scale-in: scale-in 0.3s ease-out forwards;
+  --animate-slide-up: slide-up 0.3s ease-out forwards;
+  --animate-slide-in-left: slide-in-left 0.3s ease-out forwards;
+  --animate-slide-in-right: slide-in-right 0.3s ease-out forwards;
+  --animate-bounce-subtle: bounce-subtle 1s ease-in-out infinite;
+  --animate-pulse-subtle: pulse-subtle 2s ease-in-out infinite;
+  --animate-shimmer: shimmer 2s linear infinite;
+  --animate-icon-bounce: icon-bounce 0.3s ease-out;
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
+
+  /* V3 Animations */
+  --animate-v3-pop-in: v3-pop-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  --animate-v3-pop-up: v3-pop-up 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  --animate-v3-slide-up: v3-slide-up 0.5s ease-out forwards;
+  --animate-v3-slide-right: v3-slide-right 0.4s ease-out forwards;
+  /* Load More Animation - plays bounce then waits until 3s total cycle */
+  --animate-ball-bounce: ball-bounce 3s ease-out infinite;
+}
+
+/* ========================================
+   Keyframe Animations
+   ======================================== */
+
+@keyframes fade-in {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in-up {
+  0% {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scale-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slide-in-left {
+  0% {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slide-in-right {
+  0% {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes bounce-subtle {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes pulse-subtle {
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.7;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes icon-bounce {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes accordion-down {
+  from {
+    height: 0;
+  }
+
+  to {
+    height: var(--radix-accordion-content-height);
+  }
+}
+
+@keyframes accordion-up {
+  from {
+    height: var(--radix-accordion-content-height);
+  }
+
+  to {
+    height: 0;
+  }
+}
+
+@keyframes sheet-slide-in-from-left {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes sheet-slide-out-to-left {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes sheet-slide-in-from-right {
+  from {
+    transform: translateX(100%);
+  }
+
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes sheet-slide-out-to-right {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes sheet-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes sheet-fade-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+[data-slot="sheet-overlay"][data-state="open"] {
+  animation: sheet-fade-in 300ms ease-out;
+}
+
+[data-slot="sheet-overlay"][data-state="closed"] {
+  animation: sheet-fade-out 300ms ease-out;
+}
+
+[data-slot="sheet-content"][data-state="open"] {
+  animation: sheet-slide-in-from-left 300ms ease-out;
+}
+
+[data-slot="sheet-content"][data-state="closed"] {
+  animation: sheet-slide-out-to-left 300ms ease-out;
+}
+
+[data-slot="sheet-content"][data-side="right"][data-state="open"] {
+  animation: sheet-slide-in-from-right 300ms ease-out;
+}
+
+[data-slot="sheet-content"][data-side="right"][data-state="closed"] {
+  animation: sheet-slide-out-to-right 300ms ease-out;
+}
+
+/* V3 Animations */
+@keyframes v3-pop-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes v3-pop-up {
+  0% {
+    opacity: 0;
+    transform: translateY(18px) scale(0.86);
+  }
+
+  60% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.03);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes v3-slide-up {
+  0% {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes v3-slide-right {
+  0% {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* V3: animate direct children of a container (used for page sections and SplitLayout). */
+@layer utilities {
+  .v3-slide-up-children > * {
+    animation: var(--animate-v3-slide-up);
+    /* Critical for staggered delays: apply the 0% keyframe during the delay. */
+    animation-fill-mode: both;
+    will-change: transform;
+  }
+
+  .animate-v3-pop-up {
+    /* Same reason as above: prevents "flash then pop" when animationDelay is used. */
+    animation-fill-mode: both;
+    will-change: transform;
+  }
+
+  .scrollbar-on-scroll {
+    -ms-overflow-style: none;
+    scrollbar-gutter: stable;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-on-scroll::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+
+  .scrollbar-on-scroll[data-scroll-active="true"] {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--v3-border)) transparent;
+  }
+
+  .scrollbar-on-scroll[data-scroll-active="true"]::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  .scrollbar-on-scroll[data-scroll-active="true"]::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-on-scroll[data-scroll-active="true"]::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--v3-border));
+    border: 3px solid transparent;
+    border-radius: 9999px;
+    background-clip: content-box;
+  }
+
+  .scrollbar-on-scroll[data-scroll-active="true"]::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--v3-text-muted));
+  }
+
+  /* Opt-out for specific children (e.g. to animate the grandchildren with staggering instead). */
+  .v3-slide-up-children > *.v3-no-intro {
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+
+}
+
+/* Ball bounce - dampened bouncing effect for load more chevron
+   Animation plays in first ~1s (33% of 3s), then stays idle for remaining ~2s
+   Bounce heights: 12px -> 6px -> 3px (1.5x increased) */
+@keyframes ball-bounce {
+  0%, 33%, 100% {
+    transform: translateY(0);
+  }
+  7% {
+    transform: translateY(12px);
+  }
+  12% {
+    transform: translateY(0);
+  }
+  17% {
+    transform: translateY(6px);
+  }
+  22% {
+    transform: translateY(0);
+  }
+  26% {
+    transform: translateY(3px);
+  }
+  30% {
+    transform: translateY(0);
+  }
+}
+
+/* ========================================
+   Base Styles
+   ======================================== */
+
+/* Apply border color to all elements - matches reference design */
+* {
+  border-color: hsl(var(--border));
+}
+
+html {
+  overscroll-behavior: none;
+}
+
+body {
+  overscroll-behavior: none;
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
+body {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, Roboto, "Helvetica Neue", "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
+}
+
+/* Focus visible styles - exclude form elements (they have their own focus indicators) */
+*:focus-visible:not(input):not(select):not(textarea) {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 2px;
+  border-radius: 28px;
+}
+
+/* ========================================
+   Utility Classes
+   ======================================== */
+
+/* Hover lift effect - Reference design pattern */
+.hover-lift {
+  transition: all 0.3s ease-out;
+}
+
+.hover-lift:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12);
+}
+
+/* Hover glow effect - Uses CSS variable for consistency */
+.hover-glow {
+  transition: box-shadow 0.2s ease;
+}
+
+.hover-glow:hover {
+  box-shadow: 0 0 20px hsl(var(--primary) / 0.2);
+}
+
+/* Button press effect */
+.btn-press:active {
+  transform: scale(0.98);
+}
+
+/* Legacy stagger animation delays (for backward compatibility) */
+.stagger-1 {
+  animation-delay: 0.1s;
+}
+
+.stagger-2 {
+  animation-delay: 0.2s;
+}
+
+.stagger-3 {
+  animation-delay: 0.3s;
+}
+
+.stagger-4 {
+  animation-delay: 0.4s;
+}
+
+.stagger-5 {
+  animation-delay: 0.5s;
+}
+
+.stagger-6 {
+  animation-delay: 0.6s;
+}
+
+/* Reference design stagger delays (faster, more subtle) */
+.animate-stagger-1 {
+  animation-delay: 0ms;
+}
+
+.animate-stagger-2 {
+  animation-delay: 75ms;
+}
+
+.animate-stagger-3 {
+  animation-delay: 150ms;
+}
+
+.animate-stagger-4 {
+  animation-delay: 225ms;
+}
+
+.animate-stagger-5 {
+  animation-delay: 300ms;
+}
+
+.animate-stagger-6 {
+  animation-delay: 375ms;
+}
+
+/* Hover border - border color transition on hover */
+.hover-border {
+  transition: border-color 0.2s ease;
+}
+
+.hover-border:hover {
+  border-color: hsl(var(--primary) / 0.5);
+}
+
+
+/* Icon hover bounce effect */
+.icon-hover-bounce {
+  transition: transform 0.2s ease;
+}
+
+.icon-hover-bounce:hover {
+  animation: icon-bounce 0.3s ease-out;
+}
+
+/* Icon hover scale effect */
+.icon-hover-scale {
+  transition: transform 0.2s ease;
+}
+
+.icon-hover-scale:hover {
+  transform: scale(1.1);
+}
+
+/* Row hover - table row background */
+.row-hover {
+  transition: background-color 0.2s ease;
+}
+
+.row-hover:hover {
+  background-color: hsl(var(--muted) / 0.5);
+}
+
+/* Schedule item hover - left border accent */
+.schedule-item-hover {
+  transition: background-color 0.2s ease, border-left-color 0.2s ease;
+  border-left: 2px solid transparent;
+}
+
+.schedule-item-hover:hover {
+  background-color: hsl(var(--muted) / 0.5);
+  border-left-color: hsl(var(--primary));
+}
+
+/* Search expand - search input width expansion */
+.search-expand {
+  transition: width 0.3s ease-out;
+}
+
+.search-expand:focus {
+  width: 20rem;
+}
+
+@media (min-width: 1024px) {
+  .search-expand:focus {
+    width: 24rem;
+  }
+}
+
+/* Menu item slide - translate on hover */
+.menu-item-slide {
+  transition: transform 0.2s ease;
+}
+
+.menu-item-slide:hover {
+  transform: translateX(4px);
+}
+
+/* Active indicator - sidebar active state */
+.active-indicator {
+  position: relative;
+}
+
+.active-indicator::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 24px;
+  background-color: hsl(var(--primary));
+  border-radius: 0 4px 4px 0;
+  transition: all 0.3s ease-out;
+}
+
+/* Notification badge - subtle bounce */
+.notification-badge {
+  animation: bounce-subtle 1s ease-in-out infinite;
+}
+
+/* ========================================
+   Dashboard-Style Utility Classes
+   Matches MUI spacing units (1 unit = 8px)
+   ======================================== */
+
+/* Dashboard-style border radius (24px = MUI borderRadius: 3) */
+.rounded-dashboard {
+  border-radius: 28px;
+}
+
+/* Dashboard-style padding variants */
+.p-dashboard {
+  padding: 0.625rem;
+}
+
+/* 10px */
+.p-dashboard-sm {
+  padding: 0.75rem;
+}
+
+/* 12px */
+.p-dashboard-md {
+  padding: 1rem;
+}
+
+/* 16px */
+.p-dashboard-lg {
+  padding: 1.5rem;
+}
+
+/* 24px = MUI p: 3 */
+
+/* Dashboard row hover - subtle lift effect */
+.row-hover-lift {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.row-hover-lift:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+/* Dashboard elevation variants (matching MUI elevation) */
+.elevation-1 {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.elevation-2 {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+.elevation-3 {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+/* ========================================
+   Markdown Content Styles
+   ======================================== */
+
+.markdown-content {
+  line-height: 1.7;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+  font-weight: 600;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+
+.markdown-content h1 {
+  font-size: 1.5rem;
+}
+
+.markdown-content h2 {
+  font-size: 1.25rem;
+}
+
+.markdown-content h3 {
+  font-size: 1.125rem;
+}
+
+.markdown-content h4 {
+  font-size: 1rem;
+}
+
+.markdown-content p {
+  margin-bottom: 1em;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  margin-bottom: 1em;
+  padding-left: 1.5em;
+}
+
+.markdown-content li {
+  margin-bottom: 0.25em;
+}
+
+.markdown-content code:not(pre code) {
+  background-color: hsl(var(--muted));
+  padding: 0.2em 0.4em;
+  border-radius: 0.25rem;
+  font-size: 0.875em;
+  font-family: var(--font-mono);
+}
+
+.markdown-content pre {
+  margin-bottom: 1em;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+}
+
+.markdown-content blockquote {
+  border-left: 4px solid hsl(var(--border));
+  padding-left: 1em;
+  margin-left: 0;
+  margin-bottom: 1em;
+  color: hsl(var(--muted-foreground));
+  font-style: italic;
+}
+
+.markdown-content a {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.markdown-content a:hover {
+  color: hsl(var(--accent));
+}
+
+.markdown-content hr {
+  border: none;
+  border-top: 1px solid hsl(var(--border));
+  margin: 1.5em 0;
+}
+
+/* Table wrapper for horizontal scrolling */
+.markdown-content .table-wrapper {
+  overflow-x: auto;
+  margin-bottom: 1em;
+}
+
+.markdown-content table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.markdown-content th,
+.markdown-content td {
+  padding: 0.5rem 1rem;
+  border: 1px solid hsl(var(--border));
+  text-align: left;
+}
+
+.markdown-content th {
+  background-color: hsl(var(--muted));
+  font-weight: 600;
+}
+
+.markdown-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.5rem;
+}
+
+/* ========================================
+   Chat Animations
+   ======================================== */
+
+@keyframes blink {
+
+  0%,
+  50% {
+    opacity: 1;
+  }
+
+  51%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.animate-blink {
+  animation: blink 1s step-end infinite;
+}
+
+/* ========================================
+   Tooltip Animations
+   ======================================== */
+
+@keyframes tooltip-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes tooltip-pop-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(1.05);
+  }
+}
+
+[data-radix-popper-content-wrapper] [data-state="open"],
+[data-radix-popper-content-wrapper] [data-state="delayed-open"],
+[data-radix-popper-content-wrapper] [data-state="instant-open"],
+[data-slot="select-content"][data-state="open"],
+[data-slot="dropdown-menu-content"][data-state="open"],
+[data-slot="dropdown-menu-sub-content"][data-state="open"],
+[data-slot="popover-content"][data-state="open"] {
+  animation: tooltip-pop-in 0.15s ease-out forwards;
+}
+
+[data-radix-popper-content-wrapper] [data-state="closed"],
+[data-slot="select-content"][data-state="closed"],
+[data-slot="dropdown-menu-content"][data-state="closed"],
+[data-slot="dropdown-menu-sub-content"][data-state="closed"],
+[data-slot="popover-content"][data-state="closed"] {
+  animation: tooltip-pop-out 0.2s ease-in forwards;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Hide native scrollbars for in-app scroll containers by default. */
+[class*="overflow-y-auto"]:not(.scrollbar-on-scroll):not(.custom-scrollbar):not(.scrollbar-hide),
+[class*="overflow-auto"]:not(.scrollbar-on-scroll):not(.custom-scrollbar):not(.scrollbar-hide) {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+[class*="overflow-y-auto"]:not(.scrollbar-on-scroll):not(.custom-scrollbar):not(.scrollbar-hide)::-webkit-scrollbar,
+[class*="overflow-auto"]:not(.scrollbar-on-scroll):not(.custom-scrollbar):not(.scrollbar-hide)::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  [data-radix-popper-content-wrapper]:has([data-testid="notification-popover"]) {
+    left: 50% !important;
+    right: auto !important;
+    top: 52px !important;
+    transform: translateX(-50%) !important;
+  }
+}
+
+@keyframes popIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideRight {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes bounce {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+@keyframes float {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes pulse {
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.animate-pop-in {
+  animation: popIn 0.3s ease-out;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.4s ease-out;
+}
+
+.animate-slide-right {
+  animation: slideRight 0.4s ease-out;
+}
+
+.animate-bounce-subtle {
+  animation: bounce 2s ease-in-out infinite;
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Loaders must keep spinning - users with vestibular disorders tolerate steady rotation. */
+  .animate-spin,
+  [data-slot="spinner"] {
+    animation-duration: 1s !important;
+  }
+
+  .animate-pulse {
+    animation: none !important;
+    opacity: 0.6;
+  }
+}

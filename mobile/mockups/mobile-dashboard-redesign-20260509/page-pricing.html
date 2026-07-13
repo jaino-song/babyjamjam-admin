@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>가격표 — Mobile Page</title>
+<link rel="stylesheet" href="_shared.css?v=frame-removal" />
+<link rel="stylesheet" href="_shell.css" />
+<style>
+/* ===== Page-specific styles ===== */
+.section-header { padding-top: 6px; padding-bottom: 4px; }
+.section-block:first-child .section-header { padding-top: 2px; }
+
+/* Group list-title + filter rows as one cohesive header block */
+.card-header-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 6px;
+}
+.card-header-group .filter-row { padding-bottom: 0; }
+
+/* Duration badge — replaces avatar on the row */
+.duration-badge {
+  width: 42px; height: 42px;
+  border-radius: 14px;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: var(--v3-orange-light);
+  color: hsl(34, 100%, 38%);
+  flex-shrink: 0;
+  line-height: 1;
+}
+.duration-badge .num { font-size: 0.95rem; font-weight: 800; }
+.duration-badge .unit { font-size: 0.52rem; font-weight: 600; margin-top: 2px; letter-spacing: 0.04em; }
+
+.price-row-meta {
+  font-size: 0.66rem;
+  color: var(--v3-text-muted);
+  margin-top: 2px;
+  font-weight: 500;
+}
+
+.price-total {
+  font-size: 0.92rem;
+  font-weight: 800;
+  color: var(--v3-dark);
+  font-feature-settings: "tnum";
+  line-height: 1.1;
+}
+
+/* Detail body — price breakdown card */
+.price-breakdown {
+  background: white;
+  border-radius: 18px;
+  padding: 16px 18px;
+  margin: 0 16px;
+  box-shadow: var(--shadow-v3);
+}
+.price-breakdown-row {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--v3-border);
+}
+.price-breakdown-row:last-child { border-bottom: 0; }
+.price-breakdown-row.total { padding-top: 14px; }
+.price-breakdown-row .label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--v3-text-muted);
+}
+.price-breakdown-row .value {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--v3-dark);
+  font-feature-settings: "tnum";
+}
+.price-breakdown-row.total .label { color: var(--v3-dark); font-weight: 800; font-size: 0.8rem; }
+.price-breakdown-row.total .value { font-size: 1.15rem; color: var(--v3-primary); font-weight: 800; }
+.price-breakdown-row.grant .value { color: hsl(214, 100%, 34%); }
+.price-breakdown-row.own .value { color: hsl(355, 36%, 45%); }
+
+.validate-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  background: var(--v3-green-light);
+  color: hsl(137, 60%, 28%);
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  margin: 4px 16px 0;
+  width: fit-content;
+}
+.validate-pill svg { width: 13px; height: 13px; }
+.validate-pill.warn { background: var(--v3-orange-light); color: hsl(34, 100%, 38%); }
+.validate-pill .icon-warn { display: none; }
+.validate-pill.warn .icon-ok { display: none; }
+.validate-pill.warn .icon-warn { display: inline-flex; }
+
+/* Upload sheet (admin) — opens via "업데이트" action */
+.upload-sheet { padding: 0 16px; display: flex; flex-direction: column; gap: 14px; }
+.upload-sheet .stepper {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 0 8px;
+  font-size: 0.66rem;
+  color: var(--v3-text-muted);
+  font-weight: 600;
+}
+.upload-sheet .step {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--v3-dim-white);
+}
+.upload-sheet .step.active { background: var(--v3-primary-light); color: hsl(214, 100%, 34%); }
+.upload-sheet .step .num {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: white;
+  color: var(--v3-text-muted);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.6rem; font-weight: 800;
+}
+.upload-sheet .step.active .num { background: hsl(214, 100%, 34%); color: white; }
+.upload-sheet .step .sep { color: var(--v3-border); margin: 0 -2px; }
+
+.year-select {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  background: white;
+  border: 1px solid var(--v3-border);
+  border-radius: 12px;
+}
+.year-select label { font-size: 0.68rem; font-weight: 700; color: var(--v3-text-muted); }
+.year-select select {
+  border: 0; background: transparent;
+  font-size: 0.88rem; font-weight: 700; color: var(--v3-dark);
+  flex: 1; appearance: none; -webkit-appearance: none;
+  font-family: inherit;
+}
+
+.upload-guide {
+  font-size: 0.66rem;
+  color: var(--v3-text-muted);
+  background: var(--v3-dim-white);
+  border-radius: 12px;
+  padding: 10px 12px;
+  line-height: 1.6;
+}
+.upload-guide b { color: var(--v3-dark); display: block; margin-bottom: 3px; font-size: 0.7rem; }
+</style>
+</head>
+<body>
+<div class="phone-frame">
+  <div class="phone-notch"></div>
+  <div class="phone-screen">
+    <div class="nav-stack" id="stack">
+
+      <div class="nav-page list">
+        <div class="existing-navbar">
+          <div class="navbar-identity">
+            <span class="navbar-user">송진호 님</span>
+            <span class="navbar-branch">인천점</span>
+          </div>
+          <div class="navbar-icons">
+            <button class="navbar-icon-btn" id="bellBtn" onclick="toggleNotif(event)">
+              <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+              <span class="dot"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="shell-content">
+          <div class="list-card pop-up" style="display: flex; flex-direction: column; flex: 1; overflow: hidden;">
+            <div class="card-header-group">
+              <div class="list-title">
+                <span class="list-title-text">바우처 요금표 <span class="list-count">24개</span></span>
+                <button class="list-action" onclick="openUpload()">
+                  <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  업데이트
+                </button>
+              </div>
+
+              <div class="filter-row" data-filter="year">
+                <button class="filter-pill">2024년</button>
+                <button class="filter-pill active">2025년</button>
+                <button class="filter-pill">2026년</button>
+              </div>
+              <div class="filter-row" data-filter="type">
+                <button class="filter-pill active">전체 <span class="count">24</span></button>
+                <button class="filter-pill">A형 <span class="count">6</span></button>
+                <button class="filter-pill">B형 <span class="count">6</span></button>
+                <button class="filter-pill">C형 <span class="count">6</span></button>
+                <button class="filter-pill">D형 <span class="count">6</span></button>
+              </div>
+              <div class="section-header">단축형 · 8건</div>
+            </div>
+
+            <div class="list-card-scroll">
+
+              <div class="section-block">
+                <div class="list-item" onclick="openDetail('단축', '15', 'A가1형', '1,068,000', '747,600', '320,400')">
+                  <div class="duration-badge"><span class="num">15</span><span class="unit">DAY</span></div>
+                  <div class="list-info">
+                    <div class="list-name">A가1형</div>
+                    <div class="price-row-meta">정가 1,068,000원 · 지원 747,600원</div>
+                  </div>
+                  <div class="list-right">
+                    <div class="price-total">320,400원</div>
+                  </div>
+                </div>
+
+                <div class="list-item" onclick="openDetail('단축', '15', 'A라1형', '1,254,000', '877,800', '376,200')">
+                  <div class="duration-badge"><span class="num">15</span><span class="unit">DAY</span></div>
+                  <div class="list-info">
+                    <div class="list-name">A라1형</div>
+                    <div class="price-row-meta">정가 1,254,000원 · 지원 877,800원</div>
+                  </div>
+                  <div class="list-right">
+                    <div class="price-total">376,200원</div>
+                  </div>
+                </div>
+
+                <div class="list-item" onclick="openDetail('단축', '15', 'A통합1형', '1,326,000', '928,200', '397,800')">
+                  <div class="duration-badge"><span class="num">15</span><span class="unit">DAY</span></div>
+                  <div class="list-info">
+                    <div class="list-name">A통합1형</div>
+                    <div class="price-row-meta">정가 1,326,000원 · 지원 928,200원</div>
+                  </div>
+                  <div class="list-right">
+                    <div class="price-total">397,800원</div>
+                  </div>
+                </div>
+
+                <div class="list-item" onclick="openDetail('단축', '15', 'B가1형', '1,460,000', '1,022,000', '438,000')">
+                  <div class="duration-badge"><span class="num">15</span><span class="unit">DAY</span></div>
+                  <div class="list-info">
+                    <div class="list-name">B가1형</div>
+                    <div class="price-row-meta">정가 1,460,000원 · 지원 1,022,000원</div>
+                  </div>
+                  <div class="list-right">
+                    <div class="price-total">438,000원</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="section-block">
+                <div class="section-header">표준형 · 8건</div>
+
+                <div class="list-item" onclick="openDetail('표준', '25', 'A가1형', '1,780,000', '1,246,000', '534,000')">
+                  <div class="duration-badge"><span class="num">25</span><span class="unit">DAY</span></div>
+                  <div class="list-info">
+                    <div class="list-name">A가1형</div>
+                    <div class="price-row-meta">정가 1,780,000원 · 지원 1,246,000원</div>
+                  </div>
+                  <div class="list-right">
+                    <div class="price-total">534,000원</div>
+                  </div>
+                </div>
+
+                <div class="list-item" onclick="openDetail('표준', '25', 'A라1형', '2,090,000', '1,463,000', '627,000')">
+                  <div class="duration-badge"><span class="num">25</span><span class="unit">DAY</span></div>
+                  <div class="list-info">
+                    <div class="list-name">A라1형</div>
+                    <div class="price-row-meta">정가 2,090,000원 · 지원 1,463,000원</div>
+                  </div>
+                  <div class="list-right">
+                    <div class="price-total">627,000원</div>
+                  </div>
+                </div>
+
+                <div class="list-item" onclick="openDetail('표준', '25', 'A통합1형', '2,210,000', '1,547,000', '663,000')">
+                  <div class="duration-badge"><span class="num">25</span><span class="unit">DAY</span></div>
+                  <div class="list-info">
+                    <div class="list-name">A통합1형</div>
+                    <div class="price-row-meta">정가 2,210,000원 · 지원 1,547,000원</div>
+                  </div>
+                  <div class="list-right">
+                    <div class="price-total">663,000원</div>
+                  </div>
+                </div>
+
+                <div class="list-item" onclick="openDetail('표준', '25', 'B가1형', '2,432,400', '1,702,400', '727,600')">
+                  <div class="duration-badge"><span class="num">25</span><span class="unit">DAY</span></div>
+                  <div class="list-info">
+                    <div class="list-name">B가1형</div>
+                    <div class="price-row-meta">정가 2,432,400원 · 지원 1,702,400원</div>
+                  </div>
+                  <div class="list-right">
+                    <div class="price-total">727,600원</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="section-block">
+                <div class="section-header">연장형 · 8건</div>
+
+                <div class="list-item" onclick="openDetail('연장', '35', 'A가1형', '2,492,000', '1,744,400', '747,600')">
+                  <div class="duration-badge"><span class="num">35</span><span class="unit">DAY</span></div>
+                  <div class="list-info">
+                    <div class="list-name">A가1형</div>
+                    <div class="price-row-meta">정가 2,492,000원 · 지원 1,744,400원</div>
+                  </div>
+                  <div class="list-right">
+                    <div class="price-total">747,600원</div>
+                  </div>
+                </div>
+
+                <div class="list-item" onclick="openDetail('연장', '35', 'A라1형', '2,926,000', '2,048,200', '877,800')">
+                  <div class="duration-badge"><span class="num">35</span><span class="unit">DAY</span></div>
+                  <div class="list-info">
+                    <div class="list-name">A라1형</div>
+                    <div class="price-row-meta">정가 2,926,000원 · 지원 2,048,200원</div>
+                  </div>
+                  <div class="list-right">
+                    <div class="price-total">877,800원</div>
+                  </div>
+                </div>
+
+                <div class="list-item" onclick="openDetail('연장', '35', 'A통합1형', '3,094,000', '2,165,800', '928,200')">
+                  <div class="duration-badge"><span class="num">35</span><span class="unit">DAY</span></div>
+                  <div class="list-info">
+                    <div class="list-name">A통합1형</div>
+                    <div class="price-row-meta">정가 3,094,000원 · 지원 2,165,800원</div>
+                  </div>
+                  <div class="list-right">
+                    <div class="price-total">928,200원</div>
+                  </div>
+                </div>
+
+                <div class="list-item" onclick="openDetail('연장', '35', 'B가1형', '3,406,000', '2,384,200', '1,021,800')">
+                  <div class="duration-badge"><span class="num">35</span><span class="unit">DAY</span></div>
+                  <div class="list-info">
+                    <div class="list-name">B가1형</div>
+                    <div class="price-row-meta">정가 3,406,000원 · 지원 2,384,200원</div>
+                  </div>
+                  <div class="list-right">
+                    <div class="price-total">1,021,800원</div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="scrim" onclick="closeDetail()"></div>
+
+      <!-- Bottom sheet detail (price breakdown) -->
+      <div class="nav-page detail" id="detailSheet">
+        <div class="sheet-handle"></div>
+        <div class="sheet-header">
+          <button class="sheet-close" onclick="closeDetail()" style="margin-left: auto;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="detail-body" style="display: flex; flex-direction: column; gap: 14px;">
+          <div class="client-detail-header pop-up">
+            <div class="client-detail-avatar-lg" style="background: var(--v3-orange-light); color: hsl(34, 100%, 38%); box-shadow: none;">
+              <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" x2="16" y1="6" y2="6"/><line x1="16" x2="16" y1="14" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></svg>
+            </div>
+            <div class="client-detail-title">
+              <div class="client-detail-name" id="detailName">A라1형 · 25일</div>
+              <div class="client-detail-badges">
+                <span class="badge-mini primary" id="detailTier">표준</span>
+                <span class="badge-mini muted">2025년</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="validate-pill" id="validatePill">
+            <svg class="icon-ok" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+            <svg class="icon-warn" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+            <span id="validateMsg">검증 통과 · 서비스가격 = 정부지원금 + 본인부담금</span>
+          </div>
+
+          <div class="price-breakdown pop-up">
+            <div class="price-breakdown-row">
+              <span class="label">기간</span>
+              <span class="value" id="bd-duration">25일</span>
+            </div>
+            <div class="price-breakdown-row grant">
+              <span class="label">정부지원금</span>
+              <span class="value" id="bd-grant">1,463,000원</span>
+            </div>
+            <div class="price-breakdown-row own">
+              <span class="label">본인부담금</span>
+              <span class="value" id="bd-own">627,000원</span>
+            </div>
+            <div class="price-breakdown-row total">
+              <span class="label">서비스가격 (총액)</span>
+              <span class="value" id="bd-total">2,090,000원</span>
+            </div>
+          </div>
+
+          <div class="detail-actions" style="margin-top: 0; padding: 0 16px 16px;">
+            <button class="btn btn-secondary">메시지로 보내기</button>
+            <button class="btn btn-primary">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" style="margin-right: 4px;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+              수정
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Upload sheet (admin update flow — compressed 3-step) -->
+      <div class="nav-page detail" id="uploadSheet" style="display: none;">
+        <div class="sheet-handle"></div>
+        <div class="sheet-header">
+          <div style="font-size: 0.92rem; font-weight: 800; color: var(--v3-dark);">가격표 업데이트</div>
+          <button class="sheet-close" onclick="closeUpload()" style="margin-left: auto;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="detail-body" style="display: flex; flex-direction: column; gap: 12px;">
+          <div class="upload-sheet">
+            <div class="stepper">
+              <span class="step active"><span class="num">1</span>이미지 업로드</span>
+              <span class="sep">›</span>
+              <span class="step"><span class="num">2</span>데이터 확인</span>
+              <span class="sep">›</span>
+              <span class="step"><span class="num">3</span>완료</span>
+            </div>
+
+            <div class="year-select">
+              <label>적용 연도</label>
+              <select>
+                <option>2024년</option>
+                <option selected>2025년</option>
+                <option>2026년</option>
+              </select>
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" style="color: var(--v3-text-muted);"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+
+            <div class="dropzone">
+              <div class="dropzone-icon">
+                <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              </div>
+              <div class="dropzone-title">바우처 요금표 이미지를 업로드하세요</div>
+              <div class="dropzone-sub"><b>탭하여 파일 선택</b> · 최대 10MB<br/>PNG, JPG, JPEG, PDF 지원</div>
+            </div>
+
+            <div class="upload-guide">
+              <b>업로드 가이드</b>
+              · 표 전체가 보이도록 캡처해주세요<br/>
+              · 단위 표시(천원/원)가 포함되어야 합니다<br/>
+              · 단축 / 표준 / 연장 헤더가 보여야 합니다
+            </div>
+
+            <div class="detail-actions" style="margin-top: 0; padding: 0;">
+              <button class="btn btn-secondary" onclick="closeUpload()">취소</button>
+              <button class="btn btn-primary">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" style="margin-right: 4px;"><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                2025년 요금표 업데이트
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="notif-backdrop" id="notifBackdrop" onclick="closeNotif()"></div>
+      <div class="notif-popover" id="notifPopover">
+        <div class="notif-header">
+          <h3>알림 <span class="notif-count-pill">1</span></h3>
+          <button class="notif-mark-all" onclick="markAllRead(event)">모두 읽음</button>
+        </div>
+        <div class="notif-list">
+          <div class="notif-section-title">새 알림</div>
+          <div class="notif-item unread"><span class="unread-dot"></span><div class="notif-icon" style="background: var(--v3-orange-light);"><svg width="15" height="15" fill="none" stroke="hsl(34,100%,38%)" stroke-width="2.5" viewBox="0 0 24 24"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" x2="16" y1="6" y2="6"/><line x1="16" x2="16" y1="14" y2="18"/></svg></div><div class="notif-body"><div class="notif-title">2025년 요금표 갱신</div><div class="notif-snippet">24개 항목 업데이트 · B가1형 표준 1건 검증 경고</div><div class="notif-time">5/4 14:22</div></div></div>
+        </div>
+      </div>
+
+      <!-- Bottom nav (active: 전체) -->
+      <nav class="bottom-nav">
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span class="nav-label">홈</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.128a4 4 0 0 1 0 7.744"/></svg>
+          <span class="nav-label">고객</span>
+        </a>
+        <a class="bottom-nav-item assistant">
+          <svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/><circle cx="4" cy="20" r="2"/></svg>
+          <span class="nav-label">어시스턴트</span>
+        </a>
+        <a class="bottom-nav-item">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8M16 13H8M16 17H8"/></svg>
+          <span class="nav-label">계약</span>
+        </a>
+        <a class="bottom-nav-item active">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/></svg>
+          <span class="nav-label">전체</span>
+        </a>
+      </nav>
+
+    </div>
+  </div>
+</div>
+<div class="variant-label">가격표 · /pricing</div>
+<script>
+function toggleNotif(e){e.stopPropagation();const p=document.getElementById('notifPopover'),b=document.getElementById('notifBackdrop'),bell=document.getElementById('bellBtn');const o=p.classList.toggle('open');b.classList.toggle('open',o);bell.classList.toggle('notif-active',o);}
+function closeNotif(){document.getElementById('notifPopover').classList.remove('open');document.getElementById('notifBackdrop').classList.remove('open');document.getElementById('bellBtn').classList.remove('notif-active');}
+function markAllRead(e){e.stopPropagation();document.querySelectorAll('.notif-item.unread').forEach(el=>{el.classList.remove('unread');const d=el.querySelector('.unread-dot');if(d)d.remove();});const p=document.querySelector('.notif-count-pill');if(p)p.style.display='none';const bd=document.querySelector('#bellBtn .dot');if(bd)bd.style.display='none';}
+
+const tierBadgeClass = {'단축':'muted','표준':'primary','연장':'burgundy'};
+
+function openDetail(tier, duration, type, total, grant, own){
+  document.getElementById('uploadSheet').style.display='none';
+  document.getElementById('detailSheet').style.display='';
+  document.getElementById('detailName').textContent = type + ' · ' + duration + '일';
+  const tierEl = document.getElementById('detailTier');
+  tierEl.textContent = tier;
+  tierEl.className = 'badge-mini ' + (tierBadgeClass[tier] || 'muted');
+  document.getElementById('bd-duration').textContent = duration + '일';
+  document.getElementById('bd-grant').textContent = grant + '원';
+  document.getElementById('bd-own').textContent = own + '원';
+  document.getElementById('bd-total').textContent = total + '원';
+  const t = parseInt(total.replace(/,/g,''),10);
+  const g = parseInt(grant.replace(/,/g,''),10);
+  const o = parseInt(own.replace(/,/g,''),10);
+  const pill = document.getElementById('validatePill');
+  const msg = document.getElementById('validateMsg');
+  if (t === g + o){
+    pill.classList.remove('warn');
+    msg.textContent = '검증 통과 · 서비스가격 = 정부지원금 + 본인부담금';
+  } else {
+    pill.classList.add('warn');
+    msg.textContent = '가격 계산 불일치 (차액 ' + (t - g - o).toLocaleString('ko-KR') + '원)';
+  }
+  document.getElementById('stack').classList.add('show-detail');
+}
+function closeDetail(){document.getElementById('stack').classList.remove('show-detail');}
+
+function openUpload(){
+  document.getElementById('detailSheet').style.display='none';
+  document.getElementById('uploadSheet').style.display='';
+  document.getElementById('stack').classList.add('show-detail');
+}
+function closeUpload(){
+  document.getElementById('stack').classList.remove('show-detail');
+  setTimeout(()=>{
+    document.getElementById('uploadSheet').style.display='none';
+    document.getElementById('detailSheet').style.display='';
+  }, 320);
+}
+
+document.querySelectorAll('.filter-pill').forEach(p=>p.addEventListener('click',()=>{
+  const row=p.closest('.filter-row');
+  if(!row) return;
+  row.querySelectorAll('.filter-pill').forEach(x=>x.classList.remove('active'));
+  p.classList.add('active');
+}));
+</script>
+</body>
+</html>
