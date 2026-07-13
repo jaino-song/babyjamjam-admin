@@ -55,16 +55,24 @@ interface UseInfiniteContractsOptions {
  * Per-status tabs (대기/완료/기간 만료) hit dedicated eformsign endpoints with
  * real `limit`/`skip` pagination using `total_rows` from the upstream response.
  *
- * The "전체" tab calls the merged endpoint which fetches `limit` items from
- * each of the three status streams in parallel, then dedupes. `total_rows` from
- * that endpoint is the deduped batch size — not a reliable global total — so
- * we use a "fetch until empty" cursor instead: keep paginating until a page
- * returns no documents (meaning all three status streams are exhausted at
- * the current offset).
+ * The merged "전체" endpoint now also returns its branch-scoped `total_rows`.
+ * Use that pagination metadata instead of issuing an extra, expensive request
+ * solely to discover an empty page.
  *
  * Each tab has its own cache (queryKey differs by filterType) and persists for
  * `staleTime`, so tab switches do not refetch within that window.
  */
+export function getNextContractsPageParam(
+  lastPage: EformsignDocumentsResponse,
+): number | undefined {
+  if (lastPage.documents.length === 0) {
+    return undefined;
+  }
+
+  const nextSkip = lastPage.skip + lastPage.limit;
+  return nextSkip < lastPage.total_rows ? nextSkip : undefined;
+}
+
 export function useInfiniteContracts({
   enabled = true,
   filterType = null,
@@ -88,15 +96,7 @@ export function useInfiniteContracts({
           return await eformsignApi.getAllDocuments({ ...params, type: null });
       }
     },
-    getNextPageParam: (lastPage) => {
-      const nextSkip = lastPage.skip + lastPage.limit;
-      if (filterType === null) {
-        // 전체 (merged-dedupe): fetch until a page returns empty.
-        return lastPage.documents.length > 0 ? nextSkip : undefined;
-      }
-      // Per-status: real total_rows from eformsign.
-      return nextSkip < lastPage.total_rows ? nextSkip : undefined;
-    },
+    getNextPageParam: getNextContractsPageParam,
     enabled,
     staleTime: 1000 * 60 * 5, // 5 minutes
     gcTime: 1000 * 60 * 60, // 1 hour

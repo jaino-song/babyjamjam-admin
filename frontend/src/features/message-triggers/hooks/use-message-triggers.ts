@@ -86,6 +86,8 @@ export function useUpcomingMessageTriggerJobs(limit = 200) {
             messageTriggersApi
                 .listUpcomingJobs(limit)
                 .then((response) => normalizeArrayPayload<UpcomingMessageTriggerJob>(response.data)),
+        staleTime: 0,
+        refetchOnMount: "always",
     });
 }
 

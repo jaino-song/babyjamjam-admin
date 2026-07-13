@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
-import { matchesKoreanSearch } from "@/lib/search/korean-search";
+import { matchesSearchQuery } from "@/lib/search/korean-search";
 import {
   FileText,
   FileSignature,
@@ -59,6 +59,7 @@ import {
   SectionNav,
 } from "@/components/app/v3";
 import type { StatusType } from "@/components/app/v3";
+import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -98,6 +99,10 @@ import { formatIsoDateInput } from "@/lib/date/format-iso-input";
 import { useAllVoucherPriceInfos } from "@/hooks/useVoucherData";
 import { inferVoucherDurationFromAmounts } from "@/lib/voucher/duration";
 import { ContractsListItem } from "@/components/app/contracts/ContractsListItem";
+import {
+  ContractReviewActionButton,
+  type ContractReviewAction,
+} from "@/components/app/contracts/ContractReviewActionButton";
 import {
   ContractCreationForm,
   CONTRACT_CREATION_STEPPER_STEPS,
@@ -181,13 +186,7 @@ function displayCustomerName(doc: EformsignDocument | null): string | null {
 }
 
 function matchesDocumentSearch(doc: EformsignDocument, query: string): boolean {
-  const q = query.trim();
-  if (!q) return true;
-
-  const customerName = displayCustomerName(doc);
-  if (customerName && matchesKoreanSearch(customerName, q)) return true;
-  if (doc.document_name?.toLowerCase().includes(q.toLowerCase())) return true;
-  return false;
+  return matchesSearchQuery(query, [displayCustomerName(doc), doc.document_name]);
 }
 
 function matchesDocumentStatusTab(doc: EformsignDocument, tab: string): boolean {
@@ -622,8 +621,8 @@ export default function ContractsPage() {
 
   if (authError || error) {
     return (
-      <div data-component="contracts-error-container" className="p-[calc(24px*var(--v3-ui-scale,1))]">
-        <div data-component="contracts-error-banner" className="rounded-[18px] bg-v3-burgundy-light p-[calc(24px*var(--v3-ui-scale,1))] text-center text-v3-burgundy">
+      <div data-component="contracts-error-container" className="p-[calc(24px*var(--glint-ui-scale,1))]">
+        <div data-component="contracts-error-banner" className="rounded-[18px] bg-v3-burgundy-light p-[calc(24px*var(--glint-ui-scale,1))] text-center text-v3-burgundy">
           {authError
             ? "인증에 실패했습니다. 페이지를 새로고침 해주세요."
             : "문서를 불러오는데 실패했습니다."}
@@ -648,7 +647,7 @@ export default function ContractsPage() {
 
       <div
         data-component="contracts-sections"
-        className="flex flex-1 min-h-0 flex-col gap-[calc(16px*var(--v3-ui-scale,1))] lg:flex-row"
+        className="flex flex-1 min-h-0 flex-col gap-[calc(16px*var(--glint-ui-scale,1))] lg:flex-row"
       >
         <SectionNav
           items={NAV_SECTIONS}
@@ -745,9 +744,9 @@ export default function ContractsPage() {
                       avatar={
                         <div
                           data-component="contracts-create-avatar"
-                          className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
+                          className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
                         >
-                          <Send className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
+                          <Send className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
                         </div>
                       }
                       stepper={
@@ -858,6 +857,7 @@ export default function ContractsPage() {
                     key={selectedServiceRecordDocument.id}
                     document={selectedServiceRecordDocument}
                     onDeleteRequest={handleDeleteRequest}
+                    reviewAction="preview"
                   />
                 ) : (
                   <EmptyState icon={ClipboardList} message="제공기록지를 선택하면 상세 정보가 표시됩니다" />
@@ -873,8 +873,8 @@ export default function ContractsPage() {
                   title="제공인력 계약 목록"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
-                      <Briefcase className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
+                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <Briefcase className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
                     </div>
                   }
                   emptyState={<ListEmptyState message="아직 준비중입니다" />}
@@ -885,8 +885,8 @@ export default function ContractsPage() {
                   title="제공인력 계약서"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
-                      <Briefcase className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
+                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <Briefcase className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
                     </div>
                   }
                 >
@@ -903,8 +903,8 @@ export default function ContractsPage() {
                   title="전자문서 목록"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
-                      <FileText className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
+                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <FileText className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
                     </div>
                   }
                   emptyState={<ListEmptyState message="아직 준비중입니다" />}
@@ -915,8 +915,8 @@ export default function ContractsPage() {
                   title="전자문서"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
-                      <FileText className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
+                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <FileText className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
                     </div>
                   }
                 >
@@ -933,8 +933,8 @@ export default function ContractsPage() {
                   title="알림 설정"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
-                      <Bell className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
+                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <Bell className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
                     </div>
                   }
                   emptyState={<ListEmptyState message="아직 준비중입니다" />}
@@ -945,8 +945,8 @@ export default function ContractsPage() {
                   title="알림 설정"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
-                      <Bell className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
+                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <Bell className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
                     </div>
                   }
                 >
@@ -958,39 +958,22 @@ export default function ContractsPage() {
         </div>
       </div>
 
-      <Dialog
+      <ApprovalTwoButtonModal
         open={deleteTargetDocumentId != null}
         onOpenChange={(open) => {
           if (!open && !deleteDocument.isPending) {
             setDeleteTargetDocumentId(null);
           }
         }}
-      >
-        <DialogContent className="sm:max-w-[400px]">
-          <DialogHeader>
-            <DialogTitle>삭제</DialogTitle>
-            <DialogDescription>이 문서를 삭제하시겠습니까?</DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setDeleteTargetDocumentId(null)}
-              disabled={deleteDocument.isPending}
-            >
-              취소
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={() => void handleDeleteConfirm()}
-              disabled={deleteDocument.isPending}
-            >
-              {deleteDocument.isPending ? "삭제 중..." : "삭제"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        dataComponent="contracts-delete-approval"
+        title="문서를 삭제하시겠습니까?"
+        description="삭제한 전자문서는 복구할 수 없습니다."
+        approvalLabel="삭제"
+        pendingLabel="삭제 중..."
+        approvalVariant="destructive"
+        isPending={deleteDocument.isPending}
+        onApprove={() => void handleDeleteConfirm()}
+      />
     </PageSection>
   );
 }
@@ -998,9 +981,11 @@ export default function ContractsPage() {
 function ContractDetail({
   document: doc,
   onDeleteRequest,
+  reviewAction = "finalize",
 }: {
   document: EformsignDocument;
   onDeleteRequest?: (documentId: string) => void;
+  reviewAction?: ContractReviewAction;
 }) {
   const isMobile = useIsMobile();
   const queryClient = useQueryClient();
@@ -1030,6 +1015,7 @@ function ContractDetail({
   const finalizeEventSourceRef = useRef<EventSource | null>(null);
   const [isStaffCompletionOpen, setIsStaffCompletionOpen] = useState(false);
   const [staffCompletionOption, setStaffCompletionOption] = useState<EformsignDocumentOption | null>(null);
+  const reviewDocumentLabel = reviewAction === "preview" ? "제공기록지" : "계약서";
   const canReRequest = canReRequestDocument(detailedDocument);
   const reRequestStepType = detailedDocument.current_status?.step_type ?? "";
   const reRequestStepSeq = detailedDocument.current_status?.step_index ?? "";
@@ -1230,7 +1216,7 @@ function ContractDetail({
   const handleFinalizeSuccess = () => {
     toast({
       title: "최종 확인 완료",
-      description: "계약서가 완료 처리되었습니다.",
+      description: `${reviewDocumentLabel}가 완료 처리되었습니다.`,
     });
     resetFinalizeState();
     queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
@@ -1266,7 +1252,7 @@ function ContractDetail({
   });
 
   const openStaffCompletionMutation = useMutation({
-    mutationFn: async (endDate: string): Promise<{ kind: "headless" } | { kind: "iframe"; option: EformsignDocumentOption }> => {
+    mutationFn: async (endDate?: string): Promise<{ kind: "headless" } | { kind: "iframe"; option: EformsignDocumentOption }> => {
       // BJJ-90: try the backend-driven finalize first when the flag is on.
       if (isFeatureEnabled("headlessDispatch")) {
         try {
@@ -1293,11 +1279,12 @@ function ContractDetail({
       closeFinalizeProgressStream();
       setFinalizeProgress(INITIAL_FINALIZE_PROGRESS);
       if (result.kind === "headless") {
+        setIsPreviewOpen(false);
         setIsFinalizeOpen(false);
         setFinalizeEndDate("");
         toast({
           title: "최종 확인 완료",
-          description: "계약서가 완료 처리되었습니다.",
+          description: `${reviewDocumentLabel}가 완료 처리되었습니다.`,
         });
         // Headless finalize completes within ~1s of the SDK success callback,
         // but eformsign's status field (060 → 070) and the matching webhook
@@ -1316,6 +1303,7 @@ function ContractDetail({
         });
         return;
       }
+      setIsPreviewOpen(false);
       setStaffCompletionOption(result.option);
       setIsFinalizeOpen(false);
       setIsStaffCompletionOpen(true);
@@ -1368,7 +1356,11 @@ function ContractDetail({
     closeStaffCompletionModal();
   };
 
-  const handleFinalizeSubmit = () => {
+  const startFinalizeFlow = (endDate?: string) => {
+    if (isFinalizePending) {
+      return;
+    }
+
     const progressId = createFinalizeProgressId();
     finalizeProgressIdRef.current = progressId;
     setFinalizeProgress({ step: "client-started", completed: false, failed: false });
@@ -1409,7 +1401,15 @@ function ContractDetail({
       );
     });
 
-    openStaffCompletionMutation.mutate(finalizeEndDate);
+    openStaffCompletionMutation.mutate(endDate);
+  };
+
+  const handleFinalizeSubmit = () => {
+    startFinalizeFlow(finalizeEndDate);
+  };
+
+  const handleServiceRecordReviewConfirm = () => {
+    startFinalizeFlow();
   };
 
   const activityItems: {
@@ -1558,7 +1558,7 @@ function ContractDetail({
         {
           label: "문서 ID",
           value: (
-            <span className="max-w-[calc(224px*var(--v3-ui-scale,1))] break-all font-mono text-[calc(12px*var(--v3-ui-scale,1))]">
+            <span className="max-w-[calc(224px*var(--glint-ui-scale,1))] break-all font-mono text-[calc(12px*var(--glint-ui-scale,1))]">
               {detailedDocument.id}
             </span>
           ),
@@ -1616,11 +1616,11 @@ function ContractDetail({
   ];
 
   const stepperActions = (
-    <div data-component="contracts-stepper-actions" className="flex items-start gap-[calc(8px*var(--v3-ui-scale,1))]">
+    <div data-component="contracts-stepper-actions" className="flex items-start gap-[calc(8px*var(--glint-ui-scale,1))]">
       <button
         type="button"
         data-component="contracts-detail-activity-trigger"
-        className="overflow-visible rounded-[18px] p-[calc(4px*var(--v3-ui-scale,1))] transition-colors duration-200 ease-out hover:bg-black/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary/20"
+        className="overflow-visible rounded-[18px] p-[calc(4px*var(--glint-ui-scale,1))] transition-colors duration-200 ease-out hover:bg-black/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary/20"
         onClick={() => setIsActivityOpen(true)}
         aria-label="계약서 단계 보기"
         title="계약서 단계 보기"
@@ -1638,10 +1638,10 @@ function ContractDetail({
               variant="ghost"
               size="icon"
               data-component="contracts-detail-more-trigger"
-              className="mt-[calc(8px*var(--v3-ui-scale,1))] h-[calc(32px*var(--v3-ui-scale,1))] w-[calc(32px*var(--v3-ui-scale,1))] rounded-full border-0 p-0 text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-primary"
+              className="mt-[calc(8px*var(--glint-ui-scale,1))] h-[calc(32px*var(--glint-ui-scale,1))] w-[calc(32px*var(--glint-ui-scale,1))] rounded-full border-0 p-0 text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-primary"
               aria-label="계약 작업 더보기"
             >
-              <MoreVertical className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
+              <MoreVertical className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent
@@ -1679,20 +1679,20 @@ function ContractDetail({
       title={detailedDocument.document_name}
       badges={<StatusBadge status={statusType} label={statusLabel} />}
       subtitle={
-        <span className="flex flex-nowrap items-center gap-[calc(16px*var(--v3-ui-scale,1))] whitespace-nowrap text-[calc(12px*var(--v3-ui-scale,1))]">
-          <span className="flex shrink-0 items-center gap-[calc(4px*var(--v3-ui-scale,1))]">
-            <Calendar className="h-[calc(14px*var(--v3-ui-scale,1))] w-[calc(14px*var(--v3-ui-scale,1))] shrink-0" />
+        <span className="flex flex-nowrap items-center gap-[calc(16px*var(--glint-ui-scale,1))] whitespace-nowrap text-[calc(12px*var(--glint-ui-scale,1))]">
+          <span className="flex shrink-0 items-center gap-[calc(4px*var(--glint-ui-scale,1))]">
+            <Calendar className="h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(14px*var(--glint-ui-scale,1))] shrink-0" />
             발송일: {sentDateLabel}
           </span>
           {contractCompletedDate && (
-            <span className="flex shrink-0 items-center gap-[calc(4px*var(--v3-ui-scale,1))]">
-              <CheckCircle2 className="h-[calc(14px*var(--v3-ui-scale,1))] w-[calc(14px*var(--v3-ui-scale,1))] shrink-0" />
+            <span className="flex shrink-0 items-center gap-[calc(4px*var(--glint-ui-scale,1))]">
+              <CheckCircle2 className="h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(14px*var(--glint-ui-scale,1))] shrink-0" />
               서명 완료일: {contractCompletedDateLabel}
             </span>
           )}
           {expiredDate != null && expiredDate > 0 && (
-            <span className="flex shrink-0 items-center gap-[calc(4px*var(--v3-ui-scale,1))]">
-              <Clock className="h-[calc(14px*var(--v3-ui-scale,1))] w-[calc(14px*var(--v3-ui-scale,1))] shrink-0" />
+            <span className="flex shrink-0 items-center gap-[calc(4px*var(--glint-ui-scale,1))]">
+              <Clock className="h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(14px*var(--glint-ui-scale,1))] shrink-0" />
               만료일: {formatDate(expiredDate)}
             </span>
           )}
@@ -1703,27 +1703,22 @@ function ContractDetail({
         <>
           {isMobile && stepperActions}
           {isReviewNeeded ? (
-            <Button
-              variant="positive"
-              size="sm"
-              data-component="contracts-detail-finalize-trigger"
-            className="w-[calc(176px*var(--v3-ui-scale,1))]"
-              onClick={() => {
+            <ContractReviewActionButton
+              action={reviewAction}
+              onPreview={() => setIsPreviewOpen(true)}
+              onFinalize={() => {
                 setFinalizeEndDate((current) => current || formatIsoDateInput(contractEndDateIso));
                 setIsFinalizeOpen(true);
               }}
-            >
-              <CheckCircle2 className="h-4 w-4" />
-              확인하기
-            </Button>
+            />
           ) : (
             <button
               type="button"
               data-component="contracts-detail-preview-trigger"
-              className="flex w-[calc(220px*var(--v3-ui-scale,1))] items-center gap-[calc(12px*var(--v3-ui-scale,1))] rounded-xl bg-[hsl(var(--v3-primary))] px-[calc(16px*var(--v3-ui-scale,1))] py-[calc(10px*var(--v3-ui-scale,1))] text-left text-[calc(14px*var(--v3-ui-scale,1))] font-medium text-white transition-all duration-200"
+              className="flex w-[calc(220px*var(--glint-ui-scale,1))] items-center gap-[calc(12px*var(--glint-ui-scale,1))] rounded-xl bg-[hsl(var(--v3-primary))] px-[calc(16px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))] text-left text-[calc(14px*var(--glint-ui-scale,1))] font-medium text-white transition-all duration-200"
               onClick={() => setIsPreviewOpen(true)}
             >
-              <Eye className="h-[calc(16px*var(--v3-ui-scale,1))] w-[calc(16px*var(--v3-ui-scale,1))] shrink-0" />
+              <Eye className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] shrink-0" />
               문서 보기
             </button>
           )}
@@ -1768,10 +1763,10 @@ function ContractDetail({
               {customerName} 님에게 전자문서 작성을 재요청 할까요?
             </DialogDescription>
           </DialogHeader>
-          <div data-component="contracts-rerequest-phone-field" className="pb-[calc(8px*var(--v3-ui-scale,1))]">
+          <div data-component="contracts-rerequest-phone-field" className="pb-[calc(8px*var(--glint-ui-scale,1))]">
             <Label
               htmlFor={`contract-rerequest-phone-${doc.id}`}
-              className="mb-[calc(8px*var(--v3-ui-scale,1))] block text-[calc(11.52px*var(--v3-ui-scale,1))] font-semibold uppercase tracking-[0.08em] text-v3-text-muted"
+              className="mb-[calc(8px*var(--glint-ui-scale,1))] block text-[calc(11.52px*var(--glint-ui-scale,1))] font-semibold uppercase tracking-[0.08em] text-v3-text-muted"
             >
               전송 전화번호
             </Label>
@@ -1787,14 +1782,14 @@ function ContractDetail({
               }
               maxLength={13}
               className={cn(
-                "h-[calc(48px*var(--v3-ui-scale,1))] rounded-[16px] border-[1.5px] border-v3-border bg-white px-[calc(16px*var(--v3-ui-scale,1))] text-[calc(13.6px*var(--v3-ui-scale,1))] text-v3-dark shadow-none transition-all focus-visible:border-v3-primary focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]",
+                "h-[calc(48px*var(--glint-ui-scale,1))] rounded-[16px] border-[1.5px] border-v3-border bg-white px-[calc(16px*var(--glint-ui-scale,1))] text-[calc(13.6px*var(--glint-ui-scale,1))] text-v3-dark shadow-none transition-all focus-visible:border-v3-primary focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]",
                 hasEditedRecipientPhone &&
                   !isRecipientPhoneValid &&
                   "border-v3-burgundy focus-visible:border-v3-burgundy focus-visible:shadow-[0_0_0_3px_hsla(348,83%,47%,0.08)]"
               )}
             />
             {hasEditedRecipientPhone && !isRecipientPhoneValid && (
-              <p className="mt-[calc(8px*var(--v3-ui-scale,1))] text-[calc(12px*var(--v3-ui-scale,1))] font-medium text-v3-burgundy">
+              <p className="mt-[calc(8px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-medium text-v3-burgundy">
                 전송할 전화번호를 올바르게 입력해 주세요.
               </p>
             )}
@@ -1828,7 +1823,7 @@ function ContractDetail({
           {isFinalizePending || finalizeProgress.step !== null ? (
             <div
               data-component="contracts-finalize-progress-section"
-              className="flex justify-center py-[calc(8px*var(--v3-ui-scale,1))]"
+              className="flex justify-center py-[calc(8px*var(--glint-ui-scale,1))]"
             >
               <HeadlessProgressStepper
                 steps={FINALIZE_PROGRESS_STEPS}
@@ -1836,15 +1831,15 @@ function ContractDetail({
                 ariaLabel="전자계약서 최종 확인 진행 상태"
                 dataComponentPrefix="contracts-finalize-progress"
                 testIdPrefix="contracts-finalize-progress"
-                className="w-full max-w-[calc(320px*var(--v3-ui-scale,1))]"
+                className="w-full max-w-[calc(320px*var(--glint-ui-scale,1))]"
               />
             </div>
           ) : (
             <>
-              <div data-component="contracts-finalize-end-date-field" className="pb-[calc(8px*var(--v3-ui-scale,1))]">
+              <div data-component="contracts-finalize-end-date-field" className="pb-[calc(8px*var(--glint-ui-scale,1))]">
                 <Label
                   htmlFor={`contract-finalize-end-date-${doc.id}`}
-                  className="mb-[calc(8px*var(--v3-ui-scale,1))] block text-[calc(11.52px*var(--v3-ui-scale,1))] font-semibold uppercase tracking-[0.08em] text-v3-text-muted"
+                  className="mb-[calc(8px*var(--glint-ui-scale,1))] block text-[calc(11.52px*var(--glint-ui-scale,1))] font-semibold uppercase tracking-[0.08em] text-v3-text-muted"
                 >
                   서비스 완료일
                 </Label>
@@ -1913,10 +1908,20 @@ function ContractDetail({
       </Dialog>
       <ContractDocumentPreviewModal
         open={isPreviewOpen}
-        onClose={() => setIsPreviewOpen(false)}
+        onClose={() => {
+          if (!isFinalizePending) {
+            setIsPreviewOpen(false);
+          }
+        }}
         document={detailedDocument}
         customerName={customerName}
         canDownloadReceipt={category === "completed"}
+        onReviewConfirm={
+          reviewAction === "preview" && isReviewNeeded
+            ? handleServiceRecordReviewConfirm
+            : undefined
+        }
+        isReviewConfirming={isFinalizePending}
       />
     </DetailPanel>
   );

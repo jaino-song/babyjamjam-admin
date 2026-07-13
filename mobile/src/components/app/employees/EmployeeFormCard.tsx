@@ -5,6 +5,7 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { cn } from "@/lib/utils";
 import { DEFAULT_EMPLOYEE_GRADE, EMPLOYEE_GRADES } from "@/features/employees/grade";
+import { Switch } from "@/components/ui/switch";
 import { WORK_AREAS, formatWorkAreaLabel } from "./employee-form.constants";
 import styles from "./EmployeeFormCard.module.css";
 
@@ -240,16 +241,14 @@ export function EmployeeFormCard({
               <strong className={styles.switchTitle}>다음 근무 배정 가능</strong>
               <span className={styles.switchDescription}>고객 생성 완료 후 배정 후보에 표시합니다.</span>
             </div>
-            <button
-              type="button"
-              className={cn(styles.switchButton, formData.openToNextWork && styles.switchButtonOn)}
-              onClick={() => setField("openToNextWork", !formData.openToNextWork)}
-              aria-pressed={formData.openToNextWork}
+            <Switch
+              data-component="employees-form-dialog-open-status-switch"
+              thumbDataComponent="employees-form-dialog-open-status-switch-thumb"
+              checked={formData.openToNextWork}
+              onCheckedChange={(checked) => setField("openToNextWork", checked)}
               aria-label="다음 근무 배정 가능"
               disabled={disabled}
-            >
-              <span className={styles.switchThumb} />
-            </button>
+            />
           </div>
         </div>
       </section>

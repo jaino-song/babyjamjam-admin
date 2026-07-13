@@ -127,7 +127,7 @@ export function AnimatedSlotList<T>({
         const variantClassName =
           itemVariant === "card"
             ? cn(
-                "flex h-[calc(94px*var(--v3-ui-scale,1))] items-center gap-[calc(12px*var(--v3-ui-scale,1))] overflow-hidden rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--v3-ui-scale,1))] text-left transition-all duration-200 [&>*:only-child]:w-full",
+                "flex h-[calc(94px*var(--glint-ui-scale,1))] items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--glint-ui-scale,1))] text-left transition-all duration-200 [&>*:only-child]:w-full",
                 isInteractive &&
                   "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2",
                 slotState.isActive
@@ -154,17 +154,17 @@ export function AnimatedSlotList<T>({
               data-component={itemDataComponent}
               className={cn(
                 shouldAnimateSlot && "animate-v3-pop-up",
-                "h-[calc(94px*var(--v3-ui-scale,1))] overflow-hidden px-[calc(16px*var(--v3-ui-scale,1))] py-[calc(16px*var(--v3-ui-scale,1))]",
+                "h-[calc(94px*var(--glint-ui-scale,1))] overflow-hidden px-[calc(16px*var(--glint-ui-scale,1))] py-[calc(16px*var(--glint-ui-scale,1))]",
                 computedSlotClassName
               )}
               style={shouldAnimateSlot ? { animationDelay } : undefined}
             >
               <div
                 data-component={`${itemDataComponent}-text-skeleton`}
-                className="ml-[calc(56px*var(--v3-ui-scale,1))] max-w-[calc(220px*var(--v3-ui-scale,1))] space-y-[calc(8px*var(--v3-ui-scale,1))]"
+                className="ml-[calc(56px*var(--glint-ui-scale,1))] max-w-[calc(220px*var(--glint-ui-scale,1))] space-y-[calc(8px*var(--glint-ui-scale,1))]"
               >
-                <Skeleton className="h-[calc(16px*var(--v3-ui-scale,1))] w-[calc(112px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
-                <Skeleton className="h-[calc(12px*var(--v3-ui-scale,1))] w-full bg-v3-dim-white" />
+                <Skeleton className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(112px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
+                <Skeleton className="h-[calc(12px*var(--glint-ui-scale,1))] w-full bg-v3-dim-white" />
               </div>
             </div>
           );

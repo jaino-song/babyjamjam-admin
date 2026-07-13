@@ -360,7 +360,7 @@ export function SplitLayout({
         data-mode={mode}
         className={cn(
           "flex-1 h-full min-w-0 min-h-0",
-          "grid gap-[calc(16px*var(--v3-ui-scale,1))]",
+          "grid gap-[calc(16px*var(--glint-ui-scale,1))]",
           getDesktopGridClass(columns),
           "data-[mode=compact]:block data-[mode=compact]:relative data-[mode=compact]:w-full data-[mode=compact]:overflow-hidden data-[mode=compact]:rounded-[28px]",
         )}

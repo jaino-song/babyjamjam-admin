@@ -275,7 +275,72 @@ describe("recipient phone input layout", () => {
     expect(screen.queryByTestId("contact-input-phone")).not.toBeInTheDocument();
   });
 
-  it("uses the service-record backend path for the feedback link template", async () => {
+  it("uses the service-record backend path when the selected employee id is zero", async () => {
+    useFormStore.setState({
+      clientId: 20,
+      name: "김산모",
+      employeeId: 0,
+      employeeName: "홍제공",
+      employeePhone: "010-1111-2222",
+    });
+    mockedGetClientOverview.mockResolvedValue({
+      data: {
+        assignments: [
+          {
+            scheduleId: 11,
+            replaced: false,
+            employee: {
+              id: 0,
+              name: "홍제공",
+              phone: "010-1111-2222",
+            },
+          },
+        ],
+      },
+    } as never);
+    mockedSendServiceRecordLink.mockResolvedValue({
+      data: {
+        ok: true,
+        scheduledFor: "2026-07-10T00:00:00.000Z",
+      },
+    } as never);
+
+    const onSubmitStateChange = jest.fn();
+
+    render(
+      <TemplateSendForm
+        templateId="builtin:service-feedback-link"
+        templateName="제공기록지 작성 링크"
+        message="{{employeeName}} {{clientName}} {{feedbackUrl}}"
+        deliveryMode="service-feedback-link"
+        onSubmitStateChange={onSubmitStateChange}
+      >
+        <div data-testid="service-feedback-fields" />
+      </TemplateSendForm>,
+    );
+
+    expect(screen.getByTestId("service-feedback-fields")).toBeInTheDocument();
+    expect(screen.queryByTestId("autocomplete-휴대 전화번호")).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(onSubmitStateChange).toHaveBeenLastCalledWith(
+        expect.objectContaining({ isSubmitDisabled: false }),
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+
+    await waitFor(() => {
+      expect(mockedGetClientOverview).toHaveBeenCalledWith(20);
+      expect(mockedSendServiceRecordLink).toHaveBeenCalledWith(11);
+    });
+    expect(mockedSendSms).not.toHaveBeenCalled();
+    expect(
+      document.querySelector('[data-component="messages-template-send-form-feedback"]'),
+    ).toHaveTextContent("제공기록지 링크 발송 요청이 접수되었습니다.");
+  });
+
+  it("explains why a service-record link could not be sent without exposing error codes", async () => {
     useFormStore.setState({
       clientId: 20,
       name: "김산모",
@@ -298,12 +363,17 @@ describe("recipient phone input layout", () => {
         ],
       },
     } as never);
-    mockedSendServiceRecordLink.mockResolvedValue({
-      data: {
-        ok: true,
-        scheduledFor: "2026-07-10T00:00:00.000Z",
+    mockedSendServiceRecordLink.mockRejectedValue({
+      isAxiosError: true,
+      response: {
+        status: 400,
+        data: {
+          statusCode: 400,
+          error: "Bad Request",
+          message: "제공인력 전화번호가 없습니다",
+        },
       },
-    } as never);
+    });
 
     render(
       <TemplateSendForm
@@ -311,24 +381,25 @@ describe("recipient phone input layout", () => {
         templateName="제공기록지 작성 링크"
         message="{{employeeName}} {{clientName}} {{feedbackUrl}}"
         deliveryMode="service-feedback-link"
-      >
-        <div data-testid="service-feedback-fields" />
-      </TemplateSendForm>,
+      />,
     );
 
-    expect(screen.getByTestId("service-feedback-fields")).toBeInTheDocument();
-    expect(screen.queryByTestId("autocomplete-휴대 전화번호")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+    const sendButton = screen.getByRole("button", { name: /즉시 발송/ });
+    await waitFor(() => expect(sendButton).toBeEnabled());
+    fireEvent.click(sendButton);
 
     await waitFor(() => {
-      expect(mockedGetClientOverview).toHaveBeenCalledWith(20);
-      expect(mockedSendServiceRecordLink).toHaveBeenCalledWith(11);
+      expect(
+        document.querySelector('[data-component="messages-template-send-form-feedback"]'),
+      ).toHaveTextContent(
+        "선택한 관리사님의 전화번호가 없어 제공기록지 링크를 발송하지 못했습니다.",
+      );
     });
-    expect(mockedSendSms).not.toHaveBeenCalled();
-    expect(
-      document.querySelector('[data-component="messages-template-send-form-feedback"]'),
-    ).toHaveTextContent("제공기록지 링크 발송 요청이 접수되었습니다.");
+    const feedback = document.querySelector(
+      '[data-component="messages-template-send-form-feedback"]',
+    );
+    expect(feedback).not.toHaveTextContent("400");
+    expect(feedback).not.toHaveTextContent("Bad Request");
   });
 });
 

@@ -38,6 +38,7 @@ import {
 } from "@/lib/eformsign/headless-progress";
 import { HeadlessProgressModal } from "@/components/app/eformsign/HeadlessProgressModal";
 import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import styles from "./page.module.css";
 
@@ -541,6 +542,13 @@ export default function ContractCreationPage() {
     }
   };
 
+  const handleEmployee2VisibilityChange = (checked: boolean) => {
+    setShowEmployee2(checked);
+    if (!checked) {
+      setEmployee2Selection(null, "", "");
+    }
+  };
+
   const handlePriceChange = (field: "fullPrice" | "grant" | "actualPrice", value: string) => {
     setPricesManuallyEdited(true);
     if (field === "fullPrice") setFullPrice(value);
@@ -1013,25 +1021,19 @@ export default function ContractCreationPage() {
                   <div className={styles.formCard}>
                     <div
                       className={styles.toggleRow}
-                      onClick={() => {
-                        if (showEmployee2) {
-                          setShowEmployee2(false);
-                          setEmployee2Selection(null, "", "");
-                        } else {
-                          setShowEmployee2(true);
-                        }
-                      }}
+                      onClick={() => handleEmployee2VisibilityChange(!showEmployee2)}
                       role="button"
                       tabIndex={0}
                     >
                       <div className={styles.toggleText} data-component="contracts-creation-employee-toggle-text">
                         <div className={styles.toggleLabel}>제공인력 2 추가</div>
                       </div>
-                      <button
-                        type="button"
+                      <Switch
+                        data-component="contracts-creation-employee-toggle"
                         aria-label="제공인력 2 토글"
-                        aria-pressed={showEmployee2}
-                        className={cn(styles.toggleSwitch, showEmployee2 && styles.on)}
+                        checked={showEmployee2}
+                        onClick={(event) => event.stopPropagation()}
+                        onCheckedChange={handleEmployee2VisibilityChange}
                       />
                     </div>
                     {showEmployee2 ? (

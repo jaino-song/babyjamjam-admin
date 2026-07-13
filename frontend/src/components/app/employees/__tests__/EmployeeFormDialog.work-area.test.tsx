@@ -123,20 +123,20 @@ describe("EmployeeFormPanel work area multi-select", () => {
     expect(field!.nextElementSibling).toBe(openStatusField);
     expect(openStatusField).toHaveClass(
       "self-end",
-      "h-[calc(38px*var(--v3-ui-scale,1))]",
-      "min-h-[calc(38px*var(--v3-ui-scale,1))]",
+      "h-[calc(38px*var(--glint-ui-scale,1))]",
+      "min-h-[calc(38px*var(--glint-ui-scale,1))]",
       "rounded-[13px]",
       "border-[1.35px]",
     );
     expect(openStatusField).not.toHaveClass("md:col-span-2");
     expect(openStatusSwitch).toHaveClass(
-      "h-[calc(23.4px*var(--v3-ui-scale,1))]",
-      "w-[calc(41.4px*var(--v3-ui-scale,1))]",
-      "p-[calc(2.7px*var(--v3-ui-scale,1))]",
+      "h-[calc(23.4px*var(--glint-ui-scale,1))]",
+      "w-[calc(41.4px*var(--glint-ui-scale,1))]",
+      "p-[calc(2.7px*var(--glint-ui-scale,1))]",
     );
     expect(openStatusSwitchThumb).toHaveClass(
-      "h-[calc(18px*var(--v3-ui-scale,1))]",
-      "w-[calc(18px*var(--v3-ui-scale,1))]",
+      "h-[calc(18px*var(--glint-ui-scale,1))]",
+      "w-[calc(18px*var(--glint-ui-scale,1))]",
     );
   });
 

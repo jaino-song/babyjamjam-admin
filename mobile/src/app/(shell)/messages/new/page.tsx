@@ -6,7 +6,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, X } from "lucide-react";
 
-import { useMessagesPermissionGuard } from "@/app/messages/MessagesPermissionGuard";
+import { useMessagesPermissionGuard } from "@/app/(shell)/messages/MessagesPermissionGuard";
 import { ClientAutocomplete } from "@/components/app/clients/ClientAutocomplete";
 import { MsgField } from "@/components/app/messages/templates/MsgField";
 import bankAccountJSON from "@/components/app/messages/templates/json/bank-account.json";

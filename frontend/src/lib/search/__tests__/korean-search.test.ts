@@ -7,8 +7,11 @@ import {
     getChosung,
     isChosung,
     getChosungString,
-    matchesKoreanSearch,
+    matchesSearchQuery,
 } from "../korean-search";
+
+const matchesKoreanSearch = (target: string, query: string) =>
+    matchesSearchQuery(query, [target]);
 
 // ============================================
 // getChosung tests
@@ -325,6 +328,31 @@ describe("matchesKoreanSearch", () => {
             expect(matchesKoreanSearch("대한민국만세", "ㄷㅎㅁㄱㅁㅅ")).toBe(true);
             expect(matchesKoreanSearch("대한민국만세", "ㄷㅎㅁ")).toBe(true);
         });
+    });
+});
+
+describe("matchesSearchQuery", () => {
+    const fields = ["송진호", "010-6621-1878", "인천광역시 연수구"];
+
+    it("matches Korean names by initial consonants", () => {
+        expect(matchesSearchQuery("ㅅㅈㅎ", fields)).toBe(true);
+    });
+
+    it("matches any text field case-insensitively", () => {
+        expect(matchesSearchQuery("INCHEON", ["Incheon Branch", "010-0000-0000"])).toBe(true);
+        expect(matchesSearchQuery("연수구", fields)).toBe(true);
+    });
+
+    it("matches formatted phone numbers with an unformatted query", () => {
+        expect(matchesSearchQuery("0106621", fields)).toBe(true);
+    });
+
+    it("treats an empty query as no filtering", () => {
+        expect(matchesSearchQuery("   ", fields)).toBe(true);
+    });
+
+    it("returns false when none of the fields match", () => {
+        expect(matchesSearchQuery("ㄱㅎㅇ", fields)).toBe(false);
     });
 });
 

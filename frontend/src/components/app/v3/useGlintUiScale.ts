@@ -3,32 +3,32 @@
 import type { CSSProperties } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-const BASE_VIEWPORT_WIDTH = 1920;
-const BASE_VIEWPORT_HEIGHT = 1080;
-const CONTRACTS_UI_SCALE_MULTIPLIER = 1.1;
-const V3_UI_VIEWPORT_SCALE_CSS_VALUE = `calc(min(calc(100vw / ${BASE_VIEWPORT_WIDTH}px), calc(100vh / ${BASE_VIEWPORT_HEIGHT}px)) * ${CONTRACTS_UI_SCALE_MULTIPLIER})`;
-const DPR_CHANGE_EPSILON = 0.001;
+const GLINT_UI_BASE_VIEWPORT_WIDTH = 1920;
+const GLINT_UI_BASE_VIEWPORT_HEIGHT = 1080;
+const GLINT_UI_SCALE_MULTIPLIER = 1.1;
+const GLINT_UI_VIEWPORT_SCALE_CSS_VALUE = `calc(min(calc(100vw / ${GLINT_UI_BASE_VIEWPORT_WIDTH}px), calc(100vh / ${GLINT_UI_BASE_VIEWPORT_HEIGHT}px)) * ${GLINT_UI_SCALE_MULTIPLIER})`;
+const GLINT_UI_DPR_CHANGE_EPSILON = 0.001;
 
-export type V3ScaleStyle = CSSProperties & {
-  "--v3-ui-scale": string;
+export type GlintUiScaleStyle = CSSProperties & {
+  "--glint-ui-scale": string;
 };
 
-export function getV3UiScaleForViewport(width: number, height: number): number {
+export function getGlintUiScaleForViewport(width: number, height: number): number {
   return Number((
     Math.min(
-      width / BASE_VIEWPORT_WIDTH,
-      height / BASE_VIEWPORT_HEIGHT,
-    ) * CONTRACTS_UI_SCALE_MULTIPLIER
+      width / GLINT_UI_BASE_VIEWPORT_WIDTH,
+      height / GLINT_UI_BASE_VIEWPORT_HEIGHT,
+    ) * GLINT_UI_SCALE_MULTIPLIER
   ).toFixed(4));
 }
 
-function getViewportScaleValue(): string {
-  return String(getV3UiScaleForViewport(window.innerWidth, window.innerHeight));
+function getGlintUiViewportScaleValue(): string {
+  return String(getGlintUiScaleForViewport(window.innerWidth, window.innerHeight));
 }
 
-function useStableV3ScaleValue(enabled: boolean): string {
+function useStableGlintUiScaleValue(enabled: boolean): string {
   const lastDprRef = useRef<number | null>(null);
-  const [scaleValue, setScaleValue] = useState(V3_UI_VIEWPORT_SCALE_CSS_VALUE);
+  const [scaleValue, setScaleValue] = useState(GLINT_UI_VIEWPORT_SCALE_CSS_VALUE);
 
   useEffect(() => {
     if (!enabled) {
@@ -44,12 +44,12 @@ function useStableV3ScaleValue(enabled: boolean): string {
         const previousDpr = lastDprRef.current || window.devicePixelRatio || 1;
         const currentDpr = window.devicePixelRatio || previousDpr;
 
-        if (Math.abs(currentDpr - previousDpr) > DPR_CHANGE_EPSILON) {
+        if (Math.abs(currentDpr - previousDpr) > GLINT_UI_DPR_CHANGE_EPSILON) {
           lastDprRef.current = currentDpr;
           return;
         }
 
-        const nextScaleValue = getViewportScaleValue();
+        const nextScaleValue = getGlintUiViewportScaleValue();
         setScaleValue((currentScaleValue) => currentScaleValue === nextScaleValue ? currentScaleValue : nextScaleValue);
       });
     };
@@ -68,13 +68,13 @@ function useStableV3ScaleValue(enabled: boolean): string {
   return enabled ? scaleValue : "1";
 }
 
-export function useV3UiScaleStyle(enabled: boolean): V3ScaleStyle | undefined {
-  const scaleValue = useStableV3ScaleValue(enabled);
+export function useGlintUiScaleStyle(enabled: boolean): GlintUiScaleStyle | undefined {
+  const scaleValue = useStableGlintUiScaleValue(enabled);
 
-  return useMemo<V3ScaleStyle | undefined>(
+  return useMemo<GlintUiScaleStyle | undefined>(
     () => enabled
       ? {
-          "--v3-ui-scale": scaleValue,
+          "--glint-ui-scale": scaleValue,
         }
       : undefined,
     [enabled, scaleValue],

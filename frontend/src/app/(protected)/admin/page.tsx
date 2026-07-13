@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getFeedbackList, getFeedbackStats, getFeedbackDetail, FeedbackItem, SessionMessage } from '@/lib/api/admin';
+import { matchesSearchQuery } from '@/lib/search/korean-search';
 import { cn } from '@/lib/utils';
 import { MessageSquare, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -36,11 +37,8 @@ export default function AdminFeedbackPage() {
   const filteredList = useMemo(() => {
     const feedbackList = feedbackData?.data ?? [];
     if (!searchQuery.trim()) return feedbackList;
-    const q = searchQuery.trim().toLowerCase();
     return feedbackList.filter(f =>
-      (f.user.name?.toLowerCase().includes(q)) ||
-      (f.user.email?.toLowerCase().includes(q)) ||
-      (f.comment?.toLowerCase().includes(q))
+      matchesSearchQuery(searchQuery, [f.user.name, f.user.email, f.comment])
     );
   }, [feedbackData?.data, searchQuery]);
 
@@ -138,7 +136,7 @@ export default function AdminFeedbackPage() {
                     title={feedback.user.name || feedback.user.email || '익명'}
                     subtitle={truncateText(feedback.comment, 30)}
                     status={
-                      <span className="whitespace-nowrap text-[calc(10.4px*var(--v3-ui-scale,1))] text-v3-text-muted">
+                      <span className="whitespace-nowrap text-[calc(10.4px*var(--glint-ui-scale,1))] text-v3-text-muted">
                         {formatDate(feedback.createdAt)}
                       </span>
                     }

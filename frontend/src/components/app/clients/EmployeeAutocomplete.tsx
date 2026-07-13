@@ -6,14 +6,14 @@ import { useEmployees, Employee } from "@/hooks/useEmployees";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { useEmployeeDialogStore } from "@/stores/employee-dialog-store";
-import { matchesKoreanSearch } from "@/lib/search/korean-search";
-import { formatKoreanPhoneNumber, normalizeKoreanPhoneLookupKey } from "@/lib/phone";
+import { matchesSearchQuery } from "@/lib/search/korean-search";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { cn } from "@/lib/utils";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { V3_INPUT_CONTROL_CLASS_NAME } from "@/components/ui/input";
-import { getV3UiScaleForViewport } from "@/components/app/v3/useV3UiScale";
+import { getGlintUiScaleForViewport } from "@/components/app/v3/useGlintUiScale";
 import {
     Popover,
     PopoverContent,
@@ -80,7 +80,7 @@ export function EmployeeAutocomplete({
     const popoverSideOffset = -44 * (
         typeof window === "undefined"
             ? 1
-            : getV3UiScaleForViewport(window.innerWidth, window.innerHeight)
+            : getGlintUiScaleForViewport(window.innerWidth, window.innerHeight)
     );
 
     const availableEmployees = useMemo(() => {
@@ -107,20 +107,15 @@ export function EmployeeAutocomplete({
     const filteredEmployees = useMemo(() => {
         if (!commandInputValue.trim()) return [];
         const searchTerm = commandInputValue.trim();
-        const phoneQuery = normalizeKoreanPhoneLookupKey(searchTerm);
 
-        return availableEmployees.filter((emp) => {
-            const matchesPhone = phoneQuery.length > 0
-                && normalizeKoreanPhoneLookupKey(emp.phone).includes(phoneQuery);
-
-            if (searchMode === "phone") return matchesPhone;
-
-            return matchesKoreanSearch(emp.name, searchTerm)
-                || emp.workArea.some((area) =>
-                    area.toLowerCase().includes(searchTerm.toLowerCase()),
-                )
-                || matchesPhone;
-        });
+        return availableEmployees.filter((emp) =>
+            matchesSearchQuery(
+                searchTerm,
+                searchMode === "phone"
+                    ? [emp.phone]
+                    : [emp.name, emp.phone, ...emp.workArea],
+            ),
+        );
     }, [availableEmployees, commandInputValue, searchMode]);
 
     const hasDisplayValue = Boolean(selectedEmployee || manualDisplayValue);
@@ -208,7 +203,7 @@ export function EmployeeAutocomplete({
             {label && (
                 <Label
                     className={cn(
-                        "text-[calc(12px*var(--v3-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted",
+                        "text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted",
                         error && "text-destructive",
                     )}
                 >
@@ -274,7 +269,7 @@ export function EmployeeAutocomplete({
                 </div>
                 <PopoverContent
                     data-component="employee-autocomplete-dropdown"
-                    className="v3-ui-scale-scope w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-[22px] border-none bg-white p-0 text-v3-dark shadow-[0_0_0_2px_hsla(214,30%,40%,0.12),0_0_12px_hsla(214,30%,40%,0.05)]"
+                    className="glint-ui-scale-scope w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-[22px] border-none bg-white p-0 text-v3-dark shadow-[0_0_0_2px_hsla(214,30%,40%,0.12),0_0_12px_hsla(214,30%,40%,0.05)]"
                     align="start"
                     sideOffset={popoverSideOffset}
                 >

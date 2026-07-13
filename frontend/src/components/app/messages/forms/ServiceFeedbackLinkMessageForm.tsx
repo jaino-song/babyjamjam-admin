@@ -26,7 +26,7 @@ interface ServiceFeedbackLinkMessageFormProps {
 }
 
 const ALIGNED_AUTOCOMPLETE_CLASS_NAME =
-  "grid gap-[calc(7px*var(--v3-ui-scale,1))] space-y-0";
+  "grid gap-[calc(7px*var(--glint-ui-scale,1))] space-y-0";
 
 export const ServiceFeedbackLinkMessageForm = ({
   onPreviewMessageChange,
@@ -77,8 +77,7 @@ ${resolvedFeedbackUrl}`;
   }, [generatedMessage, onPreviewMessageChange]);
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(generatedMessage);
-    alert(t(locale, "common.copy-success-message"));
+    return navigator.clipboard.writeText(generatedMessage);
   };
 
   const handleEmployeeChange = (
@@ -167,6 +166,7 @@ ${resolvedFeedbackUrl}`;
     <AutoFillMsgCard
       title={t(locale, "common.generated-message-title")}
       copyButtonText={t(locale, "common.copy-button")}
+      copySuccessMessage={t(locale, "common.copy-success-message")}
       message={generatedMessage}
       bodyDescription={systemTemplate?.description || "제공기록지 작성 링크 문구를 수정할 수 있어요."}
       metaItems={[

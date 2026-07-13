@@ -26,7 +26,7 @@ const DOCUMENT_FIELD_LABEL_CLASS_NAME =
   "text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-v3-text-muted";
 const DOCUMENT_UPLOAD_CARD_CLASS_NAME = "rounded-[20px] bg-v3-dim-white p-5";
 const DOCUMENT_TEXTAREA_CLASS_NAME =
-  "min-h-[calc(72px*var(--v3-ui-scale,1))] rounded-[16px] border-[1.5px] border-v3-border bg-white px-4 py-3 text-[0.85rem] text-v3-dark shadow-none transition-all focus-visible:border-v3-primary focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]";
+  "min-h-[calc(72px*var(--glint-ui-scale,1))] rounded-[16px] border-[1.5px] border-v3-border bg-white px-4 py-3 text-[0.85rem] text-v3-dark shadow-none transition-all focus-visible:border-v3-primary focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]";
 const UPLOAD_FORMAT_LABELS = ["PNG", "JPG", "PDF", "HWP", "HWPX"];
 const FILE_FORMAT_LABEL_OVERRIDES: Record<string, string> = {
   jpeg: "JPG",

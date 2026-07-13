@@ -2,9 +2,10 @@
 
 import { useMemo, useState } from "react";
 import { FolderOpen, FileText, Image as ImageIcon, File, Upload, CloudUpload, Loader2, Tag, MoreVertical, Pencil, Trash2, Eye } from "lucide-react";
+import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton, AnimatedSlotList, AnimatedSlotListItemContent, EmptyState, PageSection, DetailSkeleton, ListEmptyState } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
-import { matchesKoreanSearch } from "@/lib/search/korean-search";
+import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -55,11 +56,8 @@ export default function FilesPage() {
       docs = docs.filter(d => d.categoryId === activeFilter);
     }
     if (searchQuery.trim()) {
-      const q = searchQuery.trim();
       docs = docs.filter(d =>
-        matchesKoreanSearch(d.name, q) ||
-        (d.description && matchesKoreanSearch(d.description, q)) ||
-        d.tags?.some(t => matchesKoreanSearch(t, q))
+        matchesSearchQuery(searchQuery, [d.name, d.description, ...(d.tags ?? [])])
       );
     }
     return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -219,7 +217,7 @@ export default function FilesPage() {
                     title={doc.name}
                     subtitle={getCategoryLabel(doc.categoryId)}
                     status={
-                      <span className="whitespace-nowrap text-[calc(10.4px*var(--v3-ui-scale,1))] text-v3-text-muted">
+                      <span className="whitespace-nowrap text-[calc(10.4px*var(--glint-ui-scale,1))] text-v3-text-muted">
                         {formatDate(doc.createdAt)}
                       </span>
                     }
@@ -324,20 +322,20 @@ export default function FilesPage() {
         isLoading={createCategoryMutation.isPending}
       />
 
-      <Dialog open={!!deleteDoc} onOpenChange={(open: boolean) => !open && setDeleteDoc(null)}>
-        <DialogContent className="sm:max-w-[400px]">
-          <DialogHeader>
-            <DialogTitle>문서 삭제</DialogTitle>
-            <DialogDescription>이 문서를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.</DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" size="sm" onClick={() => setDeleteDoc(null)} disabled={deleteMutation.isPending}>취소</Button>
-            <Button variant="destructive" size="sm" onClick={handleDelete} disabled={deleteMutation.isPending}>
-              {deleteMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />삭제 중...</> : "삭제"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ApprovalTwoButtonModal
+        open={deleteDoc !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteDoc(null);
+        }}
+        dataComponent="files-delete-approval"
+        title="문서를 삭제하시겠습니까?"
+        description="이 작업은 되돌릴 수 없습니다."
+        approvalLabel="삭제"
+        pendingLabel="삭제 중..."
+        approvalVariant="destructive"
+        isPending={deleteMutation.isPending}
+        onApprove={() => void handleDelete()}
+      />
     </PageSection>
   );
 }

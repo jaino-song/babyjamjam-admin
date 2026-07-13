@@ -608,31 +608,32 @@
   }
 }
 
-/* V3: animate direct children of a container (used for page sections and SplitLayout). */
-.v3-ui-scale-scope {
-  --v3-ui-scope-scale: var(
-    --v3-ui-scale,
+/* Glint UI Scale: responsive sizing tokens for dense application surfaces. */
+.glint-ui-scale-scope {
+  --glint-ui-scope-scale: var(
+    --glint-ui-scale,
     calc(min(calc(100vw / 1920px), calc(100vh / 1080px)) * 1.1)
   );
-  --spacing: calc(4px * var(--v3-ui-scope-scale));
-  --text-xs: calc(12px * var(--v3-ui-scope-scale));
-  --text-sm: calc(14px * var(--v3-ui-scope-scale));
-  --text-base: calc(16px * var(--v3-ui-scope-scale));
-  --text-lg: calc(18px * var(--v3-ui-scope-scale));
-  --text-xl: calc(20px * var(--v3-ui-scope-scale));
-  --text-2xl: calc(24px * var(--v3-ui-scope-scale));
-  --text-3xl: calc(30px * var(--v3-ui-scope-scale));
-  --radius-xs: calc(2px * var(--v3-ui-scope-scale));
-  --radius-sm: calc(4px * var(--v3-ui-scope-scale));
-  --radius-md: calc(6px * var(--v3-ui-scope-scale));
-  --radius-lg: calc(8px * var(--v3-ui-scope-scale));
-  --radius-xl: calc(24px * var(--v3-ui-scope-scale));
-  --radius-2xl: calc(28px * var(--v3-ui-scope-scale));
-  --radius-3xl: calc(32px * var(--v3-ui-scope-scale));
-  --radius-pill: calc(50px * var(--v3-ui-scope-scale));
-  font-size: calc(16px * var(--v3-ui-scope-scale));
+  --spacing: calc(4px * var(--glint-ui-scope-scale));
+  --text-xs: calc(12px * var(--glint-ui-scope-scale));
+  --text-sm: calc(14px * var(--glint-ui-scope-scale));
+  --text-base: calc(16px * var(--glint-ui-scope-scale));
+  --text-lg: calc(18px * var(--glint-ui-scope-scale));
+  --text-xl: calc(20px * var(--glint-ui-scope-scale));
+  --text-2xl: calc(24px * var(--glint-ui-scope-scale));
+  --text-3xl: calc(30px * var(--glint-ui-scope-scale));
+  --radius-xs: calc(2px * var(--glint-ui-scope-scale));
+  --radius-sm: calc(4px * var(--glint-ui-scope-scale));
+  --radius-md: calc(6px * var(--glint-ui-scope-scale));
+  --radius-lg: calc(8px * var(--glint-ui-scope-scale));
+  --radius-xl: calc(24px * var(--glint-ui-scope-scale));
+  --radius-2xl: calc(28px * var(--glint-ui-scope-scale));
+  --radius-3xl: calc(32px * var(--glint-ui-scope-scale));
+  --radius-pill: calc(50px * var(--glint-ui-scope-scale));
+  font-size: calc(16px * var(--glint-ui-scope-scale));
 }
 
+/* V3: animate direct children of a container (used for page sections and SplitLayout). */
 @layer utilities {
 
   .v3-slide-up-children > * {
@@ -1132,7 +1133,7 @@ body {
 
 /* Search expand - search input width expansion */
 .expandable-search-overlay-surface {
-  width: calc(32px * var(--v3-ui-scale, 1));
+  width: calc(32px * var(--glint-ui-scale, 1));
   transition:
     width 260ms cubic-bezier(0.22, 1, 0.36, 1),
     background 180ms ease-out;
@@ -1154,7 +1155,7 @@ body {
 
 .expandable-search-overlay-surface[data-expanded="true"] .expandable-search-overlay-input {
   opacity: 1;
-  padding-inline: calc(8px * var(--v3-ui-scale, 1));
+  padding-inline: calc(8px * var(--glint-ui-scale, 1));
   pointer-events: auto;
   transition-delay: 60ms, 0ms;
 }

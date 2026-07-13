@@ -235,7 +235,6 @@ export default function SettingsPage() {
                     </p>
                   </div>
                   <Switch
-                    variant="v3"
                     id="notif-email"
                     checked={emailNotificationsEnabled}
                     onCheckedChange={handleEmailNotificationToggle}
@@ -260,7 +259,6 @@ export default function SettingsPage() {
                     <Spinner size="sm" />
                   ) : (
                     <Switch
-                      variant="v3"
                       id="notif-browser"
                       checked={isBrowserNotificationEnabled}
                       onCheckedChange={handleBrowserNotificationToggle}
@@ -410,7 +408,7 @@ export default function SettingsPage() {
                       로그인 시 추가 인증을 요구합니다. (추후 지원 예정)
                     </p>
                   </div>
-                  <Switch variant="v3" id="two-factor" checked={false} disabled />
+                  <Switch id="two-factor" checked={false} disabled />
                 </div>
               </div>
             </ContentPaper>

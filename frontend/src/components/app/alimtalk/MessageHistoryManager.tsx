@@ -34,7 +34,7 @@ import type {
   TriggerRecipientType,
   TriggerTemplateKey,
 } from "@/features/message-triggers/types";
-import { matchesKoreanSearch } from "@/lib/search/korean-search";
+import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { cn } from "@/lib/utils";
 
 type HistoryListFilter = "all" | MessageLogStatus;
@@ -206,16 +206,7 @@ function getRecordTimestamp(record: MessageLogRecord) {
 }
 
 function matchesHistorySearch(record: MessageLogRecord, query: string) {
-  const trimmedQuery = query.trim();
-  if (!trimmedQuery) return true;
-
-  const digitQuery = trimmedQuery.replace(/\D/g, "");
-  const receiverDigits = (record.recipientPhone ?? record.receiver).replace(/\D/g, "");
-  if (digitQuery && receiverDigits.includes(digitQuery)) {
-    return true;
-  }
-
-  return [
+  return matchesSearchQuery(query, [
     getRecordTitle(record),
     record.recipientName ?? "",
     record.clientName ?? "",
@@ -227,7 +218,7 @@ function matchesHistorySearch(record: MessageLogRecord, query: string) {
     record.messageBody,
     record.errorMessage ?? "",
     record.status,
-  ].some((field) => field && matchesKoreanSearch(field, trimmedQuery));
+  ]);
 }
 
 function getHistoryEmptyMessage(filter: HistoryListFilter, hasSearchQuery: boolean) {

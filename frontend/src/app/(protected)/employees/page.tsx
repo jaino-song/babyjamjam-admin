@@ -25,6 +25,7 @@ import {
     EmployeeFormDialog,
     EmployeeFormPanel,
 } from "@/components/app/employees/EmployeeFormDialog";
+import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import {
     StatsBar,
     SplitLayout,
@@ -108,6 +109,7 @@ export default function EmployeesPage() {
     const [formDialogOpen, setFormDialogOpen] = useState(false);
     const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
     const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+    const [deleteTargetEmployeeId, setDeleteTargetEmployeeId] = useState<number | null>(null);
 
     const {
         employees,
@@ -146,22 +148,24 @@ export default function EmployeesPage() {
         setFormDialogOpen(true);
     };
 
-    const handleDelete = async (id: number): Promise<boolean> => {
-        if (window.confirm("정말 삭제하시겠습니까?")) {
-            try {
-                await deleteEmployee.mutateAsync(id);
+    const handleDeleteRequest = (id: number) => {
+        setDeleteTargetEmployeeId(id);
+    };
 
-                if (selectedEmployee?.id === id) {
-                    setSelectedEmployee(null);
-                }
+    const handleDeleteConfirm = async () => {
+        if (deleteTargetEmployeeId === null) return;
 
-                return true;
-            } catch (err) {
-                console.error("Failed to delete employee:", err);
-                return false;
+        try {
+            await deleteEmployee.mutateAsync(deleteTargetEmployeeId);
+
+            if (selectedEmployee?.id === deleteTargetEmployeeId) {
+                setSelectedEmployee(null);
             }
+
+            setDeleteTargetEmployeeId(null);
+        } catch (err) {
+            console.error("Failed to delete employee:", err);
         }
-        return false;
     };
 
     const handleFormDialogClose = () => {
@@ -217,7 +221,7 @@ export default function EmployeesPage() {
                             label="직원 추가"
                             onClick={handleAddNew}
                             data-component="employees-header-add"
-                            className="text-[calc(12px*var(--v3-ui-scale,1))]"
+                            className="text-[calc(12px*var(--glint-ui-scale,1))]"
                         />
                     }
                     emptyState={!isLoading && employees.length === 0 ? (
@@ -269,7 +273,7 @@ export default function EmployeesPage() {
                                         title={employee.name}
                                         subtitle={
                                             <span className="flex items-center gap-1 truncate">
-                                                <Phone className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(12px*var(--v3-ui-scale,1))]" />
+                                                <Phone className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))]" />
                                                 {formatPhoneNumber(employee.phone)}
                                             </span>
                                         }
@@ -307,7 +311,7 @@ export default function EmployeesPage() {
                     <EmployeeDetail
                         employee={selectedEmployee}
                         onEdit={handleEdit}
-                        onDelete={handleDelete}
+                        onDelete={handleDeleteRequest}
                     />
                 ) : (
                     <EmptyState name="employees-empty-detail" icon={Users} message="직원을 선택하면 상세 정보가 표시됩니다" />
@@ -319,6 +323,21 @@ export default function EmployeesPage() {
                 onClose={handleFormDialogClose}
                 employee={editingEmployee}
             />
+
+            <ApprovalTwoButtonModal
+                open={deleteTargetEmployeeId !== null}
+                onOpenChange={(open) => {
+                    if (!open) setDeleteTargetEmployeeId(null);
+                }}
+                dataComponent="employees-delete-approval"
+                title="직원을 삭제하시겠습니까?"
+                description="삭제한 직원 정보는 복구할 수 없습니다."
+                approvalLabel="삭제"
+                pendingLabel="삭제 중..."
+                approvalVariant="destructive"
+                isPending={deleteEmployee.isPending}
+                onApprove={() => void handleDeleteConfirm()}
+            />
         </PageSection>
     );
 }
@@ -326,7 +345,7 @@ export default function EmployeesPage() {
 interface EmployeeDetailProps {
     employee: Employee;
     onEdit: (employee: Employee) => void;
-    onDelete: (id: number) => Promise<boolean>;
+    onDelete: (id: number) => void;
 }
 
 function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
@@ -367,9 +386,8 @@ function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
                             수정
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                            onClick={() => {
-                                void onDelete(employee.id);
-                            }}
+                            data-component="employees-detail-menu-delete"
+                            onClick={() => onDelete(employee.id)}
                             className="gap-2 text-destructive focus:text-destructive"
                         >
                             <Trash2 className="w-4 h-4" />

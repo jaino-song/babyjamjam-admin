@@ -73,14 +73,14 @@ describe("ListPanel", () => {
       "overflow-x-auto",
     );
     expect(container.querySelector('[data-component="expandable-search"]')).toHaveClass(
-      "h-[calc(40px*var(--v3-ui-scale,1))]",
-      "w-[calc(32px*var(--v3-ui-scale,1))]",
+      "h-[calc(40px*var(--glint-ui-scale,1))]",
+      "w-[calc(32px*var(--glint-ui-scale,1))]",
       "overflow-visible",
     );
     expect(container.querySelector('[data-component="expandable-search-overlay"]')).toHaveClass(
       "absolute",
       "right-0",
-      "h-[calc(40px*var(--v3-ui-scale,1))]",
+      "h-[calc(40px*var(--glint-ui-scale,1))]",
       "expandable-search-overlay-surface",
     );
 

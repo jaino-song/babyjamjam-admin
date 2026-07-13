@@ -101,4 +101,72 @@ describe("ClientServiceRecordsTab", () => {
         expect(screen.getByText("예정일 2026.09.29(화)")).toBeInTheDocument();
         expect(screen.queryByText("예정일 2026.09.24(목)")).not.toBeInTheDocument();
     });
+
+    it("renders one continuous client record across provider replacements", () => {
+        const first = { ...createAssignment(1, "sent"), replaced: true };
+        const second = createAssignment(2, "sent");
+        const overview: ServiceRecordOverview = {
+            record: {
+                id: "case-1",
+                status: "IN_PROGRESS",
+                startDate: "2026-07-01T00:00:00.000Z",
+                endDate: "2026-07-10T00:00:00.000Z",
+                totalSessions: 2,
+                completedAt: null,
+                finalizationDueAt: "2026-07-10T20:00:00+09:00",
+                finalizedAt: null,
+                documentsCompletedAt: null,
+                lastError: null,
+                header: null,
+                sessions: [
+                    {
+                        sessionIndex: 1,
+                        serviceDate: "2026-07-01T00:00:00.000Z",
+                        locked: true,
+                        submittedAt: "2026-07-01T10:00:00.000Z",
+                        updatedAt: "2026-07-01T10:00:00.000Z",
+                        answers: {},
+                        etcService: null,
+                        notes: null,
+                        paymentConfirmed: true,
+                        hasMomApproval: true,
+                        employeeName: "제공1",
+                        formVersion: 1,
+                    },
+                    {
+                        sessionIndex: 2,
+                        serviceDate: "2026-07-02T00:00:00.000Z",
+                        locked: false,
+                        submittedAt: null,
+                        updatedAt: "2026-07-02T10:00:00.000Z",
+                        answers: {},
+                        etcService: null,
+                        notes: null,
+                        paymentConfirmed: false,
+                        hasMomApproval: false,
+                        employeeName: "제공2",
+                        formVersion: 1,
+                    },
+                ],
+                signatureDocs: [],
+            },
+            assignments: [first, second],
+        };
+
+        render(
+            <ClientServiceRecordsTab
+                overview={overview}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+            />,
+        );
+
+        expect(screen.getAllByText("제공기록지 작성 링크")).toHaveLength(1);
+        expect(screen.getAllByText("서비스 기본정보")).toHaveLength(1);
+        expect(screen.getAllByText("회차별 제공기록")).toHaveLength(1);
+        expect(screen.getByText("제공인력 배정 이력")).toBeInTheDocument();
+        expect(screen.getByText(/1회차 ·/)).toBeInTheDocument();
+        expect(screen.getByText(/2회차 ·/)).toBeInTheDocument();
+    });
 });

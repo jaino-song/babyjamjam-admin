@@ -10,6 +10,7 @@ import { useSystemTemplates } from "@/features/system-templates/hooks";
 import { useMessageTemplates } from "@/hooks/use-message-templates";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import { ListLoadMoreButton, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
+import { Switch } from "@/components/ui/switch";
 
 import styles from "./page.module.css";
 
@@ -420,16 +421,12 @@ function TemplateListRow({
           {row.eventLabel} <span className={styles.metaSeparator}>·</span> {row.sendLabel}
         </div>
       </div>
-      <button
-        type="button"
-        className={`${styles.toggle} ${row.enabled ? styles.toggleOn : ""}`}
-        role="switch"
-        aria-checked={row.enabled}
+      <Switch
+        data-component="messages-templates-row-switch"
         aria-label={`${row.name} 자동 발송`}
-        onClick={(event) => {
-          event.stopPropagation();
-          onToggle(row);
-        }}
+        checked={row.enabled}
+        onClick={(event) => event.stopPropagation()}
+        onCheckedChange={() => onToggle(row)}
       />
     </div>
   );

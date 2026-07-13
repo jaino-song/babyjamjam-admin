@@ -47,7 +47,7 @@ export function ContractsServiceRecordsSection() {
         <ListPanel title="제공기록지 조회" subtitle="고객별 기록과 발송 상태">
           <div
             data-component="contracts-service-records-client-picker"
-            className="flex min-h-full flex-1 flex-col gap-[calc(20px*var(--v3-ui-scale,1))] pt-[calc(4px*var(--v3-ui-scale,1))]"
+            className="flex min-h-full flex-1 flex-col gap-[calc(20px*var(--glint-ui-scale,1))] pt-[calc(4px*var(--glint-ui-scale,1))]"
           >
             <ClientAutocomplete
               value={selectedClientId}
@@ -59,17 +59,17 @@ export function ContractsServiceRecordsSection() {
             {selectedClient ? (
               <div
                 data-component="contracts-service-records-selected-client"
-                className="flex items-center gap-[calc(12px*var(--v3-ui-scale,1))] border-t border-v3-border pt-[calc(16px*var(--v3-ui-scale,1))]"
+                className="flex items-center gap-[calc(12px*var(--glint-ui-scale,1))] border-t border-v3-border pt-[calc(16px*var(--glint-ui-scale,1))]"
               >
-                <div className="flex h-[calc(40px*var(--v3-ui-scale,1))] w-[calc(40px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[12px] bg-v3-primary-light text-v3-primary">
-                  <User className="h-[calc(18px*var(--v3-ui-scale,1))] w-[calc(18px*var(--v3-ui-scale,1))]" />
+                <div className="flex h-[calc(40px*var(--glint-ui-scale,1))] w-[calc(40px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[12px] bg-v3-primary-light text-v3-primary">
+                  <User className="h-[calc(18px*var(--glint-ui-scale,1))] w-[calc(18px*var(--glint-ui-scale,1))]" />
                 </div>
                 <div className="min-w-0">
-                  <p className="truncate text-[calc(14px*var(--v3-ui-scale,1))] font-bold text-v3-dark">
+                  <p className="truncate text-[calc(14px*var(--glint-ui-scale,1))] font-bold text-v3-dark">
                     {selectedClient.name}
                   </p>
                   {clientSubtitle ? (
-                    <p className="mt-[calc(2px*var(--v3-ui-scale,1))] truncate text-[calc(11.5px*var(--v3-ui-scale,1))] text-v3-text-muted">
+                    <p className="mt-[calc(2px*var(--glint-ui-scale,1))] truncate text-[calc(11.5px*var(--glint-ui-scale,1))] text-v3-text-muted">
                       {clientSubtitle}
                     </p>
                   ) : null}
@@ -90,8 +90,8 @@ export function ContractsServiceRecordsSection() {
             title={selectedClient.name}
             subtitle={clientSubtitle || "제공기록지"}
             avatar={
-              <div className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
-                <ClipboardList className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
+              <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                <ClipboardList className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
               </div>
             }
           >

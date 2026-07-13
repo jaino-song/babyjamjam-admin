@@ -1,19 +1,13 @@
 "use client";
 
+import { isAxiosError } from "axios";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Calendar, Loader2, Send, X } from "lucide-react";
 
 import { ClientAutocomplete } from "@/components/app/clients/ClientAutocomplete";
+import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { StatusBadge } from "@/components/app/ui/status-badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { filterHistoryRecordsByChannel } from "@/features/message-triggers/channel";
 import { useMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
 import type { MessageLogRecord } from "@/features/message-triggers/types";
@@ -37,6 +31,13 @@ const MAX_BODY_LENGTH = 2000;
 const DEFAULT_LMS_TITLE = "안내";
 const DUPLICATE_SEND_WINDOW_HOURS = 72;
 const DUPLICATE_SEND_WINDOW_MS = DUPLICATE_SEND_WINDOW_HOURS * 60 * 60 * 1000;
+
+type ServiceFeedbackLinkFailureStage = "assignment" | "send";
+
+const SERVICE_FEEDBACK_LINK_ERROR_MESSAGES: Record<string, string> = {
+  "Assignment not found": "선택한 관리사님과 산모님의 배정 일정을 찾지 못해 제공기록지 링크를 발송하지 못했습니다.",
+  "제공인력 전화번호가 없습니다": "선택한 관리사님의 전화번호가 없어 제공기록지 링크를 발송하지 못했습니다.",
+};
 
 export interface TemplateSendFormSubmitState {
   formId: string;
@@ -100,6 +101,41 @@ function usesInlinePhoneRecipientLayout(templateId: string) {
 
 function normalizeDuplicateMessage(message: string) {
   return message.replace(/\r\n/g, "\n").trim();
+}
+
+function getServiceFeedbackLinkErrorMessage(
+  error: unknown,
+  failureStage: ServiceFeedbackLinkFailureStage,
+): string {
+  const stageFallback = failureStage === "assignment"
+    ? "산모님의 배정 정보를 불러오지 못해 제공기록지 링크를 발송하지 못했습니다."
+    : "서버가 제공기록지 링크 발송 요청을 처리하지 못했으니 잠시 후 다시 시도해 주세요.";
+
+  if (!isAxiosError<{ message?: unknown; error?: unknown }>(error)) return stageFallback;
+  if (!error.response) {
+    return "서버에 연결하지 못해 제공기록지 링크를 발송하지 못했습니다.";
+  }
+
+  const payload = error.response.data;
+  const apiMessage = payload && typeof payload === "object"
+    ? payload.message ?? payload.error
+    : null;
+  if (typeof apiMessage === "string") {
+    const knownMessage = SERVICE_FEEDBACK_LINK_ERROR_MESSAGES[apiMessage.trim()];
+    if (knownMessage) return knownMessage;
+  }
+
+  if (error.response.status === 401) {
+    return "로그인이 만료되어 제공기록지 링크를 발송하지 못했습니다.";
+  }
+  if (error.response.status === 403) {
+    return "선택한 배정 일정을 처리할 권한이 없어 제공기록지 링크를 발송하지 못했습니다.";
+  }
+  if (error.response.status === 404) {
+    return "선택한 관리사님과 산모님의 배정 일정을 찾지 못해 제공기록지 링크를 발송하지 못했습니다.";
+  }
+
+  return stageFallback;
 }
 
 function getHistoryTimestamp(record: MessageLogRecord) {
@@ -230,13 +266,13 @@ export function TemplateSendForm({
         : requiresPriceInfoFields && !voucherYear
           ? "바우처 연도를 선택해 주세요."
           : null;
-  const serviceFeedbackValidationMessage = !employeeId || !employeeName.trim()
+  const serviceFeedbackValidationMessage = employeeId === null || !employeeName.trim()
     ? "관리사님을 선택해 주세요."
     : !normalizedEmployeePhone
       ? "관리사님 전화번호를 선택해 주세요."
       : !isValidKoreanPhoneNumber(normalizedEmployeePhone)
         ? "관리사님 전화번호 형식이 올바르지 않습니다."
-        : !clientId
+        : clientId === null
           ? "산모님을 선택해 주세요."
           : null;
   const messageValidationMessage = !trimmedMessage
@@ -394,7 +430,7 @@ export function TemplateSendForm({
           </span>
           <button
             type="button"
-            className="flex h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(12px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-full text-v3-primary/70 transition-colors hover:text-v3-primary"
+            className="flex h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-full text-v3-primary/70 transition-colors hover:text-v3-primary"
             aria-label="수신자 제거"
             onClick={() => handleRemoveQueuedRecipient(item)}
           >
@@ -529,7 +565,7 @@ export function TemplateSendForm({
   };
 
   const sendServiceFeedbackLink = async () => {
-    if (!clientId || !employeeId) {
+    if (clientId === null || employeeId === null) {
       setFeedback({
         tone: "error",
         message: serviceFeedbackValidationMessage ?? "관리사님과 산모님을 선택해 주세요.",
@@ -539,6 +575,7 @@ export function TemplateSendForm({
 
     setIsSending(true);
     setFeedback(null);
+    let failureStage: ServiceFeedbackLinkFailureStage = "assignment";
 
     try {
       const overviewResponse = await serviceRecordsApi.getClientOverview(clientId);
@@ -554,6 +591,7 @@ export function TemplateSendForm({
         return;
       }
 
+      failureStage = "send";
       await serviceRecordsApi.sendLink(assignment.scheduleId);
       setFeedback({
         tone: "success",
@@ -561,8 +599,11 @@ export function TemplateSendForm({
       });
       resetEmployeeFields();
       resetClientFields();
-    } catch {
-      setFeedback({ tone: "error", message: "제공기록지 링크 발송에 실패했습니다." });
+    } catch (error) {
+      setFeedback({
+        tone: "error",
+        message: getServiceFeedbackLinkErrorMessage(error, failureStage),
+      });
     } finally {
       setIsSending(false);
     }
@@ -611,8 +652,8 @@ export function TemplateSendForm({
     >
       <div data-component="messages-template-send-form-header" className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-[calc(14.4px*var(--v3-ui-scale,1))] font-bold text-v3-dark">전송 정보</h3>
-          <p className="mt-0.5 text-[calc(12px*var(--v3-ui-scale,1))] text-v3-text-muted">
+          <h3 className="text-[calc(14.4px*var(--glint-ui-scale,1))] font-bold text-v3-dark">전송 정보</h3>
+          <p className="mt-0.5 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">
             메시지 전송에 필요한 정보를 입력해 주세요.
           </p>
         </div>
@@ -694,7 +735,7 @@ export function TemplateSendForm({
         <div
           data-component="messages-template-send-form-feedback"
           className={cn(
-            "mt-4 rounded-[14px] px-4 py-3 text-[calc(12.48px*var(--v3-ui-scale,1))] font-semibold",
+            "mt-4 rounded-[14px] px-4 py-3 text-[calc(12.48px*var(--glint-ui-scale,1))] font-semibold",
             feedback.tone === "success"
               ? "bg-v3-primary-light text-v3-primary"
               : "bg-v3-burgundy-light text-v3-burgundy",
@@ -705,89 +746,59 @@ export function TemplateSendForm({
         </div>
       ) : null}
 
-      <Dialog
+      <ApprovalTwoButtonModal
         open={Boolean(duplicateSendCandidates && duplicateSendCandidates.length > 0)}
+        size="detail"
         onOpenChange={(open) => {
           if (!open) {
             setDuplicateSendCandidates(null);
           }
         }}
+        dataComponent="messages-duplicate-send-confirm-dialog"
+        headerDataComponent="messages-duplicate-send-confirm-header"
+        bodyDataComponent="messages-duplicate-send-confirm-main"
+        footerDataComponent="messages-duplicate-send-confirm-footer"
+        title="중복 전송 확인"
+        description={
+          duplicateSendCandidates && duplicateSendCandidates.length > 1
+            ? `최근 같은 내용의 메시지를 보낸 기록이 ${duplicateSendCandidates.length}건 있습니다. 동일한 메시지를 재전송 할까요?`
+            : "최근 같은 내용의 메시지를 보낸 기록이 있습니다. 동일한 메시지를 재전송 할까요?"
+        }
+        isDescriptionVisuallyHidden={false}
+        approvalLabel="전송"
+        pendingLabel="전송 중..."
+        isPending={isSending}
+        onApprove={() => void handleConfirmDuplicateSend()}
       >
-        <DialogContent
-          data-component="messages-duplicate-send-confirm-dialog"
-          className="flex flex-col gap-4 sm:max-w-[420px]"
-        >
-          <DialogHeader
-            data-component="messages-duplicate-send-confirm-header"
-            className="pb-0"
+        {duplicateSendCandidates && duplicateSendCandidates.length > 0 ? (
+          <div
+            data-component="messages-duplicate-send-confirm-list"
+            className="flex flex-col gap-2"
           >
-            <DialogTitle>중복 전송 확인</DialogTitle>
-            <DialogDescription className="pt-0">
-              {duplicateSendCandidates && duplicateSendCandidates.length > 1
-                ? `최근 같은 내용의 메시지를 보낸 기록이 ${duplicateSendCandidates.length}건 있습니다. 동일한 메시지를 재전송 할까요?`
-                : "최근 같은 내용의 메시지를 보낸 기록이 있습니다. 동일한 메시지를 재전송 할까요?"}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div data-component="messages-duplicate-send-confirm-main">
-            {duplicateSendCandidates && duplicateSendCandidates.length > 0 ? (
+            {duplicateSendCandidates.map((match) => (
               <div
-                data-component="messages-duplicate-send-confirm-list"
-                className="flex flex-col gap-2"
+                key={match.recipient.phone}
+                data-component="messages-duplicate-send-confirm-recent"
+                className="rounded-[16px] bg-v3-dim-white px-4 py-3"
               >
-                {duplicateSendCandidates.map((match) => (
-                  <div
-                    key={match.recipient.phone}
-                    data-component="messages-duplicate-send-confirm-recent"
-                    className="rounded-[16px] bg-v3-dim-white px-4 py-3"
-                  >
-                    {shouldShowRecipientNameInPill && match.recipient.name ? (
-                      <p className="mb-1 text-[0.78rem] font-semibold text-v3-dark truncate">
-                        {match.recipient.name} · {match.recipient.formattedPhone}
-                      </p>
-                    ) : (
-                      <p className="mb-1 text-[0.78rem] font-semibold text-v3-dark truncate">
-                        {match.recipient.formattedPhone}
-                      </p>
-                    )}
-                    <span className="flex min-w-0 shrink-0 items-center gap-[calc(4px*var(--v3-ui-scale,1))] text-[0.78rem] font-semibold text-v3-text-muted">
-                      <Calendar className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(12px*var(--v3-ui-scale,1))] shrink-0" />
-                      최근 전송 {formatDuplicateSentAt(getHistoryTimestamp(match.record))}
-                    </span>
-                  </div>
-                ))}
+                {shouldShowRecipientNameInPill && match.recipient.name ? (
+                  <p className="mb-1 truncate text-[0.78rem] font-semibold text-v3-dark">
+                    {match.recipient.name} · {match.recipient.formattedPhone}
+                  </p>
+                ) : (
+                  <p className="mb-1 truncate text-[0.78rem] font-semibold text-v3-dark">
+                    {match.recipient.formattedPhone}
+                  </p>
+                )}
+                <span className="flex min-w-0 shrink-0 items-center gap-[calc(4px*var(--glint-ui-scale,1))] text-[0.78rem] font-semibold text-v3-text-muted">
+                  <Calendar className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))] shrink-0" />
+                  최근 전송 {formatDuplicateSentAt(getHistoryTimestamp(match.record))}
+                </span>
               </div>
-            ) : null}
+            ))}
           </div>
-
-          <DialogFooter
-            data-component="messages-duplicate-send-confirm-footer"
-            className="pt-0 sm:justify-between"
-          >
-            <Button
-              type="button"
-              variant="neutral"
-              width="sm"
-              className="transition-none hover:translate-y-0 hover:border-v3-border hover:bg-white hover:text-v3-text-muted"
-              onClick={() => setDuplicateSendCandidates(null)}
-            >
-              취소
-            </Button>
-            <Button
-              type="button"
-              width="sm"
-              className="transition-none hover:translate-y-0 hover:bg-[hsl(214,100%,34%)] hover:text-white hover:shadow-[0_4px_24px_hsla(214,50%,20%,0.06)]"
-              onClick={handleConfirmDuplicateSend}
-              disabled={isSending}
-            >
-              {isSending ? (
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              ) : null}
-              전송
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        ) : null}
+      </ApprovalTwoButtonModal>
 
     </form>
   );

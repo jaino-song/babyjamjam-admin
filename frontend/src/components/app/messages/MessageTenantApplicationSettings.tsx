@@ -497,7 +497,7 @@ export function MessageTenantApplicationSettings() {
           footer={selectedItem.id === PAST_TRIGGER_POLICY_ID ? (
             <div
               data-component="messages-settings-past-trigger-policy-footer"
-              className="ml-auto flex shrink-0 flex-wrap justify-end gap-[calc(12px*var(--v3-ui-scale,1))]"
+              className="ml-auto flex shrink-0 flex-wrap justify-end gap-[calc(12px*var(--glint-ui-scale,1))]"
             >
               <Button
                 type="button"
@@ -534,7 +534,7 @@ export function MessageTenantApplicationSettings() {
                     value={
                       <div className="flex min-w-0 items-center justify-end gap-2">
                         <Input
-                          aria-label="지난 자동 전송 간격"
+                          aria-label="늦은 등록 자동 전송 간격"
                           inputMode="numeric"
                           min={1}
                           onChange={(event) => updateRetroactiveSendIntervalMinutes(event.target.value)}
@@ -555,7 +555,7 @@ export function MessageTenantApplicationSettings() {
             {selectedItem.id === PAST_TRIGGER_POLICY_ID ? (
               <InfoCard
                 data-component="messages-settings-past-trigger-policy-order-card"
-                title="지난 자동 전송 순서"
+                title="늦은 등록 자동 전송 순서"
               >
                 <div
                   data-component="messages-settings-past-trigger-policy-order-form"

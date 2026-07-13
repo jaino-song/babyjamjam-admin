@@ -30,7 +30,7 @@ import type {
   UpcomingMessageTriggerJob,
 } from "@/features/message-triggers/types";
 import { useIsMobile } from "@/hooks/useIsMobile";
-import { matchesKoreanSearch } from "@/lib/search/korean-search";
+import { matchesSearchQuery } from "@/lib/search/korean-search";
 
 type UpcomingJobSelection = string | null;
 type UpcomingListFilter = "all" | "customer" | "staff";
@@ -133,25 +133,16 @@ function getRecipientBadge(recipientType: TriggerRecipientType) {
 }
 
 function matchesJobSearch(job: UpcomingMessageTriggerJob, query: string) {
-  const trimmedQuery = query.trim();
-  if (!trimmedQuery) return true;
-
-  const digitQuery = trimmedQuery.replace(/\D/g, "");
-  const recipientPhone = (job.recipientPhone ?? job.payload.recipientPhone ?? "").replace(/\D/g, "");
-
-  if (digitQuery && recipientPhone.includes(digitQuery)) {
-    return true;
-  }
-
-  return [
+  return matchesSearchQuery(query, [
     job.ruleName,
     job.payload.clientName ?? "",
     job.payload.employeeName ?? "",
     job.payload.recipientName,
+    job.recipientPhone ?? job.payload.recipientPhone ?? "",
     RECIPIENT_LABELS[job.recipientType],
     getTemplateLabel(job.templateKey),
     getEventMeta(job.eventType).label,
-  ].some((field) => field && matchesKoreanSearch(field, trimmedQuery));
+  ]);
 }
 
 function UpcomingDetailSkeleton() {

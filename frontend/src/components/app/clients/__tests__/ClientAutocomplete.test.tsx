@@ -79,7 +79,7 @@ describe("ClientAutocomplete", () => {
 
     expect(screen.queryByText("송진호")).not.toBeInTheDocument();
     expect(document.querySelector('[data-component="clients-autocomplete-dropdown"]')).toHaveClass(
-      "v3-ui-scale-scope",
+      "glint-ui-scale-scope",
     );
     fireEvent.click(await screen.findByRole("button", { name: "새 고객 등록" }));
     expect(await screen.findByRole("dialog", { name: "새 고객 등록" })).toBeInTheDocument();
@@ -96,7 +96,7 @@ describe("ClientAutocomplete", () => {
 
     const trigger = screen.getByRole("combobox");
     await waitFor(() => expect(trigger).toHaveTextContent("송진호"));
-    expect(trigger).toHaveClass("h-[calc(38px*var(--v3-ui-scale,1))]");
+    expect(trigger).toHaveClass("h-[calc(38px*var(--glint-ui-scale,1))]");
     expect(trigger).toHaveClass("rounded-[13px]");
     expect(trigger).toHaveClass("border-[1.35px]");
     expect(trigger).toHaveClass("text-v3-dark");

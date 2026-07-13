@@ -124,7 +124,7 @@ export function DetailTabs({
       data-component="detail-tabs"
       role="tablist"
       aria-label={ariaLabel}
-      className="relative flex gap-[calc(4px*var(--v3-ui-scale,1))] border-b border-v3-border"
+      className="relative flex gap-[calc(4px*var(--glint-ui-scale,1))] border-b border-v3-border"
     >
       {tabs.map((tab, index) => (
         <button
@@ -146,7 +146,7 @@ export function DetailTabs({
           onKeyDown={(event) => handleKeyDown(event, index)}
           aria-disabled={isLoading ? "true" : undefined}
           className={cn(
-            "relative px-[calc(12px*var(--v3-ui-scale,1))] pb-[calc(8px*var(--v3-ui-scale,1))] text-[calc(14px*var(--v3-ui-scale,1))] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-v3-primary",
+            "relative px-[calc(12px*var(--glint-ui-scale,1))] pb-[calc(8px*var(--glint-ui-scale,1))] text-[calc(14px*var(--glint-ui-scale,1))] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-v3-primary",
             activeTab === tab.key
               ? "text-primary font-semibold"
               : "text-v3-text-muted hover:text-v3-text",
@@ -159,7 +159,7 @@ export function DetailTabs({
               data-slot="skeleton"
               data-component="detail-tabs-text-skeleton"
               className={cn(
-                "block h-[calc(16px*var(--v3-ui-scale,1))] animate-pulse rounded-md bg-v3-dim-white",
+                "block h-[calc(16px*var(--glint-ui-scale,1))] animate-pulse rounded-md bg-v3-dim-white",
                 index === 0 ? "w-16" : "w-14",
               )}
             />
@@ -169,7 +169,7 @@ export function DetailTabs({
       <div
         data-component="detail-tabs-indicator"
         className={cn(
-          "pointer-events-none absolute bottom-0 left-0 h-[calc(2px*var(--v3-ui-scale,1))] bg-primary",
+          "pointer-events-none absolute bottom-0 left-0 h-[calc(2px*var(--glint-ui-scale,1))] bg-primary",
           isIndicatorTransitionEnabled &&
             "transition-[transform,width,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
           indicatorMetrics.isReady ? "opacity-100" : "opacity-0"

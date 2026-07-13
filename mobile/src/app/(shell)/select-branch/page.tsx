@@ -7,7 +7,7 @@ import { Building2, Check } from "lucide-react";
 import { useInitialUser } from "@/providers/UserProvider";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
-import { logout } from "@/app/logout/actions";
+import { logout } from "@/app/(shell)/logout/actions";
 import { getUserBranches, setCurrentBranch } from "./actions";
 import "@/components/app/mobile-redesign/redesign.css";
 

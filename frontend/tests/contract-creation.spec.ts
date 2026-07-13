@@ -590,16 +590,16 @@ test.describe("Contract creation iframe + success flow", () => {
       });
     });
 
-    const successAlert = page.waitForEvent("dialog");
     await page.evaluate((documentId) => {
       const calls = (window as Window & {
         __eformsignCalls: Array<{ successCallback?: (response: unknown) => void }>;
       }).__eformsignCalls;
       calls[0].successCallback?.({ code: "-1", document_id: documentId, type: "document" });
     }, CONTRACT_DOC_ID);
-    const dialog = await successAlert;
-    expect(dialog.message()).toBe("계약서가 성공적으로 생성되었습니다.");
-    await dialog.accept();
+    const successModal = page.locator('[data-component="contract-creation-success-notification"]');
+    await expect(successModal).toBeVisible();
+    await expect(successModal).toContainText("계약서가 성공적으로 생성되었습니다.");
+    await successModal.getByRole("button", { name: "확인" }).click();
 
     await expect.poll(() => capturedCreateDocRecordBody).not.toBeNull();
     expect(capturedCreateDocRecordBody).toMatchObject({
@@ -851,11 +851,11 @@ test.describe("Contract creation iframe + success flow", () => {
     await expect(page.locator('[data-component="messages-contract-form-dialog"]')).toHaveCount(0);
     await expect(page.locator("#eformsign_iframe")).toHaveCount(0);
 
-    const successAlert = page.waitForEvent("dialog");
     await page.getByTestId("contract-creation-retry").click();
-    const dialog = await successAlert;
-    expect(dialog.message()).toBe("계약서가 성공적으로 생성되었습니다.");
-    await dialog.accept();
+    const successModal = page.locator('[data-component="contract-creation-success-notification"]');
+    await expect(successModal).toBeVisible();
+    await expect(successModal).toContainText("계약서가 성공적으로 생성되었습니다.");
+    await successModal.getByRole("button", { name: "확인" }).click();
 
     expect(dispatchCalls).toBe(2);
     await expect(page.getByTestId("contract-creation-progress-step-sent")).toHaveAttribute("data-state", "done");

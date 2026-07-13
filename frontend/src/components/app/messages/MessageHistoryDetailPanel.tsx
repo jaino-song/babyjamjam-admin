@@ -21,7 +21,7 @@ import type {
 } from "@/features/message-triggers/types";
 import { DetailPanel, InfoCard, InfoRow, ListEmptyState } from "@/components/app/v3";
 import { Button } from "@/components/ui/button";
-import { matchesKoreanSearch } from "@/lib/search/korean-search";
+import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { cn } from "@/lib/utils";
 
 export type MessageHistoryStatus = "sent" | "failed" | "pending";
@@ -293,16 +293,7 @@ export function formatMessageHistoryFailureReason(reason: string | null | undefi
 }
 
 export function matchesMessageHistoryQuery(record: MessageHistoryRecord, query: string) {
-  const trimmedQuery = query.trim().toLowerCase();
-  if (!trimmedQuery) return true;
-
-  const digitQuery = trimmedQuery.replace(/\D/g, "");
-  const recipientDigits = record.recipientPhone.replace(/\D/g, "");
-  if (digitQuery && recipientDigits.includes(digitQuery)) {
-    return true;
-  }
-
-  return [
+  return matchesSearchQuery(query, [
     record.title,
     record.recipientName,
     record.recipientPhone,
@@ -311,7 +302,7 @@ export function matchesMessageHistoryQuery(record: MessageHistoryRecord, query: 
     record.messagePreview,
     record.failureReason ?? "",
     MESSAGE_HISTORY_STATUS_META[record.status].label,
-  ].some((field) => field && matchesKoreanSearch(field, trimmedQuery));
+  ]);
 }
 
 export function MessageHistoryDetailPanel({

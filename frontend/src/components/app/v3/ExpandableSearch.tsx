@@ -93,7 +93,7 @@ export function ExpandableSearch({
       <div
         ref={rootRef}
         data-component="expandable-search"
-        className={cn("relative z-20 flex h-[calc(40px*var(--v3-ui-scale,1))] w-[calc(32px*var(--v3-ui-scale,1))] shrink-0 items-start justify-end overflow-visible", className)}
+        className={cn("relative z-20 flex h-[calc(40px*var(--glint-ui-scale,1))] w-[calc(32px*var(--glint-ui-scale,1))] shrink-0 items-start justify-end overflow-visible", className)}
       >
         <div
           data-component="expandable-search-overlay"
@@ -101,13 +101,13 @@ export function ExpandableSearch({
           style={{
             width: expanded
               ? overlayExpandedWidth
-              : "calc(32px * var(--v3-ui-scale, 1))",
+              : "calc(32px * var(--glint-ui-scale, 1))",
           }}
           className={cn(
-            "expandable-search-overlay-surface absolute right-0 top-0 flex h-[calc(40px*var(--v3-ui-scale,1))] items-start justify-start overflow-hidden rounded-[12px] bg-transparent",
+            "expandable-search-overlay-surface absolute right-0 top-0 flex h-[calc(40px*var(--glint-ui-scale,1))] items-start justify-start overflow-hidden rounded-[12px] bg-transparent",
             expanded
               ? "bg-[linear-gradient(to_right,rgb(255_255_255_/_0)_0%,rgb(255_255_255)_10%,rgb(255_255_255)_100%)]"
-              : "w-[calc(32px*var(--v3-ui-scale,1))]"
+              : "w-[calc(32px*var(--glint-ui-scale,1))]"
           )}
         >
           <Button
@@ -119,11 +119,11 @@ export function ExpandableSearch({
             disabled={disabled}
             aria-label={expanded ? closeLabel : openLabel}
             className={cn(
-              "h-[calc(32px*var(--v3-ui-scale,1))] w-[calc(32px*var(--v3-ui-scale,1))] shrink-0 rounded-[10px] border-0 bg-transparent p-0 shadow-none transition-transform duration-200 hover:bg-v3-dim-white hover:text-v3-text-muted",
+              "h-[calc(32px*var(--glint-ui-scale,1))] w-[calc(32px*var(--glint-ui-scale,1))] shrink-0 rounded-[10px] border-0 bg-transparent p-0 shadow-none transition-transform duration-200 hover:bg-v3-dim-white hover:text-v3-text-muted",
               disabled && "cursor-not-allowed opacity-50 hover:bg-transparent",
             )}
           >
-            <Search className="h-[calc(18px*var(--v3-ui-scale,1))] w-[calc(18px*var(--v3-ui-scale,1))] text-v3-text-muted" />
+            <Search className="h-[calc(18px*var(--glint-ui-scale,1))] w-[calc(18px*var(--glint-ui-scale,1))] text-v3-text-muted" />
           </Button>
           <Input
             ref={inputRef}
@@ -138,11 +138,11 @@ export function ExpandableSearch({
             placeholder={expanded ? placeholder : undefined}
             style={{
               opacity: expanded ? 1 : 0,
-              paddingInline: expanded ? "calc(8px * var(--v3-ui-scale, 1))" : 0,
+              paddingInline: expanded ? "calc(8px * var(--glint-ui-scale, 1))" : 0,
               pointerEvents: expanded ? "auto" : "none",
             }}
             className={cn(
-              "expandable-search-overlay-input h-[calc(32px*var(--v3-ui-scale,1))] min-w-0 flex-1 w-auto rounded-none border-0 bg-transparent px-0 py-0 text-[calc(12.8px*var(--v3-ui-scale,1))] text-v3-dark shadow-none outline-none caret-v3-primary placeholder:text-v3-text-muted/50 focus:outline-none focus:ring-0",
+              "expandable-search-overlay-input h-[calc(32px*var(--glint-ui-scale,1))] min-w-0 flex-1 w-auto rounded-none border-0 bg-transparent px-0 py-0 text-[calc(12.8px*var(--glint-ui-scale,1))] text-v3-dark shadow-none outline-none caret-v3-primary placeholder:text-v3-text-muted/50 focus:outline-none focus:ring-0",
               disabled && "cursor-not-allowed text-v3-text-muted",
             )}
           />
@@ -152,7 +152,7 @@ export function ExpandableSearch({
   }
 
   return (
-    <div data-component="expandable-search" className={cn("flex items-center gap-[calc(6px*var(--v3-ui-scale,1))]", className)}>
+    <div data-component="expandable-search" className={cn("flex items-center gap-[calc(6px*var(--glint-ui-scale,1))]", className)}>
       <Button
         type="button"
         variant="ghost"
@@ -162,11 +162,11 @@ export function ExpandableSearch({
         disabled={disabled}
         aria-label={expanded ? closeLabel : openLabel}
         className={cn(
-          "h-[calc(32px*var(--v3-ui-scale,1))] w-[calc(32px*var(--v3-ui-scale,1))] shrink-0 rounded-[10px] border-0 bg-transparent p-0 shadow-none transition-transform duration-200 hover:bg-v3-dim-white hover:text-v3-text-muted",
+          "h-[calc(32px*var(--glint-ui-scale,1))] w-[calc(32px*var(--glint-ui-scale,1))] shrink-0 rounded-[10px] border-0 bg-transparent p-0 shadow-none transition-transform duration-200 hover:bg-v3-dim-white hover:text-v3-text-muted",
           disabled && "cursor-not-allowed opacity-50 hover:bg-transparent",
         )}
       >
-        <Search className="h-[calc(18px*var(--v3-ui-scale,1))] w-[calc(18px*var(--v3-ui-scale,1))] text-v3-text-muted" />
+        <Search className="h-[calc(18px*var(--glint-ui-scale,1))] w-[calc(18px*var(--glint-ui-scale,1))] text-v3-text-muted" />
       </Button>
       <Input
         ref={inputRef}
@@ -181,11 +181,11 @@ export function ExpandableSearch({
         disabled={disabled}
         style={{
           opacity: expanded ? 1 : 0,
-          paddingInline: expanded ? "calc(8px * var(--v3-ui-scale, 1))" : 0,
+          paddingInline: expanded ? "calc(8px * var(--glint-ui-scale, 1))" : 0,
           pointerEvents: expanded ? "auto" : "none",
         }}
         className={cn(
-          "h-[calc(32px*var(--v3-ui-scale,1))] min-w-0 rounded-none border-0 bg-transparent px-0 py-0 text-[calc(12.8px*var(--v3-ui-scale,1))] text-v3-dark shadow-none outline-none caret-v3-primary placeholder:text-v3-text-muted/50 transition-[width,opacity,padding-inline] duration-[260ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus:ring-0 motion-reduce:transition-none",
+          "h-[calc(32px*var(--glint-ui-scale,1))] min-w-0 rounded-none border-0 bg-transparent px-0 py-0 text-[calc(12.8px*var(--glint-ui-scale,1))] text-v3-dark shadow-none outline-none caret-v3-primary placeholder:text-v3-text-muted/50 transition-[width,opacity,padding-inline] duration-[260ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus:ring-0 motion-reduce:transition-none",
           expanded ? expandedWidth : "w-0",
           disabled && "cursor-not-allowed text-v3-text-muted",
         )}

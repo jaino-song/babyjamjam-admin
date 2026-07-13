@@ -98,7 +98,7 @@ const WORK_AREA_OPTIONS = WORK_AREAS.map((area) => ({
 }));
 
 const PANEL_CONTENT_CLASS_NAME = "h-auto min-h-full";
-const PANEL_FIELDS_CLASS_NAME = "grid w-full grid-cols-1 gap-[calc(16px*var(--v3-ui-scale,1))] pb-[calc(24px*var(--v3-ui-scale,1))] md:grid-cols-2";
+const PANEL_FIELDS_CLASS_NAME = "grid w-full grid-cols-1 gap-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(24px*var(--glint-ui-scale,1))] md:grid-cols-2";
 
 interface WorkAreaMultiSelectProps {
     id: string;
@@ -184,7 +184,7 @@ function WorkAreaMultiSelect({
                         <span className="min-w-0 flex-1 truncate">{selectedSummary}</span>
                         <ChevronDown
                             className={cn(
-                                "h-[calc(16px*var(--v3-ui-scale,1))] w-[calc(16px*var(--v3-ui-scale,1))] shrink-0 text-v3-text-muted transition-transform",
+                                "h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] shrink-0 text-v3-text-muted transition-transform",
                                 open && "rotate-180",
                             )}
                             strokeWidth={2.2}
@@ -206,14 +206,14 @@ function WorkAreaMultiSelect({
                     data-component={`${dataComponentPrefix}-select-head`}
                     className="flex items-center justify-between gap-3 border-b border-v3-border px-3.5 py-2.5"
                 >
-                    <span className="text-[calc(11.2px*var(--v3-ui-scale,1))] font-semibold text-v3-text-muted">
+                    <span className="text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
                         {value.length}개 지역 선택
                     </span>
                     <div className="flex items-center gap-2">
                         <button
                             type="button"
                             onClick={() => onChange(selectableOptions.map((option) => option.value))}
-                            className="text-[calc(11.2px*var(--v3-ui-scale,1))] font-semibold text-v3-primary hover:text-v3-primary/80"
+                            className="text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-v3-primary hover:text-v3-primary/80"
                             data-component={`${dataComponentPrefix}-select-all`}
                         >
                             전체 선택
@@ -222,7 +222,7 @@ function WorkAreaMultiSelect({
                             type="button"
                             onClick={() => onChange([])}
                             disabled={value.length === 0}
-                            className="text-[calc(11.2px*var(--v3-ui-scale,1))] font-semibold text-v3-text-muted hover:text-v3-dark disabled:cursor-not-allowed disabled:opacity-45"
+                            className="text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted hover:text-v3-dark disabled:cursor-not-allowed disabled:opacity-45"
                             data-component={`${dataComponentPrefix}-clear`}
                         >
                             선택 해제
@@ -245,7 +245,7 @@ function WorkAreaMultiSelect({
                             <label
                                 key={option.value}
                                 htmlFor={checkboxId}
-                                className="flex min-h-[36px] cursor-pointer items-center gap-2.5 rounded-[8px] px-2.5 py-2 text-[calc(12px*var(--v3-ui-scale,1))] font-medium text-v3-dark hover:bg-v3-primary/5"
+                                className="flex min-h-[36px] cursor-pointer items-center gap-2.5 rounded-[8px] px-2.5 py-2 text-[calc(12px*var(--glint-ui-scale,1))] font-medium text-v3-dark hover:bg-v3-primary/5"
                             >
                                 <Checkbox
                                     id={checkboxId}
@@ -533,7 +533,7 @@ function EmployeeFormContent({
     );
 
     const panelFooter = (
-        <div className="flex w-full flex-wrap items-center justify-between gap-[calc(12px*var(--v3-ui-scale,1))]">
+        <div className="flex w-full flex-wrap items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))]">
             <span className={DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME}>{requiredFieldProgressText}</span>
             <div className={DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME}>
                 <Button
@@ -543,7 +543,7 @@ function EmployeeFormContent({
                     onClick={handleClose}
                     disabled={isLoading}
                     data-component="employees-form-panel-cancel"
-                    className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
+                    className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
                 >
                     {t(locale, "common.cancel")}
                 </Button>
@@ -554,7 +554,7 @@ function EmployeeFormContent({
                     onClick={handleSubmit}
                     disabled={isLoading || !isFormValid}
                     data-component="employees-form-panel-submit"
-                    className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
+                    className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
                 >
                     {isLoading ? (
                         <Spinner className="h-4 w-4" />
@@ -884,15 +884,13 @@ function EmployeeFormContent({
 
             <FormSwitchRow
                 data-component="employees-form-panel-open-status-field"
-                className="self-end h-[calc(38px*var(--v3-ui-scale,1))] min-h-[calc(38px*var(--v3-ui-scale,1))] rounded-[13px] border-[1.35px] px-[calc(14px*var(--v3-ui-scale,1))] py-0"
+                className="self-end h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] rounded-[13px] border-[1.35px] px-[calc(14px*var(--glint-ui-scale,1))] py-0"
                 title={t(locale, "employees.form.open-to-next-work")}
                 checked={formData.openToNextWork}
                 onToggle={() => handleChange("openToNextWork", !formData.openToNextWork)}
                 buttonAriaLabel={t(locale, "employees.form.open-to-next-work")}
                 buttonDataComponent="employees-form-panel-open-status-switch"
                 thumbDataComponent="employees-form-panel-open-status-switch-thumb"
-                buttonClassName="h-[calc(23.4px*var(--v3-ui-scale,1))] w-[calc(41.4px*var(--v3-ui-scale,1))] p-[calc(2.7px*var(--v3-ui-scale,1))]"
-                thumbClassName="h-[calc(18px*var(--v3-ui-scale,1))] w-[calc(18px*var(--v3-ui-scale,1))]"
             />
         </>
     );

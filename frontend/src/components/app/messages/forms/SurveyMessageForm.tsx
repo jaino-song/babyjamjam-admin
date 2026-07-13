@@ -36,8 +36,7 @@ export const SurveyMessageForm = ({
   const generatedMessage = messageOverride ?? templateMessage;
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(generatedMessage);
-    alert(t(locale, "common.copy-success-message"));
+    return navigator.clipboard.writeText(generatedMessage);
   };
 
   const variableItems = [
@@ -68,6 +67,7 @@ export const SurveyMessageForm = ({
     <AutoFillMsgCard
       title={t(locale, "common.generated-message-title")}
       copyButtonText={t(locale, "common.copy-button")}
+      copySuccessMessage={t(locale, "common.copy-success-message")}
       message={generatedMessage}
       bodyDescription={systemTemplate?.description || "설문 안내 문구를 검토하고 수신자별 안내를 조정할 수 있습니다."}
       metaItems={[

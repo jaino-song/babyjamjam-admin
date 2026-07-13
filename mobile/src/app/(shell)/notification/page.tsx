@@ -356,7 +356,6 @@ export default function NotificationPage() {
                 )}
                 rightContent={(
                   <Switch
-                    variant="v3"
                     id="notif-app"
                     checked={isAppNotificationEnabled}
                     onCheckedChange={handleAppNotificationChange}
@@ -373,7 +372,6 @@ export default function NotificationPage() {
                 description={emailNotificationDescription}
                 rightContent={(
                   <Switch
-                    variant="v3"
                     id="notif-email"
                     checked={emailNotifications && Boolean(accountEmail)}
                     onCheckedChange={handleEmailNotificationChange}

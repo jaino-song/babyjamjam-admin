@@ -24,7 +24,7 @@ describe("NotificationPermissionPrompt", () => {
 
     const prompt = await screen.findByRole("dialog", { name: "알림을 허용하시겠습니까?" });
     expect(prompt).toHaveClass(
-      "md:right-[calc(24px+72px*var(--v3-ui-scale,1))]",
+      "md:right-[calc(24px+72px*var(--glint-ui-scale,1))]",
     );
 
     fireEvent.click(screen.getByRole("button", { name: "알림 권한 안내 닫기" }));

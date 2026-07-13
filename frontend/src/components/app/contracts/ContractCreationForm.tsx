@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { WizardStep } from "@/components/app/v3";
+import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import {
   Dialog,
   DialogContent,
@@ -236,11 +237,11 @@ const COMPLETED_PILL =
 
 const INPUT_CLS = "bg-white";
 
-const LABEL_CLS = "text-[calc(12px*var(--v3-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted";
+const LABEL_CLS = "text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted";
 const PANEL_GRID_CLASS_NAME =
-  "grid w-full grid-cols-1 gap-[calc(16px*var(--v3-ui-scale,1))] pb-[calc(24px*var(--v3-ui-scale,1))] md:grid-cols-2";
+  "grid w-full grid-cols-1 gap-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(24px*var(--glint-ui-scale,1))] md:grid-cols-2";
 const PANEL_THREE_COLUMN_GRID_CLASS_NAME =
-  "grid w-full grid-cols-1 gap-[calc(16px*var(--v3-ui-scale,1))] md:grid-cols-3";
+  "grid w-full grid-cols-1 gap-[calc(16px*var(--glint-ui-scale,1))] md:grid-cols-3";
 
 const SELECT_CLS =
   cn(
@@ -349,6 +350,7 @@ export const ContractCreationForm = ({
     [controlledActiveStep, onActiveStepChange],
   );
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isCreationSuccessOpen, setIsCreationSuccessOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [creationProgress, setCreationProgress] = useState<HeadlessProgressState>(INITIAL_CREATION_PROGRESS);
@@ -359,6 +361,12 @@ export const ContractCreationForm = ({
 
   const { isLoaded: isEformsignLoaded, isLoading: isEformsignLoading, error: eformsignError, openDocument } =
     useEformsign();
+
+  const handleCreationSuccessAcknowledged = () => {
+    if (!isCreationSuccessOpen) return;
+    setIsCreationSuccessOpen(false);
+    onSuccess?.();
+  };
 
   const {
     clientId,
@@ -802,8 +810,7 @@ export const ContractCreationForm = ({
           if (headless.ok) {
             setCreationProgress({ step: "sent", completed: true, failed: false });
             queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
-            onSuccess?.();
-            alert("계약서가 성공적으로 생성되었습니다.");
+            setIsCreationSuccessOpen(true);
             return;
           }
 
@@ -877,8 +884,7 @@ export const ContractCreationForm = ({
             setCreationProgress({ step: "sent", completed: true, failed: false });
             queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
             setIsDialogOpen(false);
-            onSuccess?.();
-            alert("계약서가 성공적으로 생성되었습니다.");
+            setIsCreationSuccessOpen(true);
           },
           onError: (response) => {
             console.error("Document creation failed:", response);
@@ -1026,7 +1032,7 @@ export const ContractCreationForm = ({
             dataComponent="contract-creation-client-due-date-input"
           />
 
-          <div className="grid gap-[calc(7px*var(--v3-ui-scale,1))]" data-component="contract-creation-doc-type-field">
+          <div className="grid gap-[calc(7px*var(--glint-ui-scale,1))]" data-component="contract-creation-doc-type-field">
             <Label className={LABEL_CLS} data-component="contract-creation-doc-type-label">
               {t(locale, "contract-msg.doc-type-label")}
               <span className="text-destructive ml-1">*</span>
@@ -1088,7 +1094,7 @@ export const ContractCreationForm = ({
     {
       label: stepLabels[1] ?? "제공인력 정보",
       content: (
-        <div className="grid gap-[calc(18px*var(--v3-ui-scale,1))]">
+        <div className="grid gap-[calc(18px*var(--glint-ui-scale,1))]">
           <div className={PANEL_GRID_CLASS_NAME}>
             <ContractEmployeeSelector
               value={employeeId}
@@ -1107,7 +1113,7 @@ export const ContractCreationForm = ({
           </div>
 
           <Separator className="my-1" />
-          <div className="flex items-center gap-[calc(8px*var(--v3-ui-scale,1))]">
+          <div className="flex items-center gap-[calc(8px*var(--glint-ui-scale,1))]">
             <Checkbox id="add-employee2" checked={showEmployee2} onCheckedChange={handleToggleShowEmployee2} />
             <Label htmlFor="add-employee2" className="cursor-pointer">
               {t(locale, "contract-msg.add-employee2-toggle")}
@@ -1153,7 +1159,7 @@ export const ContractCreationForm = ({
     {
       label: stepLabels[2] ?? "바우처 정보",
       content: (
-        <div className="grid gap-[calc(18px*var(--v3-ui-scale,1))]">
+        <div className="grid gap-[calc(18px*var(--glint-ui-scale,1))]">
           <div className={PANEL_THREE_COLUMN_GRID_CLASS_NAME}>
             <div className="space-y-2 flex-1 min-w-0">
               <Label className={LABEL_CLS}>{t(locale, "price-info-msg.voucher-year-label")}</Label>
@@ -1413,7 +1419,7 @@ export const ContractCreationForm = ({
   );
 
   const footer = (
-    <div className="flex w-full flex-wrap items-center justify-between gap-[calc(12px*var(--v3-ui-scale,1))]">
+    <div className="flex w-full flex-wrap items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))]">
       <span className={DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME}>{requiredFieldProgressText}</span>
       <div className={DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME}>
         {activeStep === 0 && !hasProcessingSuccess ? (
@@ -1423,7 +1429,7 @@ export const ContractCreationForm = ({
             size="sm"
             onClick={handleCancel}
             disabled={hasCreationSession && !hasProcessingFailure}
-            className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
+            className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
           >
             취소
           </Button>
@@ -1437,7 +1443,7 @@ export const ContractCreationForm = ({
             size="sm"
             data-testid="contract-creation-back"
             onClick={() => handleStepChange(activeStep - 1)}
-            className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
+            className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
           >
             이전
           </Button>
@@ -1449,7 +1455,7 @@ export const ContractCreationForm = ({
             data-testid="contract-creation-next"
             onClick={() => handleStepChange(activeStep + 1)}
             disabled={!isCurrentStepValid}
-            className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
+            className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
           >
             다음
           </Button>
@@ -1460,7 +1466,7 @@ export const ContractCreationForm = ({
             data-testid="contract-creation-submit"
             onClick={handleWizardComplete}
             disabled={!isStep1Valid || !isStep2Valid || !isStep3Valid || !isStep4Valid || isSubmitting}
-            className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
+            className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
           >
             {isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}
           </Button>
@@ -1471,7 +1477,7 @@ export const ContractCreationForm = ({
             data-testid="contract-creation-new-send"
             data-component="contract-creation-new-send"
             onClick={handleStartNewContractCreation}
-            className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
+            className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
           >
             새 전자문서 발송
           </Button>
@@ -1484,7 +1490,7 @@ export const ContractCreationForm = ({
               data-testid="contract-creation-manual"
               onClick={handleManualContractCreation}
               disabled={isSubmitting}
-              className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
+              className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
             >
               수동 입력
             </Button>
@@ -1494,7 +1500,7 @@ export const ContractCreationForm = ({
               data-testid="contract-creation-retry"
               onClick={handleRetryContractCreation}
               disabled={isSubmitting}
-              className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
+              className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
             >
               {isSubmitting ? "재시도 중..." : "재시도"}
             </Button>
@@ -1538,6 +1544,17 @@ export const ContractCreationForm = ({
           </div>
         </DialogContent>
       </Dialog>
+
+      <NotificationOneButtonModal
+        open={isCreationSuccessOpen}
+        onOpenChange={(open) => {
+          if (!open) handleCreationSuccessAcknowledged();
+        }}
+        dataComponent="contract-creation-success-notification"
+        title="계약서가 성공적으로 생성되었습니다."
+        description="전자문서 생성과 전송이 완료되었습니다."
+        onAcknowledge={handleCreationSuccessAcknowledged}
+      />
     </>
   );
 };

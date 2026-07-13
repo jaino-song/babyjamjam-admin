@@ -64,7 +64,7 @@ describe("EmployeeAutocomplete", () => {
 
     expect(await screen.findByText("일치하는 제공인력이 없습니다.")).toBeInTheDocument();
     expect(document.querySelector('[data-component="employee-autocomplete-dropdown"]')).toHaveClass(
-      "v3-ui-scale-scope",
+      "glint-ui-scale-scope",
     );
     expect(screen.queryByText("김제공")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "수동 입력으로 진행" })).toBeDisabled();
@@ -131,7 +131,7 @@ describe("EmployeeAutocomplete", () => {
 
     const trigger = screen.getByRole("combobox", { name: "제공인력 1 성함" });
     expect(trigger).toHaveTextContent("홍길동");
-    expect(trigger).toHaveClass("h-[calc(38px*var(--v3-ui-scale,1))]");
+    expect(trigger).toHaveClass("h-[calc(38px*var(--glint-ui-scale,1))]");
     expect(trigger).toHaveClass("rounded-[13px]");
     expect(trigger).toHaveClass("border-[1.35px]");
   });

@@ -37,7 +37,7 @@ export function NotificationPermissionPrompt() {
             role="dialog"
             aria-labelledby={titleId}
             aria-describedby={descriptionId}
-            className="fixed bottom-20 left-4 right-4 z-50 flex items-start gap-3 rounded-xl border border-gray-200 bg-white p-4 shadow-lg animate-in slide-in-from-bottom-4 dark:border-gray-700 dark:bg-gray-800 md:bottom-6 md:left-auto md:right-[calc(24px+72px*var(--v3-ui-scale,1))] md:w-96"
+            className="fixed bottom-20 left-4 right-4 z-50 flex items-start gap-3 rounded-xl border border-gray-200 bg-white p-4 shadow-lg animate-in slide-in-from-bottom-4 dark:border-gray-700 dark:bg-gray-800 md:bottom-6 md:left-auto md:right-[calc(24px+72px*var(--glint-ui-scale,1))] md:w-96"
         >
             <div
                 aria-hidden="true"

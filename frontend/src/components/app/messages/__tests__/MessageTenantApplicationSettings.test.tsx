@@ -311,12 +311,12 @@ describe("MessageTenantApplicationSettings", () => {
 
     expect(screen.getByText("API 지난 루틴 미실행")).toBeInTheDocument();
     expect(screen.getByText("전송 간격")).toBeInTheDocument();
-    const intervalInput = screen.getByRole("spinbutton", { name: "지난 자동 전송 간격" });
+    const intervalInput = screen.getByRole("spinbutton", { name: "늦은 등록 자동 전송 간격" });
     expect(intervalInput).toHaveValue(1);
     expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
     fireEvent.change(intervalInput, { target: { value: "10" } });
     expect(intervalInput).toHaveValue(10);
-    expect(screen.getByText("지난 자동 전송 순서")).toBeInTheDocument();
+    expect(screen.getByText("늦은 등록 자동 전송 순서")).toBeInTheDocument();
     for (const rule of DEFAULT_TRIGGER_RULES) {
       expect(screen.getByText(rule.name)).toBeInTheDocument();
     }
@@ -388,7 +388,7 @@ describe("MessageTenantApplicationSettings", () => {
     expect(screen.queryByText(inactiveReminder.name)).not.toBeInTheDocument();
     expect(screen.getByText(DEFAULT_TRIGGER_RULES[3].name)).toBeInTheDocument();
 
-    const intervalInput = screen.getByRole("spinbutton", { name: "지난 자동 전송 간격" });
+    const intervalInput = screen.getByRole("spinbutton", { name: "늦은 등록 자동 전송 간격" });
     fireEvent.change(intervalInput, { target: { value: "2" } });
     fireEvent.click(screen.getByRole("button", { name: "저장" }));
 

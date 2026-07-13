@@ -26,7 +26,11 @@ import {
 } from "./list-state";
 import { StatusPill } from "@/components/app/ui/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useConsultationInquiries, useMarkConsultationInquiryRead } from "@/hooks/useConsultationInquiries";
+import {
+    useAllConsultationInquiries,
+    useConsultationInquiries,
+    useMarkConsultationInquiryRead,
+} from "@/hooks/useConsultationInquiries";
 import type { ConsultationInquiry } from "@/services/api";
 
 const READ_TABS = [
@@ -109,9 +113,12 @@ export default function ConsultationsPage() {
             page: 1,
             limit: 50,
             readState: activeReadState,
-            search: search.trim() || undefined,
         }),
-        [activeReadState, search],
+        [activeReadState],
+    );
+    const searchQueryParams = useMemo(
+        () => ({ readState: activeReadState }),
+        [activeReadState],
     );
 
     const statsQueryParams = useMemo(
@@ -123,18 +130,26 @@ export default function ConsultationsPage() {
         [],
     );
 
+    const hasSearchQuery = search.trim().length > 0;
     const { data, isLoading } = useConsultationInquiries(queryParams);
+    const { data: searchData, isLoading: isSearchLoading } =
+        useAllConsultationInquiries(searchQueryParams, hasSearchQuery);
     const { data: statsData, isLoading: isStatsLoading } = useConsultationInquiries(statsQueryParams);
     const markRead = useMarkConsultationInquiryRead();
-    const inquiries = useMemo(() => data?.data ?? [], [data?.data]);
+    const inquiries = useMemo(
+        () => (hasSearchQuery ? searchData?.data ?? [] : data?.data ?? []),
+        [data?.data, hasSearchQuery, searchData?.data],
+    );
+    const isListLoading = hasSearchQuery ? isSearchLoading : isLoading;
     const statsInquiries = useMemo(() => statsData?.data ?? [], [statsData?.data]);
     const visibleInquiries = useMemo(
         () => getDisplayedConsultationInquiries({
             inquiries,
             selectedInquiry,
             activeReadState,
+            search,
         }),
-        [activeReadState, inquiries, selectedInquiry],
+        [activeReadState, inquiries, search, selectedInquiry],
     );
     const activeInquiry = selectedInquiry
         ? inquiries.find((item) => item.id === selectedInquiry.id) ?? selectedInquiry
@@ -187,7 +202,7 @@ export default function ConsultationsPage() {
         <PageSection name="consultations">
             <StatsBar
                 name="consultations"
-                isLoading={isLoading || isStatsLoading}
+                isLoading={isListLoading || isStatsLoading}
                 items={[
                     { icon: Headset, value: stats.currentMonthTotal, label: "이번달 전체 상담", counter: "건" },
                     { icon: CalendarClock, value: stats.unreadCount, label: "읽지 않음", counter: "건", colorIndex: 1 },
@@ -215,8 +230,8 @@ export default function ConsultationsPage() {
                     searchValue={search}
                     onSearchChange={setSearch}
                     searchPlaceholder="이름, 연락처, 주소 검색..."
-                    isLoading={isLoading}
-                    emptyState={!isLoading && visibleInquiries.length === 0 ? (
+                    isLoading={isListLoading}
+                    emptyState={!isListLoading && visibleInquiries.length === 0 ? (
                         <ListEmptyState
                             name="consultations-empty"
                             message={search ? "검색 결과가 없습니다" : "상담 문의가 없습니다"}
@@ -225,7 +240,7 @@ export default function ConsultationsPage() {
                 >
                     <AnimatedSlotList<ConsultationInquiry>
                         items={visibleInquiries}
-                        isLoading={isLoading}
+                        isLoading={isListLoading}
                         loadingCount={6}
                         className="space-y-2"
                         getItemKey={(item) => item.id}
@@ -272,7 +287,7 @@ export default function ConsultationsPage() {
                                     title={item.motherName}
                                     subtitle={
                                         <>
-                                            <Phone className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(12px*var(--v3-ui-scale,1))] shrink-0" />
+                                            <Phone className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))] shrink-0" />
                                             <span className="shrink-0">{item.phone}</span>
                                             <span className="truncate">{item.address}</span>
                                         </>

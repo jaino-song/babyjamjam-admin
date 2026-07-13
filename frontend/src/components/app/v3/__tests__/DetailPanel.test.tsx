@@ -36,7 +36,7 @@ describe("DetailPanel", () => {
 
     expect(main).toBeInTheDocument();
     expect(main).toHaveClass("flex-col");
-    expect(main).toHaveClass("v3-ui-scale-scope");
+    expect(main).toHaveClass("glint-ui-scale-scope");
     expect(scrollContent).toHaveClass("flex-1");
     expect(spacer).toBeInTheDocument();
     expect(spacer?.parentElement).toBe(main);

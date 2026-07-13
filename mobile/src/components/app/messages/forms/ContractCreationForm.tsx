@@ -24,6 +24,8 @@ import {
 } from "@/components/ui/select";
 import { SteppedWizard } from "@/components/app/v3";
 import type { WizardStep } from "@/components/app/v3";
+import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import {
   Dialog,
   DialogContent,
@@ -108,6 +110,8 @@ export const ContractCreationForm = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [documentCreated, setDocumentCreated] = useState(false);
+  const [isCreationSuccessOpen, setIsCreationSuccessOpen] = useState(false);
+  const [isManualClientApprovalOpen, setIsManualClientApprovalOpen] = useState(false);
 
   // State for client creation dialog
   const [isClientDialogOpen, setIsClientDialogOpen] = useState(false);
@@ -363,7 +367,7 @@ export const ContractCreationForm = () => {
     }
   };
 
-  const handleContractCreation = async () => {
+  const handleContractCreation = async (manualClientCreationApproved = false) => {
     if (employeeId === null || (showEmployee2 && employee2Id === null)) {
       setActiveStep(1);
       setSubmitError("등록된 제공인력을 목록에서 선택해 주세요.");
@@ -371,6 +375,10 @@ export const ContractCreationForm = () => {
     }
     if (!isEformsignLoaded) {
       setSubmitError("eformsign SDK가 아직 로드되지 않았습니다. 잠시 후 다시 시도해주세요.");
+      return;
+    }
+    if (isManualEntry && !clientId && !manualClientCreationApproved) {
+      setIsManualClientApprovalOpen(true);
       return;
     }
 
@@ -402,10 +410,6 @@ export const ContractCreationForm = () => {
       };
 
       if (isManualEntry && !clientId) {
-        if (!window.confirm(MANUAL_CLIENT_CREATION_CONFIRM_MESSAGE)) {
-          return;
-        }
-
         // Create new client from manual entry data
         const newClient = await createClientMutation.mutateAsync({
           ...clientData,
@@ -503,8 +507,7 @@ export const ContractCreationForm = () => {
 
             queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.allDocuments() });
             setDocumentCreated(true);
-            alert(`계약서가 성공적으로 생성되었습니다.`);
-            handleDialogClose();
+            setIsCreationSuccessOpen(true);
           },
           onError: (response) => {
             console.error("Document creation failed:", response);
@@ -1026,6 +1029,36 @@ export const ContractCreationForm = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      <ApprovalTwoButtonModal
+        open={isManualClientApprovalOpen}
+        onOpenChange={setIsManualClientApprovalOpen}
+        dataComponent="mobile-contract-manual-client-approval"
+        title="새 고객으로 등록하시겠습니까?"
+        description={MANUAL_CLIENT_CREATION_CONFIRM_MESSAGE}
+        isDescriptionVisuallyHidden={false}
+        approvalLabel="계속"
+        onApprove={() => {
+          setIsManualClientApprovalOpen(false);
+          void handleContractCreation(true);
+        }}
+      />
+
+      <NotificationOneButtonModal
+        open={isCreationSuccessOpen}
+        onOpenChange={(open) => {
+          if (open) return;
+          setIsCreationSuccessOpen(false);
+          handleDialogClose();
+        }}
+        dataComponent="mobile-contract-creation-success-notification"
+        title="계약서가 성공적으로 생성되었습니다."
+        description="전자문서 생성과 전송이 완료되었습니다."
+        onAcknowledge={() => {
+          setIsCreationSuccessOpen(false);
+          handleDialogClose();
+        }}
+      />
 
       <ClientFormDialog
         open={isClientDialogOpen}

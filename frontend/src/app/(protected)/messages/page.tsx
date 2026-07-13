@@ -78,7 +78,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/app/ui/status-badge";
-import { matchesKoreanSearch } from "@/lib/search/korean-search";
+import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { findMessageHistoryClient } from "@/lib/message-history/client-match";
 import { renderTemplate } from "@/lib/template-utils";
 import { cn } from "@/lib/utils";
@@ -465,26 +465,17 @@ function formatScheduledDetailDate(dateString: string) {
 }
 
 function matchesScheduledJobQuery(job: UpcomingMessageTriggerJob, query: string) {
-  const trimmedQuery = query.trim();
-  if (!trimmedQuery) return true;
-
-  const digitQuery = trimmedQuery.replace(/\D/g, "");
-  const recipientPhone = (job.recipientPhone ?? job.payload.recipientPhone ?? "").replace(/\D/g, "");
-
-  if (digitQuery && recipientPhone.includes(digitQuery)) {
-    return true;
-  }
-
-  return [
+  return matchesSearchQuery(query, [
     job.ruleName,
     job.payload.recipientName,
     job.payload.clientName ?? "",
     job.payload.employeeName ?? "",
+    job.recipientPhone ?? job.payload.recipientPhone ?? "",
     getScheduledRecipientBadge(job.recipientType),
     getHistoryTemplateLabel(job.templateKey),
     getScheduledEventLabel(job.eventType),
     formatScheduledPreviewDate(job.scheduledFor),
-  ].some((field) => field && matchesKoreanSearch(field, trimmedQuery));
+  ]);
 }
 
 type ScheduledJobPayloadWithMessageBody = UpcomingMessageTriggerJob["payload"] & {
@@ -901,18 +892,7 @@ function MessageSectionPlaceholder({ sectionId }: { sectionId: PlaceholderSectio
         return false;
       }
 
-      const trimmedQuery = deferredScheduledSearchValue.trim().toLowerCase();
-      if (!trimmedQuery) {
-        return true;
-      }
-
-      const digitQuery = trimmedQuery.replace(/\D/g, "");
-      const recipientDigits = (item.recipientPhone ?? "").replace(/\D/g, "");
-      if (digitQuery && recipientDigits.includes(digitQuery)) {
-        return true;
-      }
-
-      return [
+      return matchesSearchQuery(deferredScheduledSearchValue, [
         item.recipientName ?? item.label,
         item.recipientType ?? item.badge,
         item.recipientPhone ?? "",
@@ -922,7 +902,7 @@ function MessageSectionPlaceholder({ sectionId }: { sectionId: PlaceholderSectio
         item.detailTitle,
         item.detailDescription,
         item.messageBody ?? "",
-      ].some((field) => field.toLowerCase().includes(trimmedQuery));
+      ]);
     });
   }, [copy.items, deferredScheduledSearchValue, isScheduledSection, scheduledFilter]);
   const selectedPreview = filteredPreviewItems.find((item) => item.id === selectedPreviewId) ?? null;

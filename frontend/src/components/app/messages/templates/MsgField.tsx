@@ -15,7 +15,7 @@ export const MsgField = ({ value, label, onChange }: MsgFieldProps) => {
       readOnly={!onChange}
       onChange={(e) => onChange?.(e.target.value)}
       rows={12}
-      className="scrollbar-hide min-h-[calc(280px*var(--v3-ui-scale,1))] rounded-none border-0 bg-transparent px-0 py-0 font-sans text-[calc(14.08px*var(--v3-ui-scale,1))] leading-[calc(28px*var(--v3-ui-scale,1))] text-v3-dark shadow-none resize-none focus-visible:ring-0 focus-visible:ring-offset-0"
+      className="scrollbar-hide min-h-[calc(280px*var(--glint-ui-scale,1))] rounded-none border-0 bg-transparent px-0 py-0 font-sans text-[calc(14.08px*var(--glint-ui-scale,1))] leading-[calc(28px*var(--glint-ui-scale,1))] text-v3-dark shadow-none resize-none focus-visible:ring-0 focus-visible:ring-offset-0"
     />
   );
 };
