@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>로그인 — Mobile Page</title>
+<link rel="stylesheet" href="_shared.css?v=frame-removal" />
+<style>
+.auth-page {
+  min-height: 100%;
+  background: linear-gradient(180deg, #fff 0%, var(--v3-dim-white) 60%);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+}
+.auth-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 0;
+}
+.auth-logo {
+  width: 80px; height: 80px;
+  margin-bottom: 12px;
+}
+.auth-logo img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.auth-title {
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: var(--v3-primary);
+  margin-bottom: 4px;
+}
+.auth-sub {
+  font-size: 0.78rem;
+  color: var(--v3-text-muted);
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.auth-input {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--v3-border);
+  border-radius: 14px;
+  font-family: inherit;
+  font-size: 0.9rem;
+  color: var(--v3-dark);
+  background: white;
+  outline: none;
+  box-sizing: border-box;
+}
+.auth-input:focus { border-color: var(--v3-primary); }
+.auth-options {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 24px;
+  margin-top: -2px;
+}
+.auth-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--v3-text-muted);
+  cursor: pointer;
+  font-size: 0.74rem;
+  font-weight: 600;
+  line-height: 1;
+  user-select: none;
+}
+.auth-check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--v3-primary);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+.auth-btn {
+  width: 100%;
+  padding: 14px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--v3-primary);
+  color: white;
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: 8px;
+  box-shadow: 0 6px 20px rgba(20, 50, 100, 0.18);
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 18px 0;
+  color: var(--v3-text-muted);
+  font-size: 0.7rem;
+}
+.auth-divider::before, .auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--v3-border);
+}
+
+.auth-oauth {
+  width: 100%;
+  padding: 13px;
+  border: none;
+  border-radius: 14px;
+  background: #FEE500;
+  color: rgba(0, 0, 0, 0.85);
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.auth-oauth svg { fill: rgba(0, 0, 0, 0.85) !important; }
+
+.auth-links {
+  margin-top: 20px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.74rem;
+  color: var(--v3-text-muted);
+}
+.auth-links a {
+  color: var(--v3-primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.auth-footer {
+  margin-top: auto;
+  text-align: center;
+  font-size: 0.7rem;
+  color: var(--v3-text-muted);
+  padding-top: 24px;
+}
+.auth-footer a {
+  color: var(--v3-primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+</style>
+</head>
+<body>
+<div class="phone-frame">
+  <div class="phone-notch"></div>
+  <div class="phone-screen">
+    <div class="auth-page">
+      <div class="auth-brand">
+        <div class="auth-logo"><img src="logo.svg" alt="아가잼잼 로고" /></div>
+        <div class="auth-title">아가잼잼 어드민</div>
+        <div class="auth-sub">지점 운영을 더 똑똑하게</div>
+      </div>
+
+      <form class="auth-form" onsubmit="return false">
+        <input class="auth-input" type="email" placeholder="이메일" value="" />
+        <input class="auth-input" type="password" placeholder="비밀번호" />
+        <div class="auth-options">
+          <label class="auth-check" for="login-remember-id">
+            <input id="login-remember-id" type="checkbox" />
+            <span class="auth-check-label">아이디 저장</span>
+          </label>
+          <label class="auth-check" for="login-auto-login">
+            <input id="login-auto-login" type="checkbox" />
+            <span class="auth-check-label">자동 로그인</span>
+          </label>
+        </div>
+        <button class="auth-btn" type="submit">로그인</button>
+      </form>
+
+      <div class="auth-divider">또는</div>
+
+      <button class="auth-oauth">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="hsl(45,70%,25%)"><path d="M12 3C6.5 3 2 6.5 2 11c0 2.8 1.8 5.3 4.5 6.7L5.4 21l3.5-2.3c1 .2 2 .3 3.1.3 5.5 0 10-3.5 10-8s-4.5-8-10-8z"/></svg>
+        카카오로 시작하기
+      </button>
+
+      <div class="auth-links">
+        <a href="page-forgot-password.html">비밀번호 찾기</a>
+        <a href="page-register.html">회원가입</a>
+      </div>
+
+      <div class="auth-footer">
+        가입 시 <a href="#">이용약관</a>과 <a href="#">개인정보처리방침</a>에 동의합니다.
+      </div>
+    </div>
+  </div>
+</div>
+<div class="variant-label">로그인 · /login</div>
+</body>
+</html>

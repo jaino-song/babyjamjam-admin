@@ -1,0 +1,461 @@
+{
+  "roles": {
+    "owner": "Owner",
+    "admin": "Branch Manager",
+    "manager": "Manager",
+    "member": "Staff",
+    "user": "User",
+    "unknown": "User"
+  },
+  "common": {
+    "title": "BabyJamJam Mobile Admin",
+    "subtitle": "Analog to Digital",
+    "start": "Get Started",
+    "welcome": "Welcome",
+    "loading": "Loading...",
+    "error": "Error",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "generate-button": "Generate Message",
+    "generate-button-loading": "Loading data...",
+    "copy-button": "Copy",
+    "currency-symbol": " KRW",
+    "generated-message-title": "Generated Message",
+    "copy-success-message": "Message copied to clipboard!",
+    "next": "Next",
+    "back": "Back",
+    "saving": "Saving...",
+    "deleting": "Deleting...",
+    "close": "Close"
+  },
+  "header": {
+    "companyName": "Babyjamjam",
+    "companySubtitle": "Operations Platform"
+  },
+  "dashboard": {
+    "title": "Admin Dashboard",
+    "subtitle": "Monitor operations at a glance",
+    "welcome_back": "Welcome back",
+    "suffix": " 😀",
+    "active_clients": "Active Clients",
+    "pending_clients": {
+      "title": "Pending Reservations",
+      "current_month": "Pending this month",
+      "next_month": "Pending next month"
+    },
+    "contracts": {
+      "title": "Contracts",
+      "sending_pending": "Contracts to Send",
+      "completion_pending": "Pending Completion"
+    },
+    "weekly_performance": "Weekly Performance",
+    "quick_actions": "Quick Actions",
+    "recent_activity": "Recent Activity",
+    "view_insights": "View Insights",
+    "schedule_briefing": "Schedule Briefing",
+    "view_all": "View all"
+  },
+  "actions": {
+    "add_user": "Add User",
+    "review_requests": "Review Requests",
+    "create_report": "Create Report",
+    "schedule_meeting": "Schedule Meeting",
+    "price_calculator": "Price Calculator",
+    "write_message": "Write Message",
+    "send_contract": "Send Contract"
+  },
+  "user": {
+    "profile": "Profile",
+    "settings": "Settings",
+    "logout": "Logout",
+    "login": "Login"
+  },
+  "msg-form": {
+    "title": "Messages",
+    "select-msg-type": "Please select the message you want",
+    "add-template": "Add",
+    "edit-template": "Edit"
+  },
+  "price-info-msg": {
+    "title": "Generate Pricing Message",
+    "subtitle": "Please fill in all fields and click the generate button below",
+    "name-label": "Mother's Name",
+    "name-placeholder": "Jane Doe",
+    "voucher-year-label": "Year",
+    "voucher-type-label": "Voucher Type",
+    "area-label": "Area",
+    "duration-label": "Service Duration",
+    "duration-placeholder": "Days",
+    "full-price-label": "Total Service Amount",
+    "grant-price-label": "Government Grant",
+    "actual-price-label": "Out-of-Pocket"
+  },
+  "bank-account-info": {
+    "nonghyup": "Nonghyup Bank",
+    "namdonggu": "Namdong-gu",
+    "seogu": "Seo-gu",
+    "bupyunggu": "Bupyeong-gu",
+    "yeonsu": "Yeonsu-gu"
+  },
+  "msg-type": {
+    "greeting": "Greeting",
+    "service-info": "Service Info",
+    "price-info": "Pricing & Account",
+    "reminder": "Reminder",
+    "thanks": "Reservation Complete",
+    "survey": "Survey",
+    "contract": "E-Contract",
+    "info": "Information Collection"
+  },
+  "greeting-msg": {
+    "subtitle": "Generate a greeting message",
+    "name-label": "Mother's Name",
+    "name-placeholder": "Jane Doe"
+  },
+  "info-msg": {
+    "subtitle": "Generate an information collection message for service processing"
+  },
+  "service-info-msg": {
+    "subtitle": "Generate a service information message",
+    "name-label": "Mother's Name",
+    "name-placeholder": "Jane Doe"
+  },
+  "reminder-msg": {
+    "subtitle": "Generate a reminder message after consultation",
+    "name-label": "Mother's Name",
+    "name-placeholder": "Jane Doe"
+  },
+  "thanks-msg": {
+    "subtitle": "Generate a reservation complete thank you message",
+    "name-label": "Mother's Name",
+    "name-placeholder": "Jane Doe"
+  },
+  "survey-msg": {
+    "subtitle": "Generate a monitoring survey request message",
+    "name-label": "Mother's Name",
+    "name-placeholder": "Jane Doe"
+  },
+  "contract-msg": {
+    "subtitle": "Generate an e-contract notification message",
+    "client-select-label": "Select Client",
+    "client-search-placeholder": "Search by name, phone, or address",
+    "no-client-found": "No matching clients found",
+    "manual-entry": "Add New Client",
+    "manual-entry-description": "Enter client information manually",
+    "manual-entry-mode": "Manual Entry Mode",
+    "switch-to-search": "Switch to Client Search",
+    "client-signed": "Signed",
+    "name-label": "Mother's Name",
+    "name-placeholder": "Jane Doe",
+    "phone-label": "Mother's Phone",
+    "phone-placeholder": "010-1234-5678",
+    "birthday-label": "Birthday",
+    "address-label": "Address",
+    "address-placeholder": "e.g., Namdong-gu, Incheon",
+    "doc-type-label": "Select Contract",
+    "area-label": "Service Area",
+    "start-date-label": "Contract Start Date",
+    "start-date-placeholder": "2025-01-01",
+    "end-date-label": "Contract End Date",
+    "end-date-placeholder": "2025-12-31",
+    "employee-select-label": "Select Provider 1",
+    "employee-manual-entry": "Add New Provider",
+    "employee-manual-entry-description": "Enter provider information manually",
+    "employee-manual-entry-mode": "Manual Entry Mode",
+    "switch-to-employee-search": "Switch to Provider Search",
+    "employee-name-label": "Provider 1 Name",
+    "employee-name-placeholder": "Jane Doe",
+    "employee-phone-label": "Provider 1 Phone",
+    "employee-phone-placeholder": "010-1234-5678",
+    "add-employee2-toggle": "Add Provider 2",
+    "employee2-select-label": "Select Provider 2",
+    "employee2-manual-entry": "Add New Provider",
+    "employee2-manual-entry-description": "Enter provider 2 information manually",
+    "employee2-manual-entry-mode": "Manual Entry Mode",
+    "switch-to-employee2-search": "Switch to Provider Search",
+    "employee2-name-label": "Provider 2 Name",
+    "employee2-phone-label": "Provider 2 Phone",
+    "full-price-label": "Service Amount",
+    "grant-label": "Government Grant",
+    "actual-price-label": "Out-of-Pocket",
+    "payment-date-label": "Payment Date",
+    "payment-date-placeholder": "2025-01-01",
+    "contract-creation": "Create E-Contract",
+    "price-placeholder": "KRW",
+    "pagination-steps": [
+      "User Info",
+      "Provider Info",
+      "Voucher Info",
+      "Contract Info"
+    ]
+  },
+    "nav-bar": {
+      "dashboard": "Dashboard",
+      "messages": "Messages",
+      "contracts": "Contracts",
+      "clients": "Clients",
+      "employees": "Employees",
+      "file-storage": "Documents",
+      "files": "Files",
+      "settings": "Settings"
+    },
+  "login": {
+    "title": "Login to Get Started",
+    "subtitle": "Please select one of the social login options below to log in",
+    "kakao-login": "Login with Kakao",
+    "google-login": "Login with Google"
+  },
+   "documents": {
+     "title": "document management",
+     "upload": "upload",
+     "upload-title": "upload document",
+     "filter-all": "all",
+     "delete-confirm-title": "delete document",
+     "delete-confirm-message": "are you sure you want to delete this document? this action cannot be undone.",
+     "delete-success": "document deleted successfully",
+     "upload-success": "document uploaded successfully",
+     "update-success": "document updated successfully",
+     "upload-description": "Select files to upload to the document storage"
+   },
+   "documents-list": {
+     "title": "Contracts",
+     "subtitle": "View the list of contracts based on conditions.",
+     "document-title": "Contractor",
+     "created-date": "Created Date",
+     "status": "Status",
+     "new-document": "New Contract"
+   },
+  "clients": {
+    "title": "Client Management",
+    "subtitle": "Manage registered client information and register new clients.",
+    "list-title": "Client List",
+    "add": "Add",
+    "search-placeholder": "Search by name, phone, address",
+    "no-data": "No clients registered.",
+    "load-error": "Failed to load client list.",
+    "delete-confirm": "Are you sure you want to delete this client?",
+    "delete-success": "Client deleted",
+    "delete-success-description": "The client has been deleted.",
+    "delete-fail": "Delete failed",
+    "delete-fail-description": "An error occurred while deleting the client.",
+    "table": {
+      "name": "Name",
+      "phone": "Phone",
+      "type": "Voucher Type",
+      "duration": "Duration",
+      "status": "Contract Status",
+      "start-date": "Start Date",
+      "actions": "Actions"
+    },
+    "form": {
+      "pagination-steps": [
+        "Basic Info",
+        "Provider",
+        "Service/Pricing",
+        "Contract"
+      ],
+      "add-title": "Register New Client",
+      "edit-title": "Edit Client Information",
+      "section-basic": "Basic Information",
+      "section-employee": "Assigned Provider",
+      "section-service": "Service Information",
+      "section-pricing": "Pricing Information",
+      "section-contract": "Contract Information",
+      "section-flags": "Additional Options",
+      "name": "Name",
+      "birthday": "Birthday",
+      "birthday-helper": "YYMMDD format (e.g., 990315)",
+      "due-date": "Expected Delivery Date",
+      "phone": "Phone",
+      "address": "Address",
+      "primary-employee": "Primary Provider",
+      "secondary-employee": "Secondary Provider",
+      "none": "None",
+      "voucher-type": "Voucher Type",
+      "duration": "Service Duration",
+      "full-price": "Total Service Amount",
+      "grant": "Government Grant",
+      "actual-price": "Out-of-Pocket",
+      "contract-status": "Contract Status",
+      "start-date": "Start Date",
+      "end-date": "End Date",
+      "voucher-client": "Voucher Client",
+      "care-center": "Postpartum Care Center",
+      "breast-pump": "Breast Pump Rental",
+      "error-name-required": "Name is required.",
+      "error-birthday-required": "Birthday is required.",
+      "error-due-date-required": "Expected delivery date is required.",
+      "error-address-required": "Address is required.",
+      "error-phone-required": "Phone number is required.",
+      "error-employee-required": "Primary provider is required.",
+      "error-type-required": "Voucher type is required.",
+      "error-duration-required": "Service duration is required.",
+      "error-price-required": "Pricing information is required.",
+      "error-start-date-required": "Start date is required.",
+      "error-end-date-required": "End date is required.",
+      "error-save-failed": "Failed to save. Please try again.",
+      "employee-search-placeholder": "Search by name...",
+      "no-employee-found": "No matching provider found.",
+      "add-new-employee": "Add New Provider",
+      "add-employee-coming-soon": "Add provider feature coming soon.",
+      "type-to-search": "Type to search",
+      "auto-filled": "Auto-filled",
+      "section-document": "E-Contract",
+      "document-status": "Signing Status",
+      "document-signed": "Signed",
+      "document-not-signed": "Not Signed",
+      "doc-not-sent": "Not Sent",
+      "doc-created": "Created",
+      "doc-opened": "Opened",
+      "doc-completed": "Completed",
+      "doc-requested": "Requested",
+      "doc-rejected": "Rejected",
+      "doc-revoked": "Revoked",
+      "doc-deleted": "Deleted",
+      "add-description": "Fill in the form to register a new client",
+      "edit-description": "Modify the client information",
+      "error-phone-duplicate": "This phone number is already registered"
+    },
+    "detail": {
+      "description": "View client information details"
+    }
+  },
+  "employees": {
+    "title": "Provider Management",
+    "subtitle": "Manage registered provider information and register new providers.",
+    "add": "Add",
+    "add-employee": "Register New Provider",
+    "search-placeholder": "Search by name, phone, work area",
+    "no-employees": "No providers registered.",
+    "schedule-not-implemented": "Schedule feature coming soon",
+    "table": {
+      "name": "Name",
+      "open-status": "Status",
+      "contact": "Contact"
+    },
+    "status": {
+      "available": "Available",
+      "working": "Working",
+      "unavailable": "Unavailable"
+    },
+    "form": {
+      "create-title": "Register New Provider",
+      "edit-title": "Edit Provider Information",
+      "section-basic": "Basic Information",
+      "section-work": "Work Information",
+      "section-registration": "Registration Information",
+      "name": "Name",
+      "phone": "Phone",
+      "work-area": "Work Area",
+      "grade": "Grade",
+      "open-to-next-work": "Available for Next Work",
+      "registered-date": "Registered Date",
+      "phone-required": "Please enter a phone number",
+      "work-area-required": "Please select at least one work area",
+      "error-phone-duplicate": "This phone number is already registered. Please enter a different phone number.",
+      "error-create-failed": "Failed to register provider. Please try again.",
+      "error-update-failed": "Failed to update provider information. Please try again.",
+      "error-save-failed": "Failed to save. Please try again.",
+      "create-description": "Fill in the form to register a new provider",
+      "edit-description": "Modify the provider information"
+    },
+    "detail": {
+      "title": "Provider Details",
+      "description": "View provider information details"
+    },
+    "delete-confirm": {
+      "title": "Delete Provider",
+      "message": "Are you sure you want to delete this provider? This action cannot be undone.",
+      "error": "Failed to delete provider. Please try again."
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "voucher-price": {
+      "tab-title": "Voucher Pricing",
+      "title": "Update Voucher Pricing",
+      "subtitle": "Upload a government voucher pricing table image and AI will automatically extract price information.",
+      "steps": {
+        "upload": "Upload Image",
+        "preview": "Review Data",
+        "complete": "Complete"
+      },
+      "dropzone": {
+        "title": "Upload voucher pricing table image",
+        "description": "Drag and drop or click to select file",
+        "formats": "Supported formats: PNG, JPG, JPEG, PDF (max 10MB)",
+        "analyzing": "Analyzing image...",
+        "change-file": "Click or drag to select a different file"
+      },
+      "guide": {
+        "title": "Upload Guide:",
+        "item1": "Capture the entire table",
+        "item2": "Include unit notation (thousands/won)",
+        "item3": "Short, Standard, Extended headers must be visible"
+      },
+      "preview": {
+        "total-items": "Total {count} items",
+        "validation-passed": "Validation passed",
+        "warnings": "{count} warnings",
+        "validation-warnings": "Validation Warnings ({count})",
+        "validation-formula": "* Validation formula: Service Price = Grant + Out-of-Pocket"
+      },
+      "table": {
+        "type": "Type",
+        "duration": "Duration (days)",
+        "full-price": "Service Price",
+        "grant": "Government Grant",
+        "actual-price": "Out-of-Pocket",
+        "validation": "Validation",
+        "edit": "Edit"
+      },
+      "actions": {
+        "upload-another": "Upload Another Image",
+        "confirm-update": "Confirm Update",
+        "updating": "Updating...",
+        "new-upload": "Upload New Pricing Table"
+      },
+      "result": {
+        "success": "Update Complete!",
+        "updated-count": "{count} items updated",
+        "created-count": "{count} items created",
+        "partial-failure": "Some items failed to process:"
+      },
+      "errors": {
+        "invalid-file-type": "Invalid file type. Allowed: PNG, JPG, JPEG, PDF",
+        "file-too-large": "File size exceeds 10MB",
+        "parse-failed": "Failed to parse image",
+        "update-failed": "Update failed"
+      }
+    }
+  },
+  "errors": {
+    "generic": "An error occurred. Please try again.",
+    "network": "A network error occurred.",
+    "prisma": {
+      "P2002": "{field} already exists.",
+      "P2002.phone": "This phone number is already registered. Please enter a different phone number.",
+      "P2002.email": "This email is already registered.",
+      "P2003": "Referenced data does not exist.",
+      "P2025": "Requested data not found.",
+      "P2011": "Required field is missing.",
+      "P2006": "Invalid value for {field}.",
+      "unknown": "A database error occurred."
+    },
+    "fields": {
+      "phone": "phone number",
+      "email": "email",
+      "name": "name",
+      "address": "address",
+      "birthday": "birthday",
+      "work_area": "work area",
+      "document_id": "document ID",
+      "endpoint": "notification endpoint",
+      "kakao_id": "Kakao ID",
+      "year_type_duration": "year/type/duration"
+    }
+  }
+}
