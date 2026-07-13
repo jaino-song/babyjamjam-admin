@@ -207,6 +207,7 @@ describe("SystemSettingController (Integration)", () => {
             expect(getPolicy(response, "past-trigger")).toMatchObject({
                 active: true,
                 requiresApproval: true,
+                description: "기존 발송 예정의 만료와 늦게 등록한 고객의 보충 발송을 구분합니다.",
             });
             expect(getPolicy(response, "service-feedback-link")).toMatchObject({
                 active: true,
@@ -234,7 +235,11 @@ describe("SystemSettingController (Integration)", () => {
             expect(getRowValue(response, "sms-retry", "retry-delay"))
                 .toBe(`${formatMinutes(SMS_DELIVERY_RETRY_DELAY_MS)} 후`);
             expect(getRowValue(response, "past-trigger", "grace-window"))
-                .toBe(`${formatHours(PAST_OCCURRENCE_GRACE_MS)} 이상`);
+                .toBe(`예정 시각 후 ${formatHours(PAST_OCCURRENCE_GRACE_MS)}`);
+            expect(getRowValue(response, "past-trigger", "late-registration"))
+                .toBe("서비스 시작 전 순차 발송");
+            expect(getRowValue(response, "past-trigger", "post-start-registration"))
+                .toBe("시작 전 안내 제외");
             expect(getRowValue(response, "service-feedback-link", "message-title"))
                 .toBe(SERVICE_FEEDBACK_LINK_SMS_TITLE);
             expect(getRowValue(response, "service-feedback-link", "trigger-type"))

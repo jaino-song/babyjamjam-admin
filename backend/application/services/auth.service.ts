@@ -22,6 +22,7 @@ export interface KakaoData {
 export interface TokenPayload {
     sub: string;
     role: string | null;
+    tokenVersion: number;
     branchId?: string;
     branchRole?: string;
     organizationId?: string;
@@ -134,13 +135,15 @@ export class AuthService {
     }
 
     private async issueBranchTokens(
-        user: { id: string; role: string | null },
+        user: { id: string; role: string | null; approvalStatus: string; tokenVersion: number },
         branchId: string,
         branchRole: string
     ): Promise<{ accessToken: string; refreshToken: string }> {
+        this.assertUserApproved(user);
         const payload = {
             sub: user.id,
             role: user.role,
+            tokenVersion: user.tokenVersion,
             branchId,
             branchRole,
         };
@@ -217,7 +220,10 @@ export class AuthService {
         phone: string | null;
         birthDate: string | null;
         role: string | null;
+        approvalStatus: string;
+        tokenVersion: number;
     }): Promise<UserValidationResult | PendingAccountOnboardingValidationResult> {
+        this.assertUserApproved(user);
         const userOrgs = this.filterSelectableUserBranches(await this.prisma.user_branch.findMany({
             where: { userId: user.id },
             select: {
@@ -236,6 +242,7 @@ export class AuthService {
             const payload = {
                 sub: user.id,
                 role: user.role,
+                tokenVersion: user.tokenVersion,
             };
 
             const tokenExpiresIn = getAuthTokenExpiresIn(user.role);
@@ -292,6 +299,7 @@ export class AuthService {
         const payload = {
             sub: user.id,
             role: user.role,
+            tokenVersion: user.tokenVersion,
             ...(branchId && { branchId, branchRole }),
         };
 
@@ -314,6 +322,14 @@ export class AuthService {
             refreshToken,
             requiresBranchSelection: requiresBranchSelection || undefined,
         };
+    }
+
+    private assertUserApproved(user: { role: string | null; approvalStatus: string }): void {
+        if (user.role === 'owner' || user.approvalStatus === 'approved') return;
+        if (user.approvalStatus === 'rejected') {
+            throw new ForbiddenException({ code: 'ACCOUNT_REJECTED', message: '가입이 거부되었습니다.' });
+        }
+        throw new ForbiddenException({ code: 'PENDING_APPROVAL', message: '관리자 승인 대기 중입니다.' });
     }
 
     async validateKakaoUser(kakaoData: KakaoData): Promise<KakaoUserValidationResult> {
@@ -882,11 +898,14 @@ export class AuthService {
                         profileImage: pendingSignupData.profileImage,
                         phone,
                         birthDate,
-                        role,
+                        role: null,
+                        requestedRole: role,
+                        approvalStatus: 'pending',
                         authProvider: 'kakao',
                     },
                 });
             } else {
+                const isApproved = existingUser.role === 'owner' || existingUser.approvalStatus === 'approved';
                 existingUser = await tx.user.update({
                     where: { id: existingUser.id },
                     data: {
@@ -895,7 +914,8 @@ export class AuthService {
                         profileImage: existingUser.profileImage ?? pendingSignupData.profileImage,
                         phone,
                         birthDate,
-                        role,
+                        requestedRole: role,
+                        ...(!isApproved && { approvalStatus: 'pending' }),
                         authProvider: existingUser.passwordHash ? 'both' : 'kakao',
                     },
                 });
@@ -913,7 +933,7 @@ export class AuthService {
                     data: {
                         userId: existingUser.id,
                         branchId,
-                        role,
+                        role: null,
                     },
                 });
             }
@@ -982,6 +1002,8 @@ export class AuthService {
                 select: {
                     id: true,
                     passwordHash: true,
+                    approvalStatus: true,
+                    role: true,
                 },
             });
 
@@ -1010,7 +1032,8 @@ export class AuthService {
                 data: {
                     phone,
                     birthDate,
-                    role,
+                    requestedRole: role,
+                    ...(user.role !== 'owner' && user.approvalStatus !== 'approved' && { approvalStatus: 'pending' }),
                 },
             });
 
@@ -1030,13 +1053,8 @@ export class AuthService {
                     data: {
                         userId: user.id,
                         branchId,
-                        role,
+                        role: null,
                     },
-                });
-            } else if (membership.role !== role) {
-                await tx.user_branch.update({
-                    where: { id: membership.id },
-                    data: { role },
                 });
             }
 
@@ -1053,6 +1071,8 @@ export class AuthService {
                 phone: true,
                 birthDate: true,
                 role: true,
+                approvalStatus: true,
+                tokenVersion: true,
             },
         });
 
@@ -1088,23 +1108,31 @@ export class AuthService {
                 throw new UnauthorizedException("User not found");
             }
 
+            this.assertUserApproved(user);
+            if (decoded.tokenVersion === undefined || decoded.tokenVersion !== user.tokenVersion) {
+                throw new UnauthorizedException("Token has been revoked");
+            }
+
             // Generate new tokens with the same logic as validateKakaoUser
             const payload: Omit<TokenPayload, "type"> = {
                 sub: user.id,
                 role: user.role,
+                tokenVersion: user.tokenVersion,
             };
 
             const decodedBranchId = decoded.branchId ?? decoded.organizationId;
 
             if (decodedBranchId) {
                 const stillMember = await this.prisma.user_branch.findFirst({
-                    where: { userId: decoded.sub, branchId: decodedBranchId }
+                    where: { userId: decoded.sub, branchId: decodedBranchId },
+                    select: {
+                        role: true,
+                        branch: { select: { slug: true, isActive: true } },
+                    },
                 });
-                if (stillMember !== null) {
+                if (stillMember && this.isSelectableBranch(stillMember.branch)) {
                     payload.branchId = decodedBranchId;
-                    if (stillMember) {
-                        payload.branchRole = stillMember.role ?? undefined;
-                    }
+                    payload.branchRole = stillMember.role ?? undefined;
                 }
             }
 
@@ -1126,7 +1154,7 @@ export class AuthService {
                 refreshToken: newRefreshToken,
             };
         } catch (error) {
-            if (error instanceof UnauthorizedException) {
+            if (error instanceof UnauthorizedException || error instanceof ForbiddenException) {
                 throw error;
             }
             throw new UnauthorizedException("Invalid or expired refresh token");
@@ -1217,34 +1245,6 @@ export class AuthService {
         });
 
         if (existingUser) {
-            // Check if user has Kakao account only (no password) - link the accounts
-            if (existingUser.kakaoId && !existingUser.passwordHash) {
-                this.logger.log(`Linking email/password to existing Kakao account: ${maskEmail(email)}`);
-
-                const passwordHash = await this.hashPassword(password);
-                await this.prisma.user.update({
-                    where: { id: existingUser.id },
-                    data: {
-                        passwordHash: passwordHash,
-                        authProvider: 'both',
-                        name: existingUser.name || name || null,
-                        phone: phone,
-                        birthDate: birthDate,
-                        emailVerified: false,
-                    },
-                });
-
-                // Send verification email
-                await this.sendVerificationEmail(existingUser.id, email);
-
-                return {
-                    success: true,
-                    message: '인증 이메일이 발송되었습니다. 이메일을 확인해주세요.',
-                    code: 'ACCOUNTS_LINKED',
-                    userId: existingUser.id,
-                };
-            }
-
             // User already has email account (with or without Kakao)
             // Don't reveal that the email exists - return generic success
             // But still send an email to notify the user
@@ -1272,7 +1272,9 @@ export class AuthService {
                 phone: phone,
                 birthDate: birthDate,
                 passwordHash: passwordHash,
-                role: role,
+                role: null,
+                requestedRole: role,
+                approvalStatus: 'pending',
                 authProvider: 'email',
                 emailVerified: false,
             },
@@ -1282,7 +1284,7 @@ export class AuthService {
             data: {
                 userId: user.id,
                 branchId: branchId,
-                role,
+                role: null,
             },
         });
 
@@ -1407,6 +1409,8 @@ export class AuthService {
             });
         }
 
+        this.assertUserApproved(user);
+
         return this.createLoginResultForUser(user);
     }
 
@@ -1489,28 +1493,33 @@ export class AuthService {
             );
         }
 
-        // Mark token as used
-        tokenEntity.markAsUsed();
-        await this.authTokenRepository.update(tokenEntity);
-
-        // Get user to check if they have OAuth linked
-        const user = await this.prisma.user.findUnique({
-            where: { id: tokenEntity.userId },
-        });
-
         // Hash new password
         const passwordHash = await this.hashPassword(newPassword);
 
-        // Determine authProvider: if user has kakaoId, they now have both methods
-        const authProvider = user?.kakaoId ? 'both' : 'email';
+        await this.prisma.$transaction(async (tx) => {
+            const consumed = await this.authTokenRepository.consumeWithinTx(
+                tx,
+                hashedToken,
+                'password_reset',
+            );
+            if (!consumed) {
+                throw new BadRequestException('이미 사용되었거나 만료된 재설정 토큰입니다.');
+            }
 
-        // Update user's password
-        await this.prisma.user.update({
-            where: { id: tokenEntity.userId },
-            data: {
-                passwordHash: passwordHash,
-                authProvider: authProvider,
-            },
+            const user = await tx.user.findUnique({
+                where: { id: tokenEntity.userId },
+                select: { kakaoId: true },
+            });
+            const authProvider = user?.kakaoId ? 'both' : 'email';
+
+            await tx.user.update({
+                where: { id: tokenEntity.userId },
+                data: {
+                    passwordHash,
+                    authProvider,
+                    tokenVersion: { increment: 1 },
+                },
+            });
         });
 
         this.logger.log(`Password reset completed for user ${tokenEntity.userId}`);

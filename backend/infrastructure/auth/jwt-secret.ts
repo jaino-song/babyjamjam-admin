@@ -1,4 +1,4 @@
-import { isProductionLikeEnvironment } from "./runtime-environment";
+import { isDevelopmentJwtSecretAllowed } from "./runtime-environment";
 
 const DEFAULT_DEVELOPMENT_JWT_SECRET = "your-secret-key";
 
@@ -9,8 +9,8 @@ export function getJwtSecret(): string {
     return configuredSecret;
   }
 
-  if (isProductionLikeEnvironment()) {
-    throw new Error("JWT_SECRET is required in production-like environments.");
+  if (!isDevelopmentJwtSecretAllowed()) {
+    throw new Error("JWT_SECRET is required unless the development fallback is explicitly enabled.");
   }
 
   return DEFAULT_DEVELOPMENT_JWT_SECRET;

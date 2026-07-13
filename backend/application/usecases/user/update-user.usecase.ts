@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { IUserRepository, USER_REPOSITORY } from "domain/repositories/user.repository.interface";
 import { UserEntity } from "domain/entities/user.entity";
 
@@ -7,6 +7,7 @@ export type UpdateUserParams = {
     email?: string | null;
     profileImage?: string | null;
     role?: string | null;
+    callerRole?: string;
 };
 
 @Injectable()
@@ -32,6 +33,9 @@ export class UpdateUserUsecase {
             user.profileImage = updates.profileImage;
         }
         if (updates.role !== undefined) {
+            if (updates.callerRole !== "owner") {
+                throw new ForbiddenException("역할 변경은 소유자만 가능합니다.");
+            }
             user.role = updates.role;
         }
 
