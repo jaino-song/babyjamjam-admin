@@ -1,10 +1,12 @@
 "use client";
 
-import { type ReactNode } from "react";
+import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { CircleAlert, FileCheck2, MessageCircle, MoreVertical, SquarePen, Trash2, User } from "lucide-react";
 
 import { Client } from "@/lib/client/types";
+import { getMobileClientBadges } from "@/lib/client/badges";
 import { EformsignDocument } from "@/lib/eformsign/types";
+import { useClientServiceRecords } from "@/hooks/useServiceRecords";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,6 +22,8 @@ import {
   MobileDetailPage,
   MobileDetailTabPanel,
 } from "@/components/app/mobile-redesign/detail-sheet";
+import { ClientMessageHistoryDetail } from "@/components/app/clients/client-message-history-detail";
+import { ClientServiceRecords } from "@/components/app/clients/client-service-records";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -296,18 +300,6 @@ function contractPrimaryEmployeeName(doc: EformsignDocument | null | undefined):
   ]);
 }
 
-function clientFeatureLabel(client: Client): string | null {
-  if (client.breastPump) return "유축기 대여";
-  if (client.careCenter) return "조리원 이용";
-  if (client.voucherClient) return "바우처";
-  return client.type;
-}
-
-function clientFeatureLabelTone(client: Client): "green" | "burgundy" {
-  if (client.voucherClient) return "green";
-  return "burgundy";
-}
-
 function documentStatusLabel(status: Client["documentStatus"]): string {
   switch (status) {
     case "completed":
@@ -406,15 +398,18 @@ export function shouldShowMissingContractBadge(client: Client): boolean {
   return client.serviceStatus === "active" && client.documentStatus !== "completed";
 }
 
-export type DetailTabId = "basic" | "contracts" | "alimtalk";
+export type DetailTabId = "basic" | "contracts" | "alimtalk" | "serviceRecords";
 
 export interface ClientNotificationLogRecord {
   id: number;
   provider: string;
   templateKey: string;
   receiver: string | null;
+  recipientName: string | null;
   clientId: number | null;
   status: "pending" | "sent" | "failed" | string;
+  messageBody: string;
+  errorMessage: string | null;
   createdAt: string;
   ruleName: string | null;
   variables?: Record<string, unknown> | null;
@@ -423,6 +418,8 @@ export interface ClientNotificationLogRecord {
 type DetailRowTone = "green" | "primary" | "orange" | "muted" | "burgundy" | "purple";
 const CLIENT_GREETING_SMS_TEMPLATE_KEY = "client_greeting_sms";
 const CLIENT_GREETING_SMS_TITLE = "인사 메시지";
+const SERVICE_FEEDBACK_LINK_SMS_TEMPLATE_KEY = "service_feedback_link_sms";
+const SERVICE_FEEDBACK_LINK_SMS_TITLE = "제공기록지 작성 링크";
 
 function DetailDocRow({
   icon,
@@ -430,15 +427,34 @@ function DetailDocRow({
   meta,
   badge,
   tone,
+  onClick,
 }: {
   icon: ReactNode;
   title: string;
   meta: ReactNode;
   badge: string;
   tone: DetailRowTone;
+  onClick?: () => void;
 }) {
+  const interactive = Boolean(onClick);
   return (
-    <div className="doc-row" data-component="mobile-clients-doc-row">
+    <div
+      className={interactive ? "doc-row doc-row-tappable" : "doc-row"}
+      data-component="mobile-clients-doc-row"
+      {...(interactive
+        ? {
+            role: "button" as const,
+            tabIndex: 0,
+            onClick,
+            onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onClick?.();
+              }
+            },
+          }
+        : {})}
+    >
       <div className={`doc-icon doc-icon-${tone}`} data-component="mobile-clients-doc-icon">
         {icon}
       </div>
@@ -469,6 +485,7 @@ function notificationTitle(log: ClientNotificationLogRecord): string {
   const variableTitle = stringFromUnknown(variables.title);
   if (variableTitle) return variableTitle;
   if (log.templateKey === CLIENT_GREETING_SMS_TEMPLATE_KEY) return CLIENT_GREETING_SMS_TITLE;
+  if (log.templateKey === SERVICE_FEEDBACK_LINK_SMS_TEMPLATE_KEY) return SERVICE_FEEDBACK_LINK_SMS_TITLE;
   if (log.templateKey === "manual_sms") return "수동 메시지";
   return log.templateKey || "발송 내역";
 }
@@ -568,12 +585,20 @@ export function ClientDetailContent({
   onEdit: (client: Client) => void;
   onDelete: (id: number) => void;
 }) {
+  // Keyed selection so the open message-detail auto-resets when the tab or client changes
+  // (derive-during-render — avoids a setState-in-effect).
+  const detailKey = `${activeTab}:${client.id}`;
+  const [selectedEntry, setSelectedEntry] = useState<{ key: string; log: ClientNotificationLogRecord } | null>(null);
+  const selectedLog = selectedEntry && selectedEntry.key === detailKey ? selectedEntry.log : null;
+  const serviceRecordsQuery = useClientServiceRecords(client.id, {
+    enabled: activeTab === "serviceRecords",
+  });
+
   const group = GROUPS.find((g) => g.match(client)) ?? GROUPS[1];
-  const featureLabel = clientFeatureLabel(client);
-  const featureLabelTone = clientFeatureLabelTone(client);
+  const clientBadges = getMobileClientBadges(client);
+  const detailAvatarTone = clientBadges[0]?.tone ?? group.badgeTone;
   const docTone = documentStatusTone(client.documentStatus);
   const hasContractDocument = Boolean(client.eDocId);
-  const showMissingContractBadge = shouldShowMissingContractBadge(client);
   const displayNotificationLogs = visibleNotificationLogs(notificationLogs);
   const birthDate = firstValue(
     client.birthday,
@@ -924,13 +949,9 @@ export function ClientDetailContent({
       <MobileDetailHeader
         name="clients"
         avatar={<User size={22} strokeWidth={2} />}
-        avatarTone={group.badgeTone}
+        avatarTone={detailAvatarTone}
         title={client.name}
-        badges={[
-          { label: group.badge, tone: group.badgeMini },
-          ...(featureLabel ? [{ label: featureLabel, tone: featureLabelTone }] : []),
-          ...(showMissingContractBadge ? [{ label: "계약서 없음", tone: "burgundy" as const }] : []),
-        ]}
+        badges={clientBadges.map((badge) => ({ label: badge.label, tone: badge.tone }))}
         menu={
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -996,6 +1017,7 @@ export function ClientDetailContent({
           { id: "basic", label: "기본 정보" },
           { id: "contracts", label: "계약서 정보" },
           { id: "alimtalk", label: "알림 발송" },
+          { id: "serviceRecords", label: "제공기록지" },
         ]}
         activeTab={activeTab}
         onTabChange={(id) => onTabChange(id as DetailTabId)}
@@ -1062,38 +1084,75 @@ export function ClientDetailContent({
       </MobileDetailTabPanel>
 
       <MobileDetailTabPanel name="clients" tabId="alimtalk" activeTab={activeTab}>
-        <InfoCard title="발송 내역">
-          {isNotificationLogsLoading ? (
-            <div className="detail-empty-state" data-component="mobile-clients-alimtalk-loading">
-              발송 내역을 불러오는 중입니다.
-            </div>
-          ) : displayNotificationLogs.length > 0 ? (
-            displayNotificationLogs.map((log) => {
-              const tone = notificationStatusTone(log.status);
-              const channel = notificationChannelLabel(log);
-              return (
-                <DetailDocRow
-                  key={`${channel}-${log.id}`}
-                  icon={
-                    tone === "burgundy" ? (
-                      <CircleAlert size={16} strokeWidth={2.5} />
-                    ) : (
-                      <MessageCircle size={16} strokeWidth={2.5} />
-                    )
-                  }
-                  title={`${channel} · ${notificationTitle(log)}`}
-                  meta={formatNotificationTime(log.createdAt)}
-                  badge={notificationStatusLabel(log.status)}
-                  tone={tone}
-                />
-              );
-            })
-          ) : (
-            <div className="detail-empty-state" data-component="mobile-clients-alimtalk-empty">
-              발송 내역이 없습니다.
-            </div>
-          )}
-        </InfoCard>
+        {selectedLog ? (
+          <ClientMessageHistoryDetail
+            view={{
+              title: notificationTitle(selectedLog),
+              channelLabel: notificationChannelLabel(selectedLog),
+              statusLabel: notificationStatusLabel(selectedLog.status),
+              statusTone: notificationStatusTone(selectedLog.status),
+              sentAtLabel: formatNotificationTime(selectedLog.createdAt),
+              recipientName: selectedLog.recipientName?.trim() || client.name,
+              recipientPhone: selectedLog.receiver?.trim() || "-",
+              messageBody: selectedLog.messageBody?.trim()
+                ? selectedLog.messageBody
+                : "내용이 없습니다.",
+              failureReason: selectedLog.errorMessage?.trim()
+                ? selectedLog.errorMessage
+                : null,
+            }}
+            onBack={() => setSelectedEntry(null)}
+          />
+        ) : (
+          <InfoCard title="발송 내역">
+            {isNotificationLogsLoading ? (
+              <div className="detail-empty-state" data-component="mobile-clients-alimtalk-loading">
+                발송 내역을 불러오는 중입니다.
+              </div>
+            ) : displayNotificationLogs.length > 0 ? (
+              displayNotificationLogs.map((log) => {
+                const tone = notificationStatusTone(log.status);
+                const channel = notificationChannelLabel(log);
+                return (
+                  <DetailDocRow
+                    key={`${channel}-${log.id}`}
+                    icon={
+                      tone === "burgundy" ? (
+                        <CircleAlert size={16} strokeWidth={2.5} />
+                      ) : (
+                        <MessageCircle size={16} strokeWidth={2.5} />
+                      )
+                    }
+                    title={`${channel} · ${notificationTitle(log)}`}
+                    meta={formatNotificationTime(log.createdAt)}
+                    badge={notificationStatusLabel(log.status)}
+                    tone={tone}
+                    onClick={() => setSelectedEntry({ key: detailKey, log })}
+                  />
+                );
+              })
+            ) : (
+              <div className="detail-empty-state" data-component="mobile-clients-alimtalk-empty">
+                발송 내역이 없습니다.
+              </div>
+            )}
+          </InfoCard>
+        )}
+      </MobileDetailTabPanel>
+
+      <MobileDetailTabPanel
+        name="clients"
+        tabId="serviceRecords"
+        activeTab={activeTab}
+        dataComponent="mobile-clients-service-records-tab"
+      >
+        <ClientServiceRecords
+          client={client}
+          activeTab={activeTab}
+          overview={serviceRecordsQuery.data}
+          isLoading={serviceRecordsQuery.isLoading}
+          isError={serviceRecordsQuery.isError}
+        />
       </MobileDetailTabPanel>
     </MobileDetailPage>
   );

@@ -10,13 +10,15 @@ import {
 } from "application/usecases/client";
 import { ClientEntity } from "domain/entities/client.entity";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
+import { diffBusinessDaysKr } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { computeServiceStatus, isServiceStatus, SERVICE_STATUS, SERVICE_STATUS_VALUES, ServiceStatusType } from "domain/value-objects/service-status.vo";
-import { AlimtalkService } from "./alimtalk.service";
-import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
-import { ClientGreetingSmsAutomationService } from "./client-greeting-sms-automation.service";
+import { MessageTriggerService } from "./message-trigger.service";
+import { EmployeeFeedbackLinkService } from "./employee-feedback-link.service";
+import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 
 const FILTER_DAYS_THRESHOLD = 7;
+const CONTRACT_REQUIRED_BUSINESS_DAYS_THRESHOLD = 3;
 const ACTION_REQUIRED_SIGNATURE_THRESHOLD_DAYS = 2;
 const ACTION_REQUIRED_SEND_THRESHOLD_DAYS = 6;
 const COMPLETED_DOCUMENT_STATUS_TYPES = new Set(["003", "012", "022", "032", "050", "062", "072", "092"]);
@@ -58,6 +60,15 @@ export interface ClientBadge {
     priority: number;
 }
 
+export interface PendingScheduleChange {
+    id: string;
+    sessionIndex: number;
+    fromDate: string;
+    toDate: string;
+    oldEndDate: string;
+    newEndDate: string;
+}
+
 // Response type that includes employee information
 export interface ClientWithEmployees {
     id: number;
@@ -85,6 +96,7 @@ export interface ClientWithEmployees {
     badges: ClientBadge[];
     primaryEmployee: { id: number; name: string } | null;
     secondaryEmployee: { id: number; name: string } | null;
+    pendingScheduleChange?: PendingScheduleChange | null;
 }
 
 export interface PaginatedClientWithEmployees {
@@ -128,11 +140,11 @@ export class ClientService {
         private readonly updateClientUsecase: UpdateClientUsecase,
         private readonly deleteClientUsecase: DeleteClientUsecase,
         private readonly prismaService: PrismaService,
-        private readonly alimtalkService: AlimtalkService,
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
-        @Optional() private readonly triggerService?: AlimtalkTriggerService,
-        @Optional() private readonly clientGreetingSmsAutomationService?: ClientGreetingSmsAutomationService,
+        @Optional() private readonly triggerService?: MessageTriggerService,
+        @Optional() private readonly employeeFeedbackLinkService?: EmployeeFeedbackLinkService,
+        @Optional() private readonly serviceRecordLifecycleService?: ServiceRecordLifecycleService,
     ) {}
 
     private assertAllowedServiceStatus(status: string | null | undefined): void {
@@ -152,7 +164,7 @@ export class ClientService {
     } {
         switch (status) {
             case SERVICE_STATUS.ACTIVE:
-                return { status: "active", label: "진행중", tone: "success" };
+                return { status: "active", label: "진행중", tone: "primary" };
             case SERVICE_STATUS.WAITING:
                 return { status: "pending", label: "대기", tone: "warning" };
             case SERVICE_STATUS.REPLACEMENT_REQUESTED:
@@ -160,7 +172,7 @@ export class ClientService {
             case SERVICE_STATUS.TERMINATED:
                 return { status: "terminated", label: "중단", tone: "danger" };
             case SERVICE_STATUS.COMPLETED:
-                return { status: "completed", label: "완료", tone: "neutral" };
+                return { status: "completed", label: "완료", tone: "success" };
             default:
                 return { status: "pending", label: "-", tone: "warning" };
         }
@@ -169,12 +181,24 @@ export class ClientService {
     private buildClientBadges(params: {
         serviceStatus: string | null;
         documentStatus: DocumentStatusType;
+        startDate: Date | null;
         breastPump: boolean;
         careCenter: boolean | null;
     }): ClientBadge[] {
         const badges: ClientBadge[] = [];
+        const businessDaysUntilStart = params.startDate
+            ? diffBusinessDaysKr(params.startDate.toISOString().slice(0, 10))
+            : null;
+        const isWaitingWithinContractWindow =
+            params.serviceStatus === SERVICE_STATUS.WAITING &&
+            businessDaysUntilStart !== null &&
+            businessDaysUntilStart >= 0 &&
+            businessDaysUntilStart <= CONTRACT_REQUIRED_BUSINESS_DAYS_THRESHOLD;
+        const requiresContract =
+            params.documentStatus !== "completed" &&
+            (params.serviceStatus === SERVICE_STATUS.ACTIVE || isWaitingWithinContractWindow);
 
-        if (params.serviceStatus === SERVICE_STATUS.ACTIVE && params.documentStatus !== "completed") {
+        if (requiresContract) {
             badges.push({
                 key: "contract_required",
                 status: "terminated",
@@ -189,7 +213,7 @@ export class ClientService {
                 key: "breast_pump",
                 status: "breastPump",
                 label: "유축기 대여",
-                tone: "danger",
+                tone: "primary",
                 priority: 20,
             });
         }
@@ -235,6 +259,94 @@ export class ClientService {
         }
     }
 
+    private async assertAllowedEmployees(
+        branchid: string,
+        primaryEmployeeId: number | null,
+        secondaryEmployeeId: number | null,
+    ): Promise<void> {
+        if (primaryEmployeeId === null) {
+            if (secondaryEmployeeId !== null) {
+                throw new BadRequestException("primary employee is required when a secondary employee is selected");
+            }
+            return;
+        }
+        if (primaryEmployeeId === secondaryEmployeeId) {
+            throw new BadRequestException("primary and secondary employees must be different");
+        }
+
+        const employeeIds = [primaryEmployeeId, secondaryEmployeeId].filter(
+            (employeeId): employeeId is number => employeeId !== null,
+        );
+        const employees = await this.prismaService.employee.findMany({
+            where: {
+                id: { in: employeeIds },
+                branchId: branchid,
+            },
+            select: { id: true },
+        });
+        if (employees.length !== employeeIds.length) {
+            throw new BadRequestException("selected employees must belong to the client branch");
+        }
+    }
+
+    private async syncEmployeeAssignment(branchid: string, params: {
+        clientId: number;
+        primaryEmployeeId?: number;
+        secondaryEmployeeId?: number | null;
+        workAddress: string;
+        startDate: Date;
+        endDate: Date;
+    }): Promise<{ createdScheduleId: number | null; replacedScheduleId: number | null }> {
+        const currentSchedule = await this.prismaService.employee_schedule.findFirst({
+            where: { clientId: params.clientId, branchId: branchid, replaced: false },
+            orderBy: { id: "desc" },
+        });
+        const currentPrimaryEmployeeId = currentSchedule?.primaryEmployeeId ?? null;
+        const currentSecondaryEmployeeId = currentSchedule?.secondaryEmployeeId ?? null;
+        const newPrimaryEmployeeId = params.primaryEmployeeId ?? currentPrimaryEmployeeId;
+        const newSecondaryEmployeeId = params.secondaryEmployeeId !== undefined
+            ? params.secondaryEmployeeId
+            : currentSecondaryEmployeeId;
+
+        if (
+            newPrimaryEmployeeId === currentPrimaryEmployeeId &&
+            newSecondaryEmployeeId === currentSecondaryEmployeeId
+        ) {
+            return { createdScheduleId: null, replacedScheduleId: null };
+        }
+
+        await this.assertAllowedEmployees(branchid, newPrimaryEmployeeId, newSecondaryEmployeeId);
+        if (newPrimaryEmployeeId === null) {
+            throw new BadRequestException("primary employee is required to create an assignment");
+        }
+
+        const newSchedule = await this.prismaService.$transaction(async (transaction) => {
+            if (currentSchedule) {
+                await transaction.employee_schedule.update({
+                    where: { id: currentSchedule.id },
+                    data: { replaced: true, endDate: new Date() },
+                });
+            }
+            return transaction.employee_schedule.create({
+                data: {
+                    clientId: params.clientId,
+                    branchId: branchid,
+                    primaryEmployeeId: newPrimaryEmployeeId,
+                    secondaryEmployeeId: newSecondaryEmployeeId,
+                    workAddress: params.workAddress,
+                    startDate: params.startDate,
+                    endDate: params.endDate,
+                    replaced: false,
+                },
+            });
+        });
+
+        return {
+            createdScheduleId: newSchedule.id,
+            replacedScheduleId: currentSchedule?.id ?? null,
+        };
+    }
+
     async create(branchid: string, params: {
         name: string;
         primaryEmployeeId?: number | null;
@@ -269,12 +381,39 @@ export class ClientService {
             const existing = await this.clientRepository.findByPhone(branchid, normalizedPhone);
             if (existing) {
                 this.logger.log(`[Client] Reusing existing client ${existing.id} for duplicate phone in branch ${branchid}`);
+                if (params.primaryEmployeeId !== undefined || params.secondaryEmployeeId !== undefined) {
+                    const assignment = await this.syncEmployeeAssignment(branchid, {
+                        clientId: existing.id,
+                        primaryEmployeeId: params.primaryEmployeeId ?? undefined,
+                        secondaryEmployeeId: params.secondaryEmployeeId,
+                        workAddress: params.address ?? existing.address ?? "",
+                        startDate: startDate ?? existing.startDate ?? new Date(),
+                        endDate: endDate ?? existing.endDate ?? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+                    });
+                    if (assignment.replacedScheduleId !== null) {
+                        this.employeeFeedbackLinkService
+                            ?.revoke(assignment.replacedScheduleId)
+                            ?.catch(() => undefined);
+                    }
+                    if (assignment.createdScheduleId !== null) {
+                        await this.triggerService
+                            ?.syncEmployeeAssignmentRulesForSchedule(branchid, assignment.createdScheduleId, true)
+                            ?.catch((error) => {
+                                this.logger.error(`Failed to sync employee assignment triggers: ${error}`);
+                            });
+                        this.employeeFeedbackLinkService
+                            ?.scheduleForServiceStart(assignment.createdScheduleId)
+                            ?.catch((error) => {
+                                this.logger.error(`Failed to schedule feedback link SMS: ${error}`);
+                            });
+                    }
+                }
+                await this.serviceRecordLifecycleService?.ensureForClient(existing.id);
                 return existing;
             }
         }
 
-        // First create the client
-        const client = await this.createClientUsecase.execute(branchid, {
+        const createParams = {
             name: params.name,
             address: params.address ?? null,
             phone: params.phone ?? null,
@@ -293,44 +432,48 @@ export class ClientService {
             breastPump: params.breastPump,
             eDocId: params.eDocId ?? null,
             areaId: params.areaId ?? null,
-        });
+        };
 
-        // Then create employee_schedule (optional - only when primary employee is assigned)
+        const primaryEmployeeId = params.primaryEmployeeId ?? null;
+        const secondaryEmployeeId = params.secondaryEmployeeId ?? null;
+        await this.assertAllowedEmployees(branchid, primaryEmployeeId, secondaryEmployeeId);
+
+        let client: ClientEntity;
         let createdScheduleId: number | null = null;
-        if (params.primaryEmployeeId !== undefined && params.primaryEmployeeId !== null) {
-            const schedule = await this.prismaService.employee_schedule.create({
-                data: {
-                    clientId: client.id,
-                    branchId: branchid,
-                    primaryEmployeeId: params.primaryEmployeeId,
-                    secondaryEmployeeId: params.secondaryEmployeeId ?? null,
-                    workAddress: params.address ?? "",
-                    startDate: startDate ?? new Date(),
-                    endDate: endDate ?? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
-                    replaced: false,
-                },
+        if (primaryEmployeeId !== null) {
+            const result = await this.createClientUsecase.executeWithInitialSchedule(branchid, createParams, {
+                primaryEmployeeId,
+                secondaryEmployeeId,
+                workAddress: params.address ?? "",
+                startDate: startDate ?? new Date(),
+                endDate: endDate ?? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
             });
-            createdScheduleId = schedule.id;
+            client = result.client;
+            createdScheduleId = result.scheduleId;
+        } else {
+            client = await this.createClientUsecase.execute(branchid, createParams);
         }
 
-        this.alimtalkService.sendClientCreatedAlimtalk(client).catch((error) => {
-            this.logger.error(`Failed to send client created alimtalk: ${error}`);
-        });
+        await this.serviceRecordLifecycleService?.ensureForClient(client.id);
+
         if (this.triggerService) {
-            this.triggerService.syncClientRulesForClient(branchid, client.id, true).catch((error) => {
-                this.logger.error(`Failed to sync client trigger rules: ${error}`);
-            });
-        }
-        if (this.clientGreetingSmsAutomationService && !params.suppressGreetingSms) {
-            this.clientGreetingSmsAutomationService.sendClientGreetingSms(branchid, client).catch((error) => {
-                this.logger.error(`Failed to send new client greeting SMS: ${error}`);
-            });
+            await this.triggerService
+                .ensureDefaultRulesForBranch(branchid)
+                .then(() => this.triggerService!.syncClientRulesForClient(branchid, client.id, true, params.suppressGreetingSms ?? false))
+                .catch((error) => {
+                    this.logger.error(`Failed to sync client trigger rules: ${error}`);
+                });
         }
         if (createdScheduleId !== null) {
-            this.triggerService
+            await this.triggerService
                 ?.syncEmployeeAssignmentRulesForSchedule(branchid, createdScheduleId, true)
                 ?.catch((error) => {
                     this.logger.error(`Failed to sync employee assignment triggers: ${error}`);
+                });
+            this.employeeFeedbackLinkService
+                ?.scheduleForServiceStart(createdScheduleId)
+                ?.catch((error) => {
+                    this.logger.error(`Failed to schedule feedback link SMS: ${error}`);
                 });
         }
 
@@ -362,6 +505,14 @@ export class ClientService {
             limit: result.limit,
             totalPages: result.totalPages,
         };
+    }
+
+    async checkPhoneExists(branchid: string, phone: string | null | undefined): Promise<boolean> {
+        const normalizedPhone = normalizePhone(phone);
+        if (!normalizedPhone) return false;
+
+        const existing = await this.clientRepository.findByPhone(branchid, normalizedPhone);
+        return existing !== null;
     }
 
     async findById(branchid: string, id: number): Promise<ClientWithEmployees | null> {
@@ -432,6 +583,20 @@ export class ClientService {
         // Create a map of clientId to schedule
         const scheduleMap = new Map(schedules.map(s => [s.clientId, s]));
 
+        const pendingScheduleChanges = await this.prismaService.schedule_change_request.findMany({
+            where: { clientId: { in: clientIds }, status: "pending" },
+            select: {
+                id: true,
+                clientId: true,
+                sessionIndex: true,
+                fromDate: true,
+                toDate: true,
+                oldEndDate: true,
+                newEndDate: true,
+            },
+        });
+        const pendingScheduleChangeMap = new Map(pendingScheduleChanges.map(change => [change.clientId, change]));
+
         // Batch fetch eformsign_docs for all clients with eDocId
         const eDocIds = clients.map(c => c.eDocId).filter((id): id is string => id !== null);
         const docs = eDocIds.length > 0
@@ -447,6 +612,7 @@ export class ClientService {
 
         const result = clients.map(client => {
             const schedule = scheduleMap.get(client.id);
+            const pendingScheduleChange = pendingScheduleChangeMap.get(client.id);
 
             // Compute current service status based on dates
             const computedStatus = computeServiceStatus(
@@ -463,6 +629,7 @@ export class ClientService {
             const badges = this.buildClientBadges({
                 serviceStatus: computedStatus,
                 documentStatus,
+                startDate: client.startDate,
                 breastPump: client.breastPump,
                 careCenter: client.careCenter,
             });
@@ -496,6 +663,16 @@ export class ClientService {
                         : null,
                     secondaryEmployee: schedule?.secondaryEmployee
                         ? { id: schedule.secondaryEmployee.id, name: schedule.secondaryEmployee.name }
+                        : null,
+                    pendingScheduleChange: pendingScheduleChange
+                        ? {
+                            id: pendingScheduleChange.id,
+                            sessionIndex: pendingScheduleChange.sessionIndex,
+                            fromDate: pendingScheduleChange.fromDate.toISOString().slice(0, 10),
+                            toDate: pendingScheduleChange.toDate.toISOString().slice(0, 10),
+                            oldEndDate: pendingScheduleChange.oldEndDate.toISOString().slice(0, 10),
+                            newEndDate: pendingScheduleChange.newEndDate.toISOString().slice(0, 10),
+                        }
                         : null,
                 };
             });
@@ -577,6 +754,16 @@ export class ClientService {
         }
         this.assertAllowedServiceStatus(params.serviceStatus);
         await this.assertAllowedClientArea(branchid, params.areaId);
+        await this.serviceRecordLifecycleService?.validatePeriodChange({
+            clientId: id,
+            startDate: params.startDate === undefined
+                ? undefined
+                : params.startDate ? new Date(params.startDate) : null,
+            endDate: params.endDate === undefined
+                ? undefined
+                : params.endDate ? new Date(params.endDate) : null,
+            duration: params.duration,
+        });
 
         const normalizedPhone = normalizePhone(params.phone ?? null);
         if (normalizedPhone) {
@@ -593,52 +780,21 @@ export class ClientService {
         const employeeChanged = params.primaryEmployeeId !== undefined || params.secondaryEmployeeId !== undefined;
 
         let createdScheduleId: number | null = null;
+        let replacedScheduleId: number | null = null;
         if (employeeChanged) {
-            // Get current schedule for this client
-            const currentSchedule = await this.prismaService.employee_schedule.findFirst({
-                where: { clientId: id, branchId: branchid, replaced: false },
-                orderBy: { id: 'desc' },
+            const assignment = await this.syncEmployeeAssignment(branchid, {
+                clientId: id,
+                primaryEmployeeId: params.primaryEmployeeId,
+                secondaryEmployeeId: params.secondaryEmployeeId,
+                workAddress: params.address ?? existingClient.address ?? "",
+                startDate,
+                endDate,
             });
-
-            const currentPrimaryEmployeeId = currentSchedule?.primaryEmployeeId ?? null;
-            const currentSecondaryEmployeeId = currentSchedule?.secondaryEmployeeId ?? null;
-
-            // Determine new employee values
-            const newPrimaryEmployeeId = params.primaryEmployeeId !== undefined 
-                ? params.primaryEmployeeId 
-                : currentPrimaryEmployeeId;
-            const newSecondaryEmployeeId = params.secondaryEmployeeId !== undefined 
-                ? params.secondaryEmployeeId 
-                : currentSecondaryEmployeeId;
-
-            // Only create new schedule if employees actually changed
-            const actuallyChanged = newPrimaryEmployeeId !== currentPrimaryEmployeeId || 
-                                   newSecondaryEmployeeId !== currentSecondaryEmployeeId;
-
-            if (actuallyChanged && newPrimaryEmployeeId !== null) {
-                // Mark old schedule as replaced if exists
-                if (currentSchedule) {
-                    await this.prismaService.employee_schedule.update({
-                        where: { id: currentSchedule.id },
-                        data: { replaced: true, endDate: new Date() },
-                    });
-                }
-
-                // Create new schedule
-                const newSchedule = await this.prismaService.employee_schedule.create({
-                    data: {
-                        clientId: id,
-                        branchId: branchid,
-                        primaryEmployeeId: newPrimaryEmployeeId,
-                        secondaryEmployeeId: newSecondaryEmployeeId,
-                        workAddress: params.address ?? existingClient.address ?? "",
-                        startDate: startDate,
-                        endDate: endDate,
-                        replaced: false,
-                    },
-                });
-                createdScheduleId = newSchedule.id;
-            }
+            createdScheduleId = assignment.createdScheduleId;
+            replacedScheduleId = assignment.replacedScheduleId;
+        }
+        if (replacedScheduleId !== null) {
+            this.employeeFeedbackLinkService?.revoke(replacedScheduleId)?.catch(() => undefined);
         }
 
         const updatedClient = await this.updateClientUsecase.execute(branchid, id, {
@@ -661,16 +817,22 @@ export class ClientService {
             eDocId: params.eDocId,
             areaId: params.areaId,
         });
+        await this.serviceRecordLifecycleService?.ensureForClient(id);
         if (this.triggerService) {
-            this.triggerService.syncClientRulesForClient(branchid, id, false).catch((error) => {
+            await this.triggerService.syncClientRulesForClient(branchid, id, false).catch((error) => {
                 this.logger.error(`Failed to sync client trigger rules: ${error}`);
             });
         }
         if (createdScheduleId !== null) {
-            this.triggerService
+            await this.triggerService
                 ?.syncEmployeeAssignmentRulesForSchedule(branchid, createdScheduleId, true)
                 ?.catch((error) => {
                     this.logger.error(`Failed to sync employee assignment triggers: ${error}`);
+                });
+            this.employeeFeedbackLinkService
+                ?.scheduleForServiceStart(createdScheduleId)
+                ?.catch((error) => {
+                    this.logger.error(`Failed to schedule feedback link SMS: ${error}`);
                 });
         }
         return updatedClient;
@@ -697,17 +859,37 @@ export class ClientService {
             (reason ? `: ${reason}` : "")
         );
 
+        await this.serviceRecordLifecycleService?.validatePeriodChange({
+            clientId,
+            endDate: new Date(),
+        });
+
         // Update client with terminated status and set endDate to today
         const updatedClient = await this.updateClientUsecase.execute(branchid, clientId, {
             serviceStatus: SERVICE_STATUS.TERMINATED,
             endDate: new Date(),
         });
+        if (this.triggerService) {
+            await this.triggerService.syncClientRulesForClient(branchid, clientId, false).catch((error) => {
+                this.logger.error(`Failed to sync client trigger rules: ${error}`);
+            });
+        }
 
         // Also mark the current schedule as ended
         await this.prismaService.employee_schedule.updateMany({
             where: { clientId: clientId, replaced: false },
             data: { endDate: new Date() },
         });
+
+        // Revoke any outstanding feedback links for this client's active assignments
+        const activeSchedules = await this.prismaService.employee_schedule.findMany({
+            where: { clientId: clientId, replaced: false },
+            select: { id: true },
+        });
+        for (const activeSchedule of activeSchedules) {
+            this.employeeFeedbackLinkService?.revoke(activeSchedule.id)?.catch(() => undefined);
+        }
+        await this.serviceRecordLifecycleService?.markTerminated(clientId);
 
         return updatedClient;
     }
@@ -751,6 +933,7 @@ export class ClientService {
                 where: { id: currentSchedule.id },
                 data: { replaced: true, endDate: new Date() },
             });
+            this.employeeFeedbackLinkService?.revoke(currentSchedule.id)?.catch(() => undefined);
         }
 
         // Create new schedule with new employees
@@ -770,6 +953,12 @@ export class ClientService {
             ?.syncEmployeeAssignmentRulesForSchedule(branchid, replacementSchedule.id, true)
             ?.catch((error) => {
                 this.logger.error(`Failed to sync replacement assignment triggers: ${error}`);
+            });
+        await this.serviceRecordLifecycleService?.ensureForClient(clientId);
+        this.employeeFeedbackLinkService
+            ?.scheduleForServiceStart(replacementSchedule.id)
+            ?.catch((error) => {
+                this.logger.error(`Failed to schedule replacement feedback link SMS: ${error}`);
             });
 
         return updatedClient;
@@ -802,13 +991,16 @@ export class ClientService {
             client.endDate,
         );
 
-        return this.updateClientUsecase.execute(branchid, clientId, {
+        const updatedClient = await this.updateClientUsecase.execute(branchid, clientId, {
             serviceStatus: computedStatus,
         });
+        await this.serviceRecordLifecycleService?.ensureForClient(clientId);
+        return updatedClient;
     }
 
-    delete(branchid: string, id: number): Promise<void> {
-        return this.deleteClientUsecase.execute(branchid, id);
+    async delete(branchid: string, id: number): Promise<void> {
+        await this.triggerService?.cancelPendingJobsForClientDeletion(branchid, id);
+        await this.deleteClientUsecase.execute(branchid, id);
     }
 
     async getStats(branchid: string): Promise<{

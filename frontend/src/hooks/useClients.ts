@@ -9,6 +9,11 @@ import type {
     PaginatedResponse 
 } from "@/lib/client/types";
 
+type InfiniteClientPages = {
+    pages: PaginatedResponse<Client>[];
+    pageParams: unknown[];
+};
+
 // Query keys - using factory pattern for proper invalidation
 export const clientQueryKeys = {
     all: ["clients"] as const,
@@ -20,6 +25,55 @@ export const clientQueryKeys = {
     filtered: (filter: string) => [...clientQueryKeys.all, "filtered", filter] as const,
     details: () => [...clientQueryKeys.all, "detail"] as const,
     detail: (id: number) => [...clientQueryKeys.details(), id] as const,
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null;
+
+const isClientRecord = (value: unknown): value is Client =>
+    isRecord(value) && typeof value.id === "number";
+
+const isPaginatedClientResponse = (value: unknown): value is PaginatedResponse<Client> =>
+    isRecord(value) && Array.isArray(value.data);
+
+const isInfiniteClientPages = (value: unknown): value is InfiniteClientPages =>
+    isRecord(value) && Array.isArray(value.pages);
+
+const mergeUpdatedClient = (client: Client, updatedClient: Client): Client =>
+    client.id === updatedClient.id ? { ...client, ...updatedClient } : client;
+
+const mergeUpdatedClientList = (clients: Client[], updatedClient: Client): Client[] =>
+    clients.map((client) => mergeUpdatedClient(client, updatedClient));
+
+const updateClientCacheData = (currentData: unknown, updatedClient: Client): unknown => {
+    if (!currentData) return currentData;
+
+    if (Array.isArray(currentData)) {
+        return mergeUpdatedClientList(currentData, updatedClient);
+    }
+
+    if (isInfiniteClientPages(currentData)) {
+        return {
+            ...currentData,
+            pages: currentData.pages.map((page) => ({
+                ...page,
+                data: mergeUpdatedClientList(page.data, updatedClient),
+            })),
+        };
+    }
+
+    if (isPaginatedClientResponse(currentData)) {
+        return {
+            ...currentData,
+            data: mergeUpdatedClientList(currentData.data, updatedClient),
+        };
+    }
+
+    if (isClientRecord(currentData)) {
+        return mergeUpdatedClient(currentData, updatedClient);
+    }
+
+    return currentData;
 };
 
 // Fetch all clients (paginated)
@@ -120,13 +174,14 @@ export function useUpdateClient() {
             const { data } = await api.patch(`/clients/${id}`, dto);
             return data as Client;
         },
-        onSuccess: (_, variables) => {
-            // Invalidate all client queries (lists + details) using prefix match
+        onSuccess: (updatedClient, variables) => {
+            queryClient.setQueriesData(
+                { queryKey: clientQueryKeys.all },
+                (currentData) => updateClientCacheData(currentData, updatedClient)
+            );
+            queryClient.setQueryData(clientQueryKeys.detail(variables.id), updatedClient);
+
             queryClient.invalidateQueries({ queryKey: clientQueryKeys.all });
-            // Also explicitly invalidate the specific detail query
-            queryClient.invalidateQueries({ 
-                queryKey: clientQueryKeys.detail(variables.id) 
-            });
         },
     });
 }

@@ -55,8 +55,10 @@ describe("EformsignDocService", () => {
     const findEformsignDocByDocumentIdUsecase = { execute: jest.fn() };
     const findEformsignDocsByClientIdUsecase = { execute: jest.fn() };
     const listEformsignDocsUsecase = { execute: jest.fn() };
+    const listOtherBranchDocumentIdsUsecase = { execute: jest.fn() };
     const createEformsignDocUsecase = { execute: jest.fn() };
     const updateEformsignDocStatusUsecase = { execute: jest.fn() };
+    const linkDocumentToClientUsecase = { execute: jest.fn() };
     const getEformsignAccessTokenUsecase = { execute: jest.fn() };
     const refreshEformsignAccessTokenUsecase = { execute: jest.fn() };
     const fetchAllEformsignDocsFromApiUsecase = { execute: jest.fn() };
@@ -71,8 +73,10 @@ describe("EformsignDocService", () => {
             findEformsignDocByDocumentIdUsecase as never,
             findEformsignDocsByClientIdUsecase as never,
             listEformsignDocsUsecase as never,
+            listOtherBranchDocumentIdsUsecase as never,
             createEformsignDocUsecase as never,
             updateEformsignDocStatusUsecase as never,
+            linkDocumentToClientUsecase as never,
             getEformsignAccessTokenUsecase as never,
             refreshEformsignAccessTokenUsecase as never,
             fetchAllEformsignDocsFromApiUsecase as never,
@@ -81,6 +85,7 @@ describe("EformsignDocService", () => {
         );
 
         updateEformsignDocStatusUsecase.execute.mockResolvedValue(createDocEntity());
+        linkDocumentToClientUsecase.execute.mockResolvedValue(undefined);
         createEformsignDocUsecase.execute.mockResolvedValue(createDocEntity());
     });
 
@@ -134,10 +139,34 @@ describe("EformsignDocService", () => {
         it("findByClientId scopes the read to the supplied branch", async () => {
             const docs = [createDocEntity()];
             findEformsignDocsByClientIdUsecase.execute.mockResolvedValue(docs);
+            getEformsignAccessTokenUsecase.execute.mockRejectedValue(new Error("token unavailable"));
 
             await expect(service.findByClientId(branchId, 9)).resolves.toBe(docs);
 
             expect(findEformsignDocsByClientIdUsecase.execute).toHaveBeenCalledWith(branchId, 9);
+        });
+
+        it("findByClientId refreshes each linked doc status from eformsign before returning", async () => {
+            const localDoc = createDocEntity({ statusType: "060", statusDetail: "이용자" });
+            const refreshedDoc = createDocEntity({ statusType: "003", statusDetail: "완료" });
+            findEformsignDocsByClientIdUsecase.execute.mockResolvedValue([localDoc]);
+            getEformsignAccessTokenUsecase.execute.mockResolvedValue({
+                oauth_token: { access_token: "access-token", refresh_token: "refresh-token" },
+            });
+            fetchEformsignDocFromApiUsecase.execute.mockResolvedValue(
+                createApiDocument({ status_type: "doc_complete", step_name: "최종 완료" }),
+            );
+            updateEformsignDocStatusUsecase.execute.mockResolvedValue(refreshedDoc);
+
+            await expect(service.findByClientId(branchId, 9)).resolves.toEqual([refreshedDoc]);
+
+            expect(getEformsignAccessTokenUsecase.execute).toHaveBeenCalledWith(expect.any(Number));
+            expect(fetchEformsignDocFromApiUsecase.execute).toHaveBeenCalledWith("access-token", documentId);
+            expect(updateEformsignDocStatusUsecase.execute).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({ statusType: "003", statusDetail: "완료" }),
+            );
+            expect(linkDocumentToClientUsecase.execute).toHaveBeenCalledWith(branchId, documentId);
         });
 
         it("findAll scopes the list to the supplied branch", async () => {
@@ -147,6 +176,15 @@ describe("EformsignDocService", () => {
             await expect(service.findAll(branchId)).resolves.toBe(docs);
 
             expect(listEformsignDocsUsecase.execute).toHaveBeenCalledWith(branchId);
+        });
+
+        it("findDocumentIdsForOtherBranches delegates to the list-other-branch usecase", async () => {
+            const ids = ["doc-a", "doc-b"];
+            listOtherBranchDocumentIdsUsecase.execute.mockResolvedValue(ids);
+
+            await expect(service.findDocumentIdsForOtherBranches(branchId)).resolves.toBe(ids);
+
+            expect(listOtherBranchDocumentIdsUsecase.execute).toHaveBeenCalledWith(branchId);
         });
 
         it("createAndSendContract forwards branchid and params", async () => {

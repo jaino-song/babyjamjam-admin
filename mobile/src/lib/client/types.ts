@@ -2,6 +2,10 @@
 export {
     type EmployeeSummary,
     type DocumentStatus,
+    type ClientBadge,
+    type ClientBadgeKey,
+    type ClientBadgeStatus,
+    type ClientBadgeTone,
     type Client,
     type CreateClientDto,
     type UpdateClientDto,

@@ -4,6 +4,10 @@ import { createServerApiUrl } from "@/lib/api/server-base-url";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+// Keep the proxied SSE stream alive longer before Vercel recycles the
+// function. The client (useEformsignDocsLiveStream) reconnects regardless,
+// so this only reduces reconnect churn; 60s is within every Vercel plan's cap.
+export const maxDuration = 60;
 
 export async function GET(request: NextRequest) {
     const token = getAuthToken(request);

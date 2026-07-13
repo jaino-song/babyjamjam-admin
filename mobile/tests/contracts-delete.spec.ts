@@ -21,6 +21,7 @@ test.describe("Contracts delete flow", () => {
         created_date: Date.now(),
         last_editor: { recipient_type: "sender", id: "admin", name: "Admin" },
         updated_date: Date.now(),
+        fields: [{ id: "이용자 성명", value: "삭제대상 고객" }],
         current_status: {
           status_type: "002",
           step_recipients: [{ recipient_type: "signer", name: "삭제대상 고객" }],
@@ -35,6 +36,7 @@ test.describe("Contracts delete flow", () => {
         created_date: Date.now() - 86_400_000,
         last_editor: { recipient_type: "sender", id: "admin", name: "Admin" },
         updated_date: Date.now() - 86_400_000,
+        fields: [{ id: "이용자 성명", value: "유지고객" }],
         current_status: {
           status_type: "002",
           step_recipients: [{ recipient_type: "signer", name: "유지고객" }],
@@ -183,7 +185,7 @@ async function routeContractsDependencies(
     });
   });
 
-  await page.route("**/api/alimtalk-logs**", async (route) => {
+  await page.route("**/api/message-logs**", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",

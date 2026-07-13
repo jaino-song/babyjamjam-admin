@@ -29,11 +29,16 @@ const buttonVariants = cva(
           "rounded-full border-2 border-[hsl(214,100%,34%)] bg-transparent text-[hsl(214,100%,34%)] hover:bg-[hsl(214,80%,95%)] transition-all duration-300",
       },
       size: {
-        default: "h-10 px-4 py-2",
-        sm: "h-9 rounded-2xl px-3 text-xs",
-        md: "h-10 w-1/2 rounded-2xl px-5 py-2.5",
-        lg: "h-12 rounded-2xl px-8 text-base",
-        icon: "h-10 w-10",
+        default: "h-10 px-4",
+        sm: "h-9 px-3 text-xs",
+        md: "h-[46px] px-6",
+        lg: "h-12 px-8 text-base",
+        icon: "h-10 w-10 p-0",
+      },
+      width: {
+        sm: "w-1/4",
+        md: "w-1/2",
+        lg: "w-full",
       },
     },
     defaultVariants: {
@@ -50,11 +55,18 @@ export interface ButtonProps
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
+  ({ className, variant, size, width, asChild = false, ...props }, ref) => {
+    const resolvedVariant = variant ?? "default";
+    const resolvedSize = size ?? "default";
+
     if (asChild) {
       return (
         <Slot
-          className={cn(buttonVariants({ variant, size, className }))}
+          data-size={resolvedSize}
+          data-slot="button"
+          data-variant={resolvedVariant}
+          data-width={width}
+          className={cn(buttonVariants({ variant, size, width, className }))}
           // React 19 type compatibility: Radix Slot ref types conflict with React's ref types
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           ref={ref as any}
@@ -64,7 +76,11 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     }
     return (
       <button
-        className={cn(buttonVariants({ variant, size, className }))}
+        data-size={resolvedSize}
+        data-slot="button"
+        data-variant={resolvedVariant}
+        data-width={width}
+        className={cn(buttonVariants({ variant, size, width, className }))}
         ref={ref}
         {...props}
       />

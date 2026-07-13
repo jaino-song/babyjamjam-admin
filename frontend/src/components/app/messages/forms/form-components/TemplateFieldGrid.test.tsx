@@ -21,6 +21,7 @@ describe("TemplateFieldGrid", () => {
     const item = screen.getByText("Field two").closest("[data-component='messages-template-field-grid-item']");
 
     expect(grid?.getAttribute("class")).toContain("grid-cols-[repeat(auto-fill");
+    expect(grid).toHaveClass("items-center");
     expect(item).toHaveClass("min-w-0", "space-y-2");
   });
 });

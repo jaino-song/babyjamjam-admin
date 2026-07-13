@@ -66,14 +66,20 @@ export const TitleTextInputMolecule = React.forwardRef<
 
     return (
       <div
-        className={cn("flex flex-col gap-2", containerClassName)}
+        className={cn("grid gap-[calc(7px*var(--glint-ui-scale,1))]", containerClassName)}
         data-component={dataComponent}
       >
         <div
           data-component={labelRowDataComponent}
           className={cn("flex items-center justify-between gap-2", labelRowClassName)}
         >
-          <Label htmlFor={fieldId} className={labelClassName}>
+          <Label
+            htmlFor={fieldId}
+            className={cn(
+              "text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted",
+              labelClassName,
+            )}
+          >
             {label}
             {required && <span className="ml-1 text-destructive">*</span>}
           </Label>
@@ -105,7 +111,10 @@ export const TitleTextInputMolecule = React.forwardRef<
         {helperText ? (
           <p
             id={helperElementId}
-            className={cn("text-xs text-destructive", helperTextClassName)}
+            className={cn(
+              "text-[calc(11.5px*var(--glint-ui-scale,1))] font-semibold text-destructive",
+              helperTextClassName,
+            )}
           >
             {helperText}
           </p>

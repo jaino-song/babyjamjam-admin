@@ -24,21 +24,21 @@ describe("UpdateSettingUsecase", () => {
         it("should upsert the setting and return the entity", async () => {
             const entity = new SystemSettingEntity(
                 "alimtalk_provider",
-                "channeltalk",
+                "aligo_alimtalk",
                 new Date()
             );
             repository.upsert.mockResolvedValue(entity);
 
-            const result = await usecase.execute("alimtalk_provider", "channeltalk");
+            const result = await usecase.execute("alimtalk_provider", "aligo_alimtalk");
 
             expect(repository.upsert).toHaveBeenCalledWith(
                 expect.objectContaining({
                     key: "alimtalk_provider",
-                    value: "channeltalk",
+                    value: "aligo_alimtalk",
                 })
             );
             expect(result.key).toBe("alimtalk_provider");
-            expect(result.value).toBe("channeltalk");
+            expect(result.value).toBe("aligo_alimtalk");
         });
 
         it("should work for different key-value pairs", async () => {

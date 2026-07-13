@@ -1,0 +1,6 @@
+.error {
+  border: 0;
+  border-radius: 16px;
+  background: hsl(var(--v3-burgundy-light));
+  color: hsl(var(--v3-burgundy));
+}

@@ -117,6 +117,42 @@ describe("SbEmployeeRepository", () => {
     });
 
     // ============================================
+    // findByPhone
+    // ============================================
+    describe("findByPhone", () => {
+        it("should return the employee whose normalized phone matches", async () => {
+            const row = createEmployeeRow({ id: 3, phone: "010-1234-5678" });
+            employeeModel.findMany.mockResolvedValue([
+                createEmployeeRow({ id: 2, phone: "010-0000-0000" }),
+                { id: row.id, phone: row.phone },
+            ]);
+            employeeModel.findFirst.mockResolvedValue(row);
+
+            const result = await repository.findByPhone(branchId, "01012345678");
+
+            expect(employeeModel.findMany).toHaveBeenCalledWith({
+                where: { branchId },
+                select: { id: true, phone: true },
+            });
+            expect(employeeModel.findFirst).toHaveBeenCalledWith({
+                where: { id: 3, branchId },
+            });
+            expect(result).toMatchObject({ id: 3, phone: "010-1234-5678" });
+        });
+
+        it("should return null when no employee phone matches", async () => {
+            employeeModel.findMany.mockResolvedValue([
+                { id: 2, phone: "010-0000-0000" },
+            ]);
+
+            const result = await repository.findByPhone(branchId, "01012345678");
+
+            expect(result).toBeNull();
+            expect(employeeModel.findFirst).not.toHaveBeenCalled();
+        });
+    });
+
+    // ============================================
     // findAll
     // ============================================
     describe("findAll", () => {
@@ -264,6 +300,7 @@ describe("SbEmployeeRepository", () => {
                         grade: "베스트",
                         openToNextWork: false,
                         companyRegisteredDate: new Date("2024-02-01T00:00:00.000Z"),
+                        birthday: null,
                         branchId: branchId,
                     },
                 });
@@ -329,6 +366,7 @@ describe("SbEmployeeRepository", () => {
                         phone: "010-2222-0000",
                         grade: "스탠다드",
                         openToNextWork: true,
+                        birthday: null,
                     },
                 });
                 expect(result).toMatchObject({ id: 7, workArea: ["Busan"] });

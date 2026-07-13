@@ -20,11 +20,11 @@ describe("Select Component", () => {
 
     const trigger = container.querySelector('[data-slot="select-trigger"]');
 
-    expect(trigger).toHaveClass("h-[38px]");
+    expect(trigger).toHaveClass("h-[calc(38px*var(--glint-ui-scale,1))]");
     expect(trigger).toHaveClass("rounded-[13px]");
     expect(trigger).toHaveClass("border-[1.35px]");
     expect(trigger).toHaveClass("border-v3-border");
-    expect(trigger).toHaveClass("text-[0.8rem]");
+    expect(trigger).toHaveClass("text-[calc(12px*var(--glint-ui-scale,1))]");
     expect(trigger).toHaveClass("focus-visible:ring-[3px]");
   });
 

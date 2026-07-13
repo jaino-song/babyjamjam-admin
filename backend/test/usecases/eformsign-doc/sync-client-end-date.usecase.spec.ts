@@ -130,7 +130,7 @@ describe("SyncClientEndDateUsecase", () => {
             ])
         );
 
-        await usecase.execute(branchId, documentId, accessToken);
+        const result = await usecase.execute(branchId, documentId, accessToken);
 
         expect(clientRepository.update).toHaveBeenCalledTimes(1);
         expect(clientRepository.update).toHaveBeenCalledWith(
@@ -142,6 +142,33 @@ describe("SyncClientEndDateUsecase", () => {
 
         const updatedClient = clientRepository.update.mock.calls[0][1] as ClientEntity;
         expect(updatedClient.endDate?.toISOString()).toBe("2026-05-17T00:00:00.000Z");
+        expect(result).toEqual({
+            clientId: 7,
+            endDate: new Date("2026-05-17T00:00:00.000Z"),
+        });
+    });
+
+    it("should delegate persistence when an atomic lifecycle writer is provided", async () => {
+        eformsignClient.getDocument.mockResolvedValue(
+            createDocumentResponse([
+                { id: "계약 종료 년도", value: "2026", type: "text" },
+                { id: "계약 종료 월", value: "05", type: "text" },
+                { id: "계약 종료 일", value: "31", type: "text" },
+            ])
+        );
+        const persist = jest.fn().mockResolvedValue(undefined);
+
+        const result = await usecase.execute(branchId, documentId, accessToken, { persist });
+
+        expect(persist).toHaveBeenCalledWith({
+            clientId: 7,
+            endDate: new Date("2026-05-31T00:00:00.000Z"),
+        });
+        expect(clientRepository.update).not.toHaveBeenCalled();
+        expect(result).toEqual({
+            clientId: 7,
+            endDate: new Date("2026-05-31T00:00:00.000Z"),
+        });
     });
 
     it("should skip update when any end-date field is missing", async () => {

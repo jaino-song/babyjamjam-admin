@@ -32,6 +32,7 @@ import {
   type ServiceStatus,
   type PaginatedResponse,
 } from './mock-data';
+import { matchesSearchQuery } from '@/lib/search/korean-search';
 
 // ============================================================================
 // TYPES
@@ -111,12 +112,8 @@ export const clientHandlers = {
     }
 
     if (search) {
-      const searchLower = search.toLowerCase();
       filtered = filtered.filter(
-        (c) =>
-          c.name.toLowerCase().includes(searchLower) ||
-          c.phone?.includes(search) ||
-          c.address?.toLowerCase().includes(searchLower)
+        (c) => matchesSearchQuery(search, [c.name, c.phone, c.address])
       );
     }
 
@@ -163,11 +160,8 @@ export const employeeHandlers = {
     }
 
     if (search) {
-      const searchLower = search.toLowerCase();
       filtered = filtered.filter(
-        (e) =>
-          e.name.toLowerCase().includes(searchLower) ||
-          e.phone.includes(search)
+        (e) => matchesSearchQuery(search, [e.name, e.phone, ...e.workArea])
       );
     }
 
@@ -297,12 +291,8 @@ export const documentHandlers = {
     }
 
     if (search) {
-      const searchLower = search.toLowerCase();
       filtered = filtered.filter(
-        (d) =>
-          d.name.toLowerCase().includes(searchLower) ||
-          d.description?.toLowerCase().includes(searchLower) ||
-          d.tags.some((t) => t.toLowerCase().includes(searchLower))
+        (d) => matchesSearchQuery(search, [d.name, d.description, ...d.tags])
       );
     }
 

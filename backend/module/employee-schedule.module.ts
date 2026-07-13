@@ -13,10 +13,11 @@ import { SbEmployeeScheduleRepository } from "infrastructure/database/repositori
 import { DatabaseModule } from "infrastructure/database/database.module";
 import { EmployeeScheduleService } from "application/services/employee-schedule.service";
 import { EmployeeScheduleController } from "interface/controllers/employee-schedule.controller";
-import { AlimtalkModule } from "./alimtalk.module";
+import { MessageModule } from "./message.module";
+import { ServiceFeedbackModule } from "./service-feedback.module";
 
 @Module({
-    imports: [DatabaseModule, AlimtalkModule],
+    imports: [DatabaseModule, MessageModule, ServiceFeedbackModule],
     controllers: [EmployeeScheduleController],
     providers: [
         CreateEmployeeScheduleUsecase,

@@ -1,0 +1,91 @@
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
+import { MessageTriggerService } from "application/services/message-trigger.service";
+import {
+    MessageTriggerEventType,
+    MessageTriggerRecipientType,
+    type SupportedTriggerProvider,
+} from "domain/constants/message-trigger-catalog";
+import {
+    CreateMessageTriggerRuleDto,
+    UpdateMessageTriggerRuleDto,
+} from "interface/dto/message-trigger.dto";
+import { parseInteger } from "interface/parse-integer";
+
+@Controller()
+@UseGuards(JwtGuard, TenantGuard)
+export class MessageTriggerController {
+    constructor(private readonly triggerService: MessageTriggerService) {}
+
+    @Get("message-trigger-rules")
+    listRules(@CurrentTenant() tenant: { branchId?: string }) {
+        return this.triggerService.listRules(tenant.branchId ?? "");
+    }
+
+    @Get("message-trigger-jobs/upcoming")
+    listUpcomingJobs(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Query("limit") limit?: string,
+    ) {
+        return this.triggerService.listUpcomingJobs(
+            tenant.branchId ?? "",
+            parseInteger(limit, "limit", { defaultValue: 200, min: 1, max: 500 }),
+        );
+    }
+
+    @Get("message-logs")
+    listHistory(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Query("limit") limit?: string,
+        @Query("skip") skip?: string,
+    ) {
+        return this.triggerService.listHistory(
+            tenant.branchId ?? "",
+            parseInteger(limit, "limit", { defaultValue: 200, min: 1, max: 500 }),
+            parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
+        );
+    }
+
+    @Post("message-trigger-rules")
+    createRule(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Body() dto: CreateMessageTriggerRuleDto,
+    ) {
+        return this.triggerService.createRule(tenant.branchId ?? "", dto);
+    }
+
+    @Get("message-trigger-rules/:id")
+    getRule(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Param("id") id: string,
+    ) {
+        return this.triggerService.getRule(tenant.branchId ?? "", id);
+    }
+
+    @Patch("message-trigger-rules/:id")
+    updateRule(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Param("id") id: string,
+        @Body() dto: UpdateMessageTriggerRuleDto,
+    ) {
+        return this.triggerService.updateRule(tenant.branchId ?? "", id, dto);
+    }
+
+    @Delete("message-trigger-rules/:id")
+    deleteRule(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Param("id") id: string,
+    ) {
+        return this.triggerService.deleteRule(tenant.branchId ?? "", id);
+    }
+
+    @Get("message-trigger-templates")
+    listTemplates(
+        @Query("provider") provider: SupportedTriggerProvider = "aligo_alimtalk",
+        @Query("eventType") eventType?: MessageTriggerEventType,
+        @Query("recipientType") recipientType?: MessageTriggerRecipientType,
+    ) {
+        return this.triggerService.listTemplates({ provider, eventType, recipientType });
+    }
+}

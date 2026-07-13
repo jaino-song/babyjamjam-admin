@@ -20,6 +20,7 @@ export interface DetailTabPanelsProps {
   dataComponent?: string;
   panelDataComponent?: string;
   durationMs?: number;
+  idPrefix?: string;
 }
 
 export function DetailTabPanels({
@@ -31,6 +32,7 @@ export function DetailTabPanels({
   dataComponent = "detail-tab-panels",
   panelDataComponent = "detail-tab-panel",
   durationMs = DETAIL_TAB_PANEL_SLIDE_DURATION_MS,
+  idPrefix,
 }: DetailTabPanelsProps) {
   const previousActiveTabRef = useRef(activeTab);
   const transitionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -88,7 +90,11 @@ export function DetailTabPanels({
               key={panel.key}
               data-component={panelDataComponent}
               data-panel={panel.key}
+              id={idPrefix ? `${idPrefix}-panel-${panel.key}` : undefined}
+              role={idPrefix ? "tabpanel" : undefined}
+              aria-labelledby={idPrefix ? `${idPrefix}-tab-${panel.key}` : undefined}
               aria-hidden={!isActive}
+              inert={isActive ? undefined : true}
               className={cn(
                 "w-full min-w-0 shrink-0",
                 !isActive && "pointer-events-none",

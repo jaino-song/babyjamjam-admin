@@ -7,9 +7,11 @@ import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Card } from '@/components/ui/card';
+import { ApprovalTwoButtonModal } from '@/components/app/ui/ApprovalTwoButtonModal';
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
   SheetTrigger,
@@ -17,7 +19,6 @@ import {
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -92,6 +93,9 @@ export function VersionHistory({ templateKey, onRollback }: Props) {
         <SheetContent className="w-[350px]">
           <SheetHeader>
             <SheetTitle>버전 기록</SheetTitle>
+            <SheetDescription className="sr-only">
+              시스템 메시지 템플릿 변경 이력을 확인하고 복원합니다.
+            </SheetDescription>
           </SheetHeader>
 
           <div className="mt-4">
@@ -190,36 +194,33 @@ export function VersionHistory({ templateKey, onRollback }: Props) {
         </DialogContent>
       </Dialog>
 
-      {/* Confirm Dialog */}
-      <Dialog open={!!confirmDialog} onOpenChange={() => setConfirmDialog(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {confirmDialog?.type === 'rollback' ? '버전 복원' : '기본값 초기화'}
-            </DialogTitle>
-            <DialogDescription>
-              {confirmDialog?.type === 'rollback'
-                ? `버전 ${confirmDialog.version}으로 복원하시겠습니까? 현재 내용은 새 버전으로 저장됩니다.`
-                : '기본값으로 초기화하시겠습니까? 현재 내용은 새 버전으로 저장됩니다.'}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmDialog(null)}>
-              취소
-            </Button>
-            <Button
-              variant={confirmDialog?.type === 'reset' ? 'destructive' : 'default'}
-              onClick={() =>
-                confirmDialog?.type === 'rollback'
-                  ? handleRollback(confirmDialog.version!)
-                  : handleReset()
-              }
-            >
-              {confirmDialog?.type === 'rollback' ? '복원' : '초기화'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ApprovalTwoButtonModal
+        open={confirmDialog !== null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setConfirmDialog(null);
+        }}
+        dataComponent="system-template-version-approval"
+        title={confirmDialog?.type === 'rollback' ? '버전 복원' : '기본값 초기화'}
+        description={
+          confirmDialog?.type === 'rollback'
+            ? `버전 ${confirmDialog.version}으로 복원하시겠습니까? 현재 내용은 새 버전으로 저장됩니다.`
+            : '기본값으로 초기화하시겠습니까? 현재 내용은 새 버전으로 저장됩니다.'
+        }
+        approvalLabel={confirmDialog?.type === 'rollback' ? '복원' : '초기화'}
+        pendingLabel={confirmDialog?.type === 'rollback' ? '복원 중...' : '초기화 중...'}
+        approvalVariant={confirmDialog?.type === 'reset' ? 'destructive' : 'positive'}
+        isPending={rollbackMutation.isPending || resetMutation.isPending}
+        onApprove={() => {
+          if (confirmDialog?.type === 'rollback' && confirmDialog.version !== undefined) {
+            void handleRollback(confirmDialog.version);
+            return;
+          }
+
+          if (confirmDialog?.type === 'reset') {
+            void handleReset();
+          }
+        }}
+      />
     </>
   );
 }

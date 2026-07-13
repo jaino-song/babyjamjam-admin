@@ -50,21 +50,42 @@ export const IN_PROGRESS_CODES = [
 // Korean status labels
 export type DocumentStatusLabel = "대기" | "검토 필요" | "완료" | "기간 만료";
 
+type EformsignWorkflowStatus = {
+  status_type?: string | null;
+  step_type?: string | null;
+  step_name?: string | null;
+  step_recipients?: Array<{ recipient_type?: string | null }>;
+};
+
+const PROVIDER_REVIEW_STEP_TYPES = new Set(["06"]);
+const PROVIDER_REVIEW_OWNER_KEYWORDS = ["제공기관", "관리자", "담당자"];
+const PROVIDER_REVIEW_ACTION_KEYWORDS = ["확인", "검토"];
+const CUSTOMER_STEP_KEYWORDS = ["이용자", "고객", "산모"];
+
+export function isProviderReviewWorkflowStep(
+  currentStatus: Pick<EformsignWorkflowStatus, "step_type" | "step_name"> | null | undefined,
+): boolean {
+  const stepType = currentStatus?.step_type?.trim() ?? "";
+  const stepName = currentStatus?.step_name?.trim() ?? "";
+
+  if (PROVIDER_REVIEW_STEP_TYPES.has(stepType)) return true;
+  if (!stepName) return false;
+  if (CUSTOMER_STEP_KEYWORDS.some((keyword) => stepName.includes(keyword))) return false;
+
+  const hasProviderOwner = PROVIDER_REVIEW_OWNER_KEYWORDS.some((keyword) => stepName.includes(keyword));
+  const hasReviewAction = PROVIDER_REVIEW_ACTION_KEYWORDS.some((keyword) => stepName.includes(keyword));
+  return hasProviderOwner && hasReviewAction;
+}
+
 /**
- * Step-aware variant: when a doc is in-progress AND the current step's
- * recipient is an internal member (recipient_type "01"), it has progressed
- * past the customer's signature and is now waiting on staff confirmation.
- * That state is surfaced as "검토 필요" instead of "대기".
+ * Step-aware variant: when a doc is in-progress AND the current workflow step
+ * is explicitly the provider review/confirmation step, it has progressed past
+ * the customer's signature and is surfaced as "검토 필요" instead of "대기".
  */
-export function mapDocStatusLabel(currentStatus: {
-  status_type?: string;
-  step_recipients?: Array<{ recipient_type?: string }>;
-} | null | undefined): DocumentStatusLabel {
+export function mapDocStatusLabel(currentStatus: EformsignWorkflowStatus | null | undefined): DocumentStatusLabel {
   const base = mapStatusToLabel(currentStatus?.status_type);
   if (base !== "대기") return base;
-  const recipients = currentStatus?.step_recipients ?? [];
-  const allInternal = recipients.length > 0 && recipients.every((r) => r?.recipient_type === "01");
-  return allInternal ? "검토 필요" : "대기";
+  return isProviderReviewWorkflowStep(currentStatus) ? "검토 필요" : "대기";
 }
 
 // Filter types for API calls
@@ -169,4 +190,53 @@ export function getStatusColor(status: string): BadgeVariant {
     return "secondary";
   }
   return "info";
+}
+
+/** The four StatsBar counters on the contracts page. */
+export interface ContractStatsBuckets {
+  reviewNeeded: number;
+  sendRequired: number;
+  drafting: number;
+  expired: number;
+}
+
+/**
+ * Fold the raw status signals from `GET /api/documents/status-counts` into the
+ * four StatsBar buckets. This is the single source of truth for that mapping —
+ * it mirrors the per-doc rule that used to live in contracts/page.tsx:
+ *   - completed (003 등)           → counted nowhere
+ *   - expired category, only 080   → expired (반려/취소 등은 제외)
+ *   - draft (001)                  → drafting
+ *   - 그 외 in-progress            → reviewNeeded(현재 단계가 제공기관 검토/확인)
+ *                                     아니면 sendRequired
+ * The reviewNeeded test mirrors `mapDocStatusLabel === "검토 필요"` using the
+ * current workflow step fields returned by the status-counts endpoint.
+ */
+export function foldContractStats(
+  docs: ReadonlyArray<{
+    status_type?: string | null;
+    step_type?: string | null;
+    step_name?: string | null;
+    step_recipient_types?: ReadonlyArray<string | null>;
+  }>,
+): ContractStatsBuckets {
+  const buckets: ContractStatsBuckets = { reviewNeeded: 0, sendRequired: 0, drafting: 0, expired: 0 };
+  for (const doc of docs) {
+    const normalized = normalizeStatusCode(doc.status_type);
+    const category = getStatusCategory(doc.status_type);
+
+    if (category === "completed") continue;
+    if (category === "expired") {
+      if (normalized === "080") buckets.expired++;
+      continue;
+    }
+    if (normalized === "001") {
+      buckets.drafting++;
+      continue;
+    }
+
+    if (isProviderReviewWorkflowStep(doc)) buckets.reviewNeeded++;
+    else buckets.sendRequired++;
+  }
+  return buckets;
 }

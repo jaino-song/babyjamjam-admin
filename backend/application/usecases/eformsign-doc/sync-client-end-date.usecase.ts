@@ -4,6 +4,15 @@ import { EFORMSIGN_CLIENT_REPOSITORY, IEformsignClientRepository } from "domain/
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import { EFORMSIGN_END_DATE_FIELD_IDS } from "./eformsign-end-date-field-ids";
 
+export interface SyncedClientEndDate {
+    clientId: number;
+    endDate: Date;
+}
+
+export interface SyncClientEndDateOptions {
+    persist?: (target: SyncedClientEndDate) => Promise<void>;
+}
+
 @Injectable()
 export class SyncClientEndDateUsecase {
     private readonly logger = new Logger(SyncClientEndDateUsecase.name);
@@ -17,7 +26,12 @@ export class SyncClientEndDateUsecase {
         private readonly clientRepository: IClientRepository,
     ) {}
 
-    async execute(branchId: string, documentId: string, accessToken: string): Promise<void> {
+    async execute(
+        branchId: string,
+        documentId: string,
+        accessToken: string,
+        options: SyncClientEndDateOptions = {},
+    ): Promise<SyncedClientEndDate | undefined> {
         try {
             const document = await this.eformsignClient.getDocument(accessToken, documentId);
             const fields = document.fields ?? [];
@@ -68,12 +82,19 @@ export class SyncClientEndDateUsecase {
                 return;
             }
 
-            client.update({ endDate });
-            await this.clientRepository.update(branchId, client);
+            const target = { clientId: doc.clientId, endDate };
+            if (options.persist) {
+                await options.persist(target);
+            } else {
+                client.update({ endDate });
+                await this.clientRepository.update(branchId, client);
+            }
 
             this.logger.log(`Synced client ${doc.clientId} endDate from document ${documentId}.`);
+            return target;
         } catch (error) {
             this.logger.error(`Failed to sync client endDate for document ${documentId}: ${error}`);
+            return undefined;
         }
     }
 }

@@ -7,6 +7,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { AuthGuard } from "@nestjs/passport";
 import { RateLimitGuard } from "infrastructure/auth/rate-limit.guard";
+import { GUARDS_METADATA } from "@nestjs/common/constants";
 
 describe("AuthController (Integration)", () => {
     // ============================================
@@ -17,6 +18,7 @@ describe("AuthController (Integration)", () => {
     let authService: jest.Mocked<AuthService>;
     let prismaService: jest.Mocked<PrismaService>;
     let rateLimitGuard: jest.Mocked<Pick<RateLimitGuard, "canActivate" | "resetForKey">>;
+    let authController: AuthController;
 
     // Several callback tests mutate process.env (NODE_ENV, *_FRONTEND_URL).
     // Snapshot once, give each test a fresh copy, and restore at the end so the
@@ -110,7 +112,7 @@ describe("AuthController (Integration)", () => {
         };
         const mockRateLimitGuard = {
             canActivate: jest.fn(async (_context: ExecutionContext) => true),
-            resetForKey: jest.fn(),
+            resetForKey: jest.fn().mockResolvedValue(undefined),
         } satisfies jest.Mocked<Pick<RateLimitGuard, "canActivate" | "resetForKey">>;
 
         const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -145,6 +147,7 @@ describe("AuthController (Integration)", () => {
         authService = moduleFixture.get(AuthService);
         prismaService = moduleFixture.get(PrismaService);
         rateLimitGuard = mockRateLimitGuard;
+        authController = moduleFixture.get(AuthController);
     });
 
     afterEach(async () => {
@@ -370,6 +373,36 @@ describe("AuthController (Integration)", () => {
                 pendingAccountOnboardingToken: "pending-account-token",
             });
             expect(authService.startPendingAccountOnboarding).toHaveBeenCalledWith(mockUser.id);
+        });
+    });
+
+    describe("auth enumeration and brute-force protection", () => {
+        it("should not expose Kakao linkability from check-email", async () => {
+            (prismaService.user.findUnique as jest.Mock).mockResolvedValue({ id: mockUser.id });
+
+            const response = await authController.checkEmail("Test@Example.com");
+
+            expect(response).toEqual({ exists: true });
+            expect(response).not.toHaveProperty("linkable");
+            expect(prismaService.user.findUnique).toHaveBeenCalledWith({
+                where: { email: "test@example.com" },
+                select: { id: true },
+            });
+        });
+
+        it.each([
+            "completeKakaoOnboarding",
+            "completeAccountOnboarding",
+            "refreshToken",
+            "resetPassword",
+            "getAllActiveBranches",
+        ] as const)("should apply RateLimitGuard to %s", (methodName) => {
+            const guards = Reflect.getMetadata(
+                GUARDS_METADATA,
+                AuthController.prototype[methodName],
+            ) as unknown[] | undefined;
+
+            expect(guards).toContain(RateLimitGuard);
         });
     });
 

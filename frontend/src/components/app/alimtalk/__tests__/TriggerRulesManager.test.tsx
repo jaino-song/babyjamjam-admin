@@ -1,14 +1,14 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { TriggerRulesManager } from "../TriggerRulesManager";
 import {
-  useAlimtalkTriggerRules,
-  useAlimtalkTriggerTemplates,
-  useCreateAlimtalkTriggerRule,
-  useDeleteAlimtalkTriggerRule,
-  useUpdateAlimtalkTriggerRule,
-} from "@/features/alimtalk-triggers/hooks/use-alimtalk-triggers";
+  useMessageTriggerRules,
+  useMessageTriggerTemplates,
+  useCreateMessageTriggerRule,
+  useDeleteMessageTriggerRule,
+  useUpdateMessageTriggerRule,
+} from "@/features/message-triggers/hooks/use-message-triggers";
 
 jest.mock("@tanstack/react-query", () => ({
   useQuery: jest.fn(),
@@ -64,20 +64,20 @@ jest.mock("@/hooks/use-toast", () => ({
   }),
 }));
 
-jest.mock("@/features/alimtalk-triggers/hooks/use-alimtalk-triggers", () => ({
-  useAlimtalkTriggerRules: jest.fn(),
-  useAlimtalkTriggerTemplates: jest.fn(),
-  useCreateAlimtalkTriggerRule: jest.fn(),
-  useUpdateAlimtalkTriggerRule: jest.fn(),
-  useDeleteAlimtalkTriggerRule: jest.fn(),
+jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
+  useMessageTriggerRules: jest.fn(),
+  useMessageTriggerTemplates: jest.fn(),
+  useCreateMessageTriggerRule: jest.fn(),
+  useUpdateMessageTriggerRule: jest.fn(),
+  useDeleteMessageTriggerRule: jest.fn(),
 }));
 
 const mockedUseQuery = jest.mocked(useQuery);
-const mockedUseAlimtalkTriggerRules = jest.mocked(useAlimtalkTriggerRules);
-const mockedUseAlimtalkTriggerTemplates = jest.mocked(useAlimtalkTriggerTemplates);
-const mockedUseCreateAlimtalkTriggerRule = jest.mocked(useCreateAlimtalkTriggerRule);
-const mockedUseUpdateAlimtalkTriggerRule = jest.mocked(useUpdateAlimtalkTriggerRule);
-const mockedUseDeleteAlimtalkTriggerRule = jest.mocked(useDeleteAlimtalkTriggerRule);
+const mockedUseMessageTriggerRules = jest.mocked(useMessageTriggerRules);
+const mockedUseMessageTriggerTemplates = jest.mocked(useMessageTriggerTemplates);
+const mockedUseCreateMessageTriggerRule = jest.mocked(useCreateMessageTriggerRule);
+const mockedUseUpdateMessageTriggerRule = jest.mocked(useUpdateMessageTriggerRule);
+const mockedUseDeleteMessageTriggerRule = jest.mocked(useDeleteMessageTriggerRule);
 
 type QueryOptions = {
   queryKey?: readonly unknown[];
@@ -113,7 +113,7 @@ function mockSettingsQueries({
     }
 
     return useQueryResult({
-      provider: "aligo",
+      provider: "aligo_alimtalk",
       enabled: providerEnabled,
     });
   });
@@ -128,7 +128,7 @@ beforeEach(() => {
 
   mockSettingsQueries();
 
-  mockedUseAlimtalkTriggerRules.mockReturnValue({
+  mockedUseMessageTriggerRules.mockReturnValue({
     data: [
       {
         id: "rule-1",
@@ -145,9 +145,9 @@ beforeEach(() => {
       },
     ],
     isLoading: false,
-  } as unknown as ReturnType<typeof useAlimtalkTriggerRules>);
+  } as unknown as ReturnType<typeof useMessageTriggerRules>);
 
-  mockedUseAlimtalkTriggerTemplates.mockReturnValue({
+  mockedUseMessageTriggerTemplates.mockReturnValue({
     data: [
       {
         key: "SERVICE_START_REMINDER",
@@ -157,26 +157,26 @@ beforeEach(() => {
         allowedRecipientTypes: ["CLIENT"],
         requiredVariables: [],
         providers: {
-          aligo: { templateKey: "tmpl_1" },
+          aligo_alimtalk: { templateKey: "tmpl_1" },
         },
       },
     ],
-  } as unknown as ReturnType<typeof useAlimtalkTriggerTemplates>);
+  } as unknown as ReturnType<typeof useMessageTriggerTemplates>);
 
-  mockedUseCreateAlimtalkTriggerRule.mockReturnValue({
+  mockedUseCreateMessageTriggerRule.mockReturnValue({
     isPending: false,
     mutateAsync: jest.fn(),
-  } as unknown as ReturnType<typeof useCreateAlimtalkTriggerRule>);
+  } as unknown as ReturnType<typeof useCreateMessageTriggerRule>);
 
-  mockedUseUpdateAlimtalkTriggerRule.mockReturnValue({
+  mockedUseUpdateMessageTriggerRule.mockReturnValue({
     isPending: false,
     mutateAsync: jest.fn(),
-  } as unknown as ReturnType<typeof useUpdateAlimtalkTriggerRule>);
+  } as unknown as ReturnType<typeof useUpdateMessageTriggerRule>);
 
-  mockedUseDeleteAlimtalkTriggerRule.mockReturnValue({
+  mockedUseDeleteMessageTriggerRule.mockReturnValue({
     isPending: false,
     mutateAsync: jest.fn(),
-  } as unknown as ReturnType<typeof useDeleteAlimtalkTriggerRule>);
+  } as unknown as ReturnType<typeof useDeleteMessageTriggerRule>);
 });
 
 describe("TriggerRulesManager", () => {
@@ -215,7 +215,9 @@ describe("TriggerRulesManager", () => {
     mockSettingsQueries({ providerEnabled: false, senderApproved: true });
 
     const { container } = render(<TriggerRulesManager />);
-    window.dispatchEvent(new Event("resize"));
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+    });
 
     expect(
       await screen.findByText("왼쪽 목록에서 알림톡 규칙을 선택하거나 새 규칙을 만들어 주세요."),
@@ -224,37 +226,78 @@ describe("TriggerRulesManager", () => {
     expect(container.querySelector('[data-component="split-layout"]')).toHaveAttribute("data-has-selection", "false");
   });
 
-  it("renders SMS-specific copy and hides non-SMS rules in the message automation channel", () => {
+  it("renders only automatic SMS template routines in the message auto-send channel", () => {
     mockSettingsQueries({ providerEnabled: false, senderApproved: true });
+    mockedUseMessageTriggerRules.mockReturnValue({
+      data: [
+        {
+          id: "rule-1",
+          branchId: "org-1",
+          name: "서비스 시작 안내",
+          isActive: true,
+          eventType: "SERVICE_START",
+          offsetType: "BEFORE_DAYS",
+          offsetDays: 3,
+          recipientType: "CLIENT",
+          templateKey: "SERVICE_START_REMINDER",
+          createdAt: "2026-03-01T00:00:00.000Z",
+          updatedAt: "2026-03-01T00:00:00.000Z",
+        },
+        {
+          id: "sms-rule-1",
+          branchId: "org-1",
+          name: "서비스 안내 자동 전송",
+          isActive: true,
+          eventType: "SERVICE_START",
+          offsetType: "BEFORE_DAYS",
+          offsetDays: 7,
+          recipientType: "CLIENT",
+          templateKey: "SERVICE_INFO",
+          createdAt: "2026-03-01T00:00:00.000Z",
+          updatedAt: "2026-03-01T00:00:00.000Z",
+        },
+      ],
+      isLoading: false,
+    } as unknown as ReturnType<typeof useMessageTriggerRules>);
+    mockedUseMessageTriggerTemplates.mockReturnValue({
+      data: [
+        {
+          key: "SERVICE_START_REMINDER",
+          name: "서비스 시작 리마인더",
+          description: "서비스 시작 전에 안내합니다.",
+          allowedEventTypes: ["SERVICE_START"],
+          allowedRecipientTypes: ["CLIENT"],
+          requiredVariables: [],
+          providers: {
+            aligo_alimtalk: { templateKey: "tmpl_1" },
+          },
+        },
+        {
+          key: "SERVICE_INFO",
+          name: "서비스 안내",
+          description: "서비스 정보를 SMS로 안내합니다.",
+          allowedEventTypes: ["SERVICE_START"],
+          allowedRecipientTypes: ["CLIENT"],
+          requiredVariables: [],
+          providers: {
+            aligo_alimtalk: { templateKey: "tmpl_sms_1" },
+          },
+        },
+      ],
+    } as unknown as ReturnType<typeof useMessageTriggerTemplates>);
 
-    const { container } = render(<TriggerRulesManager dataComponentPrefix="message" channel="sms" />);
+    render(<TriggerRulesManager dataComponentPrefix="message" channel="sms" />);
 
-    expect(screen.getByText("SMS 발송 규칙")).toBeInTheDocument();
-    expect(screen.getByText("SMS 재시도 규칙")).toBeInTheDocument();
-    expect(screen.getByText("SMS 전송 실패 시 5분 후 자동 재시도하며, 최초 발송 이후 최대 2번까지 다시 시도합니다.")).toBeInTheDocument();
+    expect(screen.getByText("자동 전송 루틴")).toBeInTheDocument();
+    expect(screen.getByText("메시지 템플릿을 자동으로 보내는 루틴만 관리합니다.")).toBeInTheDocument();
+    expect(screen.getByText("서비스 안내 자동 전송")).toBeInTheDocument();
     expect(screen.queryByText("서비스 시작 안내")).not.toBeInTheDocument();
-
-    const retrySwitch = screen.getByRole("switch", { name: "SMS 재시도 규칙 활성화" });
-    expect(retrySwitch).toHaveAttribute("aria-checked", "true");
-
-    fireEvent.click(screen.getByRole("button", { name: "비활성화" }));
-
+    expect(screen.queryByText("제공기록지 전송 자동화 규칙")).not.toBeInTheDocument();
     expect(screen.queryByText("SMS 재시도 규칙")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "활성화" }));
-    fireEvent.click(screen.getByRole("switch", { name: "SMS 재시도 규칙 활성화" }));
-
-    expect(screen.queryByRole("switch", { name: "SMS 재시도 규칙 활성화" })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "비활성화" }));
-
-    expect(screen.getByText("SMS 재시도 규칙")).toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: "SMS 재시도 규칙 활성화" })).toHaveAttribute("aria-checked", "false");
-
-    fireEvent.click(screen.getByText("SMS 재시도 규칙"));
-
-    expect(container.querySelector('[data-component="split-layout"]')).toHaveAttribute("data-has-selection", "true");
-    expect(screen.getByText("재시도 횟수")).toBeInTheDocument();
-    expect(screen.getByText("재시도 간격")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "서비스 안내 자동 전송 활성화" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
   });
 });

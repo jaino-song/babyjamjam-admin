@@ -36,8 +36,7 @@ export const ThanksMessageForm = ({
   const generatedMessage = messageOverride ?? templateMessage;
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(generatedMessage);
-    alert(t(locale, "common.copy-success-message"));
+    return navigator.clipboard.writeText(generatedMessage);
   };
 
   const variableItems = [
@@ -68,6 +67,7 @@ export const ThanksMessageForm = ({
     <AutoFillMsgCard
       title={t(locale, "common.generated-message-title")}
       copyButtonText={t(locale, "common.copy-button")}
+      copySuccessMessage={t(locale, "common.copy-success-message")}
       message={generatedMessage}
       bodyDescription={systemTemplate?.description || "감사 메시지를 검토하고 수신자 기준으로 다듬을 수 있습니다."}
       metaItems={[

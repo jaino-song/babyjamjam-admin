@@ -1,6 +1,11 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { ClientEntity } from "domain/entities/client.entity";
-import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
+import {
+    ClientWithInitialSchedule,
+    CLIENT_REPOSITORY,
+    IClientRepository,
+    InitialClientSchedule,
+} from "domain/repositories/client.repository.interface";
 
 type CreateClientParams = {
     name: string;
@@ -36,5 +41,17 @@ export class CreateClientUsecase {
             eDocId: params.eDocId ?? null,
         });
         return this.clientRepository.create(branchid, client);
+    }
+
+    executeWithInitialSchedule(
+        branchid: string,
+        params: CreateClientParams,
+        schedule: InitialClientSchedule,
+    ): Promise<ClientWithInitialSchedule> {
+        const client = ClientEntity.create({
+            ...params,
+            eDocId: params.eDocId ?? null,
+        });
+        return this.clientRepository.createWithInitialSchedule(branchid, client, schedule);
     }
 }

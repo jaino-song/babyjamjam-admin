@@ -1,4 +1,4 @@
-export const ALIMTALK_PROVIDERS = ["channeltalk", "aligo", "none"] as const;
+export const ALIMTALK_PROVIDERS = ["aligo_alimtalk", "none"] as const;
 export type AlimtalkProvider = (typeof ALIMTALK_PROVIDERS)[number];
 
 export interface RibbonConfig {
@@ -11,6 +11,11 @@ export interface RibbonConfig {
     linkColor: string;
 }
 
+export interface MessageAutomationPastTriggerConfig {
+    sendIntervalMinutes: number;
+    ruleOrder: string[];
+}
+
 export const DEFAULT_RIBBON_CONFIG: RibbonConfig = {
     enabled: false,
     message: "",
@@ -21,9 +26,14 @@ export const DEFAULT_RIBBON_CONFIG: RibbonConfig = {
     linkColor: "#FFB27B",
 };
 
+export const DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG: MessageAutomationPastTriggerConfig = {
+    sendIntervalMinutes: 1,
+    ruleOrder: [],
+};
+
 export class SystemSettingEntity {
     static readonly ALIMTALK_PROVIDER_KEY = "alimtalk_provider";
-    static readonly DEFAULT_ALIMTALK_PROVIDER: AlimtalkProvider = "aligo";
+    static readonly DEFAULT_ALIMTALK_PROVIDER: AlimtalkProvider = "aligo_alimtalk";
     static readonly RIBBON_CONFIG_KEY = "ribbon_config";
 
     constructor(

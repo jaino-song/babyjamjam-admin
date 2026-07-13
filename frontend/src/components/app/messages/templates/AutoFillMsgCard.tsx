@@ -1,8 +1,14 @@
-import { memo, type ReactNode } from "react";
+import { memo, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import { Copy } from "lucide-react";
 
+import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import { HeaderActionButton, InfoCard, InfoRow } from "@/components/app/v3";
+import {
+  APP_CONTENT_BODY_CARD_CLASS_NAME,
+  APP_CONTENT_CARD_MUTED_CLASS_NAME,
+  AppContentCard,
+} from "@/components/ui/app-surface";
 import { cn } from "@/lib/utils";
 
 import { MsgField } from "./MsgField";
@@ -23,9 +29,10 @@ export type AutoFillMsgCardLayout = "grouped" | "flat";
 export interface AutoFillMsgCardProps {
   title: string;
   copyButtonText: string;
+  copySuccessMessage?: string;
   message: string;
   onMessageChange?: (value: string) => void;
-  handleCopy: () => void;
+  handleCopy: () => void | Promise<void>;
   children?: ReactNode;
   bodyTitle?: string;
   bodyDescription?: string;
@@ -113,7 +120,7 @@ export function AutoFillMsgCardSide({
                 <div
                   key={`${item.token}-${item.label}`}
                   data-component="messages-generated-msg-detail-variable-item"
-                  className="flex items-center justify-between gap-3 border-b border-v3-border py-2.5 text-[0.75rem] last:border-b-0"
+                  className="flex items-center justify-between gap-3 border-b border-v3-border py-2.5 text-[calc(12px*var(--glint-ui-scale,1))] last:border-b-0"
                 >
                   <div
                     data-component="messages-generated-msg-detail-variable-meta"
@@ -127,14 +134,14 @@ export function AutoFillMsgCardSide({
                     </span>
                     <span
                       data-component="messages-generated-msg-detail-variable-token"
-                      className="inline-flex items-center rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary"
+                      className="inline-flex items-center rounded-full bg-v3-primary-light px-3 py-1 text-[calc(11.52px*var(--glint-ui-scale,1))] font-semibold text-v3-primary"
                     >
                       {item.token}
                     </span>
                   </div>
                   <p
                     data-component="messages-generated-msg-detail-variable-value"
-                    className="shrink-0 text-right text-[0.75rem] font-semibold text-v3-dark"
+                    className="shrink-0 text-right text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-dark"
                   >
                     {item.value}
                   </p>
@@ -142,7 +149,7 @@ export function AutoFillMsgCardSide({
               ))}
             </div>
           ) : (
-            <p className="text-[0.75rem] text-v3-text-muted">{variableEmptyText}</p>
+            <p className="text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">{variableEmptyText}</p>
           )}
         </div>
       </InfoCard>
@@ -153,6 +160,7 @@ export function AutoFillMsgCardSide({
 export const AutoFillMsgCard = memo(function AutoFillMsgCard({
   title,
   copyButtonText,
+  copySuccessMessage,
   message,
   onMessageChange,
   handleCopy,
@@ -167,34 +175,58 @@ export const AutoFillMsgCard = memo(function AutoFillMsgCard({
   layout = "grouped",
   showSide = true,
 }: AutoFillMsgCardProps) {
+  const [isCopySuccessOpen, setIsCopySuccessOpen] = useState(false);
+
+  const handleCopyClick = () => {
+    void handleCopy();
+    if (copySuccessMessage) setIsCopySuccessOpen(true);
+  };
+
+  const copySuccessNotification = copySuccessMessage ? (
+    <NotificationOneButtonModal
+      open={isCopySuccessOpen}
+      onOpenChange={setIsCopySuccessOpen}
+      dataComponent="messages-copy-success-notification"
+      title={copySuccessMessage}
+      description="복사한 내용을 원하는 곳에 붙여넣을 수 있습니다."
+      onAcknowledge={() => setIsCopySuccessOpen(false)}
+    />
+  ) : null;
+
   const detailGridContent = (
     <>
       <div
         data-component="messages-generated-msg-detail-content"
-        className="scrollbar-hide flex h-full min-h-0 flex-col rounded-[20px] bg-v3-dim-white p-5"
+        className={cn(
+          "scrollbar-hide flex h-full min-h-0 flex-col",
+          APP_CONTENT_CARD_MUTED_CLASS_NAME,
+        )}
       >
         <div
           data-component="messages-generated-msg-detail-content-header"
           className="mb-4 flex items-start justify-between gap-4"
         >
           <div data-component="messages-generated-msg-detail-content-title" className="min-w-0">
-            <h3 className="text-[0.9rem] font-bold text-v3-dark">{bodyTitle}</h3>
-            <p className="mt-0.5 text-[0.75rem] text-v3-text-muted">{bodyDescription}</p>
+            <h3 className="text-[calc(14.4px*var(--glint-ui-scale,1))] font-bold text-v3-dark">{bodyTitle}</h3>
+            <p className="mt-0.5 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">{bodyDescription}</p>
           </div>
           <HeaderActionButton
             icon={Copy}
             label={copyButtonText}
-            onClick={handleCopy}
+            onClick={handleCopyClick}
             data-component="messages-generated-msg-copy"
-            className="text-[12px]"
+            className="shrink-0 whitespace-nowrap text-[calc(12px*var(--glint-ui-scale,1))]"
           />
         </div>
 
         <div
           data-component="messages-generated-msg-detail-content-body"
-          className="flex min-h-[320px] flex-1 rounded-[18px] bg-white p-4"
+          className={cn(
+            "flex min-h-[calc(320px*var(--glint-ui-scale,1))] flex-1",
+            APP_CONTENT_BODY_CARD_CLASS_NAME,
+          )}
         >
-          <MsgField value={message} onChange={onMessageChange} />
+          <MsgField label={bodyTitle} value={message} onChange={onMessageChange} />
         </div>
       </div>
 
@@ -218,40 +250,47 @@ export const AutoFillMsgCard = memo(function AutoFillMsgCard({
       <>
         {detailGridContent}
         {children ? (
-          <div
+          <AppContentCard
             data-component="messages-generated-msg-actions"
-            className="rounded-[20px] border border-v3-border bg-white p-5 xl:col-span-2"
+            variant="outlined"
+            className="xl:col-span-2"
+            contentClassName="block"
           >
             {children}
-          </div>
+          </AppContentCard>
         ) : null}
+        {copySuccessNotification}
       </>
     );
   }
 
   return (
-    <motion.div
-      initial={{ opacity: 0, filter: "blur(10px)" }}
-      animate={{ opacity: 1, filter: "blur(0px)" }}
-      transition={{ duration: 0.8 }}
-      data-component="messages-generated-msg-panel"
-      className="min-h-0 space-y-4"
-    >
-      <div
-        data-component="messages-generated-msg-detail-grid"
-        className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]"
+    <>
+      <motion.div
+        initial={{ opacity: 0, filter: "blur(10px)" }}
+        animate={{ opacity: 1, filter: "blur(0px)" }}
+        transition={{ duration: 0.8 }}
+        data-component="messages-generated-msg-panel"
+        className="min-h-0 space-y-4"
       >
-        {detailGridContent}
-      </div>
-
-      {children ? (
         <div
-          data-component="messages-generated-msg-actions"
-          className="rounded-[20px] border border-v3-border bg-white p-5"
+          data-component="messages-generated-msg-detail-grid"
+          className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]"
         >
-          {children}
+          {detailGridContent}
         </div>
-      ) : null}
-    </motion.div>
+
+        {children ? (
+          <AppContentCard
+            data-component="messages-generated-msg-actions"
+            variant="outlined"
+            contentClassName="block"
+          >
+            {children}
+          </AppContentCard>
+        ) : null}
+      </motion.div>
+      {copySuccessNotification}
+    </>
   );
 });

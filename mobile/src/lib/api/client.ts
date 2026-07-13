@@ -150,11 +150,14 @@ api.interceptors.response.use(
             } catch (refreshError) {
                 processQueue(authFailedQueue, refreshError as AxiosError);
 
-                // If refresh fails, redirect to login (unless already on auth page)
+                // If refresh fails, redirect to login (unless already on auth page).
+                // The no-login feedback wizard (/feedback/[token]) must never bounce to
+                // /login — global shell requests 401 there by design.
                 if (!isRedirectingToLogin) {
                     const currentPath = window.location.pathname;
                     const isAuthPage = isPublicAuthPath(currentPath);
-                    if (!isAuthPage) {
+                    const isNoLoginWizard = currentPath.startsWith("/feedback");
+                    if (!isAuthPage && !isNoLoginWizard) {
                         isRedirectingToLogin = true;
                         window.location.href = '/login';
                     }

@@ -7,6 +7,7 @@ import { useFilteredClients, useDeleteClient } from "@/hooks/useClients";
 import { Client, DocumentStatus } from "@/lib/client/types";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
 import { ClientFormDialog } from "@/components/app/clients/ClientFormDialog";
+import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -86,6 +87,7 @@ export default function FilteredClientsPage() {
     const [detailModalOpen, setDetailModalOpen] = useState(false);
     const [editingClient, setEditingClient] = useState<Client | null>(null);
     const [formDialogOpen, setFormDialogOpen] = useState(false);
+    const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
 
     const { data: clients, isLoading, error } = useFilteredClients(filter || "");
     const deleteClient = useDeleteClient();
@@ -105,14 +107,19 @@ export default function FilteredClientsPage() {
         setDetailModalOpen(false);
     };
 
-    const handleDelete = async (id: number) => {
-        if (window.confirm("정말 삭제하시겠습니까?")) {
-            try {
-                await deleteClient.mutateAsync(id);
-                setDetailModalOpen(false);
-            } catch (err) {
-                console.error("Failed to delete client:", err);
-            }
+    const handleDeleteRequest = (id: number) => {
+        setDeleteTargetClientId(id);
+    };
+
+    const handleDeleteConfirm = async () => {
+        if (deleteTargetClientId === null) return;
+
+        try {
+            await deleteClient.mutateAsync(deleteTargetClientId);
+            setDetailModalOpen(false);
+            setDeleteTargetClientId(null);
+        } catch (err) {
+            console.error("Failed to delete client:", err);
         }
     };
 
@@ -184,7 +191,7 @@ export default function FilteredClientsPage() {
                 onClose={() => setDetailModalOpen(false)}
                 client={selectedClient}
                 onEdit={handleEdit}
-                onDelete={handleDelete}
+                onDelete={handleDeleteRequest}
             />
 
             <ClientFormDialog
@@ -194,6 +201,21 @@ export default function FilteredClientsPage() {
                     setEditingClient(null);
                 }}
                 client={editingClient}
+            />
+
+            <ApprovalTwoButtonModal
+                open={deleteTargetClientId !== null}
+                onOpenChange={(open) => {
+                    if (!open) setDeleteTargetClientId(null);
+                }}
+                dataComponent="clients-filtered-delete-approval"
+                title="고객을 삭제하시겠습니까?"
+                description="삭제한 고객 정보는 복구할 수 없습니다."
+                approvalLabel="삭제"
+                pendingLabel="삭제 중..."
+                approvalVariant="destructive"
+                isPending={deleteClient.isPending}
+                onApprove={() => void handleDeleteConfirm()}
             />
         </section>
     );

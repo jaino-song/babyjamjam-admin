@@ -3,6 +3,7 @@ import { EmployeeEntity } from "domain/entities/employee.entity";
 import { IEmployeeRepository } from "domain/repositories/employee.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { EmployeeMapper } from "infrastructure/database/mapper/employee.mapper";
+import { normalizePhone } from "application/utils/normalize-phone";
 
 @Injectable()
 export class SbEmployeeRepository implements IEmployeeRepository {
@@ -21,6 +22,18 @@ export class SbEmployeeRepository implements IEmployeeRepository {
             where: { id, branchId: branchid },
         });
         return employee ? EmployeeMapper.toDomain(employee) : null;
+    }
+
+    async findByPhone(branchid: string, normalizedPhone: string): Promise<EmployeeEntity | null> {
+        const candidates = await this.prismaService.employee.findMany({
+            where: { branchId: branchid },
+            select: { id: true, phone: true },
+        });
+        const matched = candidates.find(
+            (row) => normalizePhone(row.phone) === normalizedPhone,
+        );
+        if (!matched) return null;
+        return this.findById(branchid, matched.id);
     }
 
     async create(branchid: string, employee: EmployeeEntity): Promise<EmployeeEntity> {

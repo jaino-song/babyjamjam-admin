@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { X } from "lucide-react";
+import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
@@ -13,6 +14,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog";
+import { APP_DIALOG_FLUSH_CONTENT_CLASS_NAME } from "@/components/ui/app-surface";
 import {
     Table,
     TableBody,
@@ -71,6 +73,7 @@ export function FilteredClientsDialog({
     const [detailModalOpen, setDetailModalOpen] = useState(false);
     const [editingClient, setEditingClient] = useState<Client | null>(null);
     const [formDialogOpen, setFormDialogOpen] = useState(false);
+    const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
 
     const { data: filteredClients, isLoading: filteredLoading, error: filteredError } =
         useFilteredClients(filterType || "");
@@ -102,17 +105,22 @@ export function FilteredClientsDialog({
         setDetailModalOpen(false);
     };
 
-    const handleDelete = async (id: number) => {
-        if (window.confirm("정말 삭제하시겠습니까?")) {
-            try {
-                await deleteClient.mutateAsync(id);
-                setDetailModalOpen(false);
-                if (isIndividualClient) {
-                    onClose();
-                }
-            } catch (err) {
-                console.error("Failed to delete client:", err);
+    const handleDeleteRequest = (id: number) => {
+        setDeleteTargetClientId(id);
+    };
+
+    const handleDeleteConfirm = async () => {
+        if (deleteTargetClientId === null) return;
+
+        try {
+            await deleteClient.mutateAsync(deleteTargetClientId);
+            setDetailModalOpen(false);
+            setDeleteTargetClientId(null);
+            if (isIndividualClient) {
+                onClose();
             }
+        } catch (err) {
+            console.error("Failed to delete client:", err);
         }
     };
 
@@ -124,7 +132,10 @@ export function FilteredClientsDialog({
     return (
         <>
             <Dialog open={open} onOpenChange={(open: boolean) => !open && onClose()}>
-                <DialogContent data-component="admin-filtered-clients-dialog" className="max-w-lg max-h-[80vh] p-0">
+                <DialogContent
+                    data-component="admin-filtered-clients-dialog"
+                    className={`max-w-lg max-h-[80vh] ${APP_DIALOG_FLUSH_CONTENT_CLASS_NAME}`}
+                >
                     <DialogHeader data-component="admin-filtered-clients-header" className="px-4 py-3 flex flex-row items-center justify-between border-b">
                         <DialogTitle className="font-semibold">{title}</DialogTitle>
                         <DialogDescription className="sr-only">
@@ -192,13 +203,28 @@ export function FilteredClientsDialog({
                 onClose={() => setDetailModalOpen(false)}
                 client={selectedClient}
                 onEdit={handleEdit}
-                onDelete={handleDelete}
+                onDelete={handleDeleteRequest}
             />
 
             <ClientFormDialog
                 open={formDialogOpen}
                 onClose={handleFormDialogClose}
                 client={editingClient}
+            />
+
+            <ApprovalTwoButtonModal
+                open={deleteTargetClientId !== null}
+                onOpenChange={(open) => {
+                    if (!open) setDeleteTargetClientId(null);
+                }}
+                dataComponent="filtered-clients-delete-approval"
+                title="고객을 삭제하시겠습니까?"
+                description="삭제한 고객 정보는 복구할 수 없습니다."
+                approvalLabel="삭제"
+                pendingLabel="삭제 중..."
+                approvalVariant="destructive"
+                isPending={deleteClient.isPending}
+                onApprove={() => void handleDeleteConfirm()}
             />
         </>
     );

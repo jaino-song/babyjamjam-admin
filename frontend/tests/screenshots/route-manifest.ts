@@ -25,7 +25,6 @@ export const frontendScreenshotRoutes: ScreenshotRoute[] = [
   { slug: "contracts-creation", path: "/contracts/creation", auth: "authenticated" },
   { slug: "dashboard", path: "/dashboard", auth: "authenticated" },
   { slug: "employees", path: "/employees", auth: "authenticated" },
-  { slug: "employees-new", path: "/employees/new", auth: "authenticated" },
   { slug: "files", path: "/files", auth: "authenticated" },
   { slug: "logout", path: "/logout", auth: "authenticated" },
   { slug: "messages", path: "/messages", auth: "authenticated" },

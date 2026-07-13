@@ -1,7 +1,10 @@
-import { Injectable, Logger, Inject } from "@nestjs/common";
+import { Injectable, Logger, Inject, Optional } from "@nestjs/common";
 import { UpdateEformsignDocStatusUsecase } from "application/usecases/eformsign-doc/update-eformsign-doc-status.usecase";
 import { LinkDocumentToClientUsecase } from "application/usecases/eformsign-doc/link-document-to-client.usecase";
-import { SyncClientEndDateUsecase } from "application/usecases/eformsign-doc/sync-client-end-date.usecase";
+import {
+    SyncClientEndDateUsecase,
+    type SyncedClientEndDate,
+} from "application/usecases/eformsign-doc/sync-client-end-date.usecase";
 import { EformsignWebhookPayloadDto } from "interface/dto/eformsign-webhook.dto";
 import { AlimtalkService } from "./alimtalk.service";
 import { EformsignDocsEventBus } from "./eformsign-docs-event-bus.service";
@@ -15,6 +18,12 @@ import {
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import { EMPLOYEE_SCHEDULE_REPOSITORY, IEmployeeScheduleRepository } from "domain/repositories/employee-schedule.repository.interface";
 import { EMPLOYEE_REPOSITORY, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
+import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
+import { PrismaService } from "infrastructure/database/prisma.service";
+import {
+    SERVICE_RECORD_CASE_STATUS,
+    ServiceRecordLifecycleService,
+} from "./service-record-lifecycle.service";
 
 /**
  * Eformsign document status codes (from document.status field)
@@ -81,6 +90,10 @@ const STATUS_NAME_TO_CODE: Record<string, string> = {
 
 const COMPLETED_STATUS_CODES = new Set(["003", "012", "022", "032", "050", "062", "072", "092"]);
 const REJECTED_STATUS_CODES = new Set(["011", "021", "031", "040", "042", "045", "047", "049", "061", "071", "080"]);
+const PROVIDER_REVIEW_STEP_TYPES = new Set(["06"]);
+const PROVIDER_REVIEW_OWNER_KEYWORDS = ["제공기관", "관리자", "담당자"];
+const PROVIDER_REVIEW_ACTION_KEYWORDS = ["확인", "검토"];
+const CUSTOMER_STEP_KEYWORDS = ["이용자", "고객", "산모"];
 
 @Injectable()
 export class EformsignWebhookService {
@@ -103,7 +116,20 @@ export class EformsignWebhookService {
         private readonly employeeScheduleRepository: IEmployeeScheduleRepository,
         @Inject(EMPLOYEE_REPOSITORY)
         private readonly employeeRepository: IEmployeeRepository,
+        @Optional() private readonly prisma?: PrismaService,
+        @Optional() private readonly serviceRecordLifecycle?: ServiceRecordLifecycleService,
     ) {}
+
+    /**
+     * BJJ-247 gate: is this document the daily-feedback snapshot template?
+     * A feedback document's completion must NOT trigger contract-completion side
+     * effects (link eDocId / sync endDate / contract alimtalk). No-op (returns false)
+     * when EFORMSIGN_FEEDBACK_TEMPLATE_ID is unset, preserving existing behavior.
+     */
+    private isFeedbackTemplate(templateId?: string): boolean {
+        const feedbackTemplateId = process.env["EFORMSIGN_FEEDBACK_TEMPLATE_ID"];
+        return Boolean(feedbackTemplateId && templateId && templateId === feedbackTemplateId);
+    }
 
     async processWebhook(payload: EformsignWebhookPayloadDto): Promise<void> {
         const { event_type, webhook_id, document, ready_document_pdf, document_action } = payload;
@@ -151,7 +177,7 @@ export class EformsignWebhookService {
         branchid: string,
         pdfEvent: NonNullable<EformsignWebhookPayloadDto["ready_document_pdf"]>
     ): Promise<void> {
-        const { document_id: documentId, document_status: status, workflow_seq, workflow_name } = pdfEvent;
+        const { document_id: documentId, document_status: status, template_id, workflow_seq, workflow_name } = pdfEvent;
 
         this.logger.log(`PDF ready event: ${documentId} -> status=${status}, workflow=${workflow_name}`);
 
@@ -164,17 +190,27 @@ export class EformsignWebhookService {
                 "ready_document_pdf",
             );
             if (!claimed) {
+                if (this.isFeedbackTemplate(template_id)) {
+                    await this.handleFeedbackSnapshotCompleted(branchid, documentId);
+                }
                 return;
             }
 
-            await this.handleCompletedDocument(branchid, documentId, workflow_name, "PDF event");
+            if (this.isFeedbackTemplate(template_id)) {
+                this.logger.log(
+                    `Document ${documentId} is a feedback snapshot (template ${template_id}); skipping contract-completion side effects (BJJ-247 gate).`
+                );
+                await this.handleFeedbackSnapshotCompleted(branchid, documentId);
+            } else {
+                await this.handleCompletedDocument(branchid, documentId, workflow_name, "PDF event");
+            }
             this.eventBus.emit({ branchId: branchid, documentId, reason: `pdf:${status}` });
             return;
         }
 
         const { statusType, statusDetail } = this.mapStatus(status);
         try {
-            await this.updateStatusUsecase.execute(branchid, {
+            await this.updateStatusAndLinkClient(branchid, {
                 documentId,
                 statusType,
                 statusDetail,
@@ -214,7 +250,7 @@ export class EformsignWebhookService {
         const statusDetail = isOpenAction ? "서명 페이지 열림" : `액션: ${action}`;
 
         try {
-            await this.updateStatusUsecase.execute(branchid, {
+            await this.updateStatusAndLinkClient(branchid, {
                 documentId,
                 statusType: "020", // In-progress/opened
                 statusDetail,
@@ -240,7 +276,7 @@ export class EformsignWebhookService {
         branchid: string,
         document: NonNullable<EformsignWebhookPayloadDto["document"]>
     ): Promise<void> {
-        const { id: documentId, status, document_title, workflow_seq, workflow_name } = document;
+        const { id: documentId, status, document_title, template_id, workflow_seq, workflow_name } = document;
 
         this.logger.log(`Document event: ${documentId} -> status=${status}, title=${document_title}`);
 
@@ -255,11 +291,14 @@ export class EformsignWebhookService {
                 status,
             );
             if (!claimed) {
+                if (this.isFeedbackTemplate(template_id)) {
+                    await this.handleFeedbackSnapshotCompleted(branchid, documentId);
+                }
                 return;
             }
         } else {
             try {
-                await this.updateStatusUsecase.execute(branchid, {
+                await this.updateStatusAndLinkClient(branchid, {
                     documentId,
                     statusType,
                     statusDetail,
@@ -282,7 +321,14 @@ export class EformsignWebhookService {
         await this.notifyReviewRequiredIfNeeded(branchid, documentId, document_title, statusType);
 
         if (status === DOCUMENT_STATUS.DOC_COMPLETE) {
-            await this.handleCompletedDocument(branchid, documentId, workflow_name, "document event");
+            if (this.isFeedbackTemplate(template_id)) {
+                this.logger.log(
+                    `Document ${documentId} is a feedback snapshot (template ${template_id}); skipping contract-completion side effects (BJJ-247 gate).`
+                );
+                await this.handleFeedbackSnapshotCompleted(branchid, documentId);
+            } else {
+                await this.handleCompletedDocument(branchid, documentId, workflow_name, "document event");
+            }
         }
 
         this.eventBus.emit({ branchId: branchid, documentId, reason: `doc:${status}` });
@@ -322,12 +368,33 @@ export class EformsignWebhookService {
         return false;
     }
 
+    private async updateStatusAndLinkClient(
+        branchid: string,
+        params: Parameters<UpdateEformsignDocStatusUsecase["execute"]>[1],
+    ): Promise<void> {
+        await this.updateStatusUsecase.execute(branchid, params);
+        try {
+            await this.linkDocumentUsecase.execute(branchid, params.documentId);
+        } catch (error) {
+            this.logger.warn(`Failed to keep client linked for document ${params.documentId}: ${error}`);
+        }
+    }
+
     private async handleCompletedDocument(
         branchid: string,
         documentId: string,
         workflowName: string,
         source: string,
     ): Promise<void> {
+        const doc = await this.eformsignDocRepository.findByDocumentId(branchid, documentId);
+        if (doc?.documentKind === EFORMSIGN_DOCUMENT_KIND.SERVICE_FEEDBACK_SNAPSHOT) {
+            this.logger.log(
+                `Document ${documentId} is a feedback snapshot row; skipping contract-completion side effects (${source}).`,
+            );
+            await this.handleFeedbackSnapshotCompleted(branchid, documentId);
+            return;
+        }
+
         this.logger.log(`Document ${documentId} completed (${source}), linking to client`);
 
         try {
@@ -336,11 +403,27 @@ export class EformsignWebhookService {
 
             try {
                 const accessTokenResponse = await this.eformsignApiClient.getAccessToken(Date.now());
-                await this.syncClientEndDateUsecase.execute(
-                    branchid,
-                    documentId,
-                    accessTokenResponse.oauth_token.access_token
-                );
+                if (this.serviceRecordLifecycle) {
+                    await this.syncClientEndDateUsecase.execute(
+                        branchid,
+                        documentId,
+                        accessTokenResponse.oauth_token.access_token,
+                        {
+                            persist: (target: SyncedClientEndDate) =>
+                                this.serviceRecordLifecycle!.syncEndDateFromContract({
+                                    branchId: branchid,
+                                    clientId: target.clientId,
+                                    endDate: target.endDate,
+                                }),
+                        },
+                    );
+                } else {
+                    await this.syncClientEndDateUsecase.execute(
+                        branchid,
+                        documentId,
+                        accessTokenResponse.oauth_token.access_token,
+                    );
+                }
             } catch (error) {
                 this.logger.error(`Failed to sync end date for document ${documentId}: ${error}`);
             }
@@ -352,6 +435,49 @@ export class EformsignWebhookService {
             );
         } catch (error) {
             this.logger.error(`Failed to link document ${documentId} to client: ${error}`);
+        }
+    }
+
+    private async handleFeedbackSnapshotCompleted(
+        branchId: string,
+        documentId: string,
+    ): Promise<void> {
+        if (!this.prisma) return;
+        const document = await this.prisma.eformsign_doc.findFirst({
+            where: {
+                branchId,
+                documentId,
+                documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_FEEDBACK_SNAPSHOT,
+                serviceRecordCaseId: { not: null },
+            },
+            select: { serviceRecordCaseId: true },
+        });
+        if (!document?.serviceRecordCaseId) return;
+
+        const incompleteDocuments = await this.prisma.eformsign_doc.count({
+            where: {
+                branchId,
+                serviceRecordCaseId: document.serviceRecordCaseId,
+                documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_FEEDBACK_SNAPSHOT,
+                statusType: { notIn: [...COMPLETED_STATUS_CODES] },
+            },
+        });
+        if (incompleteDocuments > 0) return;
+
+        const completed = await this.prisma.service_record_case.updateMany({
+            where: {
+                id: document.serviceRecordCaseId,
+                branchId,
+                status: SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED,
+            },
+            data: {
+                status: SERVICE_RECORD_CASE_STATUS.COMPLETED,
+                documentsCompletedAt: new Date(),
+                version: { increment: 1 },
+            },
+        });
+        if (completed.count === 1) {
+            this.logger.log(`Service record documents completed: case=${document.serviceRecordCaseId}`);
         }
     }
 
@@ -435,8 +561,28 @@ export class EformsignWebhookService {
             return false;
         }
 
-        const recipients = currentStatus?.step_recipients ?? [];
-        return recipients.length > 0 && recipients.every((recipient) => recipient.recipient_type === "01");
+        return this.isProviderReviewStep(currentStatus);
+    }
+
+    private isProviderReviewStep(
+        currentStatus: EformsignApiDocumentResponse["current_status"] | null | undefined
+    ): boolean {
+        const stepType = currentStatus?.step_type?.trim() ?? "";
+        const stepName = currentStatus?.step_name?.trim() ?? "";
+
+        if (PROVIDER_REVIEW_STEP_TYPES.has(stepType)) {
+            return true;
+        }
+        if (!stepName) {
+            return false;
+        }
+        if (CUSTOMER_STEP_KEYWORDS.some((keyword) => stepName.includes(keyword))) {
+            return false;
+        }
+
+        const hasProviderOwner = PROVIDER_REVIEW_OWNER_KEYWORDS.some((keyword) => stepName.includes(keyword));
+        const hasReviewAction = PROVIDER_REVIEW_ACTION_KEYWORDS.some((keyword) => stepName.includes(keyword));
+        return hasProviderOwner && hasReviewAction;
     }
 
     private async notifyReviewRequiredIfNeeded(

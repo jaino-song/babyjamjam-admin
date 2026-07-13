@@ -13,7 +13,7 @@ import { AligoService } from "application/services/aligo.service";
 import { SendSmsMessageDto } from "interface/dto/message-delivery.dto";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { SMS_DELIVERY_RETRY_DELAY_MS } from "domain/entities/alimtalk-log.entity";
+import { SMS_DELIVERY_RETRY_DELAY_MS } from "domain/entities/message-log.entity";
 
 const ALIGO_SCHEDULE_MIN_LEAD_MS = 10 * 60 * 1000;
 
@@ -101,7 +101,7 @@ export class MessageDeliveryController {
         }
 
         return {
-            provider: "aligo",
+            provider: "aligo_sms",
             triggerType,
             request: {
                 senderPhone: result.request.senderPhone,
@@ -145,13 +145,15 @@ export class MessageDeliveryController {
             : isPartial
                 ? `부분 발송 (성공 ${Number(result.response.success_cnt ?? 0)}건 / 실패 ${Number(result.response.error_cnt ?? 0)}건). 실패 수신자를 식별할 수 없어 자동 재전송을 중단했습니다. 실패자에게 수동으로 재발송해 주세요.`
                 : result.response.message;
-        await this.prisma.alimtalk_log.create({
+        await this.prisma.message_log.create({
             data: {
                 branchId: branchId || null,
                 provider: "aligo_sms",
                 templateKey: dto.title?.trim() || "manual_sms",
                 receiver: result.request.receiver,
                 clientId: dto.clientId ?? null,
+                recipientName: dto.recipientName ?? null,
+                recipientPhone: result.request.receiver,
                 messageBody: dto.message,
                 variables: {
                     recipientName: dto.recipientName ?? null,
@@ -181,13 +183,15 @@ export class MessageDeliveryController {
         scheduledTime?: string,
     ) {
         const errorMessage = this.formatErrorMessage(error);
-        await this.prisma.alimtalk_log.create({
+        await this.prisma.message_log.create({
             data: {
                 branchId: branchId || null,
                 provider: "aligo_sms",
                 templateKey: dto.title?.trim() || "manual_sms",
                 receiver: dto.receiver,
                 clientId: dto.clientId ?? null,
+                recipientName: dto.recipientName ?? null,
+                recipientPhone: dto.receiver,
                 messageBody: dto.message,
                 variables: {
                     recipientName: dto.recipientName ?? null,

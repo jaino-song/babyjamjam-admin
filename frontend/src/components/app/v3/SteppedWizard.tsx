@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { ChevronLeft, ChevronRight, Check } from "lucide-react";
+import { Check } from "lucide-react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { SurfaceCard } from "@/components/ui/surface-card";
 import { Spinner } from "@/components/ui/spinner";
@@ -37,10 +37,6 @@ export interface SteppedWizardProps {
 
 const STEPPED_WIZARD_CARD_CLASS_NAME =
   "gap-5 !p-5 sm:!p-6 [&_[data-component='stepped-wizard-title']]:!text-[1.72rem] md:[&_[data-component='stepped-wizard-title']]:!text-[1.5rem] [&_[data-component='stepped-wizard-subtitle']]:!max-w-[30ch] [&_[data-component='stepped-wizard-subtitle']]:!text-[0.82rem] md:[&_[data-component='stepped-wizard-subtitle']]:!text-[0.76rem]";
-const STEPPED_WIZARD_PRIMARY_BUTTON_CLASS_NAME =
-  "h-10 gap-1.5 px-5 text-[0.72rem] font-bold md:text-[0.77rem]";
-const STEPPED_WIZARD_SECONDARY_BUTTON_CLASS_NAME =
-  "h-10 gap-1.5 px-5 text-[0.72rem] font-semibold md:text-[0.77rem]";
 
 function DesktopStepIndicator({
   steps,
@@ -184,7 +180,6 @@ export function SteppedWizard({
           onClick={onBack}
           className="inline-flex items-center gap-1.5 text-[0.85rem] md:text-[0.85rem] text-[0.8rem] font-semibold text-v3-text-muted hover:text-v3-primary transition-colors mb-4 md:mb-6 self-start"
         >
-          <ChevronLeft className="w-5 h-5 md:w-5 md:h-5 w-[18px] h-[18px]" />
           {backLabel}
         </button>
       )}
@@ -249,6 +244,10 @@ export function SteppedWizard({
             nextDataComponent={isLastStep ? "stepped-wizard-complete-btn" : "stepped-wizard-next-btn"}
             prevVariant="neutral"
             nextVariant="positive"
+            prevSize="sm"
+            nextSize="sm"
+            prevWidth="sm"
+            nextWidth="sm"
             prevLabel={prevLabel}
             nextLabel={isSubmitting ? "" : isLastStep ? completeLabel : nextLabel}
             prevDisabled={isFirstStep}
@@ -260,22 +259,11 @@ export function SteppedWizard({
               isSubmitting ? (
                 <Spinner size="sm" />
               ) : (
-                <>
-                  {isLastStep ? completeLabel : nextLabel}
-                  <ChevronRight className="h-4 w-4" />
-                </>
+                isLastStep ? completeLabel : nextLabel
               )
             }
             stickyOnMobile={isMobile}
-            className="mt-1"
-            prevClassName={cn(
-              STEPPED_WIZARD_SECONDARY_BUTTON_CLASS_NAME,
-              "w-1/4",
-            )}
-            nextClassName={cn(
-              STEPPED_WIZARD_PRIMARY_BUTTON_CLASS_NAME,
-              isLastStep ? "flex-1 md:min-w-[132px] md:flex-none" : "w-1/4",
-            )}
+            className="mt-1 gap-0"
           />
         </div>
       </SurfaceCard>

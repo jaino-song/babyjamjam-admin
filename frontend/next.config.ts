@@ -1,4 +1,5 @@
 import path from "path";
+import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
 
 function readPositiveInt(value: string | undefined): number | undefined {
@@ -26,4 +27,19 @@ const nextConfig: NextConfig = {
     },
 };
 
-export default nextConfig;
+const hasSentryBuildCredentials = Boolean(
+    process.env.SENTRY_AUTH_TOKEN && process.env.SENTRY_ORG && process.env.SENTRY_PROJECT,
+);
+
+export default withSentryConfig(nextConfig, {
+    authToken: process.env.SENTRY_AUTH_TOKEN,
+    org: process.env.SENTRY_ORG,
+    project: process.env.SENTRY_PROJECT,
+    silent: !process.env.CI || !hasSentryBuildCredentials,
+    widenClientFileUpload: true,
+    sourcemaps: {
+        deleteSourcemapsAfterUpload: true,
+    },
+    tunnelRoute: "/monitoring",
+    telemetry: false,
+});

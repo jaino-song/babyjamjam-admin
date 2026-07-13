@@ -285,7 +285,7 @@ export function SidebarNotifications() {
                                   {item.actionReason}
                                 </StatusPill>
                               ) : null}
-                              <span className="absolute left-1/2 top-full mt-[calc(4px*var(--v3-ui-scale,1))] inline-flex -translate-x-1/2 items-center whitespace-nowrap text-center text-[calc(10.4px*var(--v3-ui-scale,1))] font-medium text-v3-text-muted">
+                              <span className="absolute left-1/2 top-full mt-[calc(4px*var(--glint-ui-scale,1))] inline-flex -translate-x-1/2 items-center whitespace-nowrap text-center text-[calc(10.4px*var(--glint-ui-scale,1))] font-medium text-v3-text-muted">
                                 {item.timeLabel}
                               </span>
                             </div>
@@ -330,7 +330,7 @@ export function SidebarNotifications() {
         aria-label="알림 열기"
         aria-expanded={open}
         className={cn(
-          "relative z-50 h-[calc(32px*var(--v3-ui-scale,1))] w-[calc(32px*var(--v3-ui-scale,1))] rounded-full border-0 bg-white text-v3-primary shadow-none [&_svg]:!size-[calc(20px*var(--v3-ui-scale,1))]",
+          "relative z-50 h-[calc(32px*var(--glint-ui-scale,1))] w-[calc(32px*var(--glint-ui-scale,1))] rounded-full border-0 bg-white text-v3-primary shadow-none [&_svg]:!size-[calc(20px*var(--glint-ui-scale,1))]",
           "hover:bg-v3-primary-light hover:text-v3-primary"
         )}
         onClick={() => setOpen((current) => !current)}
@@ -339,7 +339,7 @@ export function SidebarNotifications() {
         {unreadCount > 0 ? (
           <span
             data-component="sidebar-notifications-badge"
-            className="absolute -right-[calc(4px*var(--v3-ui-scale,1))] -top-[calc(4px*var(--v3-ui-scale,1))] inline-flex h-[calc(16px*var(--v3-ui-scale,1))] w-[calc(16px*var(--v3-ui-scale,1))] items-center justify-center rounded-full bg-v3-primary p-0 text-[calc(8.8px*var(--v3-ui-scale,1))] font-bold leading-none text-white"
+            className="absolute -right-[calc(4px*var(--glint-ui-scale,1))] -top-[calc(4px*var(--glint-ui-scale,1))] inline-flex h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] items-center justify-center rounded-full bg-v3-primary p-0 text-[calc(8.8px*var(--glint-ui-scale,1))] font-bold leading-none text-white"
           >
             {unreadCount > 9 ? "9+" : unreadCount}
           </span>

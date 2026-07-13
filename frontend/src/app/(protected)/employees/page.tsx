@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { cn } from "@/lib/utils";
 import {
     Users,
     UserCheck,
@@ -24,6 +25,7 @@ import {
     EmployeeFormDialog,
     EmployeeFormPanel,
 } from "@/components/app/employees/EmployeeFormDialog";
+import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import {
     StatsBar,
     SplitLayout,
@@ -79,6 +81,12 @@ function getOpenToNextWorkBadge(openToNextWork: boolean) {
     );
 }
 
+function getEmployeeAvatarClassName(openToNextWork: boolean): string {
+    return openToNextWork
+        ? "border border-[hsl(137,34%,84%)] bg-[hsl(137,60%,94%)] text-v3-green"
+        : "border border-[hsl(220,20%,90%)] bg-[hsl(220,20%,97%)] text-v3-text-muted";
+}
+
 function formatDate(dateStr: string | null | undefined): string {
     if (!dateStr) return "-";
     return new Date(dateStr).toLocaleDateString("ko-KR");
@@ -101,6 +109,7 @@ export default function EmployeesPage() {
     const [formDialogOpen, setFormDialogOpen] = useState(false);
     const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
     const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+    const [deleteTargetEmployeeId, setDeleteTargetEmployeeId] = useState<number | null>(null);
 
     const {
         employees,
@@ -139,22 +148,24 @@ export default function EmployeesPage() {
         setFormDialogOpen(true);
     };
 
-    const handleDelete = async (id: number): Promise<boolean> => {
-        if (window.confirm("정말 삭제하시겠습니까?")) {
-            try {
-                await deleteEmployee.mutateAsync(id);
+    const handleDeleteRequest = (id: number) => {
+        setDeleteTargetEmployeeId(id);
+    };
 
-                if (selectedEmployee?.id === id) {
-                    setSelectedEmployee(null);
-                }
+    const handleDeleteConfirm = async () => {
+        if (deleteTargetEmployeeId === null) return;
 
-                return true;
-            } catch (err) {
-                console.error("Failed to delete employee:", err);
-                return false;
+        try {
+            await deleteEmployee.mutateAsync(deleteTargetEmployeeId);
+
+            if (selectedEmployee?.id === deleteTargetEmployeeId) {
+                setSelectedEmployee(null);
             }
+
+            setDeleteTargetEmployeeId(null);
+        } catch (err) {
+            console.error("Failed to delete employee:", err);
         }
-        return false;
     };
 
     const handleFormDialogClose = () => {
@@ -210,17 +221,17 @@ export default function EmployeesPage() {
                             label="직원 추가"
                             onClick={handleAddNew}
                             data-component="employees-header-add"
-                            className="text-[calc(12px*var(--v3-ui-scale,1))]"
+                            className="text-[calc(12px*var(--glint-ui-scale,1))]"
                         />
                     }
-                >
-                    {!isLoading && employees.length === 0 ? (
+                    emptyState={!isLoading && employees.length === 0 ? (
                         <ListEmptyState
                             name="employees-empty"
                             message={search || filter !== "all" ? "검색 결과가 없습니다" : "등록된 직원이 없습니다"}
                         />
-                    ) : (
-                        <AnimatedSlotList<Employee>
+                    ) : undefined}
+                >
+                    <AnimatedSlotList<Employee>
                             items={employees}
                             isLoading={isLoading}
                             loadingCount={6}
@@ -258,12 +269,11 @@ export default function EmployeesPage() {
                                     <AnimatedSlotListItemContent
                                         dataComponent="employees-list-item"
                                         icon={UserCheck}
-                                        iconContainerClassName="bg-gradient-to-br from-v3-primary to-purple-500 text-white"
-                                        iconClassName="text-white"
+                                        iconContainerClassName={getEmployeeAvatarClassName(employee.openToNextWork)}
                                         title={employee.name}
                                         subtitle={
                                             <span className="flex items-center gap-1 truncate">
-                                                <Phone className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(12px*var(--v3-ui-scale,1))]" />
+                                                <Phone className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))]" />
                                                 {formatPhoneNumber(employee.phone)}
                                             </span>
                                         }
@@ -272,7 +282,6 @@ export default function EmployeesPage() {
                                 );
                             }}
                         />
-                    )}
                 </ListPanel>
 
                 {isCreatingEmployee ? (
@@ -302,7 +311,7 @@ export default function EmployeesPage() {
                     <EmployeeDetail
                         employee={selectedEmployee}
                         onEdit={handleEdit}
-                        onDelete={handleDelete}
+                        onDelete={handleDeleteRequest}
                     />
                 ) : (
                     <EmptyState name="employees-empty-detail" icon={Users} message="직원을 선택하면 상세 정보가 표시됩니다" />
@@ -314,6 +323,21 @@ export default function EmployeesPage() {
                 onClose={handleFormDialogClose}
                 employee={editingEmployee}
             />
+
+            <ApprovalTwoButtonModal
+                open={deleteTargetEmployeeId !== null}
+                onOpenChange={(open) => {
+                    if (!open) setDeleteTargetEmployeeId(null);
+                }}
+                dataComponent="employees-delete-approval"
+                title="직원을 삭제하시겠습니까?"
+                description="삭제한 직원 정보는 복구할 수 없습니다."
+                approvalLabel="삭제"
+                pendingLabel="삭제 중..."
+                approvalVariant="destructive"
+                isPending={deleteEmployee.isPending}
+                onApprove={() => void handleDeleteConfirm()}
+            />
         </PageSection>
     );
 }
@@ -321,15 +345,15 @@ export default function EmployeesPage() {
 interface EmployeeDetailProps {
     employee: Employee;
     onEdit: (employee: Employee) => void;
-    onDelete: (id: number) => Promise<boolean>;
+    onDelete: (id: number) => void;
 }
 
 function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
     return (
         <DetailPanel
             avatar={
-                <div data-component="employees-detail-avatar" className="w-12 h-12 rounded-[16px] bg-gradient-to-br from-v3-primary to-purple-500 flex items-center justify-center text-white shadow-lg shrink-0">
-                    <UserCheck className="w-5 h-5 shrink-0 transition-colors text-white" aria-hidden="true" />
+                <div data-component="employees-detail-avatar" className={cn("w-12 h-12 rounded-[16px] flex items-center justify-center shadow-lg shrink-0", getEmployeeAvatarClassName(employee.openToNextWork))}>
+                    <UserCheck className="w-5 h-5 shrink-0 transition-colors" aria-hidden="true" />
                 </div>
             }
             title={employee.name}
@@ -350,6 +374,7 @@ function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
                     <DropdownMenuTrigger asChild>
                         <button
                             type="button"
+                            aria-label="직원 작업 메뉴 열기"
                             className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors"
                         >
                             <MoreVertical className="w-5 h-5 text-v3-text-muted" />
@@ -361,9 +386,8 @@ function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
                             수정
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                            onClick={() => {
-                                void onDelete(employee.id);
-                            }}
+                            data-component="employees-detail-menu-delete"
+                            onClick={() => onDelete(employee.id)}
                             className="gap-2 text-destructive focus:text-destructive"
                         >
                             <Trash2 className="w-4 h-4" />

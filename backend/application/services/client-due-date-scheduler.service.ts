@@ -1,8 +1,9 @@
 import { Injectable, Logger, Optional } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
+import { MessageTriggerService } from "./message-trigger.service";
 import { SchedulerExecutionGuard } from "./scheduler-execution.guard";
+import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 import {
     isTransientPrismaConnectivityError,
     summarizePrismaError,
@@ -34,7 +35,8 @@ export class ClientDueDateSchedulerService {
 
     constructor(
         private readonly prisma: PrismaService,
-        @Optional() private readonly triggerService?: AlimtalkTriggerService,
+        @Optional() private readonly triggerService?: MessageTriggerService,
+        @Optional() private readonly serviceRecordLifecycleService?: ServiceRecordLifecycleService,
     ) {}
 
     @Cron("0 * * * *", { timeZone: KOREA_TIME_ZONE })
@@ -65,27 +67,44 @@ export class ClientDueDateSchedulerService {
     }
 
     async copyUpcomingDueDatesToStartDates(referenceDate = new Date()): Promise<number> {
+        const kstToday = this.getKstDateOnly(referenceDate, 0);
         const upcomingDueDate = this.getKstDateOnly(referenceDate, START_DATE_COPY_LEAD_DAYS);
         const candidates = await this.prisma.client.findMany({
             where: {
-                dueDate: upcomingDueDate,
+                dueDate: {
+                    gte: kstToday,
+                    lte: upcomingDueDate,
+                },
                 startDate: null,
             },
-            select: { id: true, branchId: true },
+            select: { id: true, branchId: true, dueDate: true },
         });
 
         let updatedCount = 0;
         for (const client of candidates) {
-            const result = await this.prisma.client.updateMany({
-                where: {
-                    id: client.id,
-                    dueDate: upcomingDueDate,
-                    startDate: null,
-                },
-                data: {
-                    startDate: upcomingDueDate,
-                },
-            });
+            const result = this.serviceRecordLifecycleService
+                ? await this.prisma.$transaction(async (tx) => {
+                    const updated = await tx.client.updateMany({
+                        where: {
+                            id: client.id,
+                            dueDate: client.dueDate,
+                            startDate: null,
+                        },
+                        data: { startDate: client.dueDate },
+                    });
+                    if (updated.count > 0) {
+                        await this.serviceRecordLifecycleService!.ensureForClient(client.id, tx);
+                    }
+                    return updated;
+                })
+                : await this.prisma.client.updateMany({
+                    where: {
+                        id: client.id,
+                        dueDate: client.dueDate,
+                        startDate: null,
+                    },
+                    data: { startDate: client.dueDate },
+                });
 
             if (result.count === 0) {
                 continue;

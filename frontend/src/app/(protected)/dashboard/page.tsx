@@ -8,25 +8,17 @@ import {
   useDashboardOverview,
 } from "@/hooks/useDashboardStats";
 import { Client } from "@/lib/client/types";
-import { getClientBadgeAvatarClassName, getClientBadges } from "@/lib/client/badges";
 import { getActionRequiredStatus } from "@/lib/client/action-required";
 import { useInitialUser } from "@/providers/UserProvider";
-import { cn } from "@/lib/utils";
 import {
   StatsBar,
   SplitLayout,
   DetailEmptyState,
   DetailPanel,
-  DetailTabs,
-  DetailTabPanels,
-  InfoCard,
-  InfoRow,
-  StatusBadge,
   RecentActivitiesPanel,
   type ActionRequiredItem,
 } from "@/components/app/v3";
-import { useLocale } from "@/providers/LocaleProvider";
-import { t } from "@/lib/i18n/translations";
+import { ClientDetailPanel } from "@/components/app/clients/ClientDetailPanel";
 import {
   Users,
   Calendar,
@@ -50,35 +42,6 @@ const DASHBOARD_STAT_KEYS = [
   { icon: Send, valueKey: "contractsRequired" as const, label: "계약서 필요", colorIndex: 3, counter: "건" },
 ];
 
-const formatDate = (dateStr: string | null): string => {
-  if (!dateStr) return "-";
-  return new Date(dateStr).toLocaleDateString("ko-KR");
-};
-
-const formatPrice = (price: string | null): string => {
-  if (!price) return "-";
-  const cleaned = price.replace(/,/g, "");
-  const num = parseInt(cleaned, 10);
-  if (isNaN(num)) return "-";
-  return `${num.toLocaleString("ko-KR")}원`;
-};
-
-const getDocumentStatusLabel = (status: Client["documentStatus"], locale: ReturnType<typeof useLocale>) => {
-  if (status === null) return t(locale, "clients.form.doc-not-sent");
-
-  const labelMap: Record<Exclude<Client["documentStatus"], null>, string> = {
-    completed: t(locale, "clients.form.doc-completed"),
-    opened: t(locale, "clients.form.doc-opened"),
-    created: t(locale, "clients.form.doc-created"),
-    requested: t(locale, "clients.form.doc-requested"),
-    rejected: t(locale, "clients.form.doc-rejected"),
-    revoked: t(locale, "clients.form.doc-revoked"),
-    deleted: t(locale, "clients.form.doc-deleted"),
-  };
-
-  return labelMap[status];
-};
-
 function isToday(dateStr: string): boolean {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -97,12 +60,11 @@ export default function DashboardPage() {
     refetch: refetchOverview,
   } = useDashboardOverview(50);
   const user = useInitialUser();
-  const locale = useLocale();
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
-  const [activeDetailTab, setActiveDetailTab] = useState("basic");
   const [extraClientPages, setExtraClientPages] = useState<Client[][]>([]);
   const [isFetchingNextClients, setIsFetchingNextClients] = useState(false);
   const dashboardClientIdParam = searchParams.get("clientId");
+
   const dashboardClientId = useMemo(() => {
     if (!dashboardClientIdParam) {
       return null;
@@ -263,39 +225,15 @@ export default function DashboardPage() {
     return clients.find((client) => client.id === selectedClient.id) ?? selectedClient;
   }, [clients, selectedClient]);
 
-  const selectedClientBadges = useMemo(() => {
-    return getClientBadges(selectedClientData);
-  }, [selectedClientData]);
+  const handleScheduleChangeDecided = useCallback((clientId: number) => {
+    setSelectedClient((currentClient) => {
+      if (!currentClient || currentClient.id !== clientId) {
+        return currentClient;
+      }
 
-  const selectedClientAvatarClass = useMemo(() => {
-    return getClientBadgeAvatarClassName(selectedClientBadges[0]);
-  }, [selectedClientBadges]);
-
-  const selectedClientContractInfo = useMemo(() => {
-    if (!selectedClientData) {
-      return null;
-    }
-
-    const isDummyClient = selectedClientData.name.includes("[더미]");
-    const hasContractSignal = Boolean(selectedClientData.eDocId || selectedClientData.documentStatus);
-
-    if (!isDummyClient && !hasContractSignal) {
-      return null;
-    }
-
-    const baseDate = selectedClientData.startDate ? new Date(selectedClientData.startDate) : new Date();
-    const sentDate = new Date(baseDate);
-    sentDate.setDate(baseDate.getDate() - 3);
-
-    return {
-      contractName: isDummyClient ? "더미 산모신생아 서비스 계약서" : "산모신생아 서비스 계약서",
-      documentId: selectedClientData.eDocId ?? `dummy-edoc-${selectedClientData.id}`,
-      documentStatus: getDocumentStatusLabel(selectedClientData.documentStatus, locale),
-      sentDate: formatDate(sentDate.toISOString()),
-      contractPeriod: `${formatDate(selectedClientData.startDate)} ~ ${formatDate(selectedClientData.endDate)}`,
-      contractAmount: formatPrice(selectedClientData.fullPrice),
-    };
-  }, [selectedClientData, locale]);
+      return { ...currentClient, pendingScheduleChange: null };
+    });
+  }, []);
 
   if (!user) {
     redirect("/logout");
@@ -306,10 +244,12 @@ export default function DashboardPage() {
       data-component="dashboard"
       className="flex flex-col gap-4 h-[calc(100dvh-11rem)] md:h-[calc(100dvh-4rem)]"
     >
+      <h1 className="sr-only">대시보드</h1>
       <Block name="dashboard-stats" className="shrink-0">
         <StatsBar
           name="dashboard"
           isLoading={overviewLoading}
+          density="responsive-square"
           items={DASHBOARD_STAT_KEYS.map((s) => ({
             icon: s.icon,
             value: dashboardStats[s.valueKey],
@@ -344,41 +284,25 @@ export default function DashboardPage() {
           </Block>
 
           {selectedClientData ? (
-            <DetailPanel
-              avatar={
-                <div
-                  data-component="dashboard-detail-avatar"
-                  className={cn(
-                    "w-16 h-16 rounded-[20px] flex items-center justify-center shadow-lg shrink-0",
-                    selectedClientAvatarClass
-                  )}
-                >
-                  <Users className="w-7 h-7 shrink-0 transition-colors text-current" aria-hidden="true" />
-                </div>
-              }
-              title={selectedClientData.name}
-              badges={
-                <>
-                  {selectedClientBadges.map((badge) => (
-                    <StatusBadge
-                      key={badge.key}
-                      status={badge.status}
-                      label={badge.label}
-                    />
-                  ))}
-                </>
-              }
-              subtitle={
-                <>
-                  {selectedClientData.type || "일반"} ·{" "}
-                  {selectedClientData.duration ? `${selectedClientData.duration}일` : "-"}
-                </>
-              }
+            <ClientDetailPanel
+              client={selectedClientData}
+              dataComponentPrefix="dashboard-detail"
+              messageHistoryDataComponentPrefix="dashboard-message-history"
+              idPrefix="dashboard-client-detail"
+              tabsAriaLabel="고객 상세 정보"
+              tabPanelsClassName="flex min-h-0 flex-1 flex-col"
+              tabPanelsTrackClassName="min-h-0 flex-1"
+              tabPanelsPanelClassName=""
+              onScheduleChangeDecided={handleScheduleChangeDecided}
               trailing={
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <button className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors">
-                      <MoreVertical className="w-5 h-5 text-v3-text-muted" />
+                    <button
+                      type="button"
+                      aria-label="고객 상세 메뉴"
+                      className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2"
+                    >
+                      <MoreVertical className="w-5 h-5 text-v3-text-muted" aria-hidden="true" />
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="min-w-[140px]">
@@ -391,84 +315,7 @@ export default function DashboardPage() {
                   </DropdownMenuContent>
                 </DropdownMenu>
               }
-              tabs={
-                <DetailTabs
-                  tabs={[
-                    { key: "basic", label: "기본 정보" },
-                    { key: "contracts", label: "계약서 정보" },
-                    { key: "alimtalk", label: "메시지 발송 현황" },
-                  ]}
-                  activeTab={activeDetailTab}
-                  onTabChange={setActiveDetailTab}
-                />
-              }
-            >
-              <DetailTabPanels
-                activeTab={activeDetailTab}
-                dataComponent="dashboard-detail-content"
-                panelDataComponent="dashboard-detail-content-panel"
-                panels={[
-                  {
-                    key: "basic",
-                    children: (
-                      <div data-component="dashboard-detail-basic-grid" className="grid grid-cols-2 gap-4">
-                        <InfoCard title={t(locale, "clients.form.customer-info") || "고객 정보"} className="col-start-1 row-start-1 row-end-3">
-                          <InfoRow label={t(locale, "clients.form.name")} value={selectedClientData.name} />
-                          <InfoRow label={t(locale, "clients.form.birthday")} value={selectedClientData.birthday || "-"} />
-                          <InfoRow label={t(locale, "clients.form.due-date")} value={formatDate(selectedClientData.dueDate)} />
-                          <InfoRow label={t(locale, "clients.form.phone")} value={selectedClientData.phone || "-"} />
-                          <InfoRow label={t(locale, "clients.form.address")} value={selectedClientData.address || "-"} />
-                        </InfoCard>
-
-                        <InfoCard title={t(locale, "clients.form.assigned-employee") || "담당 관리사"} className="col-start-1 row-start-3 row-end-5">
-                          <InfoRow label={t(locale, "clients.form.primary-employee")} value={selectedClientData.primaryEmployee?.name ?? "-"} />
-                          <InfoRow label={t(locale, "clients.form.secondary-employee")} value={selectedClientData.secondaryEmployee?.name ?? "-"} />
-                        </InfoCard>
-
-                        <InfoCard title={t(locale, "clients.form.service-info") || "서비스 정보"} className="col-start-2 row-start-1 row-end-5">
-                          <InfoRow label={t(locale, "clients.form.voucher-type")} value={selectedClientData.type || "-"} />
-                          <InfoRow label={t(locale, "clients.form.duration")} value={selectedClientData.duration ? `${selectedClientData.duration}일` : "-"} />
-                          <InfoRow label={t(locale, "clients.form.start-date")} value={formatDate(selectedClientData.startDate)} />
-                          <InfoRow label={t(locale, "clients.form.end-date")} value={formatDate(selectedClientData.endDate)} />
-                          <InfoRow label={t(locale, "clients.form.full-price")} value={formatPrice(selectedClientData.fullPrice)} />
-                          <InfoRow label={t(locale, "clients.form.grant")} value={formatPrice(selectedClientData.grant)} />
-                          <InfoRow label={t(locale, "clients.form.actual-price")} value={formatPrice(selectedClientData.actualPrice)} />
-                        </InfoCard>
-                      </div>
-                    ),
-                  },
-                  {
-                    key: "contracts",
-                    children: selectedClientContractInfo ? (
-                      <div data-component="dashboard-detail-contracts-grid" className="grid grid-cols-2 gap-4">
-                        <InfoCard title="계약서 정보" className="col-span-2">
-                          <InfoRow label="계약서명" value={selectedClientContractInfo.contractName} />
-                          <InfoRow label="계약서 ID" value={selectedClientContractInfo.documentId} />
-                          <InfoRow label="문서 상태" value={selectedClientContractInfo.documentStatus} />
-                          <InfoRow label="발송일" value={selectedClientContractInfo.sentDate} />
-                          <InfoRow label="계약 기간" value={selectedClientContractInfo.contractPeriod} />
-                          <InfoRow label="계약 금액" value={selectedClientContractInfo.contractAmount} />
-                        </InfoCard>
-                      </div>
-                    ) : (
-                      <DetailEmptyState
-                        name="dashboard-detail-contracts-empty"
-                        message="계약서 정보가 없습니다"
-                      />
-                    ),
-                  },
-                  {
-                    key: "alimtalk",
-                    children: (
-                      <DetailEmptyState
-                        name="dashboard-detail-alimtalk-empty"
-                        message="메시지 발송 현황이 없습니다"
-                      />
-                    ),
-                  },
-                ]}
-              />
-            </DetailPanel>
+            />
           ) : (
             <DetailPanel
               emptyState={

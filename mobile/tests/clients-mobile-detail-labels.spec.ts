@@ -48,7 +48,7 @@ test.describe("Mobile clients detail labels", () => {
       });
     });
 
-    await page.route("**/api/alimtalk-logs?**", async (route) => {
+    await page.route("**/api/message-logs?**", async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -76,7 +76,9 @@ test.describe("Mobile clients detail labels", () => {
     await expect(page.locator('[data-component="mobile-clients-row"]')).toBeVisible({ timeout: 15000 });
 
     await page.locator('[data-component="mobile-clients-row"]', { hasText: CLIENT.name }).click();
-    await page.getByRole("button", { name: "알림 발송" }).click();
+    const notificationTabButton = page.locator('[data-component="mobile-redesign-detail-tabs"] [data-tab="alimtalk"]');
+    await expect(notificationTabButton).toBeVisible();
+    await notificationTabButton.dispatchEvent("click");
 
     const alimtalkTab = page.locator('[data-component="mobile-clients-alimtalk-tab"]');
     await expect(alimtalkTab).toBeVisible();
@@ -103,11 +105,19 @@ test.describe("Mobile clients detail labels", () => {
     await page.goto("/clients");
     await expect(page.locator('[data-component="mobile-clients-row"]')).toBeVisible({ timeout: 15000 });
 
+    const filterPills = page.locator('[data-component="mobile-redesign-filter-pill"]');
+    await expect(filterPills.nth(0)).toContainText("전체");
+    await expect(filterPills.nth(0)).toContainText("1");
+    await expect(filterPills.nth(1)).toContainText("계약서 필요");
+    await expect(filterPills.nth(1)).toContainText("1");
+    await filterPills.nth(1).click();
+
     const row = page.locator('[data-component="mobile-clients-row"]', {
       hasText: ACTIVE_CLIENT_WITHOUT_CONTRACT.name,
     });
-    const badges = row.locator('[data-component="mobile-clients-row-badges"] .badge');
+    const badges = row.locator('[data-component="mobile-redesign-list-row-badges"] [data-component="status-badge"]');
 
-    await expect(badges).toHaveText(["진행중", "계약서 없음"]);
+    await expect(badges).toHaveText(["계약서 필요"]);
+    await expect(row.locator('[data-component="mobile-redesign-list-row-badges-more"]')).toHaveText("+1");
   });
 });

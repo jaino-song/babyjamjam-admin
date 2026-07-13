@@ -128,7 +128,6 @@ export default function WebsiteAdminPage() {
                         <p className="text-sm text-muted-foreground">리본 배너를 홈페이지에 표시합니다.</p>
                       </div>
                       <Switch
-                        variant="v3"
                         id="ribbon-enabled"
                         checked={form.enabled}
                         onCheckedChange={(checked) => updateField("enabled", checked)}

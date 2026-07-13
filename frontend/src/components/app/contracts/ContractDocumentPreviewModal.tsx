@@ -1,17 +1,25 @@
 "use client";
 
+import { CheckCircle2 } from "lucide-react";
+
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import type { EformsignDocument } from "@/lib/eformsign/types";
 import {
   SharedDocumentPreviewDialog,
   type PreviewMetaItem,
 } from "@/components/app/documents/shared-document-preview-dialog";
+import { eformsignApi } from "@/services/api";
 
 interface ContractDocumentPreviewModalProps {
   open: boolean;
   onClose: () => void;
   document: EformsignDocument | null;
   customerName?: string | null;
+  canDownloadReceipt?: boolean;
+  onReviewConfirm?: () => void;
+  isReviewConfirming?: boolean;
 }
 
 function formatDate(timestamp: number): string {
@@ -32,6 +40,9 @@ export function ContractDocumentPreviewModal({
   onClose,
   document,
   customerName,
+  canDownloadReceipt = false,
+  onReviewConfirm,
+  isReviewConfirming = false,
 }: ContractDocumentPreviewModalProps) {
   if (!document) {
     return null;
@@ -77,8 +88,29 @@ export function ContractDocumentPreviewModal({
       previewUrl={getPreviewUrl(document.id)}
       downloadUrl={getPreviewUrl(document.id, true)}
       downloadFileName={`${document.document_name || document.id}.pdf`}
+      receiptDownloadUrl={
+        canDownloadReceipt ? eformsignApi.getDocumentReceiptDownloadUrl(document.id) : undefined
+      }
+      receiptDownloadFileName={`${document.document_name || document.id} 영수증.pdf`}
       overlayLabel="PDF 미리보기"
       previewKey={document.id}
+      footerAction={onReviewConfirm ? (
+        <Button
+          variant="positive"
+          size="sm"
+          data-component="contracts-document-preview-review-confirm"
+          onClick={onReviewConfirm}
+          disabled={isReviewConfirming}
+          className="min-w-[88px] hover:translate-y-0 hover:shadow-[0_4px_24px_hsla(214,50%,20%,0.06)]"
+        >
+          {isReviewConfirming ? (
+            <Spinner className="mr-2 h-4 w-4" />
+          ) : (
+            <CheckCircle2 className="mr-2 h-4 w-4" />
+          )}
+          {isReviewConfirming ? "확인 중..." : "확인"}
+        </Button>
+      ) : undefined}
     />
   );
 }

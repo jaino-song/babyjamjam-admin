@@ -1,4 +1,4 @@
-import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
+import { EformsignDocEntity, EformsignDocumentKind } from "domain/entities/eformsign-doc.entity";
 
 type EformsignDocRow = {
     id: number;
@@ -16,6 +16,9 @@ type EformsignDocRow = {
     expiredDate: Date;
     expired: boolean;
     clientId: number;
+    documentKind: string | null;
+    employeeScheduleId: number | null;
+    templateId: string | null;
 };
 
 export class EformsignDocMapper {
@@ -36,6 +39,9 @@ export class EformsignDocMapper {
             expiredDate: row.expiredDate,
             expired: row.expired,
             clientId: row.clientId,
+            documentKind: row.documentKind as EformsignDocumentKind | null,
+            employeeScheduleId: row.employeeScheduleId,
+            templateId: row.templateId,
         });
     }
 
@@ -55,6 +61,9 @@ export class EformsignDocMapper {
             expiredDate: entity.expiredDate,
             expired: entity.expired,
             clientId: entity.clientId,
+            documentKind: entity.documentKind,
+            employeeScheduleId: entity.employeeScheduleId,
+            templateId: entity.templateId,
         };
     }
 
@@ -74,7 +83,9 @@ export class EformsignDocMapper {
             expiredDate: entity.expiredDate,
             expired: entity.expired,
             clientId: entity.clientId,
+            documentKind: entity.documentKind,
+            employeeScheduleId: entity.employeeScheduleId,
+            templateId: entity.templateId,
         };
     }
 }
-

@@ -2,18 +2,25 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, Loader2, Users } from "lucide-react";
+import { AlertTriangle, Loader2, Users } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   type ActionRequiredReason,
   type ActionRequiredStatus,
 } from "@/lib/client/action-required";
-import { getClientBadgeAvatarClassName, getClientBadges } from "@/lib/client/badges";
+import {
+  getClientBadgeAvatarClassName,
+  getClientBadges,
+  getPrimaryClientBadge,
+  prioritizeClientBadges,
+} from "@/lib/client/badges";
+import { getDashboardClientDueLabel } from "@/lib/dashboard/client-due";
 import { cn } from "@/lib/utils";
 import { AnimatedSlotList } from "./AnimatedSlotList";
 import { AnimatedSlotListItemContent } from "./AnimatedSlotListItemContent";
+import { ListEmptyState } from "./ListEmptyState";
+import { ListPanel } from "./ListPanel";
 import { StatusBadge } from "./StatusBadge";
-import { useScrollActivity } from "./useScrollActivity";
 import type { Client } from "@/lib/client/types";
 
 export type ActionRequiredItem = {
@@ -105,19 +112,6 @@ export function getRecentActivityAvatarClass({
   return getRecentActivityActionVisual(3).iconBg;
 }
 
-function getRelativeDate(dateStr: string): string {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const target = new Date(dateStr);
-  target.setHours(0, 0, 0, 0);
-  const diffDays = Math.round(
-    (target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
-  );
-  if (diffDays <= 0) return "오늘";
-  if (diffDays === 1) return "내일";
-  return `${diffDays}일 후`;
-}
-
 function isToday(dateStr: string): boolean {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -149,56 +143,16 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
   );
 }
 
-function EmptyState() {
-  return (
-    <div className="p-8 text-center space-y-3">
-      <div className="w-12 h-12 mx-auto rounded-[18px] bg-v3-green-light flex items-center justify-center">
-        <CheckCircle2 className="w-6 h-6 text-v3-green" />
-      </div>
-      <p className="text-[0.9rem] font-bold text-v3-dark">
-        현재 조치가 필요한 항목이 없습니다
-      </p>
-      <p className="text-[0.73rem] text-v3-text-muted">
-        새로운 요청이 접수되면 우선순위 순으로 표시됩니다.
-      </p>
-    </div>
-  );
-}
-
-function FilterEmptyState({ activeTab }: { activeTab: RecentActivitiesPanelTab }) {
+function getFilterEmptyMessage(activeTab: RecentActivitiesPanelTab): string {
   if (activeTab === "actionRequired") {
-    return <EmptyState />;
+    return "현재 조치가 필요한 항목이 없습니다";
   }
 
   if (activeTab === "upcoming") {
-    return (
-      <div className="p-8 text-center space-y-3">
-        <div className="w-12 h-12 mx-auto rounded-[18px] bg-v3-primary-light flex items-center justify-center">
-          <CheckCircle2 className="w-6 h-6 text-v3-primary" />
-        </div>
-        <p className="text-[0.9rem] font-bold text-v3-dark">
-          곧 시작 예정인 고객이 없습니다
-        </p>
-        <p className="text-[0.73rem] text-v3-text-muted">
-          7일 이내 시작 일정이 생기면 여기에 표시됩니다.
-        </p>
-      </div>
-    );
+    return "곧 시작 예정인 고객이 없습니다";
   }
 
-  return (
-    <div className="p-8 text-center space-y-3">
-      <div className="w-12 h-12 mx-auto rounded-[18px] bg-v3-green-light flex items-center justify-center">
-        <CheckCircle2 className="w-6 h-6 text-v3-green" />
-      </div>
-      <p className="text-[0.9rem] font-bold text-v3-dark">
-        표시할 최근 현황이 없습니다
-      </p>
-      <p className="text-[0.73rem] text-v3-text-muted">
-        조치 필요 항목이나 시작 예정 고객이 생기면 여기에 표시됩니다.
-      </p>
-    </div>
-  );
+  return "표시할 최근 현황이 없습니다";
 }
 
 export function RecentActivitiesPanel({
@@ -218,7 +172,6 @@ export function RecentActivitiesPanel({
   className,
 }: RecentActivitiesPanelProps) {
   const [activeTab, setActiveTab] = useState<RecentActivitiesPanelTab>("all");
-  const { isScrollActive, handleScroll } = useScrollActivity();
   const isEmpty =
     actionRequiredItems.length === 0 && upcomingItems.length === 0;
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -301,7 +254,7 @@ export function RecentActivitiesPanel({
       return;
     }
 
-    const scrollContainer = sentinel.closest('[data-component="recent-activities-panel-content"]');
+    const scrollContainer = sentinel.closest('[data-component="list-panel-content"]');
     const root = scrollContainer instanceof HTMLElement ? scrollContainer : null;
 
     const observer = new IntersectionObserver(
@@ -325,64 +278,25 @@ export function RecentActivitiesPanel({
     return () => observer.disconnect();
   }, [hasMore, onLoadMore, isFetchingMore]);
 
+  const isListEmpty = !isLoading && !isError && (isEmpty || listItems.length === 0);
+
   return (
-    <div
-      className={cn(
-        "bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden h-full",
-        className,
-      )}
+    <ListPanel
+      title={title}
+      tabs={tabs}
+      activeTab={activeTab}
+      onTabChange={(nextTab) => setActiveTab(nextTab as RecentActivitiesPanelTab)}
+      tabsAriaLabel={`${title} 필터`}
+      emptyState={
+        isListEmpty ? (
+          <ListEmptyState message={getFilterEmptyMessage(activeTab)} />
+        ) : undefined
+      }
+      className={className}
     >
-      <div className="border-v3-border">
-        <div className="flex items-center justify-between p-6 pb-4">
-        <h2 className="text-lg font-bold text-v3-dark">{title}</h2>
-        </div>
-        <div
-          data-component="recent-activities-panel-tabs"
-          className="flex min-h-[52px] items-center px-6 pb-3"
-        >
-          <div className="flex gap-1">
-            {tabs.map((tab) => {
-              const isActive = activeTab === tab.value;
-
-              return (
-                <button
-                  key={tab.value}
-                  data-component="recent-activities-panel-tab-button"
-                  type="button"
-                  onClick={() => setActiveTab(tab.value)}
-                  className={cn(
-                    "relative px-3 pb-2 text-[0.8rem] transition-colors",
-                    isActive
-                      ? "font-semibold text-primary"
-                      : "text-v3-text-muted hover:text-v3-text"
-                  )}
-                >
-                  {tab.label}
-                  {isActive ? (
-                    <span
-                      data-component="recent-activities-panel-tab-indicator"
-                      className="absolute bottom-0 left-0 h-0.5 w-full bg-primary"
-                    />
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      <div className="relative flex-1 min-h-0">
-        <div
-          data-component="recent-activities-panel-content"
-          className="p-6 pt-0 overflow-y-auto scrollbar-on-scroll h-full"
-          data-scroll-active={isScrollActive ? "true" : "false"}
-          onScroll={handleScroll}
-        >
-        {!isLoading && isError ? (
-          <ErrorState onRetry={onRetry} />
-        ) : !isLoading && (isEmpty || listItems.length === 0) ? (
-          <FilterEmptyState activeTab={activeTab} />
-        ) : (
+      {!isLoading && isError ? (
+        <ErrorState onRetry={onRetry} />
+      ) : isListEmpty ? null : (
           <>
             <AnimatedSlotList<RecentActivityListItem>
               items={listItems}
@@ -428,10 +342,12 @@ export function RecentActivitiesPanel({
                 }
 
                 const clientBadges = getClientBadges(item.client);
-                const primaryClientBadge = clientBadges[0] ?? null;
-                const subtitle = `${item.client.type || "일반"} · ${item.client.primaryEmployee?.name || "-"}${
-                  item.isUpcoming && item.client.startDate ? ` · ${getRelativeDate(item.client.startDate)}` : ""
-                }`;
+                const sortedClientBadges = prioritizeClientBadges(clientBadges);
+                const primaryClientBadge = getPrimaryClientBadge(clientBadges);
+                const subtitle = getDashboardClientDueLabel(item.client, {
+                  contractRequired: sortedClientBadges.some((badge) => badge.key === "contract_required"),
+                  upcoming: item.isUpcoming,
+                }) ?? `${item.client.type || "일반"} · ${item.client.primaryEmployee?.name || "-"}`;
 
                 return (
                   <AnimatedSlotListItemContent
@@ -441,8 +357,8 @@ export function RecentActivitiesPanel({
                     title={item.client.name}
                     subtitle={subtitle}
                     status={
-                      clientBadges.length > 0
-                        ? clientBadges.map((badge) => (
+                      sortedClientBadges.length > 0
+                        ? sortedClientBadges.map((badge) => (
                             <StatusBadge
                               key={badge.key}
                               status={badge.status}
@@ -456,29 +372,26 @@ export function RecentActivitiesPanel({
               }}
             />
           </>
-        )}
+      )}
 
-        {hasMore && onLoadMore && !isFetchingMore ? (
-          <div ref={sentinelRef} className="h-1" aria-hidden="true" />
-        ) : null}
+      {hasMore && onLoadMore && !isFetchingMore ? (
+        <div ref={sentinelRef} className="h-1" aria-hidden="true" />
+      ) : null}
 
-        {isFetchingMore ? (
-          <div className="flex justify-center py-4">
-            <Loader2 className="w-5 h-5 animate-spin text-v3-primary" />
-          </div>
-        ) : null}
-
-        {hasMore && !onLoadMore && (
-          <Link
-            href={viewAllHref}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-[14px] border border-v3-border bg-v3-dim-white px-3 py-[11px] text-[0.75rem] font-bold text-v3-primary transition hover:-translate-y-0.5 hover:border-v3-primary/30 hover:bg-v3-primary-light"
-          >
-            {viewAllLabel} <span aria-hidden="true">→</span>
-          </Link>
-        )}
+      {isFetchingMore ? (
+        <div className="flex justify-center py-4">
+          <Loader2 className="w-5 h-5 animate-spin text-v3-primary" />
         </div>
-      <div className="absolute bottom-0 left-0 right-0 h-6 bg-white pointer-events-none z-20 rounded-b-[28px]" />
-      </div>
-    </div>
+      ) : null}
+
+      {hasMore && !onLoadMore ? (
+        <Link
+          href={viewAllHref}
+          className="inline-flex w-full items-center justify-center gap-2 rounded-[14px] border border-v3-border bg-v3-dim-white px-3 py-[11px] text-[0.75rem] font-bold text-v3-primary transition hover:-translate-y-0.5 hover:border-v3-primary/30 hover:bg-v3-primary-light"
+        >
+          {viewAllLabel} <span aria-hidden="true">→</span>
+        </Link>
+      ) : null}
+    </ListPanel>
   );
 }

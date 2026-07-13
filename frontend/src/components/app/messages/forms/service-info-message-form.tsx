@@ -31,8 +31,7 @@ export const ServiceInfoMessageForm = ({
   const { data: systemTemplate } = useSystemTemplate("SERVICE_INFO");
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(generatedMessage);
-    alert(t(locale, "common.copy-success-message"));
+    return navigator.clipboard.writeText(generatedMessage);
   };
 
   const variableItems = [
@@ -72,6 +71,7 @@ export const ServiceInfoMessageForm = ({
     <AutoFillMsgCard
       title={t(locale, "common.generated-message-title")}
       copyButtonText={t(locale, "common.copy-button")}
+      copySuccessMessage={t(locale, "common.copy-success-message")}
       message={generatedMessage}
       bodyDescription={systemTemplate?.description || "메시지 문구를 직접 수정할 수 있어요."}
       metaItems={[

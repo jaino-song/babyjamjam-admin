@@ -24,6 +24,10 @@ export class CreateEmployeeDto {
     @IsOptional()
     @IsDateString()
     registeredDate?: string;
+
+    @IsOptional()
+    @IsString()
+    birthday?: string;
 }
 
 export class UpdateEmployeeDto {
@@ -49,6 +53,10 @@ export class UpdateEmployeeDto {
     @IsOptional()
     @IsBoolean()
     openToNextWork?: boolean;
+
+    @IsOptional()
+    @IsString()
+    birthday?: string;
 }
 
 export class ChangeEmployeeOpenStatusDto {

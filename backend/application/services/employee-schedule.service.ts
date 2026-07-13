@@ -9,7 +9,9 @@ import {
     UpdateEmployeeScheduleUsecase,
 } from "application/usecases/employee-schedule";
 import { EmployeeScheduleEntity } from "domain/entities/employee-schedule.entity";
-import { AlimtalkTriggerService } from "./alimtalk-trigger.service";
+import { MessageTriggerService } from "./message-trigger.service";
+import { EmployeeFeedbackLinkService } from "./employee-feedback-link.service";
+import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 
 @Injectable()
 export class EmployeeScheduleService {
@@ -21,7 +23,9 @@ export class EmployeeScheduleService {
         private readonly listEmployeeSchedulesBySecondaryEmployeeIdUsecase: ListEmployeeSchedulesBySecondaryEmployeeIdUsecase,
         private readonly updateEmployeeScheduleUsecase: UpdateEmployeeScheduleUsecase,
         private readonly deleteEmployeeScheduleUsecase: DeleteEmployeeScheduleUsecase,
-        @Optional() private readonly triggerService?: AlimtalkTriggerService,
+        @Optional() private readonly triggerService?: MessageTriggerService,
+        @Optional() private readonly employeeFeedbackLinkService?: EmployeeFeedbackLinkService,
+        @Optional() private readonly serviceRecordLifecycleService?: ServiceRecordLifecycleService,
     ) {}
 
     async create(branchid: string, params: {
@@ -45,6 +49,8 @@ export class EmployeeScheduleService {
         this.triggerService
             ?.syncEmployeeAssignmentRulesForSchedule(branchid, schedule.id, true)
             ?.catch(() => undefined);
+        await this.serviceRecordLifecycleService?.ensureForClient(schedule.clientId);
+        this.employeeFeedbackLinkService?.scheduleForServiceStart(schedule.id)?.catch(() => undefined);
         return schedule;
     }
 
@@ -76,21 +82,32 @@ export class EmployeeScheduleService {
         );
     }
 
-    update(branchid: string, id: number, params: {
+    async update(branchid: string, id: number, params: {
         workAddress?: string;
         startDate?: string;
         endDate?: string;
         replaced?: boolean;
     }): Promise<EmployeeScheduleEntity> {
-        return this.updateEmployeeScheduleUsecase.execute(branchid, id, {
+        const schedule = await this.updateEmployeeScheduleUsecase.execute(branchid, id, {
             workAddress: params.workAddress,
             startDate: params.startDate ? new Date(params.startDate) : undefined,
             endDate: params.endDate ? new Date(params.endDate) : undefined,
             replaced: params.replaced,
         });
+        await this.serviceRecordLifecycleService?.ensureForClient(schedule.clientId);
+        if (params.endDate) {
+            this.employeeFeedbackLinkService
+                ?.extendExpiryForEndDate(schedule.id, schedule.endDate)
+                ?.catch(() => undefined);
+        }
+        return schedule;
     }
 
-    delete(branchid: string, id: number): Promise<void> {
-        return this.deleteEmployeeScheduleUsecase.execute(branchid, id);
+    async delete(branchid: string, id: number): Promise<void> {
+        const schedule = await this.findEmployeeScheduleByIdUsecase.execute(branchid, id);
+        await this.deleteEmployeeScheduleUsecase.execute(branchid, id);
+        if (schedule) {
+            await this.serviceRecordLifecycleService?.ensureForClient(schedule.clientId);
+        }
     }
 }

@@ -32,11 +32,14 @@ interface SharedDocumentPreviewDialogProps {
   previewUrl: string;
   downloadUrl?: string;
   downloadFileName?: string;
+  receiptDownloadUrl?: string;
+  receiptDownloadFileName?: string;
   imageAlt?: string;
   overlayLabel?: string;
   unsupportedMessage?: ReactNode;
   previewKey?: string;
   contentClassName?: string;
+  footerAction?: ReactNode;
 }
 
 const DEFAULT_ZOOM_PERCENT = 100;
@@ -137,11 +140,14 @@ export function SharedDocumentPreviewDialog({
   previewUrl,
   downloadUrl,
   downloadFileName,
+  receiptDownloadUrl,
+  receiptDownloadFileName,
   imageAlt,
   overlayLabel,
   unsupportedMessage = "Preview not available for this file type",
   previewKey,
   contentClassName,
+  footerAction,
 }: SharedDocumentPreviewDialogProps) {
   const previewDialogContentRef = useRef<HTMLDivElement | null>(null);
   const previewCanvasRef = useRef<HTMLDivElement | null>(null);
@@ -406,33 +412,47 @@ export function SharedDocumentPreviewDialog({
     const iframe = window.document.createElement("iframe");
     iframe.style.display = "none";
     iframe.src = previewUrl;
-    iframe.onload = () => {
+    iframe.addEventListener("load", () => {
+      const printWindow = iframe.contentWindow;
+      if (!printWindow) {
+        iframe.remove();
+        return;
+      }
+
+      const cleanupPrintFrame = () => {
+        printWindow.removeEventListener("afterprint", cleanupPrintFrame);
+        iframe.remove();
+      };
+
+      printWindow.addEventListener("afterprint", cleanupPrintFrame, { once: true });
+
       try {
-        iframe.contentWindow?.print();
+        printWindow.print();
       } catch (error) {
+        cleanupPrintFrame();
         console.error("Failed to print preview", error);
       }
-      setTimeout(() => {
-        window.document.body.removeChild(iframe);
-      }, 2000);
-    };
+    }, { once: true });
     window.document.body.appendChild(iframe);
+  };
+
+  const triggerDownload = (url: string, fileName?: string) => {
+    const link = window.document.createElement("a");
+    link.href = url;
+    if (fileName) {
+      link.download = fileName;
+    }
+    link.target = "_blank";
+    window.document.body.appendChild(link);
+    link.click();
+    window.document.body.removeChild(link);
   };
 
   const handleDownload = () => {
     if (!downloadUrl) {
       return;
     }
-
-    const link = window.document.createElement("a");
-    link.href = downloadUrl;
-    if (downloadFileName) {
-      link.download = downloadFileName;
-    }
-    link.target = "_blank";
-    window.document.body.appendChild(link);
-    link.click();
-    window.document.body.removeChild(link);
+    triggerDownload(downloadUrl, downloadFileName);
   };
 
   const renderPreviewAvailabilityMessage = () => {
@@ -462,6 +482,47 @@ export function SharedDocumentPreviewDialog({
     );
   };
 
+  const fileActionButtons = [
+    !isHwp ? (
+      <Button
+        key="print"
+        variant="positive-outline"
+        size="sm"
+        onClick={handlePrint}
+        disabled={isZoomablePreview && !isPreviewReady}
+        className="min-w-[88px] border-v3-primary"
+      >
+        <Printer className="mr-2 h-4 w-4" />
+        인쇄
+      </Button>
+    ) : null,
+    receiptDownloadUrl ? (
+      <Button
+        key="receipt"
+        variant="positive-outline"
+        size="sm"
+        data-component="contracts-document-preview-receipt-download"
+        onClick={() => triggerDownload(receiptDownloadUrl, receiptDownloadFileName)}
+        className="min-w-[88px] border-v3-primary"
+      >
+        <Download className="mr-2 h-4 w-4" />
+        영수증
+      </Button>
+    ) : null,
+    downloadUrl ? (
+      <Button
+        key="download"
+        size="sm"
+        onClick={handleDownload}
+        disabled={isZoomablePreview && !isPreviewReady}
+        className="min-w-[88px] hover:translate-y-0 hover:shadow-[0_4px_24px_hsla(214,50%,20%,0.06)]"
+      >
+        <Download className="mr-2 h-4 w-4" />
+        다운로드
+      </Button>
+    ) : null,
+  ];
+
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && handleClose()}>
       <DialogContent
@@ -488,6 +549,7 @@ export function SharedDocumentPreviewDialog({
           <Button
             variant="ghost"
             size="icon"
+            aria-label="미리보기 닫기"
             onClick={handleClose}
             className="h-8 w-8 text-muted-foreground hover:text-foreground"
           >
@@ -627,19 +689,28 @@ export function SharedDocumentPreviewDialog({
 
         <DialogFooter
           data-component="contracts-document-preview-footer"
-          className="justify-end border-t border-border px-6 py-4"
-        >
-          {!isHwp && (
-            <Button variant="ghost" onClick={handlePrint} disabled={isZoomablePreview && !isPreviewReady}>
-              <Printer className="mr-2 h-4 w-4" />
-              인쇄
-            </Button>
+          className={cn(
+            "border-t border-border px-6 py-4",
+            footerAction ? "sm:justify-between" : "justify-end",
           )}
-          {downloadUrl && (
-            <Button onClick={handleDownload} disabled={isZoomablePreview && !isPreviewReady}>
-              <Download className="mr-2 h-4 w-4" />
-              다운로드
-            </Button>
+        >
+          {footerAction ? (
+            <>
+              <div
+                data-component="contracts-document-preview-file-actions"
+                className="flex flex-wrap items-center gap-2"
+              >
+                {fileActionButtons}
+              </div>
+              <div
+                data-component="contracts-document-preview-review-action"
+                className="ml-auto flex items-center"
+              >
+                {footerAction}
+              </div>
+            </>
+          ) : (
+            fileActionButtons
           )}
         </DialogFooter>
       </DialogContent>

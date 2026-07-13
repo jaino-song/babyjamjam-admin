@@ -26,9 +26,9 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { ROLES } from "@/lib/constants/roles";
 import { SidebarNotifications } from "@/components/app/v3/SidebarNotifications";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { SidebarAccountMenu } from "@/components/app/v3/SidebarAccountMenu";
 import { useConsultationInquiries } from "@/hooks/useConsultationInquiries";
-import { useV3UiScaleStyle } from "./useV3UiScale";
+import { useGlintUiScaleStyle } from "./useGlintUiScale";
 
 interface NavItem {
   label: string;
@@ -90,7 +90,7 @@ export const V3Sidebar = () => {
   const locale = useLocale();
   const isOwner = user?.role === ROLES.owner;
   const isExcluded = isLayoutExcluded(pathname);
-  const scaledStyle = useV3UiScaleStyle(!isExcluded);
+  const scaledStyle = useGlintUiScaleStyle(!isExcluded);
   const [isNavScrolling, setIsNavScrolling] = React.useState(false);
   const scrollResetTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const consultationUnreadParams = React.useMemo(
@@ -168,22 +168,22 @@ export const V3Sidebar = () => {
 
   return (
     <aside
-      className="hidden md:flex flex-col fixed left-0 top-0 h-full w-[calc(min(20vw,240px)*var(--v3-ui-scale,1))] bg-white z-40 rounded-tr-[32px] rounded-br-[32px] shadow-v3 animate-v3-slide-right overflow-hidden"
+      className="hidden md:flex flex-col fixed left-0 top-0 h-full w-[calc(min(20vw,240px)*var(--glint-ui-scale,1))] bg-white z-40 rounded-tr-[32px] rounded-br-[32px] shadow-v3 animate-v3-slide-right overflow-hidden"
       aria-label="Sidebar Navigation"
       data-component="sidebar"
       style={scaledStyle}
     >
-      <div className="flex items-center justify-between gap-[calc(12px*var(--v3-ui-scale,1))] px-[calc(24px*var(--v3-ui-scale,1))] pt-[calc(32px*var(--v3-ui-scale,1))] pb-[calc(24px*var(--v3-ui-scale,1))]" data-component="sidebar-brand">
-        <div className="flex min-w-0 items-center gap-[calc(12px*var(--v3-ui-scale,1))]">
-          <div className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center overflow-hidden rounded-xl shadow-sm">
+      <div className="flex items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] px-[calc(24px*var(--glint-ui-scale,1))] pt-[calc(32px*var(--glint-ui-scale,1))] pb-[calc(24px*var(--glint-ui-scale,1))]" data-component="sidebar-brand">
+        <div className="flex min-w-0 items-center gap-[calc(12px*var(--glint-ui-scale,1))]">
+          <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center overflow-hidden rounded-xl shadow-sm">
             <Image src="/assets/logo.svg" alt="아가잼잼 로고" width={48} height={48} className="w-full h-full object-cover" />
           </div>
           <div className="min-w-0">
-            <span className="block truncate text-[calc(20px*var(--v3-ui-scale,1))] font-bold text-v3-primary tracking-tight">
+            <span className="block truncate text-[calc(20px*var(--glint-ui-scale,1))] font-bold text-v3-primary tracking-tight">
               아가잼잼
             </span>
             {user?.branchName && (
-              <span className="mt-[calc(2px*var(--v3-ui-scale,1))] block truncate text-[calc(11.52px*var(--v3-ui-scale,1))] font-medium leading-none text-v3-text-muted">
+              <span className="mt-[calc(2px*var(--glint-ui-scale,1))] block truncate text-[calc(11.52px*var(--glint-ui-scale,1))] font-medium leading-none text-v3-text-muted">
                 {user.branchName}
               </span>
             )}
@@ -193,24 +193,24 @@ export const V3Sidebar = () => {
       </div>
 
       <nav
-        className="custom-scrollbar scrollbar-on-scroll flex-1 space-y-[calc(24px*var(--v3-ui-scale,1))] overflow-y-auto px-[calc(16px*var(--v3-ui-scale,1))] py-[calc(8px*var(--v3-ui-scale,1))]"
+        className="custom-scrollbar scrollbar-on-scroll flex-1 space-y-[calc(24px*var(--glint-ui-scale,1))] overflow-y-auto px-[calc(16px*var(--glint-ui-scale,1))] py-[calc(8px*var(--glint-ui-scale,1))]"
         data-component="sidebar-nav"
         data-scroll-active={isNavScrolling ? "true" : "false"}
         onScroll={handleNavScroll}
       >
         {navSections.map((section, idx) => (
           <div key={section.title + idx}>
-            <h3 className="mb-[calc(8px*var(--v3-ui-scale,1))] px-[calc(16px*var(--v3-ui-scale,1))] text-[calc(10.4px*var(--v3-ui-scale,1))] font-semibold text-v3-text-muted uppercase tracking-[0.15em]">
+            <h3 className="mb-[calc(8px*var(--glint-ui-scale,1))] px-[calc(16px*var(--glint-ui-scale,1))] text-[calc(10.4px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted uppercase tracking-[0.15em]">
               {section.title}
             </h3>
-            <ul className="space-y-[calc(4px*var(--v3-ui-scale,1))]">
+            <ul className="space-y-[calc(4px*var(--glint-ui-scale,1))]">
               {section.items.map((item) => {
                 const disabled = item.disabled === true;
                 const active = !disabled && isActive(item.href);
                 const badge = item.href === "/consultations" ? consultationUnreadBadge : item.badge;
                 const itemName = getNavItemName(item.href);
                 const navItemClassName = `
-                  relative group flex items-center gap-[calc(12px*var(--v3-ui-scale,1))] px-[calc(16px*var(--v3-ui-scale,1))] py-[calc(10px*var(--v3-ui-scale,1))] rounded-2xl transition-all duration-200 overflow-hidden
+                  relative group flex items-center gap-[calc(12px*var(--glint-ui-scale,1))] px-[calc(16px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))] rounded-2xl transition-all duration-200 overflow-hidden
                   ${disabled
                     ? "cursor-not-allowed bg-transparent text-v3-text-muted/60"
                     : active
@@ -218,7 +218,7 @@ export const V3Sidebar = () => {
                       : "text-v3-text hover:bg-v3-primary-light hover:text-v3-primary"
                   }
                 `;
-                const iconClassName = `h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))] shrink-0 transition-colors ${
+                const iconClassName = `h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))] shrink-0 transition-colors ${
                   disabled ? "opacity-50" : active ? "text-white" : "group-hover:text-v3-primary"
                 }`;
                 const content = (
@@ -227,7 +227,7 @@ export const V3Sidebar = () => {
                       className={iconClassName}
                       strokeWidth={2}
                     />
-                    <span className="pt-[calc(2px*var(--v3-ui-scale,1))] text-[calc(14px*var(--v3-ui-scale,1))] font-medium leading-none">
+                    <span className="pt-[calc(2px*var(--glint-ui-scale,1))] text-[calc(14px*var(--glint-ui-scale,1))] font-medium leading-none">
                       {item.label}
                     </span>
 
@@ -235,7 +235,7 @@ export const V3Sidebar = () => {
                       <span
                         data-component={`sidebar-nav-${itemName}-badge`}
                         className={`
-                          ml-auto inline-flex h-[calc(20px*var(--v3-ui-scale,1))] min-w-[calc(20px*var(--v3-ui-scale,1))] items-center justify-center rounded-full px-[calc(8px*var(--v3-ui-scale,1))] text-center text-[calc(10.4px*var(--v3-ui-scale,1))] font-bold leading-none
+                          ml-auto inline-flex h-[calc(20px*var(--glint-ui-scale,1))] min-w-[calc(20px*var(--glint-ui-scale,1))] items-center justify-center rounded-full px-[calc(8px*var(--glint-ui-scale,1))] text-center text-[calc(10.4px*var(--glint-ui-scale,1))] font-bold leading-none
                           bg-v3-burgundy text-white
                         `}
                       >
@@ -274,23 +274,17 @@ export const V3Sidebar = () => {
         ))}
       </nav>
 
-      <div className="mt-auto p-[calc(16px*var(--v3-ui-scale,1))]" data-component="sidebar-profile">
-        <div className="group flex cursor-pointer items-center gap-[calc(12px*var(--v3-ui-scale,1))] rounded-2xl border border-v3-border/50 bg-v3-dim-white/50 p-[calc(12px*var(--v3-ui-scale,1))] transition-all hover:bg-white hover:shadow-v3-hover">
-          <Avatar className="h-[calc(40px*var(--v3-ui-scale,1))] w-[calc(40px*var(--v3-ui-scale,1))] shrink-0 rounded-full shadow-inner">
-            <AvatarImage src={user?.profileImage || ""} alt={user?.name || "사용자"} />
-            <AvatarFallback className="bg-gradient-to-br from-v3-primary to-blue-600 text-[calc(14px*var(--v3-ui-scale,1))] font-bold text-white">
-              {initials}
-            </AvatarFallback>
-          </Avatar>
-          <div className="flex min-w-0 flex-col">
-            <span className="truncate text-[calc(13.6px*var(--v3-ui-scale,1))] font-semibold text-gray-900 transition-colors group-hover:text-v3-primary">
-              {user?.name || "GUEST"}
-            </span>
-            <span className="truncate text-[calc(11.2px*var(--v3-ui-scale,1))] text-v3-text-muted">
-              {user?.role ? t(locale, `roles.${user.role}`) || t(locale, "roles.unknown") : t(locale, "roles.unknown")}
-            </span>
-          </div>
-        </div>
+      <div className="mt-auto p-[calc(16px*var(--glint-ui-scale,1))]" data-component="sidebar-profile">
+        <SidebarAccountMenu
+          name={user?.name || "GUEST"}
+          roleLabel={
+            user?.role
+              ? t(locale, `roles.${user.role}`) || t(locale, "roles.unknown")
+              : t(locale, "roles.unknown")
+          }
+          profileImage={user?.profileImage}
+          initials={initials}
+        />
       </div>
     </aside>
   );

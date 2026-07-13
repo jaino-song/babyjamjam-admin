@@ -5,11 +5,13 @@ import {
     FindEformsignDocByDocumentIdUsecase,
     FindEformsignDocsByClientIdUsecase,
     ListEformsignDocsUsecase,
+    ListOtherBranchDocumentIdsUsecase,
     GetEformsignAccessTokenUsecase,
     RefreshEformsignAccessTokenUsecase,
     FetchAllEformsignDocsFromApiUsecase,
     FetchEformsignDocFromApiUsecase,
     UpdateEformsignDocStatusUsecase,
+    LinkDocumentToClientUsecase,
     CreateEformsignDocUsecase,
     CreateAndSendContractUsecase,
     ListClientNamesByBranchUsecase,
@@ -31,6 +33,8 @@ import { EformsignHeadlessProgressService } from "application/services/eformsign
 import { EformsignHeadlessService } from "infrastructure/automation/eformsign-headless.service";
 import { AreaTemplateModule } from "module/area-template.module";
 import { EformsignDocController } from "interface/controllers/eformsign-doc.controller";
+import { CreateAndSendFeedbackSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-feedback-snapshot.usecase";
+import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
 
 @Module({
     imports: [DatabaseModule, AreaTemplateModule],
@@ -41,8 +45,10 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
         FindEformsignDocByDocumentIdUsecase,
         FindEformsignDocsByClientIdUsecase,
         ListEformsignDocsUsecase,
+        ListOtherBranchDocumentIdsUsecase,
         CreateEformsignDocUsecase,
         UpdateEformsignDocStatusUsecase,
+        LinkDocumentToClientUsecase,
         ListClientNamesByBranchUsecase,
         SyncClientEndDateUsecase,
         // Use cases - External API
@@ -52,6 +58,8 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
         FetchEformsignDocFromApiUsecase,
         // Use cases - Contract creation
         CreateAndSendContractUsecase,
+        // Use case - Feedback snapshot (BJJ-247)
+        CreateAndSendFeedbackSnapshotUsecase,
         // Use cases - Headless dispatch (BJJ-90)
         DispatchDocumentHeadlessUsecase,
         FinalizeDocumentHeadlessUsecase,
@@ -61,6 +69,7 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
         EformsignHeadlessService,
         EformsignDocsEventBus,
         EformsignHeadlessProgressService,
+        ContractClientAssignmentGuardService,
         // Repository bindings
         {
             provide: EFORMSIGN_DOC_REPOSITORY,
@@ -82,6 +91,7 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
         EformsignDocsEventBus,
         EformsignHeadlessProgressService,
         EFORMSIGN_CLIENT_REPOSITORY,
+        CreateAndSendFeedbackSnapshotUsecase,
     ],
 })
 export class EformsignDocModule {}

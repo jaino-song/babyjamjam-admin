@@ -18,7 +18,8 @@ const debugLog = isDev ? console.log.bind(console) : () => {};
 function filterByActualStatus(docs: EformsignDocument[], type: DocumentFilterType): EformsignDocument[] {
   const visibleDocs = docs.filter((doc) => !isDeletedStatusCode(doc.current_status?.status_type));
   if (type === null) return visibleDocs;
-  return visibleDocs.filter(doc => getStatusCategory(doc.current_status?.status_type) === type);
+  const category = type === "rejected" ? "expired" : type;
+  return visibleDocs.filter(doc => getStatusCategory(doc.current_status?.status_type) === category);
 }
 
 // Query keys
@@ -36,7 +37,7 @@ async function fetchAllDocuments(): Promise<EformsignDocumentsResponse> {
   return response;
 }
 
-// Hook to fetch documents by type (in-progress, completed, rejected, or all)
+// Hook to fetch documents by type (in-progress, completed, expired, or all)
 export function useEformsignDocumentsByType(isAuthenticated: boolean, type: DocumentFilterType) {
   return useQuery<EformsignDocumentsResponse>({
     queryKey: type === null 
@@ -55,6 +56,7 @@ export function useEformsignDocumentsByType(isAuthenticated: boolean, type: Docu
         case "completed":
           response = await withEformsignReauth(() => eformsignApi.getCompletedDocuments());
           break;
+        case "expired":
         case "rejected":
           response = await withEformsignReauth(() => eformsignApi.getRejectedDocuments());
           break;

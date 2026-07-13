@@ -10,7 +10,7 @@ describe("SbSystemSettingRepository", () => {
 
     const createSystemSettingRow = (overrides = {}) => ({
         key: "alimtalk_provider",
-        value: "aligo",
+        value: "aligo_alimtalk",
         updatedAt: new Date("2025-01-14T00:00:00Z"),
         ...overrides,
     });
@@ -42,7 +42,7 @@ describe("SbSystemSettingRepository", () => {
                 });
                 expect(result).toBeInstanceOf(SystemSettingEntity);
                 expect(result?.key).toBe("alimtalk_provider");
-                expect(result?.value).toBe("aligo");
+                expect(result?.value).toBe("aligo_alimtalk");
             });
         });
 
@@ -60,8 +60,8 @@ describe("SbSystemSettingRepository", () => {
     describe("upsert", () => {
         describe("given a new setting", () => {
             it("should create and return the setting", async () => {
-                const entity = SystemSettingEntity.create("alimtalk_provider", "channeltalk");
-                const row = createSystemSettingRow({ value: "channeltalk" });
+                const entity = SystemSettingEntity.create("alimtalk_provider", "aligo_alimtalk");
+                const row = createSystemSettingRow({ value: "aligo_alimtalk" });
                 systemSettingModel.upsert.mockResolvedValue(row);
 
                 const result = await repository.upsert(entity);
@@ -70,16 +70,16 @@ describe("SbSystemSettingRepository", () => {
                     where: { key: "alimtalk_provider" },
                     create: {
                         key: "alimtalk_provider",
-                        value: "channeltalk",
+                        value: "aligo_alimtalk",
                         updatedAt: entity.updatedAt,
                     },
                     update: {
-                        value: "channeltalk",
+                        value: "aligo_alimtalk",
                         updatedAt: entity.updatedAt,
                     },
                 });
                 expect(result).toBeInstanceOf(SystemSettingEntity);
-                expect(result.value).toBe("channeltalk");
+                expect(result.value).toBe("aligo_alimtalk");
             });
         });
 

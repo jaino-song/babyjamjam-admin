@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { CalendarClock, Headset, MapPin, Phone, Search, UserRound } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 import {
     AnimatedSlotList,
@@ -25,7 +26,11 @@ import {
 } from "./list-state";
 import { StatusPill } from "@/components/app/ui/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useConsultationInquiries, useMarkConsultationInquiryRead } from "@/hooks/useConsultationInquiries";
+import {
+    useAllConsultationInquiries,
+    useConsultationInquiries,
+    useMarkConsultationInquiryRead,
+} from "@/hooks/useConsultationInquiries";
 import type { ConsultationInquiry } from "@/services/api";
 
 const READ_TABS = [
@@ -91,6 +96,12 @@ function getReadVariant(readAt: string | null): "neutral" | "warning" {
     return readAt ? "neutral" : "warning";
 }
 
+function getConsultationAvatarClassName(readAt: string | null): string {
+    return readAt
+        ? "border border-[hsl(220,20%,90%)] bg-[hsl(220,20%,97%)] text-v3-text-muted"
+        : "border border-[hsla(38,92%,35%,0.18)] bg-[hsl(47,100%,92%)] text-[hsl(38,92%,35%)]";
+}
+
 export default function ConsultationsPage() {
     const [activeReadState, setActiveReadState] = useState("unread");
     const [activeDetailTab, setActiveDetailTab] = useState<ConsultationDetailTabKey>("customer");
@@ -102,9 +113,12 @@ export default function ConsultationsPage() {
             page: 1,
             limit: 50,
             readState: activeReadState,
-            search: search.trim() || undefined,
         }),
-        [activeReadState, search],
+        [activeReadState],
+    );
+    const searchQueryParams = useMemo(
+        () => ({ readState: activeReadState }),
+        [activeReadState],
     );
 
     const statsQueryParams = useMemo(
@@ -116,18 +130,26 @@ export default function ConsultationsPage() {
         [],
     );
 
+    const hasSearchQuery = search.trim().length > 0;
     const { data, isLoading } = useConsultationInquiries(queryParams);
+    const { data: searchData, isLoading: isSearchLoading } =
+        useAllConsultationInquiries(searchQueryParams, hasSearchQuery);
     const { data: statsData, isLoading: isStatsLoading } = useConsultationInquiries(statsQueryParams);
     const markRead = useMarkConsultationInquiryRead();
-    const inquiries = useMemo(() => data?.data ?? [], [data?.data]);
+    const inquiries = useMemo(
+        () => (hasSearchQuery ? searchData?.data ?? [] : data?.data ?? []),
+        [data?.data, hasSearchQuery, searchData?.data],
+    );
+    const isListLoading = hasSearchQuery ? isSearchLoading : isLoading;
     const statsInquiries = useMemo(() => statsData?.data ?? [], [statsData?.data]);
     const visibleInquiries = useMemo(
         () => getDisplayedConsultationInquiries({
             inquiries,
             selectedInquiry,
             activeReadState,
+            search,
         }),
-        [activeReadState, inquiries, selectedInquiry],
+        [activeReadState, inquiries, search, selectedInquiry],
     );
     const activeInquiry = selectedInquiry
         ? inquiries.find((item) => item.id === selectedInquiry.id) ?? selectedInquiry
@@ -180,7 +202,7 @@ export default function ConsultationsPage() {
         <PageSection name="consultations">
             <StatsBar
                 name="consultations"
-                isLoading={isLoading || isStatsLoading}
+                isLoading={isListLoading || isStatsLoading}
                 items={[
                     { icon: Headset, value: stats.currentMonthTotal, label: "이번달 전체 상담", counter: "건" },
                     { icon: CalendarClock, value: stats.unreadCount, label: "읽지 않음", counter: "건", colorIndex: 1 },
@@ -208,85 +230,83 @@ export default function ConsultationsPage() {
                     searchValue={search}
                     onSearchChange={setSearch}
                     searchPlaceholder="이름, 연락처, 주소 검색..."
-                    isLoading={isLoading}
-                >
-                    {!isLoading && visibleInquiries.length === 0 ? (
+                    isLoading={isListLoading}
+                    emptyState={!isListLoading && visibleInquiries.length === 0 ? (
                         <ListEmptyState
                             name="consultations-empty"
                             message={search ? "검색 결과가 없습니다" : "상담 문의가 없습니다"}
                         />
-                    ) : (
-                        <AnimatedSlotList<ConsultationInquiry>
-                            items={visibleInquiries}
-                            isLoading={isLoading}
-                            loadingCount={6}
-                            className="space-y-2"
-                            getItemKey={(item) => item.id}
-                            getSlotState={({ item, isLoading: slotLoading }) => {
-                                const isActive = !slotLoading && item?.id === activeInquiry?.id;
+                    ) : undefined}
+                >
+                    <AnimatedSlotList<ConsultationInquiry>
+                        items={visibleInquiries}
+                        isLoading={isListLoading}
+                        loadingCount={6}
+                        className="space-y-2"
+                        getItemKey={(item) => item.id}
+                        getSlotState={({ item, isLoading: slotLoading }) => {
+                            const isActive = !slotLoading && item?.id === activeInquiry?.id;
 
-                                return {
-                                    isActive,
-                                    isInteractive: !slotLoading && Boolean(item),
-                                };
-                            }}
-                            onSlotClick={(inquiry) => {
-                                setSelectedInquiry(inquiry);
-                                setActiveDetailTab("customer");
-                                if (!inquiry.readAt) {
-                                    markRead.mutate(inquiry.id, {
-                                        onSuccess: (updatedInquiry) => {
-                                            setSelectedInquiry(updatedInquiry);
-                                        },
-                                    });
-                                }
-                            }}
-                            render={({ item, isLoading: slotLoading }) => {
-                                if (slotLoading) {
-                                    return (
-                                        <>
-                                            <Skeleton className="h-11 w-11 shrink-0 rounded-[14px] bg-v3-dim-white" />
-                                            <div data-component="consultations-list-item-skeleton-content" className="min-w-0 flex-1">
-                                                <Skeleton className="mb-2 h-4 w-28 bg-v3-dim-white" />
-                                                <Skeleton className="h-3 w-44 bg-v3-dim-white" />
-                                            </div>
-                                            <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white" />
-                                        </>
-                                    );
-                                }
-
-                                if (!item) return null;
-
+                            return {
+                                isActive,
+                                isInteractive: !slotLoading && Boolean(item),
+                            };
+                        }}
+                        onSlotClick={(inquiry) => {
+                            setSelectedInquiry(inquiry);
+                            setActiveDetailTab("customer");
+                            if (!inquiry.readAt) {
+                                markRead.mutate(inquiry.id, {
+                                    onSuccess: (updatedInquiry) => {
+                                        setSelectedInquiry(updatedInquiry);
+                                    },
+                                });
+                            }
+                        }}
+                        render={({ item, isLoading: slotLoading }) => {
+                            if (slotLoading) {
                                 return (
-                                    <AnimatedSlotListItemContent
-                                        dataComponent="consultations-list-item"
-                                        icon={Headset}
-                                        iconContainerClassName="bg-v3-primary text-white"
-                                        iconClassName="text-white"
-                                        title={item.motherName}
-                                        subtitle={
-                                            <>
-                                                <Phone className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(12px*var(--v3-ui-scale,1))] shrink-0" />
-                                                <span className="shrink-0">{item.phone}</span>
-                                                <span className="truncate">{item.address}</span>
-                                            </>
-                                        }
-                                        status={(
-                                            <StatusPill variant={getReadVariant(item.readAt)} size="sm">
-                                                {getReadLabel(item.readAt)}
-                                            </StatusPill>
-                                        )}
-                                    />
+                                    <>
+                                        <Skeleton className="h-11 w-11 shrink-0 rounded-[14px] bg-v3-dim-white" />
+                                        <div data-component="consultations-list-item-skeleton-content" className="min-w-0 flex-1">
+                                            <Skeleton className="mb-2 h-4 w-28 bg-v3-dim-white" />
+                                            <Skeleton className="h-3 w-44 bg-v3-dim-white" />
+                                        </div>
+                                        <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white" />
+                                    </>
                                 );
-                            }}
-                        />
-                    )}
+                            }
+
+                            if (!item) return null;
+
+                            return (
+                                <AnimatedSlotListItemContent
+                                    dataComponent="consultations-list-item"
+                                    icon={Headset}
+                                    iconContainerClassName={getConsultationAvatarClassName(item.readAt)}
+                                    title={item.motherName}
+                                    subtitle={
+                                        <>
+                                            <Phone className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))] shrink-0" />
+                                            <span className="shrink-0">{item.phone}</span>
+                                            <span className="truncate">{item.address}</span>
+                                        </>
+                                    }
+                                    status={(
+                                        <StatusPill variant={getReadVariant(item.readAt)} size="sm">
+                                            {getReadLabel(item.readAt)}
+                                        </StatusPill>
+                                    )}
+                                />
+                            );
+                        }}
+                    />
                 </ListPanel>
 
                 {activeInquiry ? (
                     <DetailPanel
                         avatar={
-                            <div data-component="consultations-detail-avatar" className="flex h-16 w-16 shrink-0 items-center justify-center rounded-[20px] bg-v3-primary text-white shadow-lg">
+                            <div data-component="consultations-detail-avatar" className={cn("flex h-16 w-16 shrink-0 items-center justify-center rounded-[20px] shadow-lg", getConsultationAvatarClassName(activeInquiry.readAt))}>
                                 <UserRound className="h-7 w-7" />
                             </div>
                         }
@@ -328,8 +348,8 @@ export default function ConsultationsPage() {
                                 {
                                     key: "inquiry",
                                     children: (
-                                        <div data-component="consultations-detail-inquiry-grid" className="grid grid-cols-2 gap-4">
-                                            <InfoCard title="문의 정보" className="col-span-2">
+                                        <div data-component="consultations-detail-inquiry-grid" className="grid grid-cols-[repeat(3,minmax(0,1fr))] gap-4">
+                                            <InfoCard title="문의 정보" className="min-w-0 content-start">
                                                 <InfoRow label="근무 지역" value={getInquiryRegion(activeInquiry.address)} />
                                                 <InfoRow label="추천 경로" value={activeInquiry.referralSource || "-"} />
                                                 <InfoRow label="선호 매니저" value={activeInquiry.preferredCaregiverName || "-"} />
@@ -361,9 +381,9 @@ export default function ConsultationsPage() {
                                                 ) : null}
                                             </InfoCard>
 
-                                            <SelectedServicesCard inquiry={activeInquiry} className="col-span-2" />
+                                            <SelectedServicesCard inquiry={activeInquiry} className="min-w-0 content-start" />
 
-                                            <InfoCard title="문의 상태" className="col-span-2">
+                                            <InfoCard title="문의 상태" className="min-w-0 content-start">
                                                 <InfoRow
                                                     label="확인 여부"
                                                     value={

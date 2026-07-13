@@ -19,7 +19,7 @@ interface CreateDocRecordBody {
 }
 
 const REAL_TENANT_SKIP_MESSAGE = "Set RUN_SMOKE_TESTS=1 to run real-tenant smoke tests";
-const REAL_SEND_ALERT = "계약서가 성공적으로 생성되었습니다.";
+const REAL_SEND_SUCCESS_TITLE = "계약서가 성공적으로 생성되었습니다.";
 const CONTRACT_ROW_CONTENT = '[data-component="contracts-list-item-content"]';
 const EFORMSIGN_GATE_TIMEOUT_MS = 60_000;
 const EFORMSIGN_GATE_POLL_MS = 500;
@@ -269,14 +269,14 @@ async function getEformsignGateSnapshot(eformsignFrame: FrameLocator): Promise<{
 async function runEformsignCreationGates(
   page: Page,
   eformsignFrame: FrameLocator,
-  hasSeenSuccessAlert: () => boolean
-): Promise<"success-alert" | "request-send-clicked"> {
+  hasSeenSuccessModal: () => boolean
+): Promise<"success-modal" | "request-send-clicked"> {
   const deadline = Date.now() + EFORMSIGN_GATE_TIMEOUT_MS;
   let lastAction = "none";
 
   while (Date.now() < deadline) {
-    if (hasSeenSuccessAlert()) {
-      return "success-alert";
+    if (hasSeenSuccessModal()) {
+      return "success-modal";
     }
 
     const requestSendDialog = eformsignFrame.locator(REQUEST_SEND_DIALOG_SELECTOR);
@@ -406,11 +406,13 @@ test.describe.serial("contract creation smoke (real tenant)", () => {
         request.url().includes("/api/eformsign-docs"),
       { timeout: 60_000 }
     );
-    let successAlertSeen = false;
-    const successDialogPromise = page.waitForEvent("dialog", { timeout: EFORMSIGN_GATE_TIMEOUT_MS }).then((dialog) => {
-      successAlertSeen = true;
-      return dialog;
-    });
+    let successModalSeen = false;
+    const successModal = page.locator('[data-component="contract-creation-success-notification"]');
+    const successModalPromise = expect(successModal)
+      .toBeVisible({ timeout: EFORMSIGN_GATE_TIMEOUT_MS })
+      .then(() => {
+        successModalSeen = true;
+      });
 
     await page.getByTestId("contract-creation-submit").click();
 
@@ -429,16 +431,15 @@ test.describe.serial("contract creation smoke (real tenant)", () => {
 
     const iframeSrcBeforeSend = await page.locator("iframe#eformsign_iframe").getAttribute("src");
     const eformsignFrame = page.frameLocator("iframe#eformsign_iframe");
-    const gateLoopPromise = runEformsignCreationGates(page, eformsignFrame, () => successAlertSeen);
+    const gateLoopPromise = runEformsignCreationGates(page, eformsignFrame, () => successModalSeen);
     const firstResolved = await Promise.race([
-      successDialogPromise.then((dialog) => ({ type: "dialog" as const, dialog })),
+      successModalPromise.then(() => ({ type: "modal" as const })),
       gateLoopPromise.then((terminalState) => ({ type: "gate" as const, terminalState })),
     ]);
-    const successDialog =
-      firstResolved.type === "dialog" ? firstResolved.dialog : await successDialogPromise;
+    if (firstResolved.type === "gate") await successModalPromise;
 
-    expect(successDialog.message()).toBe(REAL_SEND_ALERT);
-    await successDialog.accept();
+    await expect(successModal).toContainText(REAL_SEND_SUCCESS_TITLE);
+    await successModal.getByRole("button", { name: "확인" }).click();
     await gateLoopPromise;
 
     const createDocRecordRequest = await createDocRecordRequestPromise;

@@ -14,6 +14,7 @@ import { UserController } from "interface/controllers/user.controller";
 import { USER_REPOSITORY } from "domain/repositories/user.repository.interface";
 import { DatabaseModule } from "infrastructure/database/database.module";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
+import { OwnerOnlyGuard } from "infrastructure/auth/owner-only.guard";
 
 @Module({
     imports: [DatabaseModule],
@@ -26,6 +27,7 @@ import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
         DeleteUserUsecase,
         UserService,
         OwnerOrAdminGuard,
+        OwnerOnlyGuard,
         {
             provide: USER_REPOSITORY,
             useClass: SbUserRepository,

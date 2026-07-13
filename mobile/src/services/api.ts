@@ -1,7 +1,7 @@
 import type {
     AlimtalkProvider,
     AlimtalkProviderResponse,
-} from "@babyjamjam/shared/types/alimtalk";
+} from "@babyjamjam/shared/types/message";
 import { api } from "@/lib/api/client";
 import { PUBLIC_BACKEND_BASE_URL } from "@/lib/env";
 import {
@@ -254,7 +254,7 @@ export const eformsignApi = {
         const { data } = await api.post(`/eformsign/documents/${documentId}/re-request`, params);
         return data;
     },
-    generateDocument: async (contractData: ContractDataDto, clientId?: number) => {
+    generateDocument: async (contractData: ContractDataDto, clientId: number) => {
         const { data } = await api.post('/generate-document', { contractData, clientId });
         return data;
     },
@@ -263,7 +263,7 @@ export const eformsignApi = {
     // with reason on any failure so the caller can fall back to the legacy iframe modal.
     dispatchHeadless: async (
         contractData: ContractDataDto,
-        clientId?: number,
+        clientId: number,
         progressId?: string,
     ): Promise<HeadlessDispatchResponse> => {
         const { data } = await api.post('/eformsign-docs/dispatch-headless', {

@@ -1,5 +1,6 @@
 import { EmployeeEntity } from "domain/entities/employee.entity";
 import { IEmployeeRepository } from "domain/repositories/employee.repository.interface";
+import { normalizePhone } from "application/utils/normalize-phone";
 
 /**
  * 테스트용 Mock Employee Repository
@@ -41,7 +42,13 @@ export class MockEmployeeRepository implements IEmployeeRepository {
         return this.employees.get(id) ?? null;
     }
 
-    async findAll(_branchid: string): Promise<EmployeeEntity[]> {
+    async findByPhone(_branchid: string, normalizedPhone: string): Promise<EmployeeEntity | null> {
+        return Array.from(this.employees.values()).find(
+            (employee) => normalizePhone(employee.phone) === normalizedPhone,
+        ) ?? null;
+    }
+
+    async findAll(): Promise<EmployeeEntity[]> {
         return Array.from(this.employees.values());
     }
 
@@ -136,7 +143,7 @@ export class MockEmployeeRepository implements IEmployeeRepository {
         this.employees.set(id, updated);
     }
 
-    async findAllOpenToNextWork(_branchid: string): Promise<EmployeeEntity[]> {
+    async findAllOpenToNextWork(): Promise<EmployeeEntity[]> {
         return Array.from(this.employees.values()).filter(
             employee => employee.openToNextWork === true,
         );

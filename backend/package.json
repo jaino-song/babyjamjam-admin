@@ -49,6 +49,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
     "cookie-parser": "^1.4.7",
+    "express": "4.22.1",
     "helmet": "^8.2.0",
     "nanoid": "^5.1.6",
     "passport": "^0.6.0",

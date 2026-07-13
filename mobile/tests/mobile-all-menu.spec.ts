@@ -88,7 +88,7 @@ test.describe("Mobile nav: center chat + /all menu", () => {
         body: JSON.stringify([{ id: "m1" }, { id: "m2" }, { id: "m3" }, { id: "m4" }, { id: "m5" }]),
       });
     });
-    await page.route("**/api/alimtalk-trigger-rules**", async (route) => {
+    await page.route("**/api/message-trigger-rules**", async (route) => {
       await alimtalkRulesReady;
       await route.fulfill({
         status: 200,
@@ -337,7 +337,7 @@ test.describe("Mobile nav: center chat + /all menu", () => {
         body: JSON.stringify([{ id: "m1" }, { id: "m2" }, { id: "m3" }, { id: "m4" }, { id: "m5" }]),
       });
     });
-    await page.route("**/api/alimtalk-trigger-rules**", async (route) => {
+    await page.route("**/api/message-trigger-rules**", async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -441,7 +441,7 @@ test.describe("Mobile nav: center chat + /all menu", () => {
         body: JSON.stringify([{ id: "m1" }, { id: "m2" }, { id: "m3" }, { id: "m4" }, { id: "m5" }]),
       });
     });
-    await page.route("**/api/alimtalk-trigger-rules**", async (route) => {
+    await page.route("**/api/message-trigger-rules**", async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",

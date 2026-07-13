@@ -16,6 +16,7 @@ export interface Employee {
     openToNextWork: boolean;
     registeredDate: string;
     status: EmployeeStatus;
+    birthday?: string;
 }
 
 export interface CreateEmployeeDto {
@@ -24,6 +25,7 @@ export interface CreateEmployeeDto {
     phone: string;
     grade: string;
     openToNextWork: boolean;
+    birthday?: string;
 }
 
 export interface UpdateEmployeeDto {
@@ -32,6 +34,7 @@ export interface UpdateEmployeeDto {
     phone?: string;
     grade?: string;
     openToNextWork?: boolean;
+    birthday?: string;
 }
 
 // Query key factory pattern

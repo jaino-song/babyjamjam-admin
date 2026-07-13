@@ -2,8 +2,10 @@ import { Injectable, Inject, Logger } from "@nestjs/common";
 import { ALIGO_API_PORT, IAligoApiPort, AligoAlimtalkResponse } from "domain/ports/aligo-api.port";
 import { SendAligoAlimtalkDto, AligoMessageBuilder, ALIGO_TEMPLATES } from "application/dto/aligo";
 import { maskPhone } from "application/utils/mask";
-import { ALIMTALK_LOG_REPOSITORY, IAlimtalkLogRepository } from "domain/repositories/alimtalk-log.repository.interface";
-import { AlimtalkLogEntity } from "domain/entities/alimtalk-log.entity";
+import { MESSAGE_LOG_REPOSITORY, IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
+import { MessageLogEntity } from "domain/entities/message-log.entity";
+import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
+import { isTransientPrismaConnectivityError } from "infrastructure/database/prisma-error.utils";
 
 @Injectable()
 export class SendAligoAlimtalkUsecase {
@@ -12,8 +14,8 @@ export class SendAligoAlimtalkUsecase {
     constructor(
         @Inject(ALIGO_API_PORT)
         private readonly aligoApi: IAligoApiPort,
-        @Inject(ALIMTALK_LOG_REPOSITORY)
-        private readonly logRepository: IAlimtalkLogRepository,
+        @Inject(MESSAGE_LOG_REPOSITORY)
+        private readonly logRepository: IMessageLogRepository,
     ) {}
 
     async execute(dto: SendAligoAlimtalkDto): Promise<AligoAlimtalkResponse> {
@@ -26,17 +28,30 @@ export class SendAligoAlimtalkUsecase {
             : undefined;
 
         // 발송 로그 생성
-        const log = AlimtalkLogEntity.create({
+        const log = MessageLogEntity.create({
             branchId: dto.branchId,
-            provider: "aligo",
+            provider: "aligo_alimtalk",
             templateKey: dto.templateKey,
             triggerJobId: dto.triggerJobId,
             receiver: dto.receiver,
             clientId: dto.clientId,
+            recipientName: dto.recipientName ?? null,
+            recipientPhone: dto.receiver,
             messageBody: message,
             variables: dto.variables,
         });
-        const savedLog = await this.logRepository.save(log);
+        let savedLog: MessageLogEntity;
+        try {
+            savedLog = await this.logRepository.save(log);
+        } catch (error) {
+            if (isTransientPrismaConnectivityError(error)) {
+                throw new TriggerJobDeferredError(
+                    "transient",
+                    error instanceof Error ? error.message : String(error),
+                );
+            }
+            throw error;
+        }
 
         this.logger.debug(`[Aligo] Sending ${dto.templateKey} to ${maskPhone(dto.receiver)}`);
 

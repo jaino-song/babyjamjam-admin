@@ -12,7 +12,7 @@ import {
 } from "@/lib/api/route-utils";
 
 // Mirrors backend GenerateDocumentRequestDto: contractData is a required
-// nested object (@ValidateNested, no @IsOptional); clientId is optional.
+// nested object (@ValidateNested, no @IsOptional); clientId is required.
 // accessToken/refreshToken come from cookies here, not the body, so they are
 // not part of this schema. The route destructures contractData/clientId and
 // forwards the cookie-derived tokens. Passthrough keeps contractData's nested
@@ -20,7 +20,7 @@ import {
 const generateDocumentSchema = z
     .object({
         contractData: z.object({}).passthrough(),
-        clientId: z.number().int().min(1).optional(),
+        clientId: z.number().int().min(1),
     })
     .passthrough();
 

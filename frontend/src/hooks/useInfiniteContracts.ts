@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { eformsignApi } from "@/services/api";
 import { EformsignDocument, EformsignDocumentsResponse } from "@/lib/eformsign/types";
 import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
 import { getStatusCategory, DocumentFilterType } from "@/lib/eformsign/status-codes";
+import { UNKNOWN_CUSTOMER_NAME, customerName } from "@/lib/eformsign/display-name";
 
 const PAGE_SIZE = 20;
 const EMPTY_DOCUMENTS: EformsignDocument[] = [];
@@ -34,28 +35,6 @@ function sortByCreatedDate(docs: EformsignDocument[]): EformsignDocument[] {
   return [...docs].sort((a, b) => b.created_date - a.created_date);
 }
 
-// Helper to extract customer name from document.
-// Prefer the outsider (이용자, recipient_type "02") wherever they appear so docs
-// past step 1 still surface the customer rather than the current-step staff.
-function getCustomerName(doc: EformsignDocument): string | null {
-  type Recipientish = { recipient_type?: string; name?: string };
-  const buckets: Recipientish[][] = [
-    (doc.recipients as Recipientish[]) ?? [],
-    (doc.current_status?.step_recipients as Recipientish[]) ?? [],
-  ];
-  for (const list of buckets) {
-    const outsider = list.find((r) => r?.recipient_type === "02" && r.name);
-    if (outsider?.name) return outsider.name;
-  }
-  const fallback = (doc.current_status?.step_recipients as Recipientish[] | undefined)?.find(
-    (r) => r?.name && r?.recipient_type !== "01",
-  );
-  if (fallback?.name) return fallback.name;
-  if (doc.last_editor?.name) return doc.last_editor.name;
-  if (doc.creator?.name) return doc.creator.name;
-  return null;
-}
-
 export const infiniteContractsQueryKeys = {
   documents: (status: DocumentFilterType) =>
     status === null
@@ -68,13 +47,6 @@ interface UseInfiniteContractsOptions {
   filterType?: DocumentFilterType;
   /** Names to exclude from the results */
   excludedNames?: readonly string[];
-  /**
-   * Eagerly auto-fetch every remaining page in the background so
-   * `allDocuments` becomes the true full list (not just pages scrolled into
-   * view). Required when callers compute counts/stats from `allDocuments` —
-   * without it, derived totals under-report immediately after load.
-   */
-  eager?: boolean;
 }
 
 /**
@@ -83,21 +55,28 @@ interface UseInfiniteContractsOptions {
  * Per-status tabs (대기/완료/기간 만료) hit dedicated eformsign endpoints with
  * real `limit`/`skip` pagination using `total_rows` from the upstream response.
  *
- * The "전체" tab calls the merged endpoint which fetches `limit` items from
- * each of the three status streams in parallel, then dedupes. `total_rows` from
- * that endpoint is the deduped batch size — not a reliable global total — so
- * we use a "fetch until empty" cursor instead: keep paginating until a page
- * returns no documents (meaning all three status streams are exhausted at
- * the current offset).
+ * The merged "전체" endpoint now also returns its branch-scoped `total_rows`.
+ * Use that pagination metadata instead of issuing an extra, expensive request
+ * solely to discover an empty page.
  *
  * Each tab has its own cache (queryKey differs by filterType) and persists for
  * `staleTime`, so tab switches do not refetch within that window.
  */
+export function getNextContractsPageParam(
+  lastPage: EformsignDocumentsResponse,
+): number | undefined {
+  if (lastPage.documents.length === 0) {
+    return undefined;
+  }
+
+  const nextSkip = lastPage.skip + lastPage.limit;
+  return nextSkip < lastPage.total_rows ? nextSkip : undefined;
+}
+
 export function useInfiniteContracts({
   enabled = true,
   filterType = null,
   excludedNames = EMPTY_EXCLUDED_NAMES,
-  eager = false,
 }: UseInfiniteContractsOptions = {}) {
   const query = useInfiniteQuery<EformsignDocumentsResponse>({
     queryKey: infiniteContractsQueryKeys.documents(filterType),
@@ -117,15 +96,7 @@ export function useInfiniteContracts({
           return await eformsignApi.getAllDocuments({ ...params, type: null });
       }
     },
-    getNextPageParam: (lastPage) => {
-      const nextSkip = lastPage.skip + lastPage.limit;
-      if (filterType === null) {
-        // 전체 (merged-dedupe): fetch until a page returns empty.
-        return lastPage.documents.length > 0 ? nextSkip : undefined;
-      }
-      // Per-status: real total_rows from eformsign.
-      return nextSkip < lastPage.total_rows ? nextSkip : undefined;
-    },
+    getNextPageParam: getNextContractsPageParam,
     enabled,
     staleTime: 1000 * 60 * 5, // 5 minutes
     gcTime: 1000 * 60 * 60, // 1 hour
@@ -163,8 +134,8 @@ export function useInfiniteContracts({
 
     if (excludedNameSet.size > 0) {
       docs = docs.filter((doc) => {
-        const name = getCustomerName(doc);
-        return name && !excludedNameSet.has(name);
+        const name = customerName(doc);
+        return name !== UNKNOWN_CUSTOMER_NAME && !excludedNameSet.has(name);
       });
     }
 
@@ -174,17 +145,6 @@ export function useInfiniteContracts({
   // Total reported by upstream eformsign for per-status tabs. Not meaningful
   // for the 전체 tab (it is the first page's deduped batch size).
   const totalCount = query.data?.pages[0]?.total_rows ?? 0;
-
-  // Eager mode: walk every remaining page so `allDocuments` is the true full
-  // list. Each page completion bumps query.hasNextPage; the effect refires
-  // and pulls the next page until exhaustion. Disabled by default so per-tab
-  // pagination stays cheap.
-  useEffect(() => {
-    if (!eager) return;
-    if (!query.hasNextPage) return;
-    if (query.isFetchingNextPage) return;
-    void query.fetchNextPage();
-  }, [eager, query.hasNextPage, query.isFetchingNextPage, query.fetchNextPage]);
 
   return {
     documents,

@@ -6,6 +6,8 @@ import {
     ALIMTALK_PROVIDERS,
     RibbonConfig,
     DEFAULT_RIBBON_CONFIG,
+    MessageAutomationPastTriggerConfig,
+    DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
 } from "domain/entities/system-setting.entity";
 
 @Injectable()
@@ -17,6 +19,10 @@ export class SystemSettingService {
 
     private getUserEmailNotificationPreferenceKey(userId: string): string {
         return `user:${userId}:email_notifications_enabled`;
+    }
+
+    private getMessageAutomationPastTriggerConfigKey(branchId: string): string {
+        return `branch:${branchId}:message_automation:past_trigger`;
     }
 
     async getAlimtalkProvider(): Promise<AlimtalkProvider> {
@@ -81,5 +87,58 @@ export class SystemSettingService {
             SystemSettingEntity.RIBBON_CONFIG_KEY,
             JSON.stringify(config)
         );
+    }
+
+    async getMessageAutomationPastTriggerConfig(
+        branchId: string,
+    ): Promise<MessageAutomationPastTriggerConfig> {
+        const value = await this.getSettingUsecase.execute(
+            this.getMessageAutomationPastTriggerConfigKey(branchId)
+        );
+        return this.parseMessageAutomationPastTriggerConfig(value);
+    }
+
+    async setMessageAutomationPastTriggerConfig(
+        branchId: string,
+        config: MessageAutomationPastTriggerConfig,
+    ): Promise<SystemSettingEntity> {
+        const normalized = this.normalizeMessageAutomationPastTriggerConfig(config);
+        return this.updateSettingUsecase.execute(
+            this.getMessageAutomationPastTriggerConfigKey(branchId),
+            JSON.stringify(normalized)
+        );
+    }
+
+    private parseMessageAutomationPastTriggerConfig(
+        value: string | null,
+    ): MessageAutomationPastTriggerConfig {
+        if (!value) return DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG;
+
+        try {
+            return this.normalizeMessageAutomationPastTriggerConfig(JSON.parse(value));
+        } catch {
+            return DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG;
+        }
+    }
+
+    private normalizeMessageAutomationPastTriggerConfig(
+        config: unknown,
+    ): MessageAutomationPastTriggerConfig {
+        if (typeof config !== "object" || config === null) {
+            return DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG;
+        }
+
+        const candidate = config as Partial<MessageAutomationPastTriggerConfig>;
+        const sendIntervalMinutes = Number.isInteger(candidate.sendIntervalMinutes)
+            ? candidate.sendIntervalMinutes
+            : DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG.sendIntervalMinutes;
+        const ruleOrder = Array.isArray(candidate.ruleOrder)
+            ? candidate.ruleOrder.filter((id): id is string => typeof id === "string" && id.length > 0)
+            : DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG.ruleOrder;
+
+        return {
+            sendIntervalMinutes: Math.min(Math.max(sendIntervalMinutes ?? 1, 1), 1440),
+            ruleOrder: [...new Set(ruleOrder)],
+        };
     }
 }

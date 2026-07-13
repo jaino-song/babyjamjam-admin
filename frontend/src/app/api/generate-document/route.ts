@@ -20,6 +20,9 @@ export async function POST(request: NextRequest) {
 
         const body = await readJsonObjectBody(request);
         const { contractData, clientId } = body;
+        if (!Number.isInteger(clientId) || Number(clientId) < 1) {
+            return NextResponse.json({ error: "clientId is required" }, { status: 400 });
+        }
 
         const accessToken = getAccessToken(request);
         const refreshToken = getRefreshToken(request);
@@ -32,7 +35,7 @@ export async function POST(request: NextRequest) {
             contractData,
             accessToken,
             refreshToken,
-            clientId,
+            clientId: Number(clientId),
         }, {
             headers: getAuthHeaders(authToken),
         });

@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 import {
     EformsignDocCompletionClaimParams,
@@ -9,22 +10,87 @@ import {
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { EformsignDocMapper } from "infrastructure/database/mapper/eformsign-doc.mapper";
 
+const EFORMSIGN_DOC_COMPAT_READ_SELECT = {
+    id: true,
+    documentId: true,
+    createdDate: true,
+    updatedDate: true,
+    statusType: true,
+    statusDetail: true,
+    stepType: true,
+    stepIndex: true,
+    stepName: true,
+    stepRecipientType: true,
+    stepRecipientName: true,
+    stepRecipientSms: true,
+    expiredDate: true,
+    expired: true,
+    clientId: true,
+} satisfies Prisma.eformsign_docSelect;
+
+type EformsignDocCompatReadRow = Prisma.eformsign_docGetPayload<{
+    select: typeof EFORMSIGN_DOC_COMPAT_READ_SELECT;
+}>;
+
+const PENDING_EFORMSIGN_DOC_COLUMN_NAMES = [
+    "document_kind",
+    "employee_schedule_id",
+    "template_id",
+    "documentKind",
+    "employeeScheduleId",
+    "templateId",
+];
+
+const isPendingEformsignDocColumnError = (error: unknown): boolean => {
+    const code = typeof error === "object" && error !== null && "code" in error
+        ? (error as { code?: unknown }).code
+        : undefined;
+    const column = typeof error === "object" && error !== null && "meta" in error
+        ? (error as { meta?: { column?: unknown } }).meta?.column
+        : undefined;
+    const message = error instanceof Error ? error.message : String(error);
+    const haystack = `${message} ${typeof column === "string" ? column : ""}`;
+
+    if (code === "P2022") {
+        return true;
+    }
+
+    if (!/column|does not exist/i.test(haystack)) {
+        return false;
+    }
+
+    return PENDING_EFORMSIGN_DOC_COLUMN_NAMES.some((columnName) => haystack.includes(columnName));
+};
+
+const toCompatDomainRow = (row: EformsignDocCompatReadRow) => ({
+    ...row,
+    documentKind: null,
+    employeeScheduleId: null,
+    templateId: null,
+});
+
+const omitPendingEformsignDocColumns = <T extends {
+    documentKind?: unknown;
+    employeeScheduleId?: unknown;
+    templateId?: unknown;
+}>(data: T) => {
+    const legacyData = { ...data };
+    delete legacyData.documentKind;
+    delete legacyData.employeeScheduleId;
+    delete legacyData.templateId;
+    return legacyData;
+};
+
 @Injectable()
 export class SbEformsignDocRepository implements IEformsignDocRepository {
     constructor(private readonly prismaService: PrismaService) {}
 
     async findById(branchid: string, id: number): Promise<EformsignDocEntity | null> {
-        const doc = await this.prismaService.eformsign_doc.findFirst({
-            where: { id, branchId: branchid },
-        });
-        return doc ? EformsignDocMapper.toDomain(doc) : null;
+        return this.findFirstDomain({ id, branchId: branchid });
     }
 
     async findByDocumentId(branchid: string, documentId: string): Promise<EformsignDocEntity | null> {
-        const doc = await this.prismaService.eformsign_doc.findFirst({
-            where: { documentId: documentId, branchId: branchid },
-        });
-        return doc ? EformsignDocMapper.toDomain(doc) : null;
+        return this.findFirstDomain({ documentId: documentId, branchId: branchid });
     }
 
     async findBranchIdByDocumentId(documentId: string): Promise<string | null> {
@@ -72,17 +138,25 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
     }
 
     async findByClientId(branchid: string, clientId: number): Promise<EformsignDocEntity[]> {
-        const docs = await this.prismaService.eformsign_doc.findMany({
-            where: { clientId: clientId, branchId: branchid },
-        });
-        return docs.map(EformsignDocMapper.toDomain);
+        return this.findManyDomain({ clientId: clientId, branchId: branchid });
     }
 
     async findAll(branchid: string): Promise<EformsignDocEntity[]> {
+        return this.findManyDomain({ branchId: branchid });
+    }
+
+    async findDocumentIdsForOtherBranches(branchid: string): Promise<string[]> {
+        // 다른 지점이 소유한 문서의 documentId만 추린다. branchId가 null인(미적재) 문서는
+        // "지점 미지정"이라 인천(본사) 목록에 남아야 하므로 제외한다. Prisma의 `not`은
+        // null을 포함하므로 `not: null`로 비-null을 명시적으로 강제한다.
         const docs = await this.prismaService.eformsign_doc.findMany({
-            where: { branchId: branchid },
+            where: {
+                branchId: { not: null },
+                NOT: { branchId: branchid },
+            },
+            select: { documentId: true },
         });
-        return docs.map(EformsignDocMapper.toDomain);
+        return docs.map((doc) => doc.documentId);
     }
 
     async findClientNamesByBranch(branchid: string): Promise<EformsignDocClientSummary[]> {
@@ -132,33 +206,58 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
     }
 
     async create(branchid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity> {
-        const created = await this.prismaService.eformsign_doc.create({
-            data: {
-                ...EformsignDocMapper.toPrismaCreate(doc),
-                branchId: branchid,
-            },
-        });
-        return EformsignDocMapper.toDomain(created);
+        const data = {
+            ...EformsignDocMapper.toPrismaCreate(doc),
+            branchId: branchid,
+        };
+
+        try {
+            const created = await this.prismaService.eformsign_doc.create({ data });
+            return EformsignDocMapper.toDomain(created);
+        } catch (error) {
+            if (!isPendingEformsignDocColumnError(error)) {
+                throw error;
+            }
+
+            const created = await this.prismaService.eformsign_doc.create({
+                data: omitPendingEformsignDocColumns(data),
+                select: EFORMSIGN_DOC_COMPAT_READ_SELECT,
+            });
+            return EformsignDocMapper.toDomain(toCompatDomainRow(created));
+        }
     }
 
     async update(branchid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity> {
         if (!doc.id) {
             throw new Error("Cannot update eformsign_doc without id");
         }
-        const result = await this.prismaService.eformsign_doc.updateMany({
-            where: { id: doc.id, branchId: branchid },
-            data: EformsignDocMapper.toPrismaUpdate(doc),
-        });
+        const data = EformsignDocMapper.toPrismaUpdate(doc);
+        let result: Prisma.BatchPayload;
+
+        try {
+            result = await this.prismaService.eformsign_doc.updateMany({
+                where: { id: doc.id, branchId: branchid },
+                data,
+            });
+        } catch (error) {
+            if (!isPendingEformsignDocColumnError(error)) {
+                throw error;
+            }
+
+            result = await this.prismaService.eformsign_doc.updateMany({
+                where: { id: doc.id, branchId: branchid },
+                data: omitPendingEformsignDocColumns(data),
+            });
+        }
+
         if (result.count === 0) {
             throw new Error("Eformsign doc not found for branch");
         }
-        const updated = await this.prismaService.eformsign_doc.findFirst({
-            where: { id: doc.id, branchId: branchid },
-        });
+        const updated = await this.findFirstDomain({ id: doc.id, branchId: branchid });
         if (!updated) {
             throw new Error("Eformsign doc not found after update");
         }
-        return EformsignDocMapper.toDomain(updated);
+        return updated;
     }
 
     async upsertByDocumentId(branchid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity> {
@@ -168,27 +267,51 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         };
         const existing = await this.prismaService.eformsign_doc.findFirst({
             where: { documentId: doc.documentId, branchId: branchid },
+            select: { id: true },
         });
         if (existing) {
-            const result = await this.prismaService.eformsign_doc.updateMany({
-                where: { id: existing.id, branchId: branchid },
-                data,
-            });
+            let result: Prisma.BatchPayload;
+
+            try {
+                result = await this.prismaService.eformsign_doc.updateMany({
+                    where: { id: existing.id, branchId: branchid },
+                    data,
+                });
+            } catch (error) {
+                if (!isPendingEformsignDocColumnError(error)) {
+                    throw error;
+                }
+
+                result = await this.prismaService.eformsign_doc.updateMany({
+                    where: { id: existing.id, branchId: branchid },
+                    data: omitPendingEformsignDocColumns(data),
+                });
+            }
+
             if (result.count === 0) {
                 throw new Error("Eformsign doc not found for branch");
             }
-            const updated = await this.prismaService.eformsign_doc.findFirst({
-                where: { id: existing.id, branchId: branchid },
-            });
+            const updated = await this.findFirstDomain({ id: existing.id, branchId: branchid });
             if (!updated) {
                 throw new Error("Eformsign doc not found after update");
             }
-            return EformsignDocMapper.toDomain(updated);
+            return updated;
         }
-        const created = await this.prismaService.eformsign_doc.create({
-            data,
-        });
-        return EformsignDocMapper.toDomain(created);
+
+        try {
+            const created = await this.prismaService.eformsign_doc.create({ data });
+            return EformsignDocMapper.toDomain(created);
+        } catch (error) {
+            if (!isPendingEformsignDocColumnError(error)) {
+                throw error;
+            }
+
+            const created = await this.prismaService.eformsign_doc.create({
+                data: omitPendingEformsignDocColumns(data),
+                select: EFORMSIGN_DOC_COMPAT_READ_SELECT,
+            });
+            return EformsignDocMapper.toDomain(toCompatDomainRow(created));
+        }
     }
 
     async delete(branchid: string, id: number): Promise<void> {
@@ -201,5 +324,39 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         await this.prismaService.eformsign_doc.deleteMany({
             where: { documentId: documentId, branchId: branchid },
         });
+    }
+
+    private async findFirstDomain(where: Prisma.eformsign_docWhereInput): Promise<EformsignDocEntity | null> {
+        try {
+            const doc = await this.prismaService.eformsign_doc.findFirst({ where });
+            return doc ? EformsignDocMapper.toDomain(doc) : null;
+        } catch (error) {
+            if (!isPendingEformsignDocColumnError(error)) {
+                throw error;
+            }
+
+            const doc = await this.prismaService.eformsign_doc.findFirst({
+                where,
+                select: EFORMSIGN_DOC_COMPAT_READ_SELECT,
+            });
+            return doc ? EformsignDocMapper.toDomain(toCompatDomainRow(doc)) : null;
+        }
+    }
+
+    private async findManyDomain(where: Prisma.eformsign_docWhereInput): Promise<EformsignDocEntity[]> {
+        try {
+            const docs = await this.prismaService.eformsign_doc.findMany({ where });
+            return docs.map(EformsignDocMapper.toDomain);
+        } catch (error) {
+            if (!isPendingEformsignDocColumnError(error)) {
+                throw error;
+            }
+
+            const docs = await this.prismaService.eformsign_doc.findMany({
+                where,
+                select: EFORMSIGN_DOC_COMPAT_READ_SELECT,
+            });
+            return docs.map((doc) => EformsignDocMapper.toDomain(toCompatDomainRow(doc)));
+        }
     }
 }

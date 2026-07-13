@@ -16,12 +16,12 @@ import {
 } from "lucide-react";
 
 import type {
-  AlimtalkHistoryRecord as ApiAlimtalkHistoryRecord,
+  MessageLogRecord as ApiMessageLogRecord,
   TriggerEventType,
-} from "@/features/alimtalk-triggers/types";
+} from "@/features/message-triggers/types";
 import { DetailPanel, InfoCard, InfoRow, ListEmptyState } from "@/components/app/v3";
 import { Button } from "@/components/ui/button";
-import { matchesKoreanSearch } from "@/lib/search/korean-search";
+import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { cn } from "@/lib/utils";
 
 export type MessageHistoryStatus = "sent" | "failed" | "pending";
@@ -63,22 +63,25 @@ interface MessageHistoryDetailPanelProps {
 
 export const MESSAGE_HISTORY_STATUS_META: Record<
   MessageHistoryStatus,
-  { label: string; icon: LucideIcon; tone: string }
+  { label: string; icon: LucideIcon; tone: string; avatarClass: string }
 > = {
   sent: {
     label: "발송 성공",
     icon: CheckCircle2,
     tone: "bg-emerald-50 text-emerald-600",
+    avatarClass: "border border-[hsl(137,34%,84%)] bg-[hsl(137,60%,94%)] text-v3-green",
   },
   failed: {
     label: "발송 실패",
     icon: AlertCircle,
     tone: "bg-red-50 text-red-600",
+    avatarClass: "border border-[hsla(355,36%,45%,0.20)] bg-[hsl(355,40%,94%)] text-[hsl(355,36%,45%)]",
   },
   pending: {
     label: "재시도 대기",
     icon: Clock3,
     tone: "bg-amber-50 text-amber-600",
+    avatarClass: "border border-[hsla(38,92%,35%,0.18)] bg-[hsl(47,100%,92%)] text-[hsl(38,92%,35%)]",
   },
 };
 
@@ -153,6 +156,8 @@ const HISTORY_TEMPLATE_LABELS: Record<string, string> = {
   SERVICE_INFO: "서비스 안내",
   SERVICE_END_REMINDER: "서비스 종료 안내",
   EMPLOYEE_ASSIGNED: "직원 배정 완료",
+  SERVICE_FEEDBACK_LINK: "제공기록지 작성 링크",
+  service_feedback_link_sms: "제공기록지 작성 링크",
   client_greeting_sms: "인사 메시지",
   GREETING: "인사 메시지",
   "인사(소개)": "인사 메시지",
@@ -212,7 +217,7 @@ export function getMessageHistoryTemplateLabel(templateKey: string, variables?: 
   return variableTitle ? normalizeHistoryTemplateLabel(variableTitle) : normalizeHistoryTemplateLabel(templateKey);
 }
 
-function getHistoryRecordTitle(record: ApiAlimtalkHistoryRecord) {
+function getHistoryRecordTitle(record: ApiMessageLogRecord) {
   const templateLabel = getMessageHistoryTemplateLabel(record.templateKey, record.variables);
   const ruleName = record.ruleName?.trim();
   if (ruleName && ruleName !== record.templateKey && templateLabel === normalizeHistoryTemplateLabel(record.templateKey)) {
@@ -226,12 +231,12 @@ function getHistoryChannelLabel(provider: string) {
   return provider === "aligo_sms" ? "메시지" : provider;
 }
 
-export function getMessageHistoryTimestamp(record: ApiAlimtalkHistoryRecord) {
+export function getMessageHistoryTimestamp(record: ApiMessageLogRecord) {
   return record.lastAttemptAt ?? record.updatedAt ?? record.createdAt;
 }
 
 export function normalizeMessageHistoryRecord(
-  record: ApiAlimtalkHistoryRecord,
+  record: ApiMessageLogRecord,
   options: NormalizeMessageHistoryRecordOptions = {}
 ): MessageHistoryRecord {
   const sentAt = getMessageHistoryTimestamp(record);
@@ -251,7 +256,7 @@ export function normalizeMessageHistoryRecord(
     title: getHistoryRecordTitle(record),
     templateLabel: getMessageHistoryTemplateLabel(record.templateKey, record.variables),
     recipientName: record.recipientName?.trim() || record.clientName?.trim() || record.employeeName?.trim() || fallbackRecipientName || "-",
-    recipientPhone: record.receiver,
+    recipientPhone: record.recipientPhone?.trim() || record.receiver,
     recipientListLabel: registeredClientName || fallbackListLabel || record.receiver,
     channelLabel: getHistoryChannelLabel(record.provider),
     sentAt,
@@ -288,16 +293,7 @@ export function formatMessageHistoryFailureReason(reason: string | null | undefi
 }
 
 export function matchesMessageHistoryQuery(record: MessageHistoryRecord, query: string) {
-  const trimmedQuery = query.trim().toLowerCase();
-  if (!trimmedQuery) return true;
-
-  const digitQuery = trimmedQuery.replace(/\D/g, "");
-  const recipientDigits = record.recipientPhone.replace(/\D/g, "");
-  if (digitQuery && recipientDigits.includes(digitQuery)) {
-    return true;
-  }
-
-  return [
+  return matchesSearchQuery(query, [
     record.title,
     record.recipientName,
     record.recipientPhone,
@@ -306,7 +302,7 @@ export function matchesMessageHistoryQuery(record: MessageHistoryRecord, query: 
     record.messagePreview,
     record.failureReason ?? "",
     MESSAGE_HISTORY_STATUS_META[record.status].label,
-  ].some((field) => field && matchesKoreanSearch(field, trimmedQuery));
+  ]);
 }
 
 export function MessageHistoryDetailPanel({
@@ -338,7 +334,10 @@ export function MessageHistoryDetailPanel({
       avatar={
         <div
           data-component={`${dataComponentPrefix}-detail-avatar`}
-          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
+          className={cn(
+            "flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px]",
+            selectedRecord ? MESSAGE_HISTORY_STATUS_META[selectedRecord.status].avatarClass : "bg-v3-primary-light text-v3-primary"
+          )}
         >
           <History className="h-5 w-5" />
         </div>

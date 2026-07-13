@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import {
     ChangeEmployeeOpenStatusUsecase,
     CreateEmployeeUsecase,
@@ -15,6 +15,8 @@ import {
 } from "application/usecases/employee";
 import { normalizeEmployeeGrade } from "domain/constants/employee-grade.constants";
 import { EmployeeEntity } from "domain/entities/employee.entity";
+import { EMPLOYEE_REPOSITORY, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
+import { normalizePhone } from "application/utils/normalize-phone";
 
 export type EmployeeUpdateParams = {
     name?: string;
@@ -22,6 +24,7 @@ export type EmployeeUpdateParams = {
     phone?: string;
     grade?: string;
     openToNextWork?: boolean;
+    birthday?: string;
 };
 
 @Injectable()
@@ -39,11 +42,13 @@ export class EmployeeService {
         private readonly listEmployeesByRegisteredDateRangeUsecase: ListEmployeesByRegisteredDateRangeUsecase,
         private readonly changeEmployeeOpenStatusUsecase: ChangeEmployeeOpenStatusUsecase,
         private readonly listEmployeesOpenToNextWorkUsecase: ListEmployeesOpenToNextWorkUsecase,
+        @Inject(EMPLOYEE_REPOSITORY)
+        private readonly employeeRepository: IEmployeeRepository,
     ) {}
 
     create(
         branchid: string,
-        params: { name: string; workArea: string[]; phone: string; grade: string; openToNextWork: boolean; registeredDate?: string }
+        params: { name: string; workArea: string[]; phone: string; grade: string; openToNextWork: boolean; registeredDate?: string; birthday?: string }
     ): Promise<EmployeeEntity> {
         return this.createEmployeeUsecase.execute(
             branchid,
@@ -53,6 +58,7 @@ export class EmployeeService {
             normalizeEmployeeGrade(params.grade),
             params.openToNextWork,
             params.registeredDate ? new Date(params.registeredDate) : undefined,
+            params.birthday,
         );
     }
 
@@ -101,5 +107,13 @@ export class EmployeeService {
 
     findAllOpenToNextWork(branchid: string): Promise<EmployeeEntity[]> {
         return this.listEmployeesOpenToNextWorkUsecase.execute(branchid);
+    }
+
+    async checkPhoneExists(branchid: string, phone: string | null | undefined): Promise<boolean> {
+        const normalizedPhone = normalizePhone(phone);
+        if (!normalizedPhone) return false;
+
+        const existing = await this.employeeRepository.findByPhone(branchid, normalizedPhone);
+        return existing !== null;
     }
 }

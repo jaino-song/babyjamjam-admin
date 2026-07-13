@@ -182,10 +182,12 @@ export default function TemplatesPage() {
               <HeaderActionButton icon={ArrowLeft} label="돌아가기" href="/messages" variant="muted" />
             </div>
           }
+          emptyState={!(isLoadingBranchTemplates || branchItems.length > 0) ? (
+            <ListEmptyState message="등록된 지점 템플릿이 없습니다." />
+          ) : undefined}
         >
-          {isLoadingBranchTemplates || branchItems.length > 0 ? (
-            <div data-component="messages-templates-list" className="space-y-2 pb-2">
-              <AnimatedSlotList<TemplateListItem>
+          <div data-component="messages-templates-list" className="space-y-2 pb-2">
+            <AnimatedSlotList<TemplateListItem>
                 items={branchItems}
                 isLoading={isLoadingBranchTemplates}
                 className="space-y-2"
@@ -228,9 +230,6 @@ export default function TemplatesPage() {
                 }}
               />
             </div>
-          ) : (
-            <ListEmptyState message="등록된 지점 템플릿이 없습니다." />
-          )}
         </ListPanel>
 
         <DetailPanel>

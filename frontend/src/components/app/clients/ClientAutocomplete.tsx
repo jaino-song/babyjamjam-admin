@@ -8,7 +8,7 @@ import { t } from "@/lib/i18n/translations";
 import type { Client } from "@/lib/client/types";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
 import { formatKoreanPhoneNumber, normalizeKoreanPhoneLookupKey } from "@/lib/phone";
-import { matchesKoreanSearch } from "@/lib/search/korean-search";
+import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { cn } from "@/lib/utils";
 
 import { Button } from "@/components/ui/button";
@@ -29,8 +29,11 @@ import {
 import { Label } from "@/components/ui/label";
 import { StatusBadge } from "@/components/app/ui/status-badge";
 import { V3_INPUT_CONTROL_CLASS_NAME } from "@/components/ui/input";
+import { getGlintUiScaleForViewport } from "@/components/app/v3/useGlintUiScale";
+import { ClientFormDialog } from "./ClientFormDialog";
 
 interface ClientAutocompleteProps {
+    containerClassName?: string;
     value: number | null;
     onChange: (clientId: number | null, client: Client | null) => void;
     label: string;
@@ -48,6 +51,7 @@ interface ClientAutocompleteProps {
 }
 
 export function ClientAutocomplete({
+    containerClassName,
     value,
     onChange,
     label,
@@ -56,7 +60,7 @@ export function ClientAutocomplete({
     helperText,
     placeholder,
     excludeIds = [],
-    allowManualEntry = false,
+    allowManualEntry = true,
     onManualEntry,
     manualValue,
     onManualValueChange,
@@ -66,14 +70,21 @@ export function ClientAutocomplete({
     const locale = useLocale();
     const { data: clients, isLoading } = useAllClients();
     const setPrefillName = useClientDialogStore((state) => state.setPrefillName);
+    const clearPrefillName = useClientDialogStore((state) => state.clearPrefillName);
     const allowsInlineManualValue = typeof onManualValueChange === "function";
 
     // Track input value for display synchronization
     const [inputValue, setInputValue] = useState("");
     // Track open state for controlled dropdown behavior
     const [isOpen, setIsOpen] = useState(false);
+    const [isRegistrationDialogOpen, setIsRegistrationDialogOpen] = useState(false);
     // Ref for focusing input after clear
     const triggerRef = useRef<HTMLButtonElement>(null);
+    const popoverSideOffset = -44 * (
+        typeof window === "undefined"
+            ? 1
+            : getGlintUiScaleForViewport(window.innerWidth, window.innerHeight)
+    );
 
     // Filter out excluded clients
     const availableClients = useMemo(() => {
@@ -102,26 +113,14 @@ export function ClientAutocomplete({
     // Filter clients based on input - Korean IME compatible
     const filteredClients = useMemo(() => {
         if (!commandInputValue.trim()) return [];
-        const phoneQuery = normalizeKoreanPhoneLookupKey(commandInputValue);
 
-        return availableClients.filter(
-            (client) => {
-                const clientPhone = normalizeKoreanPhoneLookupKey(client.phone ?? "");
-                const matchesPhone = phoneQuery.length > 0 && clientPhone.includes(phoneQuery);
-
-                if (searchMode === "phone") {
-                    return matchesPhone;
-                }
-
-                return (
-                    // 초성 search only for name (e.g., ㄱ → 김현아)
-                    matchesKoreanSearch(client.name, commandInputValue) ||
-                    // Phone: simple substring match (no 초성)
-                    matchesPhone ||
-                    // Address: simple substring match (no 초성 to avoid false positives)
-                    (client.address && client.address.toLowerCase().includes(commandInputValue.toLowerCase()))
-                );
-            }
+        return availableClients.filter((client) =>
+            matchesSearchQuery(
+                commandInputValue,
+                searchMode === "phone"
+                    ? [client.phone]
+                    : [client.name, client.phone, client.address],
+            ),
         );
     }, [availableClients, commandInputValue, searchMode]);
 
@@ -165,8 +164,21 @@ export function ClientAutocomplete({
         setTimeout(() => {
             if (onManualEntry) {
                 onManualEntry();
+                return;
             }
+
+            setIsRegistrationDialogOpen(true);
         }, 100);
+    };
+
+    const handleRegistrationDialogClose = () => {
+        setIsRegistrationDialogOpen(false);
+        clearPrefillName();
+    };
+
+    const handleRegistrationSuccess = (client: Client) => {
+        handleRegistrationDialogClose();
+        handleSelect(client);
     };
 
     const commitInlineManualValue = () => {
@@ -209,8 +221,16 @@ export function ClientAutocomplete({
     const searchPlaceholder = placeholder ?? t(locale, "contract-msg.client-search-placeholder");
 
     return (
-        <div data-component="clients-autocomplete" className="space-y-2">
-            <Label className={cn(error && "text-destructive")}>
+        <div
+            data-component="clients-autocomplete"
+            className={cn("space-y-2", containerClassName)}
+        >
+            <Label
+                className={cn(
+                    "text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted",
+                    error && "text-destructive",
+                )}
+            >
                 {label}
                 {required && <span className="text-destructive ml-1">*</span>}
             </Label>
@@ -221,6 +241,7 @@ export function ClientAutocomplete({
                             ref={triggerRef}
                             variant="outline"
                             role="combobox"
+                            aria-label={label}
                             aria-expanded={isOpen}
                             data-component="clients-autocomplete-input"
                             className={cn(
@@ -267,11 +288,13 @@ export function ClientAutocomplete({
                 </div>
                 <PopoverContent
                     data-component="clients-autocomplete-dropdown"
-                    className="w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-[22px] border-none bg-white p-0 text-v3-dark shadow-[0_0_0_2px_hsla(214,30%,40%,0.12),0_0_12px_hsla(214,30%,40%,0.05)]"
+                    className="glint-ui-scale-scope w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-[22px] border-none bg-white p-0 text-v3-dark shadow-[0_0_0_2px_hsla(214,30%,40%,0.12),0_0_12px_hsla(214,30%,40%,0.05)]"
                     align="start"
+                    sideOffset={popoverSideOffset}
                 >
-                    <Command shouldFilter={false}>
+                    <Command shouldFilter={false} label={`${label} 검색`}>
                         <CommandInput
+                            aria-label={`${label} 검색`}
                             placeholder={searchPlaceholder}
                             value={commandInputValue}
                             onValueChange={handleInputValueChange}
@@ -358,8 +381,10 @@ export function ClientAutocomplete({
                                 <CommandSeparator />
                                 <button
                                     type="button"
+                                    aria-label={t(locale, "contract-msg.manual-entry")}
                                     className="group flex w-full flex-col rounded-[16px] px-3 py-3 text-left transition-colors hover:bg-accent hover:text-white hover:rounded-t-none"
                                     onClick={handleManualEntry}
+                                    data-testid="client-autocomplete-add-button"
                                 >
                                     <div className="flex items-center gap-2">
                                         <UserPlus className="h-4 w-4" />
@@ -381,6 +406,14 @@ export function ClientAutocomplete({
                     {helperText}
                 </p>
             )}
+
+            {isRegistrationDialogOpen ? (
+                <ClientFormDialog
+                    open
+                    onClose={handleRegistrationDialogClose}
+                    onSuccess={handleRegistrationSuccess}
+                />
+            ) : null}
         </div>
     );
 }

@@ -4,6 +4,7 @@ import {
     FindEformsignDocByDocumentIdUsecase,
     FindEformsignDocsByClientIdUsecase,
     ListEformsignDocsUsecase,
+    ListOtherBranchDocumentIdsUsecase,
     GetEformsignAccessTokenUsecase,
     RefreshEformsignAccessTokenUsecase,
     FetchAllEformsignDocsFromApiUsecase,
@@ -14,6 +15,7 @@ import {
     CreateAndSendContractUsecase,
     CreateAndSendContractParams,
     CreateAndSendContractResult,
+    LinkDocumentToClientUsecase,
 } from "application/usecases/eformsign-doc";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 import {
@@ -23,6 +25,36 @@ import {
 
 const COMPLETED_STATUS_CODES = new Set(["003", "012", "022", "032", "050", "062", "072", "092"]);
 const REJECTED_STATUS_CODES = new Set(["011", "021", "031", "040", "042", "045", "047", "049", "061", "071", "080"]);
+const STATUS_NAME_TO_CODE: Record<string, string> = {
+    doc_tempsave: "001",
+    doc_create: "002",
+    doc_complete: "003",
+    doc_request_approval: "010",
+    doc_reject_approval: "011",
+    doc_accept_approval: "012",
+    doc_request_reception: "020",
+    doc_reject_reception: "021",
+    doc_accept_reception: "022",
+    doc_request_outsider: "030",
+    doc_reject_outsider: "031",
+    doc_accept_outsider: "032",
+    doc_request_revoke: "040",
+    doc_revoke: "042",
+    doc_update: "043",
+    doc_request_reject: "045",
+    doc_request_delete: "047",
+    doc_delete: "049",
+    doc_request_participant: "060",
+    doc_reject_participant: "061",
+    doc_accept_participant: "062",
+    doc_rerequest_participant: "063",
+    doc_open_participant: "064",
+    doc_request_reviewer: "070",
+    doc_reject_reviewer: "071",
+    doc_accept_reviewer: "072",
+    doc_expired: "080",
+    face_signature_complete: "092",
+};
 
 @Injectable()
 export class EformsignDocService {
@@ -34,8 +66,10 @@ export class EformsignDocService {
         private readonly findEformsignDocByDocumentIdUsecase: FindEformsignDocByDocumentIdUsecase,
         private readonly findEformsignDocsByClientIdUsecase: FindEformsignDocsByClientIdUsecase,
         private readonly listEformsignDocsUsecase: ListEformsignDocsUsecase,
+        private readonly listOtherBranchDocumentIdsUsecase: ListOtherBranchDocumentIdsUsecase,
         private readonly createEformsignDocUsecase: CreateEformsignDocUsecase,
         private readonly updateEformsignDocStatusUsecase: UpdateEformsignDocStatusUsecase,
+        private readonly linkDocumentToClientUsecase: LinkDocumentToClientUsecase,
         // External API use cases
         private readonly getEformsignAccessTokenUsecase: GetEformsignAccessTokenUsecase,
         private readonly refreshEformsignAccessTokenUsecase: RefreshEformsignAccessTokenUsecase,
@@ -75,8 +109,9 @@ export class EformsignDocService {
     /**
      * Find all stored eformsign docs linked to a client
      */
-    findByClientId(branchid: string, clientId: number): Promise<EformsignDocEntity[]> {
-        return this.findEformsignDocsByClientIdUsecase.execute(branchid, clientId);
+    async findByClientId(branchid: string, clientId: number): Promise<EformsignDocEntity[]> {
+        const docs = await this.findEformsignDocsByClientIdUsecase.execute(branchid, clientId);
+        return this.refreshDocsFromApiBestEffort(branchid, docs);
     }
 
     /**
@@ -84,6 +119,15 @@ export class EformsignDocService {
      */
     findAll(branchid: string): Promise<EformsignDocEntity[]> {
         return this.listEformsignDocsUsecase.execute(branchid);
+    }
+
+    /**
+     * List documentIds owned by branches OTHER than the given one
+     * (branchId set and != branchid). Lets the 인천(HQ) branch list its own +
+     * unmapped docs while excluding other branches' contracts.
+     */
+    findDocumentIdsForOtherBranches(branchid: string): Promise<string[]> {
+        return this.listOtherBranchDocumentIdsUsecase.execute(branchid);
     }
 
     // ============ External API Operations ============
@@ -132,7 +176,7 @@ export class EformsignDocService {
         const currentStatus = document.current_status;
         const statusType = this.normalizeStatusCode(currentStatus?.status_type);
 
-        return this.updateEformsignDocStatusUsecase.execute(branchid, {
+        const updatedDoc = await this.updateEformsignDocStatusUsecase.execute(branchid, {
             documentId,
             statusType,
             statusDetail: this.statusDetail(statusType, currentStatus?.step_name),
@@ -141,6 +185,8 @@ export class EformsignDocService {
             stepName: currentStatus?.step_name,
             expired: currentStatus?._expired,
         });
+        await this.linkDocumentToClientBestEffort(branchid, documentId);
+        return updatedDoc;
     }
 
     createAndSendContract(
@@ -151,7 +197,12 @@ export class EformsignDocService {
     }
 
     private normalizeStatusCode(statusType: string | null | undefined): string {
-        return statusType?.trim().padStart(3, "0") || "000";
+        const normalized = statusType?.trim().toLowerCase();
+        if (!normalized) {
+            return "000";
+        }
+
+        return STATUS_NAME_TO_CODE[normalized] ?? normalized.padStart(3, "0");
     }
 
     private statusDetail(statusType: string, stepName: string | null | undefined): string {
@@ -162,5 +213,42 @@ export class EformsignDocService {
             return "거부";
         }
         return stepName?.trim() || "진행중";
+    }
+
+    private async refreshDocsFromApiBestEffort(
+        branchid: string,
+        docs: EformsignDocEntity[],
+    ): Promise<EformsignDocEntity[]> {
+        if (docs.length === 0) {
+            return docs;
+        }
+
+        let accessToken: string;
+        try {
+            const tokenResponse = await this.getEformsignAccessTokenUsecase.execute(Date.now());
+            accessToken = tokenResponse.oauth_token.access_token;
+        } catch (error) {
+            this.logger.warn(`Failed to get eformsign access token for client doc refresh: ${error}`);
+            return docs;
+        }
+
+        return Promise.all(
+            docs.map(async (doc) => {
+                try {
+                    return await this.syncStatusFromApi(branchid, accessToken, doc.documentId);
+                } catch (error) {
+                    this.logger.warn(`Failed to refresh eformsign doc ${doc.documentId}: ${error}`);
+                    return doc;
+                }
+            }),
+        );
+    }
+
+    private async linkDocumentToClientBestEffort(branchid: string, documentId: string): Promise<void> {
+        try {
+            await this.linkDocumentToClientUsecase.execute(branchid, documentId);
+        } catch (error) {
+            this.logger.warn(`Failed to link eformsign doc ${documentId} to client: ${error}`);
+        }
     }
 }

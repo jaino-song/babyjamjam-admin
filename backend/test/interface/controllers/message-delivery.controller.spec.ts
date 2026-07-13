@@ -8,7 +8,7 @@ describe("MessageDeliveryController", () => {
     let controller: MessageDeliveryController;
     let aligoService: jest.Mocked<Pick<AligoService, "sendSms">>;
     let messageSenderApprovalService: jest.Mocked<Pick<MessageSenderApprovalService, "ensureApproved">>;
-    let prismaService: { alimtalk_log: { create: jest.Mock } };
+    let prismaService: { message_log: { create: jest.Mock } };
 
     beforeEach(() => {
         aligoService = {
@@ -18,7 +18,7 @@ describe("MessageDeliveryController", () => {
             ensureApproved: jest.fn().mockResolvedValue(undefined),
         };
         prismaService = {
-            alimtalk_log: {
+            message_log: {
                 create: jest.fn().mockResolvedValue({}),
             },
         };
@@ -50,7 +50,7 @@ describe("MessageDeliveryController", () => {
         ).rejects.toThrow(BadRequestException);
 
         expect(aligoService.sendSms).not.toHaveBeenCalled();
-        expect(prismaService.alimtalk_log.create).not.toHaveBeenCalled();
+        expect(prismaService.message_log.create).not.toHaveBeenCalled();
     });
 
     it("should normalize scheduled fields for the Aligo request and response payload", async () => {
@@ -78,6 +78,7 @@ describe("MessageDeliveryController", () => {
             { branchId: "org-1" },
             {
                 receiver: "010-1234-5678",
+                recipientName: "김산모",
                 message: "장문 테스트 메시지",
                 title: "안내",
                 triggerType: "scheduled",
@@ -90,7 +91,7 @@ describe("MessageDeliveryController", () => {
         expect(aligoService.sendSms).toHaveBeenCalledWith({
             receiver: "010-1234-5678",
             message: "장문 테스트 메시지",
-            recipientName: undefined,
+            recipientName: "김산모",
             title: "안내",
             msgType: undefined,
             scheduledDate: "20260309",
@@ -98,7 +99,7 @@ describe("MessageDeliveryController", () => {
             testMode: true,
         });
         expect(result).toEqual({
-            provider: "aligo",
+            provider: "aligo_sms",
             triggerType: "scheduled",
             request: {
                 senderPhone: "0212345678",
@@ -116,13 +117,15 @@ describe("MessageDeliveryController", () => {
                 msgType: "LMS",
             },
         });
-        expect(prismaService.alimtalk_log.create).toHaveBeenCalledWith({
+        expect(prismaService.message_log.create).toHaveBeenCalledWith({
             data: expect.objectContaining({
                 branchId: "org-1",
                 provider: "aligo_sms",
                 templateKey: "안내",
                 receiver: "01012345678",
                 clientId: null,
+                recipientName: "김산모",
+                recipientPhone: "01012345678",
                 messageBody: "장문 테스트 메시지",
                 status: "pending",
                 aligoMid: "321",
@@ -161,14 +164,14 @@ describe("MessageDeliveryController", () => {
                 },
             ),
         ).resolves.toMatchObject({
-            provider: "aligo",
+            provider: "aligo_sms",
             triggerType: "immediate",
             result: {
                 message: "success",
             },
         });
 
-        expect(prismaService.alimtalk_log.create).toHaveBeenCalledWith({
+        expect(prismaService.message_log.create).toHaveBeenCalledWith({
             data: expect.objectContaining({
                 status: "sent",
                 errorMessage: null,
@@ -206,12 +209,13 @@ describe("MessageDeliveryController", () => {
             ),
         ).rejects.toThrow(BadGatewayException);
 
-        expect(prismaService.alimtalk_log.create).toHaveBeenCalledWith({
+        expect(prismaService.message_log.create).toHaveBeenCalledWith({
             data: expect.objectContaining({
                 branchId: "org-1",
                 provider: "aligo_sms",
                 templateKey: "안내",
                 receiver: "01012345678",
+                recipientPhone: "01012345678",
                 messageBody: "테스트 발송 본문",
                 status: "failed",
                 errorMessage: "수신번호 형식이 올바르지 않습니다.",
@@ -252,9 +256,10 @@ describe("MessageDeliveryController", () => {
             ),
         ).rejects.toThrow(BadGatewayException);
 
-        expect(prismaService.alimtalk_log.create).toHaveBeenCalledWith({
+        expect(prismaService.message_log.create).toHaveBeenCalledWith({
             data: expect.objectContaining({
                 status: "failed",
+                recipientPhone: "01012345678,01099999999",
                 nextRetryAt: null,
                 errorMessage: expect.stringContaining("부분 발송"),
             }),
@@ -280,12 +285,13 @@ describe("MessageDeliveryController", () => {
             ),
         ).rejects.toThrow(BadGatewayException);
 
-        expect(prismaService.alimtalk_log.create).toHaveBeenCalledWith({
+        expect(prismaService.message_log.create).toHaveBeenCalledWith({
             data: expect.objectContaining({
                 branchId: "org-1",
                 provider: "aligo_sms",
                 templateKey: "안내",
                 receiver: "01012345678",
+                recipientPhone: "01012345678",
                 messageBody: "테스트 발송 본문",
                 status: "failed",
                 aligoMid: null,

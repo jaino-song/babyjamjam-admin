@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Logger, MessageEvent, Post, Query, Sse, UseGuards } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { Observable, filter, interval, map, merge } from "rxjs";
 import { EformsignDocService } from "application/services/eformsign-doc.service";
 import { EformsignDocsEventBus } from "application/services/eformsign-docs-event-bus.service";
@@ -34,7 +35,19 @@ export class EformsignDocController {
         private readonly finalizeHeadlessUsecase: FinalizeDocumentHeadlessUsecase,
         private readonly eventBus: EformsignDocsEventBus,
         private readonly headlessProgressService: EformsignHeadlessProgressService,
+        private readonly configService: ConfigService,
     ) {}
+
+    /**
+     * GET /eformsign-docs/feedback-template-id
+     * Exposes the 제공기록지 template id so the UI can split feedback documents
+     * from contract documents by template — never by (renamable) template name.
+     */
+    @Get("feedback-template-id")
+    getFeedbackTemplateId(): { templateId: string | null } {
+        const templateId = this.configService.get<string>("EFORMSIGN_FEEDBACK_TEMPLATE_ID")?.trim();
+        return { templateId: templateId || null };
+    }
 
     /**
      * GET /eformsign-docs/events
@@ -110,6 +123,9 @@ export class EformsignDocController {
                 stepRecipientSms: dto.stepRecipientSms,
                 expiredDate: new Date(dto.expiredDate),
                 linkToClient: dto.linkToClient,
+                documentKind: dto.documentKind,
+                employeeScheduleId: dto.employeeScheduleId,
+                templateId: dto.templateId,
             });
             this.logger.log(`[POST /eformsign-docs] Successfully created record id=${result.id}`);
             return result;

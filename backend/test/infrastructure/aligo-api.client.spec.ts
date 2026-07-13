@@ -117,6 +117,18 @@ describe("AligoApiClient", () => {
                 );
             });
 
+            it("should include a timeout signal", async () => {
+                mockFetch.mockResolvedValueOnce({
+                    ok: true,
+                    json: () => Promise.resolve({ code: 0, message: "success" }),
+                } as Response);
+
+                await client.sendAlimtalk(createSendParams());
+
+                const options = mockFetch.mock.calls[0][1] as RequestInit;
+                expect(options.signal).toBeInstanceOf(AbortSignal);
+            });
+
             it("should include all required form data", async () => {
                 mockFetch.mockResolvedValueOnce({
                     ok: true,
@@ -274,6 +286,21 @@ describe("AligoApiClient", () => {
                 error_cnt: 0,
                 msg_type: "LMS",
             });
+        });
+
+        it("should include a timeout signal", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ result_code: "1", message: "success" }),
+            } as Response);
+
+            await client.sendSms({
+                receiver: "01011112222",
+                message: "테스트",
+            });
+
+            const options = mockFetch.mock.calls[0][1] as RequestInit;
+            expect(options.signal).toBeInstanceOf(AbortSignal);
         });
 
         it("should throw when sms request returns a non-ok response", async () => {

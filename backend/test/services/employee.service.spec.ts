@@ -14,6 +14,7 @@ import {
     ListEmployeesUsecase,
     UpdateEmployeeUsecase,
 } from "application/usecases/employee";
+import { EMPLOYEE_REPOSITORY, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
 import { EmployeeFactory } from "../utils";
 
 describe("EmployeeService", () => {
@@ -35,6 +36,7 @@ describe("EmployeeService", () => {
     let listByRegisteredDateRangeUsecase: jest.Mocked<ListEmployeesByRegisteredDateRangeUsecase>;
     let changeOpenStatusUsecase: jest.Mocked<ChangeEmployeeOpenStatusUsecase>;
     let listOpenToNextWorkUsecase: jest.Mocked<ListEmployeesOpenToNextWorkUsecase>;
+    let employeeRepository: jest.Mocked<Pick<IEmployeeRepository, "findByPhone">>;
 
     const branchId = "org-1";
 
@@ -52,6 +54,7 @@ describe("EmployeeService", () => {
         const mockListByRegisteredDateRangeUsecase = { execute: jest.fn() };
         const mockChangeOpenStatusUsecase = { execute: jest.fn() };
         const mockListOpenToNextWorkUsecase = { execute: jest.fn() };
+        const mockEmployeeRepository = { findByPhone: jest.fn() };
 
         const module: TestingModule = await Test.createTestingModule({
             providers: [
@@ -68,6 +71,7 @@ describe("EmployeeService", () => {
                 { provide: ListEmployeesByRegisteredDateRangeUsecase, useValue: mockListByRegisteredDateRangeUsecase },
                 { provide: ChangeEmployeeOpenStatusUsecase, useValue: mockChangeOpenStatusUsecase },
                 { provide: ListEmployeesOpenToNextWorkUsecase, useValue: mockListOpenToNextWorkUsecase },
+                { provide: EMPLOYEE_REPOSITORY, useValue: mockEmployeeRepository },
             ],
         }).compile();
 
@@ -84,6 +88,29 @@ describe("EmployeeService", () => {
         listByRegisteredDateRangeUsecase = module.get(ListEmployeesByRegisteredDateRangeUsecase);
         changeOpenStatusUsecase = module.get(ChangeEmployeeOpenStatusUsecase);
         listOpenToNextWorkUsecase = module.get(ListEmployeesOpenToNextWorkUsecase);
+        employeeRepository = module.get(EMPLOYEE_REPOSITORY);
+    });
+
+    // ============================================
+    // checkPhoneExists
+    // ============================================
+    describe("checkPhoneExists", () => {
+        it("should check duplicate phones through the employee repository only", async () => {
+            const employee = EmployeeFactory.create({ id: 1, phone: "010-1234-5678" });
+            employeeRepository.findByPhone.mockResolvedValue(employee);
+
+            const result = await service.checkPhoneExists(branchId, "010-1234-5678");
+
+            expect(result).toBe(true);
+            expect(employeeRepository.findByPhone).toHaveBeenCalledWith(branchId, "01012345678");
+        });
+
+        it("should return false without querying when the phone is invalid", async () => {
+            const result = await service.checkPhoneExists(branchId, "1234");
+
+            expect(result).toBe(false);
+            expect(employeeRepository.findByPhone).not.toHaveBeenCalled();
+        });
     });
 
     // ============================================
@@ -114,6 +141,7 @@ describe("EmployeeService", () => {
                 params.grade,
                 params.openToNextWork,
                 undefined,
+                undefined,
             );
             expect(result).toBe(mockEmployee);
         });
@@ -143,6 +171,7 @@ describe("EmployeeService", () => {
                 params.grade,
                 params.openToNextWork,
                 new Date("2024-06-15"),
+                undefined,
             );
         });
 
@@ -169,6 +198,7 @@ describe("EmployeeService", () => {
                 params.phone,
                 params.grade,
                 params.openToNextWork,
+                undefined,
                 undefined,
             );
         });

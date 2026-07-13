@@ -7,8 +7,8 @@ import {
     ListClientsUsecase,
     UpdateClientUsecase,
 } from "../../application/usecases/client";
-import { AlimtalkService } from "../../application/services/alimtalk.service";
-import { ClientGreetingSmsAutomationService } from "../../application/services/client-greeting-sms-automation.service";
+import { MessageTriggerService } from "../../application/services/message-trigger.service";
+import { EmployeeFeedbackLinkService } from "../../application/services/employee-feedback-link.service";
 import { ClientEntity } from "../../domain/entities/client.entity";
 import { IClientRepository } from "../../domain/repositories/client.repository.interface";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
@@ -20,6 +20,7 @@ describe("ClientService", () => {
     
     const createMockCreateClientUsecase = () => ({
         execute: jest.fn(),
+        executeWithInitialSchedule: jest.fn(),
     });
 
     const createMockUpdateClientUsecase = () => ({
@@ -42,31 +43,56 @@ describe("ClientService", () => {
         execute: jest.fn(),
     });
 
-    const createMockPrismaService = () => ({
-        employee_schedule: {
+    const createDeferred = <T = void>() => {
+        let resolve!: (value: T | PromiseLike<T>) => void;
+        const promise = new Promise<T>((resolvePromise) => {
+            resolve = resolvePromise;
+        });
+        return { promise, resolve };
+    };
+
+    const createMockPrismaService = () => {
+        const prisma = {
+            employee_schedule: {
             create: jest.fn(),
             update: jest.fn(),
             updateMany: jest.fn(),
             findFirst: jest.fn(),
             findMany: jest.fn().mockResolvedValue([]),
-        },
-        client: {
-            update: jest.fn(),
-        },
-        eformsign_doc: {
-            findMany: jest.fn().mockResolvedValue([]),
-        },
-        area: {
-            findFirst: jest.fn().mockResolvedValue({ id: "incheon" }),
-        },
+            },
+            employee: {
+                findMany: jest.fn().mockImplementation(({ where }) =>
+                    Promise.resolve(where.id.in.map((id: number) => ({ id }))),
+                ),
+            },
+            client: {
+                update: jest.fn(),
+            },
+            eformsign_doc: {
+                findMany: jest.fn().mockResolvedValue([]),
+            },
+            schedule_change_request: {
+                findMany: jest.fn().mockResolvedValue([]),
+            },
+            area: {
+                findFirst: jest.fn().mockResolvedValue({ id: "incheon" }),
+            },
+            $transaction: jest.fn(),
+        };
+        prisma.$transaction.mockImplementation(async (callback) => callback(prisma));
+        return prisma;
+    };
+
+    const createMockTriggerService = () => ({
+        ensureDefaultRulesForBranch: jest.fn().mockResolvedValue(undefined),
+        syncClientRulesForClient: jest.fn().mockResolvedValue(undefined),
+        syncEmployeeAssignmentRulesForSchedule: jest.fn().mockResolvedValue(undefined),
+        cancelPendingJobsForClientDeletion: jest.fn().mockResolvedValue(undefined),
     });
 
-    const createMockAlimtalkService = () => ({
-        sendClientCreatedAlimtalk: jest.fn().mockResolvedValue(undefined),
-    });
-
-    const createMockClientGreetingSmsAutomationService = () => ({
-        sendClientGreetingSms: jest.fn().mockResolvedValue(undefined),
+    const createMockEmployeeFeedbackLinkService = () => ({
+        scheduleForServiceStart: jest.fn().mockResolvedValue(undefined),
+        revoke: jest.fn().mockResolvedValue(undefined),
     });
 
     const createMockClientRepository = (): jest.Mocked<IClientRepository> => ({
@@ -74,6 +100,7 @@ describe("ClientService", () => {
         findAll: jest.fn(),
         findAllPaginated: jest.fn(),
         create: jest.fn(),
+        createWithInitialSchedule: jest.fn(),
         update: jest.fn(),
         delete: jest.fn(),
         findByStartDate: jest.fn(),
@@ -116,8 +143,8 @@ describe("ClientService", () => {
     let listClientsPaginatedUsecase: ReturnType<typeof createMockListClientsPaginatedUsecase>;
     let deleteClientUsecase: ReturnType<typeof createMockDeleteClientUsecase>;
     let prismaService: ReturnType<typeof createMockPrismaService>;
-    let alimtalkService: ReturnType<typeof createMockAlimtalkService>;
-    let clientGreetingSmsAutomationService: ReturnType<typeof createMockClientGreetingSmsAutomationService>;
+    let triggerService: ReturnType<typeof createMockTriggerService>;
+    let employeeFeedbackLinkService: ReturnType<typeof createMockEmployeeFeedbackLinkService>;
     let clientRepository: ReturnType<typeof createMockClientRepository>;
 
     beforeEach(() => {
@@ -128,8 +155,8 @@ describe("ClientService", () => {
         listClientsPaginatedUsecase = createMockListClientsPaginatedUsecase();
         deleteClientUsecase = createMockDeleteClientUsecase();
         prismaService = createMockPrismaService();
-        alimtalkService = createMockAlimtalkService();
-        clientGreetingSmsAutomationService = createMockClientGreetingSmsAutomationService();
+        triggerService = createMockTriggerService();
+        employeeFeedbackLinkService = createMockEmployeeFeedbackLinkService();
         clientRepository = createMockClientRepository();
 
         service = new ClientService(
@@ -140,10 +167,9 @@ describe("ClientService", () => {
             updateClientUsecase as unknown as UpdateClientUsecase,
             deleteClientUsecase as unknown as DeleteClientUsecase,
             prismaService as unknown as PrismaService,
-            alimtalkService as unknown as AlimtalkService,
             clientRepository,
-            undefined,
-            clientGreetingSmsAutomationService as unknown as ClientGreetingSmsAutomationService,
+            triggerService as unknown as MessageTriggerService,
+            employeeFeedbackLinkService as unknown as EmployeeFeedbackLinkService,
         );
     });
 
@@ -152,16 +178,40 @@ describe("ClientService", () => {
     });
 
     // ============================================
+    // checkPhoneExists
+    // ============================================
+    describe("checkPhoneExists", () => {
+        it("should check duplicate phones through the client repository only", async () => {
+            const client = createClientEntity();
+            clientRepository.findByPhone.mockResolvedValue(client);
+
+            const result = await service.checkPhoneExists(branchId, "010-1234-5678");
+
+            expect(result).toBe(true);
+            expect(clientRepository.findByPhone).toHaveBeenCalledWith(branchId, "01012345678");
+        });
+
+        it("should return false without querying when the phone is invalid", async () => {
+            const result = await service.checkPhoneExists(branchId, "1234");
+
+            expect(result).toBe(false);
+            expect(clientRepository.findByPhone).not.toHaveBeenCalled();
+        });
+    });
+
+    // ============================================
     // create
     // ============================================
     describe("create", () => {
         describe("given valid client data with primary employee", () => {
-            it("should create client first, then create employee_schedule with clientId", async () => {
+            it("should create the client and employee schedule atomically", async () => {
                 // Arrange
                 const mockClient = createClientEntity();
                 const mockSchedule = { id: 10, clientId: 1 };
-                createClientUsecase.execute.mockResolvedValue(mockClient);
-                prismaService.employee_schedule.create.mockResolvedValue(mockSchedule);
+                createClientUsecase.executeWithInitialSchedule.mockResolvedValue({
+                    client: mockClient,
+                    scheduleId: mockSchedule.id,
+                });
 
                 const params = {
                     name: "New Client",
@@ -179,23 +229,21 @@ describe("ClientService", () => {
                 const result = await service.create(branchId, params);
 
                 // Assert
-                // Client should be created first
-                expect(createClientUsecase.execute).toHaveBeenCalledWith(
+                expect(createClientUsecase.executeWithInitialSchedule).toHaveBeenCalledWith(
                     branchId,
                     expect.objectContaining({
                         name: "New Client",
                         address: "123 Main St",
-                    })
-                );
-                // Then schedule with clientId
-                expect(prismaService.employee_schedule.create).toHaveBeenCalledWith({
-                    data: expect.objectContaining({
-                        clientId: 1,
-                        primaryEmployeeId: 5,
-                        workAddress: "123 Main St",
-                        replaced: false,
                     }),
-                });
+                    expect.objectContaining({
+                        primaryEmployeeId: 5,
+                        secondaryEmployeeId: null,
+                        workAddress: "123 Main St",
+                    }),
+                );
+                expect(createClientUsecase.execute).not.toHaveBeenCalled();
+                expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
+                expect(employeeFeedbackLinkService.scheduleForServiceStart).toHaveBeenCalledWith(10);
                 expect(result).toBe(mockClient);
             });
         });
@@ -265,7 +313,7 @@ describe("ClientService", () => {
             );
         });
 
-        it("should trigger the new client greeting SMS automation after client creation", async () => {
+        it("calls ensureDefaultRulesForBranch then syncClientRulesForClient with suppressGreeting=false by default", async () => {
             // Arrange
             const mockClient = createClientEntity();
             createClientUsecase.execute.mockResolvedValue(mockClient);
@@ -282,13 +330,16 @@ describe("ClientService", () => {
             await service.create(branchId, params);
 
             // Assert
-            expect(clientGreetingSmsAutomationService.sendClientGreetingSms).toHaveBeenCalledWith(
+            expect(triggerService.ensureDefaultRulesForBranch).toHaveBeenCalledWith(branchId);
+            expect(triggerService.syncClientRulesForClient).toHaveBeenCalledWith(
                 branchId,
-                mockClient,
+                mockClient.id,
+                true,
+                false,
             );
         });
 
-        it("should not trigger greeting SMS automation when suppressed by contract creation", async () => {
+        it("calls ensureDefaultRulesForBranch then syncClientRulesForClient with suppressGreeting=true when suppressGreetingSms is set", async () => {
             // Arrange
             const mockClient = createClientEntity();
             createClientUsecase.execute.mockResolvedValue(mockClient);
@@ -306,7 +357,43 @@ describe("ClientService", () => {
             await service.create(branchId, params);
 
             // Assert
-            expect(clientGreetingSmsAutomationService.sendClientGreetingSms).not.toHaveBeenCalled();
+            expect(triggerService.ensureDefaultRulesForBranch).toHaveBeenCalledWith(branchId);
+            expect(triggerService.syncClientRulesForClient).toHaveBeenCalledWith(
+                branchId,
+                mockClient.id,
+                true,
+                true,
+            );
+        });
+
+        it("does not resolve client creation before automatic message jobs are synchronized", async () => {
+            const mockClient = createClientEntity();
+            const syncCompletion = createDeferred();
+            const syncStarted = createDeferred();
+            createClientUsecase.execute.mockResolvedValue(mockClient);
+            triggerService.syncClientRulesForClient.mockImplementation(() => {
+                syncStarted.resolve();
+                return syncCompletion.promise;
+            });
+
+            let resolved = false;
+            const creation = service.create(branchId, {
+                name: "New Client",
+                phone: "010-1234-5678",
+                careCenter: false,
+                voucherClient: true,
+                breastPump: false,
+            });
+            void creation.then(() => {
+                resolved = true;
+            });
+
+            await syncStarted.promise;
+            await Promise.resolve();
+            expect(resolved).toBe(false);
+
+            syncCompletion.resolve();
+            await expect(creation).resolves.toBe(mockClient);
         });
 
         describe("given client data with both primary and secondary employees", () => {
@@ -314,8 +401,10 @@ describe("ClientService", () => {
                 // Arrange
                 const mockClient = createClientEntity();
                 const mockSchedule = { id: 10, clientId: 1 };
-                createClientUsecase.execute.mockResolvedValue(mockClient);
-                prismaService.employee_schedule.create.mockResolvedValue(mockSchedule);
+                createClientUsecase.executeWithInitialSchedule.mockResolvedValue({
+                    client: mockClient,
+                    scheduleId: mockSchedule.id,
+                });
 
                 const params = {
                     name: "New Client",
@@ -331,14 +420,15 @@ describe("ClientService", () => {
                 await service.create(branchId, params);
 
                 // Assert
-                expect(prismaService.employee_schedule.create).toHaveBeenCalledTimes(1);
-                expect(prismaService.employee_schedule.create).toHaveBeenCalledWith({
-                    data: expect.objectContaining({
-                        clientId: 1,
+                expect(createClientUsecase.executeWithInitialSchedule).toHaveBeenCalledWith(
+                    branchId,
+                    expect.any(Object),
+                    expect.objectContaining({
                         primaryEmployeeId: 5,
                         secondaryEmployeeId: 6,
                     }),
-                });
+                );
+                expect(employeeFeedbackLinkService.scheduleForServiceStart).toHaveBeenCalledWith(10);
             });
         });
 
@@ -365,9 +455,51 @@ describe("ClientService", () => {
                 expect(createClientUsecase.execute).not.toHaveBeenCalled();
                 expect(clientRepository.create).not.toHaveBeenCalled();
                 // Assert: no side-effects fired
-                expect(alimtalkService.sendClientCreatedAlimtalk).not.toHaveBeenCalled();
-                expect(clientGreetingSmsAutomationService.sendClientGreetingSms).not.toHaveBeenCalled();
+                expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
+            });
+
+            it("creates the missing assignment when a duplicate client is reused with a selected employee", async () => {
+                const existingClient = createClientEntity();
+                clientRepository.findByPhone.mockResolvedValue(existingClient);
+                prismaService.employee_schedule.findFirst.mockResolvedValue(null);
+                prismaService.employee_schedule.create.mockResolvedValue({ id: 33, clientId: existingClient.id });
+
+                const result = await service.create(branchId, {
+                    name: "New Client",
+                    phone: "010-1234-5678",
+                    primaryEmployeeId: 5,
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                });
+
+                expect(result).toBe(existingClient);
+                expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
+                expect(prismaService.employee_schedule.create).toHaveBeenCalledWith({
+                    data: expect.objectContaining({
+                        clientId: existingClient.id,
+                        branchId,
+                        primaryEmployeeId: 5,
+                        replaced: false,
+                    }),
+                });
+                expect(employeeFeedbackLinkService.scheduleForServiceStart).toHaveBeenCalledWith(33);
+            });
+
+            it("rejects an employee that does not belong to the client branch", async () => {
+                prismaService.employee.findMany.mockResolvedValue([]);
+
+                await expect(service.create(branchId, {
+                    name: "New Client",
+                    primaryEmployeeId: 999,
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                })).rejects.toThrow("selected employees must belong to the client branch");
+
+                expect(createClientUsecase.execute).not.toHaveBeenCalled();
+                expect(createClientUsecase.executeWithInitialSchedule).not.toHaveBeenCalled();
             });
 
             it("creates a new client when no client with that phone exists in the branch", async () => {
@@ -420,6 +552,32 @@ describe("ClientService", () => {
                 }));
                 expect(result).toBe(updatedClient);
             });
+
+            it("does not resolve a service date update before scheduled jobs are recalculated", async () => {
+                const existingClient = createClientEntity();
+                const updatedClient = createClientEntity();
+                const syncCompletion = createDeferred();
+                const syncStarted = createDeferred();
+                findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+                updateClientUsecase.execute.mockResolvedValue(updatedClient);
+                triggerService.syncClientRulesForClient.mockImplementation(() => {
+                    syncStarted.resolve();
+                    return syncCompletion.promise;
+                });
+
+                let resolved = false;
+                const update = service.update(branchId, 1, { endDate: "2026-08-01" });
+                void update.then(() => {
+                    resolved = true;
+                });
+
+                await syncStarted.promise;
+                await Promise.resolve();
+                expect(resolved).toBe(false);
+
+                syncCompletion.resolve();
+                await expect(update).resolves.toBe(updatedClient);
+            });
         });
 
         describe("given existing client and primary employee change", () => {
@@ -462,6 +620,28 @@ describe("ClientService", () => {
                         replaced: false,
                     }),
                 });
+                expect(employeeFeedbackLinkService.revoke).toHaveBeenCalledWith(10);
+                expect(employeeFeedbackLinkService.scheduleForServiceStart).toHaveBeenCalledWith(20);
+            });
+
+            it("keeps feedback access for the old assignment when replacement creation fails", async () => {
+                const existingClient = createClientEntity();
+                findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+                prismaService.employee_schedule.findFirst.mockResolvedValue({
+                    id: 10,
+                    clientId: 1,
+                    primaryEmployeeId: 5,
+                    secondaryEmployeeId: null,
+                });
+                prismaService.employee_schedule.create.mockRejectedValue(new Error("schedule insert failed"));
+
+                await expect(
+                    service.update(branchId, 1, { primaryEmployeeId: 7 }),
+                ).rejects.toThrow("schedule insert failed");
+
+                expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
+                expect(employeeFeedbackLinkService.revoke).not.toHaveBeenCalled();
+                expect(updateClientUsecase.execute).not.toHaveBeenCalled();
             });
 
             it("should NOT create new schedule if same employee is selected", async () => {
@@ -488,6 +668,7 @@ describe("ClientService", () => {
                 // Should NOT mark old schedule as replaced or create new schedule
                 expect(prismaService.employee_schedule.update).not.toHaveBeenCalled();
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
+                expect(employeeFeedbackLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
             });
         });
 
@@ -527,6 +708,7 @@ describe("ClientService", () => {
                         replaced: false,
                     }),
                 });
+                expect(employeeFeedbackLinkService.scheduleForServiceStart).toHaveBeenCalledWith(21);
             });
         });
 
@@ -563,6 +745,8 @@ describe("ClientService", () => {
                         secondaryEmployeeId: null,
                     }),
                 });
+                expect(employeeFeedbackLinkService.revoke).toHaveBeenCalledWith(15);
+                expect(employeeFeedbackLinkService.scheduleForServiceStart).toHaveBeenCalledWith(20);
             });
         });
 
@@ -648,6 +832,74 @@ describe("ClientService", () => {
                 hasSigned: false,
             });
         });
+
+        describe("contract required badge", () => {
+            const createWaitingClient = (startDate: string, eDocId: string | null = null) =>
+                new ClientEntity(
+                    1,
+                    "Test Client",
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    new Date(`${startDate}T00:00:00.000Z`),
+                    new Date("2026-08-31T00:00:00.000Z"),
+                    false,
+                    true,
+                    null,
+                    "waiting",
+                    false,
+                    eDocId,
+                );
+
+            beforeEach(() => {
+                jest.useFakeTimers();
+                jest.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
+            });
+
+            afterEach(() => {
+                jest.useRealTimers();
+            });
+
+            it("should show contract required from exactly three business days before service start", async () => {
+                listClientsUsecase.execute.mockResolvedValue([createWaitingClient("2026-07-16")]);
+
+                const [client] = await service.findAll(branchId);
+
+                expect(client?.badges[0]?.key).toBe("contract_required");
+            });
+
+            it("should hide contract required more than three business days before service start", async () => {
+                listClientsUsecase.execute.mockResolvedValue([createWaitingClient("2026-07-20")]);
+
+                const [client] = await service.findAll(branchId);
+
+                expect(client?.badges.some((badge) => badge.key === "contract_required")).toBe(false);
+            });
+
+            it("should hide contract required after the contract is completed", async () => {
+                const client = createWaitingClient("2026-07-16", "completed-document");
+                listClientsUsecase.execute.mockResolvedValue([client]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    { documentId: "completed-document", statusType: "003" },
+                ]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.badges.some((badge) => badge.key === "contract_required")).toBe(false);
+            });
+
+            it("should keep showing contract required after service starts", async () => {
+                listClientsUsecase.execute.mockResolvedValue([createWaitingClient("2026-07-10")]);
+
+                const [client] = await service.findAll(branchId);
+
+                expect(client?.badges[0]?.key).toBe("contract_required");
+            });
+        });
     });
 
     // ============================================
@@ -678,7 +930,7 @@ describe("ClientService", () => {
     // delete
     // ============================================
     describe("delete", () => {
-        it("should delegate to deleteClientUsecase", async () => {
+        it("should cancel pending message jobs before deleting the client", async () => {
             // Arrange
             deleteClientUsecase.execute.mockResolvedValue(undefined);
 
@@ -686,7 +938,11 @@ describe("ClientService", () => {
             await service.delete(branchId, 1);
 
             // Assert
+            expect(triggerService.cancelPendingJobsForClientDeletion).toHaveBeenCalledWith(branchId, 1);
             expect(deleteClientUsecase.execute).toHaveBeenCalledWith(branchId, 1);
+            expect(
+                triggerService.cancelPendingJobsForClientDeletion.mock.invocationCallOrder[0],
+            ).toBeLessThan(deleteClientUsecase.execute.mock.invocationCallOrder[0] ?? 0);
         });
     });
 
@@ -742,6 +998,25 @@ describe("ClientService", () => {
                 expect(updateClientUsecase.execute).toHaveBeenCalledWith(branchId, 1, expect.objectContaining({
                     serviceStatus: "terminated",
                 }));
+            });
+
+            it("should sync client trigger rules with includePast=false", async () => {
+                // Arrange
+                const mockClient = createClientEntity();
+                const terminatedClient = new ClientEntity(
+                    1, "Test Client", "Test Address", "010-1234-5678", "A형", 15,
+                    "100000", "50000", "50000", new Date(), new Date(),
+                    false, true, "900101", "terminated", false, null
+                );
+                findClientByIdUsecase.execute.mockResolvedValue(mockClient);
+                updateClientUsecase.execute.mockResolvedValue(terminatedClient);
+                prismaService.employee_schedule.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+
+                // Act
+                await service.terminateService(branchId, 1);
+
+                // Assert
+                expect(triggerService.syncClientRulesForClient).toHaveBeenCalledWith(branchId, 1, false);
             });
         });
 
@@ -805,6 +1080,8 @@ describe("ClientService", () => {
                     }),
                 });
                 expect(result.serviceStatus).toBe("replacement_requested");
+                expect(employeeFeedbackLinkService.revoke).toHaveBeenCalledWith(10);
+                expect(employeeFeedbackLinkService.scheduleForServiceStart).toHaveBeenCalledWith(20);
             });
 
             it("should handle replacement with primary employee only", async () => {
