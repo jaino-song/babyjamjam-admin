@@ -28,6 +28,26 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         return MessageLogMapper.toDomain(row);
     }
 
+    async findSentTriggerJobIds(jobIds: string[]): Promise<Set<string>> {
+        if (jobIds.length === 0) {
+            return new Set<string>();
+        }
+
+        const rows = await this.prisma.message_log.findMany({
+            where: {
+                triggerJobId: { in: jobIds },
+                status: "sent",
+            },
+            select: { triggerJobId: true },
+        });
+
+        return new Set(
+            rows
+                .map((row) => row.triggerJobId)
+                .filter((triggerJobId): triggerJobId is string => Boolean(triggerJobId)),
+        );
+    }
+
     async findPendingRetries(): Promise<MessageLogEntity[]> {
         const rows = await this.prisma.message_log.findMany({
             where: {

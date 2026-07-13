@@ -320,12 +320,17 @@ function RegisterStepFields({
           />
 
           <SelectField
-            label="역할"
+            label="요청 권한"
             value={formData.role}
             onValueChange={handleSelectChange("role")}
             options={roleOptions}
-            placeholder="역할을 선택해주세요"
+            placeholder="요청할 권한을 선택해주세요"
             error={errors.role}
+            labelTrailing={
+              <span className="inline-flex items-center text-right text-[0.68rem] font-semibold leading-none text-v3-text-muted">
+                오너 승인 필요
+              </span>
+            }
             errorDisplay="inline"
             disabled={isLoading}
             data-component="auth-register-role-field"
@@ -375,7 +380,13 @@ export function RegisterPageContent({ variant }: RegisterPageContentProps) {
         content: "auth-register-content",
       }}
       title={isSuccess ? (accountsLinked ? "계정이 연결되었습니다!" : "회원가입 완료!") : "회원가입"}
-      subtitle={isSuccess ? "이메일 인증 후 로그인을 진행해 주세요." : REGISTER_SUBTITLE}
+      subtitle={
+        isSuccess
+          ? accountsLinked
+            ? "이메일 인증 후 로그인을 진행해 주세요."
+            : "오너 승인 후 로그인할 수 있어요."
+          : REGISTER_SUBTITLE
+      }
       className={REGISTER_CARD_CLASS_NAME}
       contentClassName="gap-0"
       mobileWrapperClassName="px-4 py-6"
@@ -411,7 +422,9 @@ export function RegisterPageContent({ variant }: RegisterPageContentProps) {
                   <p data-component="auth-register-success-message" className="text-muted-foreground">
                     인증 이메일이 발송되었습니다.
                     <br />
-                    이메일을 확인하여 계정을 활성화해 주세요.
+                    이메일 인증을 완료해 주세요.
+                    <br />
+                    오너 승인이 완료되면 로그인할 수 있어요.
                   </p>
                 </>
               )}

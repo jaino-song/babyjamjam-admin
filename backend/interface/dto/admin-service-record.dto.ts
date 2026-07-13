@@ -45,7 +45,10 @@ export interface AdminServiceRecordSessionDto {
     etcService: string | null;
     notes: string | null;
     paymentConfirmed: boolean;
-    hasMomSignature: boolean;
+    hasMomApproval: boolean;
+    employeeId: number | null;
+    employeeName: string | null;
+    formVersion: number;
 }
 
 export interface AdminServiceRecordSignatureDocDto {
@@ -54,6 +57,25 @@ export interface AdminServiceRecordSignatureDocDto {
     stepName: string;
     createdDate: Date;
     updatedDate: Date;
+    snapshotVersion: number | null;
+    snapshotChunkIndex: number | null;
+    employeeScheduleId: number | null;
+}
+
+export interface AdminServiceRecordCaseDto {
+    id: string;
+    status: string;
+    startDate: Date | null;
+    endDate: Date | null;
+    totalSessions: number;
+    completedAt: Date | null;
+    finalizationDueAt: Date | null;
+    finalizedAt: Date | null;
+    documentsCompletedAt: Date | null;
+    lastError: string | null;
+    header: AdminServiceRecordHeaderDto | null;
+    sessions: AdminServiceRecordSessionDto[];
+    signatureDocs: AdminServiceRecordSignatureDocDto[];
 }
 
 export interface AdminServiceRecordAssignmentDto {
@@ -70,5 +92,6 @@ export interface AdminServiceRecordAssignmentDto {
 }
 
 export interface AdminServiceRecordOverviewDto {
+    record: AdminServiceRecordCaseDto | null;
     assignments: AdminServiceRecordAssignmentDto[];
 }

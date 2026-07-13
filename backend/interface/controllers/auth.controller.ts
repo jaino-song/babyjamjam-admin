@@ -151,6 +151,7 @@ export class AuthController {
     }
 
     @Post("kakao/complete-signup")
+    @UseGuards(RateLimitGuard)
     async completeKakaoOnboarding(
         @Headers(AuthController.PENDING_SIGNUP_TOKEN_HEADER) headerToken: string | undefined,
         @Query("token") queryToken: string | undefined,
@@ -184,6 +185,7 @@ export class AuthController {
     }
 
     @Post("onboarding/complete")
+    @UseGuards(RateLimitGuard)
     async completeAccountOnboarding(
         @Headers(AuthController.PENDING_ONBOARDING_TOKEN_HEADER) headerToken: string | undefined,
         @Query("token") queryToken: string | undefined,
@@ -204,6 +206,7 @@ export class AuthController {
     }
 
     @Post("refresh-token")
+    @UseGuards(RateLimitGuard)
     async refreshToken(@Body() body: RefreshTokenDto) {
         const tokens = await this.authService.refreshTokens(body.refreshToken);
         return tokens;
@@ -226,7 +229,7 @@ export class AuthController {
 
         // Reset rate limit on successful registration
         if (result.success) {
-            this.rateLimitGuard.resetForKey(ip, body.email);
+            await this.rateLimitGuard.resetForKey(ip, body.email);
         }
 
         return result;
@@ -238,19 +241,15 @@ export class AuthController {
         const normalizedEmail = email?.trim().toLowerCase();
 
         if (!normalizedEmail) {
-            return { exists: false, linkable: false };
+            return { exists: false };
         }
 
         const user = await this.prisma.user.findUnique({
             where: { email: normalizedEmail },
-            select: { id: true, kakaoId: true, passwordHash: true },
+            select: { id: true },
         });
 
-        const linkable = Boolean(user?.kakaoId && !user.passwordHash);
-        return {
-            exists: Boolean(user),
-            linkable,
-        };
+        return { exists: Boolean(user) };
     }
 
     @Post("login")
@@ -270,7 +269,7 @@ export class AuthController {
         }
 
         // Reset rate limit on successful login
-        this.rateLimitGuard.resetForKey(ip, body.email);
+        await this.rateLimitGuard.resetForKey(ip, body.email);
 
         if ("onboardingRequired" in result && result.onboardingRequired) {
             const pendingAccountOnboardingToken = await this.authService.startPendingAccountOnboarding(result.userId);
@@ -301,6 +300,7 @@ export class AuthController {
     }
 
     @Post("reset-password")
+    @UseGuards(RateLimitGuard)
     async resetPassword(@Body() body: ResetPasswordDto) {
         return this.authService.resetPassword(body.token, body.newPassword);
     }
@@ -360,6 +360,7 @@ export class AuthController {
     }
 
     @Get("branches/all")
+    @UseGuards(RateLimitGuard)
     async getAllActiveBranches() {
         const branches = await this.prisma.branch.findMany({
             where: { isActive: true },

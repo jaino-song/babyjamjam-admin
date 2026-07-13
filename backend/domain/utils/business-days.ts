@@ -38,6 +38,22 @@ export const KR_HOLIDAYS = new Set<string>([
 ]);
 
 const NEXT_BUSINESS_DAY_SEARCH_LIMIT = 30;
+const KOREA_DATE_FORMATTER = new Intl.DateTimeFormat("en", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+});
+
+function parseIsoDate(iso: string): Date | null {
+    const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return null;
+    return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+}
+
+function isoFromUtcDate(date: Date): string {
+    return date.toISOString().slice(0, 10);
+}
 
 export function isBusinessDayKr(iso: string): boolean {
     if (!iso) return false;
@@ -70,4 +86,39 @@ export function addBusinessDaysKr(iso: string, n: number): string {
     }
 
     return cursor;
+}
+
+export function isoDateInKorea(date = new Date()): string {
+    const parts = KOREA_DATE_FORMATTER.formatToParts(date);
+    const year = parts.find((part) => part.type === "year")?.value ?? "";
+    const month = parts.find((part) => part.type === "month")?.value ?? "";
+    const day = parts.find((part) => part.type === "day")?.value ?? "";
+    return `${year}-${month}-${day}`;
+}
+
+export function diffBusinessDaysKr(targetISO: string, baseISO = isoDateInKorea()): number | null {
+    const target = parseIsoDate(targetISO);
+    const base = parseIsoDate(baseISO);
+    if (!target || !base) return null;
+
+    const targetTime = target.getTime();
+    const baseTime = base.getTime();
+    if (targetTime === baseTime) return 0;
+
+    const cursor = new Date(base);
+    let count = 0;
+
+    if (targetTime > baseTime) {
+        while (cursor.getTime() < targetTime) {
+            cursor.setUTCDate(cursor.getUTCDate() + 1);
+            if (isBusinessDayKr(isoFromUtcDate(cursor))) count += 1;
+        }
+        return count;
+    }
+
+    while (cursor.getTime() > targetTime) {
+        if (isBusinessDayKr(isoFromUtcDate(cursor))) count += 1;
+        cursor.setUTCDate(cursor.getUTCDate() - 1);
+    }
+    return -count;
 }

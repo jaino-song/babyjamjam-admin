@@ -53,6 +53,7 @@ export default async function globalSetup(_config: FullConfig) {
       role: "owner",
       branchId,
       branchRole: "admin",
+      tokenVersion: 0,
       type: "access",
       exp,
     },
@@ -87,4 +88,3 @@ export default async function globalSetup(_config: FullConfig) {
 
   fs.writeFileSync(path.resolve(process.cwd(), "auth.json"), JSON.stringify(storageState, null, 2));
 }
-

@@ -213,6 +213,8 @@ export interface EformsignDocClientSummary {
   providerName: string | null;
 }
 
+export type EformsignDocumentKind = "contract" | "service_feedback_snapshot";
+
 export interface CreateEformsignDocRecordRequest {
   documentId: string;
   clientId: number;
@@ -226,6 +228,9 @@ export interface CreateEformsignDocRecordRequest {
   stepRecipientSms: string;
   expiredDate: string;
   linkToClient?: boolean;
+  documentKind?: EformsignDocumentKind | null;
+  employeeScheduleId?: number | null;
+  templateId?: string | null;
 }
 
 export interface EformsignRecipientPhone {

@@ -1,38 +1,54 @@
 import { Injectable } from "@nestjs/common";
 import { SystemSettingService } from "application/services/system-setting.service";
-import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SendAligoAlimtalkUsecase } from "application/usecases/aligo";
 import {
     MESSAGE_TRIGGER_TEMPLATE_CATALOG,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import { AligoTemplateKey } from "application/dto/aligo/alimtalk-template.dto";
+import { isTransientPrismaConnectivityError } from "infrastructure/database/prisma-error.utils";
 
 @Injectable()
 export class AlimtalkTriggerDeliveryService {
     constructor(
         private readonly systemSettingService: SystemSettingService,
-        private readonly messageSenderApprovalService: MessageSenderApprovalService,
         private readonly sendAligoAlimtalkUsecase: SendAligoAlimtalkUsecase,
     ) {}
 
     async sendJob(job: MessageTriggerJobEntity): Promise<boolean> {
         if (!job.branchId) {
-            return false;
+            throw new Error(`Alimtalk trigger job ${job.id} is missing branchId`);
         }
 
-        await this.messageSenderApprovalService.ensureApproved(job.branchId);
+        let provider: Awaited<ReturnType<SystemSettingService["getAlimtalkProvider"]>>;
+        try {
+            provider = await this.systemSettingService.getAlimtalkProvider();
+        } catch (error) {
+            if (isTransientPrismaConnectivityError(error)) {
+                throw new TriggerJobDeferredError(
+                    "transient",
+                    error instanceof Error ? error.message : String(error),
+                );
+            }
+            throw error;
+        }
 
-        const provider = await this.systemSettingService.getAlimtalkProvider();
         if (provider === "none") {
-            return false;
+            throw new TriggerJobDeferredError(
+                "config",
+                "Alimtalk provider is not configured for trigger delivery",
+            );
         }
 
         const template = MESSAGE_TRIGGER_TEMPLATE_CATALOG[job.templateKey];
         const providerMapping = template.providers[provider];
         if (!providerMapping) {
-            throw new Error(`Template ${job.templateKey} is not available for provider ${provider}`);
+            throw new TriggerJobDeferredError(
+                "config",
+                `Template ${job.templateKey} is not available for provider ${provider}`,
+            );
         }
 
         const payload = job.payload;
@@ -40,6 +56,7 @@ export class AlimtalkTriggerDeliveryService {
         await this.sendAligoAlimtalkUsecase.execute({
             templateKey: providerMapping.templateKey as AligoTemplateKey,
             receiver: payload.recipientPhone,
+            recipientName: payload.recipientName,
             variables: this.toAligoVariables(job.templateKey, payload.templateVariables),
             buttonUrl: payload.buttonUrl ?? undefined,
             branchId: job.branchId ?? undefined,

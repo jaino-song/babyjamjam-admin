@@ -49,6 +49,7 @@ export class AligoService {
         await this.safeSend({
             templateKey: "CONTRACT_SIGNED",
             receiver: phone.toString(),
+            recipientName: client.name,
             branchId: client.branchId ?? undefined,
             clientId: client.id,
             variables: {

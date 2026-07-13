@@ -30,6 +30,6 @@ export class UpsertSessionDto {
     @IsOptional() @IsString() etcService?: string;
     @IsOptional() @IsString() notes?: string;
     @IsOptional() @IsBoolean() paymentConfirmed?: boolean;
-    /** 산모 확인서명 (data URL / storage ref). */
-    @IsOptional() @IsString() momSignature?: string;
+    /** 산모 확인 (data URL / storage ref). */
+    @IsOptional() @IsString() momApproval?: string;
 }

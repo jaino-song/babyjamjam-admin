@@ -15,7 +15,7 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { DataTableToolbar } from "./DataTableToolbar";
 import { DataTablePagination } from "./DataTablePagination";
-import { matchesKoreanSearch } from "@/lib/search/korean-search";
+import { matchesSearchQuery, type SearchableValue } from "@/lib/search/korean-search";
 import type { DataTableProps } from "./types";
 
 export function DataTable<T extends Record<string, unknown>>({
@@ -61,20 +61,17 @@ export function DataTable<T extends Record<string, unknown>>({
       return data;
     }
 
-    const searchTerm = currentSearchQuery.trim().toLowerCase();
-
     return data.filter((row) => {
       const fieldsToSearch = searchFields.length > 0
         ? searchFields
         : (Object.keys(row) as (keyof T)[]);
 
-      return fieldsToSearch.some((field) => {
+      const values = fieldsToSearch.map((field): SearchableValue => {
         const value = row[field];
-        if (typeof value === "string") {
-          return matchesKoreanSearch(value, searchTerm);
-        }
-        return false;
+        return typeof value === "string" || typeof value === "number" ? value : null;
       });
+
+      return matchesSearchQuery(currentSearchQuery, values);
     });
   }, [data, currentSearchQuery, searchEnabled, searchFields, pagination]);
 

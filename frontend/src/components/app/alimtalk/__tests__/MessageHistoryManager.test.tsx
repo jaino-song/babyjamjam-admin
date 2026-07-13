@@ -61,6 +61,7 @@ const historyRecord: MessageLogRecord = {
   triggerJobId: "job-1",
   receiver: "010-1234-5678",
   clientId: 10,
+  recipientPhone: "010-1234-5678",
   messageBody: "안녕하세요. 베이비잼잼입니다.",
   variables: {
     clientName: "김하나",

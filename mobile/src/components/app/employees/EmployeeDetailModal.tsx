@@ -24,7 +24,7 @@ interface EmployeeDetailModalProps {
     onClose: () => void;
     employee: Employee | null;
     onEdit: (employee: Employee) => void;
-    onDelete: (id: number) => Promise<boolean>; // Returns true if deletion succeeded
+    onDelete: (id: number) => void;
 }
 
 const formatDate = (dateStr: string | null | undefined): string => {
@@ -56,11 +56,8 @@ export function EmployeeDetailModal({
         onClose();
     };
 
-    const handleDelete = async () => {
-        const success = await onDelete(employee.id);
-        if (success) {
-            onClose(); // Only close modal if deletion succeeded
-        }
+    const handleDelete = () => {
+        onDelete(employee.id);
     };
 
     const getStatusBadge = (openToNextWork: boolean) => {

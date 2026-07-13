@@ -37,7 +37,10 @@ export interface ServiceRecordSession {
     etcService: string | null;
     notes: string | null;
     paymentConfirmed: boolean;
-    hasMomSignature: boolean;
+    hasMomApproval: boolean;
+    employeeId?: number | null;
+    employeeName?: string | null;
+    formVersion?: number;
 }
 
 export interface SignatureDocStatus {
@@ -46,6 +49,25 @@ export interface SignatureDocStatus {
     stepName: string;
     createdDate: string;
     updatedDate: string;
+    snapshotVersion?: number | null;
+    snapshotChunkIndex?: number | null;
+    employeeScheduleId?: number | null;
+}
+
+export interface ServiceRecordCase {
+    id: string;
+    status: string;
+    startDate: string | null;
+    endDate: string | null;
+    totalSessions: number;
+    completedAt: string | null;
+    finalizationDueAt: string | null;
+    finalizedAt: string | null;
+    documentsCompletedAt: string | null;
+    lastError: string | null;
+    header: ServiceRecordHeader | null;
+    sessions: ServiceRecordSession[];
+    signatureDocs: SignatureDocStatus[];
 }
 
 export interface ServiceRecordAssignment {
@@ -66,6 +88,7 @@ export interface ServiceRecordAssignment {
 }
 
 export interface ServiceRecordOverview {
+    record?: ServiceRecordCase | null;
     assignments: ServiceRecordAssignment[];
 }
 

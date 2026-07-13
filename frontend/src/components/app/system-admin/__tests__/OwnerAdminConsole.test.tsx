@@ -4,11 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { OwnerAdminConsole } from "../OwnerAdminConsole";
 
 jest.mock("@/components/app/settings/NotificationTestSection", () => ({
-  NotificationTestSection: () => null,
-}));
-
-jest.mock("@/components/app/settings/VoucherPriceUploadForm", () => ({
-  VoucherPriceUploadForm: () => null,
+  NotificationTestSection: () => <div>알림 테스트 실행 도구</div>,
 }));
 
 jest.mock("@tanstack/react-query", () => ({
@@ -83,10 +79,23 @@ beforeEach(() => {
 });
 
 describe("OwnerAdminConsole", () => {
-  it("renders branch management from API data instead of branch mock records", async () => {
+  it("starts with live branch data and omits mock-only sections", async () => {
     render(<OwnerAdminConsole />);
 
-    fireEvent.click(screen.getAllByRole("button", { name: /지점 관리/ })[0]);
+    await waitFor(() => {
+      expect(screen.getAllByText("강남점").length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByRole("button", { name: "회원가입 관리" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "정부지원금 관리" })).not.toBeInTheDocument();
+    expect(screen.queryByText("김서윤")).not.toBeInTheDocument();
+    expect(screen.queryByText("2026 돌봄 바우처 단가 반영")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "검색 열기" }));
+    expect(screen.getByRole("textbox", { name: "지점 관리 검색" })).toBeInTheDocument();
+  });
+
+  it("renders branch management from API data instead of branch mock records", async () => {
+    render(<OwnerAdminConsole />);
 
     await waitFor(() => {
       expect(screen.getAllByText("강남점").length).toBeGreaterThan(0);
@@ -99,8 +108,6 @@ describe("OwnerAdminConsole", () => {
 
   it("hides branch status pills on all branches and shows them on the message request tab", async () => {
     render(<OwnerAdminConsole />);
-
-    fireEvent.click(screen.getAllByRole("button", { name: /지점 관리/ })[0]);
 
     await waitFor(() => {
       expect(screen.getAllByText("강남점").length).toBeGreaterThan(0);
@@ -120,8 +127,6 @@ describe("OwnerAdminConsole", () => {
   it("approves a pending message sender request from the branch detail", async () => {
     render(<OwnerAdminConsole />);
 
-    fireEvent.click(screen.getAllByRole("button", { name: /지점 관리/ })[0]);
-
     await waitFor(() => {
       expect(screen.getAllByText("강남점").length).toBeGreaterThan(0);
     });
@@ -132,5 +137,17 @@ describe("OwnerAdminConsole", () => {
     fireEvent.click(screen.getByRole("button", { name: "승인" }));
 
     expect(approveMutate).toHaveBeenCalledWith("branch-real-gangnam");
+  });
+
+  it("shows the functional notification tool without placeholder approval actions", async () => {
+    render(<OwnerAdminConsole />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "알림 테스트" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: /브라우저 알림 테스트/ }));
+
+    expect(screen.getByText("알림 테스트 실행 도구")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "승인" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "거부" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "더보기" })).not.toBeInTheDocument();
   });
 });

@@ -27,6 +27,15 @@ describe("message history client matching", () => {
     ).toBe(true);
   });
 
+  it("uses the recipient phone snapshot before the provider receiver value", () => {
+    expect(
+      matchesMessageHistoryClient(
+        { clientId: null, receiver: "010-0000-0000", recipientPhone: "010-9641-1878" },
+        clients[1],
+      ),
+    ).toBe(true);
+  });
+
   it("finds the matching client across all customer items", () => {
     expect(findMessageHistoryClient({ clientId: 2, receiver: "010-0000-0000" }, clients)?.name).toBe("가나다");
     expect(findMessageHistoryClient({ clientId: null, receiver: "01066211878" }, clients)?.name).toBe("송진호");

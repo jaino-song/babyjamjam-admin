@@ -11,6 +11,7 @@ import {
     FetchAllEformsignDocsFromApiUsecase,
     FetchEformsignDocFromApiUsecase,
     UpdateEformsignDocStatusUsecase,
+    LinkDocumentToClientUsecase,
     CreateEformsignDocUsecase,
     CreateAndSendContractUsecase,
     ListClientNamesByBranchUsecase,
@@ -33,6 +34,7 @@ import { EformsignHeadlessService } from "infrastructure/automation/eformsign-he
 import { AreaTemplateModule } from "module/area-template.module";
 import { EformsignDocController } from "interface/controllers/eformsign-doc.controller";
 import { CreateAndSendFeedbackSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-feedback-snapshot.usecase";
+import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
 
 @Module({
     imports: [DatabaseModule, AreaTemplateModule],
@@ -46,6 +48,7 @@ import { CreateAndSendFeedbackSnapshotUsecase } from "application/usecases/eform
         ListOtherBranchDocumentIdsUsecase,
         CreateEformsignDocUsecase,
         UpdateEformsignDocStatusUsecase,
+        LinkDocumentToClientUsecase,
         ListClientNamesByBranchUsecase,
         SyncClientEndDateUsecase,
         // Use cases - External API
@@ -66,6 +69,7 @@ import { CreateAndSendFeedbackSnapshotUsecase } from "application/usecases/eform
         EformsignHeadlessService,
         EformsignDocsEventBus,
         EformsignHeadlessProgressService,
+        ContractClientAssignmentGuardService,
         // Repository bindings
         {
             provide: EFORMSIGN_DOC_REPOSITORY,

@@ -99,4 +99,49 @@ describe("consultation list state", () => {
     expect(result).toHaveLength(1);
     expect(result[0]?.id).toBe("newer");
   });
+
+  it("filters inquiries by the same initial-consonant search used by customer autocomplete", () => {
+    const songJinho = createInquiry({
+      id: "song-jinho",
+      motherName: "송진호",
+      phone: "010-6621-1878",
+      address: "인천광역시 연수구",
+    });
+    const leeSoonshin = createInquiry({
+      id: "lee-soonshin",
+      motherName: "이순신",
+      phone: "010-3333-4444",
+      address: "서울특별시 중구",
+    });
+
+    const result = getDisplayedConsultationInquiries({
+      inquiries: [songJinho, leeSoonshin],
+      selectedInquiry: null,
+      activeReadState: "read",
+      search: "ㅅㅈㅎ",
+    });
+
+    expect(result.map((inquiry) => inquiry.id)).toEqual(["song-jinho"]);
+  });
+
+  it("does not pin a selected inquiry that does not match the active search", () => {
+    const selectedInquiry = createInquiry({
+      id: "selected",
+      motherName: "강감찬",
+    });
+    const matchingInquiry = createInquiry({
+      id: "matching",
+      motherName: "송진호",
+      phone: "010-6621-1878",
+    });
+
+    const result = getDisplayedConsultationInquiries({
+      inquiries: [matchingInquiry],
+      selectedInquiry,
+      activeReadState: "unread",
+      search: "ㅅㅈㅎ",
+    });
+
+    expect(result.map((inquiry) => inquiry.id)).toEqual(["matching"]);
+  });
 });

@@ -2,7 +2,7 @@ import type { SentryIssue, SentryLevel, SentrySummary } from "./types";
 
 const SENTRY_BASE = "https://sentry.io/api/0";
 const SENTRY_ORG = process.env.SENTRY_ORG ?? "";
-const SENTRY_PROJECT_ID = "4511387543011328";
+const SENTRY_PROJECT_ID = process.env.SENTRY_PROJECT_ID ?? "4511387543011328";
 const SENTRY_TOKEN = process.env.SENTRY_AUTH_TOKEN ?? "";
 
 const REVALIDATE_SECONDS = 60;

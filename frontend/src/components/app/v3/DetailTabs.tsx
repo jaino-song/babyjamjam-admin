@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import { cn } from "@/lib/utils";
 
 export interface DetailTab {
@@ -13,9 +21,18 @@ export interface DetailTabsProps {
   activeTab: string;
   onTabChange: (key: string) => void;
   isLoading?: boolean;
+  ariaLabel?: string;
+  idPrefix?: string;
 }
 
-export function DetailTabs({ tabs, activeTab, onTabChange, isLoading = false }: DetailTabsProps) {
+export function DetailTabs({
+  tabs,
+  activeTab,
+  onTabChange,
+  isLoading = false,
+  ariaLabel = "상세 정보",
+  idPrefix,
+}: DetailTabsProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [indicatorMetrics, setIndicatorMetrics] = useState({
@@ -54,17 +71,19 @@ export function DetailTabs({ tabs, activeTab, onTabChange, isLoading = false }: 
     const root = rootRef.current;
     if (!root) return;
 
-    const resizeObserver = new ResizeObserver(measureIndicator);
-    resizeObserver.observe(root);
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(measureIndicator);
+    resizeObserver?.observe(root);
     tabs.forEach((tab) => {
       const button = buttonRefs.current[tab.key];
-      if (button) resizeObserver.observe(button);
+      if (button) resizeObserver?.observe(button);
     });
 
     window.addEventListener("resize", measureIndicator);
 
     return () => {
-      resizeObserver.disconnect();
+      resizeObserver?.disconnect();
       window.removeEventListener("resize", measureIndicator);
     };
   }, [measureIndicator, tabs]);
@@ -81,16 +100,42 @@ export function DetailTabs({ tabs, activeTab, onTabChange, isLoading = false }: 
     };
   }, [indicatorMetrics.isReady]);
 
+  const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (isLoading) return;
+
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
+    if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = tabs.length - 1;
+    if (nextIndex === null) return;
+
+    event.preventDefault();
+    const nextTab = tabs[nextIndex];
+    if (!nextTab) return;
+
+    onTabChange(nextTab.key);
+    buttonRefs.current[nextTab.key]?.focus();
+  };
+
   return (
     <div
       ref={rootRef}
       data-component="detail-tabs"
-      className="relative flex gap-[calc(4px*var(--v3-ui-scale,1))] border-b border-v3-border"
+      role="tablist"
+      aria-label={ariaLabel}
+      className="relative flex gap-[calc(4px*var(--glint-ui-scale,1))] border-b border-v3-border"
     >
       {tabs.map((tab, index) => (
         <button
           data-component="detail-tabs-button"
+          type="button"
+          role="tab"
           key={tab.key}
+          id={idPrefix ? `${idPrefix}-tab-${tab.key}` : undefined}
+          aria-controls={idPrefix ? `${idPrefix}-panel-${tab.key}` : undefined}
+          aria-selected={activeTab === tab.key}
+          tabIndex={activeTab === tab.key ? 0 : -1}
           ref={(node) => {
             buttonRefs.current[tab.key] = node;
           }}
@@ -98,9 +143,10 @@ export function DetailTabs({ tabs, activeTab, onTabChange, isLoading = false }: 
             if (isLoading) return;
             onTabChange(tab.key);
           }}
+          onKeyDown={(event) => handleKeyDown(event, index)}
           aria-disabled={isLoading ? "true" : undefined}
           className={cn(
-            "relative px-[calc(12px*var(--v3-ui-scale,1))] pb-[calc(8px*var(--v3-ui-scale,1))] text-[calc(14px*var(--v3-ui-scale,1))] transition-colors",
+            "relative px-[calc(12px*var(--glint-ui-scale,1))] pb-[calc(8px*var(--glint-ui-scale,1))] text-[calc(14px*var(--glint-ui-scale,1))] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-v3-primary",
             activeTab === tab.key
               ? "text-primary font-semibold"
               : "text-v3-text-muted hover:text-v3-text",
@@ -113,7 +159,7 @@ export function DetailTabs({ tabs, activeTab, onTabChange, isLoading = false }: 
               data-slot="skeleton"
               data-component="detail-tabs-text-skeleton"
               className={cn(
-                "block h-[calc(16px*var(--v3-ui-scale,1))] animate-pulse rounded-md bg-v3-dim-white",
+                "block h-[calc(16px*var(--glint-ui-scale,1))] animate-pulse rounded-md bg-v3-dim-white",
                 index === 0 ? "w-16" : "w-14",
               )}
             />
@@ -123,7 +169,7 @@ export function DetailTabs({ tabs, activeTab, onTabChange, isLoading = false }: 
       <div
         data-component="detail-tabs-indicator"
         className={cn(
-          "pointer-events-none absolute bottom-0 left-0 h-[calc(2px*var(--v3-ui-scale,1))] bg-primary",
+          "pointer-events-none absolute bottom-0 left-0 h-[calc(2px*var(--glint-ui-scale,1))] bg-primary",
           isIndicatorTransitionEnabled &&
             "transition-[transform,width,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
           indicatorMetrics.isReady ? "opacity-100" : "opacity-0"

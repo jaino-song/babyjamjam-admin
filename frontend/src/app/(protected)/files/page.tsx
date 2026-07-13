@@ -2,9 +2,10 @@
 
 import { useMemo, useState } from "react";
 import { FolderOpen, FileText, Image as ImageIcon, File, Upload, CloudUpload, Loader2, Tag, MoreVertical, Pencil, Trash2, Eye } from "lucide-react";
+import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton, AnimatedSlotList, AnimatedSlotListItemContent, EmptyState, PageSection, DetailSkeleton, ListEmptyState } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
-import { matchesKoreanSearch } from "@/lib/search/korean-search";
+import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -15,7 +16,7 @@ import DocumentPreviewModal from "@/components/app/documents/document-preview-mo
 import { DocumentEditModal } from "@/components/app/documents/document-edit-modal";
 import { AddCategoryModal } from "@/components/app/documents/add-category-modal";
 import { formatDate } from "@/components/app/documents/document-list";
-import { isHangulDocument } from "@/components/app/documents/document-preview-utils";
+import { getFileFormatLabel, isHangulDocument } from "@/components/app/documents/document-preview-utils";
 import { toast } from "@/hooks/use-toast";
 
 const FILES_UPLOAD_FORM_ID = "files-upload-form";
@@ -55,11 +56,8 @@ export default function FilesPage() {
       docs = docs.filter(d => d.categoryId === activeFilter);
     }
     if (searchQuery.trim()) {
-      const q = searchQuery.trim();
       docs = docs.filter(d =>
-        matchesKoreanSearch(d.name, q) ||
-        (d.description && matchesKoreanSearch(d.description, q)) ||
-        d.tags?.some(t => matchesKoreanSearch(t, q))
+        matchesSearchQuery(searchQuery, [d.name, d.description, ...(d.tags ?? [])])
       );
     }
     return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -219,7 +217,7 @@ export default function FilesPage() {
                     title={doc.name}
                     subtitle={getCategoryLabel(doc.categoryId)}
                     status={
-                      <span className="whitespace-nowrap text-[calc(10.4px*var(--v3-ui-scale,1))] text-v3-text-muted">
+                      <span className="whitespace-nowrap text-[calc(10.4px*var(--glint-ui-scale,1))] text-v3-text-muted">
                         {formatDate(doc.createdAt)}
                       </span>
                     }
@@ -264,6 +262,9 @@ export default function FilesPage() {
                 <Upload className="h-5 w-5 text-v3-primary" />
                 파일 업로드
               </DialogTitle>
+              <DialogDescription className="sr-only">
+                파일을 선택하고 문서 정보를 입력해 저장소에 업로드합니다.
+              </DialogDescription>
             </div>
           </DialogHeader>
           <div data-component="files-upload-content" className="min-h-0 flex-1 overflow-y-auto bg-white px-6 py-6">
@@ -321,20 +322,20 @@ export default function FilesPage() {
         isLoading={createCategoryMutation.isPending}
       />
 
-      <Dialog open={!!deleteDoc} onOpenChange={(open: boolean) => !open && setDeleteDoc(null)}>
-        <DialogContent className="sm:max-w-[400px]">
-          <DialogHeader>
-            <DialogTitle>문서 삭제</DialogTitle>
-            <DialogDescription>이 문서를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.</DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" size="sm" onClick={() => setDeleteDoc(null)} disabled={deleteMutation.isPending}>취소</Button>
-            <Button variant="destructive" size="sm" onClick={handleDelete} disabled={deleteMutation.isPending}>
-              {deleteMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />삭제 중...</> : "삭제"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ApprovalTwoButtonModal
+        open={deleteDoc !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteDoc(null);
+        }}
+        dataComponent="files-delete-approval"
+        title="문서를 삭제하시겠습니까?"
+        description="이 작업은 되돌릴 수 없습니다."
+        approvalLabel="삭제"
+        pendingLabel="삭제 중..."
+        approvalVariant="destructive"
+        isPending={deleteMutation.isPending}
+        onApprove={() => void handleDelete()}
+      />
     </PageSection>
   );
 }
@@ -394,7 +395,7 @@ function FileDetail({ document: doc, getCategoryLabel, onPreview, onEdit, onDele
       <div data-component="files-detail-content" className="space-y-5">
         <InfoCard title="파일 정보">
           <InfoRow label="파일명" value={doc.name} />
-          <InfoRow label="형식" value={doc.mimeType} />
+          <InfoRow label="형식" value={getFileFormatLabel(doc).toUpperCase()} />
           <InfoRow label="카테고리" value={getCategoryLabel(doc.categoryId)} />
           <InfoRow label="등록일" value={formatDate(doc.createdAt)} />
           <InfoRow label="수정일" value={formatDate(doc.updatedAt)} />

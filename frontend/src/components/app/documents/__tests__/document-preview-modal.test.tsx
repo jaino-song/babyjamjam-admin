@@ -1,11 +1,13 @@
 /* eslint-disable @next/next/no-img-element */
 
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { ContractDocumentPreviewModal } from "@/components/app/contracts/ContractDocumentPreviewModal";
 import DocumentPreviewModal from "../document-preview-modal";
-import { getDownloadFileName, getPreviewKind } from "../document-preview-utils";
+import { getDownloadFileName, getFileFormatLabel, getPreviewKind } from "../document-preview-utils";
 import type { Document } from "@/hooks/use-documents";
 import type { DocumentCategory } from "@/hooks/use-document-categories";
+import type { EformsignDocument } from "@/lib/eformsign/types";
 
 interface MockPdfDocumentProps {
   children: ReactNode;
@@ -94,6 +96,44 @@ const baseDocument: Document = {
   updatedAt: "2026-01-29T00:00:00.000Z",
 };
 
+const contractDocument: EformsignDocument = {
+  id: "service-record-1",
+  document_number: "SR-2026-001",
+  template: {
+    id: "service-record-template",
+    name: "서비스 제공기록지 단면",
+  },
+  document_name: "김고객 제공기록지",
+  creator: {
+    recipient_type: "01",
+    name: "테스트 지점",
+  },
+  created_date: new Date("2026-07-13T00:00:00.000Z").getTime(),
+  last_editor: {
+    recipient_type: "01",
+    name: "테스트 지점",
+  },
+  updated_date: new Date("2026-07-13T00:00:00.000Z").getTime(),
+  current_status: {
+    status_type: "002",
+    status_doc_type: "검토",
+    status_doc_detail: "제공기관 검토",
+    step_type: "05",
+    step_index: "2",
+    step_name: "검토",
+    step_recipients: [],
+    step_group: 0,
+    expired_date: 0,
+    _expired: false,
+  },
+  fields: [],
+  next_status: [],
+  previous_status: [],
+  histories: [],
+  recipients: [],
+  detail_template_info: [],
+};
+
 class ResizeObserverMock {
   observe() {}
   unobserve() {}
@@ -163,6 +203,71 @@ afterAll(() => {
 });
 
 describe("DocumentPreviewModal", () => {
+  it("names the preview dialog actions", async () => {
+    render(
+      <DocumentPreviewModal
+        open={true}
+        onClose={jest.fn()}
+        doc={baseDocument}
+        categories={categories}
+        onEdit={jest.fn()}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "미리보기 닫기" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "문서 작업 더보기" })).toBeInTheDocument();
+    await screen.findByTestId("pdf-page-1");
+  });
+
+  it("keeps the print frame mounted until the print preview closes", async () => {
+    render(
+      <DocumentPreviewModal
+        open={true}
+        onClose={jest.fn()}
+        doc={baseDocument}
+        categories={categories}
+      />
+    );
+
+    const printButton = await screen.findByRole("button", { name: "인쇄" });
+    await waitFor(() => expect(printButton).toBeEnabled());
+
+    jest.useFakeTimers();
+    let printFrame: HTMLIFrameElement | null = null;
+
+    try {
+      fireEvent.click(printButton);
+
+      printFrame = document.body.querySelector("iframe");
+      expect(printFrame).not.toBeNull();
+      if (!printFrame?.contentWindow) {
+        throw new Error("print frame window not available");
+      }
+
+      const printWindow = printFrame.contentWindow;
+      const printSpy = jest.spyOn(printWindow, "print").mockImplementation(() => undefined);
+
+      fireEvent.load(printFrame);
+
+      expect(printSpy).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        jest.advanceTimersByTime(2_000);
+      });
+
+      expect(printFrame).toBeInTheDocument();
+
+      act(() => {
+        printWindow.dispatchEvent(new Event("afterprint"));
+      });
+
+      expect(printFrame).not.toBeInTheDocument();
+    } finally {
+      printFrame?.remove();
+      jest.useRealTimers();
+    }
+  });
+
   it("renders a zoom slider for pdf previews and updates the page width", async () => {
     render(
       <DocumentPreviewModal
@@ -404,7 +509,71 @@ describe("DocumentPreviewModal", () => {
 
     expect(getPreviewKind(hwpDoc)).toBe("hwp");
     expect(getDownloadFileName(hwpDoc)).toBe("신청서.hwp");
+    expect(getFileFormatLabel(hwpDoc)).toBe("hwp");
     expect(getPreviewKind(hwpxDoc)).toBe("hwp");
     expect(getDownloadFileName(hwpxDoc)).toBe("신청서.hwpx");
+    expect(getFileFormatLabel(hwpxDoc)).toBe("hwpx");
+  });
+});
+
+describe("ContractDocumentPreviewModal", () => {
+  it("places print and download on the left and review confirmation on the right", async () => {
+    const onReviewConfirm = jest.fn();
+
+    render(
+      <ContractDocumentPreviewModal
+        open={true}
+        onClose={jest.fn()}
+        document={contractDocument}
+        customerName="김고객"
+        onReviewConfirm={onReviewConfirm}
+      />
+    );
+
+    await screen.findByTestId("pdf-page-1");
+
+    const footer = document.querySelector('[data-component="contracts-document-preview-footer"]');
+    const fileActions = document.querySelector(
+      '[data-component="contracts-document-preview-file-actions"]',
+    );
+    const reviewAction = document.querySelector(
+      '[data-component="contracts-document-preview-review-action"]',
+    );
+
+    expect(footer).toHaveClass("sm:justify-between");
+    expect(fileActions).not.toBeNull();
+    expect(reviewAction).not.toBeNull();
+    if (!fileActions || !reviewAction) throw new Error("preview footer actions not rendered");
+
+    expect(within(fileActions as HTMLElement).getByRole("button", { name: "인쇄" })).toBeInTheDocument();
+    expect(within(fileActions as HTMLElement).getByRole("button", { name: "다운로드" })).toBeInTheDocument();
+    expect(reviewAction).toHaveClass("ml-auto");
+
+    const confirmButton = within(reviewAction as HTMLElement).getByRole("button", { name: "확인" });
+    expect(confirmButton).toHaveClass(
+      "hover:translate-y-0",
+      "hover:shadow-[0_4px_24px_hsla(214,50%,20%,0.06)]",
+    );
+
+    fireEvent.click(confirmButton);
+
+    expect(onReviewConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables the review confirmation while automatic processing is pending", async () => {
+    render(
+      <ContractDocumentPreviewModal
+        open={true}
+        onClose={jest.fn()}
+        document={contractDocument}
+        customerName="김고객"
+        onReviewConfirm={jest.fn()}
+        isReviewConfirming={true}
+      />
+    );
+
+    await screen.findByTestId("pdf-page-1");
+
+    expect(screen.getByRole("button", { name: "확인 중..." })).toBeDisabled();
   });
 });

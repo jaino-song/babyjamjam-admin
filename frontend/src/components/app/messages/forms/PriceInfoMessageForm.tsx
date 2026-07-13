@@ -304,8 +304,7 @@ export const PriceInfoMessageForm = ({
   const generatedMessage = messageOverride ?? templateMessage;
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(generatedMessage);
-    alert(t(locale, "common.copy-success-message"));
+    return navigator.clipboard.writeText(generatedMessage);
   };
 
   const priceMetaItems = [
@@ -475,6 +474,7 @@ export const PriceInfoMessageForm = ({
     <AutoFillMsgCard
       title={t(locale, "common.generated-message-title")}
       copyButtonText={t(locale, "common.copy-button")}
+      copySuccessMessage={t(locale, "common.copy-success-message")}
       message={generatedMessage}
       bodyDescription={systemTemplate?.description || "요금 안내 문구와 가격 변수를 한눈에 검토할 수 있습니다."}
       metaItems={priceMetaItems}

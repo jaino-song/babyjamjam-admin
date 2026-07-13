@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { IAuthTokenRepository } from "domain/repositories/auth-token.repository.interface";
 import { AuthTokenEntity, AuthTokenType } from "domain/entities/auth-token.entity";
 import { PrismaService } from "../prisma.service";
@@ -44,6 +45,25 @@ export class SbAuthTokenRepository implements IAuthTokenRepository {
             data: AuthTokenMapper.toPrismaUpdate(token),
         });
         return AuthTokenMapper.toDomain(updated);
+    }
+
+    async consumeWithinTx(
+        tx: Prisma.TransactionClient,
+        hashedToken: string,
+        type: AuthTokenType,
+    ): Promise<boolean> {
+        const consumedAt = new Date();
+        const result = await tx.auth_token.updateMany({
+            where: {
+                token: hashedToken,
+                type,
+                usedAt: null,
+                expiresAt: { gt: consumedAt },
+            },
+            data: { usedAt: consumedAt },
+        });
+
+        return result.count === 1;
     }
 
     async delete(id: string): Promise<void> {

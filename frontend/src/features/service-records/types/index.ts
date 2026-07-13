@@ -1,6 +1,7 @@
 export type {
     SendServiceRecordLinkResponse,
     ServiceRecordAssignment,
+    ServiceRecordCase,
     ServiceRecordHeader,
     ServiceRecordLink,
     ServiceRecordLinkStatus,

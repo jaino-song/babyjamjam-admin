@@ -1,5 +1,6 @@
 import axios from "axios";
 
+import { captureApiError } from "@/lib/observability/capture-api-error";
 import { resolveServerApiUrl } from "@/lib/api/server-base-url";
 
 const API_URL = resolveServerApiUrl();
@@ -13,3 +14,11 @@ export const serverAPIClient = axios.create({
         "Content-Type": "application/json",
     },
 });
+
+serverAPIClient.interceptors.response.use(
+    (response) => response,
+    (error: unknown) => {
+        captureApiError(error);
+        return Promise.reject(error);
+    },
+);

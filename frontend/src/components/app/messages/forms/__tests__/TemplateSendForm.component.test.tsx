@@ -8,6 +8,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 
 import type { MessageLogRecord } from "@/features/message-triggers/types";
 import { useMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
+import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { messageDeliveryApi } from "@/services/api";
 import { useFormStore } from "@/stores/form-store";
 
@@ -38,7 +39,7 @@ jest.mock("@/components/app/clients/ClientAutocomplete", () => ({
   ),
 }));
 
-// Mock ContactInput so the phone field for requiresRecipientName templates is a plain input.
+// Mock ContactInput so phone fields that use the plain input stay easy to assert.
 jest.mock(
   "@/components/app/messages/forms/form-components/ContactInput",
   () => ({
@@ -92,11 +93,20 @@ jest.mock("@/services/api", () => ({
   },
 }));
 
+jest.mock("@/features/service-records/api/service-records.api", () => ({
+  serviceRecordsApi: {
+    getClientOverview: jest.fn(),
+    sendLink: jest.fn(),
+  },
+}));
+
 // ---------------------------------------------------------------------------
 // Typed references to mocks
 // ---------------------------------------------------------------------------
 const mockedUseMessageHistory = jest.mocked(useMessageHistory);
 const mockedSendSms = jest.mocked(messageDeliveryApi.sendSms);
+const mockedGetClientOverview = jest.mocked(serviceRecordsApi.getClientOverview);
+const mockedSendServiceRecordLink = jest.mocked(serviceRecordsApi.sendLink);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -112,6 +122,7 @@ function buildHistoryRecord(
     triggerJobId: null,
     receiver: "010-1111-1111",
     clientId: null,
+    recipientPhone: "010-1111-1111",
     messageBody: "안내 메시지입니다.",
     variables: {},
     status: "sent",
@@ -181,6 +192,19 @@ function renderInfoForm() {
 }
 
 /**
+ * Render the greeting template without a recipient-name requirement.
+ */
+function renderGreetingPhoneOnlyForm() {
+  return render(
+    <TemplateSendForm
+      templateId="builtin:greeting"
+      templateName="인사 메시지"
+      message="안내 메시지입니다."
+    />,
+  );
+}
+
+/**
  * Render the form with requiresRecipientName=true (e.g. greeting/thanks template).
  */
 function renderNameRequiredForm() {
@@ -215,6 +239,9 @@ beforeEach(() => {
     clientId: null,
     name: "",
     phone: "",
+    employeeId: null,
+    employeeName: "",
+    employeePhone: "",
     birthday: "",
     dueDate: "",
     address: "",
@@ -228,6 +255,152 @@ beforeEach(() => {
     area: "",
   });
   mockEmptyHistory();
+});
+
+// ---------------------------------------------------------------------------
+// Recipient phone input layout
+// ---------------------------------------------------------------------------
+describe("recipient phone input layout", () => {
+  it("uses a plain phone input for the greeting template phone-only form", () => {
+    renderGreetingPhoneOnlyForm();
+
+    expect(screen.getByTestId("contact-input-phone")).toBeInTheDocument();
+    expect(screen.queryByTestId("autocomplete-휴대 전화번호")).not.toBeInTheDocument();
+  });
+
+  it("keeps the client autocomplete for the service info template", () => {
+    renderInfoForm();
+
+    expect(screen.getByTestId("autocomplete-휴대 전화번호")).toBeInTheDocument();
+    expect(screen.queryByTestId("contact-input-phone")).not.toBeInTheDocument();
+  });
+
+  it("uses the service-record backend path when the selected employee id is zero", async () => {
+    useFormStore.setState({
+      clientId: 20,
+      name: "김산모",
+      employeeId: 0,
+      employeeName: "홍제공",
+      employeePhone: "010-1111-2222",
+    });
+    mockedGetClientOverview.mockResolvedValue({
+      data: {
+        assignments: [
+          {
+            scheduleId: 11,
+            replaced: false,
+            employee: {
+              id: 0,
+              name: "홍제공",
+              phone: "010-1111-2222",
+            },
+          },
+        ],
+      },
+    } as never);
+    mockedSendServiceRecordLink.mockResolvedValue({
+      data: {
+        ok: true,
+        scheduledFor: "2026-07-10T00:00:00.000Z",
+      },
+    } as never);
+
+    const onSubmitStateChange = jest.fn();
+
+    render(
+      <TemplateSendForm
+        templateId="builtin:service-feedback-link"
+        templateName="제공기록지 작성 링크"
+        message="{{employeeName}} {{clientName}} {{feedbackUrl}}"
+        deliveryMode="service-feedback-link"
+        onSubmitStateChange={onSubmitStateChange}
+      >
+        <div data-testid="service-feedback-fields" />
+      </TemplateSendForm>,
+    );
+
+    expect(screen.getByTestId("service-feedback-fields")).toBeInTheDocument();
+    expect(screen.queryByTestId("autocomplete-휴대 전화번호")).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(onSubmitStateChange).toHaveBeenLastCalledWith(
+        expect.objectContaining({ isSubmitDisabled: false }),
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+
+    await waitFor(() => {
+      expect(mockedGetClientOverview).toHaveBeenCalledWith(20);
+      expect(mockedSendServiceRecordLink).toHaveBeenCalledWith(11);
+    });
+    expect(mockedSendSms).not.toHaveBeenCalled();
+    expect(
+      document.querySelector('[data-component="messages-template-send-form-feedback"]'),
+    ).toHaveTextContent("제공기록지 링크 발송 요청이 접수되었습니다.");
+  });
+
+  it("explains why a service-record link could not be sent without exposing error codes", async () => {
+    useFormStore.setState({
+      clientId: 20,
+      name: "김산모",
+      employeeId: 30,
+      employeeName: "홍제공",
+      employeePhone: "010-1111-2222",
+    });
+    mockedGetClientOverview.mockResolvedValue({
+      data: {
+        assignments: [
+          {
+            scheduleId: 11,
+            replaced: false,
+            employee: {
+              id: 30,
+              name: "홍제공",
+              phone: "010-1111-2222",
+            },
+          },
+        ],
+      },
+    } as never);
+    mockedSendServiceRecordLink.mockRejectedValue({
+      isAxiosError: true,
+      response: {
+        status: 400,
+        data: {
+          statusCode: 400,
+          error: "Bad Request",
+          message: "제공인력 전화번호가 없습니다",
+        },
+      },
+    });
+
+    render(
+      <TemplateSendForm
+        templateId="builtin:service-feedback-link"
+        templateName="제공기록지 작성 링크"
+        message="{{employeeName}} {{clientName}} {{feedbackUrl}}"
+        deliveryMode="service-feedback-link"
+      />,
+    );
+
+    const sendButton = screen.getByRole("button", { name: /즉시 발송/ });
+    await waitFor(() => expect(sendButton).toBeEnabled());
+    fireEvent.click(sendButton);
+
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-component="messages-template-send-form-feedback"]'),
+      ).toHaveTextContent(
+        "선택한 관리사님의 전화번호가 없어 제공기록지 링크를 발송하지 못했습니다.",
+      );
+    });
+    const feedback = document.querySelector(
+      '[data-component="messages-template-send-form-feedback"]',
+    );
+    expect(feedback).not.toHaveTextContent("400");
+    expect(feedback).not.toHaveTextContent("Bad Request");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -352,6 +525,7 @@ describe("C: duplicate-send confirm dialog lists all duplicates (not just the fi
     const historyForRecipient1 = buildHistoryRecord({
       id: 101,
       receiver: "010-1111-1111",
+      recipientPhone: "010-1111-1111",
       messageBody: message,
       status: "sent",
       lastAttemptAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(), // 1h ago
@@ -359,6 +533,7 @@ describe("C: duplicate-send confirm dialog lists all duplicates (not just the fi
     const historyForRecipient2 = buildHistoryRecord({
       id: 102,
       receiver: "010-2222-2222",
+      recipientPhone: "010-2222-2222",
       messageBody: message,
       status: "sent",
       lastAttemptAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), // 2h ago

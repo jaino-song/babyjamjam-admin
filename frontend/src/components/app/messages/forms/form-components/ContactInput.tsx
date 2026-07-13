@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ChangeEvent } from "react";
 
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { TitleTextInputMolecule } from "./TitleTextInputMolecule";
 
 const PHONE_REGEX = /^[0-9-]*$/;
@@ -33,12 +34,19 @@ export const ContactInput = ({
   labelClassName,
 }: ContactInputProps) => {
   const [error, setError] = useState(false);
+  const formattedPhone = formatKoreanPhoneNumber(phone);
+
+  useEffect(() => {
+    if (phone && formattedPhone !== phone) {
+      setPhone(formattedPhone);
+    }
+  }, [formattedPhone, phone, setPhone]);
 
   const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
 
     if (PHONE_REGEX.test(value)) {
-      setPhone(value);
+      setPhone(formatKoreanPhoneNumber(value));
       setError(false);
     } else {
       setError(true);
@@ -49,7 +57,7 @@ export const ContactInput = ({
     <TitleTextInputMolecule
       dataComponent={dataComponent}
       label={label}
-      value={phone}
+      value={formattedPhone}
       onChange={handleChange}
       placeholder={placeholder}
       required={required}

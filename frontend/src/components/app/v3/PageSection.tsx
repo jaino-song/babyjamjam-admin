@@ -10,7 +10,7 @@ export function PageSection({ name, children, style }: PageSectionProps) {
   return (
     <section
       data-component={name}
-      className="flex h-full min-h-0 flex-col gap-[calc(24px*var(--v3-ui-scale,1))]"
+      className="flex h-full min-h-0 flex-col gap-[calc(24px*var(--glint-ui-scale,1))]"
       style={style}
     >
       {children}

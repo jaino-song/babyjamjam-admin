@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCreateClient, useUpdateClient } from "@/hooks/useClients";
+import { useClientPhoneDuplicateCheck } from "@/hooks/useClientPhoneDuplicateCheck";
 import { useVoucherPriceInfos } from "@/hooks/useVoucherData";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
@@ -63,7 +64,7 @@ export interface ClientFormPanelProps extends Omit<ClientFormDialogProps, "open"
 type ClientFormData = Omit<CreateClientDto, "primaryEmployeeId"> & { primaryEmployeeId: number | null };
 
 const PANEL_STEP_CONTENT_CLASS_NAME =
-    "grid w-full grid-cols-1 gap-[calc(16px*var(--v3-ui-scale,1))] pb-[calc(24px*var(--v3-ui-scale,1))] md:grid-cols-2";
+    "grid w-full grid-cols-1 gap-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(24px*var(--glint-ui-scale,1))] md:grid-cols-2";
 const PANEL_FULL_FIELD_CLASS_NAME = "md:col-span-2";
 export const CLIENT_FORM_STEPPER_STEPS = [
     { label: "이용자\n정보" },
@@ -127,6 +128,19 @@ const formatPhoneNumber = (value: string): string => {
         return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
     }
 };
+
+const getPhoneDuplicateCheckFailedMessage = (locale: "ko" | "en"): string =>
+    locale === "ko"
+        ? "문제가 발생했어요. 새로고침 해주세요."
+        : "Something went wrong. Please refresh and try again.";
+
+const getPhoneDuplicateCheckPendingMessage = (locale: "ko" | "en"): string =>
+    locale === "ko"
+        ? "연락처 중복 확인 중입니다. 잠시만 기다려주세요."
+        : "Checking for duplicate phone number. Please wait.";
+
+const getPhoneAvailableMessage = (locale: "ko" | "en"): string =>
+    locale === "ko" ? "등록 가능한 번호입니다." : "This phone number is available.";
 
 // Format ISO date string to yyyy-MM-dd for HTML date input
 const formatDateForInput = (dateString: string | null | undefined): string => {
@@ -254,6 +268,39 @@ function ClientFormContent({
         serviceStatus: "waiting",
     });
 
+    const {
+        phoneDigits,
+        isCheckingPhoneDuplicate,
+        isPhoneDuplicate,
+        hasPhoneDuplicateCheckFailed,
+        lastCheckedPhoneDigits,
+        isUsingOriginalPhone,
+        isPhoneCheckReady,
+    } = useClientPhoneDuplicateCheck({
+        phone: formData.phone,
+        originalPhone: client?.phone,
+        enabled: open,
+    });
+    const phoneInlineMessage = phoneDigits.length === 11
+        ? isUsingOriginalPhone || isPhoneCheckReady
+            ? getPhoneAvailableMessage(locale)
+            : isCheckingPhoneDuplicate
+                ? getPhoneDuplicateCheckPendingMessage(locale)
+                : hasPhoneDuplicateCheckFailed
+                    ? getPhoneDuplicateCheckFailedMessage(locale)
+                    : lastCheckedPhoneDigits !== phoneDigits
+                        ? getPhoneDuplicateCheckPendingMessage(locale)
+                        : isPhoneDuplicate
+                            ? t(locale, "clients.form.error-phone-duplicate")
+                            : null
+        : null;
+    const hasPhoneStatusError =
+        phoneDigits.length === 11 &&
+        !isUsingOriginalPhone &&
+        (hasPhoneDuplicateCheckFailed ||
+            (lastCheckedPhoneDigits === phoneDigits && isPhoneDuplicate));
+    const isPhoneCheckBlockingSubmit = phoneDigits.length === 11 && !isPhoneCheckReady;
+
     const [error, setError] = useState<string | null>(null);
     const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
     const [employeeDialogTarget, setEmployeeDialogTarget] = useState<"primary" | "secondary" | null>(null);
@@ -320,6 +367,7 @@ function ClientFormContent({
             info => Number(info.duration) === formData.duration
         );
     }, [voucherPriceInfos, formData.duration]);
+    const arePriceInputsLocked = !formData.type || !formData.duration || isPriceLoading;
 
     // Auto-fill prices when type and duration are selected (only if not manually edited)
     useEffect(() => {
@@ -514,9 +562,27 @@ function ClientFormContent({
             setErrorAndScroll(t(locale, "clients.form.error-address-required"));
             return;
         }
-        if (!formData.phone?.trim()) {
+        if (phoneDigits.length !== 11) {
             setErrorAndScroll(t(locale, "clients.form.error-phone-required"));
             return;
+        }
+        if (!isUsingOriginalPhone) {
+            if (isCheckingPhoneDuplicate) {
+                setErrorAndScroll(getPhoneDuplicateCheckPendingMessage(locale));
+                return;
+            }
+            if (hasPhoneDuplicateCheckFailed) {
+                setErrorAndScroll(getPhoneDuplicateCheckFailedMessage(locale));
+                return;
+            }
+            if (lastCheckedPhoneDigits !== phoneDigits) {
+                setErrorAndScroll(getPhoneDuplicateCheckPendingMessage(locale));
+                return;
+            }
+            if (isPhoneDuplicate) {
+                setErrorAndScroll(t(locale, "clients.form.error-phone-duplicate"));
+                return;
+            }
         }
         // Check for null/undefined specifically, as 0 can be a valid ID
         // In edit mode, skip this validation if employee hasn't been selected
@@ -606,7 +672,7 @@ function ClientFormContent({
         formData.birthday?.trim() &&
         isValidCompactDateInput(formData.dueDate ?? "") &&
         formData.address?.trim() &&
-        formData.phone?.trim()
+        isPhoneCheckReady
     );
     const isEmployeeStepValid = true;
     const isVoucherStepValid = Boolean(
@@ -668,7 +734,7 @@ function ClientFormContent({
                 variant="positive"
                 size="sm"
                 onClick={handleSubmit}
-                disabled={isSubmitting}
+                disabled={isSubmitting || isPhoneCheckBlockingSubmit}
                 data-component="clients-form-dialog-submit"
                 className="w-full sm:flex-1"
             >
@@ -683,7 +749,7 @@ function ClientFormContent({
         </div>
     );
     const panelFormActions = (
-        <div className="flex w-full flex-wrap items-center justify-between gap-[calc(12px*var(--v3-ui-scale,1))]">
+        <div className="flex w-full flex-wrap items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))]">
             <span className={DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME}>{requiredFieldProgressText}</span>
             <div className={DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME}>
                 {activeStep === 0 && (
@@ -692,7 +758,7 @@ function ClientFormContent({
                         size="sm"
                         onClick={handleDialogClose}
                         disabled={isSubmitting}
-                        className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
+                        className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
                     >
                         {t(locale, "common.cancel")}
                     </Button>
@@ -705,7 +771,7 @@ function ClientFormContent({
                         onClick={() => handleStepChange(activeStep - 1)}
                         disabled={isSubmitting}
                         data-component="clients-form-panel-prev"
-                        className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
+                        className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
                     >
                         이전
                     </Button>
@@ -717,7 +783,7 @@ function ClientFormContent({
                         onClick={() => handleStepChange(activeStep + 1)}
                         disabled={!isCurrentStepValid || isSubmitting}
                         data-component="clients-form-panel-next"
-                        className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
+                        className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
                     >
                         다음
                     </Button>
@@ -728,7 +794,7 @@ function ClientFormContent({
                         onClick={handleSubmit}
                         disabled={isSubmitting || !isFormComplete}
                         data-component="clients-form-panel-submit"
-                        className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
+                        className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
                     >
                         {isSubmitting ? (
                             <Spinner className="h-4 w-4" />
@@ -758,6 +824,7 @@ function ClientFormContent({
                 >
                     <FormTextInput
                         id="name"
+                        placeholder="홍길동"
                         value={formData.name}
                         onChange={(e) => handleChange("name", e.target.value)}
                     />
@@ -800,13 +867,31 @@ function ClientFormContent({
                     data-component="clients-form-dialog-field-phone"
                     htmlFor="phone"
                     label={t(locale, "clients.form.phone")}
+                    labelAccessory={phoneInlineMessage ? (
+                        <FormHelperText
+                            id="clients-form-dialog-phone-helper"
+                            data-component="clients-form-dialog-phone-helper"
+                            tone={hasPhoneStatusError ? "error" : "default"}
+                            className={cn("m-0 text-right", isPhoneCheckReady && "text-v3-green")}
+                            aria-live="polite"
+                        >
+                            {phoneInlineMessage}
+                        </FormHelperText>
+                    ) : null}
                 >
                     <FormTextInput
                         id="phone"
+                        type="tel"
+                        inputMode="numeric"
                         placeholder="010-1234-5678"
                         value={formData.phone ?? ""}
-                        onChange={(e) => handleChange("phone", formatPhoneNumber(e.target.value))}
+                        onChange={(e) => {
+                            handleChange("phone", formatPhoneNumber(e.target.value));
+                            setError(null);
+                        }}
                         maxLength={13}
+                        error={hasPhoneStatusError}
+                        aria-describedby={phoneInlineMessage ? "clients-form-dialog-phone-helper" : undefined}
                     />
                 </FormField>
 
@@ -927,12 +1012,12 @@ function ClientFormContent({
                         <div className="relative">
                             <FormTextInput
                                 id="fullPrice"
-                                placeholder="0"
-                                value={formatPrice(formData.fullPrice || "")}
+                                value={arePriceInputsLocked ? "" : formatPrice(formData.fullPrice || "")}
                                 onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
-                                className="pr-[calc(32px*var(--v3-ui-scale,1))]"
+                                disabled={arePriceInputsLocked}
+                                className="pr-[calc(32px*var(--glint-ui-scale,1))]"
                             />
-                            <span className="absolute right-[calc(12px*var(--v3-ui-scale,1))] top-1/2 -translate-y-1/2 text-[calc(12px*var(--v3-ui-scale,1))] text-v3-text-muted">
+                            <span className="absolute right-[calc(12px*var(--glint-ui-scale,1))] top-1/2 -translate-y-1/2 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">
                                 원
                             </span>
                         </div>
@@ -946,12 +1031,12 @@ function ClientFormContent({
                         <div className="relative">
                             <FormTextInput
                                 id="grant"
-                                placeholder="0"
-                                value={formatPrice(formData.grant || "")}
+                                value={arePriceInputsLocked ? "" : formatPrice(formData.grant || "")}
                                 onChange={(e) => handlePriceChange("grant", e.target.value.replace(/,/g, ""))}
-                                className="pr-[calc(32px*var(--v3-ui-scale,1))]"
+                                disabled={arePriceInputsLocked}
+                                className="pr-[calc(32px*var(--glint-ui-scale,1))]"
                             />
-                            <span className="absolute right-[calc(12px*var(--v3-ui-scale,1))] top-1/2 -translate-y-1/2 text-[calc(12px*var(--v3-ui-scale,1))] text-v3-text-muted">
+                            <span className="absolute right-[calc(12px*var(--glint-ui-scale,1))] top-1/2 -translate-y-1/2 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">
                                 원
                             </span>
                         </div>
@@ -965,12 +1050,12 @@ function ClientFormContent({
                         <div className="relative">
                             <FormTextInput
                                 id="actualPrice"
-                                placeholder="0"
-                                value={formatPrice(formData.actualPrice || "")}
+                                value={arePriceInputsLocked ? "" : formatPrice(formData.actualPrice || "")}
                                 onChange={(e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, ""))}
-                                className="pr-[calc(32px*var(--v3-ui-scale,1))]"
+                                disabled={arePriceInputsLocked}
+                                className="pr-[calc(32px*var(--glint-ui-scale,1))]"
                             />
-                            <span className="absolute right-[calc(12px*var(--v3-ui-scale,1))] top-1/2 -translate-y-1/2 text-[calc(12px*var(--v3-ui-scale,1))] text-v3-text-muted">
+                            <span className="absolute right-[calc(12px*var(--glint-ui-scale,1))] top-1/2 -translate-y-1/2 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">
                                 원
                             </span>
                         </div>
@@ -1045,7 +1130,7 @@ function ClientFormContent({
                 title={t(locale, "clients.form.section-flags")}
                 description="추가 서비스 옵션을 설정해 주세요."
             >
-                <div className="grid gap-[calc(12px*var(--v3-ui-scale,1))] lg:grid-cols-3">
+                <div className="grid gap-[calc(12px*var(--glint-ui-scale,1))] lg:grid-cols-3">
                     <FormSwitchRow
                         data-component="clients-form-dialog-field-voucher-client"
                         title={t(locale, "clients.form.voucher-client")}
@@ -1082,6 +1167,7 @@ function ClientFormContent({
             >
                 <FormTextInput
                     id="name"
+                    placeholder="홍길동"
                     value={formData.name}
                     onChange={(event) => handleChange("name", event.target.value)}
                 />
@@ -1120,13 +1206,31 @@ function ClientFormContent({
                 data-component="clients-form-panel-phone-input"
                 htmlFor="phone"
                 label={t(locale, "clients.form.phone")}
+                labelAccessory={phoneInlineMessage ? (
+                    <FormHelperText
+                        id="clients-form-panel-phone-helper"
+                        data-component="clients-form-panel-phone-helper"
+                        tone={hasPhoneStatusError ? "error" : "default"}
+                        className={cn("m-0 text-right", isPhoneCheckReady && "text-v3-green")}
+                        aria-live="polite"
+                    >
+                        {phoneInlineMessage}
+                    </FormHelperText>
+                ) : null}
             >
                 <FormTextInput
                     id="phone"
+                    type="tel"
+                    inputMode="numeric"
                     placeholder="010-1234-5678"
                     value={formData.phone ?? ""}
-                    onChange={(event) => handleChange("phone", formatPhoneNumber(event.target.value))}
+                    onChange={(event) => {
+                        handleChange("phone", formatPhoneNumber(event.target.value));
+                        setError(null);
+                    }}
                     maxLength={13}
+                    error={hasPhoneStatusError}
+                    aria-describedby={phoneInlineMessage ? "clients-form-panel-phone-helper" : undefined}
                 />
             </FormField>
 
@@ -1225,9 +1329,9 @@ function ClientFormContent({
             >
                 <FormTextInput
                     id="fullPrice"
-                    placeholder="0"
-                    value={formatPrice(formData.fullPrice || "")}
+                    value={arePriceInputsLocked ? "" : formatPrice(formData.fullPrice || "")}
                     onChange={(event) => handlePriceChange("fullPrice", event.target.value.replace(/,/g, ""))}
+                    disabled={arePriceInputsLocked}
                 />
             </FormField>
 
@@ -1238,9 +1342,9 @@ function ClientFormContent({
             >
                 <FormTextInput
                     id="grant"
-                    placeholder="0"
-                    value={formatPrice(formData.grant || "")}
+                    value={arePriceInputsLocked ? "" : formatPrice(formData.grant || "")}
                     onChange={(event) => handlePriceChange("grant", event.target.value.replace(/,/g, ""))}
+                    disabled={arePriceInputsLocked}
                 />
             </FormField>
 
@@ -1251,9 +1355,9 @@ function ClientFormContent({
             >
                 <FormTextInput
                     id="actualPrice"
-                    placeholder="0"
-                    value={formatPrice(formData.actualPrice || "")}
+                    value={arePriceInputsLocked ? "" : formatPrice(formData.actualPrice || "")}
                     onChange={(event) => handlePriceChange("actualPrice", event.target.value.replace(/,/g, ""))}
+                    disabled={arePriceInputsLocked}
                 />
             </FormField>
         </>
@@ -1309,7 +1413,7 @@ function ClientFormContent({
                 />
             </FormField>
 
-            <div className={cn(PANEL_FULL_FIELD_CLASS_NAME, "grid gap-[calc(12px*var(--v3-ui-scale,1))] lg:grid-cols-3")}>
+            <div className={cn(PANEL_FULL_FIELD_CLASS_NAME, "grid gap-[calc(12px*var(--glint-ui-scale,1))] lg:grid-cols-3")}>
                 <FormSwitchRow
                     data-component="clients-form-panel-voucher-client-field"
                     title={t(locale, "clients.form.voucher-client")}

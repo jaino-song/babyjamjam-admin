@@ -7,33 +7,24 @@ import { cn } from "@/lib/utils"
 
 function Switch({
   className,
-  size = "default",
-  variant = "default",
+  thumbDataComponent,
   ...props
 }: React.ComponentProps<typeof SwitchPrimitive.Root> & {
-  size?: "sm" | "default"
-  variant?: "default" | "v3"
+  thumbDataComponent?: string
 }) {
   return (
     <SwitchPrimitive.Root
       data-slot="switch"
-      data-size={size}
-      data-variant={variant}
       className={cn(
-        "peer inline-flex shrink-0 items-center border border-transparent transition-all outline-none focus-visible:ring-[3px] focus-visible:border-ring focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50",
-        variant === "default" && "data-[state=checked]:bg-primary data-[state=unchecked]:bg-input dark:data-[state=unchecked]:bg-input/80 group/switch rounded-full shadow-xs data-[size=default]:h-[1.15rem] data-[size=default]:w-8 data-[size=sm]:h-3.5 data-[size=sm]:w-6",
-        variant === "v3" && "w-[44px] h-[24px] rounded-[50px] duration-300 ease-in-out data-[state=unchecked]:bg-[hsl(220,20%,90%)] data-[state=checked]:bg-[hsl(214,100%,34%)]",
+        "peer inline-flex h-[calc(23.4px*var(--glint-ui-scale,1))] w-[calc(41.4px*var(--glint-ui-scale,1))] shrink-0 items-center rounded-full border-0 p-[calc(2.7px*var(--glint-ui-scale,1))] outline-none transition-colors data-[state=checked]:bg-v3-primary data-[state=unchecked]:bg-v3-border focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-v3-primary/10 disabled:cursor-not-allowed disabled:opacity-55",
         className
       )}
       {...props}
     >
       <SwitchPrimitive.Thumb
         data-slot="switch-thumb"
-        className={cn(
-          "pointer-events-none block rounded-full ring-0 transition-transform",
-          variant === "default" && "bg-background dark:data-[state=unchecked]:bg-foreground dark:data-[state=checked]:bg-primary-foreground group-data-[size=default]/switch:size-4 group-data-[size=sm]/switch:size-3 data-[state=checked]:translate-x-[calc(100%-2px)] data-[state=unchecked]:translate-x-0",
-          variant === "v3" && "size-[20px] bg-white shadow-[0_2px_4px_rgba(0,0,0,0.1)] duration-300 ease-in-out data-[state=unchecked]:translate-x-[2px] data-[state=checked]:translate-x-[22px]"
-        )}
+        data-component={thumbDataComponent}
+        className="pointer-events-none block h-[calc(18px*var(--glint-ui-scale,1))] w-[calc(18px*var(--glint-ui-scale,1))] rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.2)] ring-0 transition-transform data-[state=checked]:translate-x-full data-[state=unchecked]:translate-x-0"
       />
     </SwitchPrimitive.Root>
   )

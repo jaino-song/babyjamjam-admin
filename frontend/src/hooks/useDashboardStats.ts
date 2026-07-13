@@ -16,6 +16,8 @@ export interface DashboardStats {
 export const dashboardQueryKeys = {
   stats: () => ["dashboard", "stats"] as const,
   overview: (limit: number) => ["dashboard", "overview", { limit }] as const,
+  /** Prefix key matching every `overview(limit)` query, for broad invalidation. */
+  overviewAll: () => ["dashboard", "overview"] as const,
 };
 
 export interface DashboardOverview {

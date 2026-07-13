@@ -73,7 +73,12 @@ export default function DocumentPreviewModal({
     onEdit || onDelete ? (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="h-8 w-8">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="문서 작업 더보기"
+            className="h-8 w-8"
+          >
             <MoreVertical className="h-4 w-4" />
           </Button>
         </DropdownMenuTrigger>

@@ -43,6 +43,27 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         return rows.map((row) => this.toDomain(row));
     }
 
+    async findInactiveDefaultRules(limit = 50): Promise<MessageTriggerRuleEntity[]> {
+        const rows = await this.prisma.message_trigger_rule.findMany({
+            where: {
+                isDefault: true,
+                isActive: false,
+            },
+            orderBy: { updatedAt: "asc" },
+            take: limit,
+        });
+        return rows.map((row) => this.toDomain(row));
+    }
+
+    async findStaleRules(limit = 10): Promise<MessageTriggerRuleEntity[]> {
+        const rows = await this.prisma.message_trigger_rule.findMany({
+            where: { jobsStale: true },
+            orderBy: { updatedAt: "asc" },
+            take: limit,
+        });
+        return rows.map((row) => this.toDomain(row));
+    }
+
     async create(
         branchId: string,
         rule: MessageTriggerRuleEntity,
@@ -57,6 +78,8 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 offsetDays: rule.offsetDays,
                 recipientType: rule.recipientType,
                 templateKey: rule.templateKey,
+                isDefault: rule.isDefault,
+                jobsStale: rule.jobsStale,
             },
         });
         return this.toDomain(row);
@@ -77,9 +100,33 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 offsetDays: rule.offsetDays,
                 recipientType: rule.recipientType,
                 templateKey: rule.templateKey,
+                isDefault: rule.isDefault,
+                jobsStale: rule.jobsStale,
             },
         });
         return this.toDomain(row);
+    }
+
+    async markJobsStale(ruleId: string): Promise<void> {
+        await this.prisma.message_trigger_rule.updateMany({
+            where: { id: ruleId },
+            data: { jobsStale: true },
+        });
+    }
+
+    async clearJobsStaleIfUnchanged(
+        ruleId: string,
+        updatedAtAtReadTime: Date,
+    ): Promise<boolean> {
+        const result = await this.prisma.message_trigger_rule.updateMany({
+            where: {
+                id: ruleId,
+                jobsStale: true,
+                updatedAt: updatedAtAtReadTime,
+            },
+            data: { jobsStale: false },
+        });
+        return result.count === 1;
     }
 
     async delete(branchId: string, id: string): Promise<void> {
@@ -98,6 +145,8 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         offsetDays: number;
         recipientType: string;
         templateKey: string;
+        isDefault?: boolean;
+        jobsStale?: boolean;
         createdAt: Date;
         updatedAt: Date;
     }): MessageTriggerRuleEntity {
@@ -113,6 +162,8 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
             row.templateKey as MessageTriggerTemplateKey,
             row.createdAt,
             row.updatedAt,
+            row.isDefault ?? false,
+            row.jobsStale ?? false,
         );
     }
 }

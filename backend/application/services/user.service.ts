@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
-import { 
+import { Prisma } from "@prisma/client";
+import {
     CreateUserUsecase,
     FindUserByIdUsecase,
     FindUserByKakaoIdUsecase,
@@ -27,7 +28,21 @@ export interface UserDirectoryItem {
     createdAt: Date;
     emailVerified: boolean;
     authProvider: string;
+    approvalStatus: string;
+    requestedRole: string | null;
     branches: UserDirectoryBranch[];
+}
+
+export interface UserApprovalSummary {
+    id: string;
+    name: string | null;
+    email: string | null;
+    role: string | null;
+    approvalStatus: string;
+    approvedAt: Date | null;
+    approvedBy: string | null;
+    requestedRole: string | null;
+    tokenVersion: number;
 }
 
 @Injectable()
@@ -53,20 +68,26 @@ export class UserService {
         return this.findUserByKakaoIdUsecase.execute(kakaoId);
     }
 
-    update(id: string, params: { name?: string, email?: string, profileImage?: string, role?: string | null }): Promise<UserEntity> {
+    update(id: string, params: { name?: string, email?: string, profileImage?: string, role?: string | null, callerRole?: string }): Promise<UserEntity> {
         return this.updateUserUsecase.execute(id, params);
     }
 
-    async findDirectory(params?: { branchId?: string }): Promise<UserDirectoryItem[]> {
+    async findDirectory(params?: { branchId?: string, status?: string }): Promise<UserDirectoryItem[]> {
+        const where: Prisma.userWhereInput = {};
+
+        if (params?.branchId) {
+            where.OR = [
+                { userBranches: { some: { branchId: params.branchId } } },
+                { ownedBranches: { some: { id: params.branchId } } },
+            ];
+        }
+
+        if (params?.status) {
+            where.approvalStatus = params.status;
+        }
+
         const users = await this.prismaService.user.findMany({
-            where: params?.branchId
-                ? {
-                    OR: [
-                        { userBranches: { some: { branchId: params.branchId } } },
-                        { ownedBranches: { some: { id: params.branchId } } },
-                    ],
-                }
-                : undefined,
+            where: Object.keys(where).length > 0 ? where : undefined,
             orderBy: { createdAt: "desc" },
             select: {
                 id: true,
@@ -80,6 +101,8 @@ export class UserService {
                 createdAt: true,
                 emailVerified: true,
                 authProvider: true,
+                approvalStatus: true,
+                requestedRole: true,
                 ownedBranches: {
                     orderBy: { createdAt: "asc" },
                     select: {
@@ -135,6 +158,8 @@ export class UserService {
                 createdAt: user.createdAt,
                 emailVerified: user.emailVerified,
                 authProvider: user.authProvider,
+                approvalStatus: user.approvalStatus,
+                requestedRole: user.requestedRole,
                 branches: Array.from(branches.values()),
             };
         });
@@ -142,5 +167,64 @@ export class UserService {
 
     delete(id: string) {
         return this.deleteUserUsecase.execute(id);
+    }
+
+    approve(
+        id: string,
+        params: { role: string, approvedBy: string, branchId?: string },
+    ): Promise<UserApprovalSummary> {
+        return this.prismaService.$transaction(async (tx) => {
+            const user = await tx.user.update({
+                where: { id },
+                data: {
+                    approvalStatus: "approved",
+                    approvedAt: new Date(),
+                    approvedBy: params.approvedBy,
+                    role: params.role,
+                    tokenVersion: { increment: 1 },
+                },
+                select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    role: true,
+                    approvalStatus: true,
+                    approvedAt: true,
+                    approvedBy: true,
+                    requestedRole: true,
+                    tokenVersion: true,
+                },
+            });
+
+            await tx.user_branch.updateMany({
+                where: params.branchId
+                    ? { userId: id, branchId: params.branchId }
+                    : { userId: id },
+                data: { role: params.role },
+            });
+
+            return user;
+        });
+    }
+
+    reject(id: string): Promise<UserApprovalSummary> {
+        return this.prismaService.user.update({
+            where: { id },
+            data: {
+                approvalStatus: "rejected",
+                tokenVersion: { increment: 1 },
+            },
+            select: {
+                id: true,
+                name: true,
+                email: true,
+                role: true,
+                approvalStatus: true,
+                approvedAt: true,
+                approvedBy: true,
+                requestedRole: true,
+                tokenVersion: true,
+            },
+        });
     }
 }

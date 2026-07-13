@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
@@ -11,6 +11,8 @@ import {
     getServiceFeedbackTokenExpiresAt,
 } from "domain/constants/service-feedback-link-message";
 import {
+    MessageTriggerEventType,
+    MessageTriggerOffsetType,
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
@@ -25,6 +27,7 @@ import {
     IMessageLogRepository,
 } from "domain/repositories/message-log.repository.interface";
 import { EmployeeFeedbackTokenService } from "./employee-feedback-token.service";
+import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 
 /**
  * Issues / revokes the no-login 제공기록지 link for an assignment (BJJ-247).
@@ -43,6 +46,7 @@ export class EmployeeFeedbackLinkService {
         private readonly jobRepository: IMessageTriggerJobRepository,
         @Inject(MESSAGE_LOG_REPOSITORY)
         private readonly logRepository: IMessageLogRepository,
+        @Optional() private readonly lifecycleService?: ServiceRecordLifecycleService,
     ) {}
 
     /** Backward-compatible wrapper: now schedules the SMS instead of sending immediately. */
@@ -78,6 +82,7 @@ export class EmployeeFeedbackLinkService {
         const result = await this.issueFeedbackLinkJob(scheduleId, {
             scheduledFor,
             recordMissingPhoneFailure: false,
+            allowLateReissue: true,
         });
         this.logger.log(
             `Feedback link SMS manually scheduled for provider ${result.employeeId} schedule ${scheduleId} at ${result.scheduledFor.toISOString()}`
@@ -98,10 +103,13 @@ export class EmployeeFeedbackLinkService {
 
     async extendExpiryForEndDate(scheduleId: number, endDate: Date): Promise<void> {
         try {
-            await this.tokenService.extendExpiryForSchedule(
-                scheduleId,
-                getServiceFeedbackTokenExpiresAt(endDate),
-            );
+            const record = await this.lifecycleService?.ensureForSchedule(scheduleId);
+            const expiresAt = getServiceFeedbackTokenExpiresAt(record?.endDate ?? endDate);
+            if (record) {
+                await this.tokenService.extendExpiryForCase(record.id, expiresAt);
+            } else {
+                await this.tokenService.extendExpiryForSchedule(scheduleId, expiresAt);
+            }
         } catch (error) {
             this.logger.error(`Failed to extend feedback token expiry for schedule ${scheduleId}: ${error}`);
         }
@@ -131,6 +139,7 @@ export class EmployeeFeedbackLinkService {
         options: {
             scheduledFor: Date | null;
             recordMissingPhoneFailure: boolean;
+            allowLateReissue?: boolean;
         },
     ): Promise<{ scheduledFor: Date; employeeId: number; jobEnqueued: boolean }> {
         const schedule = await this.prisma.employee_schedule.findUnique({
@@ -140,6 +149,9 @@ export class EmployeeFeedbackLinkService {
         if (!schedule || !schedule.branchId) {
             throw new NotFoundException("Assignment not found");
         }
+
+        await this.ensureSystemRule();
+        const serviceRecordCase = await this.lifecycleService?.ensureForClient(schedule.clientId);
 
         await this.cancelPendingFeedbackJobs(scheduleId, "Feedback link rescheduled");
         await this.supersedeRetryableFeedbackSmsLogs(scheduleId, "Feedback link rescheduled");
@@ -174,8 +186,12 @@ export class EmployeeFeedbackLinkService {
             branchId: schedule.branchId,
             scheduleId,
             employeeId: employee.id,
+            ...(serviceRecordCase ? { serviceRecordCaseId: serviceRecordCase.id } : {}),
             expectedPhone: employee.phone,
-            expiresAt: getServiceFeedbackTokenExpiresAt(schedule.endDate),
+            expiresAt: this.resolveExpiry(
+                serviceRecordCase?.endDate ?? schedule.endDate,
+                options.allowLateReissue === true,
+            ),
         });
 
         const base = this.configService
@@ -183,9 +199,18 @@ export class EmployeeFeedbackLinkService {
             .replace(/\/+$/, "");
         const url = `${base}/feedback/${linkToken}`;
         const clientName = schedule.client?.name ?? "고객";
-        const message =
-            `[아가잼잼] ${clientName}님 산모·신생아 서비스 제공기록지 작성 링크입니다.\n` +
-            `링크 접속 후 휴대폰 번호로 본인확인하고, 방문일마다 기록을 남겨주세요.\n${url}`;
+        const message = `[사회서비스 제공자 품질평가 A등급]
+안녕하세요, 인천 아이미래로 입니다 :)
+
+${employee.name} 관리사님, ${clientName} 산모님의 서비스 제공기록지 작성 링크입니다.
+매일 서비스 제공 완료 직전에 서비스 세부사항 기록 후에, 산모님께 승인을 받으시면 됩니다.
+
+최초 접속 시에 관리사님의 전화번호 인증이 필요합니다. 링크 접속 후 휴대폰 번호로 본인확인하고, 방문일마다 기록을 남겨주세요.
+
+감사합니다.
+
+제공기록지 링크
+${url}`;
 
         const scheduledFor = options.scheduledFor ?? getServiceFeedbackLinkScheduledFor(schedule.startDate);
         await this.jobRepository.upsertPending(
@@ -221,6 +246,26 @@ export class EmployeeFeedbackLinkService {
         );
 
         return { scheduledFor, employeeId: employee.id, jobEnqueued: true };
+    }
+
+    private async ensureSystemRule(): Promise<void> {
+        await this.prisma.message_trigger_rule.upsert({
+            where: { id: SERVICE_FEEDBACK_LINK_RULE_ID },
+            create: {
+                id: SERVICE_FEEDBACK_LINK_RULE_ID,
+                branchId: null,
+                name: SERVICE_FEEDBACK_LINK_SMS_TITLE,
+                isActive: true,
+                eventType: MessageTriggerEventType.SERVICE_START,
+                offsetType: MessageTriggerOffsetType.SAME_DAY,
+                offsetDays: 0,
+                recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+                templateKey: MessageTriggerTemplateKey.SERVICE_FEEDBACK_LINK,
+                isDefault: false,
+                jobsStale: false,
+            },
+            update: {},
+        });
     }
 
     private async recordPermanentFailure(params: {
@@ -263,6 +308,8 @@ export class EmployeeFeedbackLinkService {
                 null,
                 now,
                 now,
+                params.employeeName,
+                params.receiver,
             ),
         );
     }
@@ -273,5 +320,11 @@ export class EmployeeFeedbackLinkService {
 
     private normalizePhone(phone: string): string {
         return phone.replace(/\D/g, "");
+    }
+
+    private resolveExpiry(endDate: Date, allowLateReissue: boolean): Date {
+        const normalExpiry = getServiceFeedbackTokenExpiresAt(endDate);
+        if (!allowLateReissue || normalExpiry.getTime() >= Date.now()) return normalExpiry;
+        return new Date(Date.now() + 24 * 60 * 60 * 1000);
     }
 }

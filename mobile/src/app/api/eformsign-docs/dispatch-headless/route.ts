@@ -12,12 +12,12 @@ import {
 
 // Mirrors backend DispatchHeadlessRequestDto: contractData is @IsObject()
 // required (ContractDataDto is itself an interface, not nested-validated, so the
-// proxy only pins object-ness); clientId/progressId are optional. Passthrough
+    // proxy only pins object-ness); clientId is required and progressId is optional. Passthrough
 // keeps the contractData shape and any extra fields intact for the backend.
 const dispatchHeadlessSchema = z
     .object({
         contractData: z.object({}).passthrough(),
-        clientId: z.number().optional(),
+        clientId: z.number().int().min(1),
         progressId: z.string().optional(),
     })
     .passthrough();

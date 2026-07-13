@@ -416,6 +416,44 @@ describe("SbClientRepository", () => {
                 expect(result.address).toBeNull();
             });
         });
+
+        it("creates the client and initial employee schedule in one nested write", async () => {
+            const entity = createClientEntity();
+            clientModel.create.mockResolvedValue({
+                ...createClientRow({ id: 9, name: "Test Client" }),
+                employeeSchedules: [{ id: 44 }],
+            });
+
+            const result = await repository.createWithInitialSchedule(branchId, entity, {
+                primaryEmployeeId: 5,
+                secondaryEmployeeId: 6,
+                workAddress: "Test Address",
+                startDate: new Date("2024-02-01T00:00:00.000Z"),
+                endDate: new Date("2024-08-01T00:00:00.000Z"),
+            });
+
+            expect(clientModel.create).toHaveBeenCalledWith(expect.objectContaining({
+                data: expect.objectContaining({
+                    branchId,
+                    employeeSchedules: {
+                        create: {
+                            branchId,
+                            primaryEmployeeId: 5,
+                            secondaryEmployeeId: 6,
+                            workAddress: "Test Address",
+                            startDate: new Date("2024-02-01T00:00:00.000Z"),
+                            endDate: new Date("2024-08-01T00:00:00.000Z"),
+                            replaced: false,
+                        },
+                    },
+                }),
+                select: expect.objectContaining({
+                    employeeSchedules: expect.any(Object),
+                }),
+            }));
+            expect(result.client.id).toBe(9);
+            expect(result.scheduleId).toBe(44);
+        });
     });
 
     // ============================================

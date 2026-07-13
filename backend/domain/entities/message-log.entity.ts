@@ -50,6 +50,8 @@ export class MessageLogEntity {
         public nextRetryAt: Date | null,
         public createdAt: Date,
         public updatedAt: Date,
+        public recipientName: string | null = null,
+        public recipientPhone: string | null = null,
     ) {}
 
     markSent(aligoMid?: string): void {
@@ -95,6 +97,8 @@ export class MessageLogEntity {
         triggerJobId?: string;
         receiver: string;
         clientId?: number;
+        recipientName?: string | null;
+        recipientPhone?: string | null;
         messageBody: string;
         variables: Record<string, string>;
     }): MessageLogEntity {
@@ -117,6 +121,8 @@ export class MessageLogEntity {
             null,
             now,
             now,
+            params.recipientName ?? null,
+            params.recipientPhone ?? params.receiver,
         );
     }
 
@@ -138,11 +144,13 @@ export class MessageLogEntity {
         nextRetryAt: Date | null,
         createdAt: Date,
         updatedAt: Date = createdAt,
+        recipientName: string | null = null,
+        recipientPhone: string | null = null,
     ): MessageLogEntity {
         return new MessageLogEntity(
             id, branchId, provider, templateKey, triggerJobId, receiver, clientId,
             messageBody, variables, status, aligoMid, errorMessage, attempts,
-            lastAttemptAt, nextRetryAt, createdAt, updatedAt,
+            lastAttemptAt, nextRetryAt, createdAt, updatedAt, recipientName, recipientPhone,
         );
     }
 }

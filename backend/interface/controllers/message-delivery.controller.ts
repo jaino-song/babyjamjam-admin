@@ -152,6 +152,8 @@ export class MessageDeliveryController {
                 templateKey: dto.title?.trim() || "manual_sms",
                 receiver: result.request.receiver,
                 clientId: dto.clientId ?? null,
+                recipientName: dto.recipientName ?? null,
+                recipientPhone: result.request.receiver,
                 messageBody: dto.message,
                 variables: {
                     recipientName: dto.recipientName ?? null,
@@ -188,6 +190,8 @@ export class MessageDeliveryController {
                 templateKey: dto.title?.trim() || "manual_sms",
                 receiver: dto.receiver,
                 clientId: dto.clientId ?? null,
+                recipientName: dto.recipientName ?? null,
+                recipientPhone: dto.receiver,
                 messageBody: dto.message,
                 variables: {
                     recipientName: dto.recipientName ?? null,

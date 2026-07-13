@@ -47,19 +47,19 @@ function ContractsListItemComponent({
       <>
         <div
           data-component="contracts-list-item-skeleton-icon"
-          className="flex h-[calc(44px*var(--v3-ui-scale,1))] w-[calc(44px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[14px] bg-v3-dim-white shadow-md"
+          className="flex h-[calc(44px*var(--glint-ui-scale,1))] w-[calc(44px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[14px] bg-v3-dim-white shadow-md"
         >
-          <Skeleton className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))] rounded-md bg-white/70" />
+          <Skeleton className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))] rounded-md bg-white/70" />
         </div>
         <div
           data-component="contracts-list-item-skeleton-content"
           className="flex-1 min-w-0"
         >
-          <Skeleton className="mb-[calc(6px*var(--v3-ui-scale,1))] h-[calc(16px*var(--v3-ui-scale,1))] w-[calc(96px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
-          <Skeleton className="mb-[calc(8px*var(--v3-ui-scale,1))] h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(160px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
-          <Skeleton className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(208px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
+          <Skeleton className="mb-[calc(6px*var(--glint-ui-scale,1))] h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(96px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
+          <Skeleton className="mb-[calc(8px*var(--glint-ui-scale,1))] h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(160px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
+          <Skeleton className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(208px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
         </div>
-        <Skeleton className="h-[calc(24px*var(--v3-ui-scale,1))] w-[calc(56px*var(--v3-ui-scale,1))] shrink-0 rounded-full bg-v3-dim-white" />
+        <Skeleton className="h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(56px*var(--glint-ui-scale,1))] shrink-0 rounded-full bg-v3-dim-white" />
       </>
     );
   }
@@ -71,6 +71,11 @@ function ContractsListItemComponent({
   const sentDate = formatDate(document.created_date);
   const signedDate =
     category === "completed" ? formatDate(document.updated_date) : null;
+  const normalizedCustomerName = customerName?.trim();
+  const recipientName =
+    normalizedCustomerName && normalizedCustomerName !== "-"
+      ? normalizedCustomerName
+      : "이름 없음";
 
   return (
     <AnimatedSlotListItemContent
@@ -94,17 +99,17 @@ function ContractsListItemComponent({
               ? "text-v3-primary"
               : "text-v3-orange"
       )}
-      title={customerName ?? "-"}
+      title={recipientName}
       subtitle={document.document_name}
       meta={
         <>
-          <span className="flex min-w-0 shrink-0 items-center gap-[calc(4px*var(--v3-ui-scale,1))]">
-            <Calendar className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(12px*var(--v3-ui-scale,1))] shrink-0" />
+          <span className="flex min-w-0 shrink-0 items-center gap-[calc(4px*var(--glint-ui-scale,1))]">
+            <Calendar className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))] shrink-0" />
             발송 {sentDate}
           </span>
           {signedDate && (
-            <span className="flex min-w-0 shrink-0 items-center gap-[calc(4px*var(--v3-ui-scale,1))]">
-              <CircleCheck className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(12px*var(--v3-ui-scale,1))] shrink-0" />
+            <span className="flex min-w-0 shrink-0 items-center gap-[calc(4px*var(--glint-ui-scale,1))]">
+              <CircleCheck className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))] shrink-0" />
               완료 {signedDate}
             </span>
           )}

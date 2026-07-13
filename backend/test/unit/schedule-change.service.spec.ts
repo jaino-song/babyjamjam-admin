@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { ScheduleChangeService } from "application/services/schedule-change.service";
 import { EmployeeFeedbackTokenService } from "application/services/employee-feedback-token.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
+import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 const SCHEDULE_ID = 11;
@@ -27,6 +28,9 @@ const createMockPrismaService = () => ({
         upsert: jest.fn(),
         update: jest.fn(),
     },
+    service_record_case: {
+        findUnique: jest.fn().mockResolvedValue({ id: "case-1", formVersion: 1 }),
+    },
     client: {
         update: jest.fn(),
     },
@@ -35,22 +39,31 @@ const createMockPrismaService = () => ({
 
 const createMockTokenService = () => ({
     extendExpiryForSchedule: jest.fn(),
+    extendExpiryForCase: jest.fn(),
+});
+
+const createMockLifecycleService = () => ({
+    ensureForSchedule: jest.fn().mockResolvedValue({ id: "case-1", formVersion: 1 }),
+    ensureForClient: jest.fn().mockResolvedValue({ id: "case-1", formVersion: 1 }),
 });
 
 const createMockTriggerService = () => ({
     syncEmployeeAssignmentRulesForSchedule: jest.fn(() => Promise.resolve()),
+    syncClientRulesForClient: jest.fn(() => Promise.resolve()),
 });
 
 const createSchedule = (overrides: Record<string, unknown> = {}) => ({
     id: SCHEDULE_ID,
     branchId: BRANCH_ID,
     clientId: CLIENT_ID,
+    primaryEmployeeId: 5,
     startDate: toDbDate("2026-07-01"),
     endDate: toDbDate("2026-07-14"),
     client: {
         id: CLIENT_ID,
         duration: 10,
     },
+    primaryEmployee: { id: 5, name: "제공인력" },
     ...overrides,
 });
 
@@ -63,6 +76,11 @@ const createDay = (
     id: `day-${sessionIndex}`,
     branchId: BRANCH_ID,
     scheduleId: SCHEDULE_ID,
+    serviceRecordCaseId: "case-1",
+    caseSessionIndex: sessionIndex,
+    employeeId: 5,
+    employeeNameSnapshot: "제공인력",
+    formVersion: 1,
     sessionIndex,
     serviceDate: toDbDate(iso),
     locked,
@@ -106,6 +124,7 @@ describe("ScheduleChangeService", () => {
         branchId: BRANCH_ID,
         scheduleId: SCHEDULE_ID,
         employeeId: 5,
+        serviceRecordCaseId: "case-1",
     };
     const tenant = {
         branchId: BRANCH_ID,
@@ -117,6 +136,7 @@ describe("ScheduleChangeService", () => {
     let txPrismaService: ReturnType<typeof createMockPrismaService>;
     let tokenService: ReturnType<typeof createMockTokenService>;
     let triggerService: ReturnType<typeof createMockTriggerService>;
+    let lifecycleService: ReturnType<typeof createMockLifecycleService>;
     let events: string[];
 
     beforeEach(() => {
@@ -124,6 +144,7 @@ describe("ScheduleChangeService", () => {
         txPrismaService = createMockPrismaService();
         tokenService = createMockTokenService();
         triggerService = createMockTriggerService();
+        lifecycleService = createMockLifecycleService();
         events = [];
 
         prismaService.$transaction.mockImplementation(async (fn) => {
@@ -141,6 +162,7 @@ describe("ScheduleChangeService", () => {
             prismaService as unknown as PrismaService,
             tokenService as unknown as EmployeeFeedbackTokenService,
             triggerService as unknown as MessageTriggerService,
+            lifecycleService as unknown as ServiceRecordLifecycleService,
         );
     });
 
@@ -303,15 +325,20 @@ describe("ScheduleChangeService", () => {
             });
             expect(txPrismaService.service_record_day.upsert).toHaveBeenCalledWith({
                 where: {
-                    scheduleId_sessionIndex: {
-                        scheduleId: SCHEDULE_ID,
-                        sessionIndex: 3,
+                    serviceRecordCaseId_caseSessionIndex: {
+                        serviceRecordCaseId: "case-1",
+                        caseSessionIndex: 3,
                     },
                 },
                 update: { serviceDate: toDbDate("2026-07-06") },
                 create: {
                     branchId: BRANCH_ID,
                     scheduleId: SCHEDULE_ID,
+                    serviceRecordCaseId: "case-1",
+                    caseSessionIndex: 3,
+                    employeeId: 5,
+                    employeeNameSnapshot: "제공인력",
+                    formVersion: 1,
                     sessionIndex: 3,
                     serviceDate: toDbDate("2026-07-06"),
                 },
@@ -328,8 +355,8 @@ describe("ScheduleChangeService", () => {
                 where: { id: CLIENT_ID },
                 data: { endDate: toDbDate("2026-07-15") },
             });
-            expect(tokenService.extendExpiryForSchedule).toHaveBeenCalledWith(
-                SCHEDULE_ID,
+            expect(tokenService.extendExpiryForCase).toHaveBeenCalledWith(
+                "case-1",
                 new Date("2026-07-15T20:00:00+09:00"),
                 txPrismaService,
             );
@@ -347,6 +374,72 @@ describe("ScheduleChangeService", () => {
                 true,
             );
             expect(events).toEqual(["transaction:start", "transaction:commit", "sync"]);
+        });
+
+        it("approval resyncs client trigger rules after the transaction commits", async () => {
+            txPrismaService.schedule_change_request.findFirst.mockResolvedValue(createRequest());
+            txPrismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+            txPrismaService.service_record_day.findMany
+                .mockResolvedValueOnce([
+                    createDay(1, "2026-07-01", true),
+                    createDay(2, "2026-07-02", true),
+                    createDay(3, "2026-07-03", false),
+                ])
+                .mockResolvedValueOnce([createDay(4, "2026-07-04", false)]);
+            txPrismaService.service_record_day.upsert.mockResolvedValue(createDay(3, "2026-07-06", false));
+            txPrismaService.service_record_day.update.mockResolvedValue(createDay(4, "2026-07-07", false));
+            txPrismaService.employee_schedule.update.mockResolvedValue(createSchedule({ endDate: toDbDate("2026-07-15") }));
+            txPrismaService.client.update.mockResolvedValue({ id: CLIENT_ID, endDate: toDbDate("2026-07-15") });
+            txPrismaService.schedule_change_request.update.mockResolvedValue(
+                createRequest({
+                    status: "approved",
+                    decidedBy: USER_ID,
+                    decidedAt: toDbDate("2026-07-02"),
+                }),
+            );
+            triggerService.syncClientRulesForClient.mockImplementation(() => {
+                events.push("client-sync");
+                return Promise.resolve();
+            });
+
+            await service.approve("request-1", tenant);
+
+            expect(triggerService.syncClientRulesForClient).toHaveBeenCalledWith(
+                BRANCH_ID,
+                CLIENT_ID,
+                false,
+            );
+            expect(events).toEqual(["transaction:start", "transaction:commit", "sync", "client-sync"]);
+        });
+
+        it("approval still succeeds when the client resync throws", async () => {
+            txPrismaService.schedule_change_request.findFirst.mockResolvedValue(createRequest());
+            txPrismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+            txPrismaService.service_record_day.findMany
+                .mockResolvedValueOnce([
+                    createDay(1, "2026-07-01", true),
+                    createDay(2, "2026-07-02", true),
+                    createDay(3, "2026-07-03", false),
+                ])
+                .mockResolvedValueOnce([createDay(4, "2026-07-04", false)]);
+            txPrismaService.service_record_day.upsert.mockResolvedValue(createDay(3, "2026-07-06", false));
+            txPrismaService.service_record_day.update.mockResolvedValue(createDay(4, "2026-07-07", false));
+            txPrismaService.employee_schedule.update.mockResolvedValue(createSchedule({ endDate: toDbDate("2026-07-15") }));
+            txPrismaService.client.update.mockResolvedValue({ id: CLIENT_ID, endDate: toDbDate("2026-07-15") });
+            txPrismaService.schedule_change_request.update.mockResolvedValue(
+                createRequest({
+                    status: "approved",
+                    decidedBy: USER_ID,
+                    decidedAt: toDbDate("2026-07-02"),
+                }),
+            );
+            triggerService.syncClientRulesForClient.mockRejectedValueOnce(new Error("sync failed"));
+
+            await expect(service.approve("request-1", tenant)).resolves.toMatchObject({
+                id: "request-1",
+                status: "approved",
+                decidedBy: USER_ID,
+            });
         });
 
         it("should create the target draft row when it is missing", async () => {
@@ -369,6 +462,11 @@ describe("ScheduleChangeService", () => {
                     create: {
                         branchId: BRANCH_ID,
                         scheduleId: SCHEDULE_ID,
+                        serviceRecordCaseId: "case-1",
+                        caseSessionIndex: 3,
+                        employeeId: 5,
+                        employeeNameSnapshot: "제공인력",
+                        formVersion: 1,
                         sessionIndex: 3,
                         serviceDate: toDbDate("2026-07-06"),
                     },

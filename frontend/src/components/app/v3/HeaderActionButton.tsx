@@ -5,7 +5,7 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 
 const baseStyles =
-  "flex items-center gap-[calc(4px*var(--v3-ui-scale,1))] rounded-xl px-[calc(10px*var(--v3-ui-scale,1))] py-[calc(6px*var(--v3-ui-scale,1))] text-[calc(11.2px*var(--v3-ui-scale,1))] font-semibold transition-colors";
+  "flex items-center gap-[calc(4px*var(--glint-ui-scale,1))] rounded-xl px-[calc(10px*var(--glint-ui-scale,1))] py-[calc(6px*var(--glint-ui-scale,1))] text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold transition-colors";
 
 const variantStyles = {
   primary: "text-v3-primary hover:bg-v3-primary-light",
@@ -36,7 +36,7 @@ export function HeaderActionButton({
 
   const content = (
     <>
-      {Icon && <Icon className="h-[calc(14px*var(--v3-ui-scale,1))] w-[calc(14px*var(--v3-ui-scale,1))]" />}
+      {Icon && <Icon className="h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(14px*var(--glint-ui-scale,1))]" />}
       {label}
     </>
   );

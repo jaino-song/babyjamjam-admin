@@ -11,6 +11,11 @@ export interface RibbonConfig {
     linkColor: string;
 }
 
+export interface MessageAutomationPastTriggerConfig {
+    sendIntervalMinutes: number;
+    ruleOrder: string[];
+}
+
 export const DEFAULT_RIBBON_CONFIG: RibbonConfig = {
     enabled: false,
     message: "",
@@ -19,6 +24,11 @@ export const DEFAULT_RIBBON_CONFIG: RibbonConfig = {
     linkText: "",
     linkHref: "",
     linkColor: "#FFB27B",
+};
+
+export const DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG: MessageAutomationPastTriggerConfig = {
+    sendIntervalMinutes: 1,
+    ruleOrder: [],
 };
 
 export class SystemSettingEntity {

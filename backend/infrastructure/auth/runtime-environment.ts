@@ -19,3 +19,8 @@ export function isProductionLikeEnvironment(): boolean {
 
     return !LOCAL_NODE_ENVS.has(nodeEnv);
 }
+
+export function isDevelopmentJwtSecretAllowed(): boolean {
+    const nodeEnv = normalizeRuntimeEnv(process.env["NODE_ENV"]);
+    return nodeEnv === "test" || process.env["ALLOW_DEV_JWT_SECRET"]?.trim() === "1";
+}

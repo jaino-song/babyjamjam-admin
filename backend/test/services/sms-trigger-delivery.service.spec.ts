@@ -1,9 +1,9 @@
+import { Prisma } from "@prisma/client";
 import { AligoService } from "application/services/aligo.service";
 import {
     SmsTriggerDeliveryService,
     SMS_TEMPLATE_DELIVERY,
 } from "application/services/sms-trigger-delivery.service";
-import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SystemTemplateService } from "application/services/system-template.service";
 import { SystemTemplateKey } from "domain/constants/system-template-registry";
 import {
@@ -11,6 +11,7 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
 // Canonical SMS template set lives in the shared package (frontend/mobile source of truth).
@@ -20,6 +21,15 @@ import { SMS_TRIGGER_TEMPLATE_KEYS } from "../../../packages/shared/src/types/me
 
 describe("SmsTriggerDeliveryService", () => {
     const branchId = "branch-1";
+
+    const captureError = async (promise: Promise<unknown>): Promise<unknown> => {
+        try {
+            await promise;
+            return undefined;
+        } catch (error) {
+            return error;
+        }
+    };
 
     const createServiceInfoJob = () =>
         MessageTriggerJobEntity.reconstitute(
@@ -52,10 +62,13 @@ describe("SmsTriggerDeliveryService", () => {
             new Date("2026-06-05T00:00:00.000Z"),
         );
 
+    const createTransientPrismaError = () =>
+        new Prisma.PrismaClientKnownRequestError("Can't reach database server", {
+            code: "P1001",
+            clientVersion: "test",
+        });
+
     it("sends the service information trigger through SMS instead of alimtalk", async () => {
-        const messageSenderApprovalService = {
-            ensureApproved: jest.fn().mockResolvedValue(undefined),
-        };
         const aligoService = {
             sendSms: jest.fn().mockResolvedValue({
                 request: {
@@ -83,7 +96,6 @@ describe("SmsTriggerDeliveryService", () => {
             save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log),
         };
         const service = new SmsTriggerDeliveryService(
-            messageSenderApprovalService as unknown as MessageSenderApprovalService,
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
@@ -91,7 +103,6 @@ describe("SmsTriggerDeliveryService", () => {
 
         await expect(service.sendJob(createServiceInfoJob())).resolves.toBe(true);
 
-        expect(messageSenderApprovalService.ensureApproved).toHaveBeenCalledWith(branchId);
         expect(systemTemplateService.getByKey).toHaveBeenCalledWith(SystemTemplateKey.SERVICE_INFO);
         expect(aligoService.sendSms).toHaveBeenCalledWith({
             receiver: "010-1234-5678",
@@ -105,6 +116,8 @@ describe("SmsTriggerDeliveryService", () => {
         expect(savedLog.templateKey).toBe("service_info_sms");
         expect(savedLog.triggerJobId).toBe("job-service-info");
         expect(savedLog.receiver).toBe("01012345678");
+        expect(savedLog.recipientName).toBe("김지니");
+        expect(savedLog.recipientPhone).toBe("010-1234-5678");
         expect(savedLog.messageBody).toBe("김지니 산모님 서비스 안내");
         expect(savedLog.status).toBe("sent");
         expect(savedLog.aligoMid).toBe("321");
@@ -148,9 +161,6 @@ describe("SmsTriggerDeliveryService", () => {
             new Date("2026-06-27T00:00:00.000Z"),
         );
 
-        const messageSenderApprovalService = {
-            ensureApproved: jest.fn().mockResolvedValue(undefined),
-        };
         const aligoService = {
             sendSms: jest.fn().mockResolvedValue({
                 request: {
@@ -178,7 +188,6 @@ describe("SmsTriggerDeliveryService", () => {
             save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log),
         };
         const service = new SmsTriggerDeliveryService(
-            messageSenderApprovalService as unknown as MessageSenderApprovalService,
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
@@ -186,7 +195,6 @@ describe("SmsTriggerDeliveryService", () => {
 
         await expect(service.sendJob(greetingJob)).resolves.toBe(true);
 
-        expect(messageSenderApprovalService.ensureApproved).toHaveBeenCalledWith(branchId);
         expect(systemTemplateService.getByKey).toHaveBeenCalledWith(SystemTemplateKey.GREETING);
         expect(aligoService.sendSms).toHaveBeenCalledWith({
             receiver: "010-5678-1234",
@@ -201,6 +209,8 @@ describe("SmsTriggerDeliveryService", () => {
         expect(savedLog.provider).toBe("aligo_sms");
         expect(savedLog.templateKey).toBe("client_greeting_sms");
         expect(savedLog.triggerJobId).toBe("job-greeting-1");
+        expect(savedLog.recipientName).toBe("김산모");
+        expect(savedLog.recipientPhone).toBe("010-5678-1234");
         expect(savedLog.status).toBe("sent");
         expect(savedLog.aligoMid).toBe("999");
         expect(savedLog.variables).toEqual(expect.objectContaining({
@@ -210,6 +220,93 @@ describe("SmsTriggerDeliveryService", () => {
             title: "인사 메시지",
             recipientName: "김산모",
         }));
+    });
+
+    it("throws a plain error when branchId is missing", async () => {
+        const aligoService = { sendSms: jest.fn() };
+        const systemTemplateService = { getByKey: jest.fn() };
+        const logRepository = { save: jest.fn() };
+        const service = new SmsTriggerDeliveryService(
+            aligoService as unknown as AligoService,
+            systemTemplateService as unknown as SystemTemplateService,
+            logRepository as unknown as IMessageLogRepository,
+        );
+        const job = createServiceInfoJob();
+        job.branchId = null;
+
+        const error = await captureError(service.sendJob(job));
+
+        expect(error).toBeInstanceOf(Error);
+        expect(error).not.toBeInstanceOf(TriggerJobDeferredError);
+        expect(error).toMatchObject({
+            message: "SMS trigger job job-service-info is missing branchId",
+        });
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+        expect(logRepository.save).not.toHaveBeenCalled();
+    });
+
+    it("sms pre-provider transient DB error defers the job transiently", async () => {
+        const prismaError = createTransientPrismaError();
+        const aligoService = { sendSms: jest.fn() };
+        const systemTemplateService = {
+            getByKey: jest.fn().mockRejectedValue(prismaError),
+        };
+        const logRepository = { save: jest.fn() };
+        const service = new SmsTriggerDeliveryService(
+            aligoService as unknown as AligoService,
+            systemTemplateService as unknown as SystemTemplateService,
+            logRepository as unknown as IMessageLogRepository,
+        );
+
+        const error = await captureError(service.sendJob(createServiceInfoJob()));
+
+        expect(error).toBeInstanceOf(TriggerJobDeferredError);
+        expect(error).toMatchObject({
+            kind: "transient",
+            message: expect.stringContaining("Can't reach database server"),
+        });
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+        expect(logRepository.save).not.toHaveBeenCalled();
+    });
+
+    it("sms post-provider transient DB error does not defer after sendSms is invoked", async () => {
+        const prismaError = createTransientPrismaError();
+        const aligoService = {
+            sendSms: jest.fn().mockResolvedValue({
+                request: {
+                    senderPhone: "01099998888",
+                    receiver: "01012345678",
+                    msgType: "LMS",
+                    testModeYn: "N",
+                },
+                response: {
+                    result_code: 1,
+                    message: "성공적으로 전송요청 하였습니다.",
+                    msg_id: 321,
+                    success_cnt: 1,
+                    error_cnt: 0,
+                    msg_type: "LMS",
+                },
+            }),
+        };
+        const systemTemplateService = {
+            getByKey: jest.fn().mockResolvedValue({
+                content: "{{name}} 산모님 서비스 안내",
+            }),
+        };
+        const logRepository = { save: jest.fn().mockRejectedValue(prismaError) };
+        const service = new SmsTriggerDeliveryService(
+            aligoService as unknown as AligoService,
+            systemTemplateService as unknown as SystemTemplateService,
+            logRepository as unknown as IMessageLogRepository,
+        );
+
+        const error = await captureError(service.sendJob(createServiceInfoJob()));
+
+        expect(error).toBe(prismaError);
+        expect(error).not.toBeInstanceOf(TriggerJobDeferredError);
+        expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+        expect(logRepository.save).toHaveBeenCalledTimes(2);
     });
 });
 
@@ -225,11 +322,39 @@ describe("SMS delivery routing drift guard", () => {
 });
 
 describe("SERVICE_FEEDBACK_LINK delivery", () => {
-    const buildService = (overrides: { aligoService: any; logRepository: any }) =>
+    const serviceFeedbackLinkTemplate = `[사회서비스 제공자 품질평가 A등급]
+안녕하세요, 인천 아이미래로 입니다 :)
+
+{{employeeName}} 관리사님, {{clientName}} 산모님의 서비스 제공기록지 작성 링크입니다.
+매일 서비스 제공 완료 직전에 서비스 세부사항 기록 후에, 산모님께 승인을 받으시면 됩니다.
+
+최초 접속 시에 관리사님의 전화번호 인증이 필요합니다. 링크 접속 후 휴대폰 번호로 본인확인하고, 방문일마다 기록을 남겨주세요.
+
+감사합니다.
+
+제공기록지 링크
+{{feedbackUrl}}`;
+    const renderedServiceFeedbackLinkMessage = `[사회서비스 제공자 품질평가 A등급]
+안녕하세요, 인천 아이미래로 입니다 :)
+
+홍제공 관리사님, 김산모 산모님의 서비스 제공기록지 작성 링크입니다.
+매일 서비스 제공 완료 직전에 서비스 세부사항 기록 후에, 산모님께 승인을 받으시면 됩니다.
+
+최초 접속 시에 관리사님의 전화번호 인증이 필요합니다. 링크 접속 후 휴대폰 번호로 본인확인하고, 방문일마다 기록을 남겨주세요.
+
+감사합니다.
+
+제공기록지 링크
+https://mobile.test/feedback/efl_token`;
+
+    const buildService = (overrides: {
+        aligoService: unknown;
+        logRepository: unknown;
+        systemTemplateService?: unknown;
+    }) =>
         new SmsTriggerDeliveryService(
-            { ensureApproved: jest.fn().mockResolvedValue(undefined) } as unknown as MessageSenderApprovalService,
             overrides.aligoService as unknown as AligoService,
-            { getByKey: jest.fn() } as unknown as SystemTemplateService,
+            (overrides.systemTemplateService ?? { getByKey: jest.fn() }) as unknown as SystemTemplateService,
             overrides.logRepository as unknown as IMessageLogRepository,
         );
 
@@ -268,21 +393,27 @@ describe("SERVICE_FEEDBACK_LINK delivery", () => {
             new Date("2026-07-02T00:00:00.000Z"),
         );
 
-    it("sends the payload message and records it in SMS history", async () => {
+    it("renders the editable service feedback system template and records it in SMS history", async () => {
         const aligoService = {
             sendSms: jest.fn().mockResolvedValue({
                 request: { receiver: "01011112222", msgType: "LMS", testModeYn: "N" },
                 response: { result_code: 1, message: "성공", msg_id: 123, success_cnt: 1, error_cnt: 0 },
             }),
         };
+        const systemTemplateService = {
+            getByKey: jest.fn().mockResolvedValue({
+                content: serviceFeedbackLinkTemplate,
+            }),
+        };
         const logRepository = { save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log) };
-        const service = buildService({ aligoService, logRepository });
+        const service = buildService({ aligoService, logRepository, systemTemplateService });
 
         await expect(service.sendJob(createFeedbackJob())).resolves.toBe(true);
 
+        expect(systemTemplateService.getByKey).toHaveBeenCalledWith(SystemTemplateKey.SERVICE_FEEDBACK_LINK);
         expect(aligoService.sendSms).toHaveBeenCalledWith({
             receiver: "010-1111-2222",
-            message: "[아가잼잼] 김산모님 제공기록지 링크\nhttps://mobile.test/feedback/efl_token",
+            message: renderedServiceFeedbackLinkMessage,
             recipientName: "홍제공",
             title: "제공기록지 작성 링크",
             msgType: "AUTO",
@@ -294,6 +425,8 @@ describe("SERVICE_FEEDBACK_LINK delivery", () => {
         expect(savedLog.variables).toEqual(expect.objectContaining({
             automationKey: "SERVICE_FEEDBACK_LINK_SMS",
             triggerType: "service_start_at_15",
+            systemTemplateKey: SystemTemplateKey.SERVICE_FEEDBACK_LINK,
+            employeeName: "홍제공",
             feedbackUrl: "https://mobile.test/feedback/efl_token",
         }));
     });
@@ -305,8 +438,13 @@ describe("SERVICE_FEEDBACK_LINK delivery", () => {
                 response: { result_code: -1, message: "잔액 부족", msg_id: null, success_cnt: 0, error_cnt: 1 },
             }),
         };
+        const systemTemplateService = {
+            getByKey: jest.fn().mockResolvedValue({
+                content: serviceFeedbackLinkTemplate,
+            }),
+        };
         const logRepository = { save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log) };
-        const service = buildService({ aligoService, logRepository });
+        const service = buildService({ aligoService, logRepository, systemTemplateService });
 
         await expect(service.sendJob(createFeedbackJob())).resolves.toBe(false);
 
@@ -315,6 +453,29 @@ describe("SERVICE_FEEDBACK_LINK delivery", () => {
         expect(savedLog.status).toBe("failed");
         expect(savedLog.errorMessage).toBe("잔액 부족");
         expect(savedLog.nextRetryAt).toBeInstanceOf(Date);
+    });
+
+    it("uses the registry default when the editable feedback link template row is unavailable", async () => {
+        const aligoService = {
+            sendSms: jest.fn().mockResolvedValue({
+                request: { receiver: "01011112222", msgType: "LMS", testModeYn: "N" },
+                response: { result_code: 1, message: "성공", msg_id: 123, success_cnt: 1, error_cnt: 0 },
+            }),
+        };
+        const systemTemplateService = {
+            getByKey: jest.fn().mockRejectedValue(new Error("template row unavailable")),
+        };
+        const logRepository = { save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log) };
+        const service = buildService({ aligoService, logRepository, systemTemplateService });
+        const job = createFeedbackJob();
+        job.payload.messageBody = "   ";
+
+        await expect(service.sendJob(job)).resolves.toBe(true);
+
+        expect(aligoService.sendSms).toHaveBeenCalledWith(expect.objectContaining({
+            message: renderedServiceFeedbackLinkMessage,
+            title: "제공기록지 작성 링크",
+        }));
     });
 });
 
@@ -349,7 +510,6 @@ describe("PRICE_INFO data guard", () => {
 
     const buildService = (overrides: { aligoService: any; logRepository: any; systemTemplateService?: any }) =>
         new SmsTriggerDeliveryService(
-            { ensureApproved: jest.fn().mockResolvedValue(undefined) } as unknown as MessageSenderApprovalService,
             overrides.aligoService as unknown as AligoService,
             (overrides.systemTemplateService ?? {
                 getByKey: jest.fn().mockResolvedValue({ content: "총 금액 {{fullPrice}}원 / {{bankName}} {{accNum}}" }),

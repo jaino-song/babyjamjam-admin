@@ -5,10 +5,14 @@ import {
     SERVICE_FEEDBACK_LINK_RULE_ID,
     SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
 } from "domain/constants/service-feedback-link-message";
+import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 describe("AdminServiceRecordService", () => {
     const createPrisma = () => ({
+        service_record_case: {
+            findFirst: jest.fn().mockResolvedValue(null),
+        },
         employee_schedule: {
             findMany: jest.fn(),
             findFirst: jest.fn(),
@@ -18,6 +22,9 @@ describe("AdminServiceRecordService", () => {
         },
         message_log: {
             findMany: jest.fn(),
+        },
+        eformsign_doc: {
+            findMany: jest.fn().mockResolvedValue([]),
         },
     });
 
@@ -110,6 +117,28 @@ describe("AdminServiceRecordService", () => {
                 createdAt: new Date("2026-07-02T06:00:00.000Z"),
             },
         ]);
+        prisma.eformsign_doc.findMany.mockResolvedValue([
+            {
+                employeeScheduleId: 3,
+                documentId: "feedback-doc-3",
+                statusDetail: "완료",
+                stepName: "제공기록지 서명",
+                createdDate: new Date("2026-07-02T07:00:00.000Z"),
+                updatedDate: new Date("2026-07-02T07:10:00.000Z"),
+                snapshotVersion: null,
+                snapshotChunkIndex: null,
+            },
+            {
+                employeeScheduleId: 3,
+                documentId: "feedback-doc-3-old",
+                statusDetail: "대기",
+                stepName: "제공기록지 서명",
+                createdDate: new Date("2026-07-01T07:00:00.000Z"),
+                updatedDate: new Date("2026-07-01T07:10:00.000Z"),
+                snapshotVersion: null,
+                snapshotChunkIndex: null,
+            },
+        ]);
 
         const overview = await service.getClientOverview("branch-1", 100);
         const statuses = new Map(overview.assignments.map((assignment) => [
@@ -127,7 +156,24 @@ describe("AdminServiceRecordService", () => {
         expect(overview.assignments.find((assignment) => assignment.scheduleId === 3)?.link.lastSentAt).toEqual(
             new Date("2026-07-02T06:05:00.000Z"),
         );
-        expect(overview.assignments.every((assignment) => assignment.signatureDoc === null)).toBe(true);
+        expect(prisma.eformsign_doc.findMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({
+                branchId: "branch-1",
+                documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_FEEDBACK_SNAPSHOT,
+                OR: [{ employeeScheduleId: { in: [1, 2, 3, 4] } }],
+            }),
+        }));
+        expect(overview.assignments.find((assignment) => assignment.scheduleId === 1)?.signatureDoc).toBeNull();
+        expect(overview.assignments.find((assignment) => assignment.scheduleId === 3)?.signatureDoc).toEqual({
+            documentId: "feedback-doc-3",
+            statusDetail: "완료",
+            stepName: "제공기록지 서명",
+            createdDate: new Date("2026-07-02T07:00:00.000Z"),
+            updatedDate: new Date("2026-07-02T07:10:00.000Z"),
+            snapshotVersion: null,
+            snapshotChunkIndex: null,
+            employeeScheduleId: 3,
+        });
     });
 
     it("attributes phone-missing failure logs only to their own assignment", async () => {
@@ -163,6 +209,27 @@ describe("AdminServiceRecordService", () => {
 
         expect(statuses.get(1)).toBe("failed");
         expect(statuses.get(2)).toBe("none");
+    });
+
+    it("keeps overview available when feedback signature doc columns are not migrated yet", async () => {
+        const prisma = createPrisma();
+        const service = new AdminServiceRecordService(
+            prisma as unknown as PrismaService,
+            createLinkService() as unknown as EmployeeFeedbackLinkService,
+        );
+        prisma.employee_schedule.findMany.mockResolvedValue([
+            createSchedule(1, "2026-07-04T00:00:00.000Z"),
+        ]);
+        prisma.message_trigger_job.findMany.mockResolvedValue([]);
+        prisma.message_log.findMany.mockResolvedValue([]);
+        prisma.eformsign_doc.findMany.mockRejectedValue(
+            Object.assign(new Error("[PrismaException] Code: P2022, Field: N/A"), { code: "P2022" }),
+        );
+
+        const overview = await service.getClientOverview("branch-1", 100);
+
+        expect(overview.assignments).toHaveLength(1);
+        expect(overview.assignments[0]?.signatureDoc).toBeNull();
     });
 
     it("throws NotFoundException and does not send when schedule belongs to another branch", async () => {

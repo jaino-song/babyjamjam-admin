@@ -86,6 +86,8 @@ export function useUpcomingMessageTriggerJobs(limit = 200) {
             messageTriggersApi
                 .listUpcomingJobs(limit)
                 .then((response) => normalizeArrayPayload<UpcomingMessageTriggerJob>(response.data)),
+        staleTime: 0,
+        refetchOnMount: "always",
     });
 }
 
@@ -107,6 +109,7 @@ export function useCreateMessageTriggerRule() {
             messageTriggersApi.create(dto).then((response) => response.data),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: messageTriggerKeys.all });
+            queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
         },
     });
 }
@@ -119,6 +122,7 @@ export function useUpdateMessageTriggerRule() {
             messageTriggersApi.update(id, dto).then((response) => response.data),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: messageTriggerKeys.all });
+            queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
         },
     });
 }

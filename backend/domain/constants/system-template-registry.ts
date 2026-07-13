@@ -4,6 +4,7 @@ export enum SystemTemplateKey {
   THANKS = 'THANKS',
   SURVEY = 'SURVEY',
   SERVICE_INFO = 'SERVICE_INFO',
+  SERVICE_FEEDBACK_LINK = 'SERVICE_FEEDBACK_LINK',
   REMINDER = 'REMINDER',
   INFO = 'INFO',
 }
@@ -235,6 +236,47 @@ blog.naver.com/imirae-incheon`,
 4. 궁금하신 점 있으시면 언제든지 문자 또는 연락 주세요 :)
 
 아기의 건강과 엄마의 안정을 위해 최선을 다하겠습니다. 감사합니다.`,
+  },
+
+  [SystemTemplateKey.SERVICE_FEEDBACK_LINK]: {
+    key: SystemTemplateKey.SERVICE_FEEDBACK_LINK,
+    name: '제공기록지 작성 링크',
+    description: '서비스 시작일 오후 3시에 제공인력에게 발송되는 제공기록지 작성 링크 SMS',
+    requiredVariables: [
+      {
+        key: 'employeeName',
+        label: '관리사님 성함',
+        type: 'string',
+        required: true,
+        description: '제공기록지를 작성할 관리사명',
+      },
+      {
+        key: 'clientName',
+        label: '산모님 성함',
+        type: 'string',
+        required: true,
+        description: '제공기록지 대상 고객명',
+      },
+      {
+        key: 'feedbackUrl',
+        label: '제공기록지 링크',
+        type: 'string',
+        required: true,
+        description: '제공인력이 작성할 제공기록지 링크',
+      },
+    ],
+    defaultContent: `[사회서비스 제공자 품질평가 A등급]
+안녕하세요, 인천 아이미래로 입니다 :)
+
+{{employeeName}} 관리사님, {{clientName}} 산모님의 서비스 제공기록지 작성 링크입니다.
+매일 서비스 제공 완료 직전에 서비스 세부사항 기록 후에, 산모님께 승인을 받으시면 됩니다.
+
+최초 접속 시에 관리사님의 전화번호 인증이 필요합니다. 링크 접속 후 휴대폰 번호로 본인확인하고, 방문일마다 기록을 남겨주세요.
+
+감사합니다.
+
+제공기록지 링크
+{{feedbackUrl}}`,
   },
 
   [SystemTemplateKey.REMINDER]: {

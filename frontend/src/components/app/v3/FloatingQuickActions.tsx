@@ -29,8 +29,8 @@ export function FloatingQuickActions() {
       data-mode="desktop"
       className={cn(
         "hidden md:flex",
-        "sticky top-[calc(16px*var(--v3-ui-scale,1))] z-20 h-full min-h-0 w-[calc(72px*var(--v3-ui-scale,1))] flex-none",
-        "flex-col items-center justify-end gap-[calc(16px*var(--v3-ui-scale,1))] pb-[calc(16px*var(--v3-ui-scale,1))]",
+        "sticky top-[calc(16px*var(--glint-ui-scale,1))] z-20 h-full min-h-0 w-[calc(72px*var(--glint-ui-scale,1))] flex-none",
+        "flex-col items-center justify-end gap-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(16px*var(--glint-ui-scale,1))]",
       )}
     >
       {FLOATING_ACTIONS.map((action, idx) => {
@@ -45,22 +45,22 @@ export function FloatingQuickActions() {
             key={action.href + action.label}
             href={action.href}
             className={cn(
-              "group flex flex-col items-center gap-[calc(4px*var(--v3-ui-scale,1))]",
+              "group flex flex-col items-center gap-[calc(4px*var(--glint-ui-scale,1))]",
               "transition-transform duration-200",
               "hover:-translate-y-0.5 active:scale-95",
             )}
           >
             <div
               className={cn(
-                "flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] items-center justify-center rounded-full",
+                "flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] items-center justify-center rounded-full",
                 "shadow-lg",
                 "transition-shadow duration-200 group-hover:shadow-xl",
                 color.bg,
               )}
             >
-              <IconComp className={cn("h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]", color.text)} strokeWidth={2.5} />
+              <IconComp className={cn("h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]", color.text)} strokeWidth={2.5} />
             </div>
-            <span className="text-center text-[calc(10px*var(--v3-ui-scale,1))] font-bold leading-tight text-v3-text-muted transition-colors group-hover:text-v3-dark">
+            <span className="text-center text-[calc(10px*var(--glint-ui-scale,1))] font-bold leading-tight text-v3-text-muted transition-colors group-hover:text-v3-dark">
               {action.label}
             </span>
           </Link>

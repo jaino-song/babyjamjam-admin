@@ -1,9 +1,5 @@
 import type { EformsignDocument } from "./types";
 
-export interface EformsignDisplayNameMetadata {
-  clientName?: string | null;
-}
-
 type UnknownRecord = Record<string, unknown>;
 
 export const UNKNOWN_CUSTOMER_NAME = "고객 미지정";
@@ -114,7 +110,7 @@ function keyedFieldValue(source: unknown, normalizedIds: readonly string[]): str
 function documentFieldValue(doc: EformsignDocument, fieldIds: readonly string[]): string | null {
   const normalizedIds = fieldIds.map(normalizeFieldId);
 
-  for (const source of [doc.fields, doc]) {
+  for (const source of [doc.fields, doc.detail_template_info]) {
     const keyedValue = keyedFieldValue(source, normalizedIds);
     if (keyedValue) return keyedValue;
   }
@@ -182,45 +178,21 @@ export function mergeDocumentForDisplayData(
   };
 }
 
-export function customerName(
-  doc: EformsignDocument,
-  metadata?: EformsignDisplayNameMetadata,
-): string {
+export function customerName(doc: EformsignDocument): string {
   const fieldName = documentFieldValue(doc, CUSTOMER_NAME_FIELD_IDS);
   if (fieldName) return fieldName;
 
-  const metadataName = metadata?.clientName?.trim();
-  if (metadataName) return metadataName;
-
-  const recipients = doc.current_status?.step_recipients;
-  const outsiderRecipient = recipients?.find(
-    (recipient) => recipient.recipient_type !== "01" && recipient.name?.trim(),
-  );
-  if (outsiderRecipient?.name) return outsiderRecipient.name.trim();
-
-  const historicalRecipient = collectRecords(doc.recipients)
-    .map((record) => {
-      const recipientType = stringFromUnknown(record.recipient_type);
-      const name = stringFromUnknown(record.name);
-      return recipientType && recipientType !== "01" ? name : null;
-    })
-    .find((name): name is string => Boolean(name));
-  if (historicalRecipient) return historicalRecipient;
-
-  const anyRecipient = recipients?.find((recipient) => recipient.name?.trim());
-  if (anyRecipient?.name) return anyRecipient.name.trim();
-
-  if (doc.last_editor?.recipient_type !== "01" && doc.last_editor?.name) return doc.last_editor.name;
-  if (doc.creator?.recipient_type !== "01" && doc.creator?.name) return doc.creator.name;
   return UNKNOWN_CUSTOMER_NAME;
 }
 
 export function contractDisplayName(
   doc: EformsignDocument,
-  metadata?: EformsignDisplayNameMetadata,
-  includeSuffix = false,
+  includeSuffixOrMetadata?: unknown,
+  maybeIncludeSuffix = false,
 ): string {
-  const customer = customerName(doc, metadata);
+  const includeSuffix =
+    typeof includeSuffixOrMetadata === "boolean" ? includeSuffixOrMetadata : maybeIncludeSuffix;
+  const customer = customerName(doc);
   const base = customer !== UNKNOWN_CUSTOMER_NAME || isGenericContractDocumentName(doc.document_name)
     ? customer
     : (doc.document_name || customer);

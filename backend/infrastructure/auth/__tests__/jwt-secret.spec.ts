@@ -8,6 +8,7 @@ describe("getJwtSecret", () => {
         delete process.env["JWT_SECRET"];
         delete process.env["NODE_ENV"];
         delete process.env["VERCEL_ENV"];
+        delete process.env["ALLOW_DEV_JWT_SECRET"];
     });
 
     afterAll(() => {
@@ -37,10 +38,20 @@ describe("getJwtSecret", () => {
         expect(() => getJwtSecret()).toThrow("JWT_SECRET is required");
     });
 
-    it.each(["development", "test", undefined])("should preserve local fallback for NODE_ENV=%s", (nodeEnv) => {
-        if (nodeEnv !== undefined) {
-            process.env["NODE_ENV"] = nodeEnv;
-        }
+    it("should preserve the fallback in tests", () => {
+        process.env["NODE_ENV"] = "test";
+        expect(getJwtSecret()).toBe("your-secret-key");
+    });
+
+    it.each(["development", undefined])("should fail closed without explicit local opt-in for NODE_ENV=%s", (nodeEnv) => {
+        if (nodeEnv) process.env["NODE_ENV"] = nodeEnv;
+
+        expect(() => getJwtSecret()).toThrow("JWT_SECRET is required");
+    });
+
+    it("should allow the development fallback only with explicit opt-in", () => {
+        process.env["NODE_ENV"] = "development";
+        process.env["ALLOW_DEV_JWT_SECRET"] = "1";
 
         expect(getJwtSecret()).toBe("your-secret-key");
     });

@@ -48,6 +48,9 @@ export class UpdateEformsignDocStatusUsecase {
             expiredDate: existing.expiredDate,
             expired: params.expired ?? existing.expired,
             clientId: existing.clientId,
+            documentKind: existing.documentKind,
+            employeeScheduleId: existing.employeeScheduleId,
+            templateId: existing.templateId,
         });
 
         return this.eformsignDocRepository.update(branchid, updated);

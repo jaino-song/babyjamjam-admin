@@ -1,6 +1,24 @@
 import type { DocumentStatusLabel } from "@/lib/eformsign/status-codes";
+import type {
+  EformsignApiListResponse as SharedEformsignApiListResponse,
+  EformsignDocument as SharedEformsignDocument,
+  EformsignDocumentsResponse as SharedEformsignDocumentsResponse,
+  EformsignTemplate as SharedEformsignTemplate,
+} from "@babyjamjam/shared/types/eformsign";
 
 export * from "@babyjamjam/shared/types/eformsign";
+
+export interface EformsignDocument extends Omit<SharedEformsignDocument, "template"> {
+  template?: Partial<SharedEformsignTemplate>;
+}
+
+export interface EformsignDocumentsResponse extends Omit<SharedEformsignDocumentsResponse, "documents"> {
+  documents: EformsignDocument[];
+}
+
+export interface EformsignApiListResponse extends Omit<SharedEformsignApiListResponse, "documents"> {
+  documents: EformsignDocument[];
+}
 
 // UI-only view model: derived from raw eformsign documents for list rendering.
 export interface EformsignDocumentView {
@@ -14,5 +32,10 @@ export interface EformsignDocumentView {
 // HQ-aware). Folded into the StatsBar counters by `foldContractStats`. The
 // fields come from each doc's live eformsign `current_status`.
 export interface EformsignStatusCountsResponse {
-  documents: Array<{ status_type: string | null; step_recipient_types: Array<string | null> }>;
+  documents: Array<{
+    status_type: string | null;
+    step_type: string | null;
+    step_name: string | null;
+    step_recipient_types: Array<string | null>;
+  }>;
 }

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { AutoFillMsgCard } from "../AutoFillMsgCard";
 
@@ -19,10 +19,17 @@ describe("AutoFillMsgCard", () => {
       />,
     );
 
-    const textbox = screen.getByRole("textbox");
+    const textbox = screen.getByRole("textbox", { name: "메시지 본문" });
 
-    expect(screen.getByText("메시지 본문")).toBeInTheDocument();
+    expect(screen.getByText("메시지 본문")).toHaveClass(
+      "text-[calc(14.4px*var(--glint-ui-scale,1))]",
+    );
     expect(textbox).toHaveValue("안녕하세요\n반갑습니다");
+    expect(textbox).toHaveClass(
+      "min-h-[calc(280px*var(--glint-ui-scale,1))]",
+      "text-[calc(14.08px*var(--glint-ui-scale,1))]",
+    );
+    expect(screen.getByRole("button", { name: "복사" })).toHaveClass("shrink-0", "whitespace-nowrap");
     expect(screen.getByText("템플릿 유형")).toBeInTheDocument();
     expect(screen.getByText("{{name}}")).toBeInTheDocument();
 
@@ -76,5 +83,32 @@ describe("AutoFillMsgCard", () => {
     expect(
       container.querySelector('[data-component="messages-generated-msg-detail-side"]'),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows the shared notification modal after copying when a success message is configured", async () => {
+    const handleCopy = jest.fn().mockResolvedValue(undefined);
+
+    render(
+      <AutoFillMsgCard
+        title="생성 메시지"
+        copyButtonText="복사"
+        copySuccessMessage="메시지가 복사되었습니다."
+        message="안녕하세요"
+        handleCopy={handleCopy}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "복사" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "메시지가 복사되었습니다." });
+    expect(dialog).toHaveAttribute("data-component", "messages-copy-success-notification");
+    expect(handleCopy).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "확인" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "메시지가 복사되었습니다." })).not.toBeInTheDocument();
+    });
   });
 });

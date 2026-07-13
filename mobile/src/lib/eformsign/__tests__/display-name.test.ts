@@ -39,12 +39,39 @@ function documentFixture(overrides: Partial<EformsignDocument> = {}): EformsignD
 }
 
 describe("contract display names", () => {
-  it("uses eformsign document fields before linked client metadata", () => {
+  it("uses eformsign document fields as the customer name source", () => {
     const doc = documentFixture({
       fields: [{ id: "이용자 성명", value: "송진호" }],
     });
 
-    expect(customerName(doc, { clientName: "김지니" })).toBe("송진호");
+    expect(customerName(doc)).toBe("송진호");
+  });
+
+  it("does not use internal creator/editor names as customer names", () => {
+    const doc = documentFixture();
+
+    expect(customerName(doc)).toBe(UNKNOWN_CUSTOMER_NAME);
+  });
+
+  it("does not use recipients as customer name fallbacks", () => {
+    const doc = documentFixture({
+      current_status: {
+        ...documentFixture().current_status,
+        step_recipients: [{ recipient_type: "02", name: "현재 단계 수신자" }],
+      },
+      recipients: [{ recipient_type: "02", name: "과거 수신자" }],
+    });
+
+    expect(customerName(doc)).toBe(UNKNOWN_CUSTOMER_NAME);
+  });
+
+  it("does not use top-level document metadata as customer names", () => {
+    const doc = documentFixture({
+      clientName: "로컬 고객명",
+      customerName: "로컬 고객명",
+    } as Partial<EformsignDocument>);
+
+    expect(customerName(doc)).toBe(UNKNOWN_CUSTOMER_NAME);
   });
 
   it("recovers customer name from detailed eformsign fields when list data is missing it", () => {
@@ -62,6 +89,14 @@ describe("contract display names", () => {
   it("reads customer name from keyed field value maps returned by document detail APIs", () => {
     const doc = documentFixture({
       fields: [{ field_values: { "이용자 성명": "송진호" } }],
+    });
+
+    expect(customerName(doc)).toBe("송진호");
+  });
+
+  it("reads customer name from eformsign detail template info", () => {
+    const doc = documentFixture({
+      detail_template_info: [{ field_values: { "이용자 성명": "송진호" } }],
     });
 
     expect(customerName(doc)).toBe("송진호");

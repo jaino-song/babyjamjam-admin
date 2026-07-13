@@ -1,7 +1,9 @@
+import { Prisma } from "@prisma/client";
 import { SendAligoAlimtalkUsecase } from "application/usecases/aligo/send-alimtalk.usecase";
 import { IAligoApiPort } from "domain/ports/aligo-api.port";
 import { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
+import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 
 describe("SendAligoAlimtalkUsecase", () => {
     const createMockAligoApi = (): jest.Mocked<IAligoApiPort> => ({
@@ -31,9 +33,12 @@ describe("SendAligoAlimtalkUsecase", () => {
                 log.nextRetryAt,
                 log.createdAt,
                 log.updatedAt,
+                log.recipientName,
+                log.recipientPhone,
             ));
         }),
         update: jest.fn().mockResolvedValue(undefined),
+        findSentTriggerJobIds: jest.fn().mockResolvedValue(new Set()),
         findPendingRetries: jest.fn().mockResolvedValue([]),
         findRetryableServiceFeedbackSmsByScheduleId: jest.fn().mockResolvedValue([]),
         findRecentByBranch: jest.fn().mockResolvedValue([]),
@@ -42,6 +47,12 @@ describe("SendAligoAlimtalkUsecase", () => {
     let usecase: SendAligoAlimtalkUsecase;
     let aligoApi: jest.Mocked<IAligoApiPort>;
     let logRepository: jest.Mocked<IMessageLogRepository>;
+
+    const createTransientPrismaError = () =>
+        new Prisma.PrismaClientKnownRequestError("Can't reach database server", {
+            code: "P1001",
+            clientVersion: "test",
+        });
 
     beforeEach(() => {
         aligoApi = createMockAligoApi();
@@ -64,6 +75,7 @@ describe("SendAligoAlimtalkUsecase", () => {
                 const result = await usecase.execute({
                     templateKey: "CLIENT_CREATED",
                     receiver: "01012345678",
+                    recipientName: "홍길동",
                     variables: {
                         고객명: "홍길동",
                         등록일: "2025-01-14",
@@ -80,7 +92,11 @@ describe("SendAligoAlimtalkUsecase", () => {
                 expect(result.code).toBe(0);
                 expect(logRepository.save).toHaveBeenCalledTimes(1);
                 expect(logRepository.save).toHaveBeenCalledWith(
-                    expect.objectContaining({ provider: "aligo_alimtalk" }),
+                    expect.objectContaining({
+                        provider: "aligo_alimtalk",
+                        recipientName: "홍길동",
+                        recipientPhone: "01012345678",
+                    }),
                 );
                 expect(logRepository.update).toHaveBeenCalledTimes(1);
             });
@@ -140,6 +156,32 @@ describe("SendAligoAlimtalkUsecase", () => {
                 ).rejects.toThrow("Network error");
 
                 expect(logRepository.update).toHaveBeenCalledTimes(1);
+            });
+        });
+
+        describe("given pre-send log save throws", () => {
+            it("alimtalk pre-send log save transient DB error defers the job transiently", async () => {
+                const prismaError = createTransientPrismaError();
+                logRepository.save.mockRejectedValue(prismaError);
+
+                let thrownError: unknown;
+                try {
+                    await usecase.execute({
+                        templateKey: "CLIENT_CREATED",
+                        receiver: "01012345678",
+                        variables: { 고객명: "test", 등록일: "2025-01-14", 서비스타입: "test" },
+                    });
+                } catch (error) {
+                    thrownError = error;
+                }
+
+                expect(thrownError).toBeInstanceOf(TriggerJobDeferredError);
+                expect(thrownError).toMatchObject({
+                    kind: "transient",
+                    message: expect.stringContaining("Can't reach database server"),
+                });
+                expect(aligoApi.sendAlimtalk).not.toHaveBeenCalled();
+                expect(logRepository.update).not.toHaveBeenCalled();
             });
         });
     });

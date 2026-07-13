@@ -1,15 +1,18 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
     Baby,
+    CalendarDays,
     ChevronDown,
     ClipboardList,
     FileSignature,
     Link2,
+    UserRound,
 } from "lucide-react";
 
 import { DetailEmptyState, InfoRow } from "@/components/app/v3";
+import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { StatusPill } from "@/components/app/ui/status-badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -25,6 +28,8 @@ import {
 import { useSendServiceRecordLink } from "@/features/service-records/hooks/use-service-records";
 import type {
     ServiceRecordAssignment,
+    ServiceRecordCase,
+    ServiceRecordHeader,
     ServiceRecordLinkStatus,
     ServiceRecordOverview,
     ServiceRecordSession,
@@ -65,27 +70,45 @@ export function ClientServiceRecordsTab({
     const { toast } = useToast();
     const sendLinkMutation = useSendServiceRecordLink();
     const assignments = overview?.assignments ?? [];
+    const record = overview?.record ?? null;
+    const activeAssignment = assignments.find((assignment) => !assignment.replaced)
+        ?? assignments[0]
+        ?? null;
+    const [pendingResendAssignment, setPendingResendAssignment] = useState<ServiceRecordAssignment | null>(null);
 
-    const handleSendLink = async (assignment: ServiceRecordAssignment) => {
-        const isResend = assignment.link.status === "sent" || assignment.link.status === "failed";
-        if (
-            isResend
-            && !window.confirm("재전송 시 새 링크가 발급되며 기존 링크는 사용할 수 없게 됩니다. 계속할까요?")
-        ) {
-            return;
-        }
-
+    const sendLink = async (assignment: ServiceRecordAssignment): Promise<boolean> => {
         try {
             await sendLinkMutation.mutateAsync({
                 scheduleId: assignment.scheduleId,
                 clientId: clientId ?? undefined,
             });
             toast({ description: "제공기록지 링크를 발송했습니다." });
+            return true;
         } catch (error) {
             toast({
                 description: getErrorDescription(error),
                 variant: "destructive",
             });
+            return false;
+        }
+    };
+
+    const handleSendLink = async (assignment: ServiceRecordAssignment) => {
+        const isResend = assignment.link.status === "sent" || assignment.link.status === "failed";
+        if (isResend) {
+            setPendingResendAssignment(assignment);
+            return;
+        }
+
+        await sendLink(assignment);
+    };
+
+    const handleResendConfirm = async () => {
+        if (!pendingResendAssignment) return;
+
+        const sent = await sendLink(pendingResendAssignment);
+        if (sent) {
+            setPendingResendAssignment(null);
         }
     };
 
@@ -106,14 +129,14 @@ export function ClientServiceRecordsTab({
         return (
             <div
                 data-component="clients-detail-service-records-error"
-                className="py-12 text-center text-[calc(13px*var(--v3-ui-scale,1))] text-v3-text-muted"
+                className="py-12 text-center text-[calc(13px*var(--glint-ui-scale,1))] text-v3-text-muted"
             >
                 제공기록지 정보를 불러오지 못했습니다
             </div>
         );
     }
 
-    if (assignments.length === 0) {
+    if (assignments.length === 0 && !record) {
         return (
             <DetailEmptyState
                 name="clients-detail-service-records-empty"
@@ -123,67 +146,203 @@ export function ClientServiceRecordsTab({
     }
 
     return (
-        <div data-component="clients-detail-service-records" className="space-y-[calc(16px*var(--v3-ui-scale,1))]">
-            {assignments.map((assignment, index) => (
-                <div
-                    key={assignment.scheduleId}
-                    data-component="clients-detail-service-records-assignment"
-                    className="space-y-[calc(16px*var(--v3-ui-scale,1))]"
-                >
-                    {assignments.length > 1 && (
-                        <div
-                            data-component="clients-detail-service-records-assignment-period"
-                            className="flex items-center gap-[calc(10px*var(--v3-ui-scale,1))] text-[calc(11.5px*var(--v3-ui-scale,1))] font-semibold text-v3-text-muted"
-                        >
-                            <span className="h-px flex-1 bg-v3-border" />
-                            <span>배정 기간 {formatDateKo(assignment.startDate)} - {formatDateKo(assignment.endDate)}</span>
-                            <span className="h-px flex-1 bg-v3-border" />
-                        </div>
-                    )}
-                    <LinkStatusCard
-                        assignment={assignment}
-                        isPending={sendLinkMutation.isPending
-                            && sendLinkMutation.variables?.scheduleId === assignment.scheduleId}
-                        onSendLink={() => void handleSendLink(assignment)}
-                    />
-                    <ServiceHeaderCard assignment={assignment} />
-                    <ServiceSessionsCard assignment={assignment} />
-                    {assignment.signatureDoc && (
-                        <SignatureDocCard signatureDoc={assignment.signatureDoc} />
-                    )}
-                    {index < assignments.length - 1 && <div className="h-px bg-v3-border" />}
-                </div>
-            ))}
-        </div>
+        <>
+            <div data-component="clients-detail-service-records" className="space-y-[calc(16px*var(--glint-ui-scale,1))]">
+                {record ? (
+                    <>
+                        <RecordStatusCard record={record} />
+                        {activeAssignment ? (
+                            <LinkStatusCard
+                                assignment={activeAssignment}
+                                isPending={sendLinkMutation.isPending
+                                    && sendLinkMutation.variables?.scheduleId === activeAssignment.scheduleId}
+                                onSendLink={() => void handleSendLink(activeAssignment)}
+                            />
+                        ) : (
+                            <ServiceRecordCard
+                                dataComponent="clients-detail-service-records-link-unassigned"
+                                icon={<Link2 className="h-[calc(17px*var(--glint-ui-scale,1))] w-[calc(17px*var(--glint-ui-scale,1))]" />}
+                                title="제공기록지 작성 링크"
+                                subtitle="제공인력 배정 후 작성 링크가 생성됩니다"
+                                right={<StatusPill variant="neutral">배정 대기</StatusPill>}
+                            >
+                                <div />
+                            </ServiceRecordCard>
+                        )}
+                        {assignments.length > 1 && <AssignmentHistoryCard assignments={assignments} />}
+                        <ServiceHeaderCard header={record.header} />
+                        <ServiceSessionsCard
+                            startDate={record.startDate}
+                            totalSessions={record.totalSessions}
+                            sessions={record.sessions}
+                        />
+                        {record.signatureDocs.map((signatureDoc) => (
+                            <SignatureDocCard key={signatureDoc.documentId} signatureDoc={signatureDoc} />
+                        ))}
+                    </>
+                ) : assignments.map((assignment, index) => (
+                    <div
+                        key={assignment.scheduleId}
+                        data-component="clients-detail-service-records-assignment"
+                        className="space-y-[calc(16px*var(--glint-ui-scale,1))]"
+                    >
+                        {assignments.length > 1 && (
+                            <div
+                                data-component="clients-detail-service-records-assignment-period"
+                                className="flex items-center gap-[calc(10px*var(--glint-ui-scale,1))] text-[calc(11.5px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted"
+                            >
+                                <span className="h-px flex-1 bg-v3-border" />
+                                <span>배정 기간 {formatDateKo(assignment.startDate)} - {formatDateKo(assignment.endDate)}</span>
+                                <span className="h-px flex-1 bg-v3-border" />
+                            </div>
+                        )}
+                        <LinkStatusCard
+                            assignment={assignment}
+                            isPending={sendLinkMutation.isPending
+                                && sendLinkMutation.variables?.scheduleId === assignment.scheduleId}
+                            onSendLink={() => void handleSendLink(assignment)}
+                        />
+                        <ServiceHeaderCard header={assignment.header} />
+                        <ServiceSessionsCard
+                            startDate={assignment.startDate}
+                            totalSessions={assignment.totalSessions}
+                            sessions={assignment.sessions}
+                        />
+                        {assignment.signatureDoc && (
+                            <SignatureDocCard signatureDoc={assignment.signatureDoc} />
+                        )}
+                        {index < assignments.length - 1 && <div className="h-px bg-v3-border" />}
+                    </div>
+                ))}
+            </div>
+
+            <ApprovalTwoButtonModal
+                open={pendingResendAssignment !== null}
+                onOpenChange={(open) => {
+                    if (!open) setPendingResendAssignment(null);
+                }}
+                dataComponent="clients-service-record-resend-approval"
+                title="제공기록지 링크를 재전송하시겠습니까?"
+                description="새 링크가 발급되며 기존 링크는 즉시 사용할 수 없게 됩니다."
+                isDescriptionVisuallyHidden={false}
+                approvalLabel="재전송"
+                pendingLabel="재전송 중..."
+                isPending={sendLinkMutation.isPending}
+                onApprove={() => void handleResendConfirm()}
+            />
+        </>
     );
 }
 
 function ClientServiceRecordsSkeleton() {
     return (
-        <div data-component="clients-detail-service-records-skeleton-list" className="space-y-[calc(16px*var(--v3-ui-scale,1))]">
+        <div data-component="clients-detail-service-records-skeleton-list" className="space-y-[calc(16px*var(--glint-ui-scale,1))]">
             {[0, 1, 2].map((index) => (
                 <div
                     key={index}
                     data-component="clients-detail-service-records-skeleton-card"
-                    className="rounded-[18px] border border-v3-border bg-white p-[calc(18px*var(--v3-ui-scale,1))]"
+                    className="rounded-[18px] border border-v3-border bg-white p-[calc(18px*var(--glint-ui-scale,1))]"
                 >
-                    <div className="flex items-start gap-[calc(12px*var(--v3-ui-scale,1))]">
-                        <Skeleton className="h-[calc(38px*var(--v3-ui-scale,1))] w-[calc(38px*var(--v3-ui-scale,1))] shrink-0 rounded-[12px] bg-v3-dim-white" />
+                    <div className="flex items-start gap-[calc(12px*var(--glint-ui-scale,1))]">
+                        <Skeleton className="h-[calc(38px*var(--glint-ui-scale,1))] w-[calc(38px*var(--glint-ui-scale,1))] shrink-0 rounded-[12px] bg-v3-dim-white" />
                         <div className="min-w-0 flex-1 space-y-2">
-                            <Skeleton className="h-[calc(15px*var(--v3-ui-scale,1))] w-[calc(150px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
-                            <Skeleton className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(220px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
+                            <Skeleton className="h-[calc(15px*var(--glint-ui-scale,1))] w-[calc(150px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
+                            <Skeleton className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(220px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
                         </div>
-                        <Skeleton className="h-[calc(24px*var(--v3-ui-scale,1))] w-[calc(68px*var(--v3-ui-scale,1))] rounded-full bg-v3-dim-white" />
+                        <Skeleton className="h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(68px*var(--glint-ui-scale,1))] rounded-full bg-v3-dim-white" />
                     </div>
-                    <div className="mt-[calc(14px*var(--v3-ui-scale,1))] grid grid-cols-2 gap-x-[calc(24px*var(--v3-ui-scale,1))] gap-y-2 border-t border-dashed border-v3-border pt-[calc(12px*var(--v3-ui-scale,1))] max-sm:grid-cols-1">
+                    <div className="mt-[calc(14px*var(--glint-ui-scale,1))] grid grid-cols-2 gap-x-[calc(24px*var(--glint-ui-scale,1))] gap-y-2 border-t border-dashed border-v3-border pt-[calc(12px*var(--glint-ui-scale,1))] max-sm:grid-cols-1">
                         {[0, 1, 2, 3].map((row) => (
-                            <Skeleton key={row} className="h-[calc(18px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
+                            <Skeleton key={row} className="h-[calc(18px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
                         ))}
                     </div>
                 </div>
             ))}
         </div>
     );
+}
+
+function RecordStatusCard({ record }: { record: ServiceRecordCase }) {
+    const status = getRecordStatusMeta(record.status);
+    const submitted = record.sessions.filter((session) => session.locked).length;
+    return (
+        <ServiceRecordCard
+            dataComponent="clients-detail-service-records-status-card"
+            icon={<CalendarDays className="h-[calc(17px*var(--glint-ui-scale,1))] w-[calc(17px*var(--glint-ui-scale,1))]" />}
+            title="제공기록지 진행 상태"
+            subtitle="고객 서비스 기간 전체를 하나의 기록지로 관리합니다"
+            right={<StatusPill variant={status.variant}>{status.label}</StatusPill>}
+        >
+            <div className="grid grid-cols-2 gap-x-[calc(24px*var(--glint-ui-scale,1))] gap-y-[calc(6px*var(--glint-ui-scale,1))] border-t border-dashed border-v3-border pt-[calc(12px*var(--glint-ui-scale,1))] max-sm:grid-cols-1">
+                <MetaRow label="서비스 기간" value={`${formatDateKo(record.startDate)} - ${formatDateKo(record.endDate)}`} />
+                <MetaRow label="작성 현황" value={`${submitted}/${record.totalSessions}회`} />
+                <MetaRow label="기록 완료" value={formatDateTimeKo(record.completedAt)} />
+                <MetaRow
+                    label="전자문서 생성"
+                    value={record.finalizedAt
+                        ? formatDateTimeKo(record.finalizedAt)
+                        : record.finalizationDueAt ? `${formatDateTimeKo(record.finalizationDueAt)} 이후` : "-"}
+                />
+            </div>
+        </ServiceRecordCard>
+    );
+}
+
+function AssignmentHistoryCard({ assignments }: { assignments: ServiceRecordAssignment[] }) {
+    const ordered = [...assignments].sort((left, right) => (
+        new Date(left.startDate).getTime() - new Date(right.startDate).getTime()
+    ));
+    return (
+        <ServiceRecordCard
+            dataComponent="clients-detail-service-records-assignment-history"
+            icon={<UserRound className="h-[calc(17px*var(--glint-ui-scale,1))] w-[calc(17px*var(--glint-ui-scale,1))]" />}
+            title="제공인력 배정 이력"
+            subtitle="담당자가 바뀌어도 회차 기록은 연속해서 이어집니다"
+        >
+            <div className="border-t border-dashed border-v3-border pt-[calc(8px*var(--glint-ui-scale,1))]">
+                {ordered.map((assignment) => (
+                    <div
+                        key={assignment.scheduleId}
+                        className="flex items-center gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-v3-dim-white py-[calc(8px*var(--glint-ui-scale,1))] last:border-b-0"
+                    >
+                        <div className="min-w-0 flex-1">
+                            <div className="truncate text-[calc(12.5px*var(--glint-ui-scale,1))] font-semibold text-v3-dark">
+                                {assignment.employee.name}
+                            </div>
+                            <div className="mt-0.5 text-[calc(11.3px*var(--glint-ui-scale,1))] text-v3-text-muted">
+                                {formatDateKo(assignment.startDate)} - {formatDateKo(assignment.endDate)}
+                            </div>
+                        </div>
+                        <StatusPill variant={assignment.replaced ? "neutral" : "primary"}>
+                            {assignment.replaced ? "이전 배정" : "현재 배정"}
+                        </StatusPill>
+                    </div>
+                ))}
+            </div>
+        </ServiceRecordCard>
+    );
+}
+
+function getRecordStatusMeta(status: string): {
+    label: string;
+    variant: "neutral" | "primary" | "success" | "warning" | "danger";
+} {
+    switch (status) {
+        case "WAITING_FOR_DETAILS": return { label: "정보 대기", variant: "neutral" };
+        case "WAITING_FOR_ASSIGNMENT": return { label: "배정 대기", variant: "warning" };
+        case "SCHEDULED": return { label: "시작 전", variant: "primary" };
+        case "IN_PROGRESS": return { label: "작성 중", variant: "primary" };
+        case "WAITING_FOR_END": return { label: "종료 대기", variant: "success" };
+        case "AWAITING_COMPLETION": return { label: "기록 미완료", variant: "warning" };
+        case "READY_TO_FINALIZE": return { label: "문서 생성 대기", variant: "primary" };
+        case "FINALIZING": return { label: "문서 생성 중", variant: "primary" };
+        case "DOCUMENTS_CREATED": return { label: "기관 검토 중", variant: "success" };
+        case "COMPLETED": return { label: "완료", variant: "success" };
+        case "FINALIZATION_FAILED": return { label: "문서 생성 실패", variant: "danger" };
+        case "TERMINATED_REVIEW_REQUIRED": return { label: "중단 확인 필요", variant: "warning" };
+        case "MIGRATION_REVIEW_REQUIRED": return { label: "데이터 확인 필요", variant: "warning" };
+        default: return { label: "상태 확인", variant: "neutral" };
+    }
 }
 
 function LinkStatusCard({
@@ -203,12 +362,12 @@ function LinkStatusCard({
     return (
         <ServiceRecordCard
             dataComponent="clients-detail-service-records-link-card"
-            icon={<Link2 className="h-[calc(17px*var(--v3-ui-scale,1))] w-[calc(17px*var(--v3-ui-scale,1))]" />}
+            icon={<Link2 className="h-[calc(17px*var(--glint-ui-scale,1))] w-[calc(17px*var(--glint-ui-scale,1))]" />}
             title="제공기록지 작성 링크"
             subtitle={`${employee.name} · ${formatPhone(employee.phone)} · 문자메시지 발송`}
             right={<StatusPill variant={statusMeta.variant}>{statusMeta.label}</StatusPill>}
         >
-            <div className="grid grid-cols-2 gap-x-[calc(24px*var(--v3-ui-scale,1))] gap-y-[calc(6px*var(--v3-ui-scale,1))] border-t border-dashed border-v3-border pt-[calc(12px*var(--v3-ui-scale,1))] max-sm:grid-cols-1">
+            <div className="grid grid-cols-2 gap-x-[calc(24px*var(--glint-ui-scale,1))] gap-y-[calc(6px*var(--glint-ui-scale,1))] border-t border-dashed border-v3-border pt-[calc(12px*var(--glint-ui-scale,1))] max-sm:grid-cols-1">
                 <MetaRow
                     label={link.status === "none" || link.status === "scheduled" ? "자동 발송 예정" : "최근 발송"}
                     value={
@@ -226,8 +385,8 @@ function LinkStatusCard({
                 <MetaRow label="링크 인증" value={<TokenVerificationValue assignment={assignment} />} />
                 <MetaRow label="링크 만료" value={<TokenExpiryValue assignment={assignment} />} />
             </div>
-            <div className="mt-[calc(14px*var(--v3-ui-scale,1))] flex flex-wrap items-center justify-between gap-[calc(12px*var(--v3-ui-scale,1))] border-t border-dashed border-v3-border pt-[calc(12px*var(--v3-ui-scale,1))]">
-                <p className="min-w-[200px] flex-1 text-[calc(11.5px*var(--v3-ui-scale,1))] leading-6 text-v3-text-muted">
+            <div className="mt-[calc(14px*var(--glint-ui-scale,1))] flex flex-wrap items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] border-t border-dashed border-v3-border pt-[calc(12px*var(--glint-ui-scale,1))]">
+                <p className="min-w-[200px] flex-1 text-[calc(11.5px*var(--glint-ui-scale,1))] leading-6 text-v3-text-muted">
                     {isResend
                         ? <>재전송 시 <b>새 링크가 발급</b>되며 기존 링크는 즉시 사용할 수 없게 됩니다.</>
                         : "서비스 시작일 15:00에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요."}
@@ -283,19 +442,17 @@ function TokenExpiryValue({ assignment }: { assignment: ServiceRecordAssignment 
     return <span>{formatDateTimeKo(token.expiresAt)}</span>;
 }
 
-function ServiceHeaderCard({ assignment }: { assignment: ServiceRecordAssignment }) {
-    const { header } = assignment;
-
+function ServiceHeaderCard({ header }: { header: ServiceRecordHeader | null }) {
     return (
         <ServiceRecordCard
             dataComponent="clients-detail-service-records-header-card"
-            icon={<Baby className="h-[calc(17px*var(--v3-ui-scale,1))] w-[calc(17px*var(--v3-ui-scale,1))]" />}
+            icon={<Baby className="h-[calc(17px*var(--glint-ui-scale,1))] w-[calc(17px*var(--glint-ui-scale,1))]" />}
             title="서비스 기본정보"
             subtitle={header ? `${formatDateTimeKo(header.createdAt)} 작성` : "산모 및 신생아 정보"}
             right={<StatusPill variant={header ? "success" : "neutral"}>{header ? "작성 완료" : "작성 전"}</StatusPill>}
         >
             {header ? (
-                <div className="grid grid-cols-2 gap-x-[calc(32px*var(--v3-ui-scale,1))] max-sm:grid-cols-1">
+                <div className="grid grid-cols-2 gap-x-[calc(32px*var(--glint-ui-scale,1))] max-sm:grid-cols-1">
                     <InfoRow label="산모 성명" value={header.momName || "-"} />
                     <InfoRow label="산모 생년월일" value={header.momBirth || "-"} />
                     <InfoRow label="신생아 성명" value={header.babyName || "-"} />
@@ -304,7 +461,7 @@ function ServiceHeaderCard({ assignment }: { assignment: ServiceRecordAssignment
                     <InfoRow label="신생아 몸무게" value={formatBabyWeight(header.babyWeight)} />
                 </div>
             ) : (
-                <div className="mt-[calc(12px*var(--v3-ui-scale,1))] rounded-[14px] border-2 border-dashed border-v3-border px-[calc(22px*var(--v3-ui-scale,1))] py-[calc(22px*var(--v3-ui-scale,1))] text-center text-[calc(12.3px*var(--v3-ui-scale,1))] leading-6 text-v3-text-muted">
+                <div className="mt-[calc(12px*var(--glint-ui-scale,1))] rounded-[14px] border-2 border-dashed border-v3-border px-[calc(22px*var(--glint-ui-scale,1))] py-[calc(22px*var(--glint-ui-scale,1))] text-center text-[calc(12.3px*var(--glint-ui-scale,1))] leading-6 text-v3-text-muted">
                     아직 작성된 기본정보가 없습니다.
                     <br />
                     제공인력이 링크 접속 후 산모·신생아 정보를 입력하면 표시됩니다.
@@ -314,36 +471,47 @@ function ServiceHeaderCard({ assignment }: { assignment: ServiceRecordAssignment
     );
 }
 
-function ServiceSessionsCard({ assignment }: { assignment: ServiceRecordAssignment }) {
-    const slots = useMemo(() => buildSessionSlots(assignment), [assignment]);
-    const lockedCount = assignment.sessions.filter((session) => session.locked).length;
-    const draftCount = assignment.sessions.filter((session) => !session.locked).length;
+function ServiceSessionsCard({
+    startDate,
+    totalSessions: configuredSessions,
+    sessions,
+}: {
+    startDate: string | null;
+    totalSessions: number;
+    sessions: ServiceRecordSession[];
+}) {
+    const slots = useMemo(
+        () => buildSessionSlots(startDate, configuredSessions, sessions),
+        [configuredSessions, sessions, startDate],
+    );
+    const lockedCount = sessions.filter((session) => session.locked).length;
+    const draftCount = sessions.filter((session) => !session.locked).length;
     const totalSessions = slots.length;
     const progress = totalSessions > 0 ? Math.round((lockedCount / totalSessions) * 100) : 0;
 
     return (
         <ServiceRecordCard
             dataComponent="clients-detail-service-records-sessions"
-            icon={<ClipboardList className="h-[calc(17px*var(--v3-ui-scale,1))] w-[calc(17px*var(--v3-ui-scale,1))]" />}
+            icon={<ClipboardList className="h-[calc(17px*var(--glint-ui-scale,1))] w-[calc(17px*var(--glint-ui-scale,1))]" />}
             title="회차별 제공기록"
-            subtitle={assignment.sessions.length > 0
+            subtitle={sessions.length > 0
                 ? "계약 회차를 누르면 기록 상세가 열립니다"
-                : `계약 회차 ${assignment.totalSessions}회`}
+                : `계약 회차 ${configuredSessions}회`}
             right={
-                <span className="text-[calc(12px*var(--v3-ui-scale,1))] font-semibold text-v3-text-muted">
+                <span className="text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
                     <b className="text-v3-primary">{lockedCount}</b>/{totalSessions} 제출완료
                     {draftCount > 0 ? ` · 임시저장 ${draftCount}` : ""}
                 </span>
             }
         >
-            <div className="mt-[calc(10px*var(--v3-ui-scale,1))] h-[calc(6px*var(--v3-ui-scale,1))] overflow-hidden rounded-full bg-v3-dim-white">
+            <div className="mt-[calc(10px*var(--glint-ui-scale,1))] h-[calc(6px*var(--glint-ui-scale,1))] overflow-hidden rounded-full bg-v3-dim-white">
                 <div
                     data-component="clients-detail-service-records-progress"
                     className={cn("h-full rounded-full bg-v3-primary transition-[width] duration-300", progress === 100 && "bg-v3-green")}
                     style={{ width: `${progress}%` }}
                 />
             </div>
-            <div data-component="clients-detail-service-records-session-list" className="mt-[calc(8px*var(--v3-ui-scale,1))]">
+            <div data-component="clients-detail-service-records-session-list" className="mt-[calc(8px*var(--glint-ui-scale,1))]">
                 {slots.map((slot, index) => (
                     <SessionRow
                         key={slot.sessionIndex}
@@ -361,11 +529,11 @@ function SessionRow({ slot, defaultOpen }: { slot: SessionSlot; defaultOpen: boo
     if (!record) {
         return (
             <div data-component="clients-detail-service-records-session-item" className="border-b border-v3-dim-white last:border-b-0">
-                <div className="flex items-center gap-[calc(12px*var(--v3-ui-scale,1))] px-[calc(4px*var(--v3-ui-scale,1))] py-[calc(13px*var(--v3-ui-scale,1))] opacity-75">
+                <div className="flex items-center gap-[calc(12px*var(--glint-ui-scale,1))] px-[calc(4px*var(--glint-ui-scale,1))] py-[calc(13px*var(--glint-ui-scale,1))] opacity-75">
                     <SessionNumber index={slot.sessionIndex} state="idle" />
                     <div className="min-w-0">
-                        <div className="text-[calc(13px*var(--v3-ui-scale,1))] font-semibold text-v3-dark">{slot.sessionIndex}회차</div>
-                        <div className="mt-0.5 text-[calc(11.5px*var(--v3-ui-scale,1))] text-v3-text-muted">예정일 {formatDateKo(slot.expectedDate)}</div>
+                        <div className="text-[calc(13px*var(--glint-ui-scale,1))] font-semibold text-v3-dark">{slot.sessionIndex}회차</div>
+                        <div className="mt-0.5 text-[calc(11.5px*var(--glint-ui-scale,1))] text-v3-text-muted">예정일 {formatDateKo(slot.expectedDate)}</div>
                     </div>
                     <div className="ml-auto shrink-0">
                         <StatusPill variant="neutral">미작성</StatusPill>
@@ -386,27 +554,28 @@ function SessionRow({ slot, defaultOpen }: { slot: SessionSlot; defaultOpen: boo
             <CollapsibleTrigger asChild>
                 <button
                     type="button"
-                    className="group flex w-full items-center gap-[calc(12px*var(--v3-ui-scale,1))] px-[calc(4px*var(--v3-ui-scale,1))] py-[calc(13px*var(--v3-ui-scale,1))] text-left"
+                    className="group flex w-full items-center gap-[calc(12px*var(--glint-ui-scale,1))] px-[calc(4px*var(--glint-ui-scale,1))] py-[calc(13px*var(--glint-ui-scale,1))] text-left"
                 >
                     <SessionNumber index={slot.sessionIndex} state={state} />
                     <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-[calc(8px*var(--v3-ui-scale,1))] text-[calc(13px*var(--v3-ui-scale,1))] font-semibold text-v3-dark">
+                        <div className="flex flex-wrap items-center gap-[calc(8px*var(--glint-ui-scale,1))] text-[calc(13px*var(--glint-ui-scale,1))] font-semibold text-v3-dark">
                             <span>{slot.sessionIndex}회차 · {formatDateKo(record.serviceDate)}</span>
-                            <span className="rounded-[6px] border border-v3-border bg-v3-dim-white px-[calc(6px*var(--v3-ui-scale,1))] py-px text-[calc(10px*var(--v3-ui-scale,1))] font-semibold text-v3-text-muted">
-                                양식 v1
+                            <span className="rounded-[6px] border border-v3-border bg-v3-dim-white px-[calc(6px*var(--glint-ui-scale,1))] py-px text-[calc(10px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
+                                양식 v{record.formVersion ?? 1}
                             </span>
                         </div>
-                        <div className="mt-0.5 text-[calc(11.5px*var(--v3-ui-scale,1))] text-v3-text-muted">
+                        <div className="mt-0.5 text-[calc(11.5px*var(--glint-ui-scale,1))] text-v3-text-muted">
+                            {record.employeeName ? `${record.employeeName} · ` : ""}
                             {record.locked
                                 ? <>제출 {formatDateTimeKo(record.submittedAt)} · 잠금 🔒</>
                                 : <>마지막 저장 {formatDateTimeKo(record.updatedAt)} · 작성 중</>}
                         </div>
                     </div>
-                    <div className="ml-auto flex shrink-0 items-center gap-[calc(10px*var(--v3-ui-scale,1))] text-right">
+                    <div className="ml-auto flex shrink-0 items-center gap-[calc(10px*var(--glint-ui-scale,1))] text-right">
                         <StatusPill variant={record.locked ? "success" : "warning"}>
                             {record.locked ? "제출완료" : "임시저장"}
                         </StatusPill>
-                        <ChevronDown className="h-[calc(14px*var(--v3-ui-scale,1))] w-[calc(14px*var(--v3-ui-scale,1))] text-v3-text-muted transition-transform group-data-[state=open]:rotate-180" />
+                        <ChevronDown className="h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(14px*var(--glint-ui-scale,1))] text-v3-text-muted transition-transform group-data-[state=open]:rotate-180" />
                     </div>
                 </button>
             </CollapsibleTrigger>
@@ -421,7 +590,7 @@ function SessionNumber({ index, state }: { index: number; state: "done" | "draft
     return (
         <div
             className={cn(
-                "flex h-[calc(30px*var(--v3-ui-scale,1))] w-[calc(30px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-full text-[calc(12px*var(--v3-ui-scale,1))] font-bold",
+                "flex h-[calc(30px*var(--glint-ui-scale,1))] w-[calc(30px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-full text-[calc(12px*var(--glint-ui-scale,1))] font-bold",
                 state === "done" && "bg-v3-green-light text-v3-green",
                 state === "draft" && "bg-v3-primary-light text-v3-primary",
                 state === "idle" && "bg-v3-dim-white text-v3-text-muted",
@@ -440,14 +609,14 @@ function SessionRecordDetail({ record }: { record: ServiceRecordSession }) {
     return (
         <div
             data-component="clients-detail-service-records-session-detail"
-            className="px-[calc(4px*var(--v3-ui-scale,1))] pb-[calc(18px*var(--v3-ui-scale,1))] pl-[calc(46px*var(--v3-ui-scale,1))]"
+            className="px-[calc(4px*var(--glint-ui-scale,1))] pb-[calc(18px*var(--glint-ui-scale,1))] pl-[calc(46px*var(--glint-ui-scale,1))]"
         >
             {SERVICE_RECORD_FORM_LAYOUT.map((section) => (
                 <div key={section.id}>
-                    <div className="mb-[calc(4px*var(--v3-ui-scale,1))] mt-[calc(14px*var(--v3-ui-scale,1))] flex items-center gap-[calc(6px*var(--v3-ui-scale,1))] text-[calc(11px*var(--v3-ui-scale,1))] font-bold tracking-[0.05em] text-v3-text-muted">
+                    <div className="mb-[calc(4px*var(--glint-ui-scale,1))] mt-[calc(14px*var(--glint-ui-scale,1))] flex items-center gap-[calc(6px*var(--glint-ui-scale,1))] text-[calc(11px*var(--glint-ui-scale,1))] font-bold tracking-[0.05em] text-v3-text-muted">
                         <span
                             className={cn(
-                                "h-[calc(7px*var(--v3-ui-scale,1))] w-[calc(7px*var(--v3-ui-scale,1))] rounded-full",
+                                "h-[calc(7px*var(--glint-ui-scale,1))] w-[calc(7px*var(--glint-ui-scale,1))] rounded-full",
                                 section.tone === "mom" && "bg-v3-burgundy",
                                 section.tone === "baby" && "bg-v3-primary",
                                 section.tone === "finish" && "bg-v3-green",
@@ -455,7 +624,7 @@ function SessionRecordDetail({ record }: { record: ServiceRecordSession }) {
                         />
                         {section.title}
                     </div>
-                    <div className="grid grid-cols-2 gap-x-[calc(28px*var(--v3-ui-scale,1))] max-sm:grid-cols-1">
+                    <div className="grid grid-cols-2 gap-x-[calc(28px*var(--glint-ui-scale,1))] max-sm:grid-cols-1">
                         {section.fields.map((field) => (
                             <RecordFieldRow key={field.key} field={field} answers={answers} record={record} />
                         ))}
@@ -464,21 +633,21 @@ function SessionRecordDetail({ record }: { record: ServiceRecordSession }) {
             ))}
             {unknownEntries.length > 0 && (
                 <div>
-                    <div className="mb-[calc(4px*var(--v3-ui-scale,1))] mt-[calc(14px*var(--v3-ui-scale,1))] flex items-center gap-[calc(6px*var(--v3-ui-scale,1))] text-[calc(11px*var(--v3-ui-scale,1))] font-bold tracking-[0.05em] text-v3-text-muted">
-                        <span className="h-[calc(7px*var(--v3-ui-scale,1))] w-[calc(7px*var(--v3-ui-scale,1))] rounded-full bg-v3-text-muted" />
+                    <div className="mb-[calc(4px*var(--glint-ui-scale,1))] mt-[calc(14px*var(--glint-ui-scale,1))] flex items-center gap-[calc(6px*var(--glint-ui-scale,1))] text-[calc(11px*var(--glint-ui-scale,1))] font-bold tracking-[0.05em] text-v3-text-muted">
+                        <span className="h-[calc(7px*var(--glint-ui-scale,1))] w-[calc(7px*var(--glint-ui-scale,1))] rounded-full bg-v3-text-muted" />
                         기타 항목
                     </div>
-                    <div className="grid grid-cols-2 gap-x-[calc(28px*var(--v3-ui-scale,1))] max-sm:grid-cols-1">
+                    <div className="grid grid-cols-2 gap-x-[calc(28px*var(--glint-ui-scale,1))] max-sm:grid-cols-1">
                         {unknownEntries.map(([key, value]) => (
-                            <div key={key} className="flex items-center justify-between gap-[calc(12px*var(--v3-ui-scale,1))] border-b border-dashed border-v3-dim-white py-[calc(7px*var(--v3-ui-scale,1))]">
-                                <span className="shrink-0 text-[calc(12px*var(--v3-ui-scale,1))] text-v3-text-muted">{key}</span>
-                                <span className="text-right text-[calc(12.3px*var(--v3-ui-scale,1))] font-medium text-v3-dark">{formatUnknownValue(value)}</span>
+                            <div key={key} className="flex items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-dashed border-v3-dim-white py-[calc(7px*var(--glint-ui-scale,1))]">
+                                <span className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">{key}</span>
+                                <span className="text-right text-[calc(12.3px*var(--glint-ui-scale,1))] font-medium text-v3-dark">{formatUnknownValue(value)}</span>
                             </div>
                         ))}
                     </div>
                 </div>
             )}
-            <div className="mt-[calc(12px*var(--v3-ui-scale,1))] text-[calc(10.8px*var(--v3-ui-scale,1))] text-[#b3bcc5]">
+            <div className="mt-[calc(12px*var(--glint-ui-scale,1))] text-[calc(10.8px*var(--glint-ui-scale,1))] text-[#b3bcc5]">
                 ※ 제출 시점의 양식 스냅샷(v1) 기준으로 표시됩니다.
             </div>
         </div>
@@ -498,12 +667,12 @@ function RecordFieldRow({
     return (
         <div
             className={cn(
-                "flex items-center justify-between gap-[calc(12px*var(--v3-ui-scale,1))] border-b border-dashed border-v3-dim-white py-[calc(7px*var(--v3-ui-scale,1))]",
+                "flex items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-dashed border-v3-dim-white py-[calc(7px*var(--glint-ui-scale,1))]",
                 isWide && "col-span-full items-start",
             )}
         >
-            <span className="shrink-0 text-[calc(12px*var(--v3-ui-scale,1))] text-v3-text-muted">{field.label}</span>
-            <div className="flex min-w-0 flex-wrap items-center justify-end gap-[calc(5px*var(--v3-ui-scale,1))] text-right text-[calc(12.3px*var(--v3-ui-scale,1))] font-medium text-v3-dark">
+            <span className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">{field.label}</span>
+            <div className="flex min-w-0 flex-wrap items-center justify-end gap-[calc(5px*var(--glint-ui-scale,1))] text-right text-[calc(12.3px*var(--glint-ui-scale,1))] font-medium text-v3-dark">
                 {renderFieldValue(field, answers, record)}
             </div>
         </div>
@@ -523,8 +692,8 @@ function renderFieldValue(
                 ? <span className="font-semibold text-v3-green">✓ 완료</span>
                 : <span className="text-[#b3bcc5]">미확인</span>;
         }
-        if (field.key === "hasMomSignature") {
-            return record.hasMomSignature
+        if (field.key === "hasMomApproval") {
+            return record.hasMomApproval
                 ? <span className="font-semibold text-v3-green">✓ 서명함</span>
                 : <span className="text-[#b3bcc5]">서명 전</span>;
         }
@@ -584,7 +753,7 @@ function AnswerChip({
     return (
         <span
             className={cn(
-                "rounded-[8px] px-[calc(9px*var(--v3-ui-scale,1))] py-[calc(2.5px*var(--v3-ui-scale,1))] text-[calc(11px*var(--v3-ui-scale,1))] font-medium",
+                "rounded-[8px] px-[calc(9px*var(--glint-ui-scale,1))] py-[calc(2.5px*var(--glint-ui-scale,1))] text-[calc(11px*var(--glint-ui-scale,1))] font-medium",
                 resolvedTone === "neutral" && "bg-v3-dim-white text-v3-text",
                 resolvedTone === "warn" && "bg-[hsl(32,100%,94%)] text-[hsl(32,100%,35%)]",
                 resolvedTone === "primary" && "bg-v3-primary-light text-v3-primary",
@@ -598,26 +767,28 @@ function AnswerChip({
 function FreeTextValue({ value }: { value: string | null }) {
     if (!value) return <span className="text-[#b3bcc5]">미입력</span>;
     return (
-        <span className="flex-1 rounded-[10px] bg-v3-dim-white px-[calc(12px*var(--v3-ui-scale,1))] py-[calc(9px*var(--v3-ui-scale,1))] text-left text-[calc(12.2px*var(--v3-ui-scale,1))] font-normal leading-6 text-v3-text">
+        <span className="flex-1 rounded-[10px] bg-v3-dim-white px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(9px*var(--glint-ui-scale,1))] text-left text-[calc(12.2px*var(--glint-ui-scale,1))] font-normal leading-6 text-v3-text">
             {value}
         </span>
     );
 }
 
 function EmptyValue() {
-    return <span className="text-[calc(11.8px*var(--v3-ui-scale,1))] font-normal italic text-[#b3bcc5]">미입력</span>;
+    return <span className="text-[calc(11.8px*var(--glint-ui-scale,1))] font-normal italic text-[#b3bcc5]">미입력</span>;
 }
 
 function SignatureDocCard({ signatureDoc }: { signatureDoc: SignatureDocStatus }) {
     return (
         <ServiceRecordCard
             dataComponent="clients-detail-service-records-signature-card"
-            icon={<FileSignature className="h-[calc(17px*var(--v3-ui-scale,1))] w-[calc(17px*var(--v3-ui-scale,1))]" />}
-            title="제공기록 서명 문서 (eformsign)"
-            subtitle="전 회차 제출 완료 후 자동 생성 · 제공인력 서명"
+            icon={<FileSignature className="h-[calc(17px*var(--glint-ui-scale,1))] w-[calc(17px*var(--glint-ui-scale,1))]" />}
+            title={signatureDoc.snapshotChunkIndex
+                ? `제공기록지 전자문서 ${signatureDoc.snapshotChunkIndex}`
+                : "제공기록지 전자문서"}
+            subtitle="서비스 종료 후 자동 생성 · 제공기관 검토"
             right={<StatusPill variant={getSignatureVariant(signatureDoc.statusDetail)}>{formatSignatureStatus(signatureDoc.statusDetail)}</StatusPill>}
         >
-            <div className="grid grid-cols-2 gap-x-[calc(24px*var(--v3-ui-scale,1))] gap-y-[calc(6px*var(--v3-ui-scale,1))] border-t border-dashed border-v3-border pt-[calc(12px*var(--v3-ui-scale,1))] max-sm:grid-cols-1">
+            <div className="grid grid-cols-2 gap-x-[calc(24px*var(--glint-ui-scale,1))] gap-y-[calc(6px*var(--glint-ui-scale,1))] border-t border-dashed border-v3-border pt-[calc(12px*var(--glint-ui-scale,1))] max-sm:grid-cols-1">
                 <MetaRow label="문서 발송" value={formatDateTimeKo(signatureDoc.createdDate)} />
                 <MetaRow label="상태 갱신" value={formatDateTimeKo(signatureDoc.updatedDate)} />
                 <MetaRow label="단계" value={signatureDoc.stepName} />
@@ -645,17 +816,17 @@ function ServiceRecordCard({
     return (
         <div
             data-component={dataComponent}
-            className="rounded-[18px] border border-v3-border bg-white p-[calc(18px*var(--v3-ui-scale,1))]"
+            className="rounded-[18px] border border-v3-border bg-white p-[calc(18px*var(--glint-ui-scale,1))]"
         >
-            <div className="mb-[calc(14px*var(--v3-ui-scale,1))] flex items-start gap-[calc(12px*var(--v3-ui-scale,1))]">
-                <div className="flex h-[calc(38px*var(--v3-ui-scale,1))] w-[calc(38px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[12px] bg-v3-primary-light text-v3-primary">
+            <div className="mb-[calc(14px*var(--glint-ui-scale,1))] flex items-start gap-[calc(12px*var(--glint-ui-scale,1))]">
+                <div className="flex h-[calc(38px*var(--glint-ui-scale,1))] w-[calc(38px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[12px] bg-v3-primary-light text-v3-primary">
                     {icon}
                 </div>
                 <div className="min-w-0">
-                    <div className="text-[calc(13.5px*var(--v3-ui-scale,1))] font-bold text-v3-dark">{title}</div>
-                    <div className="mt-0.5 text-[calc(12px*var(--v3-ui-scale,1))] text-v3-text-muted">{subtitle}</div>
+                    <div className="text-[calc(13.5px*var(--glint-ui-scale,1))] font-bold text-v3-dark">{title}</div>
+                    <div className="mt-0.5 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">{subtitle}</div>
                 </div>
-                {right && <div className="ml-auto flex shrink-0 items-center gap-[calc(8px*var(--v3-ui-scale,1))]">{right}</div>}
+                {right && <div className="ml-auto flex shrink-0 items-center gap-[calc(8px*var(--glint-ui-scale,1))]">{right}</div>}
             </div>
             {children}
         </div>
@@ -664,30 +835,34 @@ function ServiceRecordCard({
 
 function MetaRow({ label, value }: { label: string; value: ReactNode }) {
     return (
-        <div className="flex min-w-0 items-center justify-between gap-[calc(12px*var(--v3-ui-scale,1))] py-[calc(4px*var(--v3-ui-scale,1))]">
-            <span className="shrink-0 text-[calc(12px*var(--v3-ui-scale,1))] text-v3-text-muted">{label}</span>
-            <span className="min-w-0 text-right text-[calc(12.5px*var(--v3-ui-scale,1))] font-medium text-v3-dark">{value}</span>
+        <div className="flex min-w-0 items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] py-[calc(4px*var(--glint-ui-scale,1))]">
+            <span className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">{label}</span>
+            <span className="min-w-0 text-right text-[calc(12.5px*var(--glint-ui-scale,1))] font-medium text-v3-dark">{value}</span>
         </div>
     );
 }
 
-function buildSessionSlots(assignment: ServiceRecordAssignment): SessionSlot[] {
+function buildSessionSlots(
+    startDate: string | null,
+    configuredSessions: number,
+    sessions: ServiceRecordSession[],
+): SessionSlot[] {
     const total = Math.max(
-        assignment.totalSessions,
-        assignment.sessions.reduce((max, session) => Math.max(max, session.sessionIndex), 0),
+        configuredSessions,
+        sessions.reduce((max, session) => Math.max(max, session.sessionIndex), 0),
     );
-    const sessionsByIndex = new Map(assignment.sessions.map((session) => [session.sessionIndex, session]));
+    const sessionsByIndex = new Map(sessions.map((session) => [session.sessionIndex, session]));
     return Array.from({ length: total }, (_, index) => {
         const sessionIndex = index + 1;
         return {
             sessionIndex,
             record: sessionsByIndex.get(sessionIndex) ?? null,
-            expectedDate: getExpectedSessionDate(assignment.startDate, sessionIndex),
+            expectedDate: getExpectedSessionDate(startDate, sessionIndex),
         };
     });
 }
 
-function getExpectedSessionDate(startDate: string, sessionIndex: number): string | null {
+function getExpectedSessionDate(startDate: string | null, sessionIndex: number): string | null {
     const datePart = datePartOf(startDate);
     if (!datePart) return null;
     return calcEndDateBusinessDays(datePart, sessionIndex) || null;

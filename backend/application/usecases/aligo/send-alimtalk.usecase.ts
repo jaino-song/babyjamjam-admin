@@ -4,6 +4,8 @@ import { SendAligoAlimtalkDto, AligoMessageBuilder, ALIGO_TEMPLATES } from "appl
 import { maskPhone } from "application/utils/mask";
 import { MESSAGE_LOG_REPOSITORY, IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
+import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
+import { isTransientPrismaConnectivityError } from "infrastructure/database/prisma-error.utils";
 
 @Injectable()
 export class SendAligoAlimtalkUsecase {
@@ -33,10 +35,23 @@ export class SendAligoAlimtalkUsecase {
             triggerJobId: dto.triggerJobId,
             receiver: dto.receiver,
             clientId: dto.clientId,
+            recipientName: dto.recipientName ?? null,
+            recipientPhone: dto.receiver,
             messageBody: message,
             variables: dto.variables,
         });
-        const savedLog = await this.logRepository.save(log);
+        let savedLog: MessageLogEntity;
+        try {
+            savedLog = await this.logRepository.save(log);
+        } catch (error) {
+            if (isTransientPrismaConnectivityError(error)) {
+                throw new TriggerJobDeferredError(
+                    "transient",
+                    error instanceof Error ? error.message : String(error),
+                );
+            }
+            throw error;
+        }
 
         this.logger.debug(`[Aligo] Sending ${dto.templateKey} to ${maskPhone(dto.receiver)}`);
 

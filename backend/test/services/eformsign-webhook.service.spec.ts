@@ -119,6 +119,9 @@ describe("EformsignWebhookService", () => {
         emit: jest.fn(),
         events$: { subscribe: jest.fn() },
     };
+    const serviceRecordLifecycle = {
+        syncEndDateFromContract: jest.fn(),
+    };
 
     let service: EformsignWebhookService;
 
@@ -135,6 +138,8 @@ describe("EformsignWebhookService", () => {
             eformsignDocRepository as never,
             employeeScheduleRepository as never,
             employeeRepository as never,
+            undefined,
+            serviceRecordLifecycle as never,
         );
 
         updateStatusUsecase.execute.mockResolvedValue(createDocEntity());
@@ -169,10 +174,30 @@ describe("EformsignWebhookService", () => {
     });
 
     it("should call link and sync usecases for DOC_COMPLETE document events", async () => {
+        const target = {
+            clientId: 9,
+            endDate: new Date("2026-07-31T00:00:00.000Z"),
+        };
+        syncClientEndDateUsecase.execute.mockResolvedValue(target);
+
         await expect(service.processWebhook(createDocumentPayload())).resolves.toBeUndefined();
 
         expect(linkDocumentUsecase.execute).toHaveBeenCalledWith(branchId, documentId);
-        expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(branchId, documentId, "test-access-token");
+        expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(
+            branchId,
+            documentId,
+            "test-access-token",
+            expect.objectContaining({ persist: expect.any(Function) }),
+        );
+        const options = syncClientEndDateUsecase.execute.mock.calls[0][3] as {
+            persist: (value: typeof target) => Promise<void>;
+        };
+        await options.persist(target);
+        expect(serviceRecordLifecycle.syncEndDateFromContract).toHaveBeenCalledWith({
+            branchId,
+            clientId: 9,
+            endDate: target.endDate,
+        });
     });
 
     it("should resolve the branch from the local document before processing webhook status", async () => {
@@ -191,7 +216,12 @@ describe("EformsignWebhookService", () => {
         await expect(service.processWebhook(createDocumentPayload())).resolves.toBeUndefined();
 
         expect(linkDocumentUsecase.execute).toHaveBeenCalledWith(branchId, documentId);
-        expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(branchId, documentId, "test-access-token");
+        expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(
+            branchId,
+            documentId,
+            "test-access-token",
+            expect.objectContaining({ persist: expect.any(Function) }),
+        );
         expect(alimtalkService.sendContractSignedAlimtalk).toHaveBeenCalledTimes(1);
     });
 
@@ -199,7 +229,12 @@ describe("EformsignWebhookService", () => {
         await expect(service.processWebhook(createReadyPdfPayload())).resolves.toBeUndefined();
 
         expect(linkDocumentUsecase.execute).toHaveBeenCalledWith(branchId, documentId);
-        expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(branchId, documentId, "test-access-token");
+        expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(
+            branchId,
+            documentId,
+            "test-access-token",
+            expect.objectContaining({ persist: expect.any(Function) }),
+        );
     });
 
     it("should keep processing ready_document_pdf events when sync throws", async () => {
@@ -208,7 +243,12 @@ describe("EformsignWebhookService", () => {
         await expect(service.processWebhook(createReadyPdfPayload())).resolves.toBeUndefined();
 
         expect(linkDocumentUsecase.execute).toHaveBeenCalledWith(branchId, documentId);
-        expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(branchId, documentId, "test-access-token");
+        expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(
+            branchId,
+            documentId,
+            "test-access-token",
+            expect.objectContaining({ persist: expect.any(Function) }),
+        );
         expect(alimtalkService.sendContractSignedAlimtalk).toHaveBeenCalledTimes(1);
     });
 
@@ -257,6 +297,25 @@ describe("EformsignWebhookService", () => {
         await expect(service.processWebhook(payload)).resolves.toBeUndefined();
 
         expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+    });
+
+    it("should keep the client contract pointer linked on non-complete document status updates", async () => {
+        const payload = createDocumentPayload();
+        if (!payload.document) {
+            throw new Error("document payload is required");
+        }
+        payload.document.status = "doc_request_participant";
+
+        await expect(service.processWebhook(payload)).resolves.toBeUndefined();
+
+        expect(updateStatusUsecase.execute).toHaveBeenCalledWith(
+            branchId,
+            expect.objectContaining({
+                documentId,
+                statusType: "060",
+            }),
+        );
+        expect(linkDocumentUsecase.execute).toHaveBeenCalledWith(branchId, documentId);
     });
 
     it("should not notify branch users for a user participant step even when eformsign reports recipient_type 01", async () => {

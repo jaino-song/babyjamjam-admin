@@ -12,6 +12,9 @@ import { ScheduleChangeService } from "application/services/schedule-change.serv
 import { EmployeeFeedbackTokenService } from "application/services/employee-feedback-token.service";
 import { EmployeeFeedbackLinkService } from "application/services/employee-feedback-link.service";
 import { EmployeeFeedbackGuard } from "infrastructure/auth/employee-feedback.guard";
+import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
+import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
+import { ServiceRecordFinalizationSchedulerService } from "application/services/service-record-finalization-scheduler.service";
 
 /**
  * No-login daily service feedback capture (BJJ-247).
@@ -27,8 +30,11 @@ import { EmployeeFeedbackGuard } from "infrastructure/auth/employee-feedback.gua
         ScheduleChangeService,
         EmployeeFeedbackTokenService,
         EmployeeFeedbackLinkService,
+        ServiceRecordLifecycleService,
+        ServiceRecordFinalizationService,
+        ServiceRecordFinalizationSchedulerService,
         EmployeeFeedbackGuard,
     ],
-    exports: [EmployeeFeedbackTokenService, EmployeeFeedbackLinkService],
+    exports: [EmployeeFeedbackTokenService, EmployeeFeedbackLinkService, ServiceRecordLifecycleService],
 })
 export class ServiceFeedbackModule {}

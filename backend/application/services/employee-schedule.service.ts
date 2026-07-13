@@ -11,6 +11,7 @@ import {
 import { EmployeeScheduleEntity } from "domain/entities/employee-schedule.entity";
 import { MessageTriggerService } from "./message-trigger.service";
 import { EmployeeFeedbackLinkService } from "./employee-feedback-link.service";
+import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 
 @Injectable()
 export class EmployeeScheduleService {
@@ -24,6 +25,7 @@ export class EmployeeScheduleService {
         private readonly deleteEmployeeScheduleUsecase: DeleteEmployeeScheduleUsecase,
         @Optional() private readonly triggerService?: MessageTriggerService,
         @Optional() private readonly employeeFeedbackLinkService?: EmployeeFeedbackLinkService,
+        @Optional() private readonly serviceRecordLifecycleService?: ServiceRecordLifecycleService,
     ) {}
 
     async create(branchid: string, params: {
@@ -47,6 +49,7 @@ export class EmployeeScheduleService {
         this.triggerService
             ?.syncEmployeeAssignmentRulesForSchedule(branchid, schedule.id, true)
             ?.catch(() => undefined);
+        await this.serviceRecordLifecycleService?.ensureForClient(schedule.clientId);
         this.employeeFeedbackLinkService?.scheduleForServiceStart(schedule.id)?.catch(() => undefined);
         return schedule;
     }
@@ -91,6 +94,7 @@ export class EmployeeScheduleService {
             endDate: params.endDate ? new Date(params.endDate) : undefined,
             replaced: params.replaced,
         });
+        await this.serviceRecordLifecycleService?.ensureForClient(schedule.clientId);
         if (params.endDate) {
             this.employeeFeedbackLinkService
                 ?.extendExpiryForEndDate(schedule.id, schedule.endDate)
@@ -99,7 +103,11 @@ export class EmployeeScheduleService {
         return schedule;
     }
 
-    delete(branchid: string, id: number): Promise<void> {
-        return this.deleteEmployeeScheduleUsecase.execute(branchid, id);
+    async delete(branchid: string, id: number): Promise<void> {
+        const schedule = await this.findEmployeeScheduleByIdUsecase.execute(branchid, id);
+        await this.deleteEmployeeScheduleUsecase.execute(branchid, id);
+        if (schedule) {
+            await this.serviceRecordLifecycleService?.ensureForClient(schedule.clientId);
+        }
     }
 }

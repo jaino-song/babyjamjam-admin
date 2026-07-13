@@ -39,6 +39,7 @@ function historyRecord(overrides: Partial<MessageLogRecord>): MessageLogRecord {
     triggerJobId: null,
     receiver: "010-0000-0000",
     clientId: null,
+    recipientPhone: "010-0000-0000",
     messageBody: "message",
     variables: {},
     status: "sent",

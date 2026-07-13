@@ -57,7 +57,7 @@ When a 제공인력 (employee) is assigned to a client, SMS them a no-login link
 - `employee.birthday String? @db.VarChar(6)` (YYMMDD, mirror `client.birthday` `prisma/schema.prisma:92`).
 - `employee_feedback_token`: id(uuid), branchId, scheduleId, employeeId, linkTokenHash(unique), accessTokenHash(unique,nullable), expectedDobHash, verifiedAt?, failedAttempts, expiresAt, active, revokedAt?, createdAt; `@@unique([scheduleId, employeeId])`.
 - `service_record`: id(uuid), branchId, scheduleId(unique), momName, momBirth, babyName, babyBirth, deliveryType, babyWeight, createdAt/updatedAt.
-- `service_record_day`: id(uuid), branchId, scheduleId, sessionIndex, serviceDate(@db.Date), perineum/breast/excretion/sitzBath/meals…(①–⑪ as typed cols or JSON), etcService, notes, paymentConfirmed(bool), momSignature(text), locked(bool default false), submittedAt?; `@@unique([scheduleId, sessionIndex])`.
+- `service_record_day`: id(uuid), branchId, scheduleId, sessionIndex, serviceDate(@db.Date), perineum/breast/excretion/sitzBath/meals…(①–⑪ as typed cols or JSON), etcService, notes, paymentConfirmed(bool), momApproval(text), locked(bool default false), submittedAt?; `@@unique([scheduleId, sessionIndex])`.
 
 ### Design Details
 - **Hybrid rationale:** eformsign templates are fixed-field (`eformsign-api-templates.md:35-43`); `createDocument` fills only pre-existing fields, no repeatable rows (`eformsign-api-documents.md:14-29`). DB capture removes the limit; snapshot is one text field.

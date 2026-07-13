@@ -51,7 +51,7 @@ export class SmsRetryService {
                 senderPhone: this.stringVariable(log, "senderPhone"),
                 receiver: log.receiver,
                 message: log.messageBody,
-                recipientName: this.stringVariable(log, "recipientName") ?? undefined,
+                recipientName: log.recipientName ?? this.stringVariable(log, "recipientName") ?? undefined,
                 title: this.stringVariable(log, "title") ?? undefined,
                 msgType: this.smsMessageTypeVariable(log, "msgType"),
                 ...(scheduledDate ? { scheduledDate } : {}),

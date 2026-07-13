@@ -54,36 +54,36 @@ const SIZE_MAP: Record<
   // centre (≈ half the circle height) now that labels sit in normal flow below
   // each circle and the root is top-aligned.
   sm: {
-    root: "px-[calc(4px*var(--v3-ui-scale,1))] py-[calc(4px*var(--v3-ui-scale,1))]",
-    circle: "w-[calc(24px*var(--v3-ui-scale,1))] h-[calc(24px*var(--v3-ui-scale,1))]",
-    font: "text-[calc(8.8px*var(--v3-ui-scale,1))]",
-    label: "text-[calc(8px*var(--v3-ui-scale,1))]",
-    connector: "min-w-[calc(40px*var(--v3-ui-scale,1))] px-[calc(6px*var(--v3-ui-scale,1))]",
-    connectorOffset: "mt-[calc(11px*var(--v3-ui-scale,1))]",
+    root: "px-[calc(4px*var(--glint-ui-scale,1))] py-[calc(4px*var(--glint-ui-scale,1))]",
+    circle: "w-[calc(24px*var(--glint-ui-scale,1))] h-[calc(24px*var(--glint-ui-scale,1))]",
+    font: "text-[calc(8.8px*var(--glint-ui-scale,1))]",
+    label: "text-[calc(8px*var(--glint-ui-scale,1))]",
+    connector: "min-w-[calc(40px*var(--glint-ui-scale,1))] px-[calc(6px*var(--glint-ui-scale,1))]",
+    connectorOffset: "mt-[calc(11px*var(--glint-ui-scale,1))]",
   },
   md: {
-    root: "px-[calc(4px*var(--v3-ui-scale,1))] py-[calc(4px*var(--v3-ui-scale,1))]",
-    circle: "w-[calc(32px*var(--v3-ui-scale,1))] h-[calc(32px*var(--v3-ui-scale,1))]",
-    font: "text-[calc(10.4px*var(--v3-ui-scale,1))]",
-    label: "text-[calc(9.6px*var(--v3-ui-scale,1))]",
-    connector: "min-w-[calc(64px*var(--v3-ui-scale,1))] px-[calc(8px*var(--v3-ui-scale,1))]",
-    connectorOffset: "mt-[calc(15px*var(--v3-ui-scale,1))]",
+    root: "px-[calc(4px*var(--glint-ui-scale,1))] py-[calc(4px*var(--glint-ui-scale,1))]",
+    circle: "w-[calc(32px*var(--glint-ui-scale,1))] h-[calc(32px*var(--glint-ui-scale,1))]",
+    font: "text-[calc(10.4px*var(--glint-ui-scale,1))]",
+    label: "text-[calc(9.6px*var(--glint-ui-scale,1))]",
+    connector: "min-w-[calc(64px*var(--glint-ui-scale,1))] px-[calc(8px*var(--glint-ui-scale,1))]",
+    connectorOffset: "mt-[calc(15px*var(--glint-ui-scale,1))]",
   },
   lg: {
-    root: "px-[calc(4px*var(--v3-ui-scale,1))] py-[calc(4px*var(--v3-ui-scale,1))]",
-    circle: "w-[calc(40px*var(--v3-ui-scale,1))] h-[calc(40px*var(--v3-ui-scale,1))]",
-    font: "text-[calc(12px*var(--v3-ui-scale,1))]",
-    label: "text-[calc(11.2px*var(--v3-ui-scale,1))]",
-    connector: "min-w-[calc(80px*var(--v3-ui-scale,1))] px-[calc(10px*var(--v3-ui-scale,1))]",
-    connectorOffset: "mt-[calc(19px*var(--v3-ui-scale,1))]",
+    root: "px-[calc(4px*var(--glint-ui-scale,1))] py-[calc(4px*var(--glint-ui-scale,1))]",
+    circle: "w-[calc(40px*var(--glint-ui-scale,1))] h-[calc(40px*var(--glint-ui-scale,1))]",
+    font: "text-[calc(12px*var(--glint-ui-scale,1))]",
+    label: "text-[calc(11.2px*var(--glint-ui-scale,1))]",
+    connector: "min-w-[calc(80px*var(--glint-ui-scale,1))] px-[calc(10px*var(--glint-ui-scale,1))]",
+    connectorOffset: "mt-[calc(19px*var(--glint-ui-scale,1))]",
   },
   fluid: {
-    root: "px-[calc(4px*var(--v3-ui-scale,1))] py-[calc(4px*var(--v3-ui-scale,1))]",
-    circle: "w-[calc(32px*var(--v3-ui-scale,1))] h-[calc(32px*var(--v3-ui-scale,1))]",
-    font: "text-[calc(10.4px*var(--v3-ui-scale,1))]",
-    label: "text-[calc(9.6px*var(--v3-ui-scale,1))]",
-    connector: "min-w-[calc(64px*var(--v3-ui-scale,1))] px-[calc(8px*var(--v3-ui-scale,1))]",
-    connectorOffset: "mt-[calc(15px*var(--v3-ui-scale,1))]",
+    root: "px-[calc(4px*var(--glint-ui-scale,1))] py-[calc(4px*var(--glint-ui-scale,1))]",
+    circle: "w-[calc(32px*var(--glint-ui-scale,1))] h-[calc(32px*var(--glint-ui-scale,1))]",
+    font: "text-[calc(10.4px*var(--glint-ui-scale,1))]",
+    label: "text-[calc(9.6px*var(--glint-ui-scale,1))]",
+    connector: "min-w-[calc(64px*var(--glint-ui-scale,1))] px-[calc(8px*var(--glint-ui-scale,1))]",
+    connectorOffset: "mt-[calc(15px*var(--glint-ui-scale,1))]",
   },
 };
 
@@ -176,10 +176,10 @@ export function Stepper({
         indicator = (
           <Check
             className={cn(
-              size === "sm" && "h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(12px*var(--v3-ui-scale,1))]",
-              size === "md" && "h-[calc(14px*var(--v3-ui-scale,1))] w-[calc(14px*var(--v3-ui-scale,1))]",
-              size === "lg" && "h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]",
-              size === "fluid" && "h-[calc(16px*var(--v3-ui-scale,1))] w-[calc(16px*var(--v3-ui-scale,1))]",
+              size === "sm" && "h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))]",
+              size === "md" && "h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(14px*var(--glint-ui-scale,1))]",
+              size === "lg" && "h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]",
+              size === "fluid" && "h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))]",
             )}
           />
         );
@@ -204,7 +204,7 @@ export function Stepper({
             <span
               data-component={exposeDataComponents ? "stepper-label" : undefined}
               className={cn(
-                "mt-[calc(4px*var(--v3-ui-scale,1))] whitespace-nowrap text-center",
+                "mt-[calc(4px*var(--glint-ui-scale,1))] whitespace-nowrap text-center",
                 tokens.label,
                 state === "done" ? "text-v3-primary" : "text-v3-text-muted",
               )}
@@ -306,10 +306,10 @@ export function Stepper({
             className={cn(
               "flex items-center justify-center text-v3-primary",
               tokens.circle,
-              size === "sm" && "gap-[calc(3.5px*var(--v3-ui-scale,1))]",
-              size === "md" && "gap-[calc(4px*var(--v3-ui-scale,1))]",
-              size === "lg" && "gap-[calc(5px*var(--v3-ui-scale,1))]",
-              size === "fluid" && "gap-[calc(4px*var(--v3-ui-scale,1))]",
+              size === "sm" && "gap-[calc(3.5px*var(--glint-ui-scale,1))]",
+              size === "md" && "gap-[calc(4px*var(--glint-ui-scale,1))]",
+              size === "lg" && "gap-[calc(5px*var(--glint-ui-scale,1))]",
+              size === "fluid" && "gap-[calc(4px*var(--glint-ui-scale,1))]",
             )}
           >
             {[0, 1, 2].map((dot) => (
@@ -318,10 +318,10 @@ export function Stepper({
                 aria-hidden="true"
                 className={cn(
                   "rounded-full bg-current",
-                  size === "sm" && "h-[calc(4.5px*var(--v3-ui-scale,1))] w-[calc(4.5px*var(--v3-ui-scale,1))]",
-                  size === "md" && "h-[calc(6px*var(--v3-ui-scale,1))] w-[calc(6px*var(--v3-ui-scale,1))]",
-                  size === "lg" && "h-[calc(7px*var(--v3-ui-scale,1))] w-[calc(7px*var(--v3-ui-scale,1))]",
-                  size === "fluid" && "h-[calc(6px*var(--v3-ui-scale,1))] w-[calc(6px*var(--v3-ui-scale,1))]",
+                  size === "sm" && "h-[calc(4.5px*var(--glint-ui-scale,1))] w-[calc(4.5px*var(--glint-ui-scale,1))]",
+                  size === "md" && "h-[calc(6px*var(--glint-ui-scale,1))] w-[calc(6px*var(--glint-ui-scale,1))]",
+                  size === "lg" && "h-[calc(7px*var(--glint-ui-scale,1))] w-[calc(7px*var(--glint-ui-scale,1))]",
+                  size === "fluid" && "h-[calc(6px*var(--glint-ui-scale,1))] w-[calc(6px*var(--glint-ui-scale,1))]",
                 )}
               />
             ))}

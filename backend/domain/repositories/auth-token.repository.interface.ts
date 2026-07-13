@@ -1,3 +1,5 @@
+import { Prisma } from "@prisma/client";
+
 import { AuthTokenEntity, AuthTokenType } from "../entities/auth-token.entity";
 
 export interface IAuthTokenRepository {
@@ -20,6 +22,13 @@ export interface IAuthTokenRepository {
      * Update an existing token (e.g., mark as used)
      */
     update(token: AuthTokenEntity): Promise<AuthTokenEntity>;
+
+    /** Atomically consumes one valid, unused token inside the caller's transaction. */
+    consumeWithinTx(
+        tx: Prisma.TransactionClient,
+        hashedToken: string,
+        type: AuthTokenType,
+    ): Promise<boolean>;
 
     /**
      * Delete a token by ID

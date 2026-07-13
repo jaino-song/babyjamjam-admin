@@ -43,6 +43,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
         findByUserIdAndType: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
+        consumeWithinTx: jest.fn(),
         delete: jest.fn(),
         deleteByUserIdAndType: jest.fn(),
         deleteExpiredTokens: jest.fn(),
@@ -57,6 +58,8 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
         birthDate: "1990-01-01",
         profileImage: null,
         role: "user",
+        approvalStatus: "approved",
+        tokenVersion: 0,
     };
 
     const mockBranch = {
@@ -481,7 +484,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 data: {
                     userId: "new-user-uuid-123",
                     branchId: mockBranch.id,
-                    role: "manager",
+                    role: null,
                 },
             });
         });
@@ -499,11 +502,16 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                     sub: mockUser.id,
                     role: mockUser.role,
                     type: "refresh" as const,
+                    tokenVersion: mockUser.tokenVersion,
                     branchId: mockBranch.id,
                 };
 
                 jwtService.verifyAsync.mockResolvedValue(decodedPayload);
                 prismaService.user.findUnique.mockResolvedValue(mockUser);
+                prismaService.user_branch.findFirst.mockResolvedValue({
+                    role: "admin",
+                    branch: mockBranch,
+                });
 
                 // #when
                 await service.refreshTokens(refreshToken);
@@ -528,6 +536,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                     sub: mockUser.id,
                     role: mockUser.role,
                     type: "refresh" as const,
+                    tokenVersion: mockUser.tokenVersion,
                 };
 
                 jwtService.verifyAsync.mockResolvedValue(decodedPayload);
@@ -556,6 +565,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                     sub: mockUser.id,
                     role: mockUser.role,
                     type: "refresh" as const,
+                    tokenVersion: mockUser.tokenVersion,
                     branchId: mockBranch.id,
                 };
 
@@ -576,6 +586,28 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 expect(accessCall?.[0]).not.toHaveProperty("branchId");
                 expect(refreshCall?.[0]).not.toHaveProperty("branchId");
             });
+        });
+
+        it.each([
+            [{ ...mockBranch, isActive: false }, "inactive"],
+            [{ ...mockBranch, slug: "incheon-bupyeong" }, "hidden"],
+        ])("should drop branchId when the branch is %s", async (branch) => {
+            jwtService.verifyAsync.mockResolvedValue({
+                sub: mockUser.id,
+                role: mockUser.role,
+                type: "refresh",
+                tokenVersion: mockUser.tokenVersion,
+                branchId: mockBranch.id,
+            });
+            prismaService.user.findUnique.mockResolvedValue(mockUser);
+            prismaService.user_branch.findFirst.mockResolvedValue({ role: "admin", branch });
+
+            await service.refreshTokens("valid-refresh-token");
+
+            for (const [payload] of jwtService.signAsync.mock.calls) {
+                expect(payload).not.toHaveProperty("branchId");
+                expect(payload).not.toHaveProperty("branchRole");
+            }
         });
     });
 

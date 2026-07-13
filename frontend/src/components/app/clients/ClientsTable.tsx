@@ -10,6 +10,7 @@ import { ClientDetailModal } from "./ClientDetailModal";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { ExpandableSearch } from "@/components/app/v3/ExpandableSearch";
+import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -67,6 +68,7 @@ export function ClientsTable() {
     const [detailModalOpen, setDetailModalOpen] = useState(false);
     const [selectedClient, setSelectedClient] = useState<Client | null>(null);
     const [editingClient, setEditingClient] = useState<Client | null>(null);
+    const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState<ServiceStatus | null>(null);
 
@@ -103,13 +105,18 @@ export function ClientsTable() {
         setFormDialogOpen(true);
     };
 
-    const handleDelete = async (id: number) => {
-        if (window.confirm(t(locale, "clients.delete-confirm"))) {
-            try {
-                await deleteClient.mutateAsync(id);
-            } catch (err) {
-                console.error("Failed to delete client:", err);
-            }
+    const handleDeleteRequest = (id: number) => {
+        setDeleteTargetClientId(id);
+    };
+
+    const handleDeleteConfirm = async () => {
+        if (deleteTargetClientId === null) return;
+
+        try {
+            await deleteClient.mutateAsync(deleteTargetClientId);
+            setDeleteTargetClientId(null);
+        } catch (err) {
+            console.error("Failed to delete client:", err);
         }
     };
 
@@ -294,13 +301,28 @@ export function ClientsTable() {
                 onClose={handleDetailModalClose}
                 client={selectedClient}
                 onEdit={handleEdit}
-                onDelete={handleDelete}
+                onDelete={handleDeleteRequest}
             />
 
             <ClientFormDialog
                 open={formDialogOpen}
                 onClose={handleFormDialogClose}
                 client={editingClient}
+            />
+
+            <ApprovalTwoButtonModal
+                open={deleteTargetClientId !== null}
+                onOpenChange={(open) => {
+                    if (!open) setDeleteTargetClientId(null);
+                }}
+                dataComponent="clients-table-delete-approval"
+                title={t(locale, "clients.delete-confirm")}
+                description="삭제한 고객 정보는 복구할 수 없습니다."
+                approvalLabel={t(locale, "common.delete")}
+                pendingLabel="삭제 중..."
+                approvalVariant="destructive"
+                isPending={deleteClient.isPending}
+                onApprove={() => void handleDeleteConfirm()}
             />
         </div>
     );

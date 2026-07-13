@@ -15,6 +15,7 @@ function createHistoryRecord(
     triggerJobId: null,
     receiver: "010-6621-1878",
     clientId: null,
+    recipientPhone: "010-6621-1878",
     messageBody: "안녕하세요",
     variables: {},
     status: "sent",

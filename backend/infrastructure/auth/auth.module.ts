@@ -12,6 +12,7 @@ import { SbAuthTokenRepository } from "../database/repositories/sb.auth-token.re
 import { EMAIL_PORT } from "../../domain/ports/email.port";
 import { AUTH_TOKEN_REPOSITORY } from "../../domain/repositories/auth-token.repository.interface";
 import { getJwtSecret } from "./jwt-secret";
+import { JwtStrategy } from "./jwt.strategy";
 
 @Module({
     imports: [
@@ -28,6 +29,7 @@ import { getJwtSecret } from "./jwt-secret";
         KakaoStrategy,
         LocalStrategy,
         RateLimitGuard,
+        JwtStrategy,
         {
             provide: EMAIL_PORT,
             useClass: ResendEmailAdapter,

@@ -53,6 +53,7 @@ function makeStorageState() {
       role: "owner",
       branchId,
       branchRole: "admin",
+      tokenVersion: 0,
       type: "access",
       exp,
     },

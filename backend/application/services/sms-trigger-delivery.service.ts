@@ -1,6 +1,5 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { AligoService } from "application/services/aligo.service";
-import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SystemTemplateService } from "application/services/system-template.service";
 import { SendAligoSmsResult } from "application/dto/aligo/send-sms.dto";
 import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey } from "domain/constants/system-template-registry";
@@ -12,6 +11,7 @@ import {
     SERVICE_FEEDBACK_LINK_SMS_TRIGGER_TYPE,
 } from "domain/constants/service-feedback-link-message";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import {
     MessageLogEntity,
     MessageLogStatus,
@@ -21,6 +21,7 @@ import {
     MESSAGE_LOG_REPOSITORY,
     IMessageLogRepository,
 } from "domain/repositories/message-log.repository.interface";
+import { isTransientPrismaConnectivityError } from "infrastructure/database/prisma-error.utils";
 
 interface SmsTemplateDeliveryConfig {
     smsLogTemplateKey: string;
@@ -86,7 +87,7 @@ export const SMS_TEMPLATE_DELIVERY: Partial<Record<MessageTriggerTemplateKey, Sm
         automationKey: SERVICE_FEEDBACK_LINK_SMS_AUTOMATION_KEY,
         triggerType: SERVICE_FEEDBACK_LINK_SMS_TRIGGER_TYPE,
         title: SERVICE_FEEDBACK_LINK_SMS_TITLE,
-        usePayloadMessage: true,
+        systemTemplateKey: SystemTemplateKey.SERVICE_FEEDBACK_LINK,
     },
 };
 
@@ -95,7 +96,6 @@ export class SmsTriggerDeliveryService {
     private readonly logger = new Logger(SmsTriggerDeliveryService.name);
 
     constructor(
-        private readonly messageSenderApprovalService: MessageSenderApprovalService,
         private readonly aligoService: AligoService,
         private readonly systemTemplateService: SystemTemplateService,
         @Inject(MESSAGE_LOG_REPOSITORY)
@@ -108,7 +108,7 @@ export class SmsTriggerDeliveryService {
 
     async sendJob(job: MessageTriggerJobEntity): Promise<boolean> {
         if (!job.branchId) {
-            return false;
+            throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
 
         const config = SMS_TEMPLATE_DELIVERY[job.templateKey];
@@ -116,7 +116,6 @@ export class SmsTriggerDeliveryService {
             return false;
         }
 
-        await this.messageSenderApprovalService.ensureApproved(job.branchId);
         return this.sendSmsJob(job, config);
     }
 
@@ -127,7 +126,10 @@ export class SmsTriggerDeliveryService {
         const payload = job.payload;
         const baseVariables: Record<string, string> = {
             name: payload.recipientName,
+            employeeName: payload.recipientName,
             clientName: payload.recipientName,
+            buttonUrl: payload.buttonUrl ?? "",
+            feedbackUrl: payload.buttonUrl ?? "",
             ...payload.templateVariables,
         };
         if (config.systemTemplateKey === SystemTemplateKey.PRICE_INFO) {
@@ -200,6 +202,13 @@ export class SmsTriggerDeliveryService {
             const template = await this.systemTemplateService.getByKey(systemTemplateKey);
             return this.renderTemplate(template.content, variables);
         } catch (error) {
+            if (isTransientPrismaConnectivityError(error)) {
+                throw new TriggerJobDeferredError(
+                    "transient",
+                    error instanceof Error ? error.message : String(error),
+                );
+            }
+
             this.logger.warn(
                 `[SMS Automation] Failed to load system template ${systemTemplateKey}, using registry default: ${
                     error instanceof Error ? error.message : String(error)
@@ -269,6 +278,8 @@ export class SmsTriggerDeliveryService {
                     : null,
                 now,
                 now,
+                params.job.payload.recipientName,
+                params.job.payload.recipientPhone,
             ),
         );
     }
