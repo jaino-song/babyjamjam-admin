@@ -4,8 +4,11 @@ import { EmployeeFeedbackLinkService } from "application/services/employee-feedb
 import {
     SERVICE_FEEDBACK_LINK_RULE_ID,
     SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
+    SERVICE_FEEDBACK_LINK_SMS_TITLE,
 } from "domain/constants/service-feedback-link-message";
 import {
+    MessageTriggerEventType,
+    MessageTriggerOffsetType,
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
@@ -19,6 +22,9 @@ describe("EmployeeFeedbackLinkService", () => {
     const createPrisma = () => ({
         employee_schedule: {
             findUnique: jest.fn(),
+        },
+        message_trigger_rule: {
+            upsert: jest.fn().mockResolvedValue(undefined),
         },
     });
     const createTokenService = () => ({
@@ -96,7 +102,7 @@ describe("EmployeeFeedbackLinkService", () => {
         }));
     });
 
-    it("sendNow issues a fresh token and upserts an immediate pending job", async () => {
+    it("sendNow grants a 24-hour late token and upserts an immediate pending job", async () => {
         const prisma = createPrisma();
         const tokenService = createTokenService();
         const jobRepository = createJobRepository();
@@ -113,19 +119,57 @@ describe("EmployeeFeedbackLinkService", () => {
         const result = await service.sendNow(10);
         const after = Date.now();
 
-        expect(tokenService.issueLink).toHaveBeenCalledWith({
+        expect(tokenService.issueLink).toHaveBeenCalledWith(expect.objectContaining({
             branchId: "branch-1",
             scheduleId: 10,
             employeeId: 30,
             expectedPhone: "010-1111-2222",
-            expiresAt: new Date("2026-07-12T20:00:00+09:00"),
-        });
+        }));
+        const issuedExpiry = tokenService.issueLink.mock.calls[0]?.[0].expiresAt as Date;
+        expect(issuedExpiry.getTime()).toBeGreaterThanOrEqual(before + 24 * 60 * 60 * 1000);
+        expect(issuedExpiry.getTime()).toBeLessThanOrEqual(after + 24 * 60 * 60 * 1000);
         const job = jobRepository.upsertPending.mock.calls[0]?.[0] as MessageTriggerJobEntity;
         expect(job.scheduledFor.getTime()).toBeGreaterThanOrEqual(before);
         expect(job.scheduledFor.getTime()).toBeLessThanOrEqual(after);
         expect(result.scheduledFor).toBe(job.scheduledFor);
         expect(job.dedupeKey).toBe(`${SERVICE_FEEDBACK_LINK_RULE_ID}:schedule:10:primary`);
         expect(job.payload.buttonUrl).toBe("https://mobile.test/feedback/efl_token");
+    });
+
+    it("provisions the fixed system rule before issuing a feedback token", async () => {
+        const prisma = createPrisma();
+        const tokenService = createTokenService();
+        const service = new EmployeeFeedbackLinkService(
+            prisma as unknown as PrismaService,
+            tokenService as never,
+            createConfigService() as unknown as ConfigService,
+            createJobRepository() as unknown as IMessageTriggerJobRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
+        );
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+
+        await service.sendNow(10);
+
+        expect(prisma.message_trigger_rule.upsert).toHaveBeenCalledWith({
+            where: { id: SERVICE_FEEDBACK_LINK_RULE_ID },
+            create: {
+                id: SERVICE_FEEDBACK_LINK_RULE_ID,
+                branchId: null,
+                name: SERVICE_FEEDBACK_LINK_SMS_TITLE,
+                isActive: true,
+                eventType: MessageTriggerEventType.SERVICE_START,
+                offsetType: MessageTriggerOffsetType.SAME_DAY,
+                offsetDays: 0,
+                recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+                templateKey: MessageTriggerTemplateKey.SERVICE_FEEDBACK_LINK,
+                isDefault: false,
+                jobsStale: false,
+            },
+            update: {},
+        });
+        expect(prisma.message_trigger_rule.upsert.mock.invocationCallOrder[0]).toBeLessThan(
+            tokenService.issueLink.mock.invocationCallOrder[0]!,
+        );
     });
 
     it("supersedes retryable stale SMS logs before issuing a replacement token", async () => {

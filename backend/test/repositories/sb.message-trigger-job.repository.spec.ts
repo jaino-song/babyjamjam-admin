@@ -252,7 +252,9 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(sqlText).toMatch(
             /INSERT INTO "message_trigger_job" \([\s\S]*next_attempt_at,\s*updated_at[\s\S]*\)\s*VALUES/,
         );
-        expect(sqlText).toContain("::uuid");
+        // branch_id is the ONLY uuid-cast parameter: rule_id is a text column and system rules
+        // use non-uuid ids ("system:service_feedback_link") — casting it to uuid breaks the insert.
+        expect(sqlText.match(/::uuid/g)).toHaveLength(1);
         expect(sqlText).toMatch(/0,\s*NULL,\s*now\(\)/);
         const normalizedSqlText = sqlText.replace(/\s+/g, " ");
         expect(normalizedSqlText).toContain('ON CONFLICT ("dedupe_key") DO UPDATE SET');
@@ -298,6 +300,98 @@ describe("SbMessageTriggerJobRepository", () => {
                 status: "canceled",
                 canceledAt: now,
                 cancelReason: "rule disabled",
+            },
+        });
+    });
+
+    it("cancelPendingByClientContext cancels client and assignment jobs in one batch", async () => {
+        messageTriggerJobModel.updateMany.mockResolvedValue({ count: 2 });
+
+        await expect(
+            repository.cancelPendingByClientContext("branch-1", 42, "Client deleted"),
+        ).resolves.toBe(2);
+
+        expect(messageTriggerJobModel.updateMany).toHaveBeenCalledWith({
+            where: {
+                branchId: "branch-1",
+                status: "pending",
+                OR: [
+                    { clientId: 42 },
+                    { employeeSchedule: { is: { clientId: 42 } } },
+                ],
+            },
+            data: {
+                status: "canceled",
+                canceledAt: now,
+                cancelReason: "Client deleted",
+            },
+        });
+    });
+
+    it("cancelOrphanedPending cancels legacy pending jobs whose relations were deleted", async () => {
+        messageTriggerJobModel.updateMany.mockResolvedValue({ count: 2 });
+
+        await expect(
+            repository.cancelOrphanedPending("Related client or schedule deleted", "branch-1"),
+        ).resolves.toBe(2);
+
+        expect(messageTriggerJobModel.updateMany).toHaveBeenCalledWith({
+            where: {
+                branchId: "branch-1",
+                status: "pending",
+                clientId: null,
+                employeeScheduleId: null,
+            },
+            data: {
+                status: "canceled",
+                canceledAt: now,
+                cancelReason: "Related client or schedule deleted",
+            },
+        });
+    });
+
+    it("findRecoverableOrphanedClientJobs returns pending and cleanup-canceled client jobs", async () => {
+        messageTriggerJobModel.findMany.mockResolvedValue([]);
+
+        await repository.findRecoverableOrphanedClientJobs("branch-1", 25);
+
+        expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith({
+            where: {
+                branchId: "branch-1",
+                clientId: null,
+                employeeScheduleId: null,
+                recipientType: MessageTriggerRecipientType.CLIENT,
+                OR: [
+                    { status: "pending" },
+                    {
+                        status: "canceled",
+                        cancelReason: {
+                            in: ["Client deleted", "Related client or schedule deleted"],
+                        },
+                    },
+                ],
+            },
+            orderBy: { createdAt: "asc" },
+            take: 25,
+        });
+    });
+
+    it("markOrphanedJobsReconciled records the replacement client", async () => {
+        messageTriggerJobModel.updateMany.mockResolvedValue({ count: 2 });
+
+        await expect(
+            repository.markOrphanedJobsReconciled(["job-1", "job-2"], 42),
+        ).resolves.toBe(2);
+
+        expect(messageTriggerJobModel.updateMany).toHaveBeenCalledWith({
+            where: {
+                id: { in: ["job-1", "job-2"] },
+                status: "canceled",
+                clientId: null,
+                employeeScheduleId: null,
+            },
+            data: {
+                cancelReason: "Reconciled to replacement client:42",
             },
         });
     });

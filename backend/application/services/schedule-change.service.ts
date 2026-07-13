@@ -15,6 +15,7 @@ import {
     EmployeeFeedbackTokenService,
     FeedbackTokenContext,
 } from "./employee-feedback-token.service";
+import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 
 function toIso(d: Date): string {
     return d.toISOString().slice(0, 10);
@@ -71,6 +72,7 @@ export class ScheduleChangeService {
         private readonly prisma: PrismaService,
         private readonly tokenService: EmployeeFeedbackTokenService,
         @Optional() private readonly triggerService?: MessageTriggerService,
+        @Optional() private readonly lifecycleService?: ServiceRecordLifecycleService,
     ) {}
 
     private computeTarget(
@@ -131,17 +133,25 @@ export class ScheduleChangeService {
     }
 
     async preview(ctx: FeedbackTokenContext): Promise<{ sessionIndex: number; fromDate: string; toDate: string }> {
+        const record = ctx.serviceRecordCaseId
+            ? await this.prisma.service_record_case.findUnique({ where: { id: ctx.serviceRecordCaseId } })
+            : await this.lifecycleService?.ensureForSchedule(ctx.scheduleId);
         const schedule = await this.prisma.employee_schedule.findUnique({
             where: { id: ctx.scheduleId },
             include: { client: true },
         });
         if (!schedule) throw new NotFoundException("Assignment not found");
+        if (!record) throw new NotFoundException("Service record not found");
 
         const days = await this.prisma.service_record_day.findMany({
-            where: { scheduleId: ctx.scheduleId },
-            orderBy: { sessionIndex: "asc" },
+            where: { serviceRecordCaseId: record.id },
+            orderBy: { caseSessionIndex: "asc" },
         });
-        const target = this.computeTarget(schedule, schedule.client, days);
+        const target = this.computeTarget(schedule, schedule.client, days.map((day) => ({
+            sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
+            serviceDate: day.serviceDate,
+            locked: day.locked,
+        })));
 
         return {
             sessionIndex: target.sessionIndex,
@@ -151,11 +161,15 @@ export class ScheduleChangeService {
     }
 
     async createRequest(ctx: FeedbackTokenContext): Promise<{ id: string; sessionIndex: number; fromDate: string; toDate: string }> {
+        const record = ctx.serviceRecordCaseId
+            ? await this.prisma.service_record_case.findUnique({ where: { id: ctx.serviceRecordCaseId } })
+            : await this.lifecycleService?.ensureForSchedule(ctx.scheduleId);
         const schedule = await this.prisma.employee_schedule.findUnique({
             where: { id: ctx.scheduleId },
             include: { client: true },
         });
         if (!schedule) throw new NotFoundException("Assignment not found");
+        if (!record) throw new NotFoundException("Service record not found");
 
         const existing = await this.prisma.schedule_change_request.findFirst({
             where: { scheduleId: ctx.scheduleId, status: "pending" },
@@ -165,10 +179,14 @@ export class ScheduleChangeService {
         }
 
         const days = await this.prisma.service_record_day.findMany({
-            where: { scheduleId: ctx.scheduleId },
-            orderBy: { sessionIndex: "asc" },
+            where: { serviceRecordCaseId: record.id },
+            orderBy: { caseSessionIndex: "asc" },
         });
-        const target = this.computeTarget(schedule, schedule.client, days);
+        const target = this.computeTarget(schedule, schedule.client, days.map((day) => ({
+            sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
+            serviceDate: day.serviceDate,
+            locked: day.locked,
+        })));
         if (!schedule.endDate) {
             throw new BadRequestException("Assignment has no end date");
         }
@@ -219,15 +237,21 @@ export class ScheduleChangeService {
 
                 const schedule = await tx.employee_schedule.findUnique({
                     where: { id: request.scheduleId },
-                    include: { client: true },
+                    include: { client: true, primaryEmployee: true },
                 });
                 if (!schedule) throw new NotFoundException("Assignment not found");
+                const record = await tx.service_record_case.findUnique({ where: { clientId: request.clientId } });
+                if (!record) throw new NotFoundException("Service record not found");
 
                 const days = await tx.service_record_day.findMany({
-                    where: { scheduleId: request.scheduleId },
-                    orderBy: { sessionIndex: "asc" },
+                    where: { serviceRecordCaseId: record.id },
+                    orderBy: { caseSessionIndex: "asc" },
                 });
-                const target = this.computeTarget(schedule, schedule.client, days);
+                const target = this.computeTarget(schedule, schedule.client, days.map((day) => ({
+                    sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
+                    serviceDate: day.serviceDate,
+                    locked: day.locked,
+                })));
                 if (target.sessionIndex !== request.sessionIndex || target.fromDate !== toIso(request.fromDate)) {
                     throw new StaleRequestError(request.id);
                 }
@@ -235,15 +259,20 @@ export class ScheduleChangeService {
                 const serviceDate = toDbDate(target.toDate);
                 await tx.service_record_day.upsert({
                     where: {
-                        scheduleId_sessionIndex: {
-                            scheduleId: request.scheduleId,
-                            sessionIndex: target.sessionIndex,
+                        serviceRecordCaseId_caseSessionIndex: {
+                            serviceRecordCaseId: record.id,
+                            caseSessionIndex: target.sessionIndex,
                         },
                     },
                     update: { serviceDate },
                     create: {
                         branchId: request.branchId,
                         scheduleId: request.scheduleId,
+                        serviceRecordCaseId: record.id,
+                        caseSessionIndex: target.sessionIndex,
+                        employeeId: schedule.primaryEmployeeId,
+                        employeeNameSnapshot: schedule.primaryEmployee.name,
+                        formVersion: record.formVersion,
                         sessionIndex: target.sessionIndex,
                         serviceDate,
                     },
@@ -251,18 +280,21 @@ export class ScheduleChangeService {
 
                 const unlockedRows = await tx.service_record_day.findMany({
                     where: {
-                        scheduleId: request.scheduleId,
-                        sessionIndex: { gt: target.sessionIndex },
+                        serviceRecordCaseId: record.id,
+                        caseSessionIndex: { gt: target.sessionIndex },
                         locked: false,
                     },
-                    orderBy: { sessionIndex: "asc" },
+                    orderBy: { caseSessionIndex: "asc" },
                 });
                 for (const row of unlockedRows) {
                     await tx.service_record_day.update({
                         where: { id: row.id },
                         data: {
                             serviceDate: toDbDate(
-                                addBusinessDaysKr(target.toDate, row.sessionIndex - target.sessionIndex),
+                                addBusinessDaysKr(
+                                    target.toDate,
+                                    (row.caseSessionIndex ?? row.sessionIndex) - target.sessionIndex,
+                                ),
                             ),
                         },
                     });
@@ -278,11 +310,21 @@ export class ScheduleChangeService {
                     data: { endDate: newEndDate },
                 });
 
-                await this.tokenService.extendExpiryForSchedule(
-                    request.scheduleId,
-                    getServiceFeedbackTokenExpiresAt(newEndDate),
-                    tx,
-                );
+                const syncedRecord = await this.lifecycleService?.ensureForClient(request.clientId, tx);
+
+                if (syncedRecord) {
+                    await this.tokenService.extendExpiryForCase(
+                        syncedRecord.id,
+                        getServiceFeedbackTokenExpiresAt(newEndDate),
+                        tx,
+                    );
+                } else {
+                    await this.tokenService.extendExpiryForSchedule(
+                        request.scheduleId,
+                        getServiceFeedbackTokenExpiresAt(newEndDate),
+                        tx,
+                    );
+                }
 
                 return tx.schedule_change_request.update({
                     where: { id: request.id },
@@ -309,12 +351,12 @@ export class ScheduleChangeService {
             throw error;
         } finally {
             if (scheduleIdForSync && branchIdForSync) {
-                this.triggerService
+                await this.triggerService
                     ?.syncEmployeeAssignmentRulesForSchedule(branchIdForSync, scheduleIdForSync, true)
                     ?.catch(() => undefined);
             }
             if (clientIdForSync && branchIdForSync) {
-                this.triggerService
+                await this.triggerService
                     ?.syncClientRulesForClient(branchIdForSync, clientIdForSync, false)
                     ?.catch((error) => {
                         this.logger.error(

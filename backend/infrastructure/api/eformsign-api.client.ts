@@ -203,6 +203,46 @@ export class EformsignApiClient implements IEformsignClientRepository {
         return [...inProgress, ...completed];
     }
 
+    async findDocumentsByTitle(
+        accessToken: string,
+        title: string,
+    ): Promise<EformsignApiDocumentResponse[]> {
+        this.assertConfigured();
+        const [inProgress, completed] = await Promise.all([
+            this.listDocumentsByTitle(accessToken, "01", title),
+            this.listDocumentsByTitle(accessToken, "03", title),
+        ]);
+        return [...inProgress, ...completed].filter((document) => document.document_name === title);
+    }
+
+    private async listDocumentsByTitle(
+        accessToken: string,
+        type: "01" | "03",
+        title: string,
+    ): Promise<EformsignApiDocumentResponse[]> {
+        const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/list_document`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({
+                type,
+                title_and_content: title,
+                title,
+                content: "",
+                limit: "100",
+                skip: "0",
+            }),
+        });
+        if (!response.ok) {
+            const errorData = await response.text();
+            throw new Error(`Failed to find document by title: ${response.status} - ${errorData}`);
+        }
+        const data: EformsignApiListResponse = await response.json();
+        return data.documents ?? [];
+    }
+
     /**
      * Get single document info from eformsign API (uses DOC API URL)
      * GET /v2.0/api/documents/{DOCUMENT_ID}

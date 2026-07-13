@@ -75,6 +75,22 @@ jobs:
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-eformsign-document-relations.sql
 
+      - name: Apply client-owned service-record patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713000000_add_client_service_record_case/migration.sql
+
+      - name: Verify client-owned service-record patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-service-record-cases.sql
+
+      - name: Apply user approval + token-version patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713100000_add_user_approval_and_token_version/migration.sql
+
+      - name: Verify user approval + token-version patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-user-approval.sql
+
   apply-preview:
     name: apply preview database patches
     if: >-
@@ -251,11 +267,32 @@ jobs:
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-eformsign-document-relations.sql
 
+      - name: Apply client-owned service-record patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713000000_add_client_service_record_case/migration.sql
+
+      - name: Verify client-owned service-record patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-service-record-cases.sql
+
+      - name: Apply user approval + token-version patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713100000_add_user_approval_and_token_version/migration.sql
+
+      - name: Verify user approval + token-version patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-user-approval.sql
+
   apply-production:
     name: apply production database patches
+    needs: [apply-preview]
     if: >-
-      (github.event_name == 'push' && github.ref_name == 'main') ||
-      (github.event_name == 'workflow_dispatch' && inputs.target == 'production')
+      always() &&
+      (
+        (github.event_name == 'push' && github.ref_name == 'preview' && needs['apply-preview'].result == 'success') ||
+        (github.event_name == 'push' && github.ref_name == 'main') ||
+        (github.event_name == 'workflow_dispatch' && inputs.target == 'production')
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: production
@@ -426,3 +463,19 @@ jobs:
       - name: Verify eformsign document relation patches
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-eformsign-document-relations.sql
+
+      - name: Apply client-owned service-record patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713000000_add_client_service_record_case/migration.sql
+
+      - name: Verify client-owned service-record patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-service-record-cases.sql
+
+      - name: Apply user approval + token-version patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713100000_add_user_approval_and_token_version/migration.sql
+
+      - name: Verify user approval + token-version patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-user-approval.sql

@@ -177,16 +177,6 @@ export class EformsignDocController {
     }
 
     /**
-     * GET /eformsign-docs/feedback-template-id
-     * Exposes the configured service-record feedback template id for UI-only filtering.
-     */
-    @Get("feedback-template-id")
-    getFeedbackTemplateId(): { templateId: string | null } {
-        const templateId = this.configService.get<string>("EFORMSIGN_FEEDBACK_TEMPLATE_ID")?.trim();
-        return { templateId: templateId || null };
-    }
-
-    /**
      * GET /eformsign-docs/client?clientId=123
      * Find all stored eformsign documents linked to a client
      */

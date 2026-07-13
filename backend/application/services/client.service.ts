@@ -10,12 +10,15 @@ import {
 } from "application/usecases/client";
 import { ClientEntity } from "domain/entities/client.entity";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
+import { diffBusinessDaysKr } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { computeServiceStatus, isServiceStatus, SERVICE_STATUS, SERVICE_STATUS_VALUES, ServiceStatusType } from "domain/value-objects/service-status.vo";
 import { MessageTriggerService } from "./message-trigger.service";
 import { EmployeeFeedbackLinkService } from "./employee-feedback-link.service";
+import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 
 const FILTER_DAYS_THRESHOLD = 7;
+const CONTRACT_REQUIRED_BUSINESS_DAYS_THRESHOLD = 3;
 const ACTION_REQUIRED_SIGNATURE_THRESHOLD_DAYS = 2;
 const ACTION_REQUIRED_SEND_THRESHOLD_DAYS = 6;
 const COMPLETED_DOCUMENT_STATUS_TYPES = new Set(["003", "012", "022", "032", "050", "062", "072", "092"]);
@@ -141,6 +144,7 @@ export class ClientService {
         private readonly clientRepository: IClientRepository,
         @Optional() private readonly triggerService?: MessageTriggerService,
         @Optional() private readonly employeeFeedbackLinkService?: EmployeeFeedbackLinkService,
+        @Optional() private readonly serviceRecordLifecycleService?: ServiceRecordLifecycleService,
     ) {}
 
     private assertAllowedServiceStatus(status: string | null | undefined): void {
@@ -177,12 +181,24 @@ export class ClientService {
     private buildClientBadges(params: {
         serviceStatus: string | null;
         documentStatus: DocumentStatusType;
+        startDate: Date | null;
         breastPump: boolean;
         careCenter: boolean | null;
     }): ClientBadge[] {
         const badges: ClientBadge[] = [];
+        const businessDaysUntilStart = params.startDate
+            ? diffBusinessDaysKr(params.startDate.toISOString().slice(0, 10))
+            : null;
+        const isWaitingWithinContractWindow =
+            params.serviceStatus === SERVICE_STATUS.WAITING &&
+            businessDaysUntilStart !== null &&
+            businessDaysUntilStart >= 0 &&
+            businessDaysUntilStart <= CONTRACT_REQUIRED_BUSINESS_DAYS_THRESHOLD;
+        const requiresContract =
+            params.documentStatus !== "completed" &&
+            (params.serviceStatus === SERVICE_STATUS.ACTIVE || isWaitingWithinContractWindow);
 
-        if (params.serviceStatus === SERVICE_STATUS.ACTIVE && params.documentStatus !== "completed") {
+        if (requiresContract) {
             badges.push({
                 key: "contract_required",
                 status: "terminated",
@@ -380,7 +396,7 @@ export class ClientService {
                             ?.catch(() => undefined);
                     }
                     if (assignment.createdScheduleId !== null) {
-                        this.triggerService
+                        await this.triggerService
                             ?.syncEmployeeAssignmentRulesForSchedule(branchid, assignment.createdScheduleId, true)
                             ?.catch((error) => {
                                 this.logger.error(`Failed to sync employee assignment triggers: ${error}`);
@@ -392,6 +408,7 @@ export class ClientService {
                             });
                     }
                 }
+                await this.serviceRecordLifecycleService?.ensureForClient(existing.id);
                 return existing;
             }
         }
@@ -437,8 +454,10 @@ export class ClientService {
             client = await this.createClientUsecase.execute(branchid, createParams);
         }
 
+        await this.serviceRecordLifecycleService?.ensureForClient(client.id);
+
         if (this.triggerService) {
-            this.triggerService
+            await this.triggerService
                 .ensureDefaultRulesForBranch(branchid)
                 .then(() => this.triggerService!.syncClientRulesForClient(branchid, client.id, true, params.suppressGreetingSms ?? false))
                 .catch((error) => {
@@ -446,7 +465,7 @@ export class ClientService {
                 });
         }
         if (createdScheduleId !== null) {
-            this.triggerService
+            await this.triggerService
                 ?.syncEmployeeAssignmentRulesForSchedule(branchid, createdScheduleId, true)
                 ?.catch((error) => {
                     this.logger.error(`Failed to sync employee assignment triggers: ${error}`);
@@ -610,6 +629,7 @@ export class ClientService {
             const badges = this.buildClientBadges({
                 serviceStatus: computedStatus,
                 documentStatus,
+                startDate: client.startDate,
                 breastPump: client.breastPump,
                 careCenter: client.careCenter,
             });
@@ -734,6 +754,16 @@ export class ClientService {
         }
         this.assertAllowedServiceStatus(params.serviceStatus);
         await this.assertAllowedClientArea(branchid, params.areaId);
+        await this.serviceRecordLifecycleService?.validatePeriodChange({
+            clientId: id,
+            startDate: params.startDate === undefined
+                ? undefined
+                : params.startDate ? new Date(params.startDate) : null,
+            endDate: params.endDate === undefined
+                ? undefined
+                : params.endDate ? new Date(params.endDate) : null,
+            duration: params.duration,
+        });
 
         const normalizedPhone = normalizePhone(params.phone ?? null);
         if (normalizedPhone) {
@@ -787,13 +817,14 @@ export class ClientService {
             eDocId: params.eDocId,
             areaId: params.areaId,
         });
+        await this.serviceRecordLifecycleService?.ensureForClient(id);
         if (this.triggerService) {
-            this.triggerService.syncClientRulesForClient(branchid, id, false).catch((error) => {
+            await this.triggerService.syncClientRulesForClient(branchid, id, false).catch((error) => {
                 this.logger.error(`Failed to sync client trigger rules: ${error}`);
             });
         }
         if (createdScheduleId !== null) {
-            this.triggerService
+            await this.triggerService
                 ?.syncEmployeeAssignmentRulesForSchedule(branchid, createdScheduleId, true)
                 ?.catch((error) => {
                     this.logger.error(`Failed to sync employee assignment triggers: ${error}`);
@@ -828,13 +859,18 @@ export class ClientService {
             (reason ? `: ${reason}` : "")
         );
 
+        await this.serviceRecordLifecycleService?.validatePeriodChange({
+            clientId,
+            endDate: new Date(),
+        });
+
         // Update client with terminated status and set endDate to today
         const updatedClient = await this.updateClientUsecase.execute(branchid, clientId, {
             serviceStatus: SERVICE_STATUS.TERMINATED,
             endDate: new Date(),
         });
         if (this.triggerService) {
-            this.triggerService.syncClientRulesForClient(branchid, clientId, false).catch((error) => {
+            await this.triggerService.syncClientRulesForClient(branchid, clientId, false).catch((error) => {
                 this.logger.error(`Failed to sync client trigger rules: ${error}`);
             });
         }
@@ -853,6 +889,7 @@ export class ClientService {
         for (const activeSchedule of activeSchedules) {
             this.employeeFeedbackLinkService?.revoke(activeSchedule.id)?.catch(() => undefined);
         }
+        await this.serviceRecordLifecycleService?.markTerminated(clientId);
 
         return updatedClient;
     }
@@ -917,6 +954,12 @@ export class ClientService {
             ?.catch((error) => {
                 this.logger.error(`Failed to sync replacement assignment triggers: ${error}`);
             });
+        await this.serviceRecordLifecycleService?.ensureForClient(clientId);
+        this.employeeFeedbackLinkService
+            ?.scheduleForServiceStart(replacementSchedule.id)
+            ?.catch((error) => {
+                this.logger.error(`Failed to schedule replacement feedback link SMS: ${error}`);
+            });
 
         return updatedClient;
     }
@@ -948,13 +991,16 @@ export class ClientService {
             client.endDate,
         );
 
-        return this.updateClientUsecase.execute(branchid, clientId, {
+        const updatedClient = await this.updateClientUsecase.execute(branchid, clientId, {
             serviceStatus: computedStatus,
         });
+        await this.serviceRecordLifecycleService?.ensureForClient(clientId);
+        return updatedClient;
     }
 
-    delete(branchid: string, id: number): Promise<void> {
-        return this.deleteClientUsecase.execute(branchid, id);
+    async delete(branchid: string, id: number): Promise<void> {
+        await this.triggerService?.cancelPendingJobsForClientDeletion(branchid, id);
+        await this.deleteClientUsecase.execute(branchid, id);
     }
 
     async getStats(branchid: string): Promise<{

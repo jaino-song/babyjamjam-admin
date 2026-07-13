@@ -21,6 +21,10 @@ export interface IMessageTriggerJobRepository {
         ruleId: string,
         employeeScheduleId: number,
     ): Promise<MessageTriggerJobEntity[]>;
+    cancelPendingByClientContext(branchId: string, clientId: number, reason: string): Promise<number>;
+    cancelOrphanedPending(reason: string, branchId?: string): Promise<number>;
+    findRecoverableOrphanedClientJobs(branchId: string, limit?: number): Promise<MessageTriggerJobEntity[]>;
+    markOrphanedJobsReconciled(jobIds: string[], replacementClientId: number): Promise<number>;
     cancelPendingByRuleId(ruleId: string, reason: string): Promise<number>;
     cancelPendingOlderThan(ruleId: string, cutoff: Date, reason: string): Promise<number>;
     upsertPending(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;

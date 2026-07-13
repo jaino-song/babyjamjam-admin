@@ -9,6 +9,7 @@ export interface FeedbackTokenContext {
     branchId: string;
     scheduleId: number;
     employeeId: number;
+    serviceRecordCaseId?: string | null;
 }
 
 export type VerifyPhoneResult =
@@ -49,21 +50,35 @@ export class EmployeeFeedbackTokenService {
         branchId: string;
         scheduleId: number;
         employeeId: number;
+        serviceRecordCaseId?: string | null;
         expectedPhone: string;
         expiresAt: Date;
     }): Promise<{ linkToken: string }> {
-        await this.revokeForSchedule(params.scheduleId);
-
         const linkToken = `efl_${randomBytes(32).toString("base64url")}`;
-        await this.prismaService.employee_feedback_token.create({
-            data: {
-                branchId: params.branchId,
-                scheduleId: params.scheduleId,
-                employeeId: params.employeeId,
-                linkTokenHash: this.hash(linkToken),
-                expectedPhoneHash: this.hash(this.normalizePhone(params.expectedPhone)),
-                expiresAt: params.expiresAt,
-            },
+        await this.prismaService.$transaction(async (tx) => {
+            await tx.employee_feedback_token.updateMany({
+                where: {
+                    active: true,
+                    OR: [
+                        { scheduleId: params.scheduleId },
+                        ...(params.serviceRecordCaseId
+                            ? [{ serviceRecordCaseId: params.serviceRecordCaseId }]
+                            : []),
+                    ],
+                },
+                data: { active: false, revokedAt: new Date() },
+            });
+            await tx.employee_feedback_token.create({
+                data: {
+                    branchId: params.branchId,
+                    scheduleId: params.scheduleId,
+                    employeeId: params.employeeId,
+                    serviceRecordCaseId: params.serviceRecordCaseId,
+                    linkTokenHash: this.hash(linkToken),
+                    expectedPhoneHash: this.hash(this.normalizePhone(params.expectedPhone)),
+                    expiresAt: params.expiresAt,
+                },
+            });
         });
         return { linkToken };
     }
@@ -124,12 +139,22 @@ export class EmployeeFeedbackTokenService {
             branchId: record.branchId,
             scheduleId: record.scheduleId,
             employeeId: record.employeeId,
+            ...(record.serviceRecordCaseId
+                ? { serviceRecordCaseId: record.serviceRecordCaseId }
+                : {}),
         };
     }
 
     async extendExpiryForSchedule(scheduleId: number, newExpiresAt: Date, tx?: Prisma.TransactionClient): Promise<void> {
         await (tx ?? this.prismaService).employee_feedback_token.updateMany({
             where: { scheduleId, active: true, revokedAt: null },
+            data: { expiresAt: newExpiresAt },
+        });
+    }
+
+    async extendExpiryForCase(serviceRecordCaseId: string, newExpiresAt: Date, tx?: Prisma.TransactionClient): Promise<void> {
+        await (tx ?? this.prismaService).employee_feedback_token.updateMany({
+            where: { serviceRecordCaseId, active: true, revokedAt: null },
             data: { expiresAt: newExpiresAt },
         });
     }

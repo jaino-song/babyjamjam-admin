@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { ScheduleChangeService } from "application/services/schedule-change.service";
 import { EmployeeFeedbackTokenService } from "application/services/employee-feedback-token.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
+import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 const SCHEDULE_ID = 11;
@@ -27,6 +28,9 @@ const createMockPrismaService = () => ({
         upsert: jest.fn(),
         update: jest.fn(),
     },
+    service_record_case: {
+        findUnique: jest.fn().mockResolvedValue({ id: "case-1", formVersion: 1 }),
+    },
     client: {
         update: jest.fn(),
     },
@@ -35,6 +39,12 @@ const createMockPrismaService = () => ({
 
 const createMockTokenService = () => ({
     extendExpiryForSchedule: jest.fn(),
+    extendExpiryForCase: jest.fn(),
+});
+
+const createMockLifecycleService = () => ({
+    ensureForSchedule: jest.fn().mockResolvedValue({ id: "case-1", formVersion: 1 }),
+    ensureForClient: jest.fn().mockResolvedValue({ id: "case-1", formVersion: 1 }),
 });
 
 const createMockTriggerService = () => ({
@@ -46,12 +56,14 @@ const createSchedule = (overrides: Record<string, unknown> = {}) => ({
     id: SCHEDULE_ID,
     branchId: BRANCH_ID,
     clientId: CLIENT_ID,
+    primaryEmployeeId: 5,
     startDate: toDbDate("2026-07-01"),
     endDate: toDbDate("2026-07-14"),
     client: {
         id: CLIENT_ID,
         duration: 10,
     },
+    primaryEmployee: { id: 5, name: "제공인력" },
     ...overrides,
 });
 
@@ -64,6 +76,11 @@ const createDay = (
     id: `day-${sessionIndex}`,
     branchId: BRANCH_ID,
     scheduleId: SCHEDULE_ID,
+    serviceRecordCaseId: "case-1",
+    caseSessionIndex: sessionIndex,
+    employeeId: 5,
+    employeeNameSnapshot: "제공인력",
+    formVersion: 1,
     sessionIndex,
     serviceDate: toDbDate(iso),
     locked,
@@ -107,6 +124,7 @@ describe("ScheduleChangeService", () => {
         branchId: BRANCH_ID,
         scheduleId: SCHEDULE_ID,
         employeeId: 5,
+        serviceRecordCaseId: "case-1",
     };
     const tenant = {
         branchId: BRANCH_ID,
@@ -118,6 +136,7 @@ describe("ScheduleChangeService", () => {
     let txPrismaService: ReturnType<typeof createMockPrismaService>;
     let tokenService: ReturnType<typeof createMockTokenService>;
     let triggerService: ReturnType<typeof createMockTriggerService>;
+    let lifecycleService: ReturnType<typeof createMockLifecycleService>;
     let events: string[];
 
     beforeEach(() => {
@@ -125,6 +144,7 @@ describe("ScheduleChangeService", () => {
         txPrismaService = createMockPrismaService();
         tokenService = createMockTokenService();
         triggerService = createMockTriggerService();
+        lifecycleService = createMockLifecycleService();
         events = [];
 
         prismaService.$transaction.mockImplementation(async (fn) => {
@@ -142,6 +162,7 @@ describe("ScheduleChangeService", () => {
             prismaService as unknown as PrismaService,
             tokenService as unknown as EmployeeFeedbackTokenService,
             triggerService as unknown as MessageTriggerService,
+            lifecycleService as unknown as ServiceRecordLifecycleService,
         );
     });
 
@@ -304,15 +325,20 @@ describe("ScheduleChangeService", () => {
             });
             expect(txPrismaService.service_record_day.upsert).toHaveBeenCalledWith({
                 where: {
-                    scheduleId_sessionIndex: {
-                        scheduleId: SCHEDULE_ID,
-                        sessionIndex: 3,
+                    serviceRecordCaseId_caseSessionIndex: {
+                        serviceRecordCaseId: "case-1",
+                        caseSessionIndex: 3,
                     },
                 },
                 update: { serviceDate: toDbDate("2026-07-06") },
                 create: {
                     branchId: BRANCH_ID,
                     scheduleId: SCHEDULE_ID,
+                    serviceRecordCaseId: "case-1",
+                    caseSessionIndex: 3,
+                    employeeId: 5,
+                    employeeNameSnapshot: "제공인력",
+                    formVersion: 1,
                     sessionIndex: 3,
                     serviceDate: toDbDate("2026-07-06"),
                 },
@@ -329,8 +355,8 @@ describe("ScheduleChangeService", () => {
                 where: { id: CLIENT_ID },
                 data: { endDate: toDbDate("2026-07-15") },
             });
-            expect(tokenService.extendExpiryForSchedule).toHaveBeenCalledWith(
-                SCHEDULE_ID,
+            expect(tokenService.extendExpiryForCase).toHaveBeenCalledWith(
+                "case-1",
                 new Date("2026-07-15T20:00:00+09:00"),
                 txPrismaService,
             );
@@ -436,6 +462,11 @@ describe("ScheduleChangeService", () => {
                     create: {
                         branchId: BRANCH_ID,
                         scheduleId: SCHEDULE_ID,
+                        serviceRecordCaseId: "case-1",
+                        caseSessionIndex: 3,
+                        employeeId: 5,
+                        employeeNameSnapshot: "제공인력",
+                        formVersion: 1,
                         sessionIndex: 3,
                         serviceDate: toDbDate("2026-07-06"),
                     },

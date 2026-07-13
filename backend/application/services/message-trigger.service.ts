@@ -46,6 +46,7 @@ import { MessageTriggerDeliveryService } from "./message-trigger-delivery.servic
 import { hasColumn, hasTable } from "infrastructure/database/schema-capabilities";
 import { MessageSenderApprovalService } from "./message-sender-approval.service";
 import { buildSmsClientVariables } from "./sms-client-variables";
+import { normalizePhone } from "application/utils/normalize-phone";
 import { SystemSettingService } from "./system-setting.service";
 import {
     DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
@@ -83,6 +84,9 @@ const DEFAULT_CLIENT_GREETING_TRIGGER: UpsertRuleParams = {
 };
 
 const MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON = "메시지 발송 승인 필요";
+const ORPHANED_TRIGGER_JOB_CANCEL_REASON = "Related client or schedule deleted";
+const EXPIRED_PENDING_JOB_CANCEL_REASON = "기존 발송 예정 24시간 경과";
+const MISSING_CATCH_UP_PREDECESSOR_CANCEL_REASON = "보충 발송 이전 순위 job 없음";
 const MS_PER_MINUTE = 60 * 1000;
 
 function isPrismaUniqueViolation(error: unknown): boolean {
@@ -206,6 +210,7 @@ export class MessageTriggerService {
             return [];
         }
 
+        await this.reconcileOrphanedClientJobs(branchId);
         const jobs = await this.jobRepository.findUpcomingPendingByBranch(branchId, limit);
         if (jobs.length === 0) {
             return [];
@@ -399,6 +404,7 @@ export class MessageTriggerService {
             return;
         }
 
+        await this.jobRepository.cancelOrphanedPending(ORPHANED_TRIGGER_JOB_CANCEL_REASON);
         await this.reclaimStaleProcessingJobs();
         const jobs = await this.jobRepository.findDuePending(100);
 
@@ -501,6 +507,9 @@ export class MessageTriggerService {
             if (rule.templateKey === MessageTriggerTemplateKey.CLIENT_GREETING && suppressGreeting) {
                 continue;
             }
+            if (includePast && this.shouldSkipPreStartCatchUp(rule, client)) {
+                continue;
+            }
             const job = this.buildClientJob(rule, client);
             if (!job) continue;
             candidateJobs.push({ rule, job });
@@ -512,6 +521,64 @@ export class MessageTriggerService {
 
         for (const { rule, job } of jobsToPersist) {
             await this.persistPendingJob(job, rule, includePast);
+        }
+    }
+
+    async cancelPendingJobsForClientDeletion(branchId: string, clientId: number): Promise<void> {
+        if (!(await this.hasTriggerSchema())) {
+            return;
+        }
+
+        await this.jobRepository.cancelPendingByClientContext(
+            branchId,
+            clientId,
+            "Client deleted",
+        );
+    }
+
+    private async reconcileOrphanedClientJobs(branchId: string): Promise<void> {
+        const orphanedJobs = await this.jobRepository.findRecoverableOrphanedClientJobs(branchId);
+        await this.jobRepository.cancelOrphanedPending(
+            ORPHANED_TRIGGER_JOB_CANCEL_REASON,
+            branchId,
+        );
+        if (orphanedJobs.length === 0) {
+            return;
+        }
+        if (!(await this.messageSenderApprovalService.isApproved(branchId))) {
+            return;
+        }
+
+        const clients = await this.prisma.client.findMany({
+            where: { branchId, phone: { not: null } },
+            select: { id: true, phone: true, createdAt: true },
+        });
+        const clientsByPhone = new Map<string, typeof clients>();
+        for (const client of clients) {
+            const phone = normalizePhone(client.phone);
+            if (!phone) continue;
+            const matches = clientsByPhone.get(phone) ?? [];
+            matches.push(client);
+            clientsByPhone.set(phone, matches);
+        }
+
+        const orphanIdsByReplacementClient = new Map<number, string[]>();
+        for (const job of orphanedJobs) {
+            const phone = normalizePhone(job.recipientPhone ?? job.payload.recipientPhone);
+            if (!phone) continue;
+            const matches = clientsByPhone.get(phone) ?? [];
+            if (matches.length !== 1) continue;
+            const [replacementClient] = matches;
+            if (!replacementClient || replacementClient.createdAt <= job.createdAt) continue;
+
+            const jobIds = orphanIdsByReplacementClient.get(replacementClient.id) ?? [];
+            jobIds.push(job.id);
+            orphanIdsByReplacementClient.set(replacementClient.id, jobIds);
+        }
+
+        for (const [clientId, jobIds] of orphanIdsByReplacementClient) {
+            await this.syncClientRulesForClient(branchId, clientId, true);
+            await this.jobRepository.markOrphanedJobsReconciled(jobIds, clientId);
         }
     }
 
@@ -736,6 +803,7 @@ export class MessageTriggerService {
         );
 
         orderedDueCandidates.forEach(({ rule, job }, index) => {
+            const originalScheduledFor = job.scheduledFor.toISOString();
             const scheduledFor = new Date(
                 baseScheduledFor.getTime() + (index * config.sendIntervalMinutes * MS_PER_MINUTE),
             );
@@ -748,6 +816,15 @@ export class MessageTriggerService {
                     rule.recipientType,
                 );
             }
+            job.payload.catchUp = {
+                batchId: `client:${job.clientId ?? "unknown"}:${baseScheduledFor.toISOString()}`,
+                sequence: index + 1,
+                intervalMinutes: config.sendIntervalMinutes,
+                originalScheduledFor,
+                predecessorDedupeKey: index > 0
+                    ? orderedDueCandidates[index - 1]?.job.dedupeKey ?? null
+                    : null,
+            };
         });
 
         return [...orderedDueCandidates, ...futureCandidates];
@@ -806,7 +883,10 @@ export class MessageTriggerService {
             if (!refreshedJob) continue;
 
             job.recipientPhone = refreshedJob.recipientPhone;
-            job.payload = refreshedJob.payload;
+            job.payload = {
+                ...refreshedJob.payload,
+                ...(job.payload.catchUp ? { catchUp: job.payload.catchUp } : {}),
+            };
             await this.jobRepository.update(job);
         }
     }
@@ -1135,19 +1215,29 @@ export class MessageTriggerService {
             return;
         }
 
-        if (!job.branchId || !approvedBranchIds.has(job.branchId)) {
-            job.cancel(MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON);
-            await this.persistTriggerJobStatus(job, "persist sender approval canceled trigger job");
-            return;
-        }
-
-        job.markProcessing();
         if (sentIds.has(job.id)) {
             job.markSent();
             await this.persistTriggerJobStatus(job, "persist sent trigger job reconciliation");
             return;
         }
 
+        if (job.scheduledFor.getTime() <= Date.now() - PAST_OCCURRENCE_GRACE_MS) {
+            job.cancel(EXPIRED_PENDING_JOB_CANCEL_REASON);
+            await this.persistTriggerJobStatus(job, "persist expired trigger job");
+            return;
+        }
+
+        if (!job.branchId || !approvedBranchIds.has(job.branchId)) {
+            job.cancel(MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON);
+            await this.persistTriggerJobStatus(job, "persist sender approval canceled trigger job");
+            return;
+        }
+
+        if (await this.postponeCatchUpJobUntilPredecessorCompletes(job)) {
+            return;
+        }
+
+        job.markProcessing();
         try {
             const sent = await this.deliveryService.sendJob(job);
             if (sent) {
@@ -1164,6 +1254,70 @@ export class MessageTriggerService {
         }
 
         await this.persistTriggerJobStatus(job, "persist dispatched trigger job");
+    }
+
+    private shouldSkipPreStartCatchUp(
+        rule: MessageTriggerRuleEntity,
+        client: ClientTriggerSource,
+    ): boolean {
+        if (
+            rule.eventType !== MessageTriggerEventType.SERVICE_START ||
+            rule.offsetType !== MessageTriggerOffsetType.BEFORE_DAYS ||
+            !client.startDate
+        ) {
+            return false;
+        }
+
+        return this.getKstCalendarDate(new Date(), 0) >=
+            this.getKstCalendarDate(client.startDate, 0);
+    }
+
+    private async postponeCatchUpJobUntilPredecessorCompletes(
+        job: MessageTriggerJobEntity,
+    ): Promise<boolean> {
+        const catchUp = job.payload.catchUp;
+        if (!catchUp?.predecessorDedupeKey) {
+            return false;
+        }
+
+        const predecessor = await this.prisma.message_trigger_job.findUnique({
+            where: { dedupeKey: catchUp.predecessorDedupeKey },
+            select: {
+                status: true,
+                scheduledFor: true,
+                sentAt: true,
+                canceledAt: true,
+                nextAttemptAt: true,
+                updatedAt: true,
+            },
+        });
+        if (!predecessor) {
+            job.cancel(MISSING_CATCH_UP_PREDECESSOR_CANCEL_REASON);
+            await this.persistTriggerJobStatus(job, "persist catch-up job with missing predecessor");
+            return true;
+        }
+
+        const intervalMs = catchUp.intervalMinutes * MS_PER_MINUTE;
+        const now = Date.now();
+        const predecessorReference = predecessor.status === "pending" || predecessor.status === "processing"
+            ? predecessor.nextAttemptAt ?? predecessor.scheduledFor
+            : predecessor.sentAt ?? predecessor.canceledAt ?? predecessor.updatedAt;
+        const earliestNextSend = new Date(predecessorReference.getTime() + intervalMs);
+
+        if (
+            predecessor.status === "pending" ||
+            predecessor.status === "processing" ||
+            earliestNextSend.getTime() > now
+        ) {
+            const retryAt = new Date(Math.max(earliestNextSend.getTime(), now + intervalMs));
+            job.status = "pending";
+            job.scheduledFor = retryAt;
+            job.nextAttemptAt = null;
+            await this.persistTriggerJobStatus(job, "postpone catch-up job for predecessor");
+            return true;
+        }
+
+        return false;
     }
 
     private async processStaleRuleRebuilds(): Promise<void> {

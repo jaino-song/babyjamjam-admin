@@ -108,17 +108,20 @@ describe("MessageTriggerService", () => {
         payload: MessageTriggerJobEntity["payload"];
         attempts: number;
         nextAttemptAt: Date | null;
+        canceledAt: Date | null;
+        cancelReason: string | null;
+        createdAt: Date;
     }> = {}) =>
         MessageTriggerJobEntity.reconstitute(
             overrides.id ?? "job-1",
             branchId,
             overrides.ruleId ?? "rule-1",
             overrides.status ?? "pending",
-            overrides.scheduledFor ?? new Date("2026-06-15T00:00:00.000Z"),
+            overrides.scheduledFor ?? new Date(),
             null,
-            null,
-            null,
-            overrides.clientId ?? 1,
+            overrides.canceledAt ?? null,
+            overrides.cancelReason ?? null,
+            overrides.clientId === undefined ? 1 : overrides.clientId,
             overrides.employeeScheduleId ?? null,
             overrides.recipientType ?? MessageTriggerRecipientType.CLIENT,
             overrides.recipientPhone ?? "010-1234-5678",
@@ -130,7 +133,7 @@ describe("MessageTriggerService", () => {
                 recipientPhone: overrides.recipientPhone ?? "010-1234-5678",
                 templateVariables: {},
             },
-            new Date("2026-06-01T00:00:00.000Z"),
+            overrides.createdAt ?? new Date("2026-06-01T00:00:00.000Z"),
             new Date("2026-06-01T00:00:00.000Z"),
             overrides.attempts ?? 0,
             overrides.nextAttemptAt ?? null,
@@ -170,13 +173,22 @@ describe("MessageTriggerService", () => {
             clearJobsStaleIfUnchanged: jest.fn().mockResolvedValue(true),
         };
         const jobRepository = {
+            cancelOrphanedPending: jest.fn().mockResolvedValue(0),
+            findRecoverableOrphanedClientJobs: jest.fn().mockResolvedValue([]),
+            markOrphanedJobsReconciled: jest.fn().mockResolvedValue(0),
             cancelPendingByRuleId: jest.fn().mockResolvedValue(0),
             cancelPendingOlderThan: jest.fn().mockResolvedValue(0),
+            findUpcomingPendingByBranch: jest.fn().mockResolvedValue([]),
+        };
+        const prisma = {
+            client: {
+                findMany: jest.fn().mockResolvedValue([]),
+            },
         };
         const messageSenderApprovalService = createMessageSenderApprovalService();
         const messageLogRepository = createMessageLogRepository();
         const service = new MessageTriggerService(
-            {} as never,
+            prisma as never,
             {} as never,
             messageSenderApprovalService as never,
             ruleRepository as never,
@@ -188,7 +200,7 @@ describe("MessageTriggerService", () => {
         jest.spyOn(internals, "hasTriggerSchema").mockResolvedValue(true);
         jest.spyOn(internals, "rebuildJobsForRule").mockResolvedValue(undefined);
 
-        return { service, internals, ruleRepository, jobRepository, messageSenderApprovalService };
+        return { service, internals, prisma, ruleRepository, jobRepository, messageSenderApprovalService };
     };
 
     const createDispatchService = () => {
@@ -196,6 +208,7 @@ describe("MessageTriggerService", () => {
             sendJob: jest.fn().mockResolvedValue(true),
         };
         const jobRepository = {
+            cancelOrphanedPending: jest.fn().mockResolvedValue(0),
             findDuePending: jest.fn().mockResolvedValue([]),
             findStaleProcessing: jest.fn().mockResolvedValue([]),
             claimPending: jest.fn().mockResolvedValue(true),
@@ -212,8 +225,13 @@ describe("MessageTriggerService", () => {
         };
         const messageSenderApprovalService = createMessageSenderApprovalService();
         const messageLogRepository = createMessageLogRepository();
+        const prisma = {
+            message_trigger_job: {
+                findUnique: jest.fn().mockResolvedValue(null),
+            },
+        };
         const service = new MessageTriggerService(
-            {} as never,
+            prisma as never,
             deliveryService as never,
             messageSenderApprovalService as never,
             ruleRepository as never,
@@ -230,8 +248,88 @@ describe("MessageTriggerService", () => {
             jobRepository,
             messageLogRepository,
             messageSenderApprovalService,
+            prisma,
         };
     };
+
+    it("cancels orphaned pending jobs before returning the upcoming list", async () => {
+        const { service, jobRepository } = createService();
+
+        await service.listUpcomingJobs(branchId);
+
+        expect(jobRepository.cancelOrphanedPending).toHaveBeenCalledWith(
+            "Related client or schedule deleted",
+            branchId,
+        );
+        expect(jobRepository.findUpcomingPendingByBranch).toHaveBeenCalledWith(branchId, 200);
+    });
+
+    it("rebuilds jobs for a newer client with the same phone as a canceled orphan", async () => {
+        const { service, prisma, jobRepository } = createService();
+        const orphanedJob = createJob({
+            id: "orphaned-job",
+            status: "canceled",
+            clientId: null,
+            canceledAt: new Date("2026-07-12T00:00:00.000Z"),
+            cancelReason: "Related client or schedule deleted",
+            recipientPhone: "010-1234-5678",
+            createdAt: new Date("2026-07-01T00:00:00.000Z"),
+        });
+        jobRepository.findRecoverableOrphanedClientJobs.mockResolvedValue([orphanedJob]);
+        prisma.client.findMany.mockResolvedValue([
+            {
+                id: 42,
+                phone: "01012345678",
+                createdAt: new Date("2026-07-12T01:00:00.000Z"),
+            },
+        ]);
+        jest.spyOn(service, "syncClientRulesForClient").mockResolvedValue(undefined);
+
+        await service.listUpcomingJobs(branchId);
+
+        expect(service.syncClientRulesForClient).toHaveBeenCalledWith(branchId, 42, true);
+        expect(jobRepository.markOrphanedJobsReconciled).toHaveBeenCalledWith(
+            ["orphaned-job"],
+            42,
+        );
+    });
+
+    it("does not reuse an orphan for a client that predates the old job", async () => {
+        const { service, prisma, jobRepository } = createService();
+        const orphanedJob = createJob({
+            id: "orphaned-job",
+            status: "canceled",
+            clientId: null,
+            canceledAt: new Date("2026-07-12T00:00:00.000Z"),
+            cancelReason: "Related client or schedule deleted",
+            recipientPhone: "010-1234-5678",
+            createdAt: new Date("2026-07-10T00:00:00.000Z"),
+        });
+        jobRepository.findRecoverableOrphanedClientJobs.mockResolvedValue([orphanedJob]);
+        prisma.client.findMany.mockResolvedValue([
+            {
+                id: 7,
+                phone: "010-1234-5678",
+                createdAt: new Date("2026-07-01T00:00:00.000Z"),
+            },
+        ]);
+        jest.spyOn(service, "syncClientRulesForClient").mockResolvedValue(undefined);
+
+        await service.listUpcomingJobs(branchId);
+
+        expect(service.syncClientRulesForClient).not.toHaveBeenCalled();
+        expect(jobRepository.markOrphanedJobsReconciled).not.toHaveBeenCalled();
+    });
+
+    it("cancels orphaned pending jobs before dispatching due jobs", async () => {
+        const { service, jobRepository } = createDispatchService();
+
+        await service.dispatchDueJobs();
+
+        expect(jobRepository.cancelOrphanedPending).toHaveBeenCalledWith(
+            "Related client or schedule deleted",
+        );
+    });
 
     it("ensures the default service information trigger on rule listing", async () => {
         const { service, internals, ruleRepository } = createService();
@@ -566,6 +664,78 @@ describe("MessageTriggerService", () => {
         expect(deliveryService.sendJob).toHaveBeenCalledWith(job);
         expect(job.status).toBe("sent");
         expect(jobRepository.update).toHaveBeenCalledWith(job);
+    });
+
+    it("cancels an existing pending job once its scheduled time is at least 24 hours old", async () => {
+        jest.useFakeTimers().setSystemTime(new Date("2026-07-09T12:00:00.000Z"));
+        try {
+            const { service, deliveryService, jobRepository } = createDispatchService();
+            const job = createJob({
+                scheduledFor: new Date("2026-07-08T12:00:00.000Z"),
+            });
+            jobRepository.findDuePending.mockResolvedValue([job]);
+
+            await service.dispatchDueJobs();
+
+            expect(jobRepository.claimPending).toHaveBeenCalledWith(job.id);
+            expect(deliveryService.sendJob).not.toHaveBeenCalled();
+            expect(job.status).toBe("canceled");
+            expect(job.cancelReason).toBe("기존 발송 예정 24시간 경과");
+            expect(jobRepository.update).toHaveBeenCalledWith(job);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("keeps a catch-up job behind its predecessor by the configured interval after downtime", async () => {
+        jest.useFakeTimers().setSystemTime(new Date("2026-07-09T12:10:00.000Z"));
+        try {
+            const { service, deliveryService, jobRepository, prisma } = createDispatchService();
+            const job = createJob({
+                scheduledFor: new Date("2026-07-09T12:03:00.000Z"),
+                payload: {
+                    memberId: "1",
+                    recipientName: "김산모",
+                    recipientPhone: "010-1234-5678",
+                    templateVariables: {},
+                    catchUp: {
+                        batchId: "client:1:2026-07-09T12:00:00.000Z",
+                        sequence: 2,
+                        intervalMinutes: 3,
+                        originalScheduledFor: "2026-07-07T00:00:00.000Z",
+                        predecessorDedupeKey: "dedupe-predecessor",
+                    },
+                },
+            });
+            jobRepository.findDuePending.mockResolvedValue([job]);
+            prisma.message_trigger_job.findUnique.mockResolvedValue({
+                status: "sent",
+                sentAt: new Date("2026-07-09T12:10:00.000Z"),
+                canceledAt: null,
+                nextAttemptAt: null,
+                updatedAt: new Date("2026-07-09T12:10:00.000Z"),
+            });
+
+            await service.dispatchDueJobs();
+
+            expect(prisma.message_trigger_job.findUnique).toHaveBeenCalledWith({
+                where: { dedupeKey: "dedupe-predecessor" },
+                select: {
+                    status: true,
+                    scheduledFor: true,
+                    sentAt: true,
+                    canceledAt: true,
+                    nextAttemptAt: true,
+                    updatedAt: true,
+                },
+            });
+            expect(deliveryService.sendJob).not.toHaveBeenCalled();
+            expect(job.status).toBe("pending");
+            expect(job.scheduledFor).toEqual(new Date("2026-07-09T12:13:00.000Z"));
+            expect(jobRepository.update).toHaveBeenCalledWith(job);
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     it("defers with kind config without incrementing attempts", async () => {
@@ -1018,6 +1188,7 @@ describe("MessageTriggerService", () => {
         const jobRepository = {
             upsertPending: jest.fn().mockResolvedValue(undefined),
             findPendingByRuleIdsAndClientId: jest.fn().mockResolvedValue([]),
+            cancelPendingByClientContext: jest.fn().mockResolvedValue(0),
             update: jest.fn().mockResolvedValue(undefined),
         };
         const prisma = {
@@ -1123,6 +1294,40 @@ describe("MessageTriggerService", () => {
         expect(sync.prisma.client.findFirst).not.toHaveBeenCalled();
         expect(sync.ruleRepository.findActiveByEventTypes).not.toHaveBeenCalled();
         expect(sync.jobRepository.upsertPending).not.toHaveBeenCalled();
+    });
+
+    it("cancels every pending job tied to a client before client deletion", async () => {
+        const sync = createSyncService();
+
+        await sync.service.cancelPendingJobsForClientDeletion(branchId, 42);
+
+        expect(sync.jobRepository.cancelPendingByClientContext).toHaveBeenCalledWith(
+            branchId,
+            42,
+            "Client deleted",
+        );
+    });
+
+    it("uses the new client id when the same phone is registered after deletion", async () => {
+        const serviceEndRule = createRule({
+            id: "rule-service-end",
+            eventType: MessageTriggerEventType.SERVICE_END,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
+            offsetDays: 1,
+            templateKey: MessageTriggerTemplateKey.SERVICE_END_REMINDER,
+        });
+        const recreated = createSyncService({
+            id: 42,
+            phone: "010-1234-5678",
+            endDate: new Date("2026-08-01T00:00:00.000Z"),
+        });
+        recreated.ruleRepository.findActiveByEventTypes.mockResolvedValue([serviceEndRule]);
+
+        await recreated.service.syncClientRulesForClient(branchId, 42, true);
+
+        const persistedJob = recreated.jobRepository.upsertPending.mock.calls[0]?.[0];
+        expect(persistedJob?.clientId).toBe(42);
+        expect(persistedJob?.dedupeKey).toContain(":client:42:");
     });
 
     it("rebuildJobsForRule is a no-op for an unapproved branch", async () => {
@@ -1234,6 +1439,13 @@ describe("MessageTriggerService", () => {
                     clientName: "김산모",
                     phone: "010-0000-0000",
                 },
+                catchUp: {
+                    batchId: "client:1:batch",
+                    sequence: 2,
+                    intervalMinutes: 3,
+                    originalScheduledFor: "2026-06-27T00:00:00.000Z",
+                    predecessorDedupeKey: "dedupe-predecessor",
+                },
             },
         });
         const reSync = createSyncService({
@@ -1257,6 +1469,13 @@ describe("MessageTriggerService", () => {
                 name: "김수정",
                 clientName: "김수정",
                 phone: "010-9999-0000",
+            },
+            catchUp: {
+                batchId: "client:1:batch",
+                sequence: 2,
+                intervalMinutes: 3,
+                originalScheduledFor: "2026-06-27T00:00:00.000Z",
+                predecessorDedupeKey: "dedupe-predecessor",
             },
         });
         expect(pendingGreeting.status).toBe("pending");
@@ -1412,18 +1631,19 @@ describe("MessageTriggerService", () => {
         }
     });
 
-    it("includePast=true schedules a past non-immediate client job for immediate retroactive dispatch", async () => {
+    it("includePast=true catches up a pre-start notice when registration is late but service has not started", async () => {
         jest.useFakeTimers().setSystemTime(new Date("2026-07-09T12:00:00.000Z"));
         try {
             const serviceInfoRule = createRule({
                 id: "rule-service-info-active",
                 eventType: MessageTriggerEventType.SERVICE_START,
-                offsetType: MessageTriggerOffsetType.SAME_DAY,
-                offsetDays: 0,
+                offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
+                offsetDays: 7,
                 templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
             });
             const create = createSyncService({
-                startDate: new Date("2026-07-07T00:00:00.000Z"),
+                startDate: new Date("2026-07-14T00:00:00.000Z"),
+                createdAt: new Date("2026-07-09T00:00:00.000Z"),
             });
             create.ruleRepository.findActiveByEventTypes.mockResolvedValue([serviceInfoRule]);
 
@@ -1438,14 +1658,38 @@ describe("MessageTriggerService", () => {
         }
     });
 
+    it("includePast=true skips pre-start notices once the service start date has arrived", async () => {
+        jest.useFakeTimers().setSystemTime(new Date("2026-07-09T12:00:00.000Z"));
+        try {
+            const serviceInfoRule = createRule({
+                id: "rule-service-info-active",
+                eventType: MessageTriggerEventType.SERVICE_START,
+                offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
+                offsetDays: 7,
+                templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            });
+            const create = createSyncService({
+                startDate: new Date("2026-07-09T00:00:00.000Z"),
+                createdAt: new Date("2026-07-09T01:00:00.000Z"),
+            });
+            create.ruleRepository.findActiveByEventTypes.mockResolvedValue([serviceInfoRule]);
+
+            await create.service.syncClientRulesForClient(branchId, 1, true);
+
+            expect(create.jobRepository.upsertPending).not.toHaveBeenCalled();
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     it("includePast=true applies saved retroactive order and interval to due client jobs", async () => {
         jest.useFakeTimers().setSystemTime(new Date("2026-07-09T12:00:00.000Z"));
         try {
             const firstRule = createRule({
                 id: "rule-first",
                 eventType: MessageTriggerEventType.SERVICE_START,
-                offsetType: MessageTriggerOffsetType.SAME_DAY,
-                offsetDays: 0,
+                offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
+                offsetDays: 7,
                 templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
                 createdAt: new Date("2026-06-02T00:00:00.000Z"),
             });
@@ -1458,8 +1702,8 @@ describe("MessageTriggerService", () => {
                 createdAt: new Date("2026-06-01T00:00:00.000Z"),
             });
             const create = createSyncService({
-                startDate: new Date("2026-07-07T00:00:00.000Z"),
-                createdAt: new Date("2026-07-01T00:00:00.000Z"),
+                startDate: new Date("2026-07-14T00:00:00.000Z"),
+                createdAt: new Date("2026-07-09T00:00:00.000Z"),
             });
             create.systemSettingService.getMessageAutomationPastTriggerConfig.mockResolvedValue({
                 sendIntervalMinutes: 3,
@@ -1476,6 +1720,17 @@ describe("MessageTriggerService", () => {
             expect(firstPersistedJob.scheduledFor).toEqual(new Date("2026-07-09T12:00:00.000Z"));
             expect(secondPersistedJob.ruleId).toBe(firstRule.id);
             expect(secondPersistedJob.scheduledFor).toEqual(new Date("2026-07-09T12:03:00.000Z"));
+            expect(firstPersistedJob.payload.catchUp).toMatchObject({
+                sequence: 1,
+                intervalMinutes: 3,
+                predecessorDedupeKey: null,
+            });
+            expect(secondPersistedJob.payload.catchUp).toMatchObject({
+                batchId: firstPersistedJob.payload.catchUp.batchId,
+                sequence: 2,
+                intervalMinutes: 3,
+                predecessorDedupeKey: firstPersistedJob.dedupeKey,
+            });
         } finally {
             jest.useRealTimers();
         }

@@ -10,6 +10,14 @@ import {
 
 export type MessageTriggerJobStatus = "pending" | "processing" | "sent" | "failed" | "canceled";
 
+export interface MessageTriggerCatchUpMetadata {
+    batchId: string;
+    sequence: number;
+    intervalMinutes: number;
+    originalScheduledFor: string;
+    predecessorDedupeKey: string | null;
+}
+
 export interface MessageTriggerJobPayload {
     clientId?: number | null;
     clientName?: string | null;
@@ -21,6 +29,7 @@ export interface MessageTriggerJobPayload {
     templateVariables: Record<string, string>;
     buttonUrl?: string | null;
     messageBody?: string | null;
+    catchUp?: MessageTriggerCatchUpMetadata;
 }
 
 export class MessageTriggerJobEntity {

@@ -164,19 +164,29 @@ export class MessageAutomationPoliciesResponseDto {
             {
                 id: "past-trigger",
                 title: "지난 자동 전송 처리",
-                description: "예정 시각이 기준 시간을 넘긴 자동 전송은 다시 만들거나 발송하지 않습니다.",
+                description: "기존 발송 예정의 만료와 늦게 등록한 고객의 보충 발송을 구분합니다.",
                 active: true,
                 requiresApproval: true,
                 rows: [
                     {
                         id: "grace-window",
-                        label: "지난 예정 기준",
-                        value: `${formatHours(PAST_OCCURRENCE_GRACE_MS)} 이상`,
+                        label: "기존 발송 만료 기준",
+                        value: `예정 시각 후 ${formatHours(PAST_OCCURRENCE_GRACE_MS)}`,
                     },
                     {
                         id: "handling",
-                        label: "처리 방식",
-                        value: "재생성/발송 안 함",
+                        label: "기존 발송 처리",
+                        value: "만료 시 발송 안 함",
+                    },
+                    {
+                        id: "late-registration",
+                        label: "늦은 고객 등록",
+                        value: "서비스 시작 전 순차 발송",
+                    },
+                    {
+                        id: "post-start-registration",
+                        label: "서비스 시작 후 등록",
+                        value: "시작 전 안내 제외",
                     },
                 ],
             },

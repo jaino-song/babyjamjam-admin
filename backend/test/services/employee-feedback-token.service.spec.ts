@@ -7,7 +7,7 @@ import {
 function makePrismaMock() {
     const rows: any[] = [];
     let seq = 0;
-    return {
+    const prisma = {
         __rows: rows,
         employee_feedback_token: {
             create: jest.fn(async ({ data }: any) => {
@@ -41,7 +41,12 @@ function makePrismaMock() {
             updateMany: jest.fn(async ({ where, data }: any) => {
                 let count = 0;
                 for (const r of rows) {
-                    if (r.scheduleId === where.scheduleId && (where.active === undefined || r.active === where.active)) {
+                    const scheduleMatches = where.scheduleId === undefined || r.scheduleId === where.scheduleId;
+                    const orMatches = !where.OR || where.OR.some((clause: any) => (
+                        (clause.scheduleId !== undefined && r.scheduleId === clause.scheduleId)
+                        || (clause.serviceRecordCaseId !== undefined && r.serviceRecordCaseId === clause.serviceRecordCaseId)
+                    ));
+                    if (scheduleMatches && orMatches && (where.active === undefined || r.active === where.active)) {
                         Object.assign(r, data);
                         count++;
                     }
@@ -50,6 +55,9 @@ function makePrismaMock() {
             }),
         },
     };
+    return Object.assign(prisma, {
+        $transaction: jest.fn(async (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma)),
+    });
 }
 
 const future = () => new Date(Date.now() + 15 * 24 * 60 * 60 * 1000);

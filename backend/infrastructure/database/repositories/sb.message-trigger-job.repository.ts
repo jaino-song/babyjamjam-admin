@@ -184,6 +184,92 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         return rows.map((row) => this.toDomain(row));
     }
 
+    async cancelPendingByClientContext(
+        branchId: string,
+        clientId: number,
+        reason: string,
+    ): Promise<number> {
+        const result = await this.prisma.message_trigger_job.updateMany({
+            where: {
+                branchId,
+                status: "pending",
+                OR: [
+                    { clientId },
+                    { employeeSchedule: { is: { clientId } } },
+                ],
+            },
+            data: {
+                status: "canceled",
+                canceledAt: new Date(),
+                cancelReason: reason,
+            },
+        });
+        return result.count;
+    }
+
+    async cancelOrphanedPending(reason: string, branchId?: string): Promise<number> {
+        const result = await this.prisma.message_trigger_job.updateMany({
+            where: {
+                ...(branchId ? { branchId } : {}),
+                status: "pending",
+                clientId: null,
+                employeeScheduleId: null,
+            },
+            data: {
+                status: "canceled",
+                canceledAt: new Date(),
+                cancelReason: reason,
+            },
+        });
+        return result.count;
+    }
+
+    async findRecoverableOrphanedClientJobs(
+        branchId: string,
+        limit = 200,
+    ): Promise<MessageTriggerJobEntity[]> {
+        const rows = await this.prisma.message_trigger_job.findMany({
+            where: {
+                branchId,
+                clientId: null,
+                employeeScheduleId: null,
+                recipientType: MessageTriggerRecipientType.CLIENT,
+                OR: [
+                    { status: "pending" },
+                    {
+                        status: "canceled",
+                        cancelReason: {
+                            in: ["Client deleted", "Related client or schedule deleted"],
+                        },
+                    },
+                ],
+            },
+            orderBy: { createdAt: "asc" },
+            take: limit,
+        });
+        return rows.map((row) => this.toDomain(row));
+    }
+
+    async markOrphanedJobsReconciled(
+        jobIds: string[],
+        replacementClientId: number,
+    ): Promise<number> {
+        if (jobIds.length === 0) return 0;
+
+        const result = await this.prisma.message_trigger_job.updateMany({
+            where: {
+                id: { in: jobIds },
+                status: "canceled",
+                clientId: null,
+                employeeScheduleId: null,
+            },
+            data: {
+                cancelReason: `Reconciled to replacement client:${replacementClientId}`,
+            },
+        });
+        return result.count;
+    }
+
     async cancelPendingByRuleId(ruleId: string, reason: string): Promise<number> {
         const result = await this.prisma.message_trigger_job.updateMany({
             where: { ruleId, status: "pending" },
@@ -235,7 +321,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             )
             VALUES (
                 ${job.branchId}::uuid,
-                ${job.ruleId}::uuid,
+                ${job.ruleId},
                 'pending',
                 ${job.scheduledFor},
                 NULL,

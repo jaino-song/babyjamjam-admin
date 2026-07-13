@@ -106,6 +106,11 @@ export interface IEformsignClientRepository {
     getAccessToken(executionTime: number, memberEmail?: string): Promise<EformsignTokenResponse>;
     refreshAccessToken(executionTime: number, refreshToken: string): Promise<EformsignTokenResponse>;
     getAllDocuments(accessToken: string): Promise<EformsignApiDocumentResponse[]>;
+    /** Narrow remote lookup used to reconcile an ambiguous document-creation attempt. */
+    findDocumentsByTitle?(
+        accessToken: string,
+        title: string,
+    ): Promise<EformsignApiDocumentResponse[]>;
     getDocument(accessToken: string, documentId: string): Promise<EformsignApiDocumentResponse>;
     createDocument(accessToken: string, payload: CreateDocumentPayload): Promise<CreateDocumentResponse>;
     /** Pre-specified recipient of the template's reviewer step, or null if the template has none. */

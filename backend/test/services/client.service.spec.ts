@@ -43,6 +43,14 @@ describe("ClientService", () => {
         execute: jest.fn(),
     });
 
+    const createDeferred = <T = void>() => {
+        let resolve!: (value: T | PromiseLike<T>) => void;
+        const promise = new Promise<T>((resolvePromise) => {
+            resolve = resolvePromise;
+        });
+        return { promise, resolve };
+    };
+
     const createMockPrismaService = () => {
         const prisma = {
             employee_schedule: {
@@ -79,6 +87,7 @@ describe("ClientService", () => {
         ensureDefaultRulesForBranch: jest.fn().mockResolvedValue(undefined),
         syncClientRulesForClient: jest.fn().mockResolvedValue(undefined),
         syncEmployeeAssignmentRulesForSchedule: jest.fn().mockResolvedValue(undefined),
+        cancelPendingJobsForClientDeletion: jest.fn().mockResolvedValue(undefined),
     });
 
     const createMockEmployeeFeedbackLinkService = () => ({
@@ -357,6 +366,36 @@ describe("ClientService", () => {
             );
         });
 
+        it("does not resolve client creation before automatic message jobs are synchronized", async () => {
+            const mockClient = createClientEntity();
+            const syncCompletion = createDeferred();
+            const syncStarted = createDeferred();
+            createClientUsecase.execute.mockResolvedValue(mockClient);
+            triggerService.syncClientRulesForClient.mockImplementation(() => {
+                syncStarted.resolve();
+                return syncCompletion.promise;
+            });
+
+            let resolved = false;
+            const creation = service.create(branchId, {
+                name: "New Client",
+                phone: "010-1234-5678",
+                careCenter: false,
+                voucherClient: true,
+                breastPump: false,
+            });
+            void creation.then(() => {
+                resolved = true;
+            });
+
+            await syncStarted.promise;
+            await Promise.resolve();
+            expect(resolved).toBe(false);
+
+            syncCompletion.resolve();
+            await expect(creation).resolves.toBe(mockClient);
+        });
+
         describe("given client data with both primary and secondary employees", () => {
             it("should create single schedule with both employees", async () => {
                 // Arrange
@@ -512,6 +551,32 @@ describe("ClientService", () => {
                     address: "New Address",
                 }));
                 expect(result).toBe(updatedClient);
+            });
+
+            it("does not resolve a service date update before scheduled jobs are recalculated", async () => {
+                const existingClient = createClientEntity();
+                const updatedClient = createClientEntity();
+                const syncCompletion = createDeferred();
+                const syncStarted = createDeferred();
+                findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+                updateClientUsecase.execute.mockResolvedValue(updatedClient);
+                triggerService.syncClientRulesForClient.mockImplementation(() => {
+                    syncStarted.resolve();
+                    return syncCompletion.promise;
+                });
+
+                let resolved = false;
+                const update = service.update(branchId, 1, { endDate: "2026-08-01" });
+                void update.then(() => {
+                    resolved = true;
+                });
+
+                await syncStarted.promise;
+                await Promise.resolve();
+                expect(resolved).toBe(false);
+
+                syncCompletion.resolve();
+                await expect(update).resolves.toBe(updatedClient);
             });
         });
 
@@ -767,6 +832,74 @@ describe("ClientService", () => {
                 hasSigned: false,
             });
         });
+
+        describe("contract required badge", () => {
+            const createWaitingClient = (startDate: string, eDocId: string | null = null) =>
+                new ClientEntity(
+                    1,
+                    "Test Client",
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    new Date(`${startDate}T00:00:00.000Z`),
+                    new Date("2026-08-31T00:00:00.000Z"),
+                    false,
+                    true,
+                    null,
+                    "waiting",
+                    false,
+                    eDocId,
+                );
+
+            beforeEach(() => {
+                jest.useFakeTimers();
+                jest.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
+            });
+
+            afterEach(() => {
+                jest.useRealTimers();
+            });
+
+            it("should show contract required from exactly three business days before service start", async () => {
+                listClientsUsecase.execute.mockResolvedValue([createWaitingClient("2026-07-16")]);
+
+                const [client] = await service.findAll(branchId);
+
+                expect(client?.badges[0]?.key).toBe("contract_required");
+            });
+
+            it("should hide contract required more than three business days before service start", async () => {
+                listClientsUsecase.execute.mockResolvedValue([createWaitingClient("2026-07-20")]);
+
+                const [client] = await service.findAll(branchId);
+
+                expect(client?.badges.some((badge) => badge.key === "contract_required")).toBe(false);
+            });
+
+            it("should hide contract required after the contract is completed", async () => {
+                const client = createWaitingClient("2026-07-16", "completed-document");
+                listClientsUsecase.execute.mockResolvedValue([client]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    { documentId: "completed-document", statusType: "003" },
+                ]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.badges.some((badge) => badge.key === "contract_required")).toBe(false);
+            });
+
+            it("should keep showing contract required after service starts", async () => {
+                listClientsUsecase.execute.mockResolvedValue([createWaitingClient("2026-07-10")]);
+
+                const [client] = await service.findAll(branchId);
+
+                expect(client?.badges[0]?.key).toBe("contract_required");
+            });
+        });
     });
 
     // ============================================
@@ -797,7 +930,7 @@ describe("ClientService", () => {
     // delete
     // ============================================
     describe("delete", () => {
-        it("should delegate to deleteClientUsecase", async () => {
+        it("should cancel pending message jobs before deleting the client", async () => {
             // Arrange
             deleteClientUsecase.execute.mockResolvedValue(undefined);
 
@@ -805,7 +938,11 @@ describe("ClientService", () => {
             await service.delete(branchId, 1);
 
             // Assert
+            expect(triggerService.cancelPendingJobsForClientDeletion).toHaveBeenCalledWith(branchId, 1);
             expect(deleteClientUsecase.execute).toHaveBeenCalledWith(branchId, 1);
+            expect(
+                triggerService.cancelPendingJobsForClientDeletion.mock.invocationCallOrder[0],
+            ).toBeLessThan(deleteClientUsecase.execute.mock.invocationCallOrder[0] ?? 0);
         });
     });
 
@@ -944,7 +1081,7 @@ describe("ClientService", () => {
                 });
                 expect(result.serviceStatus).toBe("replacement_requested");
                 expect(employeeFeedbackLinkService.revoke).toHaveBeenCalledWith(10);
-                expect(employeeFeedbackLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+                expect(employeeFeedbackLinkService.scheduleForServiceStart).toHaveBeenCalledWith(20);
             });
 
             it("should handle replacement with primary employee only", async () => {

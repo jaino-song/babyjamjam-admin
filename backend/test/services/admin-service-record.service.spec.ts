@@ -10,6 +10,9 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 
 describe("AdminServiceRecordService", () => {
     const createPrisma = () => ({
+        service_record_case: {
+            findFirst: jest.fn().mockResolvedValue(null),
+        },
         employee_schedule: {
             findMany: jest.fn(),
             findFirst: jest.fn(),
@@ -122,6 +125,8 @@ describe("AdminServiceRecordService", () => {
                 stepName: "제공기록지 서명",
                 createdDate: new Date("2026-07-02T07:00:00.000Z"),
                 updatedDate: new Date("2026-07-02T07:10:00.000Z"),
+                snapshotVersion: null,
+                snapshotChunkIndex: null,
             },
             {
                 employeeScheduleId: 3,
@@ -130,6 +135,8 @@ describe("AdminServiceRecordService", () => {
                 stepName: "제공기록지 서명",
                 createdDate: new Date("2026-07-01T07:00:00.000Z"),
                 updatedDate: new Date("2026-07-01T07:10:00.000Z"),
+                snapshotVersion: null,
+                snapshotChunkIndex: null,
             },
         ]);
 
@@ -152,8 +159,8 @@ describe("AdminServiceRecordService", () => {
         expect(prisma.eformsign_doc.findMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({
                 branchId: "branch-1",
-                employeeScheduleId: { in: [1, 2, 3, 4] },
                 documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_FEEDBACK_SNAPSHOT,
+                OR: [{ employeeScheduleId: { in: [1, 2, 3, 4] } }],
             }),
         }));
         expect(overview.assignments.find((assignment) => assignment.scheduleId === 1)?.signatureDoc).toBeNull();
@@ -163,6 +170,9 @@ describe("AdminServiceRecordService", () => {
             stepName: "제공기록지 서명",
             createdDate: new Date("2026-07-02T07:00:00.000Z"),
             updatedDate: new Date("2026-07-02T07:10:00.000Z"),
+            snapshotVersion: null,
+            snapshotChunkIndex: null,
+            employeeScheduleId: 3,
         });
     });
 

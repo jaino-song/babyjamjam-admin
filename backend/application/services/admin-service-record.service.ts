@@ -9,6 +9,7 @@ import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { EmployeeFeedbackLinkService } from "./employee-feedback-link.service";
 import {
     AdminServiceRecordAssignmentDto,
+    AdminServiceRecordCaseDto,
     AdminServiceRecordHeaderDto,
     AdminServiceRecordLinkDto,
     AdminServiceRecordLinkStatus,
@@ -28,6 +29,9 @@ type ScheduleForOverview = Prisma.employee_scheduleGetPayload<{
         feedbackTokens: true;
     };
 }>;
+type CaseForOverview = Prisma.service_record_caseGetPayload<{
+    include: { days: true };
+}>;
 
 type FeedbackLinkJob = message_trigger_job;
 type FeedbackLinkLog = message_log;
@@ -39,6 +43,8 @@ type SignatureDocRow = Prisma.eformsign_docGetPayload<{
         stepName: true;
         createdDate: true;
         updatedDate: true;
+        snapshotVersion: true;
+        snapshotChunkIndex: true;
     };
 }>;
 
@@ -52,33 +58,35 @@ export class AdminServiceRecordService {
     ) {}
 
     async getClientOverview(branchId: string, clientId: number): Promise<AdminServiceRecordOverviewDto> {
-        const schedules = await this.prisma.employee_schedule.findMany({
-            where: { branchId, clientId },
-            include: {
-                client: true,
-                primaryEmployee: true,
-                serviceRecord: true,
-                serviceRecordDays: { orderBy: { sessionIndex: "asc" } },
-                feedbackTokens: { orderBy: { createdAt: "desc" } },
-            },
-            orderBy: { startDate: "desc" },
-        });
-
-        if (schedules.length === 0) {
-            return { assignments: [] };
-        }
+        const [record, schedules] = await Promise.all([
+            this.prisma.service_record_case.findFirst({
+                where: { branchId, clientId },
+                include: { days: { orderBy: { caseSessionIndex: "asc" } } },
+            }),
+            this.prisma.employee_schedule.findMany({
+                where: { branchId, clientId },
+                include: {
+                    client: true,
+                    primaryEmployee: true,
+                    serviceRecord: true,
+                    serviceRecordDays: { orderBy: { sessionIndex: "asc" } },
+                    feedbackTokens: { orderBy: { createdAt: "desc" } },
+                },
+                orderBy: { startDate: "desc" },
+            }),
+        ]);
 
         const scheduleIds = schedules.map((schedule) => schedule.id);
-        const jobs = await this.prisma.message_trigger_job.findMany({
+        const jobs = scheduleIds.length > 0 ? await this.prisma.message_trigger_job.findMany({
             where: {
                 branchId,
                 employeeScheduleId: { in: scheduleIds },
                 ruleId: SERVICE_FEEDBACK_LINK_RULE_ID,
             },
             orderBy: { createdAt: "desc" },
-        });
+        }) : [];
         const jobIds = jobs.map((job) => job.id);
-        const logs = await this.prisma.message_log.findMany({
+        const logs = scheduleIds.length > 0 ? await this.prisma.message_log.findMany({
             where: {
                 branchId,
                 templateKey: SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
@@ -88,11 +96,16 @@ export class AdminServiceRecordService {
                 ],
             },
             orderBy: { createdAt: "desc" },
-        });
-        const signatureDocs = await this.findServiceFeedbackSignatureDocs(branchId, scheduleIds);
+        }) : [];
+        const signatureDocs = await this.findServiceFeedbackSignatureDocs(
+            branchId,
+            scheduleIds,
+            record?.id ?? null,
+        );
         const signatureDocByScheduleId = latestSignatureDocByScheduleId(signatureDocs);
 
         return {
+            record: record ? this.mapCase(record, signatureDocs) : null,
             assignments: schedules.map((schedule) => this.mapAssignment(
                 schedule,
                 jobs.filter((job) => job.employeeScheduleId === schedule.id),
@@ -102,6 +115,44 @@ export class AdminServiceRecordService {
                 )),
                 signatureDocByScheduleId.get(schedule.id) ?? null,
             )),
+        };
+    }
+
+    private mapCase(
+        record: CaseForOverview,
+        signatureDocs: SignatureDocRow[],
+    ): AdminServiceRecordCaseDto {
+        const header = [
+            record.momName,
+            record.momBirth,
+            record.babyName,
+            record.babyBirth,
+            record.deliveryType,
+            record.babyWeight,
+        ].some((value) => Boolean(value));
+        return {
+            id: record.id,
+            status: record.status,
+            startDate: record.startDate,
+            endDate: record.endDate,
+            totalSessions: record.requiredSessionCount ?? 0,
+            completedAt: record.completedAt,
+            finalizationDueAt: record.finalizationDueAt,
+            finalizedAt: record.finalizedAt,
+            documentsCompletedAt: record.documentsCompletedAt,
+            lastError: record.lastError,
+            header: header ? {
+                momName: record.momName,
+                momBirth: record.momBirth,
+                babyName: record.babyName,
+                babyBirth: record.babyBirth,
+                deliveryType: record.deliveryType,
+                babyWeight: record.babyWeight,
+                createdAt: record.createdAt,
+                updatedAt: record.updatedAt,
+            } : null,
+            sessions: record.days.map((session) => this.mapSession(session)),
+            signatureDocs: signatureDocs.map((document) => this.mapSignatureDoc(document)),
         };
     }
 
@@ -207,7 +258,7 @@ export class AdminServiceRecordService {
 
     private mapSession(session: ScheduleForOverview["serviceRecordDays"][number]): AdminServiceRecordSessionDto {
         return {
-            sessionIndex: session.sessionIndex,
+            sessionIndex: session.caseSessionIndex ?? session.sessionIndex,
             serviceDate: session.serviceDate,
             locked: session.locked,
             submittedAt: session.submittedAt,
@@ -217,6 +268,22 @@ export class AdminServiceRecordService {
             notes: session.notes,
             paymentConfirmed: session.paymentConfirmed,
             hasMomApproval: Boolean(session.momApproval),
+            employeeId: session.employeeId,
+            employeeName: session.employeeNameSnapshot,
+            formVersion: session.formVersion,
+        };
+    }
+
+    private mapSignatureDoc(document: SignatureDocRow): AdminServiceRecordSignatureDocDto {
+        return {
+            documentId: document.documentId,
+            statusDetail: document.statusDetail,
+            stepName: document.stepName,
+            createdDate: document.createdDate,
+            updatedDate: document.updatedDate,
+            snapshotVersion: document.snapshotVersion,
+            snapshotChunkIndex: document.snapshotChunkIndex,
+            employeeScheduleId: document.employeeScheduleId,
         };
     }
 
@@ -227,13 +294,17 @@ export class AdminServiceRecordService {
     private async findServiceFeedbackSignatureDocs(
         branchId: string,
         scheduleIds: number[],
+        serviceRecordCaseId: string | null,
     ): Promise<SignatureDocRow[]> {
         try {
             return await this.prisma.eformsign_doc.findMany({
                 where: {
                     branchId,
-                    employeeScheduleId: { in: scheduleIds },
                     documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_FEEDBACK_SNAPSHOT,
+                    OR: [
+                        ...(serviceRecordCaseId ? [{ serviceRecordCaseId }] : []),
+                        ...(scheduleIds.length > 0 ? [{ employeeScheduleId: { in: scheduleIds } }] : []),
+                    ],
                 },
                 select: {
                     employeeScheduleId: true,
@@ -242,6 +313,8 @@ export class AdminServiceRecordService {
                     stepName: true,
                     createdDate: true,
                     updatedDate: true,
+                    snapshotVersion: true,
+                    snapshotChunkIndex: true,
                 },
                 orderBy: [
                     { employeeScheduleId: "asc" },
@@ -275,7 +348,7 @@ function isPendingEformsignFeedbackColumnError(error: unknown): boolean {
         : undefined;
     const message = error instanceof Error ? error.message : String(error);
     const haystack = `${message} ${typeof column === "string" ? column : ""}`;
-    return /document_kind|employee_schedule_id|template_id|documentKind|employeeScheduleId|templateId/i.test(haystack);
+    return /document_kind|employee_schedule_id|template_id|service_record_case_id|snapshot_version|snapshot_chunk_index|documentKind|employeeScheduleId|templateId|serviceRecordCaseId|snapshotVersion|snapshotChunkIndex/i.test(haystack);
 }
 
 function jobIdsForSchedule(jobs: FeedbackLinkJob[], scheduleId: number): Set<string> {
@@ -300,12 +373,21 @@ function latestSignatureDocByScheduleId(docs: SignatureDocRow[]): Map<number, Ad
     for (const doc of docs) {
         if (doc.employeeScheduleId === null || byScheduleId.has(doc.employeeScheduleId)) continue;
         byScheduleId.set(doc.employeeScheduleId, {
-            documentId: doc.documentId,
-            statusDetail: doc.statusDetail,
-            stepName: doc.stepName,
-            createdDate: doc.createdDate,
-            updatedDate: doc.updatedDate,
+            ...mapSignatureDocRow(doc),
         });
     }
     return byScheduleId;
+}
+
+function mapSignatureDocRow(doc: SignatureDocRow): AdminServiceRecordSignatureDocDto {
+    return {
+        documentId: doc.documentId,
+        statusDetail: doc.statusDetail,
+        stepName: doc.stepName,
+        createdDate: doc.createdDate,
+        updatedDate: doc.updatedDate,
+        snapshotVersion: doc.snapshotVersion,
+        snapshotChunkIndex: doc.snapshotChunkIndex,
+        employeeScheduleId: doc.employeeScheduleId,
+    };
 }

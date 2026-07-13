@@ -13,9 +13,29 @@ import {
     VerifyPhoneResult,
 } from "./employee-feedback-token.service";
 import { SaveServiceHeaderDto, UpsertSessionDto } from "interface/dto/service-feedback.dto";
-import { CreateAndSendFeedbackSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-feedback-snapshot.usecase";
+import {
+    SERVICE_RECORD_CASE_STATUS,
+    ServiceRecordLifecycleService,
+} from "./service-record-lifecycle.service";
 
 const ORG = { name: "인천 아이미래로", hours: "평일 09시~18시" };
+const MAX_ANSWERS_BYTES = 16 * 1024;
+const ANSWER_KEYS = new Set([
+    "perineum",
+    "breast",
+    "excretion",
+    "sitzBath",
+    "meals_meal",
+    "meals_snack",
+    "temperature_temp",
+    "sleep",
+    "breastFeeding_count",
+    "formulaFeeding_count",
+    "formulaFeeding_ml",
+    "stool",
+    "stool_color",
+    "bath",
+]);
 
 function toIso(d: Date): string {
     return d.toISOString().slice(0, 10);
@@ -32,7 +52,7 @@ export class ServiceFeedbackService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly tokenService: EmployeeFeedbackTokenService,
-        private readonly snapshotUsecase: CreateAndSendFeedbackSnapshotUsecase,
+        private readonly lifecycleService: ServiceRecordLifecycleService,
     ) {}
 
     /** Is this SMS link still usable (before asking for the phone number)? No PII returned. */
@@ -47,14 +67,19 @@ export class ServiceFeedbackService {
 
     /** Full wizard context: header + existing sessions + how many sessions are contracted. */
     async getContext(ctx: FeedbackTokenContext) {
-        const [schedule, pendingScheduleChange] = await Promise.all([
+        const serviceRecordCase = await this.resolveCase(ctx);
+        const [schedule, record, pendingScheduleChange] = await Promise.all([
             this.prisma.employee_schedule.findUnique({
                 where: { id: ctx.scheduleId },
                 include: {
                     client: true,
                     primaryEmployee: true,
-                    serviceRecord: true,
-                    serviceRecordDays: { orderBy: { sessionIndex: "asc" } },
+                },
+            }),
+            this.prisma.service_record_case.findUnique({
+                where: { id: serviceRecordCase.id },
+                include: {
+                    days: { orderBy: { caseSessionIndex: "asc" } },
                 },
             }),
             this.prisma.schedule_change_request.findFirst({
@@ -63,15 +88,24 @@ export class ServiceFeedbackService {
             }),
         ]);
         if (!schedule) throw new NotFoundException("Assignment not found");
+        if (!record) throw new NotFoundException("Service record not found");
 
         return {
             org: ORG,
             employee: { id: schedule.primaryEmployee.id, name: schedule.primaryEmployee.name },
             client: { id: schedule.client.id, name: schedule.client.name },
-            totalSessions: schedule.client.duration ?? 0,
-            startDate: schedule.startDate,
-            header: schedule.serviceRecord ?? null,
-            sessions: schedule.serviceRecordDays,
+            totalSessions: record.requiredSessionCount ?? 0,
+            startDate: record.startDate,
+            endDate: record.endDate,
+            recordStatus: record.status,
+            completedAt: record.completedAt,
+            finalizationDueAt: record.finalizationDueAt,
+            finalizedAt: record.finalizedAt,
+            header: this.headerFromCase(record),
+            sessions: record.days.map((day) => ({
+                ...day,
+                sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
+            })),
             pendingScheduleChange: pendingScheduleChange
                 ? {
                     id: pendingScheduleChange.id,
@@ -85,11 +119,41 @@ export class ServiceFeedbackService {
 
     /** Upsert the one-time service header. */
     async saveHeader(ctx: FeedbackTokenContext, dto: SaveServiceHeaderDto) {
-        return this.prisma.service_record.upsert({
-            where: { scheduleId: ctx.scheduleId },
-            create: { branchId: ctx.branchId, scheduleId: ctx.scheduleId, ...dto },
-            update: { ...dto },
+        const record = await this.resolveCase(ctx);
+        const lockedCount = await this.prisma.service_record_day.count({
+            where: { serviceRecordCaseId: record.id, locked: true },
         });
+        if (lockedCount > 0) {
+            throw new ConflictException({ code: "SERVICE_RECORD_HEADER_LOCKED" });
+        }
+        if ([
+            SERVICE_RECORD_CASE_STATUS.FINALIZING,
+            SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED,
+            SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED,
+            SERVICE_RECORD_CASE_STATUS.COMPLETED,
+        ].includes(record.status as never)) {
+            throw new ConflictException({ code: "SERVICE_RECORD_FINALIZED" });
+        }
+
+        const updated = await this.prisma.$transaction(async (tx) => {
+            const aggregate = await tx.service_record_case.update({
+                where: { id: record.id },
+                data: { ...dto, version: { increment: 1 } },
+            });
+            await tx.service_record.upsert({
+                where: { scheduleId: ctx.scheduleId },
+                create: {
+                    branchId: ctx.branchId,
+                    scheduleId: ctx.scheduleId,
+                    serviceRecordCaseId: record.id,
+                    ...dto,
+                },
+                update: { serviceRecordCaseId: record.id, ...dto },
+            });
+            await this.lifecycleService.recompute(record.id, tx);
+            return aggregate;
+        });
+        return this.headerFromCase(updated);
     }
 
     /**
@@ -97,79 +161,231 @@ export class ServiceFeedbackService {
      * session is immutable; the service date is forward-only (skip-safe, no backdating).
      */
     async upsertSession(ctx: FeedbackTokenContext, sessionIndex: number, dto: UpsertSessionDto, lock: boolean) {
-        const schedule = await this.prisma.employee_schedule.findUnique({
-            where: { id: ctx.scheduleId },
-            include: { client: true },
-        });
-        if (!schedule) throw new NotFoundException("Assignment not found");
+        const aggregate = await this.resolveCase(ctx);
+        const answers = this.validateAnswers(dto.answers ?? {});
+        const saved = await this.prisma.$transaction(async (tx) => {
+            const [record, schedule] = await Promise.all([
+                tx.service_record_case.findUnique({ where: { id: aggregate.id } }),
+                tx.employee_schedule.findUnique({
+                    where: { id: ctx.scheduleId },
+                    include: { primaryEmployee: true },
+                }),
+            ]);
+            if (!record) throw new NotFoundException("Service record not found");
+            if (!schedule) throw new NotFoundException("Assignment not found");
+            if ([
+                SERVICE_RECORD_CASE_STATUS.FINALIZING,
+                SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED,
+                SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED,
+                SERVICE_RECORD_CASE_STATUS.COMPLETED,
+            ].includes(record.status as never)) {
+                throw new ConflictException({ code: "SERVICE_RECORD_FINALIZED" });
+            }
 
-        const total = schedule.client.duration ?? 0;
-        if (sessionIndex < 1 || sessionIndex > total) {
-            throw new BadRequestException(`Session ${sessionIndex} is outside the contracted range 1..${total}`);
-        }
+            const total = record.requiredSessionCount ?? 0;
+            if (sessionIndex < 1 || sessionIndex > total) {
+                throw new BadRequestException(`Session ${sessionIndex} is outside the contracted range 1..${total}`);
+            }
+            const serviceDate = new Date(dto.serviceDate);
+            if (Number.isNaN(serviceDate.getTime())) {
+                throw new BadRequestException("Invalid service date");
+            }
+            if (record.startDate && serviceDate < record.startDate) {
+                throw new BadRequestException("Service date cannot precede the service start date.");
+            }
+            if (record.endDate && serviceDate > record.endDate) {
+                throw new BadRequestException("Service date cannot exceed the service end date.");
+            }
 
-        const serviceDate = new Date(dto.serviceDate);
-
-        const existing = await this.prisma.service_record_day.findUnique({
-            where: { scheduleId_sessionIndex: { scheduleId: ctx.scheduleId, sessionIndex } },
-        });
-        if (existing?.locked) {
-            throw new ConflictException(`Session ${sessionIndex} has already been submitted and cannot be edited.`);
-        }
-
-        if (sessionIndex > 1) {
-            const prev = await this.prisma.service_record_day.findUnique({
-                where: { scheduleId_sessionIndex: { scheduleId: ctx.scheduleId, sessionIndex: sessionIndex - 1 } },
+            const existing = await tx.service_record_day.findUnique({
+                where: {
+                    serviceRecordCaseId_caseSessionIndex: {
+                        serviceRecordCaseId: record.id,
+                        caseSessionIndex: sessionIndex,
+                    },
+                },
             });
-            if (!prev?.locked) {
-                throw new ConflictException(`Submit session ${sessionIndex - 1} before session ${sessionIndex}.`);
+            if (existing?.locked) {
+                throw new ConflictException(`Session ${sessionIndex} has already been submitted and cannot be edited.`);
             }
-            if (serviceDate < prev.serviceDate) {
-                throw new BadRequestException("Service date cannot precede the previous session's date.");
+
+            if (sessionIndex > 1) {
+                const prev = await tx.service_record_day.findUnique({
+                    where: {
+                        serviceRecordCaseId_caseSessionIndex: {
+                            serviceRecordCaseId: record.id,
+                            caseSessionIndex: sessionIndex - 1,
+                        },
+                    },
+                });
+                if (!prev?.locked) {
+                    throw new ConflictException(`Submit session ${sessionIndex - 1} before session ${sessionIndex}.`);
+                }
+                if (serviceDate < prev.serviceDate) {
+                    throw new BadRequestException("Service date cannot precede the previous session's date.");
+                }
             }
-        } else if (schedule.startDate && serviceDate < schedule.startDate) {
-            throw new BadRequestException("Service date cannot precede the assignment start date.");
-        }
 
-        const data = {
-            branchId: ctx.branchId,
-            scheduleId: ctx.scheduleId,
-            sessionIndex,
-            serviceDate,
-            answers: (dto.answers ?? {}) as Prisma.InputJsonValue,
-            etcService: dto.etcService ?? null,
-            notes: dto.notes ?? null,
-            paymentConfirmed: dto.paymentConfirmed ?? false,
-            momApproval: dto.momApproval ?? null,
-            locked: lock,
-            submittedAt: lock ? new Date() : null,
-        };
+            if (lock) {
+                if (dto.momApproval !== "approved") {
+                    throw new BadRequestException("산모 확인 승인이 필요합니다.");
+                }
+                if (!this.hasCompleteHeader(record)) {
+                    throw new BadRequestException("서비스 기본정보를 모두 입력해 주세요.");
+                }
+            }
 
-        const saved = await this.prisma.service_record_day.upsert({
-            where: { scheduleId_sessionIndex: { scheduleId: ctx.scheduleId, sessionIndex } },
-            create: data,
-            update: data,
+            const data = {
+                branchId: ctx.branchId,
+                scheduleId: ctx.scheduleId,
+                serviceRecordCaseId: record.id,
+                caseSessionIndex: sessionIndex,
+                employeeId: ctx.employeeId,
+                employeeNameSnapshot: schedule.primaryEmployee.name,
+                formVersion: record.formVersion,
+                sessionIndex,
+                serviceDate,
+                answers: answers as Prisma.InputJsonValue,
+                etcService: this.trimNullable(dto.etcService, 1000),
+                notes: this.trimNullable(dto.notes, 2000),
+                paymentConfirmed: dto.paymentConfirmed ?? false,
+                momApproval: dto.momApproval ?? null,
+                locked: lock,
+                submittedAt: lock ? new Date() : null,
+            };
+
+            const row = await tx.service_record_day.upsert({
+                where: {
+                    serviceRecordCaseId_caseSessionIndex: {
+                        serviceRecordCaseId: record.id,
+                        caseSessionIndex: sessionIndex,
+                    },
+                },
+                create: data,
+                update: data,
+            });
+            await this.lifecycleService.recompute(record.id, tx);
+            return row;
         });
         if (lock) {
-            this.logger.log(`Service feedback session ${sessionIndex} submitted + locked for schedule ${ctx.scheduleId}`);
+            this.logger.log(`Service feedback session ${sessionIndex} submitted + locked for case ${aggregate.id}`);
         }
-        return saved;
+        return { ...saved, sessionIndex: saved.caseSessionIndex ?? saved.sessionIndex };
     }
 
-    /** Generate the eformsign snapshot of the whole record and SMS it to the 제공인력 to sign. */
+    /** Backward-compatible completion acknowledgement. Snapshot creation is scheduler-owned. */
     async finalize(ctx: FeedbackTokenContext) {
-        const schedule = await this.prisma.employee_schedule.findUnique({
-            where: { id: ctx.scheduleId },
-            include: { client: true, serviceRecordDays: true },
+        const record = await this.resolveCase(ctx);
+        const updated = await this.lifecycleService.recompute(record.id);
+        const documentIds = await this.prisma.eformsign_doc.findMany({
+            where: { serviceRecordCaseId: record.id, documentKind: "service_feedback_snapshot" },
+            select: { documentId: true },
+            orderBy: { snapshotChunkIndex: "asc" },
         });
-        if (!schedule) throw new NotFoundException("Assignment not found");
+        return {
+            status: updated.status,
+            completedAt: updated.completedAt,
+            finalizationDueAt: updated.finalizationDueAt,
+            finalizedAt: updated.finalizedAt,
+            chunkCount: documentIds.length,
+            documentIds: documentIds.map((document) => document.documentId),
+        };
+    }
 
-        const total = schedule.client.duration ?? 0;
-        const lockedCount = schedule.serviceRecordDays.filter((d) => d.locked).length;
-        if (total > 0 && lockedCount < total) {
-            throw new BadRequestException(`아직 모든 회차가 제출되지 않았습니다 (${lockedCount}/${total}).`);
+    private async resolveCase(ctx: FeedbackTokenContext) {
+        if (ctx.serviceRecordCaseId) {
+            const record = await this.prisma.service_record_case.findFirst({
+                where: { id: ctx.serviceRecordCaseId, branchId: ctx.branchId },
+            });
+            if (record) return record;
         }
+        const record = await this.lifecycleService.ensureForSchedule(ctx.scheduleId);
+        if (!record || record.branchId !== ctx.branchId) {
+            throw new NotFoundException("Service record not found");
+        }
+        return record;
+    }
 
-        return this.snapshotUsecase.execute(ctx.branchId, ctx.scheduleId);
+    private headerFromCase(record: {
+        momName: string | null;
+        momBirth: string | null;
+        babyName: string | null;
+        babyBirth: string | null;
+        deliveryType: string | null;
+        babyWeight: string | null;
+        createdAt: Date;
+        updatedAt: Date;
+    }) {
+        const hasValue = [
+            record.momName,
+            record.momBirth,
+            record.babyName,
+            record.babyBirth,
+            record.deliveryType,
+            record.babyWeight,
+        ].some((value) => Boolean(value));
+        if (!hasValue) return null;
+        return {
+            momName: record.momName,
+            momBirth: record.momBirth,
+            babyName: record.babyName,
+            babyBirth: record.babyBirth,
+            deliveryType: record.deliveryType,
+            babyWeight: record.babyWeight,
+            createdAt: record.createdAt,
+            updatedAt: record.updatedAt,
+        };
+    }
+
+    private hasCompleteHeader(record: {
+        momName: string | null;
+        momBirth: string | null;
+        babyName: string | null;
+        babyBirth: string | null;
+        deliveryType: string | null;
+        babyWeight: string | null;
+    }): boolean {
+        return [
+            record.momName,
+            record.momBirth,
+            record.babyName,
+            record.babyBirth,
+            record.deliveryType,
+            record.babyWeight,
+        ].every((value) => Boolean(value?.trim()));
+    }
+
+    private validateAnswers(raw: Record<string, unknown>): Record<string, unknown> {
+        if (Buffer.byteLength(JSON.stringify(raw), "utf8") > MAX_ANSWERS_BYTES) {
+            throw new BadRequestException("제공기록 입력값이 너무 큽니다.");
+        }
+        const answers: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(raw)) {
+            if (["etcService", "notes", "paymentConfirmed"].includes(key)) continue;
+            if (!ANSWER_KEYS.has(key)) {
+                throw new BadRequestException(`Unknown service-record field: ${key}`);
+            }
+            if (Array.isArray(value)) {
+                if (value.length > 8 || value.some((item) => typeof item !== "string" || item.length > 80)) {
+                    throw new BadRequestException(`Invalid service-record field: ${key}`);
+                }
+                answers[key] = value;
+                continue;
+            }
+            if (!["string", "number", "boolean"].includes(typeof value) || (typeof value === "string" && value.length > 500)) {
+                throw new BadRequestException(`Invalid service-record field: ${key}`);
+            }
+            answers[key] = value;
+        }
+        return answers;
+    }
+
+    private trimNullable(value: string | undefined, maxLength: number): string | null {
+        const normalized = value?.trim();
+        if (!normalized) return null;
+        if (normalized.length > maxLength) {
+            throw new BadRequestException(`입력값은 ${maxLength}자를 넘을 수 없습니다.`);
+        }
+        return normalized;
     }
 }

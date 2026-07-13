@@ -449,6 +449,16 @@ export class E2eEformsignClientStub implements IEformsignClientRepository {
         return Promise.resolve(buildEformsignStubDocuments());
     }
 
+    findDocumentsByTitle(
+        accessToken: string,
+        title: string,
+    ): Promise<EformsignApiDocumentResponse[]> {
+        void accessToken;
+        return Promise.resolve(
+            buildEformsignStubDocuments().filter((document) => document.document_name === title),
+        );
+    }
+
     getDocument(accessToken: string, documentId: string): Promise<EformsignApiDocumentResponse> {
         void accessToken;
         return Promise.resolve(buildEformsignStubDocument(documentId));
