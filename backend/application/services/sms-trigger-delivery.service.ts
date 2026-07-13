@@ -133,7 +133,7 @@ export class SmsTriggerDeliveryService {
             ...payload.templateVariables,
         };
         if (config.systemTemplateKey === SystemTemplateKey.PRICE_INFO) {
-            const requiredKeys = ["fullPrice", "actualPrice", "bankName", "accNum", "duration", "type"];
+            const requiredKeys = ["fullPrice", "grant", "actualPrice", "bankName", "accNum", "duration", "type"];
             const missing = requiredKeys.filter((key) => !baseVariables[key]?.trim());
             if (missing.length > 0) {
                 job.cancel(`비용 안내 발송 건너뜀: 필수 정보 누락 (${missing.join(", ")})`);

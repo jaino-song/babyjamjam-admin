@@ -219,6 +219,48 @@ describe("EformsignController (Integration)", () => {
         expect(eformsignService.downloadDocumentFile).not.toHaveBeenCalled();
     });
 
+    it("forbids downloading a document owned by another branch", async () => {
+        eformsignDocService.findAll.mockResolvedValue([{ documentId: "branch-1-doc" }] as any);
+
+        const response = await request(app.getHttpServer())
+            .get("/api/documents/other-branch-doc/download_files?accessToken=access-token");
+
+        expect(response.status).toBe(403);
+        expect(eformsignService.downloadDocumentFile).not.toHaveBeenCalled();
+    });
+
+    it("forbids the headquarters branch from downloading another branch's document", async () => {
+        branchFindUnique.mockResolvedValue({ slug: "incheon" });
+        eformsignDocService.findDocumentIdsForOtherBranches.mockResolvedValue(["other-branch-doc"]);
+
+        const response = await request(app.getHttpServer())
+            .get("/api/documents/other-branch-doc/download_files?accessToken=access-token");
+
+        expect(response.status).toBe(403);
+        expect(eformsignService.downloadDocumentFile).not.toHaveBeenCalled();
+    });
+
+    it("lets the headquarters branch download an unmapped document", async () => {
+        branchFindUnique.mockResolvedValue({ slug: "incheon" });
+        eformsignDocService.findDocumentIdsForOtherBranches.mockResolvedValue(["other-branch-doc"]);
+        eformsignService.downloadDocumentFile.mockResolvedValue({
+            status: 200,
+            contentType: "application/pdf",
+            contentDisposition: "attachment; filename=document.pdf",
+            body: Buffer.from("pdf"),
+        });
+
+        const response = await request(app.getHttpServer())
+            .get("/api/documents/unmapped-doc/download_files?accessToken=access-token");
+
+        expect(response.status).toBe(200);
+        expect(eformsignService.downloadDocumentFile).toHaveBeenCalledWith(
+            "access-token",
+            "unmapped-doc",
+            "document",
+        );
+    });
+
     it("returns only documents created by the current branch (getAllDocuments)", async () => {
         eformsignService.getAllDocuments.mockResolvedValue({
             documents: [
@@ -260,6 +302,35 @@ describe("EformsignController (Integration)", () => {
         expect(response.status).toBe(200);
         expect(response.body.documents).toEqual([{ id: "branch-1-doc" }]);
         expect(eformsignDocService.findAll).toHaveBeenCalledWith("branch-1");
+    });
+
+    it("finds current-branch status documents after pages containing only other branches", async () => {
+        const otherBranchDocuments = Array.from({ length: 100 }, (_, index) => ({
+            id: `other-branch-doc-${index}`,
+        }));
+        eformsignService.getInProgressDocuments.mockImplementation((async (_token: string, _limit: number, skip: number) => {
+            if (skip === 0) {
+                return { documents: otherBranchDocuments, total_rows: 101, limit: 100, skip: 0 };
+            }
+            if (skip === 100) {
+                return { documents: [{ id: "branch-1-doc" }], total_rows: 101, limit: 100, skip: 100 };
+            }
+            return { documents: [], total_rows: 101, limit: 100, skip };
+        }) as any);
+        eformsignDocService.findAll.mockResolvedValue([{ documentId: "branch-1-doc" }] as any);
+
+        const response = await request(app.getHttpServer())
+            .get("/api/documents/in-progress?accessToken=access-token&limit=20&skip=0");
+
+        expect(response.status).toBe(200);
+        expect(response.body).toMatchObject({
+            documents: [{ id: "branch-1-doc" }],
+            total_rows: 1,
+            limit: 20,
+            skip: 0,
+        });
+        expect(eformsignService.getInProgressDocuments).toHaveBeenNthCalledWith(1, "access-token", 100, 0);
+        expect(eformsignService.getInProgressDocuments).toHaveBeenNthCalledWith(2, "access-token", 100, 100);
     });
 
     it("enriches per-type branch-filtered documents with customer fields", async () => {

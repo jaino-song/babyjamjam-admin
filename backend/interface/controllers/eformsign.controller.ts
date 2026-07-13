@@ -292,6 +292,8 @@ export class EformsignController {
         keep: (doc: EformsignListDoc) => boolean,
         targetCount: number | null,
         branchId: string,
+        fetchPage: (limit: number, skip: number) => Promise<{ documents?: EformsignListDoc[] }> =
+            (limit, skip) => this.eformsignService.getAllDocuments(accessToken, limit, skip),
     ): Promise<EformsignListDoc[]> {
         const PAGE_SIZE = 100;
         const MAX_PAGES = 10;
@@ -299,11 +301,7 @@ export class EformsignController {
         let exhausted = false;
 
         for (let page = 0; page < MAX_PAGES; page++) {
-            const result = await this.eformsignService.getAllDocuments(
-                accessToken,
-                PAGE_SIZE,
-                page * PAGE_SIZE,
-            );
+            const result = await fetchPage(PAGE_SIZE, page * PAGE_SIZE);
             const pageDocs: EformsignListDoc[] = result.documents ?? [];
             if (pageDocs.length === 0) {
                 exhausted = true;
@@ -334,6 +332,55 @@ export class EformsignController {
             }
             return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
         });
+    }
+
+    private async collectBranchScopedDocuments(
+        accessToken: string,
+        branchId: string,
+        fetchPage: (limit: number, skip: number) => Promise<{ documents?: EformsignListDoc[] }>,
+    ): Promise<EformsignListDoc[]> {
+        if (await this.isHeadquartersBranch(branchId)) {
+            const otherBranchIds = new Set(
+                await this.eformsignDocService.findDocumentIdsForOtherBranches(branchId),
+            );
+            return this.scanCompanyDocuments(
+                accessToken,
+                (doc) => !otherBranchIds.has(doc.id),
+                null,
+                branchId,
+                fetchPage,
+            );
+        }
+
+        const localDocs = await this.eformsignDocService.findAll(branchId);
+        const allowedIds = new Set(localDocs.map((doc) => doc.documentId));
+        if (allowedIds.size === 0) {
+            return [];
+        }
+        return this.scanCompanyDocuments(
+            accessToken,
+            (doc) => allowedIds.has(doc.id),
+            allowedIds.size,
+            branchId,
+            fetchPage,
+        );
+    }
+
+    private async getBranchScopedStatusPage(
+        accessToken: string,
+        branchId: string,
+        limit: number,
+        skip: number,
+        fetchPage: (limit: number, skip: number) => Promise<{ documents?: EformsignListDoc[] }>,
+    ) {
+        const documents = await this.collectBranchScopedDocuments(accessToken, branchId, fetchPage);
+        const pageDocuments = documents.slice(skip, skip + limit);
+        return {
+            documents: await this.enrichDocumentsWithDisplayFields(accessToken, pageDocuments),
+            total_rows: documents.length,
+            limit,
+            skip,
+        };
     }
 
     /**
@@ -603,13 +650,19 @@ export class EformsignController {
                     HttpStatus.BAD_REQUEST
                 );
             }
-            const result = await this.eformsignService.getInProgressDocuments(
+            const parsedLimit = parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 });
+            const parsedSkip = parseInteger(skip, "skip", { defaultValue: 0, min: 0 });
+            return await this.getBranchScopedStatusPage(
                 accessToken,
-                parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 }),
-                parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
+                tenant.branchId ?? "",
+                parsedLimit,
+                parsedSkip,
+                (pageLimit, pageSkip) => this.eformsignService.getInProgressDocuments(
+                    accessToken,
+                    pageLimit,
+                    pageSkip,
+                ),
             );
-            const documents = await this.filterDocumentsByBranch(tenant.branchId ?? "", result.documents ?? []);
-            return { ...result, documents: await this.enrichDocumentsWithDisplayFields(accessToken, documents) };
         } catch (error) {
             throwHttpOrInternalError(error);
         }
@@ -632,13 +685,19 @@ export class EformsignController {
                     HttpStatus.BAD_REQUEST
                 );
             }
-            const result = await this.eformsignService.getCompletedDocuments(
+            const parsedLimit = parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 });
+            const parsedSkip = parseInteger(skip, "skip", { defaultValue: 0, min: 0 });
+            return await this.getBranchScopedStatusPage(
                 accessToken,
-                parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 }),
-                parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
+                tenant.branchId ?? "",
+                parsedLimit,
+                parsedSkip,
+                (pageLimit, pageSkip) => this.eformsignService.getCompletedDocuments(
+                    accessToken,
+                    pageLimit,
+                    pageSkip,
+                ),
             );
-            const documents = await this.filterDocumentsByBranch(tenant.branchId ?? "", result.documents ?? []);
-            return { ...result, documents: await this.enrichDocumentsWithDisplayFields(accessToken, documents) };
         } catch (error) {
             throwHttpOrInternalError(error);
         }
@@ -661,13 +720,19 @@ export class EformsignController {
                     HttpStatus.BAD_REQUEST
                 );
             }
-            const result = await this.eformsignService.getRejectedDocuments(
+            const parsedLimit = parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 });
+            const parsedSkip = parseInteger(skip, "skip", { defaultValue: 0, min: 0 });
+            return await this.getBranchScopedStatusPage(
                 accessToken,
-                parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 }),
-                parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
+                tenant.branchId ?? "",
+                parsedLimit,
+                parsedSkip,
+                (pageLimit, pageSkip) => this.eformsignService.getRejectedDocuments(
+                    accessToken,
+                    pageLimit,
+                    pageSkip,
+                ),
             );
-            const documents = await this.filterDocumentsByBranch(tenant.branchId ?? "", result.documents ?? []);
-            return { ...result, documents: await this.enrichDocumentsWithDisplayFields(accessToken, documents) };
         } catch (error) {
             throwHttpOrInternalError(error);
         }
@@ -745,6 +810,7 @@ export class EformsignController {
      */
     @Get("documents/:documentId/download_files")
     async downloadDocumentFile(
+        @CurrentTenant() tenant: { branchId?: string },
         @Param("documentId") documentId: string,
         @Query("accessToken") accessToken: string,
         @Query("fileType") fileType: string | undefined,
@@ -759,6 +825,16 @@ export class EformsignController {
             }
 
             const parsedFileType = parseDownloadFileType(fileType);
+            const allowedDocuments = await this.filterDocumentsByBranch(
+                tenant.branchId ?? "",
+                [{ id: documentId }],
+            );
+            if (allowedDocuments.length === 0) {
+                throw new HttpException(
+                    { error: "Document access forbidden" },
+                    HttpStatus.FORBIDDEN,
+                );
+            }
             const file = await this.eformsignService.downloadDocumentFile(accessToken, documentId, parsedFileType);
 
             res.status(file.status);

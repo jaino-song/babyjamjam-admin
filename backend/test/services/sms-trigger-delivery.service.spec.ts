@@ -543,6 +543,7 @@ describe("PRICE_INFO data guard", () => {
         const job = createPriceInfoJob({
             name: "김지니",
             fullPrice: "1200000",
+            grant: "1080000",
             actualPrice: "120000",
             bankName: "국민",
             accNum: "123-45-6789",
@@ -557,6 +558,28 @@ describe("PRICE_INFO data guard", () => {
         expect(logRepository.save).toHaveBeenCalledTimes(1);
     });
 
+    it("cancels a PRICE_INFO job when the government grant is blank", async () => {
+        const aligoService = { sendSms: jest.fn() };
+        const logRepository = { save: jest.fn() };
+        const service = buildService({ aligoService, logRepository });
+        const job = createPriceInfoJob({
+            name: "김지니",
+            fullPrice: "1200000",
+            grant: "",
+            actualPrice: "120000",
+            bankName: "국민",
+            accNum: "123-45-6789",
+            duration: "20",
+            type: "단태아 첫째아 A가1형",
+        });
+
+        const sent = await service.sendJob(job);
+
+        expect(sent).toBe(false);
+        expect(job.status).toBe("canceled");
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+    });
+
     it("cancels a PRICE_INFO job when price/bank are present but duration is blank", async () => {
         const aligoService = { sendSms: jest.fn() };
         const logRepository = { save: jest.fn() };
@@ -564,6 +587,7 @@ describe("PRICE_INFO data guard", () => {
         const job = createPriceInfoJob({
             name: "김지니",
             fullPrice: "1200000",
+            grant: "1080000",
             actualPrice: "120000",
             bankName: "국민",
             accNum: "123-45-6789",
