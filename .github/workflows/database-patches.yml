@@ -77,7 +77,9 @@ jobs:
 
       - name: Apply client-owned service-record patch
         working-directory: backend
-        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713000000_add_client_service_record_case/migration.sql
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713000000_add_client_service_record_case/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713110000_align_service_record_case_schema/migration.sql
 
       - name: Verify client-owned service-record patch
         working-directory: backend
@@ -269,7 +271,9 @@ jobs:
 
       - name: Apply client-owned service-record patch
         working-directory: backend
-        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713000000_add_client_service_record_case/migration.sql
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713000000_add_client_service_record_case/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713110000_align_service_record_case_schema/migration.sql
 
       - name: Verify client-owned service-record patch
         working-directory: backend
@@ -466,7 +470,9 @@ jobs:
 
       - name: Apply client-owned service-record patch
         working-directory: backend
-        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713000000_add_client_service_record_case/migration.sql
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713000000_add_client_service_record_case/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713110000_align_service_record_case_schema/migration.sql
 
       - name: Verify client-owned service-record patch
         working-directory: backend
