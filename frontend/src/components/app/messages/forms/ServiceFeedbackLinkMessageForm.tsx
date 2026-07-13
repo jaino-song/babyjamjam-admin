@@ -1,13 +1,18 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ClientAutocomplete } from "@/components/app/clients/ClientAutocomplete";
 import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocomplete";
+import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import type { Employee } from "@/hooks/useEmployees";
 import { t } from "@/lib/i18n/translations";
 import type { Client } from "@/lib/client/types";
+import {
+  isValidKoreanPhoneNumber,
+  normalizeKoreanPhoneLookupKey,
+} from "@/lib/phone";
 import { useLocale } from "@/providers/LocaleProvider";
 import { renderTemplate } from "@/lib/template-utils";
 import { useFormStore } from "@/stores/form-store";
@@ -17,6 +22,7 @@ import { TemplateFieldGridItem } from "./form-components/TemplateFieldGrid";
 import {
   TemplateMessageFormFrame,
   type TemplateMessageFormLayout,
+  type ServiceFeedbackLinkPreparation,
 } from "./form-components/TemplateMessageFormLayout";
 
 interface ServiceFeedbackLinkMessageFormProps {
@@ -27,6 +33,10 @@ interface ServiceFeedbackLinkMessageFormProps {
 
 const ALIGNED_AUTOCOMPLETE_CLASS_NAME =
   "grid gap-[calc(7px*var(--glint-ui-scale,1))] space-y-0";
+
+interface PreparedFeedbackLink extends ServiceFeedbackLinkPreparation {
+  selectionKey: string;
+}
 
 export const ServiceFeedbackLinkMessageForm = ({
   onPreviewMessageChange,
@@ -48,10 +58,85 @@ export const ServiceFeedbackLinkMessageForm = ({
     resetEmployeeFields,
   } = useFormStore();
   const { data: systemTemplate } = useSystemTemplate("SERVICE_FEEDBACK_LINK");
+  const [preparedFeedbackLink, setPreparedFeedbackLink] = useState<PreparedFeedbackLink | null>(null);
+  const [preparationErrorKey, setPreparationErrorKey] = useState<string | null>(null);
+  const inFlightPreparationRef = useRef<{
+    selectionKey: string;
+    promise: Promise<PreparedFeedbackLink>;
+  } | null>(null);
+
+  const normalizedEmployeePhone = normalizeKoreanPhoneLookupKey(employeePhone);
+  const canPrepareFeedbackLink = clientId !== null
+    && Boolean(clientName.trim())
+    && employeeId !== null
+    && Boolean(employeeName.trim())
+    && isValidKoreanPhoneNumber(normalizedEmployeePhone);
+  const selectionKey = canPrepareFeedbackLink
+    ? `${clientId}:${employeeId}:${normalizedEmployeePhone}`
+    : null;
+  const currentPreparation = preparedFeedbackLink?.selectionKey === selectionKey
+    ? preparedFeedbackLink
+    : null;
+
+  useEffect(() => {
+    if (selectionKey === null || clientId === null || employeeId === null) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const existingRequest = inFlightPreparationRef.current;
+    const promise = existingRequest?.selectionKey === selectionKey
+      ? existingRequest.promise
+      : (async (): Promise<PreparedFeedbackLink> => {
+          const overviewResponse = await serviceRecordsApi.getClientOverview(clientId);
+          const assignment = overviewResponse.data.assignments.find(
+            (item) => !item.replaced && item.employee.id === employeeId,
+          );
+          if (!assignment) {
+            throw new Error("Assignment not found");
+          }
+
+          const preparedResponse = await serviceRecordsApi.prepareLink(assignment.scheduleId);
+          return {
+            scheduleId: assignment.scheduleId,
+            ...preparedResponse.data,
+            selectionKey,
+          };
+        })();
+
+    inFlightPreparationRef.current = { selectionKey, promise };
+    void promise
+      .then((prepared) => {
+        if (!cancelled) {
+          setPreparedFeedbackLink(prepared);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPreparationErrorKey(selectionKey);
+        }
+      })
+      .finally(() => {
+        if (inFlightPreparationRef.current?.promise === promise) {
+          inFlightPreparationRef.current = null;
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId, employeeId, selectionKey]);
 
   const resolvedEmployeeName = employeeName.trim() || "{{employeeName}}";
   const resolvedClientName = clientName.trim() || "{{clientName}}";
-  const resolvedFeedbackUrl = "{{feedbackUrl}}";
+  const resolvedFeedbackUrl = currentPreparation?.feedbackUrl ?? "{{feedbackUrl}}";
+  const feedbackLinkDisplayValue = currentPreparation?.feedbackUrl
+    ?? (selectionKey === null
+      ? "필수 정보 입력 후 생성"
+      : preparationErrorKey === selectionKey
+        ? "배정 정보를 확인해 주세요."
+        : "링크 준비 중…");
   const templateMessage = systemTemplate?.content
     ? renderTemplate(systemTemplate.content, {
         employeeName: resolvedEmployeeName,
@@ -80,10 +165,16 @@ ${resolvedFeedbackUrl}`;
     return navigator.clipboard.writeText(generatedMessage);
   };
 
+  const invalidatePreparedFeedbackLink = () => {
+    setPreparedFeedbackLink(null);
+    setPreparationErrorKey(null);
+  };
+
   const handleEmployeeChange = (
     nextEmployeeId: number | null,
     employee: Employee | null,
   ) => {
+    invalidatePreparedFeedbackLink();
     if (!employee || nextEmployeeId === null) {
       resetEmployeeFields();
       return;
@@ -94,6 +185,7 @@ ${resolvedFeedbackUrl}`;
   };
 
   const handleEmployeeManualNameChange = (value: string) => {
+    invalidatePreparedFeedbackLink();
     const nextName = value.trimStart();
     if (!nextName.trim()) {
       resetEmployeeFields();
@@ -108,6 +200,7 @@ ${resolvedFeedbackUrl}`;
     nextClientId: number | null,
     client: Client | null,
   ) => {
+    invalidatePreparedFeedbackLink();
     if (!client || nextClientId === null) {
       setClientId(null);
       return;
@@ -118,8 +211,14 @@ ${resolvedFeedbackUrl}`;
   };
 
   const handleClientManualNameChange = (value: string) => {
+    invalidatePreparedFeedbackLink();
     setClientId(null);
     setClientName(value);
+  };
+
+  const handleEmployeePhoneChange = (value: string) => {
+    invalidatePreparedFeedbackLink();
+    setEmployeePhone(value);
   };
 
   const fields = (
@@ -140,7 +239,7 @@ ${resolvedFeedbackUrl}`;
       <TemplateFieldGridItem dataComponent="messages-service-feedback-link-employee-phone-field">
         <ContactInput
           phone={employeePhone}
-          setPhone={setEmployeePhone}
+          setPhone={handleEmployeePhoneChange}
           label="관리사님 전화번호"
           placeholder="010-0000-0000"
           required
@@ -174,12 +273,12 @@ ${resolvedFeedbackUrl}`;
         { label: "관리사님 성함", value: employeeName.trim() || "-" },
         { label: "관리사님 전화번호", value: employeePhone.trim() || "-" },
         { label: "산모님 성함", value: clientName.trim() || "-" },
-        { label: "제공기록지 링크", value: "발송 시 자동 생성" },
+        { label: "제공기록지 링크", value: feedbackLinkDisplayValue },
       ]}
       variableItems={[
         { token: "{{employeeName}}", label: "관리사님 성함", value: employeeName.trim() || "-" },
         { token: "{{clientName}}", label: "산모님 성함", value: clientName.trim() || "-" },
-        { token: "{{feedbackUrl}}", label: "제공기록지 링크", value: "발송 시 자동 생성" },
+        { token: "{{feedbackUrl}}", label: "제공기록지 링크", value: feedbackLinkDisplayValue },
       ]}
       handleCopy={handleCopy}
       showSide={showMessageSide}
@@ -192,6 +291,7 @@ ${resolvedFeedbackUrl}`;
       fields={fields}
       messageCard={messageCard}
       deliveryMode="service-feedback-link"
+      serviceFeedbackLinkPreparation={currentPreparation}
       renderLayout={renderLayout}
     />
   );

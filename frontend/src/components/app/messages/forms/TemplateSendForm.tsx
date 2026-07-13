@@ -23,7 +23,10 @@ import { cn } from "@/lib/utils";
 import { useFormStore } from "@/stores/form-store";
 import { ContactInput } from "./form-components/ContactInput";
 import { TemplateFieldGrid, TemplateFieldGridItem } from "./form-components/TemplateFieldGrid";
-import type { TemplateMessageDeliveryMode } from "./form-components/TemplateMessageFormLayout";
+import type {
+  ServiceFeedbackLinkPreparation,
+  TemplateMessageDeliveryMode,
+} from "./form-components/TemplateMessageFormLayout";
 
 const SMS_BYTE_LIMIT = 90;
 const MAX_LMS_TITLE_BYTES = 44;
@@ -37,6 +40,7 @@ type ServiceFeedbackLinkFailureStage = "assignment" | "send";
 const SERVICE_FEEDBACK_LINK_ERROR_MESSAGES: Record<string, string> = {
   "Assignment not found": "선택한 관리사님과 산모님의 배정 일정을 찾지 못해 제공기록지 링크를 발송하지 못했습니다.",
   "제공인력 전화번호가 없습니다": "선택한 관리사님의 전화번호가 없어 제공기록지 링크를 발송하지 못했습니다.",
+  "준비된 제공기록지 링크가 만료되었거나 유효하지 않습니다": "제공기록지 링크가 만료되었습니다. 입력 정보를 다시 선택해 새 링크를 준비해 주세요.",
 };
 
 export interface TemplateSendFormSubmitState {
@@ -69,6 +73,7 @@ interface TemplateSendFormProps {
   className?: string;
   formId?: string;
   showSubmitButton?: boolean;
+  serviceFeedbackLinkPreparation?: ServiceFeedbackLinkPreparation | null;
   onSubmitStateChange?: (state: TemplateSendFormSubmitState | null) => void;
 }
 
@@ -194,6 +199,7 @@ export function TemplateSendForm({
   className,
   formId,
   showSubmitButton = true,
+  serviceFeedbackLinkPreparation,
   onSubmitStateChange,
 }: TemplateSendFormProps) {
   const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
@@ -312,7 +318,10 @@ export function TemplateSendForm({
     : hasQueuedRecipients
       ? null
       : recipientValidationMessage ?? templateFieldValidationMessage ?? messageValidationMessage;
-  const isSubmitDisabled = Boolean(validationMessage) || isSending || isCheckingDuplicate;
+  const isSubmitDisabled = Boolean(validationMessage)
+    || (isServiceFeedbackLinkDelivery && !serviceFeedbackLinkPreparation)
+    || isSending
+    || isCheckingDuplicate;
   const resolvedFormId = formId ?? `messages-template-send-form-${templateId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 
   useEffect(() => {
@@ -565,34 +574,22 @@ export function TemplateSendForm({
   };
 
   const sendServiceFeedbackLink = async () => {
-    if (clientId === null || employeeId === null) {
+    if (clientId === null || employeeId === null || !serviceFeedbackLinkPreparation) {
       setFeedback({
         tone: "error",
-        message: serviceFeedbackValidationMessage ?? "관리사님과 산모님을 선택해 주세요.",
+        message: serviceFeedbackValidationMessage ?? "제공기록지 링크를 준비하고 있습니다. 잠시 후 다시 시도해 주세요.",
       });
       return;
     }
 
     setIsSending(true);
     setFeedback(null);
-    let failureStage: ServiceFeedbackLinkFailureStage = "assignment";
+    const failureStage: ServiceFeedbackLinkFailureStage = "send";
 
     try {
-      const overviewResponse = await serviceRecordsApi.getClientOverview(clientId);
-      const assignment = overviewResponse.data.assignments.find(
-        (item) => !item.replaced && item.employee.id === employeeId,
-      );
-
-      if (!assignment) {
-        setFeedback({
-          tone: "error",
-          message: "선택한 관리사님과 산모님의 배정 일정을 찾을 수 없습니다.",
-        });
-        return;
-      }
-
-      failureStage = "send";
-      await serviceRecordsApi.sendLink(assignment.scheduleId);
+      await serviceRecordsApi.sendLink(serviceFeedbackLinkPreparation.scheduleId, {
+        preparedLinkToken: serviceFeedbackLinkPreparation.preparedLinkToken,
+      });
       setFeedback({
         tone: "success",
         message: "제공기록지 링크 발송 요청이 접수되었습니다.",

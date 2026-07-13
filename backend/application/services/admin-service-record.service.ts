@@ -14,6 +14,7 @@ import {
     AdminServiceRecordLinkDto,
     AdminServiceRecordLinkStatus,
     AdminServiceRecordOverviewDto,
+    AdminServiceRecordPreparedLinkDto,
     AdminServiceRecordSessionDto,
     AdminServiceRecordSignatureDocDto,
     AdminServiceRecordTokenDto,
@@ -70,7 +71,15 @@ export class AdminServiceRecordService {
                     primaryEmployee: true,
                     serviceRecord: true,
                     serviceRecordDays: { orderBy: { sessionIndex: "asc" } },
-                    feedbackTokens: { orderBy: { createdAt: "desc" } },
+                    feedbackTokens: {
+                        where: {
+                            OR: [
+                                { active: true },
+                                { revokedAt: { not: null } },
+                            ],
+                        },
+                        orderBy: { createdAt: "desc" },
+                    },
                 },
                 orderBy: { startDate: "desc" },
             }),
@@ -156,7 +165,21 @@ export class AdminServiceRecordService {
         };
     }
 
-    async sendLinkNow(branchId: string, scheduleId: number): Promise<{ scheduledFor: Date }> {
+    async prepareLink(branchId: string, scheduleId: number): Promise<AdminServiceRecordPreparedLinkDto> {
+        await this.assertScheduleBelongsToBranch(branchId, scheduleId);
+        return this.employeeFeedbackLinkService.prepareLink(scheduleId);
+    }
+
+    async sendLinkNow(
+        branchId: string,
+        scheduleId: number,
+        preparedLinkToken?: string,
+    ): Promise<{ scheduledFor: Date }> {
+        await this.assertScheduleBelongsToBranch(branchId, scheduleId);
+        return this.employeeFeedbackLinkService.sendNow(scheduleId, preparedLinkToken);
+    }
+
+    private async assertScheduleBelongsToBranch(branchId: string, scheduleId: number): Promise<void> {
         const schedule = await this.prisma.employee_schedule.findFirst({
             where: { id: scheduleId, branchId },
             select: { id: true },
@@ -164,8 +187,6 @@ export class AdminServiceRecordService {
         if (!schedule) {
             throw new NotFoundException("Assignment not found");
         }
-
-        return this.employeeFeedbackLinkService.sendNow(scheduleId);
     }
 
     private mapAssignment(

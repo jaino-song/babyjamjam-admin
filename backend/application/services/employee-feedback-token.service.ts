@@ -19,6 +19,15 @@ export type VerifyPhoneResult =
 /** Max phone verification attempts before the link is locked (staff must re-issue). */
 export const MAX_PHONE_ATTEMPTS = 5;
 
+interface FeedbackLinkTokenParams {
+    branchId: string;
+    scheduleId: number;
+    employeeId: number;
+    serviceRecordCaseId?: string | null;
+    expectedPhone: string;
+    expiresAt: Date;
+}
+
 /**
  * No-login per-assignment feedback access (BJJ-247).
  * Two secrets per token row:
@@ -46,14 +55,7 @@ export class EmployeeFeedbackTokenService {
      * Issue a fresh link for an assignment, revoking any prior active token for the schedule
      * (so a replaced provider's old link stops working). Returns the plaintext link token once.
      */
-    async issueLink(params: {
-        branchId: string;
-        scheduleId: number;
-        employeeId: number;
-        serviceRecordCaseId?: string | null;
-        expectedPhone: string;
-        expiresAt: Date;
-    }): Promise<{ linkToken: string }> {
+    async issueLink(params: FeedbackLinkTokenParams): Promise<{ linkToken: string }> {
         const linkToken = `efl_${randomBytes(32).toString("base64url")}`;
         await this.prismaService.$transaction(async (tx) => {
             await tx.employee_feedback_token.updateMany({
@@ -81,6 +83,76 @@ export class EmployeeFeedbackTokenService {
             });
         });
         return { linkToken };
+    }
+
+    /**
+     * Prepare the exact link shown in the admin preview without making it usable yet.
+     * The plaintext token is returned once and must stay in the authenticated admin's
+     * in-memory form state until send activates this same row.
+     */
+    async prepareLink(params: FeedbackLinkTokenParams): Promise<{ linkToken: string }> {
+        const linkToken = `efl_${randomBytes(32).toString("base64url")}`;
+        await this.prismaService.employee_feedback_token.create({
+            data: {
+                branchId: params.branchId,
+                scheduleId: params.scheduleId,
+                employeeId: params.employeeId,
+                serviceRecordCaseId: params.serviceRecordCaseId,
+                linkTokenHash: this.hash(linkToken),
+                expectedPhoneHash: this.hash(this.normalizePhone(params.expectedPhone)),
+                expiresAt: params.expiresAt,
+                active: false,
+            },
+        });
+        return { linkToken };
+    }
+
+    /** Activate a prepared link only when it still matches the tenant assignment and phone. */
+    async activatePreparedLink(params: FeedbackLinkTokenParams & { linkToken: string }): Promise<boolean> {
+        const linkTokenHash = this.hash(params.linkToken);
+        const expectedPhoneHash = this.hash(this.normalizePhone(params.expectedPhone));
+
+        return this.prismaService.$transaction(async (tx) => {
+            const record = await tx.employee_feedback_token.findUnique({
+                where: { linkTokenHash },
+            });
+            if (
+                !record
+                || record.revokedAt
+                || record.expiresAt.getTime() < Date.now()
+                || record.branchId !== params.branchId
+                || record.scheduleId !== params.scheduleId
+                || record.employeeId !== params.employeeId
+                || record.expectedPhoneHash !== expectedPhoneHash
+            ) {
+                return false;
+            }
+
+            if (!record.active) {
+                await tx.employee_feedback_token.updateMany({
+                    where: {
+                        active: true,
+                        OR: [
+                            { scheduleId: params.scheduleId },
+                            ...(record.serviceRecordCaseId
+                                ? [{ serviceRecordCaseId: record.serviceRecordCaseId }]
+                                : []),
+                        ],
+                    },
+                    data: { active: false, revokedAt: new Date() },
+                });
+            }
+
+            await tx.employee_feedback_token.update({
+                where: { id: record.id },
+                data: {
+                    active: true,
+                    revokedAt: null,
+                    expiresAt: params.expiresAt,
+                },
+            });
+            return true;
+        });
     }
 
     /** Resolve a usable (active, not revoked, not expired) link-token row, else null. */

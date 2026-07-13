@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
+import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { useFormStore } from "@/stores/form-store";
 
@@ -7,6 +8,13 @@ import { ServiceFeedbackLinkMessageForm } from "../ServiceFeedbackLinkMessageFor
 
 jest.mock("@/features/system-templates/hooks", () => ({
   useSystemTemplate: jest.fn(),
+}));
+
+jest.mock("@/features/service-records/api/service-records.api", () => ({
+  serviceRecordsApi: {
+    getClientOverview: jest.fn(),
+    prepareLink: jest.fn(),
+  },
 }));
 
 jest.mock("@/providers/LocaleProvider", () => ({
@@ -120,16 +128,26 @@ jest.mock("../form-components/TemplateMessageFormLayout", () => ({
     fields,
     messageCard,
     deliveryMode,
+    renderLayout,
+    serviceFeedbackLinkPreparation,
   }: {
     fields: React.ReactNode;
     messageCard: React.ReactNode;
     deliveryMode?: string;
-  }) => (
-    <div data-delivery-mode={deliveryMode}>
-      {fields}
-      {messageCard}
-    </div>
-  ),
+    renderLayout?: (args: Record<string, unknown>) => React.ReactNode;
+    serviceFeedbackLinkPreparation?: Record<string, unknown> | null;
+  }) => renderLayout ? renderLayout({
+    fields,
+    messageCard,
+    requiresRecipientName: false,
+    deliveryMode,
+    serviceFeedbackLinkPreparation,
+  }) : (
+      <div data-delivery-mode={deliveryMode}>
+        {fields}
+        {messageCard}
+      </div>
+    ),
 }));
 
 const serviceFeedbackLinkTemplate = `[사회서비스 제공자 품질평가 A등급]
@@ -147,7 +165,28 @@ const serviceFeedbackLinkTemplate = `[사회서비스 제공자 품질평가 A�
 
 describe("ServiceFeedbackLinkMessageForm", () => {
   beforeEach(() => {
+    jest.clearAllMocks();
     useFormStore.getState().resetAll();
+    jest.mocked(serviceRecordsApi.getClientOverview).mockResolvedValue({
+      data: {
+        assignments: [{
+          scheduleId: 11,
+          replaced: false,
+          employee: {
+            id: 30,
+            name: "홍제공",
+            phone: "010-1111-2222",
+          },
+        }],
+      },
+    } as never);
+    jest.mocked(serviceRecordsApi.prepareLink).mockResolvedValue({
+      data: {
+        feedbackUrl: "https://mobile.test/feedback/efl_prepared",
+        preparedLinkToken: "efl_prepared",
+        expiresAt: "2026-07-20T00:00:00.000Z",
+      },
+    } as never);
     jest.mocked(useSystemTemplate).mockReturnValue({
       data: {
         content: serviceFeedbackLinkTemplate,
@@ -200,10 +239,16 @@ describe("ServiceFeedbackLinkMessageForm", () => {
       expect(screen.getByTestId("generated-message")).toHaveTextContent(
         "홍제공 관리사님, 김산모 산모님의 서비스 제공기록지 작성 링크입니다.",
       );
+      expect(screen.getByTestId("generated-message")).toHaveTextContent(
+        "https://mobile.test/feedback/efl_prepared",
+      );
       expect(onPreviewMessageChange).toHaveBeenLastCalledWith(
-        expect.stringContaining("{{feedbackUrl}}"),
+        expect.stringContaining("https://mobile.test/feedback/efl_prepared"),
       );
     });
+
+    expect(serviceRecordsApi.getClientOverview).toHaveBeenCalledWith(20);
+    expect(serviceRecordsApi.prepareLink).toHaveBeenCalledWith(11);
 
     expect(document.querySelector('[data-delivery-mode="service-feedback-link"]')).toBeInTheDocument();
     expect(screen.getByText("{{employeeName}}")).toBeInTheDocument();
@@ -233,6 +278,31 @@ describe("ServiceFeedbackLinkMessageForm", () => {
       employeePhone: "010-3333-4444",
       clientId: null,
       name: "수동산모",
+    });
+    expect(serviceRecordsApi.prepareLink).not.toHaveBeenCalled();
+    expect(screen.getByTestId("generated-message")).toHaveTextContent("{{feedbackUrl}}");
+  });
+
+  it("passes the in-memory prepared link through the render layout for the submit form", async () => {
+    render(
+      <ServiceFeedbackLinkMessageForm
+        renderLayout={({ fields, messageCard, serviceFeedbackLinkPreparation }) => (
+          <div>
+            {fields}
+            {messageCard}
+            <output data-testid="prepared-link-state">
+              {serviceFeedbackLinkPreparation?.preparedLinkToken ?? ""}
+            </output>
+          </div>
+        )}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("combobox", { name: "관리사님 성함" }));
+    fireEvent.click(screen.getByRole("combobox", { name: "산모님 성함" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("prepared-link-state")).toHaveTextContent("efl_prepared");
     });
   });
 });
