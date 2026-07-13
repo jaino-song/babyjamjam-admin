@@ -1,4 +1,6 @@
 export type {
+    PrepareServiceRecordLinkResponse,
+    SendServiceRecordLinkRequest,
     SendServiceRecordLinkResponse,
     ServiceRecordAssignment,
     ServiceRecordCase,

@@ -1657,6 +1657,7 @@ export default function MessagesPage() {
     messageCard,
     requiresRecipientName,
     deliveryMode,
+    serviceFeedbackLinkPreparation,
   }) => {
     const flattenedMessageCard = isValidElement(messageCard)
       ? cloneElement(messageCard as ReactElement<{ layout?: "flat" }>, { layout: "flat" })
@@ -1674,6 +1675,7 @@ export default function MessagesPage() {
           message={templatePreviewMessage}
           requiresRecipientName={requiresRecipientName}
           deliveryMode={deliveryMode}
+          serviceFeedbackLinkPreparation={serviceFeedbackLinkPreparation}
           className="h-full"
           formId={TEMPLATE_SEND_FORM_ID}
           showSubmitButton={false}

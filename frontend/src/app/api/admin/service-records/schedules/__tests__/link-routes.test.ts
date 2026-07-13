@@ -1,0 +1,104 @@
+/**
+ * @jest-environment node
+ */
+import { NextRequest } from "next/server";
+
+import { serverAPIClient } from "@/lib/api/server";
+
+import { POST as prepareLink } from "../[scheduleId]/prepare-link/route";
+import { POST as sendLink } from "../[scheduleId]/send-link/route";
+
+jest.mock("@/lib/api/server", () => ({
+    serverAPIClient: {
+        post: jest.fn(),
+    },
+}));
+
+const mockPost = serverAPIClient.post as jest.Mock;
+const preparedLinkToken = `efl_${"a".repeat(43)}`;
+
+function createRequest(path: string, body?: object, authenticated = true): NextRequest {
+    return new NextRequest(`http://localhost${path}`, {
+        method: "POST",
+        headers: {
+            ...(authenticated ? { cookie: "auth_token=token-1" } : {}),
+            ...(body ? { "content-type": "application/json" } : {}),
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+}
+
+describe("service-record feedback link proxy routes", () => {
+    beforeEach(() => {
+        mockPost.mockReset();
+    });
+
+    it("prepares an exact feedback URL through the authenticated backend route", async () => {
+        mockPost.mockResolvedValue({
+            status: 201,
+            data: {
+                feedbackUrl: `https://mobile.test/feedback/${preparedLinkToken}`,
+                preparedLinkToken,
+                expiresAt: "2026-07-20T00:00:00.000Z",
+            },
+        });
+
+        const response = await prepareLink(
+            createRequest("/api/admin/service-records/schedules/11/prepare-link"),
+            { params: Promise.resolve({ scheduleId: "11" }) },
+        );
+
+        expect(response.status).toBe(201);
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        expect(mockPost).toHaveBeenCalledWith(
+            "/admin/service-records/schedules/11/prepare-link",
+            {},
+            { headers: { Authorization: "Bearer token-1" } },
+        );
+        await expect(response.json()).resolves.toEqual(expect.objectContaining({ preparedLinkToken }));
+    });
+
+    it("forwards only the validated prepared token when sending", async () => {
+        mockPost.mockResolvedValue({
+            status: 201,
+            data: { ok: true, scheduledFor: "2026-07-13T00:00:00.000Z" },
+        });
+
+        const response = await sendLink(
+            createRequest("/api/admin/service-records/schedules/11/send-link", {
+                preparedLinkToken,
+                ignored: "do-not-forward",
+            }),
+            { params: Promise.resolve({ scheduleId: "11" }) },
+        );
+
+        expect(response.status).toBe(201);
+        expect(mockPost).toHaveBeenCalledWith(
+            "/admin/service-records/schedules/11/send-link",
+            { preparedLinkToken },
+            { headers: { Authorization: "Bearer token-1" } },
+        );
+    });
+
+    it("rejects malformed prepared tokens before they reach the backend", async () => {
+        const response = await sendLink(
+            createRequest("/api/admin/service-records/schedules/11/send-link", {
+                preparedLinkToken: "efl_invalid",
+            }),
+            { params: Promise.resolve({ scheduleId: "11" }) },
+        );
+
+        expect(response.status).toBe(400);
+        expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it("requires admin authentication before preparing a bearer link", async () => {
+        const response = await prepareLink(
+            createRequest("/api/admin/service-records/schedules/11/prepare-link", undefined, false),
+            { params: Promise.resolve({ scheduleId: "11" }) },
+        );
+
+        expect(response.status).toBe(401);
+        expect(mockPost).not.toHaveBeenCalled();
+    });
+});

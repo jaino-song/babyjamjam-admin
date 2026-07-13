@@ -29,6 +29,11 @@ describe("AdminServiceRecordService", () => {
     });
 
     const createLinkService = () => ({
+        prepareLink: jest.fn().mockResolvedValue({
+            feedbackUrl: "https://mobile.test/feedback/efl_prepared",
+            preparedLinkToken: "efl_prepared",
+            expiresAt: new Date("2026-07-13T01:00:00.000Z"),
+        }),
         sendNow: jest.fn().mockResolvedValue({ scheduledFor: new Date("2026-07-03T01:00:00.000Z") }),
     });
 
@@ -141,6 +146,19 @@ describe("AdminServiceRecordService", () => {
         ]);
 
         const overview = await service.getClientOverview("branch-1", 100);
+        expect(prisma.employee_schedule.findMany).toHaveBeenCalledWith(expect.objectContaining({
+            include: expect.objectContaining({
+                feedbackTokens: {
+                    where: {
+                        OR: [
+                            { active: true },
+                            { revokedAt: { not: null } },
+                        ],
+                    },
+                    orderBy: { createdAt: "desc" },
+                },
+            }),
+        }));
         const statuses = new Map(overview.assignments.map((assignment) => [
             assignment.scheduleId,
             assignment.link.status,
@@ -244,5 +262,38 @@ describe("AdminServiceRecordService", () => {
         await expect(service.sendLinkNow("branch-1", 10)).rejects.toBeInstanceOf(NotFoundException);
 
         expect(linkService.sendNow).not.toHaveBeenCalled();
+    });
+
+    it("prepares a link only after checking that the schedule belongs to the tenant branch", async () => {
+        const prisma = createPrisma();
+        const linkService = createLinkService();
+        const service = new AdminServiceRecordService(
+            prisma as unknown as PrismaService,
+            linkService as unknown as EmployeeFeedbackLinkService,
+        );
+        prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10 });
+
+        const result = await service.prepareLink("branch-1", 10);
+
+        expect(prisma.employee_schedule.findFirst).toHaveBeenCalledWith({
+            where: { id: 10, branchId: "branch-1" },
+            select: { id: true },
+        });
+        expect(linkService.prepareLink).toHaveBeenCalledWith(10);
+        expect(result.preparedLinkToken).toBe("efl_prepared");
+    });
+
+    it("passes the prepared token through the tenant-checked send path", async () => {
+        const prisma = createPrisma();
+        const linkService = createLinkService();
+        const service = new AdminServiceRecordService(
+            prisma as unknown as PrismaService,
+            linkService as unknown as EmployeeFeedbackLinkService,
+        );
+        prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10 });
+
+        await service.sendLinkNow("branch-1", 10, "efl_prepared");
+
+        expect(linkService.sendNow).toHaveBeenCalledWith(10, "efl_prepared");
     });
 });
