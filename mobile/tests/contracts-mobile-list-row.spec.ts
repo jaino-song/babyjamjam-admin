@@ -798,7 +798,18 @@ test.describe("Mobile contracts list rows", () => {
         body: JSON.stringify(STAGE_DOCUMENTS),
       });
     });
-    await routeDocumentDetails(page);
+    await routeDocumentDetails(page, [
+      ...MOCK_DOCUMENTS.documents,
+      ...STAGE_DOCUMENTS.documents.map((document) => {
+        if (document.id === "doc-waiting") {
+          return { ...document, fields: [{ id: "이용자 성명", value: "대기고객" }] };
+        }
+        if (document.id === "doc-opened") {
+          return { ...document, fields: [{ id: "이용자 성명", value: "열람고객" }] };
+        }
+        return document;
+      }),
+    ]);
     await routeDocumentClientSummaries(page);
     await routeNotificationLogs(page);
 
@@ -886,7 +897,7 @@ test.describe("Mobile contracts list rows", () => {
     await expect(timeline).not.toContainText("이용자 문서 열람 대기중입니다");
   });
 
-  test("shows actual provider metadata and document id in related info", async ({ page }) => {
+  test("shows document id in the contract info layout", async ({ page }) => {
     await page.route("**/api/access-token", async (route) => {
       await route.fulfill({
         status: 200,
@@ -902,15 +913,7 @@ test.describe("Mobile contracts list rows", () => {
         body: JSON.stringify(STAGE_DOCUMENTS),
       });
     });
-    await routeDocumentClientSummaries(page, [
-      {
-        documentId: "doc-waiting",
-        clientId: 101,
-        clientName: "대기고객",
-        clientPhone: "010-1111-2222",
-        providerName: "실제제공인력",
-      },
-    ]);
+    await routeDocumentClientSummaries(page);
     await routeNotificationLogs(page);
 
     await page.goto("/contracts");
@@ -928,11 +931,8 @@ test.describe("Mobile contracts list rows", () => {
     await expect(contractInfo).not.toContainText("마감일");
     await expect(page.locator(".client-detail-badges")).not.toContainText("DOC-WAITING");
 
-    // The former combined "관련 정보" card no longer exists: provider fields
-    // render in the 이용자 정보 card, document id in the 계약 정보 card.
-    const userInfo = page.locator(".info-card", { hasText: "이용자 정보" });
-    await expect(userInfo).toContainText("제공인력");
-    await expect(userInfo).toContainText("실제제공인력");
+    // The former combined "관련 정보" card no longer exists; document id
+    // renders in the 계약 정보 card.
     await expect(contractInfo).toContainText("문서 ID");
     await expect(contractInfo).toContainText("doc-waiting");
     await expect(contractInfo).not.toContainText("eformsign 코드");
