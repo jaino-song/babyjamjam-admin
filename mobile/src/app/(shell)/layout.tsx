@@ -1,9 +1,9 @@
 import type { Metadata, Viewport } from "next";
-import "./globals.css";
+import "../globals.css";
 import { QueryProvider } from "@/providers/QueryProvider";
 import localFont from "next/font/local";
 import { LocaleProvider } from "@/providers/LocaleProvider";
-import { getLocale } from "./actions/locale";
+import { getLocale } from "../actions/locale";
 import { getCurrentUser } from "@/lib/auth/cookies";
 import { UserProvider } from "@/providers/UserProvider";
 import { NotificationPermissionPrompt } from "@/components/app/notification-permission-prompt";
@@ -15,7 +15,7 @@ import { V3MainContent } from "@/components/app/v3/V3MainContent";
 import { FloatingQuickActions } from "@/components/app/v3/FloatingQuickActions";
 
 const Pretendard = localFont({
-  src: "./fonts/Pretendard.woff2",
+  src: "../fonts/Pretendard.woff2",
   variable: "--font-pretendard",
   display: "swap",
 });
