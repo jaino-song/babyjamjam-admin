@@ -70,10 +70,12 @@ describe("EmployeeFeedbackTokenService", () => {
     }
 
     it("issues a link, then a correct phone number mints an access token that resolves to the assignment context", async () => {
-        const { svc } = setup();
+        const { prisma, svc } = setup();
         const { linkToken } = await svc.issueLink({
             branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "010-1111-2222", expiresAt: future(),
         });
+
+        expect(prisma.__rows[0].linkTokenHash).toBe(linkToken);
 
         // normalized phone compare: "01011112222" must match "010-1111-2222"
         const result = await svc.verifyPhoneAndMintAccess(linkToken, "01011112222");
@@ -141,5 +143,75 @@ describe("EmployeeFeedbackTokenService", () => {
 
         // the first (now-replaced) provider's link is dead
         expect(await svc.resolveLink(first.linkToken)).toBeNull();
+    });
+
+    it("prepares an inactive link that cannot be used before an admin sends it", async () => {
+        const { prisma, svc } = setup();
+        const prepared = await svc.prepareLink({
+            branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "010-1111-2222", expiresAt: future(),
+        });
+
+        expect(prisma.__rows[0]).toMatchObject({
+            branchId: "b1",
+            scheduleId: 10,
+            employeeId: 7,
+            active: false,
+            revokedAt: null,
+        });
+        expect(await svc.resolveLink(prepared.linkToken)).toBeNull();
+    });
+
+    it("activates the exact prepared link and revokes the previously active link", async () => {
+        const { svc } = setup();
+        const previous = await svc.issueLink({
+            branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "010-1111-2222", expiresAt: future(),
+        });
+        const prepared = await svc.prepareLink({
+            branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "010-1111-2222", expiresAt: future(),
+        });
+        const activatedExpiry = future();
+
+        await expect(svc.activatePreparedLink({
+            linkToken: prepared.linkToken,
+            branchId: "b1",
+            scheduleId: 10,
+            employeeId: 7,
+            expectedPhone: "01011112222",
+            expiresAt: activatedExpiry,
+        })).resolves.toBe(true);
+
+        expect(await svc.resolveLink(previous.linkToken)).toBeNull();
+        expect(await svc.resolveLink(prepared.linkToken)).toMatchObject({
+            branchId: "b1",
+            scheduleId: 10,
+            employeeId: 7,
+            active: true,
+            expiresAt: activatedExpiry,
+        });
+    });
+
+    it("does not activate a prepared link for a different assignment or phone", async () => {
+        const { svc } = setup();
+        const prepared = await svc.prepareLink({
+            branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "010-1111-2222", expiresAt: future(),
+        });
+
+        await expect(svc.activatePreparedLink({
+            linkToken: prepared.linkToken,
+            branchId: "b1",
+            scheduleId: 11,
+            employeeId: 7,
+            expectedPhone: "010-1111-2222",
+            expiresAt: future(),
+        })).resolves.toBe(false);
+        await expect(svc.activatePreparedLink({
+            linkToken: prepared.linkToken,
+            branchId: "b1",
+            scheduleId: 10,
+            employeeId: 7,
+            expectedPhone: "010-9999-9999",
+            expiresAt: future(),
+        })).resolves.toBe(false);
+        expect(await svc.resolveLink(prepared.linkToken)).toBeNull();
     });
 });

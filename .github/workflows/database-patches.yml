@@ -65,6 +65,12 @@ jobs:
             exit 1
           fi
 
+      - name: Apply message schema compatibility patches
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713120000_repair_message_table_renames/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260709000000_message_automation_hardening/migration.sql
+
       - name: Apply eformsign document relation patches
         working-directory: backend
         run: |
@@ -134,6 +140,12 @@ jobs:
             echo "PREVIEW_DIRECT_URL or PREVIEW_DATABASE_URL secret is required."
             exit 1
           fi
+
+      - name: Apply message schema compatibility patches
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713120000_repair_message_table_renames/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260709000000_message_automation_hardening/migration.sql
 
       - name: Apply idempotent database patches
         working-directory: backend
@@ -333,6 +345,12 @@ jobs:
             echo "PRODUCTION_DIRECT_URL, PROD_DIRECT_URL, PRODUCTION_DATABASE_URL, or PROD_DATABASE_URL secret is required."
             exit 1
           fi
+
+      - name: Apply message schema compatibility patches
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713120000_repair_message_table_renames/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260709000000_message_automation_hardening/migration.sql
 
       - name: Apply idempotent database patches
         working-directory: backend

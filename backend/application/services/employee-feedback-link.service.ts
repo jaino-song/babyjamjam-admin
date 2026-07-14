@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -60,6 +62,7 @@ export class EmployeeFeedbackLinkService {
             const { scheduledFor, employeeId, jobEnqueued } = await this.issueFeedbackLinkJob(scheduleId, {
                 scheduledFor: null,
                 recordMissingPhoneFailure: true,
+                isManualSend: false,
             });
             if (jobEnqueued) {
                 this.logger.log(
@@ -77,17 +80,58 @@ export class EmployeeFeedbackLinkService {
      * Mint a fresh link and enqueue immediate dispatch from an admin action.
      * Unlike the assignment hook, errors are intentionally surfaced to the caller.
      */
-    async sendNow(scheduleId: number): Promise<{ scheduledFor: Date }> {
+    async sendNow(scheduleId: number, preparedLinkToken?: string): Promise<{ scheduledFor: Date }> {
         const scheduledFor = new Date();
         const result = await this.issueFeedbackLinkJob(scheduleId, {
             scheduledFor,
             recordMissingPhoneFailure: false,
             allowLateReissue: true,
+            preparedLinkToken,
+            isManualSend: true,
         });
         this.logger.log(
             `Feedback link SMS manually scheduled for provider ${result.employeeId} schedule ${scheduleId} at ${result.scheduledFor.toISOString()}`
         );
         return { scheduledFor: result.scheduledFor };
+    }
+
+    /**
+     * Create the exact URL shown in the admin composer without enqueueing a job or
+     * revoking the currently active provider link. The returned token is inactive
+     * until sendNow receives and activates it.
+     */
+    async prepareLink(scheduleId: number): Promise<{
+        feedbackUrl: string;
+        preparedLinkToken: string;
+        expiresAt: Date;
+    }> {
+        const schedule = await this.prisma.employee_schedule.findUnique({
+            where: { id: scheduleId },
+            include: { primaryEmployee: true },
+        });
+        if (!schedule || !schedule.branchId) {
+            throw new NotFoundException("Assignment not found");
+        }
+
+        const employee = schedule.primaryEmployee;
+        if (!this.normalizePhone(employee.phone)) {
+            throw new BadRequestException("제공인력 전화번호가 없습니다");
+        }
+
+        const expiresAt = this.resolveExpiry(schedule.endDate, true);
+        const { linkToken } = await this.tokenService.prepareLink({
+            branchId: schedule.branchId,
+            scheduleId,
+            employeeId: employee.id,
+            expectedPhone: employee.phone,
+            expiresAt,
+        });
+
+        return {
+            feedbackUrl: this.buildFeedbackUrl(linkToken),
+            preparedLinkToken: linkToken,
+            expiresAt,
+        };
     }
 
     /** Revoke an assignment's feedback access (replacement / termination). */
@@ -140,6 +184,8 @@ export class EmployeeFeedbackLinkService {
             scheduledFor: Date | null;
             recordMissingPhoneFailure: boolean;
             allowLateReissue?: boolean;
+            preparedLinkToken?: string;
+            isManualSend: boolean;
         },
     ): Promise<{ scheduledFor: Date; employeeId: number; jobEnqueued: boolean }> {
         const schedule = await this.prisma.employee_schedule.findUnique({
@@ -153,10 +199,31 @@ export class EmployeeFeedbackLinkService {
         await this.ensureSystemRule();
         const serviceRecordCase = await this.lifecycleService?.ensureForClient(schedule.clientId);
 
+        const employee = schedule.primaryEmployee;
+        if (options.preparedLinkToken) {
+            if (!this.normalizePhone(employee.phone)) {
+                throw new BadRequestException("제공인력 전화번호가 없습니다");
+            }
+
+            const activated = await this.tokenService.activatePreparedLink({
+                linkToken: options.preparedLinkToken,
+                branchId: schedule.branchId,
+                scheduleId,
+                employeeId: employee.id,
+                expectedPhone: employee.phone,
+                expiresAt: this.resolveExpiry(
+                    serviceRecordCase?.endDate ?? schedule.endDate,
+                    options.allowLateReissue === true,
+                ),
+            });
+            if (!activated) {
+                throw new BadRequestException("준비된 제공기록지 링크가 만료되었거나 유효하지 않습니다");
+            }
+        }
+
         await this.cancelPendingFeedbackJobs(scheduleId, "Feedback link rescheduled");
         await this.supersedeRetryableFeedbackSmsLogs(scheduleId, "Feedback link rescheduled");
 
-        const employee = schedule.primaryEmployee;
         if (!this.normalizePhone(employee.phone)) {
             if (!options.recordMissingPhoneFailure) {
                 throw new BadRequestException("제공인력 전화번호가 없습니다");
@@ -182,22 +249,25 @@ export class EmployeeFeedbackLinkService {
             };
         }
 
-        const { linkToken } = await this.tokenService.issueLink({
-            branchId: schedule.branchId,
-            scheduleId,
-            employeeId: employee.id,
-            ...(serviceRecordCase ? { serviceRecordCaseId: serviceRecordCase.id } : {}),
-            expectedPhone: employee.phone,
-            expiresAt: this.resolveExpiry(
+        let linkToken: string;
+        if (options.preparedLinkToken) {
+            linkToken = options.preparedLinkToken;
+        } else {
+            const expiresAt = this.resolveExpiry(
                 serviceRecordCase?.endDate ?? schedule.endDate,
                 options.allowLateReissue === true,
-            ),
-        });
+            );
+            ({ linkToken } = await this.tokenService.issueLink({
+                branchId: schedule.branchId,
+                scheduleId,
+                employeeId: employee.id,
+                ...(serviceRecordCase ? { serviceRecordCaseId: serviceRecordCase.id } : {}),
+                expectedPhone: employee.phone,
+                expiresAt,
+            }));
+        }
 
-        const base = this.configService
-            .get<string>("MOBILE_FEEDBACK_BASE_URL", "https://m.admin.babyjamjam.com")
-            .replace(/\/+$/, "");
-        const url = `${base}/feedback/${linkToken}`;
+        const url = this.buildFeedbackUrl(linkToken);
         const clientName = schedule.client?.name ?? "고객";
         const message = `[사회서비스 제공자 품질평가 A등급]
 안녕하세요, 인천 아이미래로 입니다 :)
@@ -223,7 +293,7 @@ ${url}`;
                 recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
                 recipientPhone: employee.phone,
                 templateKey: MessageTriggerTemplateKey.SERVICE_FEEDBACK_LINK,
-                dedupeKey: `${SERVICE_FEEDBACK_LINK_RULE_ID}:schedule:${scheduleId}:primary`,
+                dedupeKey: this.buildDedupeKey(scheduleId, options.isManualSend),
                 payload: {
                     clientId: schedule.clientId,
                     clientName,
@@ -318,8 +388,22 @@ ${url}`;
         return date.toISOString().slice(0, 10);
     }
 
+    private buildDedupeKey(scheduleId: number, isManualSend: boolean): string {
+        const assignmentKey = `${SERVICE_FEEDBACK_LINK_RULE_ID}:schedule:${scheduleId}:primary`;
+        if (!isManualSend) return assignmentKey;
+
+        return `${assignmentKey}:manual:${randomUUID()}`;
+    }
+
     private normalizePhone(phone: string): string {
         return phone.replace(/\D/g, "");
+    }
+
+    private buildFeedbackUrl(linkToken: string): string {
+        const base = this.configService
+            .get<string>("MOBILE_FEEDBACK_BASE_URL", "https://m.admin.babyjamjam.com")
+            .replace(/\/+$/, "");
+        return `${base}/feedback/${linkToken}`;
     }
 
     private resolveExpiry(endDate: Date, allowLateReissue: boolean): Date {

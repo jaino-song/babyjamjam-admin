@@ -29,6 +29,8 @@ describe("EmployeeFeedbackLinkService", () => {
     });
     const createTokenService = () => ({
         issueLink: jest.fn().mockResolvedValue({ linkToken: "efl_token" }),
+        prepareLink: jest.fn().mockResolvedValue({ linkToken: "efl_prepared" }),
+        activatePreparedLink: jest.fn().mockResolvedValue(true),
         revokeForSchedule: jest.fn().mockResolvedValue(undefined),
         extendExpiryForSchedule: jest.fn().mockResolvedValue(undefined),
     });
@@ -90,6 +92,7 @@ describe("EmployeeFeedbackLinkService", () => {
         });
         const job = jobRepository.upsertPending.mock.calls[0]?.[0] as MessageTriggerJobEntity;
         expect(job.ruleId).toBe(SERVICE_FEEDBACK_LINK_RULE_ID);
+        expect(job.dedupeKey).toBe(`${SERVICE_FEEDBACK_LINK_RULE_ID}:schedule:10:primary`);
         expect(job.templateKey).toBe(MessageTriggerTemplateKey.SERVICE_FEEDBACK_LINK);
         expect(job.recipientType).toBe(MessageTriggerRecipientType.PRIMARY_EMPLOYEE);
         expect(job.scheduledFor).toEqual(new Date("2026-07-03T15:00:00+09:00"));
@@ -132,8 +135,124 @@ describe("EmployeeFeedbackLinkService", () => {
         expect(job.scheduledFor.getTime()).toBeGreaterThanOrEqual(before);
         expect(job.scheduledFor.getTime()).toBeLessThanOrEqual(after);
         expect(result.scheduledFor).toBe(job.scheduledFor);
-        expect(job.dedupeKey).toBe(`${SERVICE_FEEDBACK_LINK_RULE_ID}:schedule:10:primary`);
+        expect(job.dedupeKey).toMatch(
+            new RegExp(`^${SERVICE_FEEDBACK_LINK_RULE_ID}:schedule:10:primary:manual:[0-9a-f-]{36}$`),
+        );
         expect(job.payload.buttonUrl).toBe("https://mobile.test/feedback/efl_token");
+    });
+
+    it("sendNow creates a unique UUID dedupe key without exposing the plaintext link token", async () => {
+        const prisma = createPrisma();
+        const tokenService = createTokenService();
+        tokenService.issueLink
+            .mockResolvedValueOnce({ linkToken: "efl_manual_first" })
+            .mockResolvedValueOnce({ linkToken: "efl_manual_second" });
+        const jobRepository = createJobRepository();
+        const service = new EmployeeFeedbackLinkService(
+            prisma as unknown as PrismaService,
+            tokenService as never,
+            createConfigService() as unknown as ConfigService,
+            jobRepository as unknown as IMessageTriggerJobRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
+        );
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+
+        await service.sendNow(10);
+        await service.sendNow(10);
+
+        const firstJob = jobRepository.upsertPending.mock.calls[0]?.[0] as MessageTriggerJobEntity;
+        const secondJob = jobRepository.upsertPending.mock.calls[1]?.[0] as MessageTriggerJobEntity;
+        expect(firstJob.dedupeKey).not.toBe(secondJob.dedupeKey);
+        expect(firstJob.dedupeKey).toMatch(
+            new RegExp(`^${SERVICE_FEEDBACK_LINK_RULE_ID}:schedule:10:primary:manual:[0-9a-f-]{36}$`),
+        );
+        expect(firstJob.dedupeKey).not.toContain("efl_manual_first");
+        expect(secondJob.dedupeKey).not.toContain("efl_manual_second");
+    });
+
+    it("prepares an inactive exact URL without enqueueing or canceling any SMS job", async () => {
+        const prisma = createPrisma();
+        const tokenService = createTokenService();
+        const jobRepository = createJobRepository();
+        const logRepository = createLogRepository();
+        const service = new EmployeeFeedbackLinkService(
+            prisma as unknown as PrismaService,
+            tokenService as never,
+            createConfigService() as unknown as ConfigService,
+            jobRepository as unknown as IMessageTriggerJobRepository,
+            logRepository as unknown as IMessageLogRepository,
+        );
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+
+        const result = await service.prepareLink(10);
+
+        expect(tokenService.prepareLink).toHaveBeenCalledWith(expect.objectContaining({
+            branchId: "branch-1",
+            scheduleId: 10,
+            employeeId: 30,
+            expectedPhone: "010-1111-2222",
+        }));
+        expect(result).toEqual({
+            feedbackUrl: "https://mobile.test/feedback/efl_prepared",
+            preparedLinkToken: "efl_prepared",
+            expiresAt: expect.any(Date),
+        });
+        expect(prisma.message_trigger_rule.upsert).not.toHaveBeenCalled();
+        expect(jobRepository.findPendingByRuleIdsAndEmployeeScheduleId).not.toHaveBeenCalled();
+        expect(jobRepository.upsertPending).not.toHaveBeenCalled();
+        expect(logRepository.findRetryableServiceFeedbackSmsByScheduleId).not.toHaveBeenCalled();
+    });
+
+    it("sendNow reuses the exact prepared URL instead of minting a different link", async () => {
+        const prisma = createPrisma();
+        const tokenService = createTokenService();
+        const jobRepository = createJobRepository();
+        const service = new EmployeeFeedbackLinkService(
+            prisma as unknown as PrismaService,
+            tokenService as never,
+            createConfigService() as unknown as ConfigService,
+            jobRepository as unknown as IMessageTriggerJobRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
+        );
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+
+        await service.sendNow(10, "efl_prepared");
+
+        expect(tokenService.activatePreparedLink).toHaveBeenCalledWith(expect.objectContaining({
+            linkToken: "efl_prepared",
+            branchId: "branch-1",
+            scheduleId: 10,
+            employeeId: 30,
+            expectedPhone: "010-1111-2222",
+        }));
+        expect(tokenService.issueLink).not.toHaveBeenCalled();
+        const job = jobRepository.upsertPending.mock.calls[0]?.[0] as MessageTriggerJobEntity;
+        expect(job.payload.buttonUrl).toBe("https://mobile.test/feedback/efl_prepared");
+        expect(job.payload.messageBody).toContain("https://mobile.test/feedback/efl_prepared");
+    });
+
+    it("rejects an expired or mismatched prepared link instead of silently minting another URL", async () => {
+        const prisma = createPrisma();
+        const tokenService = createTokenService();
+        tokenService.activatePreparedLink.mockResolvedValue(false);
+        const jobRepository = createJobRepository();
+        const logRepository = createLogRepository();
+        const service = new EmployeeFeedbackLinkService(
+            prisma as unknown as PrismaService,
+            tokenService as never,
+            createConfigService() as unknown as ConfigService,
+            jobRepository as unknown as IMessageTriggerJobRepository,
+            logRepository as unknown as IMessageLogRepository,
+        );
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+
+        await expect(service.sendNow(10, "efl_invalid")).rejects.toBeInstanceOf(BadRequestException);
+        expect(tokenService.issueLink).not.toHaveBeenCalled();
+        expect(jobRepository.findPendingByRuleIdsAndEmployeeScheduleId).not.toHaveBeenCalled();
+        expect(jobRepository.update).not.toHaveBeenCalled();
+        expect(jobRepository.upsertPending).not.toHaveBeenCalled();
+        expect(logRepository.findRetryableServiceFeedbackSmsByScheduleId).not.toHaveBeenCalled();
+        expect(logRepository.update).not.toHaveBeenCalled();
     });
 
     it("provisions the fixed system rule before issuing a feedback token", async () => {

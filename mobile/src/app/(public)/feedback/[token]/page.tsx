@@ -3,15 +3,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 
-import {
-    SERVICE_RECORD_FORM_LAYOUT,
-    type ServiceRecordFieldDescriptor,
-    type ServiceRecordFormSection,
-} from "@babyjamjam/shared/constants/service-record-form-layout";
-
+import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
-import { isBusinessDayKr, nextBusinessDayKr } from "@/lib/date/business-days";
+import { DEFAULT_PROVIDER_NAME, ProviderInfo } from "@/components/feedback/provider-info";
+import { isBusinessDayKr, isoDateInKorea, nextBusinessDayKr } from "@/lib/date/business-days";
 
 /* ───────────────────────── form definition (mirrors the 제공기록지) ───────────────────────── */
 
@@ -25,9 +21,9 @@ interface DailyItem {
 }
 
 const DAILY_ITEMS: DailyItem[] = [
-    { key: "perineum", label: "① 회음절개부위 (또는 수술부위)", type: "multi", opts: ["열상", "혈종", "불편감", "이상없음"] },
-    { key: "breast", label: "② 유방상태", type: "multi", opts: ["울혈", "통증", "이상없음"] },
-    { key: "excretion", label: "③ 배뇨/배변", type: "multi", opts: ["불편감", "이상없음"] },
+    { key: "perineum", label: "① 회음절개부위 (또는 수술부위)", type: "multi", opts: ["이상없음", "열상", "혈종", "불편감"] },
+    { key: "breast", label: "② 유방상태", type: "multi", opts: ["이상없음", "울혈", "통증"] },
+    { key: "excretion", label: "③ 배뇨/배변", type: "multi", opts: ["이상없음", "불편감"] },
     { key: "sitzBath", label: "④ 좌욕", type: "radio", opts: ["실시", "미실시"] },
     { key: "meals", label: "⑤ 식사/간식", type: "counts", counts: [{ k: "meal", label: "식사", unit: "회" }, { k: "snack", label: "간식", unit: "회" }] },
     { key: "temperature", label: "⑥ 체온", type: "counts", counts: [{ k: "temp", label: "체온", unit: "℃" }] },
@@ -36,26 +32,22 @@ const DAILY_ITEMS: DailyItem[] = [
     { key: "formulaFeeding", label: "⑨ 분유수유", type: "counts", counts: [{ k: "count", label: "횟수", unit: "회" }, { k: "ml", label: "회당", unit: "ml" }] },
     { key: "stool", label: "⑩ 배변양상", type: "stool", opts: ["정상변", "이상변"] },
     { key: "bath", label: "⑪ 목욕·제대관리", type: "radio", opts: ["실시", "미실시"] },
-    { key: "etcService", label: "기타 서비스 (필요시 직접기재)", type: "textarea" },
-    { key: "notes", label: "특이사항", type: "textarea" },
+    { key: "etcService", label: "기타 서비스 (필요 시 기재)", type: "textarea" },
+    { key: "notes", label: "특이사항 (필요 시 기재)", type: "textarea" },
     { key: "paymentConfirmed", label: "결제 확인", type: "confirm" },
 ];
 interface DayPage {
-    tag: "산모" | "신생아" | "마무리" | "산모 확인";
     title: string;
-    sub: string;
     items: number[];
     confirmation?: boolean;
 }
 
 const DAY_PAGES: DayPage[] = [
-    { tag: "산모", title: "산모 기록", sub: "① ~ ⑤", items: [0, 1, 2, 3, 4] },
-    { tag: "신생아", title: "신생아 기록", sub: "⑥ ~ ⑪", items: [5, 6, 7, 8, 9, 10] },
-    { tag: "마무리", title: "마무리 · 확인", sub: "기타 · 특이사항 · 결제 확인", items: [11, 12, 13] },
+    { title: "산모 기록", items: [0, 1, 2, 3, 4] },
+    { title: "신생아 기록", items: [5, 6, 7, 8, 9, 10] },
+    { title: "서비스 기록", items: [11, 12, 13] },
     {
-        tag: "산모 확인",
         title: "기록 내용 확인",
-        sub: "제공인력이 작성한 오늘의 기록입니다. 내용을 확인하신 후 아래에서 승인 또는 거부를 선택해 주세요.",
         items: [],
         confirmation: true,
     },
@@ -63,6 +55,16 @@ const DAY_PAGES: DayPage[] = [
 
 const MOM_APPROVAL_APPROVED = "approved";
 const REVIEW_EMPTY_LABEL = "입력 없음";
+const DRAFT_STORAGE_PREFIX = "daily-service-feedback-draft";
+const DEFAULT_DAILY_ANSWERS: Record<string, unknown> = {
+    perineum: ["이상없음"],
+    breast: ["이상없음"],
+    excretion: ["이상없음"],
+    sitzBath: "실시",
+    sleep: "잘 잠",
+    stool: "정상변",
+    bath: "실시",
+};
 
 /* ───────────────────────── types from the backend ───────────────────────── */
 
@@ -77,13 +79,14 @@ interface SessionRow {
     momApproval?: string | null;
 }
 interface FeedbackContext {
-    org: { name: string; hours: string };
+    org?: { name: string };
     employee: { id: number; name: string };
     client: { id: number; name: string };
     totalSessions: number;
     startDate: string | null;
     header: Record<string, unknown> | null;
     sessions: SessionRow[];
+    recordStatus?: string | null;
     pendingScheduleChange?: { id: string; sessionIndex: number; fromDate: string; toDate: string } | null;
 }
 
@@ -103,11 +106,42 @@ const HEADER_FIELDS = [
 
 /* ───────────────────────── helpers ───────────────────────── */
 
-const isoOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const mmdd = (iso: string) => (iso ? iso.slice(5).replace("-", ".") : "");
 const monthDayKo = (iso: string) => {
     const [, month = "", day = ""] = iso.match(/^\d{4}-(\d{2})-(\d{2})$/) ?? [];
     return `${Number(month)}월 ${Number(day)}일`;
+};
+interface StoredFormState {
+    header?: Record<string, string>;
+    day?: number;
+    pageIdx?: number;
+    draft?: Record<string, unknown>;
+}
+const draftStorageKey = (token: string) => `${DRAFT_STORAGE_PREFIX}:${token}`;
+const readStoredFormState = (token: string): StoredFormState | null => {
+    if (typeof window === "undefined" || !token) return null;
+    try {
+        const raw = window.sessionStorage.getItem(draftStorageKey(token));
+        return raw ? JSON.parse(raw) as StoredFormState : null;
+    } catch {
+        return null;
+    }
+};
+const writeStoredFormState = (token: string, value: StoredFormState) => {
+    if (typeof window === "undefined" || !token) return;
+    try {
+        window.sessionStorage.setItem(draftStorageKey(token), JSON.stringify(value));
+    } catch {
+        // The form remains usable when session storage is unavailable.
+    }
+};
+const clearStoredFormState = (token: string) => {
+    if (typeof window === "undefined" || !token) return;
+    try {
+        window.sessionStorage.removeItem(draftStorageKey(token));
+    } catch {
+        // Ignore storage cleanup failures after a successful server submission.
+    }
 };
 const hasDisplayValue = (value: unknown): boolean => {
     if (value === null || value === undefined) return false;
@@ -115,45 +149,33 @@ const hasDisplayValue = (value: unknown): boolean => {
     if (typeof value === "string") return value.trim().length > 0;
     return true;
 };
-const REVIEW_SECTIONS = SERVICE_RECORD_FORM_LAYOUT.map((section) => ({
-    ...section,
-    fields: section.id === "finish"
-        ? section.fields.filter((field) => field.key !== "hasMomApproval")
-        : section.fields,
-}));
+const REVIEW_SECTIONS = [
+    { id: "mom", title: "산모", tone: "mom", fields: DAILY_ITEMS.slice(0, 5) },
+    { id: "baby", title: "신생아", tone: "baby", fields: DAILY_ITEMS.slice(5, 11) },
+    { id: "finish", title: "서비스 기록", tone: "finish", fields: DAILY_ITEMS.slice(11, 14) },
+] as const;
 
-function dayPageTagClass(tag: DayPage["tag"]) {
-    if (tag === "산모") return "mom";
-    if (tag === "신생아") return "baby";
-    if (tag === "산모 확인") return "confirm";
-    return "etc";
-}
-
-function sectionToneClass(tone: ServiceRecordFormSection["tone"]) {
+function sectionToneClass(tone: "mom" | "baby" | "finish") {
     if (tone === "mom") return "mom";
     if (tone === "baby") return "baby";
     return "etc";
 }
 
 function formatReviewFieldValue(
-    field: ServiceRecordFieldDescriptor,
+    field: DailyItem,
     draft: Record<string, unknown>,
 ): { value: string; ok?: boolean } {
-    if (field.source === "session") {
-        if (field.key === "paymentConfirmed") {
-            return Boolean(draft[field.key]) ? { value: "✓ 확인 완료", ok: true } : { value: "" };
-        }
-        const value = draft[field.key];
-        return { value: hasDisplayValue(value) ? String(value).trim() : "" };
+    if (field.type === "confirm") {
+        return Boolean(draft[field.key]) ? { value: "✓ 확인 완료", ok: true } : { value: "" };
     }
 
-    if (field.kind === "multi") {
+    if (field.type === "multi") {
         const value = draft[field.key];
         const values = Array.isArray(value) ? value.filter(hasDisplayValue).map((item) => String(item).trim()) : [];
         return { value: values.join(", ") };
     }
 
-    if (field.kind === "radio") {
+    if (field.type === "radio" || field.type === "stool") {
         const value = hasDisplayValue(draft[field.key]) ? String(draft[field.key]).trim() : "";
         const colorValue = field.key === "stool" && hasDisplayValue(draft.stool_color)
             ? String(draft.stool_color).trim()
@@ -162,20 +184,16 @@ function formatReviewFieldValue(
         return { value };
     }
 
-    if (field.kind === "counts") {
-        const parts = (field.subKeys ?? [])
-            .map((subKey) => {
-                const value = draft[subKey.key];
+    if (field.type === "counts") {
+        const parts = (field.counts ?? [])
+            .map((count) => {
+                const value = draft[`${field.key}_${count.k}`];
                 if (!hasDisplayValue(value)) return null;
-                const prefix = subKey.label === "횟수" || subKey.label === "체온" ? "" : `${subKey.label} `;
-                return `${prefix}${String(value).trim()}${subKey.unit}`;
+                const prefix = count.label === "횟수" || count.label === "체온" ? "" : `${count.label} `;
+                return `${prefix}${String(value).trim()}${count.unit}`;
             })
             .filter((part): part is string => Boolean(part));
         return { value: parts.join(" · ") };
-    }
-
-    if (field.kind === "check") {
-        return Boolean(draft[field.key]) ? { value: "✓ 확인 완료", ok: true } : { value: "" };
     }
 
     const value = draft[field.key];
@@ -193,19 +211,16 @@ export default function FeedbackPage() {
     const [phone, setPhone] = useState("");
     const [phoneError, setPhoneError] = useState<string | null>(null);
     const [ctx, setCtx] = useState<FeedbackContext | null>(null);
-    const [header, setHeader] = useState<Record<string, string>>({});
+    const [header, setHeader] = useState<Record<string, string>>({ deliveryType: "자연분만" });
     const [day, setDay] = useState(1);
     const [pageIdx, setPageIdx] = useState(0);
     const [draft, setDraft] = useState<Record<string, unknown>>({});
     const [busy, setBusy] = useState(false);
+    const [submitModalOpen, setSubmitModalOpen] = useState(false);
     const [scheduleChangePreview, setScheduleChangePreview] = useState<ScheduleChangePreview | null>(null);
     const [scheduleChangeModalOpen, setScheduleChangeModalOpen] = useState(false);
     const [scheduleChangeBusy, setScheduleChangeBusy] = useState(false);
     const [errorNotificationMessage, setErrorNotificationMessage] = useState<string | null>(null);
-    const [rejectionRequests, setRejectionRequests] = useState<Record<number, string>>({});
-    const [dismissedRejectionDays, setDismissedRejectionDays] = useState<Set<number>>(() => new Set());
-    const [rejectSheetOpen, setRejectSheetOpen] = useState(false);
-    const [rejectNoteDraft, setRejectNoteDraft] = useState("");
 
     const api = useCallback(
         async (path: string, init: RequestInit = {}) => {
@@ -242,10 +257,39 @@ export default function FeedbackPage() {
         const res = await api("/context");
         if (!res.ok) { setScreen("invalid"); return; }
         const data: FeedbackContext = await res.json();
+        const stored = readStoredFormState(token);
+        const serverHeader = (data.header as Record<string, string>) ?? {};
+        const nextHeader = data.header
+            ? { deliveryType: "자연분만", ...serverHeader }
+            : { deliveryType: "자연분만", ...(stored?.header ?? {}) };
         setCtx(data);
-        setHeader((data.header as Record<string, string>) ?? {});
+        setHeader(nextHeader);
+
+        const submittedCount = data.sessions.filter((session) => session.locked).length;
+        if (data.totalSessions > 0 && submittedCount === data.totalSessions) {
+            clearStoredFormState(token);
+            setScreen("done");
+            return;
+        }
+
+        const storedDay = stored?.day;
+        const canResumeDay = Boolean(
+            data.header
+            && stored?.draft
+            && storedDay
+            && storedDay >= 1
+            && storedDay <= data.totalSessions
+            && !data.sessions.some((session) => session.sessionIndex === storedDay && session.locked),
+        );
+        if (canResumeDay && storedDay && stored?.draft) {
+            setDay(storedDay);
+            setPageIdx(Math.min(Math.max(stored.pageIdx ?? 0, 0), DAY_PAGES.length - 1));
+            setDraft(stored.draft);
+            setScreen("day");
+            return;
+        }
         setScreen(data.header ? "overview" : "service");
-    }, [api]);
+    }, [api, token]);
 
     const lockedDays = useMemo(() => new Set((ctx?.sessions ?? []).filter((s) => s.locked).map((s) => s.sessionIndex)), [ctx]);
     const nextOpenDay = useCallback(() => {
@@ -256,7 +300,7 @@ export default function FeedbackPage() {
     const defaultDate = useCallback(
         (d: number) => {
             const sessions = ctx?.sessions ?? [];
-            const rawStart = ctx?.startDate ? ctx.startDate.slice(0, 10) : isoOf(new Date());
+            const rawStart = ctx?.startDate ? ctx.startDate.slice(0, 10) : isoDateInKorea();
             const start = isBusinessDayKr(rawStart) ? rawStart : nextBusinessDayKr(rawStart);
             // Row-first recursive chain: an existing row's date (e.g. an approved
             // postpone) shifts every later default, not just the next session.
@@ -290,12 +334,36 @@ export default function FeedbackPage() {
             setPhoneError("확인 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
         } finally { setBusy(false); }
     }
+    function handlePhoneChange(value: string) {
+        const digits = value.replace(/\D/g, "").slice(0, 11);
+        if (digits.length <= 3) setPhone(digits);
+        else if (digits.length <= 7) setPhone(`${digits.slice(0, 3)}-${digits.slice(3)}`);
+        else {
+            const middleEnd = digits.length === 10 ? 6 : 7;
+            setPhone(`${digits.slice(0, 3)}-${digits.slice(3, middleEnd)}-${digits.slice(middleEnd)}`);
+        }
+    }
     useEffect(() => { if (accessToken) loadContext(); }, [accessToken, loadContext]);
+    useEffect(() => {
+        if (screen === "service") {
+            writeStoredFormState(token, { ...(readStoredFormState(token) ?? {}), header });
+            return;
+        }
+        if (screen === "day") {
+            writeStoredFormState(token, { header, day, pageIdx, draft });
+        }
+    }, [day, draft, header, pageIdx, screen, token]);
 
     async function saveHeader() {
         setBusy(true);
         try {
-            await api("/header", { method: "PUT", body: JSON.stringify(header) });
+            const response = await api("/header", { method: "PUT", body: JSON.stringify(header) });
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                setErrorNotificationMessage(error?.message ?? "기본정보 저장에 실패했습니다.");
+                return;
+            }
+            clearStoredFormState(token);
             await loadContext();
             setScreen("overview");
         } finally { setBusy(false); }
@@ -304,13 +372,13 @@ export default function FeedbackPage() {
     function openDay(d: number) {
         if (lockedDays.has(d) || d !== nextOpenDay()) return;
         setDay(d); setPageIdx(0);
-        setDraft({ _date: defaultDate(d) });
+        setDraft({ _date: defaultDate(d), ...DEFAULT_DAILY_ANSWERS });
         setScreen("day");
     }
 
     async function submitDay() {
         const serviceDate = (draft["_date"] as string) ?? defaultDate(day);
-        if (serviceDate !== isoOf(new Date())) {
+        if (serviceDate !== isoDateInKorea()) {
             setErrorNotificationMessage("제공일자가 오늘과 달라 제출할 수 없습니다. 서비스 제공 당일에 기록해 주세요.");
             return;
         }
@@ -330,60 +398,9 @@ export default function FeedbackPage() {
                 setErrorNotificationMessage(e?.message ?? "제출에 실패했습니다.");
                 return;
             }
+            clearStoredFormState(token);
+            setSubmitModalOpen(false);
             await loadContext();
-            setRejectionRequests((requests) => {
-                if (!Object.prototype.hasOwnProperty.call(requests, day)) return requests;
-                const next = { ...requests };
-                delete next[day];
-                return next;
-            });
-            setDismissedRejectionDays((days) => {
-                if (!days.has(day)) return days;
-                const next = new Set(days);
-                next.delete(day);
-                return next;
-            });
-            setScreen("overview");
-        } finally { setBusy(false); }
-    }
-
-    function openRejectSheet() {
-        setRejectNoteDraft(rejectionRequests[day] ?? "");
-        setRejectSheetOpen(true);
-    }
-
-    function closeRejectSheet() {
-        setRejectSheetOpen(false);
-    }
-
-    function submitRejectionRequest() {
-        const note = rejectNoteDraft.trim();
-        setRejectionRequests((requests) => ({ ...requests, [day]: note }));
-        setDismissedRejectionDays((days) => {
-            if (!days.has(day)) return days;
-            const next = new Set(days);
-            next.delete(day);
-            return next;
-        });
-        setRejectSheetOpen(false);
-        setRejectNoteDraft("");
-        setPageIdx(0);
-    }
-
-    function dismissRejectionNotice() {
-        setDismissedRejectionDays((days) => {
-            const next = new Set(days);
-            next.add(day);
-            return next;
-        });
-    }
-
-    async function finalize() {
-        setBusy(true);
-        try {
-            const res = await api("/finalize", { method: "POST" });
-            if (res.ok) setScreen("done");
-            else setErrorNotificationMessage("제출 처리에 실패했습니다.");
         } finally { setBusy(false); }
     }
 
@@ -443,7 +460,7 @@ export default function FeedbackPage() {
             return (
                 <div data-component="feedback-options" className="opts">
                     {it.opts!.map((o) => (
-                        <button type="button" key={o} disabled={!isRecordDateToday} className={`opt ${Array.isArray(v) && (v as string[]).includes(o) ? "sel" : ""}`} onClick={() => toggleMulti(it.key, o)}>
+                        <button type="button" key={o} aria-pressed={Array.isArray(v) && (v as string[]).includes(o)} disabled={!isRecordDateToday} className={`opt ${Array.isArray(v) && (v as string[]).includes(o) ? "sel" : ""}`} onClick={() => toggleMulti(it.key, o)}>
                             <span className="box">✓</span>{o}
                         </button>
                     ))}
@@ -455,12 +472,12 @@ export default function FeedbackPage() {
                 <>
                     <div data-component="feedback-radio-options" className="opts">
                         {it.opts!.map((o) => (
-                            <button type="button" key={o} disabled={!isRecordDateToday} className={`opt radio ${v === o ? "sel" : ""}`} onClick={() => setField(it.key, o)}>
+                            <button type="button" key={o} aria-pressed={v === o} disabled={!isRecordDateToday} className={`opt radio ${v === o ? "sel" : ""}`} onClick={() => setField(it.key, o)}>
                                 <span className="box">●</span>{o}
                             </button>
                         ))}
                     </div>
-                    {it.type === "stool" && (
+                    {it.type === "stool" && v === "이상변" && (
                         <input className="in" style={{ marginTop: 8 }} placeholder="색깔 등 (이상변 시)" disabled={!isRecordDateToday}
                             value={(draft[`${it.key}_color`] as string) ?? ""} onChange={(e) => setField(`${it.key}_color`, e.target.value)} />
                     )}
@@ -469,25 +486,28 @@ export default function FeedbackPage() {
         }
         if (it.type === "counts") {
             return (
-                <>
+                <div data-component="feedback-count-options" className="segrow">
                     {it.counts!.map((c) => (
                         <div data-component="feedback-count-row" className="segnum" key={c.k}>
                             <span>{c.label}</span>
-                            <input type="number" inputMode="numeric" disabled={!isRecordDateToday} value={((draft[`${it.key}_${c.k}`] as string) ?? "")} onChange={(e) => setField(`${it.key}_${c.k}`, e.target.value)} />
+                            <input type="number" aria-label={c.label} inputMode={c.k === "temp" ? "decimal" : "numeric"} min="0" step={c.k === "temp" ? "0.1" : "1"} disabled={!isRecordDateToday} value={((draft[`${it.key}_${c.k}`] as string) ?? "")} onChange={(e) => setField(`${it.key}_${c.k}`, e.target.value)} />
                             <span>{c.unit}</span>
                         </div>
                     ))}
-                </>
+                </div>
             );
         }
         if (it.type === "textarea") {
-            return <textarea className="ta" disabled={!isRecordDateToday} value={(v as string) ?? ""} onChange={(e) => setField(it.key, e.target.value)} placeholder="필요 시 직접 기재" />;
+            const placeholder = it.key === "etcService"
+                ? "추가사항에 대한 기록 필요 시 기재"
+                : "서비스 제공 관련 특이사항 기록 필요 시 기재";
+            return <textarea className="ta" disabled={!isRecordDateToday} value={(v as string) ?? ""} onChange={(e) => setField(it.key, e.target.value)} placeholder={placeholder} />;
         }
         if (it.type === "confirm") {
             return (
                 <div data-component="feedback-confirm-options" className="opts">
-                    <button type="button" disabled={!isRecordDateToday} className={`opt ${v ? "sel" : ""}`} onClick={() => setField(it.key, !v)}>
-                        <span className="box">✓</span>결제 확인 완료 (제공인력 체크)
+                    <button type="button" aria-pressed={Boolean(v)} disabled={!isRecordDateToday} className={`opt ${v ? "sel" : ""}`} onClick={() => setField(it.key, !v)}>
+                        <span className="box">✓</span>결제 확인 완료
                     </button>
                 </div>
             );
@@ -499,19 +519,55 @@ export default function FeedbackPage() {
     const isMomConfirmationPage = Boolean(currentDayPage.confirmation);
     const currentServiceDate = ((draft["_date"] as string | undefined) || defaultDate(day));
     // Same-day rule: daily records may only be entered on the actual service date.
-    const isRecordDateToday = currentServiceDate === isoOf(new Date());
-    const hasRejectionRequest = Object.prototype.hasOwnProperty.call(rejectionRequests, day);
-    const showRejectionNotice = hasRejectionRequest && !dismissedRejectionDays.has(day) && !isMomConfirmationPage;
-    const rejectionNoticeText = (rejectionRequests[day] ?? "").trim() || "내용을 다시 확인해 주세요.";
+    const isRecordDateToday = currentServiceDate === isoDateInKorea();
+    const isDailyItemComplete = (item: DailyItem) => {
+        const value = draft[item.key];
+        if (item.type === "textarea") return true;
+        if (item.type === "multi") return Array.isArray(value) && value.length > 0;
+        if (item.type === "radio") return hasDisplayValue(value);
+        if (item.type === "counts") {
+            return item.counts?.every((count) => hasDisplayValue(draft[`${item.key}_${count.k}`])) ?? false;
+        }
+        if (item.type === "stool") {
+            return hasDisplayValue(value) && (value !== "이상변" || hasDisplayValue(draft[`${item.key}_color`]));
+        }
+        if (item.type === "confirm") return value === true;
+        return false;
+    };
+    const isCurrentPageComplete = currentDayPage.items.every((index) => {
+        const item = DAILY_ITEMS[index];
+        return item ? isDailyItemComplete(item) : false;
+    });
+    const isHeaderComplete = HEADER_FIELDS.every((field) => hasDisplayValue(header[field.k]))
+        && hasDisplayValue(header.deliveryType);
+    const progress = screen === "done"
+        ? 100
+        : screen === "day"
+            ? 20 + Math.round(((pageIdx + 1) / DAY_PAGES.length) * 70)
+            : screen === "overview"
+                ? 20
+                : screen === "service"
+                    ? 12
+                    : 5;
 
     return (
         <div data-component="feedback-wizard" className="efb">
             <Styles />
             <div data-component="feedback-top-bar" className="top">
                 <h1>산모·신생아 건강관리 서비스 제공기록지</h1>
-                <div data-component="feedback-org-info" className="org">제공기관 {ctx?.org.name ?? "인천 아이미래로"} · {ctx?.org.hours ?? "평일 09시~18시"}</div>
+                <div data-component="feedback-top-meta" className="top-meta">
+                    <ProviderInfo providerName={ctx?.org?.name} />
+                    <div data-component="feedback-crumbs" className="crumbs">
+                        {screen === "phone" && <>1단계 · <b>본인 확인</b></>}
+                        {screen === "service" && <>2단계 · <b>서비스 기본정보</b></>}
+                        {screen === "overview" && <>3단계 · <b>일자별 기록</b></>}
+                        {screen === "day" && <><b>{day}회차</b> · {currentDayPage.title} ({pageIdx + 1}/{DAY_PAGES.length})</>}
+                        {screen === "done" && <b>최종 제출 완료</b>}
+                    </div>
+                </div>
+                <div data-component="feedback-progress" className="bar"><i style={{ width: `${progress}%` }} /></div>
             </div>
-            <div data-component="feedback-body" className="body">
+            <div data-component="feedback-body" className={`body ${screen === "done" ? "completion-body" : ""}`}>
                 {screen === "loading" && <p className="muted">불러오는 중…</p>}
 
                 {screen === "invalid" && (
@@ -523,22 +579,22 @@ export default function FeedbackPage() {
 
                 {screen === "phone" && (
                     <>
-                        <div data-component="feedback-phone-pill" className="pill">최초 1회 인증</div>
                         <div data-component="feedback-phone-title" className="step-title">제공인력 본인 확인</div>
                         <p className="muted">본인 휴대폰 번호를 입력하면 서비스 기간 동안 유효한 접근 권한이 발급됩니다.</p>
-                        <label className="lab">휴대폰 번호</label>
-                        <input className="in" type="tel" inputMode="numeric" autoComplete="tel" maxLength={13} placeholder="예) 01012345678" value={phone} onChange={(e) => setPhone(e.target.value)} />
+                        <label data-component="feedback-phone-label" className="lab" htmlFor="feedback-phone">휴대폰 번호</label>
+                        <input id="feedback-phone" data-component="feedback-phone-input" className="in" type="tel" inputMode="numeric" autoComplete="tel" maxLength={13} placeholder="예) 01012345678" value={phone} onChange={(e) => handlePhoneChange(e.target.value)} />
                         {phoneError && <p className="err">{phoneError}</p>}
-                        <button className="btn primary" disabled={busy} onClick={submitPhone}>{busy ? "확인 중…" : "확인하고 시작"}</button>
+                        <button data-component="feedback-phone-submit" className="btn primary" disabled={busy} onClick={submitPhone}>{busy ? "확인 중…" : "확인하기"}</button>
                     </>
                 )}
 
                 {screen === "service" && (
                     <>
-                        <div data-component="feedback-service-pill" className="pill">서비스 전체 공통 · 최초 1회</div>
+                        <button data-component="feedback-service-back" className="text-back" type="button" onClick={() => setScreen("phone")}>이전</button>
                         <div data-component="feedback-service-title" className="step-title">서비스 기본정보</div>
                         <div data-component="feedback-readonly-row" className="ro"><span>제공인력</span><b>{ctx?.employee.name}</b></div>
-                        {HEADER_FIELDS.map((f) => (
+                        <div data-component="feedback-readonly-row" className="ro"><span>제공기관</span><b>{ctx?.org?.name ?? DEFAULT_PROVIDER_NAME}</b></div>
+                        {HEADER_FIELDS.slice(0, 4).map((f) => (
                             <div data-component="feedback-field" className="fld" key={f.k}>
                                 <label className="lab">{f.label}</label>
                                 <input className="in" placeholder={f.ph} value={header[f.k] ?? ""} onChange={(e) => setHeader((h) => ({ ...h, [f.k]: e.target.value }))} />
@@ -548,21 +604,25 @@ export default function FeedbackPage() {
                             <label className="lab">분만형태</label>
                             <div data-component="feedback-delivery-options" className="opts">
                                 {["자연분만", "제왕절개"].map((o) => (
-                                    <button type="button" key={o} className={`opt radio ${header["deliveryType"] === o ? "sel" : ""}`} onClick={() => setHeader((h) => ({ ...h, deliveryType: o }))}>
+                                    <button type="button" key={o} aria-pressed={header["deliveryType"] === o} className={`opt radio ${header["deliveryType"] === o ? "sel" : ""}`} onClick={() => setHeader((h) => ({ ...h, deliveryType: o }))}>
                                         <span className="box">●</span>{o}
                                     </button>
                                 ))}
                             </div>
                         </div>
-                        <button className="btn primary" disabled={busy} onClick={saveHeader}>{busy ? "저장 중…" : "다음"}</button>
+                        <div data-component="feedback-field" className="fld">
+                            <label className="lab">{HEADER_FIELDS[4]?.label}</label>
+                            <input className="in" placeholder={HEADER_FIELDS[4]?.ph} value={header.babyWeight ?? ""} onChange={(e) => setHeader((h) => ({ ...h, babyWeight: e.target.value }))} />
+                        </div>
+                        <button className="btn primary" disabled={busy || !isHeaderComplete} onClick={saveHeader}>{busy ? "저장 중…" : "다음"}</button>
                     </>
                 )}
 
                 {screen === "overview" && ctx && (
                     <>
-                        <div data-component="feedback-overview-pill" className="pill">총 {ctx.totalSessions}회 제공 · {lockedDays.size}회 제출됨</div>
-                        <div data-component="feedback-overview-title" className="step-title">일자별 제공기록</div>
-                        <p className="muted">제공 회차 순서대로 입력합니다. 제출한 회차는 잠기며 수정할 수 없습니다.</p>
+                        <button data-component="feedback-overview-back" className="text-back" type="button" onClick={() => setScreen("service")}>이전</button>
+                        <div data-component="feedback-overview-title" className="step-title">제공기록표</div>
+                        <p className="muted">서비스 제공 기록은 해당 날짜에만 기록이 가능하며, 한번 제출된 기록은 수정할 수 없습니다.</p>
                         <div data-component="feedback-day-grid" className="days">
                             {Array.from({ length: ctx.totalSessions }, (_, i) => i + 1).map((d) => {
                                 const done = lockedDays.has(d);
@@ -572,15 +632,13 @@ export default function FeedbackPage() {
                                     <button type="button" key={d} className={cls} disabled={done || !open} onClick={() => openDay(d)}>
                                         <div data-component="feedback-day-date" className="d">{mmdd(done ? (ctx.sessions.find((s) => s.sessionIndex === d)?.serviceDate.slice(0, 10) ?? "") : defaultDate(d))}</div>
                                         <div data-component="feedback-day-number" className="n">{d}</div>
-                                        <div data-component="feedback-day-status" className="st">{done ? "제출완료 🔒" : open ? "입력 가능" : "대기"}</div>
+                                        <div data-component="feedback-day-status" className="st">{done ? "제출완료" : open ? "입력 가능" : "대기"}</div>
                                     </button>
                                 );
                             })}
                         </div>
-                        {lockedDays.size === ctx.totalSessions ? (
-                            <button className="btn submit" disabled={busy} onClick={finalize}>{busy ? "완료 처리 중…" : "제공기록 작성 완료"}</button>
-                        ) : (
-                            <>
+                        {lockedDays.size < ctx.totalSessions && (
+                            <div data-component="feedback-overview-actions" className="overview-actions">
                                 <button className="btn primary" onClick={() => openDay(nextOpenDay())}>{lockedDays.size ? "다음 회차 입력" : "기록 시작"}</button>
                                 <button
                                     className="btn ghost schedule-change"
@@ -589,44 +647,41 @@ export default function FeedbackPage() {
                                 >
                                     {ctx.pendingScheduleChange ? "일정 변경 요청 대기 중" : "서비스 일정 변경"}
                                 </button>
-                            </>
+                            </div>
                         )}
                     </>
                 )}
 
                 {screen === "day" && (
                     <>
-                        <div data-component="feedback-day-crumb" className="crumb">
-                            제공 <b>{day}회차</b> · {currentDayPage.tag} ({pageIdx + 1}/{DAY_PAGES.length})
-                        </div>
-                        <div data-component="feedback-date-chip" className="datechip">📅 {isMomConfirmationPage ? currentServiceDate : "제공일자"}
-                            {isMomConfirmationPage ? null : (
-                                <input type="date" className="dateinput" value={currentServiceDate} min={day <= 1 ? (ctx?.startDate?.slice(0, 10) ?? undefined) : defaultDate(day)} onChange={(e) => setField("_date", e.target.value)} />
-                            )}
-                            · {day}회차
-                        </div>
+                        <button
+                            data-component="feedback-day-back"
+                            className="text-back"
+                            type="button"
+                            onClick={() => (pageIdx > 0 ? setPageIdx(pageIdx - 1) : setScreen("overview"))}
+                        >
+                            이전
+                        </button>
+                        <div data-component="feedback-date-chip" className="datechip">{day}회차</div>
+                        {pageIdx === 0 && (
+                            <div data-component="feedback-service-date-field" className="fld">
+                                <label className="lab">제공일자</label>
+                                <input type="date" className="in dateinput" value={currentServiceDate} min={day <= 1 ? (ctx?.startDate?.slice(0, 10) ?? undefined) : defaultDate(day)} onChange={(e) => setField("_date", e.target.value)} />
+                            </div>
+                        )}
                         {!isRecordDateToday && (
                             <div data-component="feedback-date-mismatch-notice" className="notice">
                                 <span>제공일자({monthDayKo(currentServiceDate)})가 오늘과 달라 입력할 수 없습니다. 서비스 제공 당일에 기록해 주세요.</span>
                             </div>
                         )}
-                        {showRejectionNotice && (
-                            <div data-component="feedback-rejection-notice" className="notice">
-                                <span>산모 수정 요청: {rejectionNoticeText}</span>
-                                <button type="button" onClick={dismissRejectionNotice}>닫기</button>
-                            </div>
-                        )}
-                        <div data-component="feedback-section-tag" className={`tag ${dayPageTagClass(currentDayPage.tag)}`}>{currentDayPage.tag}</div>
                         <div data-component="feedback-day-title" className="step-title">{currentDayPage.title}</div>
-                        <p className="muted">{currentDayPage.sub}</p>
                         {isMomConfirmationPage ? (
                             <>
                                 <div data-component="feedback-handover-banner" className="handover">
-                                    <span aria-hidden="true">🤱</span>
-                                    <b>제공인력님, 이 화면을 산모님께 전달해 주세요.</b>
+                                    <b>최종 기록을 확인해 주세요.</b>
                                 </div>
                                 <MomConfirmationReview draft={draft} />
-                                <p className="lock">승인하면 이 회차 기록이 제출·잠금되어 수정할 수 없습니다 · 거부하면 제공인력이 내용을 수정한 뒤 다시 확인을 요청합니다</p>
+                                <p className="lock">최종 확인 후에는 수정할 수 없으니 한번 더 확인해 주세요.</p>
                             </>
                         ) : (
                             <>
@@ -642,35 +697,45 @@ export default function FeedbackPage() {
                                 })}
                             </>
                         )}
-                        <div data-component="feedback-nav" className="nav">
-                            <button className="btn ghost" onClick={() => (pageIdx > 0 ? setPageIdx(pageIdx - 1) : setScreen("overview"))}>이전</button>
-                            {isMomConfirmationPage ? (
-                                <>
-                                    <button className="btn reject" type="button" disabled={!isRecordDateToday} onClick={openRejectSheet}>거부</button>
-                                    <button className="btn submit" disabled={busy || !isRecordDateToday} onClick={submitDay}>{busy ? "제출 중…" : "확인했습니다 · 승인"}</button>
-                                </>
-                            ) : (
-                                <button className="btn primary" disabled={!isRecordDateToday} onClick={() => setPageIdx(pageIdx + 1)}>다음</button>
-                            )}
-                        </div>
+                        {isMomConfirmationPage ? (
+                            <div data-component="feedback-confirmation-action" className="nav confirmation-nav">
+                                <button className="btn submit" disabled={busy || !isRecordDateToday} onClick={() => setSubmitModalOpen(true)}>확인</button>
+                            </div>
+                        ) : (
+                            <div data-component="feedback-nav" className="nav">
+                                <button className="btn primary" disabled={!isRecordDateToday || !isCurrentPageComplete} onClick={() => setPageIdx(pageIdx + 1)}>다음</button>
+                            </div>
+                        )}
                     </>
                 )}
 
                 {screen === "done" && (
                     <div data-component="feedback-done-center" className="center">
-                        <div data-component="feedback-done-title" className="step-title">제공기록지 작성이 완료되었습니다</div>
-                        <p className="muted">서비스 종료 시각 이후 전자문서가 자동 생성되어 제공기관 검토 단계로 전달됩니다. 별도로 하실 일은 없습니다.</p>
+                        <span data-component="feedback-done-icon" className="completion-icon" aria-hidden="true">✅</span>
+                        <h2 data-component="feedback-done-title" className="completion-title">제공기록지 제출이 완료되었습니다.</h2>
                     </div>
                 )}
             </div>
+            <ApprovalTwoButtonModal
+                open={submitModalOpen}
+                onOpenChange={setSubmitModalOpen}
+                dataComponent="feedback-submit"
+                title="제출하시겠어요?"
+                description={`확인하면 ${day}회차 기록이 제출되어 수정할 수 없습니다.`}
+                cancelLabel="취소"
+                approvalLabel="확인"
+                pendingLabel="제출 중…"
+                isPending={busy}
+                onApprove={submitDay}
+            />
             <ConfirmActionModal
                 open={scheduleChangeModalOpen && Boolean(scheduleChangePreview)}
-                title="서비스 일정을 조정할까요?"
+                title={scheduleChangePreview ? `${scheduleChangePreview.sessionIndex}회차 서비스 일정을 조정할까요?` : "서비스 일정을 조정할까요?"}
                 description={scheduleChangePreview
-                    ? `${scheduleChangePreview.sessionIndex}회차 서비스를 ${monthDayKo(scheduleChangePreview.fromDate)} → ${monthDayKo(scheduleChangePreview.toDate)}(으)로 변경 요청합니다. 관리자 승인 후 일정과 종료일이 조정됩니다.`
+                    ? `${scheduleChangePreview.sessionIndex}회차 서비스를 ${monthDayKo(scheduleChangePreview.fromDate)}에서 ${monthDayKo(scheduleChangePreview.toDate)}로 변경을 요청할까요? 관리자 승인 후 일정이 조정됩니다.`
                     : ""}
                 cancelLabel="취소"
-                confirmLabel={scheduleChangeBusy ? "요청 중…" : "확인"}
+                confirmLabel={scheduleChangeBusy ? "요청 중…" : "승인 요청"}
                 loading={scheduleChangeBusy}
                 onOpenChange={(open) => {
                     if (!open) closeScheduleChangeModal();
@@ -689,27 +754,6 @@ export default function FeedbackPage() {
                 isDescriptionVisuallyHidden={false}
                 onAcknowledge={() => setErrorNotificationMessage(null)}
             />
-            {rejectSheetOpen && (
-                <div data-component="feedback-rejection-sheet" className="sheet" role="dialog" aria-modal="true" aria-labelledby="feedback-rejection-title">
-                    <div data-component="feedback-rejection-sheet-card" className="sheet-card">
-                        <h2 id="feedback-rejection-title">기록 내용 거부</h2>
-                        <p>
-                            거부하시면 이 회차는 제출되지 않고, 제공인력이 내용을 수정한 뒤 다시 확인을 요청합니다.
-                            수정이 필요한 부분을 알려주세요. <b>(선택)</b>
-                        </p>
-                        <textarea
-                            className="ta"
-                            placeholder="예) 분유수유 횟수가 실제와 달라요"
-                            value={rejectNoteDraft}
-                            onChange={(event) => setRejectNoteDraft(event.target.value)}
-                        />
-                        <div data-component="feedback-rejection-sheet-actions" className="sheet-actions">
-                            <button className="btn ghost" type="button" onClick={closeRejectSheet}>취소</button>
-                            <button className="btn danger" type="button" onClick={submitRejectionRequest}>거부하고 수정 요청</button>
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }
@@ -733,11 +777,11 @@ function ReviewFieldRow({
     field,
     draft,
 }: {
-    field: ServiceRecordFieldDescriptor;
+    field: DailyItem;
     draft: Record<string, unknown>;
 }) {
     const display = formatReviewFieldValue(field, draft);
-    const isText = field.kind === "text";
+    const isText = field.type === "textarea";
     const valueClassName = display.value ? (display.ok ? "ok" : "") : "empty";
     const value = display.value || REVIEW_EMPTY_LABEL;
 
@@ -761,74 +805,73 @@ function ReviewFieldRow({
 function Styles() {
     return (
         <style>{`
-	.efb{--ink:#1c2430;--muted:#7c8798;--line:#e4e8ef;--primary:#3b6fe0;--soft:#f3f6fb;--ok:#2faa6b;--danger:#d64545;--warn:#c9803a;max-width:480px;margin:0 auto;min-height:100vh;background:#fff;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard",Roboto,sans-serif;color:var(--ink);display:flex;flex-direction:column}
-.efb .top{background:linear-gradient(135deg,#3b6fe0,#5a86ea);color:#fff;padding:18px 18px 16px}
-.efb .top h1{font-size:16px;margin:0;font-weight:700}
-.efb .top .org{font-size:12px;opacity:.9;margin-top:4px}
-.efb .body{flex:1;padding:18px}
-.efb .muted{font-size:13px;color:var(--muted)}
-.efb .center{text-align:center;padding-top:40px}
-.efb .pill{display:inline-block;font-size:11px;background:var(--soft);color:var(--muted);border-radius:99px;padding:4px 11px;margin-bottom:8px}
-.efb .step-title{font-size:19px;font-weight:750;margin:6px 0 8px}
-.efb .lab{display:block;font-size:13.5px;font-weight:700;margin:14px 0 7px}
-.efb .fld{margin-bottom:14px}
-.efb .in,.efb .ta{width:100%;border:1.5px solid var(--line);border-radius:12px;padding:13px 14px;font-size:15px;outline:none;background:#fff}
-.efb .in:focus,.efb .ta:focus{border-color:var(--primary)}
-.efb .ta{min-height:90px;resize:vertical}
-.efb .err{color:#c2456e;font-size:13px;margin-top:8px}
-.efb .ro{display:flex;justify-content:space-between;font-size:13px;border:1px solid var(--line);border-radius:10px;padding:11px 12px;margin-bottom:8px;background:#f9fbfe}
+.efb{--ink:#1c2430;--muted:#7c8798;--line:#e4e8ef;--primary:#004aad;--soft:#f3f6fb;--ok:#004aad;--warn:#c9803a;box-sizing:border-box;max-width:480px;margin:0 auto;min-height:100dvh;background:#fff;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard",Roboto,"Segoe UI",sans-serif;color:var(--ink);display:flex;flex-direction:column}
+.efb *{box-sizing:border-box}
+.efb .top{background:var(--primary);color:#fff;padding:16px 18px 14px}
+.efb .top h1{font-size:15px;margin:0;font-weight:700;letter-spacing:-.2px}
+.efb .top-meta{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:3px}
+.efb .top .org{font-size:12px;opacity:.9}
+.efb .top .crumbs{display:flex;gap:6px;align-items:center;margin-left:auto;padding:0;color:rgba(255,255,255,.78);font-size:11px}
+.efb .top .crumbs b{color:#fff}
+.efb .bar{height:5px;background:rgba(255,255,255,.28);border-radius:99px;margin-top:12px;overflow:hidden}
+.efb .bar>i{display:block;height:100%;background:#fff;border-radius:99px;transition:width .35s}
+.efb .body{flex:1;padding:14px 18px 18px;overflow:auto}
+.efb .body.completion-body{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.efb .muted{font-size:12.5px;line-height:1.55;color:var(--muted);margin:0 0 16px}
+.efb .center{display:flex;flex:1;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.efb .step-title{font-size:18px;font-weight:750;margin:6px 0;letter-spacing:-.3px}
+.efb .lab{display:block;font-size:13.5px;font-weight:700;margin-bottom:8px}
+.efb .fld{margin-bottom:16px;padding-bottom:14px;border-bottom:1px dashed var(--line)}
+.efb .fld:last-of-type{border-bottom:0}
+.efb .in,.efb .ta{width:100%;border:1.5px solid var(--line);border-radius:12px;padding:13px 14px;font-size:15px;outline:none;background:#fff;color:var(--ink)}
+.efb .in:focus,.efb .ta:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(0,74,173,.08)}
+.efb .ta{min-height:84px;resize:vertical}
+.efb .err{color:#c2456e;font-size:13px;margin:8px 0 0}
+.efb .ro{display:flex;justify-content:space-between;font-size:13px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#f9fbfe}
 .efb .opts{display:flex;flex-wrap:wrap;gap:8px}
 .efb .opt{display:flex;align-items:center;gap:9px;border:1.5px solid var(--line);border-radius:11px;padding:11px 13px;font-size:14.5px;background:#fff;cursor:pointer;color:var(--ink)}
-.efb .opt .box{width:20px;height:20px;border-radius:6px;border:2px solid #c4cdda;display:grid;place-items:center;font-size:12px;color:#fff}
+.efb .opt .box{width:20px;height:20px;border-radius:6px;border:2px solid #c4cdda;flex:0 0 auto;display:grid;place-items:center;font-size:12px;color:#fff}
 .efb .opt.radio .box{border-radius:50%}
 .efb .opt.sel{border-color:var(--primary);background:#f1f6ff}
+.efb .opt.sel .box{background:var(--primary);border-color:var(--primary)}
 .efb .opt:disabled{opacity:.45;cursor:not-allowed}
 .efb .in:disabled,.efb .ta:disabled,.efb .segnum input:disabled{background:#f6f8fb;color:#9aa6b6;cursor:not-allowed}
-.efb .opt.sel .box{background:var(--primary);border-color:var(--primary)}
-	.efb .segnum{display:flex;align-items:center;gap:8px;border:1.5px solid var(--line);border-radius:12px;padding:8px 12px;margin-bottom:8px}
-	.efb .segnum span{font-size:14px;color:var(--muted);white-space:nowrap}
-	.efb .segnum input{flex:1;min-width:0;border:none;text-align:right;font-size:15px;outline:none}
-	.efb .segnum span{flex:0 0 auto}
-	.efb .crumb{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--muted);margin-bottom:10px}
-	.efb .crumb b{color:var(--ink)}
-	.efb .datechip{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;font-weight:700;background:#eaf1ff;color:#3b6fe0;border-radius:10px;padding:8px 12px;margin-bottom:10px}
-	.efb .dateinput{border:1px solid #cfe0ff;border-radius:8px;padding:4px 8px;font-size:13px}
-	.efb .tag{display:inline-block;font-size:11px;font-weight:800;border-radius:6px;padding:3px 8px;margin-bottom:8px}
-	.efb .tag.mom{background:#fde9ef;color:#c2456e}.efb .tag.baby{background:#e7f1ff;color:#3b6fe0}.efb .tag.etc{background:#eef0f4;color:#6b7686}.efb .tag.confirm{background:#e6f7ee;color:#1d8a55}
-	.efb .notice{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;background:#fff7ec;border:1px solid #f0dcc0;color:var(--warn);font-size:12.5px;border-radius:10px;padding:10px 12px;margin-bottom:12px}
-	.efb .notice button{border:0;background:transparent;color:var(--warn);font:inherit;font-weight:800;cursor:pointer;padding:0;white-space:nowrap}
-	.efb .handover{display:flex;gap:10px;align-items:flex-start;background:#e6f7ee;border:1px solid #bfe7cf;border-radius:12px;padding:12px 14px;margin-bottom:10px;font-size:13px;color:#1d8a55}
-	.efb .handover span{font-size:18px;line-height:1}
-	.efb .review-section{margin-top:14px}
-	.efb .review-row{display:flex;justify-content:space-between;gap:12px;font-size:13px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#f9fbfe}
-	.efb .review-row span{color:var(--muted);flex:0 0 auto}.efb .review-row b{color:var(--ink);text-align:right;font-weight:700;word-break:keep-all}
-	.efb .review-note{font-size:13px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#f9fbfe}
-	.efb .review-note span{display:block;color:var(--muted);margin-bottom:4px}.efb .review-note b{font-weight:600;line-height:1.5}
-	.efb .review-row b.empty,.efb .review-note b.empty{color:#b6bfcc;font-weight:600}
-	.efb .review-row b.ok,.efb .review-note b.ok{color:var(--ok)}
-	.efb .days{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:8px 0 16px}
-.efb .day{border:1.5px solid var(--line);border-radius:14px;padding:14px 6px;text-align:center;background:#fff;cursor:pointer;color:var(--ink)}
-.efb .day .d{font-size:11px;color:var(--muted)}.efb .day .n{font-size:20px;font-weight:800;margin-top:2px}.efb .day .st{font-size:11px;margin-top:6px;color:var(--muted)}
-.efb .day.done{background:#f0faf4;border-color:#bfe7cf}.efb .day.done .st{color:var(--ok);font-weight:700}
-.efb .day.current{border-color:var(--primary);box-shadow:0 0 0 3px #e8f0ff}
-.efb .day.locked{opacity:.5}
+.efb .segrow{display:flex;gap:8px}
+.efb .segnum{display:flex;align-items:center;gap:8px;flex:1;min-width:0;border:1.5px solid var(--line);border-radius:12px;padding:8px 10px}
+.efb .segnum span{font-size:14px;color:var(--muted);white-space:nowrap;flex:0 0 auto}
+.efb .segnum input{width:auto;min-width:0;flex:1;border:none;text-align:right;padding:10px 2px;font-size:15px;outline:none;appearance:textfield}
+.efb .segnum input::-webkit-inner-spin-button,.efb .segnum input::-webkit-outer-spin-button{margin:0;appearance:none}
+.efb .text-back{display:block;border:0;border-radius:0;background:transparent;color:var(--primary);font:inherit;font-size:13px;font-weight:700;margin:0 0 10px;padding:4px 0;text-align:left;cursor:pointer}
+.efb .text-back:focus-visible{outline:2px solid var(--primary);outline-offset:3px}
+.efb .datechip{display:inline-block;font-size:12px;font-weight:700;background:#eaf1ff;color:var(--primary);border-radius:99px;padding:4px 12px;margin-bottom:10px}
+.efb .dateinput{font-size:15px}
+.efb .notice{display:flex;align-items:flex-start;background:#fff7ec;border:1px solid #f0dcc0;color:var(--warn);font-size:12.5px;border-radius:10px;padding:10px 12px;margin-bottom:12px}
+.efb .handover{display:flex;align-items:flex-start;background:#eef5ff;border:1px solid #c7dafa;border-radius:12px;padding:12px 14px;margin-bottom:10px;font-size:13px;color:var(--primary)}
+.efb .review-section{margin-top:14px}
+.efb .tag{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.4px;border-radius:6px;padding:3px 8px;margin-bottom:8px}
+.efb .tag.mom{background:#fde9ef;color:#c2456e}.efb .tag.baby{background:#e7f1ff;color:#3b6fe0}.efb .tag.etc{background:#eef0f4;color:#6b7686}
+.efb .review-row{display:flex;justify-content:space-between;gap:12px;font-size:13px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#f9fbfe}
+.efb .review-row>span{color:var(--muted);flex:0 0 auto}.efb .review-row b{color:var(--ink);text-align:right;font-weight:700;word-break:keep-all}
+.efb .review-note{font-size:13px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#f9fbfe}
+.efb .review-note>span{display:block;color:var(--muted);margin-bottom:4px}.efb .review-note b{font-weight:600;line-height:1.5}
+.efb .review-row b.empty,.efb .review-note b.empty{color:#b6bfcc;font-weight:600}
+.efb .review-row b.ok,.efb .review-note b.ok{color:var(--primary)}
+.efb .days{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:6px}
+.efb .day{border:1.5px solid var(--line);border-radius:14px;padding:14px 8px;text-align:center;cursor:pointer;background:#fff;color:var(--ink)}
+.efb .day .d{font-size:12px;color:var(--muted)}.efb .day .n{font-size:20px;font-weight:800;margin-top:2px}.efb .day .st{font-size:11px;margin-top:6px;color:var(--muted)}
+.efb .day.done{background:#eef5ff;border-color:#c7dafa}.efb .day.done .st{color:var(--primary);font-weight:700}
+.efb .day.locked{opacity:.5;cursor:not-allowed}.efb .day.current{border-color:var(--primary);box-shadow:0 0 0 3px #e8f0ff}
+.efb .overview-actions{display:flex;flex-direction:column;gap:10px;margin-top:16px}
 .efb .nav{display:flex;gap:10px;margin-top:18px}
 .efb .btn{font-family:inherit;font-size:15px;font-weight:700;border-radius:12px;border:none;padding:14px 16px;cursor:pointer;width:100%;margin-top:16px}
-.efb .nav .btn{margin-top:0}
-	.efb .btn.primary{background:var(--primary);color:#fff;flex:1}
-	.efb .btn.ghost{background:var(--soft);color:var(--ink);flex:0 0 92px;width:auto}
-	.efb .btn.ghost.schedule-change{width:100%;flex:1;margin-top:10px}
-	.efb .btn.submit{background:var(--ok);color:#fff;flex:1}
-	.efb .btn.reject{background:#fdeeee;color:var(--danger);border:1.5px solid #f3cccc;flex:1}
-	.efb .btn.danger{background:var(--danger);color:#fff;flex:1.4}
-	.efb .btn:disabled{opacity:.6}
-	.efb .lock{font-size:12px;color:#9aa6b6;text-align:center;margin-top:10px}
-	.efb .sheet{position:fixed;inset:0;background:rgba(28,36,48,.45);display:flex;align-items:flex-end;justify-content:center;z-index:50}
-	.efb .sheet-card{width:100%;max-width:480px;background:#fff;border-radius:22px 22px 0 0;padding:20px 18px 24px}
-	.efb .sheet-card h2{font-size:16px;margin:0 0 6px}.efb .sheet-card p{font-size:12.5px;color:var(--muted);margin:0 0 12px;line-height:1.5}
-	.efb .sheet-card .ta{min-height:76px}
-	.efb .sheet-actions{display:flex;gap:10px;margin-top:12px}
-	.efb .sheet-actions .btn{margin-top:0}.efb .sheet-actions .btn.ghost{flex:1;width:100%}
-	`}</style>
+.efb .nav .btn,.efb .overview-actions .btn{margin-top:0}
+.efb .btn.primary,.efb .btn.submit{background:var(--primary);color:#fff;flex:1}
+.efb .btn.ghost,.efb .btn.ghost.schedule-change{width:100%;background:var(--soft);color:var(--ink);flex:1}
+.efb .btn:disabled{background:#c5cad3;color:#fff;opacity:1;cursor:not-allowed}
+.efb .lock{font-size:12px;color:#9aa6b6;text-align:center;margin-top:10px;line-height:1.5}
+.efb .completion-icon{font-size:28px;line-height:1;margin-bottom:18px}
+.efb .completion-title{margin:0;color:var(--primary);font-size:20px;font-weight:700;letter-spacing:-.2px}
+@media (max-width:360px){.efb .segrow{flex-direction:column}}
+`}</style>
     );
 }

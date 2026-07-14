@@ -96,3 +96,13 @@ export interface SendServiceRecordLinkResponse {
     ok: true;
     scheduledFor: string;
 }
+
+export interface PrepareServiceRecordLinkResponse {
+    feedbackUrl: string;
+    preparedLinkToken: string;
+    expiresAt: string;
+}
+
+export interface SendServiceRecordLinkRequest {
+    preparedLinkToken?: string;
+}

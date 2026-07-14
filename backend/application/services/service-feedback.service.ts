@@ -18,7 +18,6 @@ import {
     ServiceRecordLifecycleService,
 } from "./service-record-lifecycle.service";
 
-const ORG = { name: "인천 아이미래로", hours: "평일 09시~18시" };
 const MAX_ANSWERS_BYTES = 16 * 1024;
 const ANSWER_KEYS = new Set([
     "perineum",
@@ -91,7 +90,6 @@ export class ServiceFeedbackService {
         if (!record) throw new NotFoundException("Service record not found");
 
         return {
-            org: ORG,
             employee: { id: schedule.primaryEmployee.id, name: schedule.primaryEmployee.name },
             client: { id: schedule.client.id, name: schedule.client.name },
             totalSessions: record.requiredSessionCount ?? 0,

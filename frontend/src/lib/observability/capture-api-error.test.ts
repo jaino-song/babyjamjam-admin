@@ -18,6 +18,7 @@ function createAxiosError(options: {
   code?: string;
   method?: string;
   url?: string;
+  data?: unknown;
 }): Error {
   return Object.assign(new Error("Request failed"), {
     isAxiosError: true,
@@ -25,6 +26,7 @@ function createAxiosError(options: {
     config: {
       method: options.method ?? "get",
       url: options.url ?? "/clients?phone=01012345678",
+      data: options.data,
     },
     response: options.status ? { status: options.status } : undefined,
     toJSON: () => ({}),
@@ -75,5 +77,24 @@ describe("captureApiError", () => {
 
     expect(mockCaptureException).toHaveBeenCalledTimes(1);
     expect(mockScope.setLevel).toHaveBeenCalledWith("warning");
+  });
+
+  it("does not pass a prepared feedback bearer token to Sentry", () => {
+    const error = createAxiosError({
+      status: 503,
+      method: "post",
+      url: "/admin/service-records/schedules/51/send-link",
+      data: JSON.stringify({ preparedLinkToken: "efl_sensitive_value" }),
+    });
+
+    captureApiError(error);
+
+    const capturedError = mockCaptureException.mock.calls[0]?.[0] as Error & {
+      config?: unknown;
+    };
+    expect(capturedError).not.toBe(error);
+    expect(capturedError).toBeInstanceOf(Error);
+    expect(capturedError.config).toBeUndefined();
+    expect(capturedError.message).not.toContain("efl_sensitive_value");
   });
 });
