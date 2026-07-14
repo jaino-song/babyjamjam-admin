@@ -92,6 +92,7 @@ describe("EmployeeFeedbackLinkService", () => {
         });
         const job = jobRepository.upsertPending.mock.calls[0]?.[0] as MessageTriggerJobEntity;
         expect(job.ruleId).toBe(SERVICE_FEEDBACK_LINK_RULE_ID);
+        expect(job.dedupeKey).toBe(`${SERVICE_FEEDBACK_LINK_RULE_ID}:schedule:10:primary`);
         expect(job.templateKey).toBe(MessageTriggerTemplateKey.SERVICE_FEEDBACK_LINK);
         expect(job.recipientType).toBe(MessageTriggerRecipientType.PRIMARY_EMPLOYEE);
         expect(job.scheduledFor).toEqual(new Date("2026-07-03T15:00:00+09:00"));
@@ -134,8 +135,39 @@ describe("EmployeeFeedbackLinkService", () => {
         expect(job.scheduledFor.getTime()).toBeGreaterThanOrEqual(before);
         expect(job.scheduledFor.getTime()).toBeLessThanOrEqual(after);
         expect(result.scheduledFor).toBe(job.scheduledFor);
-        expect(job.dedupeKey).toBe(`${SERVICE_FEEDBACK_LINK_RULE_ID}:schedule:10:primary`);
+        expect(job.dedupeKey).toMatch(
+            new RegExp(`^${SERVICE_FEEDBACK_LINK_RULE_ID}:schedule:10:primary:manual:[0-9a-f-]{36}$`),
+        );
         expect(job.payload.buttonUrl).toBe("https://mobile.test/feedback/efl_token");
+    });
+
+    it("sendNow creates a unique UUID dedupe key without exposing the plaintext link token", async () => {
+        const prisma = createPrisma();
+        const tokenService = createTokenService();
+        tokenService.issueLink
+            .mockResolvedValueOnce({ linkToken: "efl_manual_first" })
+            .mockResolvedValueOnce({ linkToken: "efl_manual_second" });
+        const jobRepository = createJobRepository();
+        const service = new EmployeeFeedbackLinkService(
+            prisma as unknown as PrismaService,
+            tokenService as never,
+            createConfigService() as unknown as ConfigService,
+            jobRepository as unknown as IMessageTriggerJobRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
+        );
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+
+        await service.sendNow(10);
+        await service.sendNow(10);
+
+        const firstJob = jobRepository.upsertPending.mock.calls[0]?.[0] as MessageTriggerJobEntity;
+        const secondJob = jobRepository.upsertPending.mock.calls[1]?.[0] as MessageTriggerJobEntity;
+        expect(firstJob.dedupeKey).not.toBe(secondJob.dedupeKey);
+        expect(firstJob.dedupeKey).toMatch(
+            new RegExp(`^${SERVICE_FEEDBACK_LINK_RULE_ID}:schedule:10:primary:manual:[0-9a-f-]{36}$`),
+        );
+        expect(firstJob.dedupeKey).not.toContain("efl_manual_first");
+        expect(secondJob.dedupeKey).not.toContain("efl_manual_second");
     });
 
     it("prepares an inactive exact URL without enqueueing or canceling any SMS job", async () => {

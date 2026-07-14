@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -60,6 +62,7 @@ export class EmployeeFeedbackLinkService {
             const { scheduledFor, employeeId, jobEnqueued } = await this.issueFeedbackLinkJob(scheduleId, {
                 scheduledFor: null,
                 recordMissingPhoneFailure: true,
+                isManualSend: false,
             });
             if (jobEnqueued) {
                 this.logger.log(
@@ -84,6 +87,7 @@ export class EmployeeFeedbackLinkService {
             recordMissingPhoneFailure: false,
             allowLateReissue: true,
             preparedLinkToken,
+            isManualSend: true,
         });
         this.logger.log(
             `Feedback link SMS manually scheduled for provider ${result.employeeId} schedule ${scheduleId} at ${result.scheduledFor.toISOString()}`
@@ -181,6 +185,7 @@ export class EmployeeFeedbackLinkService {
             recordMissingPhoneFailure: boolean;
             allowLateReissue?: boolean;
             preparedLinkToken?: string;
+            isManualSend: boolean;
         },
     ): Promise<{ scheduledFor: Date; employeeId: number; jobEnqueued: boolean }> {
         const schedule = await this.prisma.employee_schedule.findUnique({
@@ -288,7 +293,7 @@ ${url}`;
                 recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
                 recipientPhone: employee.phone,
                 templateKey: MessageTriggerTemplateKey.SERVICE_FEEDBACK_LINK,
-                dedupeKey: `${SERVICE_FEEDBACK_LINK_RULE_ID}:schedule:${scheduleId}:primary`,
+                dedupeKey: this.buildDedupeKey(scheduleId, options.isManualSend),
                 payload: {
                     clientId: schedule.clientId,
                     clientName,
@@ -381,6 +386,13 @@ ${url}`;
 
     private formatDate(date: Date): string {
         return date.toISOString().slice(0, 10);
+    }
+
+    private buildDedupeKey(scheduleId: number, isManualSend: boolean): string {
+        const assignmentKey = `${SERVICE_FEEDBACK_LINK_RULE_ID}:schedule:${scheduleId}:primary`;
+        if (!isManualSend) return assignmentKey;
+
+        return `${assignmentKey}:manual:${randomUUID()}`;
     }
 
     private normalizePhone(phone: string): string {

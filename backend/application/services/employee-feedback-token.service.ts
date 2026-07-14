@@ -31,10 +31,12 @@ interface FeedbackLinkTokenParams {
 /**
  * No-login per-assignment feedback access (BJJ-247).
  * Two secrets per token row:
- *   - link token: carried in the SMS URL (possession). Only reaches the phone challenge.
+ *   - link token: carried in the SMS URL (possession). Stored plaintext so the issued
+ *     form URL can be recovered from the database when needed; only reaches the phone challenge.
  *   - access token: minted after a correct phone number (knowledge). Grants the feedback endpoints
  *     until expiresAt (= schedule.endDate + grace buffer).
- * Both are stored only as sha256 hashes. Mirrors CallIngestTokenService.
+ * The access token and expected phone remain sha256 hashes. `linkTokenHash` retains its
+ * legacy Prisma/database name even though newly issued form-link values are plaintext.
  */
 @Injectable()
 export class EmployeeFeedbackTokenService {
@@ -76,7 +78,7 @@ export class EmployeeFeedbackTokenService {
                     scheduleId: params.scheduleId,
                     employeeId: params.employeeId,
                     serviceRecordCaseId: params.serviceRecordCaseId,
-                    linkTokenHash: this.hash(linkToken),
+                    linkTokenHash: linkToken,
                     expectedPhoneHash: this.hash(this.normalizePhone(params.expectedPhone)),
                     expiresAt: params.expiresAt,
                 },
@@ -98,7 +100,7 @@ export class EmployeeFeedbackTokenService {
                 scheduleId: params.scheduleId,
                 employeeId: params.employeeId,
                 serviceRecordCaseId: params.serviceRecordCaseId,
-                linkTokenHash: this.hash(linkToken),
+                linkTokenHash: linkToken,
                 expectedPhoneHash: this.hash(this.normalizePhone(params.expectedPhone)),
                 expiresAt: params.expiresAt,
                 active: false,
@@ -109,13 +111,10 @@ export class EmployeeFeedbackTokenService {
 
     /** Activate a prepared link only when it still matches the tenant assignment and phone. */
     async activatePreparedLink(params: FeedbackLinkTokenParams & { linkToken: string }): Promise<boolean> {
-        const linkTokenHash = this.hash(params.linkToken);
         const expectedPhoneHash = this.hash(this.normalizePhone(params.expectedPhone));
 
         return this.prismaService.$transaction(async (tx) => {
-            const record = await tx.employee_feedback_token.findUnique({
-                where: { linkTokenHash },
-            });
+            const record = await this.findByLinkToken(params.linkToken, tx);
             if (
                 !record
                 || record.revokedAt
@@ -157,13 +156,18 @@ export class EmployeeFeedbackTokenService {
 
     /** Resolve a usable (active, not revoked, not expired) link-token row, else null. */
     async resolveLink(linkToken: string) {
-        const record = await this.prismaService.employee_feedback_token.findUnique({
-            where: { linkTokenHash: this.hash(linkToken) },
-        });
+        const record = await this.findByLinkToken(linkToken, this.prismaService);
         if (!record || !record.active || record.revokedAt || record.expiresAt.getTime() < Date.now()) {
             return null;
         }
         return record;
+    }
+
+    /** Resolve form links by their plaintext database value. */
+    private async findByLinkToken(linkToken: string, client: Prisma.TransactionClient | PrismaService) {
+        return client.employee_feedback_token.findUnique({
+            where: { linkTokenHash: linkToken },
+        });
     }
 
     /**

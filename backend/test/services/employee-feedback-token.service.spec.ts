@@ -70,10 +70,12 @@ describe("EmployeeFeedbackTokenService", () => {
     }
 
     it("issues a link, then a correct phone number mints an access token that resolves to the assignment context", async () => {
-        const { svc } = setup();
+        const { prisma, svc } = setup();
         const { linkToken } = await svc.issueLink({
             branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "010-1111-2222", expiresAt: future(),
         });
+
+        expect(prisma.__rows[0].linkTokenHash).toBe(linkToken);
 
         // normalized phone compare: "01011112222" must match "010-1111-2222"
         const result = await svc.verifyPhoneAndMintAccess(linkToken, "01011112222");
