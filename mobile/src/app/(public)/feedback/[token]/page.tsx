@@ -7,7 +7,7 @@ import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonMod
 import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import { DEFAULT_PROVIDER_NAME, ProviderInfo } from "@/components/feedback/provider-info";
-import { isBusinessDayKr, nextBusinessDayKr } from "@/lib/date/business-days";
+import { isBusinessDayKr, isoDateInKorea, nextBusinessDayKr } from "@/lib/date/business-days";
 
 /* ───────────────────────── form definition (mirrors the 제공기록지) ───────────────────────── */
 
@@ -106,7 +106,6 @@ const HEADER_FIELDS = [
 
 /* ───────────────────────── helpers ───────────────────────── */
 
-const isoOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const mmdd = (iso: string) => (iso ? iso.slice(5).replace("-", ".") : "");
 const monthDayKo = (iso: string) => {
     const [, month = "", day = ""] = iso.match(/^\d{4}-(\d{2})-(\d{2})$/) ?? [];
@@ -301,7 +300,7 @@ export default function FeedbackPage() {
     const defaultDate = useCallback(
         (d: number) => {
             const sessions = ctx?.sessions ?? [];
-            const rawStart = ctx?.startDate ? ctx.startDate.slice(0, 10) : isoOf(new Date());
+            const rawStart = ctx?.startDate ? ctx.startDate.slice(0, 10) : isoDateInKorea();
             const start = isBusinessDayKr(rawStart) ? rawStart : nextBusinessDayKr(rawStart);
             // Row-first recursive chain: an existing row's date (e.g. an approved
             // postpone) shifts every later default, not just the next session.
@@ -379,7 +378,7 @@ export default function FeedbackPage() {
 
     async function submitDay() {
         const serviceDate = (draft["_date"] as string) ?? defaultDate(day);
-        if (serviceDate !== isoOf(new Date())) {
+        if (serviceDate !== isoDateInKorea()) {
             setErrorNotificationMessage("제공일자가 오늘과 달라 제출할 수 없습니다. 서비스 제공 당일에 기록해 주세요.");
             return;
         }
@@ -520,7 +519,7 @@ export default function FeedbackPage() {
     const isMomConfirmationPage = Boolean(currentDayPage.confirmation);
     const currentServiceDate = ((draft["_date"] as string | undefined) || defaultDate(day));
     // Same-day rule: daily records may only be entered on the actual service date.
-    const isRecordDateToday = currentServiceDate === isoOf(new Date());
+    const isRecordDateToday = currentServiceDate === isoDateInKorea();
     const isDailyItemComplete = (item: DailyItem) => {
         const value = draft[item.key];
         if (item.type === "textarea") return true;

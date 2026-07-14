@@ -1,13 +1,18 @@
 import { expect, test } from "@playwright/test";
 
-test.use({ storageState: { cookies: [], origins: [] } });
+import { isoDateInKorea } from "../src/lib/date/business-days";
 
-const todayKst = new Intl.DateTimeFormat("sv-SE", {
-  timeZone: "Asia/Seoul",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-}).format(new Date());
+test.use({
+  storageState: { cookies: [], origins: [] },
+  timezoneId: "UTC",
+});
+
+const TEST_NOW = new Date("2026-07-14T15:30:00.000Z");
+const todayKst = isoDateInKorea(TEST_NOW);
+
+test.beforeEach(async ({ page }) => {
+  await page.clock.setFixedTime(TEST_NOW);
+});
 
 const header = {
   momName: "김산모",
