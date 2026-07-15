@@ -1,0 +1,183 @@
+import {
+    MessageTriggerRecipientType,
+    MessageTriggerTemplateKey,
+} from "domain/constants/message-trigger-catalog";
+import {
+    TRIGGER_JOB_CONFIG_RETRY_DELAY_MS,
+    TRIGGER_JOB_MAX_ATTEMPTS,
+    TRIGGER_JOB_RETRY_DELAY_MS,
+} from "domain/constants/message-automation-policy";
+
+export type MessageTriggerJobStatus = "pending" | "processing" | "sent" | "failed" | "canceled";
+
+export interface MessageTriggerCatchUpMetadata {
+    batchId: string;
+    sequence: number;
+    intervalMinutes: number;
+    originalScheduledFor: string;
+    predecessorDedupeKey: string | null;
+}
+
+export interface MessageTriggerJobPayload {
+    clientId?: number | null;
+    clientName?: string | null;
+    employeeId?: number | null;
+    employeeName?: string | null;
+    memberId: string;
+    recipientName: string;
+    recipientPhone: string;
+    templateVariables: Record<string, string>;
+    buttonUrl?: string | null;
+    messageBody?: string | null;
+    catchUp?: MessageTriggerCatchUpMetadata;
+}
+
+export class MessageTriggerJobEntity {
+    constructor(
+        public readonly id: string,
+        public branchId: string | null,
+        public ruleId: string,
+        public status: MessageTriggerJobStatus,
+        public scheduledFor: Date,
+        public sentAt: Date | null,
+        public canceledAt: Date | null,
+        public cancelReason: string | null,
+        public clientId: number | null,
+        public employeeScheduleId: number | null,
+        public recipientType: MessageTriggerRecipientType,
+        public recipientPhone: string | null,
+        public templateKey: MessageTriggerTemplateKey,
+        public dedupeKey: string,
+        public payload: MessageTriggerJobPayload,
+        public attempts: number,
+        public nextAttemptAt: Date | null,
+        public createdAt: Date,
+        public updatedAt: Date,
+    ) {}
+
+    static create(params: {
+        branchId?: string;
+        ruleId: string;
+        scheduledFor: Date;
+        clientId?: number | null;
+        employeeScheduleId?: number | null;
+        recipientType: MessageTriggerRecipientType;
+        recipientPhone?: string | null;
+        templateKey: MessageTriggerTemplateKey;
+        dedupeKey: string;
+        payload: MessageTriggerJobPayload;
+    }): MessageTriggerJobEntity {
+        const now = new Date();
+        return new MessageTriggerJobEntity(
+            "",
+            params.branchId ?? null,
+            params.ruleId,
+            "pending",
+            params.scheduledFor,
+            null,
+            null,
+            null,
+            params.clientId ?? null,
+            params.employeeScheduleId ?? null,
+            params.recipientType,
+            params.recipientPhone ?? null,
+            params.templateKey,
+            params.dedupeKey,
+            params.payload,
+            0,
+            null,
+            now,
+            now,
+        );
+    }
+
+    static reconstitute(
+        id: string,
+        branchId: string | null,
+        ruleId: string,
+        status: MessageTriggerJobStatus,
+        scheduledFor: Date,
+        sentAt: Date | null,
+        canceledAt: Date | null,
+        cancelReason: string | null,
+        clientId: number | null,
+        employeeScheduleId: number | null,
+        recipientType: MessageTriggerRecipientType,
+        recipientPhone: string | null,
+        templateKey: MessageTriggerTemplateKey,
+        dedupeKey: string,
+        payload: MessageTriggerJobPayload,
+        createdAt: Date,
+        updatedAt: Date,
+        attempts = 0,
+        nextAttemptAt: Date | null = null,
+    ): MessageTriggerJobEntity {
+        return new MessageTriggerJobEntity(
+            id,
+            branchId,
+            ruleId,
+            status,
+            scheduledFor,
+            sentAt,
+            canceledAt,
+            cancelReason,
+            clientId,
+            employeeScheduleId,
+            recipientType,
+            recipientPhone,
+            templateKey,
+            dedupeKey,
+            payload,
+            attempts,
+            nextAttemptAt,
+            createdAt,
+            updatedAt,
+        );
+    }
+
+    markProcessing(): void {
+        this.status = "processing";
+        this.updatedAt = new Date();
+    }
+
+    defer(kind: "config" | "transient", reason: string): void {
+        const now = new Date();
+
+        if (kind === "config") {
+            this.status = "pending";
+            this.nextAttemptAt = new Date(now.getTime() + TRIGGER_JOB_CONFIG_RETRY_DELAY_MS);
+            this.updatedAt = now;
+            return;
+        }
+
+        this.attempts += 1;
+        if (this.attempts >= TRIGGER_JOB_MAX_ATTEMPTS) {
+            this.markFailed(reason);
+            return;
+        }
+
+        this.status = "pending";
+        this.nextAttemptAt = new Date(now.getTime() + TRIGGER_JOB_RETRY_DELAY_MS);
+        this.updatedAt = now;
+    }
+
+    markSent(): void {
+        this.status = "sent";
+        this.sentAt = new Date();
+        this.nextAttemptAt = null;
+        this.updatedAt = new Date();
+    }
+
+    markFailed(reason?: string): void {
+        this.status = "failed";
+        this.cancelReason = reason ?? null;
+        this.updatedAt = new Date();
+    }
+
+    cancel(reason: string): void {
+        this.status = "canceled";
+        this.cancelReason = reason;
+        this.canceledAt = new Date();
+        this.updatedAt = new Date();
+    }
+}

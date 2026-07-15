@@ -9,139 +9,871 @@ datasource db {
 }
 
 model area {
-  id                String             @id
-  name              String
-  korean_name       String
-  bank_account_info bank_account_info?
-  doc_templates     doc_template[]
+  id              String             @id
+  name            String
+  koreanName      String             @map("korean_name")
+  branchId        String?            @map("branch_id") @db.Uuid
+  branch          branch?            @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  bankAccountInfo bank_account_info?
+  clients         client[]
+  docTemplates    doc_template[]
+
+  @@index([branchId], map: "idx_area_branch")
 }
 
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model bank_account_info {
-  area_id   String  @id(map: "bankAccountInfo_pkey")
-  bank_name String?
-  acc_num   String?
-  area      area    @relation(fields: [area_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  areaId   String  @id(map: "bankAccountInfo_pkey") @map("area_id")
+  bankName String? @map("bank_name")
+  accNum   String? @map("acc_num")
+  area     area    @relation(fields: [areaId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model chat_feedback {
+  id          String       @id @default(dbgenerated("(gen_random_uuid())::text"))
+  sessionId   String       @map("session_id")
+  messageId   String       @map("message_id")
+  userId      String       @map("user_id") @db.Uuid
+  type        String
+  comment     String?
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  chatMessage chat_message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  chatSession chat_session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user        user         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([sessionId])
+  @@index([type])
+  @@index([userId])
+}
+
+model chat_message {
+  id           String          @id @default(dbgenerated("(gen_random_uuid())::text"))
+  sessionId    String          @map("session_id")
+  role         String
+  content      String
+  timestamp    DateTime        @default(now()) @db.Timestamptz(6)
+  chatFeedback chat_feedback[]
+  chatSession  chat_session    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([timestamp])
+}
+
+model chat_session {
+  id           String          @id @default(dbgenerated("(gen_random_uuid())::text"))
+  userId       String          @map("user_id") @db.Uuid
+  createdAt    DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt    DateTime        @map("expires_at") @db.Timestamptz(6)
+  updatedAt    DateTime        @default(now()) @map("updated_at") @db.Timestamptz(6)
+  chatFeedback chat_feedback[]
+  messages     chat_message[]
+  user         user            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([expiresAt])
+  @@index([userId])
+}
+
+model client {
+  id                     Int                       @id @default(autoincrement())
+  name                   String
+  address                String?
+  phone                  String?
+  type                   String?
+  duration               Int?                      @db.SmallInt
+  fullPrice              String?                   @map("full_price")
+  grant                  String?
+  actualPrice            String?                   @map("actual_price")
+  startDate              DateTime?                 @map("start_date") @db.Date
+  endDate                DateTime?                 @map("end_date") @db.Date
+  careCenter             Boolean?                  @map("care_center")
+  voucherClient          Boolean                   @map("voucher_client")
+  birthday               String?                   @db.VarChar(6)
+  breastPump             Boolean                   @default(false) @map("breast_pump")
+  serviceStatus          String?                   @map("service_status")
+  eDocId                 String?                   @unique @map("e_doc_id")
+  dueDate                DateTime?                 @map("due_date") @db.Date
+  createdAt              DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  branchId               String?                   @map("branch_id") @db.Uuid
+  areaId                 String?                   @map("area_id")
+  eformsignDocByEDocId   eformsign_doc?            @relation("client_e_doc_idToeformsign_doc", fields: [eDocId], references: [documentId], onUpdate: NoAction)
+  branch                 branch?                   @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  area                   area?                     @relation(fields: [areaId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  eformsignDocs          eformsign_doc[]           @relation("eformsign_doc_client_idToclient")
+  employeeSchedules      employee_schedule[]
+  callRecords            call_record[]
+  clientDrafts           client_draft[]
+  scheduleChangeRequests schedule_change_request[]
+  messageLogs            message_log[]
+  messageTriggerJobs     message_trigger_job[]
+  serviceRecordCase      service_record_case?
+
+  @@unique([branchId, phone], map: "client_branch_phone_key")
+  @@index([areaId], map: "idx_client_area")
+  @@index([branchId], map: "idx_client_branch")
+  @@index([createdAt], map: "idx_client_created_at")
 }
 
 model doc_template {
-  area_id       String
-  template_id   String
-  template_name String?
-  id            String  @id @default(dbgenerated("(gen_random_uuid())::text"))
-  area          area    @relation(fields: [area_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  areaId       String  @map("area_id")
+  templateId   String  @map("template_id")
+  templateName String? @map("template_name")
+  id           String  @id @default(dbgenerated("(gen_random_uuid())::text"))
+  area         area    @relation(fields: [areaId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
 
-/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model document {
+  id               String            @id @default(dbgenerated("(gen_random_uuid())::text"))
+  name             String
+  description      String?
+  tags             String[]
+  mimeType         String            @map("mime_type")
+  fileSize         Int               @map("file_size")
+  storagePath      String            @map("storage_path")
+  storageUrl       String?           @map("storage_url")
+  orgId            String?           @map("org_id")
+  uploadedBy       String            @map("uploaded_by")
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime          @map("updated_at") @db.Timestamptz(6)
+  categoryId       String            @map("category_id")
+  branchId         String?           @map("branch_id") @db.Uuid
+  documentCategory document_category @relation(fields: [categoryId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  branch           branch?           @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([categoryId])
+  @@index([orgId])
+  @@index([uploadedBy])
+  @@index([branchId], map: "idx_document_branch")
+}
+
+model document_category {
+  id        String     @id @default(dbgenerated("(gen_random_uuid())::text"))
+  value     String     @unique
+  label     String
+  color     String
+  isCustom  Boolean    @default(true) @map("is_custom")
+  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  branchId  String?    @map("branch_id") @db.Uuid
+  documents document[]
+  branch    branch?    @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([branchId], map: "idx_document_category_branch")
+}
+
+model eformsign_doc {
+  id                         Int                            @id @default(autoincrement())
+  documentId                 String                         @unique @map("document_id")
+  createdDate                DateTime                       @map("created_date") @db.Timestamptz(6)
+  updatedDate                DateTime                       @map("updated_date") @db.Timestamptz(6)
+  statusType                 String                         @map("status_type")
+  statusDetail               String                         @map("status_detail")
+  stepType                   String                         @map("step_type")
+  stepIndex                  String                         @map("step_index")
+  stepName                   String                         @map("step_name")
+  stepRecipientType          String                         @map("step_recipient_type")
+  stepRecipientName          String                         @map("step_recipient_name")
+  stepRecipientSms           String                         @map("step_recipient_sms")
+  expiredDate                DateTime                       @map("expired_date") @db.Timestamptz(6)
+  expired                    Boolean                        @default(false)
+  clientId                   Int                            @map("client_id")
+  branchId                   String?                        @map("branch_id") @db.Uuid
+  documentKind               String?                        @map("document_kind")
+  employeeScheduleId         Int?                           @map("employee_schedule_id")
+  templateId                 String?                        @map("template_id")
+  serviceRecordCaseId        String?                        @map("service_record_case_id") @db.Uuid
+  snapshotVersion            Int?                           @map("snapshot_version")
+  snapshotChunkIndex         Int?                           @map("snapshot_chunk_index")
+  clientByEDocId             client?                        @relation("client_e_doc_idToeformsign_doc")
+  client                     client                         @relation("eformsign_doc_client_idToclient", fields: [clientId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  employeeSchedule           employee_schedule?             @relation(fields: [employeeScheduleId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  serviceRecordCase          service_record_case?           @relation(fields: [serviceRecordCaseId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  serviceRecordSnapshotChunk service_record_snapshot_chunk?
+  branch                     branch?                        @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([serviceRecordCaseId, snapshotVersion, snapshotChunkIndex], map: "uniq_eformsign_doc_service_record_chunk")
+  @@index([branchId], map: "idx_eformsign_doc_branch")
+  @@index([documentKind], map: "idx_eformsign_doc_document_kind")
+  @@index([employeeScheduleId], map: "idx_eformsign_doc_employee_schedule_id")
+  @@index([templateId], map: "idx_eformsign_doc_template_id")
+  @@index([serviceRecordCaseId], map: "idx_eformsign_doc_service_record_case_id")
+}
+
+model employee {
+  id                         Int                         @id @db.SmallInt
+  name                       String
+  workArea                   String[]                    @map("work_area")
+  phone                      String                      @unique
+  grade                      String
+  openToNextWork             Boolean                     @default(true) @map("open_to_next_work")
+  companyRegisteredDate      DateTime?                   @map("company_registered_date") @db.Date
+  birthday                   String?                     @db.VarChar(6)
+  branchId                   String?                     @map("branch_id") @db.Uuid
+  branch                     branch?                     @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  primaryEmployeeSchedules   employee_schedule[]         @relation("employee_schedule_primary_employee_idToemployee")
+  secondaryEmployeeSchedules employee_schedule[]         @relation("employee_schedule_secondary_employee_idToemployee")
+  employeeFeedbackTokens     employee_feedback_token[]
+  serviceRecordAssignments   service_record_assignment[]
+  serviceRecordDays          service_record_day[]
+
+  @@index([branchId], map: "idx_employee_branch")
+}
+
+model employee_schedule {
+  id                      Int                        @id @default(autoincrement())
+  primaryEmployeeId       Int                        @map("primary_employee_id") @db.SmallInt
+  workAddress             String                     @map("work_address")
+  startDate               DateTime                   @map("start_date") @db.Date
+  endDate                 DateTime                   @map("end_date") @db.Date
+  replaced                Boolean                    @default(false)
+  clientId                Int                        @map("client_id")
+  secondaryEmployeeId     Int?                       @map("secondary_employee_id") @db.SmallInt
+  branchId                String?                    @map("branch_id") @db.Uuid
+  client                  client                     @relation(fields: [clientId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  branch                  branch?                    @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  primaryEmployee         employee                   @relation("employee_schedule_primary_employee_idToemployee", fields: [primaryEmployeeId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  secondaryEmployee       employee?                  @relation("employee_schedule_secondary_employee_idToemployee", fields: [secondaryEmployeeId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  feedbackTokens          employee_feedback_token[]
+  serviceRecord           service_record?
+  serviceRecordDays       service_record_day[]
+  scheduleChangeRequests  schedule_change_request[]
+  eformsignDocs           eformsign_doc[]
+  messageTriggerJobs      message_trigger_job[]
+  serviceRecordAssignment service_record_assignment?
+
+  @@index([branchId], map: "idx_employee_schedule_branch")
+}
+
 model message {
-  id         Int       @id @default(autoincrement()) @db.SmallInt
-  title      String?   @default("") @db.VarChar
-  text       String?   @db.VarChar
-  created_at DateTime  @default(now()) @db.Timestamptz(6)
-  edited_at  DateTime? @db.Timestamptz(6)
+  id        Int       @id @default(autoincrement()) @db.SmallInt
+  title     String?   @default("") @db.VarChar
+  text      String?   @db.VarChar
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  editedAt  DateTime? @map("edited_at") @db.Timestamptz(6)
+  branchId  String?   @map("branch_id") @db.Uuid
+  branch    branch?   @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([branchId], map: "idx_message_branch")
 }
 
-/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model message_template {
+  id        String   @id
+  name      String
+  content   String
+  variables Json     @default("[]")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @map("updated_at") @db.Timestamptz(6)
+  branchId  String?  @map("branch_id") @db.Uuid
+  isCustom  Boolean? @default(true) @map("is_custom")
+  branch    branch?  @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([branchId], map: "idx_message_template_branch")
+}
+
+model notification {
+  id       Int       @id @default(autoincrement())
+  userId   String    @map("user_id") @db.Uuid
+  title    String
+  body     String
+  data     Json?
+  sentAt   DateTime  @default(now()) @map("sent_at") @db.Timestamptz(6)
+  readAt   DateTime? @map("read_at") @db.Timestamptz(6)
+  branchId String?   @map("branch_id") @db.Uuid
+  branch   branch?   @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  user     user      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([branchId], map: "idx_notification_branch")
+  @@index([userId, sentAt])
+}
+
+model branch {
+  id                           String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                         String
+  slug                         String                          @unique
+  region                       String?
+  district                     String?
+  branchType                   String?                         @map("branch_type")
+  phone                        String?
+  address                      String?
+  email                        String?
+  businessHours                String?                         @map("business_hours")
+  description                  String?
+  isActive                     Boolean?                        @default(true) @map("is_active")
+  smsSenderApprovalStatus      String                          @default("not_requested") @map("sms_sender_approval_status") @db.VarChar(20)
+  smsSenderApprovalRequestedAt DateTime?                       @map("sms_sender_approval_requested_at") @db.Timestamptz(6)
+  smsSenderApprovalRequestedBy String?                         @map("sms_sender_approval_requested_by") @db.Uuid
+  smsSenderApprovalApprovedAt  DateTime?                       @map("sms_sender_approval_approved_at") @db.Timestamptz(6)
+  smsSenderApprovalApprovedBy  String?                         @map("sms_sender_approval_approved_by") @db.Uuid
+  createdAt                    DateTime?                       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                    DateTime?                       @default(now()) @map("updated_at") @db.Timestamptz(6)
+  ownerId                      String                          @map("owner_id") @db.Uuid
+  areas                        area[]
+  clients                      client[]
+  documents                    document[]
+  documentCategories           document_category[]
+  eformsignDocs                eformsign_doc[]
+  employees                    employee[]
+  employeeSchedules            employee_schedule[]
+  messages                     message[]
+  messageTemplates             message_template[]
+  messageLogs                  message_log[]
+  messageTriggerRules          message_trigger_rule[]
+  messageTriggerJobs           message_trigger_job[]
+  notifications                notification[]
+  consultationInquiries        consultation_inquiry[]
+  callIngestTokens             call_ingest_token[]
+  callRecords                  call_record[]
+  clientDrafts                 client_draft[]
+  employeeFeedbackTokens       employee_feedback_token[]
+  serviceRecords               service_record[]
+  serviceRecordDays            service_record_day[]
+  serviceRecordCases           service_record_case[]
+  serviceRecordAssignments     service_record_assignment[]
+  serviceRecordSnapshotChunks  service_record_snapshot_chunk[]
+  scheduleChangeRequests       schedule_change_request[]
+  owner                        user                            @relation(fields: [ownerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  userBranches                 user_branch[]
+
+  @@index([isActive], map: "idx_branch_is_active")
+  @@index([ownerId], map: "idx_branch_owner")
+  @@index([region], map: "idx_branch_region")
+  @@index([smsSenderApprovalStatus], map: "idx_branch_sms_sender_approval_status")
+  @@index([slug], map: "idx_branch_slug")
+}
+
+model push_subscription {
+  id        Int      @id @default(autoincrement())
+  userId    String   @map("user_id") @db.Uuid
+  endpoint  String   @unique
+  p256dhKey String   @map("p256dh_key")
+  authKey   String   @map("auth_key")
+  userAgent String?  @map("user_agent")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  user      user     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([userId])
+}
+
+model system_setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+}
+
+model system_template {
+  id              String                    @id @default(dbgenerated("(gen_random_uuid())::text"))
+  templateKey     String                    @unique @map("template_key")
+  content         String
+  createdAt       DateTime                  @default(now()) @map("created_at")
+  updatedAt       DateTime                  @updatedAt @map("updated_at")
+  customVariables Json?                     @map("custom_variables")
+  versions        system_template_version[]
+}
+
+model system_template_version {
+  id             String          @id @default(dbgenerated("(gen_random_uuid())::text"))
+  templateId     String          @map("template_id")
+  content        String
+  versionNumber  Int             @map("version_number")
+  createdBy      String?         @map("created_by")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  systemTemplate system_template @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@unique([templateId, versionNumber])
+  @@index([templateId])
+}
+
 model user {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  email         String?  @db.VarChar
-  name          String?  @db.VarChar
-  profile_image String?  @db.VarChar
-  role          String?  @db.VarChar
-  created_at    DateTime @default(now()) @db.Timestamp(6)
-  kakao_id      String   @unique(map: "user_kakaoId_key") @db.VarChar
+  id                   String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email                String?             @unique @db.VarChar
+  name                 String?             @db.VarChar
+  phone                String?             @db.VarChar
+  birthDate            String?             @map("birth_date") @db.VarChar
+  profileImage         String?             @map("profile_image") @db.VarChar
+  role                 String?             @db.VarChar
+  createdAt            DateTime            @default(now()) @map("created_at") @db.Timestamp(6)
+  kakaoId              String?             @unique(map: "user_kakaoId_key") @map("kakao_id") @db.VarChar
+  passwordHash         String?             @map("password_hash") @db.VarChar
+  emailVerified        Boolean             @default(false) @map("email_verified")
+  emailVerifiedAt      DateTime?           @map("email_verified_at") @db.Timestamptz(6)
+  authProvider         String              @default("kakao") @map("auth_provider")
+  approvalStatus       String              @default("pending") @map("approval_status") @db.VarChar
+  approvedAt           DateTime?           @map("approved_at") @db.Timestamptz(6)
+  approvedBy           String?             @map("approved_by") @db.Uuid
+  requestedRole        String?             @map("requested_role") @db.VarChar
+  tokenVersion         Int                 @default(0) @map("token_version")
+  chatFeedback         chat_feedback[]
+  chatSessions         chat_session[]
+  notifications        notification[]
+  ownedBranches        branch[]
+  pushSubscriptions    push_subscription[]
+  userBranches         user_branch[]
+  authTokens           auth_token[]
+  reviewedClientDrafts client_draft[]
+}
+
+model auth_rate_limit {
+  keyHash     String   @id @map("key_hash") @db.VarChar
+  windowStart DateTime @map("window_start") @db.Timestamptz(6)
+  count       Int      @default(0)
+  updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([windowStart], map: "idx_auth_rate_limit_window")
+}
+
+model user_branch {
+  id       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId   String    @map("user_id") @db.Uuid
+  branchId String    @map("branch_id") @db.Uuid
+  role     String?   @default("user")
+  joinedAt DateTime? @default(now()) @map("joined_at") @db.Timestamptz(6)
+  branch   branch    @relation(fields: [branchId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user     user      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([branchId], map: "idx_user_branch_branch")
+  @@index([userId], map: "idx_user_branch_user")
+  @@index([userId, branchId], map: "idx_user_branch_user_branch")
+}
+
+model consultation_inquiry {
+  id                     String    @id @default(dbgenerated("(gen_random_uuid())::text"))
+  branchId               String    @map("branch_id") @db.Uuid
+  publicBranchSlug       String    @map("public_branch_slug")
+  motherName             String    @map("mother_name")
+  phone                  String
+  address                String
+  dueDate                DateTime  @map("due_date") @db.Date
+  birthExperience        String    @map("birth_experience")
+  voucherType            String?   @map("voucher_type")
+  preferredCaregiverName String?   @map("preferred_caregiver_name")
+  referralSource         String    @map("referral_source")
+  privacyAcceptedAt      DateTime  @map("privacy_accepted_at") @db.Timestamptz(6)
+  selectedServices       Json?     @map("selected_services")
+  additionalNotes        String?   @map("additional_notes")
+  source                 String    @default("website")
+  status                 String    @default("new")
+  readAt                 DateTime? @map("read_at") @db.Timestamptz(6)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  branch                 branch    @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([branchId, createdAt], map: "idx_consultation_inquiry_branch_created")
+  @@index([branchId, status], map: "idx_consultation_inquiry_branch_status")
+  @@index([branchId, readAt], map: "idx_consultation_inquiry_branch_read_at")
+  @@index([phone], map: "idx_consultation_inquiry_phone")
+  @@index([publicBranchSlug], map: "idx_consultation_inquiry_public_branch_slug")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model voucher_price_info {
-  id           Int     @id(map: "voucherPriceInfo_pkey") @default(autoincrement()) @db.SmallInt
-  type         String?
-  duration     BigInt?
-  full_price   String?
-  grant        String?
-  actual_price String?
-  year         Int
+  id          Int     @id(map: "voucherPriceInfo_pkey") @default(autoincrement()) @db.SmallInt
+  type        String?
+  duration    BigInt?
+  fullPrice   String? @map("full_price")
+  grant       String?
+  actualPrice String? @map("actual_price")
+  year        Int
 
   @@unique([year, type, duration], map: "voucher_price_info_year_type_duration_uniq")
   @@index([type, duration, year])
 }
 
-model employee {
-  id                      Int                 @id @db.SmallInt
-  name                    String
-  work_area               String[]
-  phone                   String              @unique
-  grade                   String
-  open_to_next_work       Boolean             @default(true)
-  company_registered_date DateTime?           @db.Date
-  schedules_as_primary    employee_schedule[] @relation("schedule_primary_employee")
-  schedules_as_secondary  employee_schedule[] @relation("schedule_secondary_employee")
-}
-
-model employee_schedule {
-  id                    Int       @id @default(autoincrement())
-  primary_employee_id   Int       @db.SmallInt
-  work_address          String
-  start_date            DateTime  @db.Date
-  end_date              DateTime  @db.Date
-  replaced              Boolean   @default(false)
-  client_id             Int
-  secondary_employee_id Int?      @db.SmallInt
-  client                client    @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  primary_employee      employee  @relation("schedule_primary_employee", fields: [primary_employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  secondary_employee    employee? @relation("schedule_secondary_employee", fields: [secondary_employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-}
-
-/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
-model client {
-  id                 Int                 @id @default(autoincrement())
-  name               String
-  address            String?
-  phone              String?
-  type               String?
-  duration           Int?                @db.SmallInt
-  full_price         String?
-  grant              String?
-  actual_price       String?
-  start_date         DateTime?           @db.Date
-  end_date           DateTime?           @db.Date
-  care_center        Boolean
-  voucher_client     Boolean
-  birthday           String?             @db.VarChar(6)
-  breast_pump        Boolean             @default(false)
-  contract_status    String?
-  e_doc_id           String?             @unique
-  signed_doc         eformsign_doc?      @relation("client_signed_doc", fields: [e_doc_id], references: [document_id], onUpdate: NoAction)
-  eformsign_docs     eformsign_doc[]     @relation("eformsign_doc_client")
-  employee_schedules employee_schedule[]
-}
-
-model eformsign_doc {
-  id                  Int      @id @default(autoincrement())
-  document_id         String   @unique
-  created_date        DateTime @db.Timestamptz(6)
-  updated_date        DateTime @db.Timestamptz(6)
-  status_type         String
-  status_detail       String
-  step_type           String
-  step_index          String
-  step_name           String
-  step_recipient_type String
-  step_recipient_name String
-  step_recipient_sms  String
-  expired_date        DateTime @db.Timestamptz(6)
-  expired             Boolean  @default(false)
-  client_id           Int
-  signed_by_client    client?  @relation("client_signed_doc")
-  client              client   @relation("eformsign_doc_client", fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-}
-
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model voucher_price_info_2025 {
-  id           Int     @id @db.SmallInt
-  type         String?
-  duration     BigInt?
-  full_price   String?
-  grant        String?
-  actual_price String?
+  id          Int     @id @db.SmallInt
+  type        String?
+  duration    BigInt?
+  fullPrice   String? @map("full_price")
+  grant       String?
+  actualPrice String? @map("actual_price")
+}
+
+model auth_token {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  token     String    @unique
+  type      String // "email_verification" | "password_reset"
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(6)
+  user      user      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+}
+
+model auth_flow_state {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kind                    String    @db.VarChar
+  tokenHash               String    @unique @map("token_hash") @db.VarChar
+  userId                  String?   @map("user_id") @db.Uuid
+  accessToken             String?   @map("access_token")
+  refreshToken            String?   @map("refresh_token")
+  requiresBranchSelection Boolean?  @default(false) @map("requires_branch_selection")
+  kakaoId                 String?   @map("kakao_id") @db.VarChar
+  email                   String?   @db.VarChar
+  name                    String?   @db.VarChar
+  profileImage            String?   @map("profile_image") @db.VarChar
+  expiresAt               DateTime  @map("expires_at") @db.Timestamptz(6)
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  consumedAt              DateTime? @map("consumed_at") @db.Timestamptz(6)
+
+  @@index([kind, expiresAt], map: "idx_auth_flow_state_kind_expires_at")
+}
+
+model message_log {
+  id             Int                  @id @default(autoincrement())
+  branchId       String?              @map("branch_id") @db.Uuid
+  provider       String // "aligo_sms" | "aligo_alimtalk"
+  templateKey    String               @map("template_key")
+  triggerJobId   String?              @map("trigger_job_id")
+  receiver       String
+  clientId       Int?                 @map("client_id")
+  recipientName  String?              @map("recipient_name")
+  recipientPhone String?              @map("recipient_phone")
+  messageBody    String               @map("message_body")
+  variables      Json                 @default("{}")
+  status         String               @default("pending") // "pending" | "sent" | "failed"
+  aligoMid       String?              @map("aligo_mid")
+  errorMessage   String?              @map("error_message")
+  attempts       Int                  @default(0)
+  lastAttemptAt  DateTime?            @map("last_attempt_at") @db.Timestamptz(6)
+  nextRetryAt    DateTime?            @map("next_retry_at") @db.Timestamptz(6)
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  branch         branch?              @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  client         client?              @relation(fields: [clientId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  triggerJob     message_trigger_job? @relation(fields: [triggerJobId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([branchId], map: "idx_message_log_branch")
+  @@index([triggerJobId], map: "idx_message_log_trigger_job_id")
+  @@index([status], map: "idx_message_log_status")
+  @@index([receiver], map: "idx_message_log_receiver")
+  @@index([recipientPhone], map: "idx_message_log_recipient_phone")
+  @@index([createdAt], map: "idx_message_log_created_at")
+  @@index([nextRetryAt], map: "idx_message_log_next_retry_at")
+}
+
+/// Database note: partial unique index `uniq_message_trigger_rule_default` on
+/// (branch_id, template_key) WHERE is_default = true exists in the database but
+/// cannot be expressed in Prisma (created via migration/patch SQL).
+model message_trigger_rule {
+  id            String                @id @default(dbgenerated("(gen_random_uuid())::text"))
+  branchId      String?               @map("branch_id") @db.Uuid
+  name          String
+  isActive      Boolean               @default(true) @map("is_active")
+  eventType     String                @map("event_type")
+  offsetType    String                @map("offset_type")
+  offsetDays    Int                   @default(0) @map("offset_days")
+  recipientType String                @map("recipient_type")
+  templateKey   String                @map("template_key")
+  isDefault     Boolean               @default(false) @map("is_default")
+  jobsStale     Boolean               @default(false) @map("jobs_stale")
+  createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+  branch        branch?               @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  jobs          message_trigger_job[]
+
+  @@index([branchId], map: "idx_message_trigger_rule_branch")
+  @@index([branchId, isActive], map: "idx_message_trigger_rule_active")
+  @@index([eventType], map: "idx_message_trigger_rule_event_type")
+}
+
+model message_trigger_job {
+  id                 String               @id @default(dbgenerated("(gen_random_uuid())::text"))
+  branchId           String?              @map("branch_id") @db.Uuid
+  ruleId             String               @map("rule_id")
+  status             String               @default("pending")
+  scheduledFor       DateTime             @map("scheduled_for") @db.Timestamptz(6)
+  attempts           Int                  @default(0)
+  nextAttemptAt      DateTime?            @map("next_attempt_at") @db.Timestamptz(6)
+  sentAt             DateTime?            @map("sent_at") @db.Timestamptz(6)
+  canceledAt         DateTime?            @map("canceled_at") @db.Timestamptz(6)
+  cancelReason       String?              @map("cancel_reason")
+  clientId           Int?                 @map("client_id")
+  employeeScheduleId Int?                 @map("employee_schedule_id")
+  recipientType      String               @map("recipient_type")
+  recipientPhone     String?              @map("recipient_phone")
+  templateKey        String               @map("template_key")
+  dedupeKey          String               @unique @map("dedupe_key")
+  payload            Json                 @default("{}")
+  createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  branch             branch?              @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  rule               message_trigger_rule @relation(fields: [ruleId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  client             client?              @relation(fields: [clientId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  employeeSchedule   employee_schedule?   @relation(fields: [employeeScheduleId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  logs               message_log[]
+
+  @@index([branchId], map: "idx_message_trigger_job_branch")
+  @@index([ruleId], map: "idx_message_trigger_job_rule_id")
+  @@index([status, scheduledFor], map: "idx_message_trigger_job_status_scheduled_for")
+  @@index([clientId], map: "idx_message_trigger_job_client_id")
+  @@index([employeeScheduleId], map: "idx_message_trigger_job_employee_schedule_id")
+}
+
+model call_ingest_token {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId   String    @map("branch_id") @db.Uuid
+  tokenHash  String    @unique @map("token_hash")
+  label      String
+  active     Boolean   @default(true)
+  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz(6)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  branch     branch    @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([branchId], map: "idx_call_ingest_token_branch")
+}
+
+/// Per-assignment no-login feedback access for a 제공인력.
+/// The SMS link carries the plaintext link token; a phone challenge mints the access token.
+model employee_feedback_token {
+  id                  String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId            String               @map("branch_id") @db.Uuid
+  scheduleId          Int                  @map("schedule_id")
+  employeeId          Int                  @map("employee_id") @db.SmallInt
+  serviceRecordCaseId String?              @map("service_record_case_id") @db.Uuid
+  linkTokenHash       String               @unique @map("link_token_hash")
+  accessTokenHash     String?              @unique @map("access_token_hash")
+  expectedPhoneHash   String               @map("expected_phone_hash")
+  verifiedAt          DateTime?            @map("verified_at") @db.Timestamptz(6)
+  failedAttempts      Int                  @default(0) @map("failed_attempts")
+  expiresAt           DateTime             @map("expires_at") @db.Timestamptz(6)
+  active              Boolean              @default(true)
+  revokedAt           DateTime?            @map("revoked_at") @db.Timestamptz(6)
+  createdAt           DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  branch              branch               @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  schedule            employee_schedule    @relation(fields: [scheduleId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  employee            employee             @relation(fields: [employeeId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  serviceRecordCase   service_record_case? @relation(fields: [serviceRecordCaseId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([scheduleId], map: "idx_employee_feedback_token_schedule")
+  @@index([branchId], map: "idx_employee_feedback_token_branch")
+  @@index([serviceRecordCaseId], map: "idx_employee_feedback_token_service_record_case_id")
+}
+
+/// One-time service header per assignment (top of the 제공기록지).
+model service_record {
+  id                  String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId            String               @map("branch_id") @db.Uuid
+  scheduleId          Int                  @unique @map("schedule_id")
+  serviceRecordCaseId String?              @map("service_record_case_id") @db.Uuid
+  momName             String?              @map("mom_name")
+  momBirth            String?              @map("mom_birth") @db.VarChar(6)
+  babyName            String?              @map("baby_name")
+  babyBirth           String?              @map("baby_birth") @db.VarChar(6)
+  deliveryType        String?              @map("delivery_type")
+  babyWeight          String?              @map("baby_weight")
+  createdAt           DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  branch              branch               @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  schedule            employee_schedule    @relation(fields: [scheduleId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  serviceRecordCase   service_record_case? @relation(fields: [serviceRecordCaseId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([branchId], map: "idx_service_record_branch")
+  @@index([serviceRecordCaseId], map: "idx_service_record_service_record_case_id")
+}
+
+/// One row per service session (제공 회차). Locked once submitted (edit-block guardrail).
+model service_record_day {
+  id                   String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId             String               @map("branch_id") @db.Uuid
+  scheduleId           Int?                 @map("schedule_id")
+  serviceRecordCaseId  String?              @map("service_record_case_id") @db.Uuid
+  caseSessionIndex     Int?                 @map("case_session_index")
+  employeeId           Int?                 @map("employee_id") @db.SmallInt
+  employeeNameSnapshot String?              @map("employee_name_snapshot")
+  formVersion          Int                  @default(1) @map("form_version")
+  sessionIndex         Int                  @map("session_index")
+  serviceDate          DateTime             @map("service_date") @db.Date
+  answers              Json                 @default("{}")
+  etcService           String?              @map("etc_service")
+  notes                String?
+  paymentConfirmed     Boolean              @default(false) @map("payment_confirmed")
+  momApproval          String?              @map("mom_approval")
+  locked               Boolean              @default(false)
+  submittedAt          DateTime?            @map("submitted_at") @db.Timestamptz(6)
+  createdAt            DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  branch               branch               @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  schedule             employee_schedule?   @relation(fields: [scheduleId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  serviceRecordCase    service_record_case? @relation(fields: [serviceRecordCaseId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  employee             employee?            @relation(fields: [employeeId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@unique([scheduleId, sessionIndex])
+  @@unique([serviceRecordCaseId, caseSessionIndex], map: "uniq_service_record_day_case_session")
+  @@index([branchId], map: "idx_service_record_day_branch")
+  @@index([serviceRecordCaseId], map: "idx_service_record_day_case")
+  @@index([employeeId], map: "idx_service_record_day_employee")
+}
+
+/// Client-owned service record lifecycle. Assignment changes never replace this aggregate.
+model service_record_case {
+  id                    String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId              String                          @map("branch_id") @db.Uuid
+  clientId              Int                             @unique @map("client_id")
+  status                String                          @default("WAITING_FOR_DETAILS")
+  startDate             DateTime?                       @map("start_date") @db.Date
+  endDate               DateTime?                       @map("end_date") @db.Date
+  requiredSessionCount  Int?                            @map("required_session_count") @db.SmallInt
+  formVersion           Int                             @default(1) @map("form_version")
+  momName               String?                         @map("mom_name")
+  momBirth              String?                         @map("mom_birth") @db.VarChar(6)
+  babyName              String?                         @map("baby_name")
+  babyBirth             String?                         @map("baby_birth") @db.VarChar(6)
+  deliveryType          String?                         @map("delivery_type")
+  babyWeight            String?                         @map("baby_weight")
+  completedAt           DateTime?                       @map("completed_at") @db.Timestamptz(6)
+  finalizationDueAt     DateTime?                       @map("finalization_due_at") @db.Timestamptz(6)
+  finalizationStartedAt DateTime?                       @map("finalization_started_at") @db.Timestamptz(6)
+  finalizedAt           DateTime?                       @map("finalized_at") @db.Timestamptz(6)
+  documentsCompletedAt  DateTime?                       @map("documents_completed_at") @db.Timestamptz(6)
+  finalizationAttempts  Int                             @default(0) @map("finalization_attempts")
+  nextAttemptAt         DateTime?                       @map("next_attempt_at") @db.Timestamptz(6)
+  lastError             String?                         @map("last_error")
+  version               Int                             @default(0)
+  createdAt             DateTime                        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime                        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  branch                branch                          @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  client                client                          @relation(fields: [clientId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  assignments           service_record_assignment[]
+  days                  service_record_day[]
+  feedbackTokens        employee_feedback_token[]
+  legacyHeaders         service_record[]
+  snapshotChunks        service_record_snapshot_chunk[]
+  eformsignDocs         eformsign_doc[]
+
+  @@index([branchId, status], map: "idx_service_record_case_branch_status")
+  @@index([status, finalizationDueAt], map: "idx_service_record_case_finalization_due")
+}
+
+/// Assignment history for a client-owned service record.
+model service_record_assignment {
+  id                    String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId              String                          @map("branch_id") @db.Uuid
+  serviceRecordCaseId   String                          @map("service_record_case_id") @db.Uuid
+  scheduleId            Int?                            @unique @map("schedule_id")
+  employeeId            Int?                            @map("employee_id") @db.SmallInt
+  employeeNameSnapshot  String                          @map("employee_name_snapshot")
+  employeePhoneSnapshot String?                         @map("employee_phone_snapshot")
+  startDate             DateTime                        @map("start_date") @db.Date
+  endDate               DateTime                        @map("end_date") @db.Date
+  createdAt             DateTime                        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime                        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  branch                branch                          @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  serviceRecordCase     service_record_case             @relation(fields: [serviceRecordCaseId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  schedule              employee_schedule?              @relation(fields: [scheduleId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  employee              employee?                       @relation(fields: [employeeId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  snapshotChunks        service_record_snapshot_chunk[]
+
+  @@index([branchId], map: "idx_service_record_assignment_branch")
+  @@index([serviceRecordCaseId], map: "idx_service_record_assignment_case")
+  @@index([employeeId], map: "idx_service_record_assignment_employee")
+}
+
+/// Durable per-chunk claim and reconciliation state for eformsign snapshot creation.
+model service_record_snapshot_chunk {
+  id                   String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId             String                     @map("branch_id") @db.Uuid
+  serviceRecordCaseId  String                     @map("service_record_case_id") @db.Uuid
+  assignmentId         String?                    @map("assignment_id") @db.Uuid
+  snapshotVersion      Int                        @default(1) @map("snapshot_version")
+  chunkIndex           Int                        @map("chunk_index")
+  chunkCount           Int                        @map("chunk_count")
+  firstSessionIndex    Int                        @map("first_session_index")
+  lastSessionIndex     Int                        @map("last_session_index")
+  employeeNameSnapshot String                     @map("employee_name_snapshot")
+  sourceHash           String                     @map("source_hash")
+  status               String                     @default("PENDING")
+  attempts             Int                        @default(0)
+  nextAttemptAt        DateTime?                  @map("next_attempt_at") @db.Timestamptz(6)
+  claimedAt            DateTime?                  @map("claimed_at") @db.Timestamptz(6)
+  createAttemptedAt    DateTime?                  @map("create_attempted_at") @db.Timestamptz(6)
+  eformsignDocumentId  String?                    @unique @map("document_id")
+  lastError            String?                    @map("last_error")
+  createdAt            DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  branch               branch                     @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  serviceRecordCase    service_record_case        @relation(fields: [serviceRecordCaseId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  assignment           service_record_assignment? @relation(fields: [assignmentId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  eformsignDoc         eformsign_doc?             @relation(fields: [eformsignDocumentId], references: [documentId], onDelete: SetNull, onUpdate: NoAction)
+
+  @@unique([serviceRecordCaseId, snapshotVersion, chunkIndex], map: "uniq_service_record_snapshot_chunk")
+  @@index([branchId], map: "idx_service_record_snapshot_chunk_branch")
+  @@index([status, nextAttemptAt], map: "idx_service_record_snapshot_chunk_retry")
+}
+
+model schedule_change_request {
+  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId     String            @map("branch_id") @db.Uuid
+  scheduleId   Int               @map("schedule_id")
+  clientId     Int               @map("client_id")
+  sessionIndex Int               @map("session_index")
+  fromDate     DateTime          @map("from_date") @db.Date
+  toDate       DateTime          @map("to_date") @db.Date
+  oldEndDate   DateTime          @map("old_end_date") @db.Date
+  newEndDate   DateTime          @map("new_end_date") @db.Date
+  status       String            @default("pending")
+  reason       String?
+  decidedBy    String?           @map("decided_by") @db.Uuid
+  requestedAt  DateTime          @default(now()) @map("requested_at") @db.Timestamptz(6)
+  decidedAt    DateTime?         @map("decided_at") @db.Timestamptz(6)
+  branch       branch            @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  schedule     employee_schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  client       client            @relation(fields: [clientId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([scheduleId], map: "idx_schedule_change_request_schedule")
+  @@index([clientId], map: "idx_schedule_change_request_client")
+  @@index([branchId], map: "idx_schedule_change_request_branch")
+}
+
+model call_record {
+  id                   String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId             String        @map("branch_id") @db.Uuid
+  driveFileId          String        @unique @map("drive_file_id")
+  fileName             String        @map("file_name")
+  recordedAt           DateTime?     @map("recorded_at") @db.Timestamptz(6)
+  transcript           Json
+  summary              Json?
+  category             String?
+  callerName           String?       @map("caller_name")
+  callerPhone          String?       @map("caller_phone")
+  matchedClientId      Int?          @map("matched_client_id")
+  processingStatus     String        @default("RECEIVED") @map("processing_status")
+  extractionRetryCount Int           @default(0) @map("extraction_retry_count")
+  failureReason        String?       @map("failure_reason")
+  createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  branch               branch        @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  matchedClient        client?       @relation(fields: [matchedClientId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  draft                client_draft?
+
+  @@index([branchId, createdAt], map: "idx_call_record_branch_created")
+  @@index([branchId, category], map: "idx_call_record_branch_category")
+  @@index([processingStatus], map: "idx_call_record_processing_status")
+}
+
+model client_draft {
+  id                  String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  callRecordId        String      @unique @map("call_record_id") @db.Uuid
+  branchId            String      @map("branch_id") @db.Uuid
+  type                String
+  status              String      @default("PENDING")
+  clientId            Int?        @map("client_id")
+  proposals           Json
+  requestSummary      String      @map("request_summary")
+  extractionMeta      Json?       @map("extraction_meta")
+  reviewedById        String?     @map("reviewed_by_id") @db.Uuid
+  reviewedAt          DateTime?   @map("reviewed_at") @db.Timestamptz(6)
+  discardReason       String?     @map("discard_reason")
+  createdAt           DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  confirmingStartedAt DateTime?   @map("confirming_started_at") @db.Timestamptz(6)
+  callRecord          call_record @relation(fields: [callRecordId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  branch              branch      @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  client              client?     @relation(fields: [clientId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  reviewedBy          user?       @relation(fields: [reviewedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([branchId, status], map: "idx_client_draft_branch_status")
+  @@index([clientId], map: "idx_client_draft_client")
 }

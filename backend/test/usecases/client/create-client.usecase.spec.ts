@@ -4,6 +4,7 @@ import { MockClientRepository } from "../../utils/mocks";
 describe("CreateClientUsecase", () => {
     let usecase: CreateClientUsecase;
     let mockRepository: MockClientRepository;
+    const branchId = "org-1";
 
     beforeEach(() => {
         mockRepository = new MockClientRepository();
@@ -31,13 +32,14 @@ describe("CreateClientUsecase", () => {
                 careCenter: false,
                 voucherClient: true,
                 birthday: "1990-01-01",
-                contractStatus: "active",
+                dueDate: new Date("2024-03-01"),
+                serviceStatus: "active",
                 breastPump: false,
                 eDocId: null,
             };
 
             // Act
-            const result = await usecase.execute(params);
+            const result = await usecase.execute(branchId, params);
 
             // Assert
             expect(result).toBeDefined();
@@ -64,12 +66,13 @@ describe("CreateClientUsecase", () => {
                 careCenter: false,
                 voucherClient: false,
                 birthday: null,
-                contractStatus: null,
+                dueDate: null,
+                serviceStatus: null,
                 breastPump: false,
             };
 
             // Act
-            const result = await usecase.execute(params);
+            const result = await usecase.execute(branchId, params);
 
             // Assert
             expect(result).toBeDefined();
@@ -93,14 +96,15 @@ describe("CreateClientUsecase", () => {
                 careCenter: false,
                 voucherClient: false,
                 birthday: null,
-                contractStatus: null,
+                dueDate: null,
+                serviceStatus: null,
                 breastPump: false,
             };
             const params2 = { ...params1, name: "고객2" };
 
             // Act
-            const client1 = await usecase.execute(params1);
-            const client2 = await usecase.execute(params2);
+            const client1 = await usecase.execute(branchId, params1);
+            const client2 = await usecase.execute(branchId, params2);
 
             // Assert
             expect(client1.id).toBe(1);

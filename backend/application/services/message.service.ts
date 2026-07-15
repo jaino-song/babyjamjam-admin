@@ -3,6 +3,7 @@ import {
     CreateMessageUsecase,
     DeleteMessageUsecase,
     FindMessageByIdUsecase,
+    ListMessagesUsecase,
     UpdateMessageUsecase,
 } from "application/usecases/message";
 import { MessageEntity } from "domain/entities/message.entity";
@@ -11,25 +12,29 @@ import { MessageEntity } from "domain/entities/message.entity";
 export class MessageService {
     constructor(
         private readonly createMessageUsecase: CreateMessageUsecase,
+        private readonly listMessagesUsecase: ListMessagesUsecase,
         private readonly findMessageByIdUsecase: FindMessageByIdUsecase,
         private readonly updateMessageUsecase: UpdateMessageUsecase,
         private readonly deleteMessageUsecase: DeleteMessageUsecase,
     ) {}
 
-    create(title: string, text: string): Promise<MessageEntity> {
-        return this.createMessageUsecase.execute(title, text);
+    findAll(branchid: string): Promise<MessageEntity[]> {
+        return this.listMessagesUsecase.execute(branchid);
     }
 
-    findById(id: number): Promise<MessageEntity | null> {
-        return this.findMessageByIdUsecase.execute(id);
+    create(branchid: string, title: string, text: string): Promise<MessageEntity> {
+        return this.createMessageUsecase.execute(branchid, title, text);
     }
 
-    update(id: number, title: string, text: string): Promise<MessageEntity> {
-        return this.updateMessageUsecase.execute(id, title, text);
+    findById(branchid: string, id: number): Promise<MessageEntity | null> {
+        return this.findMessageByIdUsecase.execute(branchid, id);
     }
 
-    delete(id: number): Promise<void> {
-        return this.deleteMessageUsecase.execute(id);
+    update(branchid: string, id: number, title: string, text: string): Promise<MessageEntity> {
+        return this.updateMessageUsecase.execute(branchid, id, title, text);
+    }
+
+    delete(branchid: string, id: number): Promise<void> {
+        return this.deleteMessageUsecase.execute(branchid, id);
     }
 }
-

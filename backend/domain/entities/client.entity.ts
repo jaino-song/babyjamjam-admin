@@ -1,3 +1,5 @@
+import { computeServiceStatus, ServiceStatusType } from "domain/value-objects/service-status.vo";
+
 interface UpdateClientProps {
     name?: string;
     address?: string | null;
@@ -9,12 +11,14 @@ interface UpdateClientProps {
     actualPrice?: string | null;
     startDate?: Date | null;
     endDate?: Date | null;
-    careCenter?: boolean;
+    careCenter?: boolean | null;
     voucherClient?: boolean;
     birthday?: string | null;
-    contractStatus?: string | null;
+    dueDate?: Date | null;
+    serviceStatus?: string | null;
     breastPump?: boolean;
     eDocId?: string | null;
+    areaId?: string | null;
 }
 
 interface CreateClientProps {
@@ -28,12 +32,15 @@ interface CreateClientProps {
     actualPrice: string | null;
     startDate: Date | null;
     endDate: Date | null;
-    careCenter: boolean;
+    careCenter: boolean | null;
     voucherClient: boolean;
     birthday: string | null;
-    contractStatus: string | null;
+    dueDate: Date | null;
+    serviceStatus: string | null;
     breastPump: boolean;
     eDocId: string | null;
+    areaId?: string | null;
+    createdAt?: Date | null;
 }
 
 export class ClientEntity {
@@ -49,20 +56,43 @@ export class ClientEntity {
         public actualPrice: string | null,
         public startDate: Date | null,
         public endDate: Date | null,
-        public careCenter: boolean,
+        public careCenter: boolean | null,
         public voucherClient: boolean,
         public birthday: string | null,
-        public contractStatus: string | null,
+        public serviceStatus: string | null,
         public breastPump: boolean,
         public eDocId: string | null,
+        public dueDate: Date | null = null,
+        public createdAt: Date | null = null,
+        public areaId: string | null = null,
+        // Owning tenant; populated by ClientMapper on reads so downstream
+        // consumers (e.g. alimtalk log rows) can scope records to the branch.
+        public branchId: string | null = null,
     ) {}
 
     isGoingToCareCenter(): boolean {
-        return this.careCenter;
+        return this.careCenter === true;
     }
 
     isVoucherClient(): boolean {
         return this.voucherClient;
+    }
+
+    /**
+     * Compute the current service status based on dates
+     * Returns the computed status without modifying the entity
+     */
+    computeCurrentStatus(): ServiceStatusType {
+        return computeServiceStatus(this.serviceStatus, this.startDate, this.endDate);
+    }
+
+    /**
+     * Check if the stored status differs from the computed status
+     * If true, the status should be updated in the database
+     */
+    needsStatusUpdate(): boolean {
+        const computed = this.computeCurrentStatus();
+        return this.serviceStatus !== computed;
     }
 
     static create(
@@ -83,9 +113,12 @@ export class ClientEntity {
             props.careCenter,
             props.voucherClient,
             props.birthday,
-            props.contractStatus,
+            props.serviceStatus,
             props.breastPump,
             props.eDocId,
+            props.dueDate,
+            props.createdAt ?? new Date(),
+            props.areaId ?? null,
         );
     }
 
@@ -103,9 +136,11 @@ export class ClientEntity {
         this.careCenter = props.careCenter ?? this.careCenter;
         this.voucherClient = props.voucherClient ?? this.voucherClient;
         this.birthday = props.birthday ?? this.birthday;
-        this.contractStatus = props.contractStatus ?? this.contractStatus;
+        this.dueDate = props.dueDate ?? this.dueDate;
+        this.serviceStatus = props.serviceStatus ?? this.serviceStatus;
         this.breastPump = props.breastPump ?? this.breastPump;
         this.eDocId = props.eDocId ?? this.eDocId;
+        if ("areaId" in props) this.areaId = props.areaId ?? null;
     }
 
     /**
@@ -124,12 +159,15 @@ export class ClientEntity {
         actualPrice: string | null,
         startDate: Date | null,
         endDate: Date | null,
-        careCenter: boolean,
+        careCenter: boolean | null,
         voucherClient: boolean,
         birthday: string | null,
-        contractStatus: string | null,
+        dueDate: Date | null,
+        serviceStatus: string | null,
         breastPump: boolean,
         eDocId: string | null,
+        createdAt: Date | null = null,
+        areaId: string | null = null,
     ): ClientEntity {
         return new ClientEntity(
             id,
@@ -146,9 +184,12 @@ export class ClientEntity {
             careCenter,
             voucherClient,
             birthday,
-            contractStatus,
+            serviceStatus,
             breastPump,
             eDocId,
+            dueDate,
+            createdAt,
+            areaId,
         );
     }
 }

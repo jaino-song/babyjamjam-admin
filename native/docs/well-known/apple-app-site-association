@@ -1,0 +1,19 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appIDs": ["TEAM_ID.com.imirae.incheon"],
+        "paths": [
+          "/clients/*",
+          "/employees/*",
+          "/contracts/*",
+          "/messages/*",
+          "/chat",
+          "/dashboard",
+          "/settings"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>인천 아이미래로 - 후기</title>
+  <style>
+    :root {
+      --color-primary-50:#FFF5F5;--color-primary-100:#FFE0E6;--color-primary-200:#FFC2CC;--color-primary-300:#FFA3B3;--color-primary-400:#FF8599;--color-primary-500:#E8637A;--color-primary-600:#D14D64;--color-primary-700:#B3384E;
+      --color-secondary-50:#F2F8F4;--color-secondary-100:#E0F0E5;--color-secondary-500:#6BAD80;--color-secondary-700:#3F7A50;
+      --color-accent-50:#FFFBF0;--color-accent-100:#FFF3D6;--color-accent-500:#F0B840;--color-accent-700:#B38318;
+      --color-neutral-0:#FFFFFF;--color-neutral-50:#FDFCFB;--color-neutral-100:#F7F5F3;--color-neutral-200:#EDE9E5;--color-neutral-300:#DDD7D1;--color-neutral-400:#B8AFA7;--color-neutral-500:#93897E;--color-neutral-600:#6E6559;--color-neutral-700:#4A4238;--color-neutral-800:#332C24;--color-neutral-900:#1C1814;
+      --color-bg-primary:#FDFCFB;--color-bg-secondary:#FFF5F5;--color-bg-cream:#FFF9F0;--color-bg-card:#FFFFFF;
+      --font-heading:'Pretendard',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;--font-body:'Pretendard',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+      --text-xs:0.75rem;--text-sm:0.875rem;--text-base:1rem;--text-lg:1.125rem;--text-xl:1.25rem;--text-2xl:1.5rem;--text-3xl:1.875rem;--text-4xl:2.25rem;--text-5xl:3rem;
+      --font-regular:400;--font-medium:500;--font-semibold:600;--font-bold:700;
+      --leading-tight:1.25;--leading-snug:1.375;--leading-normal:1.5;--leading-relaxed:1.625;
+      --space-1:0.25rem;--space-2:0.5rem;--space-3:0.75rem;--space-4:1rem;--space-5:1.25rem;--space-6:1.5rem;--space-8:2rem;--space-10:2.5rem;--space-12:3rem;--space-16:4rem;--space-20:5rem;
+      --radius-sm:8px;--radius-md:12px;--radius-lg:16px;--radius-xl:24px;--radius-full:9999px;
+      --shadow-sm:0 1px 2px rgba(28,24,20,0.05);--shadow-md:0 4px 12px rgba(28,24,20,0.08);--shadow-lg:0 8px 24px rgba(28,24,20,0.12);--shadow-xl:0 16px 48px rgba(28,24,20,0.16);
+      --ease-default:cubic-bezier(0.4,0,0.2,1);--ease-out:cubic-bezier(0,0,0.2,1);--duration-fast:150ms;--duration-normal:300ms;--duration-slow:500ms;
+    }
+    @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+    @keyframes fadeInUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes skeletonPulse{0%,100%{opacity:1}50%{opacity:0.5}}
+    @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:0.01ms!important;transition-duration:0.01ms!important}}
+    *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{font-family:var(--font-body);font-size:var(--text-base);line-height:var(--leading-normal);color:var(--color-neutral-800);background:var(--color-bg-primary);-webkit-font-smoothing:antialiased}
+    a{color:inherit;text-decoration:none}ul{list-style:none}
+    button{font-family:inherit;cursor:pointer;border:none;background:none}
+    .container{max-width:1200px;margin:0 auto;padding:0 var(--space-6)}
+    .skip-link{position:absolute;top:-100%;left:var(--space-4);padding:var(--space-2) var(--space-4);background:var(--color-primary-500);color:white;border-radius:var(--radius-md);z-index:1000;font-size:var(--text-sm)}.skip-link:focus{top:var(--space-4)}
+
+    /* NAV */
+    [data-component="nav"]{position:fixed;top:0;left:0;right:0;height:72px;background:rgba(255,255,255,0.95);backdrop-filter:blur(8px);border-bottom:1px solid var(--color-neutral-200);z-index:100}
+    [data-component="nav-container"]{max-width:1200px;margin:0 auto;padding:0 var(--space-6);height:100%;display:flex;align-items:center;justify-content:space-between}
+    [data-component="nav-logo"]{font-size:var(--text-xl);font-weight:var(--font-bold);color:var(--color-primary-600);display:flex;align-items:center;gap:var(--space-2)}
+    [data-component="nav-logo"] .logo-icon{width:36px;height:36px;background:var(--color-primary-500);border-radius:var(--radius-md);display:flex;align-items:center;justify-content:center;color:white;font-size:var(--text-lg)}
+    [data-component="nav-links"]{display:flex;gap:var(--space-1)}
+    [data-component="nav-links-item"] a{display:block;padding:var(--space-2) var(--space-4);font-size:var(--text-base);font-weight:var(--font-medium);color:var(--color-neutral-600);border-radius:var(--radius-md);transition:all var(--duration-fast) var(--ease-default)}
+    [data-component="nav-links-item"] a:hover{color:var(--color-primary-500);background:var(--color-primary-50)}
+    [data-component="nav-links-item"].active a{color:var(--color-primary-600);background:var(--color-primary-50)}
+    [data-component="nav-cta"]{background:var(--color-primary-500);color:white;padding:10px 20px;border-radius:var(--radius-md);font-size:var(--text-sm);font-weight:var(--font-semibold);transition:all var(--duration-fast) var(--ease-default)}
+    [data-component="nav-cta"]:hover{background:var(--color-primary-600)}
+    [data-component="nav-mobile-toggle"]{display:none;width:44px;height:44px;align-items:center;justify-content:center;border-radius:var(--radius-md);color:var(--color-neutral-700)}
+
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);font-weight:var(--font-semibold);border-radius:var(--radius-md);transition:all var(--duration-fast) var(--ease-default);white-space:nowrap}
+    .btn-primary{background:var(--color-primary-500);color:white;padding:12px 24px;font-size:var(--text-base)}.btn-primary:hover{background:var(--color-primary-600);transform:translateY(-1px);box-shadow:var(--shadow-md)}
+    .btn-outline{background:transparent;color:var(--color-primary-500);border:2px solid var(--color-primary-500);padding:10px 22px;font-size:var(--text-base)}.btn-outline:hover{background:var(--color-primary-50)}
+    .btn-lg{padding:16px 32px;font-size:var(--text-lg)}
+    .badge{display:inline-flex;align-items:center;padding:4px 12px;border-radius:var(--radius-full);font-size:var(--text-xs);font-weight:var(--font-medium)}
+    .badge-primary{background:var(--color-primary-100);color:var(--color-primary-700)}
+    .badge-accent{background:var(--color-accent-100);color:var(--color-accent-700)}
+
+    .page-header{padding-top:calc(72px + var(--space-16));padding-bottom:var(--space-16);background:linear-gradient(135deg,var(--color-bg-secondary) 0%,var(--color-bg-cream) 100%);text-align:center}
+    .page-header-title{font-family:var(--font-heading);font-size:var(--text-4xl);font-weight:var(--font-bold);color:var(--color-neutral-900);margin-bottom:var(--space-4);line-height:var(--leading-tight)}
+    .page-header-desc{font-size:var(--text-lg);color:var(--color-neutral-600);max-width:600px;margin:0 auto;line-height:var(--leading-relaxed)}
+
+    /* STATS SUMMARY */
+    [data-component="review-stats"]{padding:var(--space-16) 0;background:var(--color-neutral-0)}
+    .review-stats-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-6);max-width:800px;margin:0 auto}
+    .review-stat-card{background:var(--color-bg-card);border:1px solid var(--color-neutral-200);border-radius:var(--radius-md);padding:var(--space-8);text-align:center;animation:fadeInUp var(--duration-normal) var(--ease-out);animation-fill-mode:both}
+    .review-stat-card:nth-child(1){animation-delay:0ms}.review-stat-card:nth-child(2){animation-delay:100ms}.review-stat-card:nth-child(3){animation-delay:200ms}
+    .review-stat-value{font-size:var(--text-4xl);font-weight:var(--font-bold);color:var(--color-primary-500);margin-bottom:var(--space-2)}
+    .review-stat-label{font-size:var(--text-sm);color:var(--color-neutral-500)}
+
+    /* REVIEWS GRID */
+    [data-component="testimonials"]{padding:var(--space-20) 0;background:var(--color-bg-primary)}
+    .section-header{text-align:center;margin-bottom:var(--space-12)}
+    .section-title{font-family:var(--font-heading);font-size:var(--text-4xl);font-weight:var(--font-bold);color:var(--color-neutral-900);margin-bottom:var(--space-4);line-height:var(--leading-tight)}
+    .section-subtitle{font-size:var(--text-lg);color:var(--color-neutral-500);max-width:600px;margin:0 auto;line-height:var(--leading-relaxed)}
+
+    [data-component="testimonials-grid"]{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-6);margin-bottom:var(--space-10)}
+    .review-card{background:var(--color-bg-card);border:1px solid var(--color-neutral-200);border-radius:var(--radius-md);padding:var(--space-6);animation:fadeInUp var(--duration-normal) var(--ease-out);animation-fill-mode:both;transition:all var(--duration-normal) var(--ease-default)}
+    .review-card:hover{box-shadow:var(--shadow-md);transform:translateY(-2px)}
+    .review-card:nth-child(1){animation-delay:0ms}.review-card:nth-child(2){animation-delay:50ms}.review-card:nth-child(3){animation-delay:100ms}
+    .review-card:nth-child(4){animation-delay:150ms}.review-card:nth-child(5){animation-delay:200ms}.review-card:nth-child(6){animation-delay:250ms}
+    .review-card:nth-child(7){animation-delay:300ms}.review-card:nth-child(8){animation-delay:350ms}.review-card:nth-child(9){animation-delay:400ms}
+    .review-stars{color:var(--color-accent-500);font-size:var(--text-lg);margin-bottom:var(--space-3);letter-spacing:2px}
+    .review-service-badge{display:inline-flex;padding:2px 8px;border-radius:var(--radius-full);font-size:var(--text-xs);font-weight:var(--font-medium);margin-bottom:var(--space-3)}
+    .review-quote{font-size:var(--text-sm);color:var(--color-neutral-700);line-height:var(--leading-relaxed);margin-bottom:var(--space-4)}
+    .review-author{display:flex;align-items:center;gap:var(--space-3)}
+    .review-avatar{width:40px;height:40px;border-radius:var(--radius-full);background:var(--color-primary-100);display:flex;align-items:center;justify-content:center;color:var(--color-primary-600);font-weight:var(--font-semibold);font-size:var(--text-sm);flex-shrink:0}
+    .review-author-info{display:flex;flex-direction:column}
+    .review-author-name{font-size:var(--text-sm);font-weight:var(--font-semibold);color:var(--color-neutral-800)}
+    .review-author-date{font-size:var(--text-xs);color:var(--color-neutral-400)}
+    .reviews-more{text-align:center}
+
+    /* CTA */
+    [data-component="cta"]{padding:var(--space-20) 0;background:linear-gradient(135deg,var(--color-primary-50) 0%,var(--color-bg-cream) 100%);text-align:center}
+    .cta-content{max-width:640px;margin:0 auto}
+    .cta-title{font-family:var(--font-heading);font-size:var(--text-4xl);font-weight:var(--font-bold);color:var(--color-neutral-900);margin-bottom:var(--space-4);line-height:var(--leading-tight)}
+    .cta-desc{font-size:var(--text-lg);color:var(--color-neutral-600);margin-bottom:var(--space-8);line-height:var(--leading-relaxed)}
+    .cta-actions{display:flex;gap:var(--space-4);justify-content:center;flex-wrap:wrap}
+
+    /* FOOTER */
+    [data-component="footer"]{background:var(--color-neutral-800);color:var(--color-neutral-300);padding:var(--space-16) 0 0}
+    [data-component="footer-container"]{max-width:1200px;margin:0 auto;padding:0 var(--space-6);display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:var(--space-10);padding-bottom:var(--space-12);border-bottom:1px solid var(--color-neutral-700)}
+    .footer-logo{font-size:var(--text-xl);font-weight:var(--font-bold);color:var(--color-neutral-0);margin-bottom:var(--space-4)}
+    .footer-desc{font-size:var(--text-sm);line-height:var(--leading-relaxed);color:var(--color-neutral-400);margin-bottom:var(--space-4)}
+    .footer-social{display:flex;gap:var(--space-3)}.footer-social a{width:36px;height:36px;border-radius:var(--radius-full);background:var(--color-neutral-700);display:flex;align-items:center;justify-content:center;font-size:var(--text-sm);transition:background var(--duration-fast)}.footer-social a:hover{background:var(--color-primary-500)}
+    .footer-section-title{font-size:var(--text-sm);font-weight:var(--font-semibold);color:var(--color-neutral-0);margin-bottom:var(--space-4);text-transform:uppercase;letter-spacing:0.05em}
+    .footer-links{display:flex;flex-direction:column;gap:var(--space-3)}.footer-links a{font-size:var(--text-sm);color:var(--color-neutral-400);transition:color var(--duration-fast)}.footer-links a:hover{color:var(--color-primary-300)}
+    .footer-contact-item{display:flex;align-items:flex-start;gap:var(--space-2);font-size:var(--text-sm);color:var(--color-neutral-400);margin-bottom:var(--space-3);line-height:var(--leading-relaxed)}
+    [data-component="footer-bottom"]{max-width:1200px;margin:0 auto;padding:var(--space-6);display:flex;justify-content:space-between;align-items:center}
+    .footer-copyright{font-size:var(--text-xs);color:var(--color-neutral-500)}
+    .footer-legal{display:flex;gap:var(--space-4)}.footer-legal a{font-size:var(--text-xs);color:var(--color-neutral-500);transition:color var(--duration-fast)}.footer-legal a:hover{color:var(--color-neutral-300)}
+
+    @media(max-width:1023px){
+      [data-component="nav-links"],[data-component="nav-cta"]{display:none}[data-component="nav-mobile-toggle"]{display:flex}
+      [data-component="testimonials-grid"]{grid-template-columns:repeat(2,1fr)}
+      .review-stats-grid{grid-template-columns:repeat(3,1fr)}
+      [data-component="footer-container"]{grid-template-columns:1fr 1fr;gap:var(--space-8)}
+      .section-title,.page-header-title,.cta-title{font-size:var(--text-3xl)}
+    }
+    @media(max-width:767px){
+      .container{padding:0 var(--space-4)}
+      [data-component="nav"]{height:60px}
+      .page-header{padding-top:calc(60px + var(--space-12));padding-bottom:var(--space-12)}
+      [data-component="testimonials-grid"]{grid-template-columns:1fr}
+      .review-stats-grid{grid-template-columns:1fr}
+      [data-component="footer-container"]{grid-template-columns:1fr}
+      [data-component="footer-bottom"]{flex-direction:column;gap:var(--space-4);text-align:center}
+    }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">본문으로 건너뛰기</a>
+
+  <nav data-component="nav" role="navigation" aria-label="주 내비게이션">
+    <div data-component="nav-container">
+      <a href="/" data-component="nav-logo"><span class="logo-icon" aria-hidden="true">&#9829;</span>아이미래로</a>
+      <ul data-component="nav-links">
+        <li data-component="nav-links-item"><a href="/">홈</a></li>
+        <li data-component="nav-links-item"><a href="/introduction">소개</a></li>
+        <li data-component="nav-links-item"><a href="/program">산후관리서비스</a></li>
+        <li data-component="nav-links-item"><a href="/plan">비용</a></li>
+        <li data-component="nav-links-item" class="active"><a href="/reviews" aria-current="page">후기</a></li>
+        <li data-component="nav-links-item"><a href="/contact">문의하기</a></li>
+      </ul>
+      <button data-component="nav-cta">상담 신청</button>
+      <button data-component="nav-mobile-toggle" aria-label="메뉴 열기"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+    </div>
+  </nav>
+
+  <main id="main-content">
+
+    <section class="page-header" data-component="reviews-header">
+      <div class="container">
+        <span class="badge badge-accent" data-component="reviews-header-badge">Reviews</span>
+        <h1 class="page-header-title" data-component="reviews-header-title">고객 후기</h1>
+        <p class="page-header-desc" data-component="reviews-header-desc">아이미래로를 경험한 산모님들의 진심 어린 이야기를 확인해 보세요</p>
+      </div>
+    </section>
+
+    <!-- Review Stats Summary -->
+    <section data-component="review-stats" aria-label="후기 통계">
+      <div class="container">
+        <div class="review-stats-grid">
+          <div class="review-stat-card" data-component="review-stats-card">
+            <div class="review-stat-value">4.9</div>
+            <div class="review-stat-label">평균 만족도 (5점 만점)</div>
+          </div>
+          <div class="review-stat-card" data-component="review-stats-card">
+            <div class="review-stat-value">98%</div>
+            <div class="review-stat-label">재이용 의향률</div>
+          </div>
+          <div class="review-stat-card" data-component="review-stats-card">
+            <div class="review-stat-value">2,500+</div>
+            <div class="review-stat-label">누적 서비스 건수</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Organism: TestimonialGrid -->
+    <section data-component="testimonials" aria-label="후기 목록">
+      <div class="container">
+        <div class="section-header">
+          <h2 class="section-title" data-component="testimonials-title">산모님들의 이야기</h2>
+        </div>
+        <div data-component="testimonials-grid">
+          <!-- Molecule: TestimonialCard -->
+          <div class="review-card" data-component="testimonials-grid-item">
+            <div class="review-stars" aria-label="별점 5점">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+            <span class="review-service-badge badge-primary">프리미엄 15일</span>
+            <p class="review-quote">"첫째 때도 이용했는데 둘째 때도 역시 아이미래로를 선택했어요. 관리사님이 정말 꼼꼼하고 따뜻하게 케어해주셔서 산후 회복이 빨랐습니다. 특히 모유 수유 지도가 정말 도움이 많이 됐어요."</p>
+            <div class="review-author">
+              <div class="review-avatar" aria-hidden="true">김</div>
+              <div class="review-author-info"><span class="review-author-name">김** 님</span><span class="review-author-date">2025.12</span></div>
+            </div>
+          </div>
+          <div class="review-card" data-component="testimonials-grid-item">
+            <div class="review-stars" aria-label="별점 5점">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+            <span class="review-service-badge badge-primary">프리미엄 15일</span>
+            <p class="review-quote">"정부지원 바우처 신청부터 서비스까지 모든 과정을 친절하게 안내해주셨어요. 신생아 케어가 정말 전문적이었고, 아기 목욕도 완벽하게 해주셨습니다."</p>
+            <div class="review-author">
+              <div class="review-avatar" aria-hidden="true">이</div>
+              <div class="review-author-info"><span class="review-author-name">이** 님</span><span class="review-author-date">2025.11</span></div>
+            </div>
+          </div>
+          <div class="review-card" data-component="testimonials-grid-item">
+            <div class="review-stars" aria-label="별점 5점">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+            <span class="review-service-badge" style="background:var(--color-secondary-100);color:var(--color-secondary-700)">VIP 20일</span>
+            <p class="review-quote">"산후 우울감이 있었는데 관리사님이 정서적으로도 많이 위로해주시고, 산후 체조도 알려주셔서 몸과 마음 모두 회복할 수 있었어요. 감사합니다."</p>
+            <div class="review-author">
+              <div class="review-avatar" aria-hidden="true">박</div>
+              <div class="review-author-info"><span class="review-author-name">박** 님</span><span class="review-author-date">2025.10</span></div>
+            </div>
+          </div>
+          <div class="review-card" data-component="testimonials-grid-item">
+            <div class="review-stars" aria-label="별점 5점">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+            <span class="review-service-badge badge-primary">프리미엄 15일</span>
+            <p class="review-quote">"쌍둥이 출산 후 정말 막막했는데, 관리사님이 두 아이를 능숙하게 돌봐주셔서 큰 힘이 됐어요. 영양식도 맛있게 해주시고, 정말 만족했습니다."</p>
+            <div class="review-author">
+              <div class="review-avatar" aria-hidden="true">최</div>
+              <div class="review-author-info"><span class="review-author-name">최** 님</span><span class="review-author-date">2025.09</span></div>
+            </div>
+          </div>
+          <div class="review-card" data-component="testimonials-grid-item">
+            <div class="review-stars" aria-label="별점 5점">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+            <span class="review-service-badge" style="background:var(--color-accent-100);color:var(--color-accent-700)">스탠다드 10일</span>
+            <p class="review-quote">"짧은 기간이었지만 산후 회복에 큰 도움이 됐습니다. 특히 신생아 목욕법을 직접 알려주셔서 서비스 종료 후에도 자신감 있게 할 수 있게 됐어요."</p>
+            <div class="review-author">
+              <div class="review-avatar" aria-hidden="true">정</div>
+              <div class="review-author-info"><span class="review-author-name">정** 님</span><span class="review-author-date">2025.08</span></div>
+            </div>
+          </div>
+          <div class="review-card" data-component="testimonials-grid-item">
+            <div class="review-stars" aria-label="별점 5점">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+            <span class="review-service-badge badge-primary">프리미엄 15일</span>
+            <p class="review-quote">"셋째 출산이라 걱정이 많았는데, 큰 아이들까지 세심하게 챙겨주시는 모습에 감동받았어요. 다음에도 무조건 아이미래로입니다!"</p>
+            <div class="review-author">
+              <div class="review-avatar" aria-hidden="true">한</div>
+              <div class="review-author-info"><span class="review-author-name">한** 님</span><span class="review-author-date">2025.07</span></div>
+            </div>
+          </div>
+          <div class="review-card" data-component="testimonials-grid-item">
+            <div class="review-stars" aria-label="별점 4점">&#9733;&#9733;&#9733;&#9733;&#9734;</div>
+            <span class="review-service-badge" style="background:var(--color-accent-100);color:var(--color-accent-700)">스탠다드 10일</span>
+            <p class="review-quote">"남편이 출장이 잦아서 혼자 출산 후를 보내야 했는데, 관리사님이 든든하게 곁에 있어주셔서 안심이 됐어요. 아이미래로 덕분에 잘 회복했습니다."</p>
+            <div class="review-author">
+              <div class="review-avatar" aria-hidden="true">윤</div>
+              <div class="review-author-info"><span class="review-author-name">윤** 님</span><span class="review-author-date">2025.06</span></div>
+            </div>
+          </div>
+          <div class="review-card" data-component="testimonials-grid-item">
+            <div class="review-stars" aria-label="별점 5점">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+            <span class="review-service-badge" style="background:var(--color-secondary-100);color:var(--color-secondary-700)">VIP 20일</span>
+            <p class="review-quote">"산후 조리원 대신 집에서 관리받고 싶어서 VIP를 선택했어요. 20일 동안 가정에서 편안하게 회복할 수 있었고, 아기와의 유대감도 더 깊어진 것 같아요."</p>
+            <div class="review-author">
+              <div class="review-avatar" aria-hidden="true">송</div>
+              <div class="review-author-info"><span class="review-author-name">송** 님</span><span class="review-author-date">2025.05</span></div>
+            </div>
+          </div>
+          <div class="review-card" data-component="testimonials-grid-item">
+            <div class="review-stars" aria-label="별점 5점">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+            <span class="review-service-badge badge-primary">프리미엄 15일</span>
+            <p class="review-quote">"초보 엄마라 모든 게 처음이었는데, 관리사님이 하나하나 차근차근 알려주셔서 육아에 자신감이 생겼어요. 일일 보고서도 너무 유용했습니다."</p>
+            <div class="review-author">
+              <div class="review-avatar" aria-hidden="true">장</div>
+              <div class="review-author-info"><span class="review-author-name">장** 님</span><span class="review-author-date">2025.04</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="reviews-more">
+          <a href="https://blog.naver.com/imirae-incheon" target="_blank" rel="noopener noreferrer" class="btn btn-outline" data-component="testimonials-more-button">네이버 블로그에서 더 보기 &#8594;</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section data-component="cta" aria-label="상담 신청">
+      <div class="container">
+        <div class="cta-content">
+          <h2 class="cta-title">다음 후기의 주인공이<br>되어 보세요</h2>
+          <p class="cta-desc">무료 상담을 통해 나에게 맞는 서비스를 알아보세요.</p>
+          <div class="cta-actions">
+            <button class="btn btn-primary btn-lg" data-component="cta-actions-primary">무료 상담 신청</button>
+            <a href="/plan" class="btn btn-outline btn-lg" data-component="cta-actions-secondary">비용 확인하기</a>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer data-component="footer" role="contentinfo">
+    <div data-component="footer-container">
+      <div data-component="footer-brand"><div class="footer-logo">아이미래로</div><p class="footer-desc">인천 남동구에서 산모와 신생아의 건강한 시작을 함께하는 산후관리 전문 기관입니다.</p><div class="footer-social"><a href="https://www.instagram.com/imirae_incheon/" target="_blank" rel="noopener noreferrer" aria-label="인스타그램">IG</a><a href="https://blog.naver.com/imirae-incheon" target="_blank" rel="noopener noreferrer" aria-label="네이버 블로그">NB</a></div></div>
+      <div><h4 class="footer-section-title">서비스</h4><nav class="footer-links"><a href="/program">산후관리서비스</a><a href="/plan">비용 안내</a><a href="/reviews">고객 후기</a><a href="/contact">문의하기</a></nav></div>
+      <div><h4 class="footer-section-title">회사</h4><nav class="footer-links"><a href="/introduction">회사 소개</a><a href="/disclaimer">이용약관</a></nav></div>
+      <div><h4 class="footer-section-title">연락처</h4><div class="footer-contact-item"><span aria-hidden="true">&#128222;</span><span>(032) 442-5992</span></div><div class="footer-contact-item"><span aria-hidden="true">&#9993;</span><span>forchildrenbysongs@gmail.com</span></div><div class="footer-contact-item"><span aria-hidden="true">&#128205;</span><span>인천광역시 남동구 구월남로 120 백세빌딩 302호</span></div></div>
+    </div>
+    <div data-component="footer-bottom"><p class="footer-copyright">&copy; 2026 인천 아이미래로. All rights reserved.</p><div class="footer-legal"><a href="/disclaimer">이용약관</a><a href="/disclaimer">개인정보처리방침</a></div></div>
+  </footer>
+</body>
+</html>

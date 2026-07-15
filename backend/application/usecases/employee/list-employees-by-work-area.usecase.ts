@@ -9,8 +9,7 @@ export class ListEmployeesByWorkAreaUsecase {
         private readonly employeeRepository: IEmployeeRepository,
     ) {}
 
-    execute(workArea: string): Promise<EmployeeEntity[]> {
-        return this.employeeRepository.findByWorkArea(workArea);
+    execute(branchid: string, workArea: string): Promise<EmployeeEntity[]> {
+        return this.employeeRepository.findByWorkArea(branchid, workArea);
     }
 }
-

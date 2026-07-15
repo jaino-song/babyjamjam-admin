@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>통화 인박스 — UI 와이어프레임 (design draft)</title>
+<style>
+  :root {
+    --ink: #1f2430; --sub: #6b7280; --line: #d7dbe2; --bg: #f4f5f7;
+    --card: #ffffff; --accent: #3b5bdb; --new: #0c8599; --chg: #e8590c;
+    --warn: #f59f00; --chip: #eef1f5;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Apple SD Gothic Neo", "Pretendard", sans-serif; background: var(--bg); color: var(--ink); padding: 32px; }
+  h1 { font-size: 20px; margin-bottom: 6px; }
+  .note { color: var(--sub); font-size: 13px; margin-bottom: 24px; }
+  .pipeline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 32px; font-size: 13px; }
+  .pipeline .step { background: var(--chip); border-radius: 8px; padding: 8px 12px; white-space: nowrap; }
+  .pipeline .arrow { color: var(--sub); }
+  .pipeline .step.hl { background: #e7ecff; border: 1px solid var(--accent); }
+  .screens { display: flex; gap: 28px; flex-wrap: wrap; align-items: flex-start; }
+  .screen { width: 360px; }
+  .screen h2 { font-size: 14px; margin-bottom: 4px; }
+  .screen .desc { font-size: 12px; color: var(--sub); margin-bottom: 10px; min-height: 30px; }
+  .phone { background: var(--card); border: 2px solid var(--ink); border-radius: 24px; overflow: hidden; }
+  .appbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }
+  .appbar .title { font-weight: 700; font-size: 16px; }
+  .bell { position: relative; font-size: 16px; }
+  .bell .dot { position: absolute; top: -4px; right: -7px; background: #e03131; color: #fff; font-size: 9px; border-radius: 8px; padding: 1px 4px; }
+  .tabs { display: flex; border-bottom: 1px solid var(--line); }
+  .tab { flex: 1; text-align: center; padding: 10px 0; font-size: 13px; color: var(--sub); }
+  .tab.on { color: var(--accent); border-bottom: 2px solid var(--accent); font-weight: 700; }
+  .chips { display: flex; gap: 6px; padding: 10px 12px; font-size: 11px; }
+  .chip { background: var(--chip); border-radius: 12px; padding: 4px 10px; color: var(--sub); }
+  .chip.on { background: var(--ink); color: #fff; }
+  .list { padding: 4px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+  .card { border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  .row1 { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .badge { font-size: 10px; font-weight: 700; border-radius: 6px; padding: 3px 7px; color: #fff; }
+  .badge.new { background: var(--new); } .badge.chg { background: var(--chg); } .badge.etc { background: #868e96; }
+  .who { font-weight: 700; font-size: 14px; }
+  .time { font-size: 11px; color: var(--sub); }
+  .sum { font-size: 12px; color: var(--ink); line-height: 1.45; }
+  .meta { font-size: 11px; color: var(--sub); margin-top: 6px; display: flex; gap: 8px; align-items: center; }
+  .warnflag { color: var(--warn); font-size: 11px; font-weight: 700; }
+  .clientlink { background: #e7f5ff; color: #1971c2; border-radius: 6px; padding: 2px 6px; font-size: 10px; }
+  .bottomnav { display: flex; border-top: 1px solid var(--line); }
+  .bn { flex: 1; text-align: center; font-size: 10px; color: var(--sub); padding: 8px 0 12px; }
+  .bn.on { color: var(--accent); font-weight: 700; }
+  .bn .ico { font-size: 16px; display: block; margin-bottom: 2px; }
+  .section { padding: 12px; border-bottom: 1px solid var(--line); }
+  .sec-title { font-size: 12px; font-weight: 700; color: var(--sub); margin-bottom: 8px; }
+  .field { margin-bottom: 10px; }
+  .field label { font-size: 11px; color: var(--sub); display: block; margin-bottom: 3px; }
+  .input { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px; background: #fff; }
+  .input.low { border-color: var(--warn); background: #fff9e6; }
+  .evi { display: inline-block; margin-top: 4px; font-size: 10px; color: var(--sub); border: 1px dashed var(--line); border-radius: 6px; padding: 3px 6px; }
+  .evi::before { content: "🎙 "; }
+  .toggles { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tg { font-size: 11px; border: 1px solid var(--line); border-radius: 14px; padding: 5px 10px; color: var(--sub); }
+  .tg.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .chat { display: flex; flex-direction: column; gap: 6px; padding: 12px; background: #fafbfc; }
+  .bub { max-width: 78%; font-size: 12px; line-height: 1.4; padding: 8px 10px; border-radius: 12px; }
+  .bub.staff { background: var(--chip); align-self: flex-start; border-bottom-left-radius: 3px; }
+  .bub.cust { background: #d8e3ff; align-self: flex-end; border-bottom-right-radius: 3px; }
+  .bub .spk { display: block; font-size: 9px; color: var(--sub); margin-bottom: 2px; }
+  .bub.hl { outline: 2px solid var(--warn); }
+  .actions { display: flex; gap: 8px; padding: 12px; }
+  .btn { flex: 1; text-align: center; font-size: 13px; font-weight: 700; border-radius: 10px; padding: 12px 0; }
+  .btn.primary { background: var(--accent); color: #fff; }
+  .btn.ghost { border: 1px solid var(--line); color: var(--sub); }
+  .diff { border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin-bottom: 8px; }
+  .diff .fname { font-size: 11px; color: var(--sub); margin-bottom: 4px; display: flex; justify-content: space-between; }
+  .diff .vals { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .old { color: var(--sub); text-decoration: line-through; }
+  .newv { font-weight: 700; color: var(--chg); }
+  .inc { font-size: 10px; border-radius: 10px; padding: 2px 8px; background: #e6fcf5; color: #0ca678; font-weight: 700; }
+  .inc.off { background: var(--chip); color: var(--sub); }
+  .clientcard { display: flex; justify-content: space-between; align-items: center; background: #e7f5ff; border-radius: 10px; padding: 10px 12px; font-size: 12px; }
+  .ann { font-size: 11px; color: var(--accent); margin-top: 8px; line-height: 1.5; }
+</style>
+</head>
+<body>
+  <h1>통화 인박스 (Call Inbox) — 와이어프레임</h1>
+  <p class="note">m.staff 모바일 · 구조 검토용 lo-fi 와이어프레임 (디자인 아님) · 2026-06-10 design draft</p>
+
+  <div class="pipeline">
+    <span class="step">📱 통화녹음 → Google Drive</span><span class="arrow">→</span>
+    <span class="step">n8n: Gemini 전사·교정 (구조화 JSON)</span><span class="arrow">→</span>
+    <span class="step">POST api.babyjamjam.com/webhooks/call-transcripts</span><span class="arrow">→</span>
+    <span class="step">backend: 분류 + 필드 추출 (LLM, repo 관리)</span><span class="arrow">→</span>
+    <span class="step hl">통화 인박스: 직원 검토</span><span class="arrow">→</span>
+    <span class="step">확정 시 고객 생성 / 변경 적용</span>
+  </div>
+
+  <div class="screens">
+
+    <!-- Screen 1: Review queue -->
+    <div class="screen">
+      <h2>① 검토 대기 (기본 탭)</h2>
+      <p class="desc">처리 필요한 항목만. 신규상담 = 고객 드래프트, 변경요청 = 기존 고객 변경 제안.</p>
+      <div class="phone">
+        <div class="appbar"><span class="title">통화 인박스</span><span class="bell">🔔<span class="dot">3</span></span></div>
+        <div class="tabs"><div class="tab on">검토 대기 3</div><div class="tab">통화 기록</div></div>
+        <div class="list">
+          <div class="card">
+            <div class="row1"><span class="badge new">신규 상담</span><span class="time">오늘 14:02 · 4분 12초</span></div>
+            <div class="who">김서연 · 010-4821-7763</div>
+            <div class="sum">7월 15일 출산예정, 정부지원 A-통합형 문의. 2주 서비스 희망, 부평구 거주.</div>
+            <div class="meta"><span class="warnflag">⚠ 주소 확신도 낮음</span></div>
+          </div>
+          <div class="card">
+            <div class="row1"><span class="badge chg">변경 요청</span><span class="time">오늘 11:40 · 2분 03초</span></div>
+            <div class="who">박지은 · 010-2210-9987 <span class="clientlink">고객 #142 일치</span></div>
+            <div class="sum">출산이 빨라져 서비스 시작일을 6월 23일로 앞당기고 싶다는 요청.</div>
+          </div>
+          <div class="card">
+            <div class="row1"><span class="badge chg">변경 요청</span><span class="time">어제 16:55 · 5분 40초</span></div>
+            <div class="who">발신자 미확인 <span class="warnflag">⚠ 고객 연결 필요</span></div>
+            <div class="sum">관리사 교체 요청. 통화 중 이름 언급: "이수민 산모".</div>
+          </div>
+        </div>
+        <div class="bottomnav">
+          <div class="bn"><span class="ico">🏠</span>홈</div>
+          <div class="bn"><span class="ico">👥</span>고객</div>
+          <div class="bn on"><span class="ico">📞</span>통화</div>
+          <div class="bn"><span class="ico">💬</span>메시지</div>
+          <div class="bn"><span class="ico">☰</span>전체</div>
+        </div>
+      </div>
+      <p class="ann">· 대기 건수 배지: 하단 탭 + NotificationBell 연동<br>· 카드 탭 → ③/④ 상세 화면</p>
+    </div>
+
+    <!-- Screen 2: Call log -->
+    <div class="screen">
+      <h2>② 통화 기록 (전체 로그)</h2>
+      <p class="desc">모든 통화 저장·검색. 기존 markdown 리포트를 대체. 기타 통화도 여기서 열람.</p>
+      <div class="phone">
+        <div class="appbar"><span class="title">통화 인박스</span><span class="bell">🔔<span class="dot">3</span></span></div>
+        <div class="tabs"><div class="tab">검토 대기 3</div><div class="tab on">통화 기록</div></div>
+        <div class="chips">
+          <span class="chip on">전체</span><span class="chip">신규상담</span><span class="chip">고객 변경</span><span class="chip">기타</span><span class="chip">🔍 검색</span>
+        </div>
+        <div class="list">
+          <div class="card">
+            <div class="row1"><span class="badge new">신규 상담</span><span class="time">14:02</span></div>
+            <div class="who">김서연</div>
+            <div class="sum">출산예정 7/15 · A-통합형 · 검토 대기중</div>
+          </div>
+          <div class="card">
+            <div class="row1"><span class="badge etc">기타</span><span class="time">12:31</span></div>
+            <div class="who">519호 거주 고객</div>
+            <div class="sum">주차 정기권 차량 번호 변경 (21호 2610) — 나이스파크 접수 예정</div>
+          </div>
+          <div class="card">
+            <div class="row1"><span class="badge chg">변경 요청</span><span class="time">11:40</span></div>
+            <div class="who">박지은 <span class="clientlink">고객 #142</span></div>
+            <div class="sum">시작일 6/23 변경 — ✅ 적용 완료 (김직원, 13:05)</div>
+          </div>
+          <div class="card">
+            <div class="row1"><span class="badge etc">기타</span><span class="time">09:12</span></div>
+            <div class="who">제휴업체</div>
+            <div class="sum">베이비페어 부스 규격 문의</div>
+          </div>
+        </div>
+        <div class="bottomnav">
+          <div class="bn"><span class="ico">🏠</span>홈</div>
+          <div class="bn"><span class="ico">👥</span>고객</div>
+          <div class="bn on"><span class="ico">📞</span>통화</div>
+          <div class="bn"><span class="ico">💬</span>메시지</div>
+          <div class="bn"><span class="ico">☰</span>전체</div>
+        </div>
+      </div>
+      <p class="ann">· 처리 결과가 행에 남음 (적용 완료 / 폐기 / 대기)<br>· 행 탭 → 전사 스크립트 + 요약 열람 (Drive 원본 오디오 링크 포함)</p>
+    </div>
+
+    <!-- Screen 3: New client draft review -->
+    <div class="screen">
+      <h2>③ 신규 상담 검토 → 고객 등록</h2>
+      <p class="desc">추출 필드가 채워진 편집 가능 폼. 필드별 근거 인용 + 낮은 확신도 강조. 확정 전까지 실제 고객 테이블에 아무 것도 생성되지 않음.</p>
+      <div class="phone">
+        <div class="appbar"><span class="title">← 신규 상담 검토</span><span class="time">오늘 14:02 · ▶ 원본 듣기</span></div>
+        <div class="section">
+          <div class="sec-title">추출된 고객 정보 — 수정 후 등록</div>
+          <div class="field"><label>산모명</label><div class="input">김서연</div>
+            <span class="evi">"김서연이요. 서연이 서 자에…"</span></div>
+          <div class="field"><label>연락처</label><div class="input">010-4821-7763</div>
+            <span class="evi">통화 중 구술 + 녹음 파일명 일치</span></div>
+          <div class="field"><label>주소</label><div class="input low">인천 부평구 (상세주소 미언급)</div>
+            <span class="evi">"부평구청 근처 살아요" ⚠ 확신도 낮음</span></div>
+          <div class="field"><label>출산예정일</label><div class="input">2026-07-15</div>
+            <span class="evi">"7월 15일이 예정일이에요"</span></div>
+          <div class="field"><label>서비스 기간</label><div class="input">10일 (2주 중 협의)</div></div>
+          <div class="toggles">
+            <span class="tg on">정부지원 (A-통합형)</span><span class="tg">조리원 이용</span><span class="tg">유축기</span>
+          </div>
+        </div>
+        <div class="chat">
+          <div class="bub staff"><span class="spk">아이미래로</span>네, 아이미래로입니다.</div>
+          <div class="bub cust"><span class="spk">산모</span>산후도우미 정부지원 알아보고 있는데요…</div>
+          <div class="bub cust hl"><span class="spk">산모</span>7월 15일이 예정일이에요.</div>
+          <div class="bub staff"><span class="spk">아이미래로</span>네, A-통합형이시면 본인부담금이…</div>
+        </div>
+        <div class="actions">
+          <div class="btn ghost">폐기</div>
+          <div class="btn primary">고객 등록</div>
+        </div>
+      </div>
+      <p class="ann">· 근거 인용 탭 → 스크립트 해당 발화로 스크롤<br>· [고객 등록] = 기존 POST /clients 경로 재사용 (인사 문자 발송 여부 확인 시트)</p>
+    </div>
+
+    <!-- Screen 4: Change request review -->
+    <div class="screen">
+      <h2>④ 변경 요청 검토 → 적용</h2>
+      <p class="desc">전화번호로 기존 고객 자동 매칭. 변경 항목별 현재값 → 제안값 diff, 항목별 포함/제외 선택 후 일괄 적용.</p>
+      <div class="phone">
+        <div class="appbar"><span class="title">← 변경 요청 검토</span><span class="time">오늘 11:40</span></div>
+        <div class="section">
+          <div class="clientcard"><span><b>박지은</b> · 010-2210-9987<br><span class="time">서비스 6/30 시작 예정 · 정부지원</span></span><span class="clientlink">고객 상세 ›</span></div>
+        </div>
+        <div class="section">
+          <div class="sec-title">제안된 변경 사항</div>
+          <div class="diff">
+            <div class="fname"><span>서비스 시작일</span><span class="inc">포함</span></div>
+            <div class="vals"><span class="old">2026-06-30</span> → <span class="newv">2026-06-23</span></div>
+            <span class="evi">"아기가 빨리 나와서… 23일부터 가능할까요?"</span>
+          </div>
+          <div class="diff">
+            <div class="fname"><span>출산일 (예정→실제)</span><span class="inc off">제외</span></div>
+            <div class="vals"><span class="old">예정 2026-06-28</span> → <span class="newv">출산 2026-06-18</span></div>
+            <span class="evi">"지난주 목요일에 낳았어요" ⚠ 날짜 환산 확인 필요</span>
+          </div>
+        </div>
+        <div class="chat">
+          <div class="bub cust hl"><span class="spk">산모</span>아기가 빨리 나와서요, 23일부터 가능할까요?</div>
+          <div class="bub staff"><span class="spk">아이미래로</span>네, 일정 확인하고 관리사님 조율해 드릴게요.</div>
+        </div>
+        <div class="actions">
+          <div class="btn ghost">폐기</div>
+          <div class="btn primary">변경 적용 (1건)</div>
+        </div>
+      </div>
+      <p class="ann">· 미매칭 시: 고객 검색(ClientAutocomplete)으로 수동 연결 후 적용 가능<br>· 교체/종료 요청은 기존 고객 액션 플로우와 동일한 검증 경로로 적용</p>
+    </div>
+
+  </div>
+</body>
+</html>

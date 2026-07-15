@@ -5,6 +5,7 @@ import { MockClientRepository, ClientFactory } from "../../utils";
 describe("UpdateClientUsecase", () => {
     let usecase: UpdateClientUsecase;
     let mockRepository: MockClientRepository;
+    const branchId = "org-1";
 
     beforeEach(() => {
         mockRepository = new MockClientRepository();
@@ -22,7 +23,7 @@ describe("UpdateClientUsecase", () => {
             mockRepository.setData([existingClient]);
 
             // Act
-            const result = await usecase.execute(1, { name: "변경된 이름" });
+            const result = await usecase.execute(branchId, 1, { name: "변경된 이름" });
 
             // Assert
             expect(result.name).toBe("변경된 이름");
@@ -39,17 +40,31 @@ describe("UpdateClientUsecase", () => {
             mockRepository.setData([existingClient]);
 
             // Act
-            const result = await usecase.execute(1, {
+            const result = await usecase.execute(branchId, 1, {
                 address: "새 주소",
                 phone: "010-1111-1111",
-                contractStatus: "completed",
+                serviceStatus: "completed",
             });
 
             // Assert
             expect(result.address).toBe("새 주소");
             expect(result.phone).toBe("010-1111-1111");
-            expect(result.contractStatus).toBe("completed");
+            expect(result.serviceStatus).toBe("completed");
             expect(result.name).toBe("고객"); // 변경 안 됨
+        });
+
+        it("should update dueDate", async () => {
+            // Arrange
+            const existingClient = ClientFactory.create({ id: 1, name: "고객", dueDate: null });
+            mockRepository.setData([existingClient]);
+
+            // Act
+            const result = await usecase.execute(branchId, 1, {
+                dueDate: new Date("2024-03-01"),
+            });
+
+            // Assert
+            expect(result.dueDate).toEqual(new Date("2024-03-01"));
         });
 
         it("should throw NotFoundException when client not found", async () => {
@@ -57,7 +72,7 @@ describe("UpdateClientUsecase", () => {
 
             // Act & Assert
             await expect(
-                usecase.execute(999, { name: "새 이름" }),
+                usecase.execute(branchId, 999, { name: "새 이름" }),
             ).rejects.toThrow(NotFoundException);
         });
 
@@ -66,7 +81,7 @@ describe("UpdateClientUsecase", () => {
 
             // Act & Assert
             await expect(
-                usecase.execute(123, { name: "새 이름" }),
+                usecase.execute(branchId, 123, { name: "새 이름" }),
             ).rejects.toThrow("Client with id 123 not found");
         });
 
@@ -76,10 +91,10 @@ describe("UpdateClientUsecase", () => {
             mockRepository.setData([existingClient]);
 
             // Act
-            await usecase.execute(1, { name: "수정됨" });
+            await usecase.execute(branchId, 1, { name: "수정됨" });
 
             // Assert - verify persistence
-            const persisted = await mockRepository.findById(1);
+            const persisted = await mockRepository.findById(branchId, 1);
             expect(persisted?.name).toBe("수정됨");
         });
     });

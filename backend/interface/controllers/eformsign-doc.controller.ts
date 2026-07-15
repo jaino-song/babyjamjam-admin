@@ -1,25 +1,147 @@
-import { Body, Controller, Get, Post, Query } from "@nestjs/common";
+import { Body, Controller, Get, Logger, MessageEvent, Post, Query, Sse, UseGuards } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { Observable, filter, interval, map, merge } from "rxjs";
 import { EformsignDocService } from "application/services/eformsign-doc.service";
+import { EformsignDocsEventBus } from "application/services/eformsign-docs-event-bus.service";
+import { EformsignHeadlessProgressService } from "application/services/eformsign-headless-progress.service";
+import { ListClientNamesByBranchUsecase } from "application/usecases/eformsign-doc/list-client-names-by-branch.usecase";
+import { DispatchDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/dispatch-document-headless.usecase";
+import { FinalizeDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/finalize-document-headless.usecase";
 import {
     GetAccessTokenDto,
     RefreshAccessTokenDto,
     FetchDocumentsDto,
     FetchDocumentByIdDto,
+    CreateEformsignDocLocalDto,
+    SyncEformsignDocStatusDto,
+    DispatchHeadlessRequestDto,
+    DispatchHeadlessResponseDto,
+    FinalizeHeadlessRequestDto,
+    FinalizeHeadlessResponseDto,
 } from "interface/dto/eformsign-doc.dto";
+import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { parseInteger } from "interface/parse-integer";
 
 @Controller("eformsign-docs")
+@UseGuards(JwtGuard, TenantGuard)
 export class EformsignDocController {
-    constructor(private readonly eformsignDocService: EformsignDocService) {}
+    private readonly logger = new Logger(EformsignDocController.name);
+
+    constructor(
+        private readonly eformsignDocService: EformsignDocService,
+        private readonly listClientNamesByBranchUsecase: ListClientNamesByBranchUsecase,
+        private readonly dispatchHeadlessUsecase: DispatchDocumentHeadlessUsecase,
+        private readonly finalizeHeadlessUsecase: FinalizeDocumentHeadlessUsecase,
+        private readonly eventBus: EformsignDocsEventBus,
+        private readonly headlessProgressService: EformsignHeadlessProgressService,
+        private readonly configService: ConfigService,
+    ) {}
+
+    /**
+     * GET /eformsign-docs/feedback-template-id
+     * Exposes the 제공기록지 template id so the UI can split feedback documents
+     * from contract documents by template — never by (renamable) template name.
+     */
+    @Get("feedback-template-id")
+    getFeedbackTemplateId(): { templateId: string | null } {
+        const templateId = this.configService.get<string>("EFORMSIGN_FEEDBACK_TEMPLATE_ID")?.trim();
+        return { templateId: templateId || null };
+    }
+
+    /**
+     * GET /eformsign-docs/events
+     * Server-Sent Events stream of doc-list mutations for the current branch.
+     * Emits a `docs-changed` event after each webhook completes; sends a `ping`
+     * every 30s to keep proxies + clients honest.
+     */
+    @Sse("events")
+    events(@CurrentTenant() tenant: { branchId?: string }): Observable<MessageEvent> {
+        const branchId = tenant.branchId ?? "";
+
+        const docs = this.eventBus.events$.pipe(
+            filter((e) => e.branchId === branchId),
+            map((e) => ({ data: e, type: "docs-changed" } as MessageEvent)),
+        );
+
+        const heartbeat = interval(30000).pipe(
+            map(() => ({ data: { at: Date.now() }, type: "ping" } as MessageEvent)),
+        );
+
+        return merge(docs, heartbeat);
+    }
+
+    @Sse("dispatch-headless/progress")
+    dispatchHeadlessProgress(@Query("progressId") progressId: string): Observable<MessageEvent> {
+        const progress = this.headlessProgressService.events$.pipe(
+            filter((event) => event.progressId === progressId),
+            map((event) => ({ data: event, type: "progress" } as MessageEvent)),
+        );
+
+        const heartbeat = interval(30000).pipe(
+            map(() => ({ data: { at: Date.now() }, type: "ping" } as MessageEvent)),
+        );
+
+        return merge(progress, heartbeat);
+    }
+
+    @Sse("finalize-headless/progress")
+    finalizeHeadlessProgress(@Query("progressId") progressId: string): Observable<MessageEvent> {
+        const progress = this.headlessProgressService.events$.pipe(
+            filter((event) => event.progressId === progressId),
+            map((event) => ({ data: event, type: "progress" } as MessageEvent)),
+        );
+
+        const heartbeat = interval(30000).pipe(
+            map(() => ({ data: { at: Date.now() }, type: "ping" } as MessageEvent)),
+        );
+
+        return merge(progress, heartbeat);
+    }
 
     // ============ Local DB Endpoints ============
+
+    /**
+     * POST /eformsign-docs
+     * Create a new eformsign document record in local DB
+     * Called by frontend after document is created in eformsign
+     */
+    @Post()
+    async create(@CurrentTenant() tenant: { branchId?: string }, @Body() dto: CreateEformsignDocLocalDto) {
+        this.logger.log(`[POST /eformsign-docs] Received request to create doc record: documentId=${dto.documentId}, clientId=${dto.clientId}`);
+        try {
+            const result = await this.eformsignDocService.create(tenant.branchId ?? "", {
+                documentId: dto.documentId,
+                clientId: dto.clientId,
+                statusType: dto.statusType,
+                statusDetail: dto.statusDetail,
+                stepType: dto.stepType,
+                stepIndex: dto.stepIndex,
+                stepName: dto.stepName,
+                stepRecipientType: dto.stepRecipientType,
+                stepRecipientName: dto.stepRecipientName,
+                stepRecipientSms: dto.stepRecipientSms,
+                expiredDate: new Date(dto.expiredDate),
+                linkToClient: dto.linkToClient,
+                documentKind: dto.documentKind,
+                employeeScheduleId: dto.employeeScheduleId,
+                templateId: dto.templateId,
+            });
+            this.logger.log(`[POST /eformsign-docs] Successfully created record id=${result.id}`);
+            return result;
+        } catch (error) {
+            this.logger.error(`[POST /eformsign-docs] Failed to create record: ${error}`);
+            throw error;
+        }
+    }
 
     /**
      * GET /eformsign-docs
      * List all stored eformsign documents from local DB
      */
     @Get()
-    findAll() {
-        return this.eformsignDocService.findAll();
+    findAll(@CurrentTenant() tenant: { branchId?: string }) {
+        return this.eformsignDocService.findAll(tenant.branchId ?? "");
     }
 
     /**
@@ -27,17 +149,31 @@ export class EformsignDocController {
      * Find a stored eformsign document by its DB id
      */
     @Get("id")
-    findById(@Query("id") id: string) {
-        return this.eformsignDocService.findById(Number(id));
+    findById(@CurrentTenant() tenant: { branchId?: string }, @Query("id") id: string) {
+        return this.eformsignDocService.findById(tenant.branchId ?? "", parseInteger(id, "id", { min: 1 }));
     }
 
     /**
      * GET /eformsign-docs/document-id?documentId=abc123
-     * Find a stored eformsign document by the eformsign document_id
+     * Find a stored eformsign document by the eformsign documentId
      */
     @Get("document-id")
-    findByDocumentId(@Query("documentId") documentId: string) {
-        return this.eformsignDocService.findByDocumentId(documentId);
+    findByDocumentId(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Query("documentId") documentId: string
+    ) {
+        return this.eformsignDocService.findByDocumentId(tenant.branchId ?? "", documentId);
+    }
+
+    /**
+     * GET /eformsign-docs/client-names
+     * Returns documentId → clientName mapping for current branch.
+     * Used by the contracts list to show the customer's name even after the
+     * doc has progressed past step 1 (eformsign list_document loses outsider info).
+     */
+    @Get("client-names")
+    listClientNames(@CurrentTenant() tenant: { branchId?: string }) {
+        return this.listClientNamesByBranchUsecase.execute(tenant.branchId ?? "");
     }
 
     /**
@@ -45,8 +181,14 @@ export class EformsignDocController {
      * Find all stored eformsign documents linked to a client
      */
     @Get("client")
-    findByClientId(@Query("clientId") clientId: string) {
-        return this.eformsignDocService.findByClientId(Number(clientId));
+    findByClientId(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Query("clientId") clientId: string
+    ) {
+        return this.eformsignDocService.findByClientId(
+            tenant.branchId ?? "",
+            parseInteger(clientId, "clientId", { min: 1 }),
+        );
     }
 
     // ============ External API Endpoints ============
@@ -86,5 +228,78 @@ export class EformsignDocController {
     fetchFromApi(@Body() dto: FetchDocumentByIdDto) {
         return this.eformsignDocService.fetchFromApi(dto.accessToken, dto.documentId);
     }
-}
 
+    /**
+     * POST /eformsign-docs/sync-status
+     * Fetch current eformsign status and update the local eformsign_doc row.
+     */
+    @Post("sync-status")
+    syncStatusFromApi(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Body() dto: SyncEformsignDocStatusDto
+    ) {
+        return this.eformsignDocService.syncStatusFromApi(
+            tenant.branchId ?? "",
+            dto.accessToken,
+            dto.documentId
+        );
+    }
+
+    /**
+     * POST /eformsign-docs/dispatch-headless
+     * Run the creation iframe gate sequence (mode:"01") off-screen via Playwright.
+     * Returns { ok: false, fallbackHint: "iframe" } on any failure so the
+     * frontend can fall back to the existing iframe modal automatically.
+     */
+    @Post("dispatch-headless")
+    async dispatchHeadless(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Body() dto: DispatchHeadlessRequestDto,
+    ): Promise<DispatchHeadlessResponseDto> {
+        this.logger.log(`[POST /eformsign-docs/dispatch-headless] clientId=${dto.clientId}`);
+        const result = await this.dispatchHeadlessUsecase.execute(tenant.branchId ?? "", {
+            contractData: dto.contractData,
+            clientId: dto.clientId,
+            progressId: dto.progressId,
+        });
+        if (!result.ok) {
+            this.logger.warn(`[dispatch-headless] failed: ${result.reason}`);
+            return {
+                ok: false,
+                durationMs: result.durationMs,
+                reason: result.reason,
+                failedStep: result.failedStep,
+                fallbackHint: "iframe",
+            };
+        }
+        return {
+            ok: true,
+            documentId: result.documentId,
+            durationMs: result.durationMs,
+        };
+    }
+
+    /**
+     * POST /eformsign-docs/finalize-headless
+     * Run the staff-finalize iframe gate sequence (mode:"02") off-screen.
+     */
+    @Post("finalize-headless")
+    async finalizeHeadless(@Body() dto: FinalizeHeadlessRequestDto): Promise<FinalizeHeadlessResponseDto> {
+        this.logger.log(`[POST /eformsign-docs/finalize-headless] documentId=${dto.documentId}`);
+        const result = await this.finalizeHeadlessUsecase.execute({
+            documentId: dto.documentId,
+            prefillEndDate: dto.prefillEndDate,
+            progressId: dto.progressId,
+        });
+        if (!result.ok) {
+            this.logger.warn(`[finalize-headless] failed: ${result.reason}`);
+            return {
+                ok: false,
+                durationMs: result.durationMs,
+                reason: result.reason,
+                fallbackHint: "iframe",
+            };
+        }
+        return { ok: true, durationMs: result.durationMs };
+    }
+}

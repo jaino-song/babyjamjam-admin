@@ -9,7 +9,7 @@ export class ListAreaTemplatesUsecase {
         private readonly areaTemplateRepository: IAreaTemplateRepository,
     ) {}
 
-    execute(): Promise<AreaTemplateEntity[]> {
-        return this.areaTemplateRepository.findAll();
+    execute(branchid: string): Promise<AreaTemplateEntity[]> {
+        return this.areaTemplateRepository.findAll(branchid);
     }
 }

@@ -8,11 +8,11 @@ export class DeleteAreaTemplateUsecase {
         private readonly areaTemplateRepository: IAreaTemplateRepository,
     ) {}
 
-    async execute(area: string): Promise<void> {
-        const existing = await this.areaTemplateRepository.findByArea(area);
+    async execute(branchid: string, area: string): Promise<void> {
+        const existing = await this.areaTemplateRepository.findByArea(branchid, area);
         if (!existing) {
             throw new Error(`AreaTemplate not found for area: ${area}`);
         }
-        return this.areaTemplateRepository.delete(existing.id);
+        return this.areaTemplateRepository.delete(branchid, existing.id);
     }
 }

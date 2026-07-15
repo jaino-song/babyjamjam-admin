@@ -1,9 +1,11 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { INestApplication, ValidationPipe } from "@nestjs/common";
+import { ExecutionContext, INestApplication, ValidationPipe } from "@nestjs/common";
 import request from "supertest";
 import { EmployeeController } from "interface/controllers/employee.controller";
 import { EmployeeService } from "application/services/employee.service";
 import { EmployeeEntity } from "domain/entities/employee.entity";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { TenantGuard } from "infrastructure/tenant/tenant.guard";
 
 describe("EmployeeController (Integration)", () => {
     // ============================================
@@ -29,7 +31,7 @@ describe("EmployeeController (Integration)", () => {
             overrides.name ?? "Test Employee",
             overrides.workArea ?? ["Seoul", "Incheon"],
             overrides.phone ?? "010-1234-5678",
-            overrides.grade ?? "A",
+            overrides.grade ?? "프리미엄",
             overrides.openToNextWork ?? true,
             overrides.registeredDate ?? new Date("2025-01-01"),
         );
@@ -46,9 +48,23 @@ describe("EmployeeController (Integration)", () => {
             findByRegisteredDate: jest.fn(),
             findByRegisteredDateRange: jest.fn(),
             findAllOpenToNextWork: jest.fn(),
+            checkPhoneExists: jest.fn(),
             changeOpenStatus: jest.fn(),
             update: jest.fn(),
             delete: jest.fn(),
+        };
+
+        const mockAuthGuard = {
+            canActivate: (context: ExecutionContext) => {
+                const requestContext = context.switchToHttp().getRequest();
+                requestContext.user = {
+                    userId: "user-1",
+                    branchId: "org-1",
+                    role: "admin",
+                    branchRole: "admin",
+                };
+                return true;
+            },
         };
 
         const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -59,7 +75,12 @@ describe("EmployeeController (Integration)", () => {
                     useValue: mockEmployeeService,
                 },
             ],
-        }).compile();
+        })
+            .overrideGuard(JwtGuard)
+            .useValue(mockAuthGuard)
+            .overrideGuard(TenantGuard)
+            .useValue(mockAuthGuard)
+            .compile();
 
         app = moduleFixture.createNestApplication();
         app.useGlobalPipes(new ValidationPipe({ transform: true }));
@@ -83,7 +104,7 @@ describe("EmployeeController (Integration)", () => {
                     name: "New Employee",
                     workArea: ["Seoul"],
                     phone: "010-9999-8888",
-                    grade: "B",
+                    grade: "베스트",
                     openToNextWork: true,
                 };
                 const createdEmployee = createMockEmployee({ id: 5, ...createDto });
@@ -97,10 +118,11 @@ describe("EmployeeController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(201);
                 expect(employeeService.create).toHaveBeenCalledWith(
+                    expect.any(String),
                     expect.objectContaining({
                         name: "New Employee",
                         workArea: ["Seoul"],
-                        grade: "B",
+                        grade: "베스트",
                     }),
                 );
             });
@@ -113,7 +135,7 @@ describe("EmployeeController (Integration)", () => {
                     name: "Dated Employee",
                     workArea: ["Busan"],
                     phone: "010-1111-2222",
-                    grade: "A",
+                    grade: "프리미엄",
                     openToNextWork: false,
                     registeredDate: "2025-06-15",
                 };
@@ -128,6 +150,7 @@ describe("EmployeeController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(201);
                 expect(employeeService.create).toHaveBeenCalledWith(
+                    expect.any(String),
                     expect.objectContaining({
                         registeredDate: "2025-06-15",
                     }),
@@ -155,7 +178,7 @@ describe("EmployeeController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(response.body).toHaveLength(2);
-                expect(employeeService.findAll).toHaveBeenCalled();
+                expect(employeeService.findAll).toHaveBeenCalledWith(expect.any(String));
             });
         });
 
@@ -171,6 +194,23 @@ describe("EmployeeController (Integration)", () => {
                 expect(response.status).toBe(200);
                 expect(response.body).toEqual([]);
             });
+        });
+    });
+
+    // ============================================
+    // GET /employees/check-phone - Check Phone
+    // ============================================
+    describe("GET /employees/check-phone", () => {
+        it("should check phone duplication against employees only", async () => {
+            employeeService.checkPhoneExists.mockResolvedValue(true);
+
+            const response = await request(app.getHttpServer())
+                .get("/employees/check-phone")
+                .query({ phone: "010-1234-5678" });
+
+            expect(response.status).toBe(200);
+            expect(response.body).toEqual({ exists: true });
+            expect(employeeService.checkPhoneExists).toHaveBeenCalledWith(expect.any(String), "010-1234-5678");
         });
     });
 
@@ -191,7 +231,7 @@ describe("EmployeeController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(employeeService.findById).toHaveBeenCalledWith(7);
+                expect(employeeService.findById).toHaveBeenCalledWith(expect.any(String), 7);
             });
         });
 
@@ -207,8 +247,17 @@ describe("EmployeeController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(employeeService.findById).toHaveBeenCalledWith(999);
+                expect(employeeService.findById).toHaveBeenCalledWith(expect.any(String), 999);
             });
+        });
+
+        it("should reject invalid ids before calling service", async () => {
+            const response = await request(app.getHttpServer())
+                .get("/employees/id")
+                .query({ id: "abc" });
+
+            expect(response.status).toBe(400);
+            expect(employeeService.findById).not.toHaveBeenCalled();
         });
     });
 
@@ -232,7 +281,7 @@ describe("EmployeeController (Integration)", () => {
             // Assert
             expect(response.status).toBe(200);
             expect(response.body).toHaveLength(2);
-            expect(employeeService.findByWorkArea).toHaveBeenCalledWith("Seoul");
+            expect(employeeService.findByWorkArea).toHaveBeenCalledWith(expect.any(String), "Seoul");
         });
     });
 
@@ -243,20 +292,20 @@ describe("EmployeeController (Integration)", () => {
         it("should return employees by grade", async () => {
             // Arrange
             const employees = [
-                createMockEmployee({ id: 1, grade: "A" }),
-                createMockEmployee({ id: 2, grade: "A" }),
+                createMockEmployee({ id: 1, grade: "프리미엄" }),
+                createMockEmployee({ id: 2, grade: "프리미엄" }),
             ];
             employeeService.findByGrade.mockResolvedValue(employees);
 
             // Act
             const response = await request(app.getHttpServer())
                 .get("/employees/grade")
-                .query({ grade: "A" });
+                .query({ grade: "프리미엄" });
 
             // Assert
             expect(response.status).toBe(200);
             expect(response.body).toHaveLength(2);
-            expect(employeeService.findByGrade).toHaveBeenCalledWith("A");
+            expect(employeeService.findByGrade).toHaveBeenCalledWith(expect.any(String), "프리미엄");
         });
     });
 
@@ -277,7 +326,7 @@ describe("EmployeeController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(employeeService.findByOpenStatus).toHaveBeenCalledWith(true);
+                expect(employeeService.findByOpenStatus).toHaveBeenCalledWith(expect.any(String), true);
             });
         });
 
@@ -294,7 +343,7 @@ describe("EmployeeController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(employeeService.findByOpenStatus).toHaveBeenCalledWith(false);
+                expect(employeeService.findByOpenStatus).toHaveBeenCalledWith(expect.any(String), false);
             });
         });
 
@@ -310,7 +359,7 @@ describe("EmployeeController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(employeeService.findByOpenStatus).toHaveBeenCalledWith(true);
+                expect(employeeService.findByOpenStatus).toHaveBeenCalledWith(expect.any(String), true);
             });
         });
     });
@@ -332,7 +381,19 @@ describe("EmployeeController (Integration)", () => {
 
             // Assert
             expect(response.status).toBe(200);
-            expect(employeeService.findByRegisteredDate).toHaveBeenCalledWith(new Date(date));
+            expect(employeeService.findByRegisteredDate).toHaveBeenCalledWith(
+                expect.any(String),
+                new Date(date),
+            );
+        });
+
+        it("should reject invalid registered date before calling service", async () => {
+            const response = await request(app.getHttpServer())
+                .get("/employees/registered-date")
+                .query({ date: "not-a-date" });
+
+            expect(response.status).toBe(400);
+            expect(employeeService.findByRegisteredDate).not.toHaveBeenCalled();
         });
     });
 
@@ -356,6 +417,7 @@ describe("EmployeeController (Integration)", () => {
             expect(response.status).toBe(200);
             expect(response.body).toHaveLength(2);
             expect(employeeService.findByRegisteredDateRange).toHaveBeenCalledWith(
+                expect.any(String),
                 new Date(startDate),
                 new Date(endDate),
             );
@@ -381,7 +443,7 @@ describe("EmployeeController (Integration)", () => {
             // Assert
             expect(response.status).toBe(200);
             expect(response.body).toHaveLength(2);
-            expect(employeeService.findAllOpenToNextWork).toHaveBeenCalled();
+            expect(employeeService.findAllOpenToNextWork).toHaveBeenCalledWith(expect.any(String));
         });
     });
 
@@ -402,7 +464,7 @@ describe("EmployeeController (Integration)", () => {
 
             // Assert
             expect(response.status).toBe(200);
-            expect(employeeService.changeOpenStatus).toHaveBeenCalledWith(5, true);
+            expect(employeeService.changeOpenStatus).toHaveBeenCalledWith(expect.any(String), 5, true);
         });
 
         it("should change employee open status to false", async () => {
@@ -418,7 +480,7 @@ describe("EmployeeController (Integration)", () => {
 
             // Assert
             expect(response.status).toBe(200);
-            expect(employeeService.changeOpenStatus).toHaveBeenCalledWith(3, false);
+            expect(employeeService.changeOpenStatus).toHaveBeenCalledWith(expect.any(String), 3, false);
         });
     });
 
@@ -431,7 +493,7 @@ describe("EmployeeController (Integration)", () => {
                 // Arrange
                 const updateDto = {
                     name: "Updated Name",
-                    grade: "S",
+                    grade: "스탠다드",
                 };
                 const updatedEmployee = createMockEmployee({ id: 3, ...updateDto });
                 employeeService.update.mockResolvedValue(updatedEmployee);
@@ -445,10 +507,11 @@ describe("EmployeeController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(employeeService.update).toHaveBeenCalledWith(
+                    expect.any(String),
                     3,
                     expect.objectContaining({
                         name: "Updated Name",
-                        grade: "S",
+                        grade: "스탠다드",
                     }),
                 );
             });
@@ -470,6 +533,7 @@ describe("EmployeeController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(employeeService.update).toHaveBeenCalledWith(
+                    expect.any(String),
                     4,
                     expect.objectContaining({
                         phone: "010-0000-0000",
@@ -494,6 +558,7 @@ describe("EmployeeController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(employeeService.update).toHaveBeenCalledWith(
+                    expect.any(String),
                     2,
                     expect.objectContaining({
                         workArea: ["Seoul", "Busan", "Daegu"],
@@ -519,7 +584,7 @@ describe("EmployeeController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(employeeService.delete).toHaveBeenCalledWith(8);
+                expect(employeeService.delete).toHaveBeenCalledWith(expect.any(String), 8);
             });
         });
 
@@ -535,7 +600,7 @@ describe("EmployeeController (Integration)", () => {
 
                 // Assert
                 expect(response.status).toBe(200);
-                expect(employeeService.delete).toHaveBeenCalledWith(id);
+                expect(employeeService.delete).toHaveBeenCalledWith(expect.any(String), id);
             });
         });
     });

@@ -1,0 +1,13 @@
+build/
+.gradle/
+local.properties
+*.iml
+.idea/
+.DS_Store
+*.apk
+*.aab
+*.ipa
+Pods/
+DerivedData/
+xcuserdata/
+.kotlin/

@@ -1,7 +1,10 @@
 import { NestFactory } from "@nestjs/core";
-import { ValidationPipe } from "@nestjs/common";
+import helmet from "helmet";
+import { json } from "express";
 import { AppModule } from "./app.module";
 import cookieParser from "cookie-parser";
+import { PrismaExceptionFilter } from "./infrastructure/filters/prisma-exception.filter";
+import { GlobalValidationPipe } from "./infrastructure/pipes/global-validation.pipe";
 
 // Catch any unhandled errors
 process.on('uncaughtException', (error) => {
@@ -18,13 +21,39 @@ process.on('unhandledRejection', (reason, promise) => {
 };
 
 async function bootstrap() {
+    // Belt-and-suspenders (review finding): the e2e-only switches must never
+    // ride into a production boot — they disable vendor egress and the
+    // storage bucket bootstrap.
+    if (process.env["NODE_ENV"] === "production") {
+        for (const flag of ["E2E_VENDOR_STUBS", "STORAGE_BOOTSTRAP_DISABLED"]) {
+            if (process.env[flag] === "1") {
+                throw new Error(`${flag}=1 is not allowed when NODE_ENV=production`);
+            }
+        }
+    }
+
     const app = await NestFactory.create(AppModule);
+    app.use(helmet());
+    // 1mb: call-transcript webhook payloads (long transcripts) exceed the 100kb express default
+    app.use(json({ limit: "1mb" }));
+    const expressApp = app.getHttpAdapter().getInstance();
+    expressApp.set("trust proxy", 1);
     app.use(cookieParser());
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-    // CORS configuration - support both production and development origins
+    // forbidNonWhitelisted turns silently-stripped unknown body fields into
+    // explicit 400s (mass-assignment hardening). GlobalValidationPipe carves out
+    // inbound third-party webhook DTOs (eformsign sends undeclared fields) that
+    // a stricter global pipe would otherwise reject — see the pipe for why a
+    // controller-level override can't do this.
+    app.useGlobalPipes(new GlobalValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+    app.useGlobalFilters(new PrismaExceptionFilter());
+    // CORS configuration - support production, preview, and development origins
     const allowedOrigins = [
         process.env['PRODUCTION_FRONTEND_URL'],
+        process.env['PRODUCTION_MOBILE_FRONTEND_URL'],
+        process.env['PREVIEW_FRONTEND_URL'],
+        process.env['PREVIEW_MOBILE_FRONTEND_URL'],
         process.env['DEVELOPMENT_FRONTEND_URL'],
+        process.env['DEVELOPMENT_MOBILE_FRONTEND_URL'],
         "http://localhost:3000", // Fallback for local development
     ].filter((origin): origin is string => Boolean(origin)); // Remove undefined values
 
@@ -49,4 +78,7 @@ async function bootstrap() {
     await app.listen(3001);
     console.log("Server is running");
 }
-bootstrap();
+bootstrap().catch((error) => {
+    console.error("BOOTSTRAP FAILED:", error);
+    process.exit(1);
+});

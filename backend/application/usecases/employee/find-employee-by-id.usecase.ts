@@ -9,8 +9,7 @@ export class FindEmployeeByIdUsecase {
         private readonly employeeRepository: IEmployeeRepository,
     ) {}
 
-    execute(id: number): Promise<EmployeeEntity | null> {
-        return this.employeeRepository.findById(id);
+    execute(branchid: string, id: number): Promise<EmployeeEntity | null> {
+        return this.employeeRepository.findById(branchid, id);
     }
 }
-

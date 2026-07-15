@@ -15,11 +15,12 @@ import {
 } from "application/usecases/employee";
 import { EmployeeService } from "application/services/employee.service";
 import { EMPLOYEE_REPOSITORY } from "domain/repositories/employee.repository.interface";
-import { PrismaService } from "infrastructure/database/prisma.service";
+import { DatabaseModule } from "infrastructure/database/database.module";
 import { SbEmployeeRepository } from "infrastructure/database/repositories/sb.employee.repository";
 import { EmployeeController } from "interface/controllers/employee.controller";
 
 @Module({
+    imports: [DatabaseModule],
     controllers: [EmployeeController],
     providers: [
         CreateEmployeeUsecase,
@@ -35,7 +36,6 @@ import { EmployeeController } from "interface/controllers/employee.controller";
         ChangeEmployeeOpenStatusUsecase,
         ListEmployeesOpenToNextWorkUsecase,
         EmployeeService,
-        PrismaService,
         {
             provide: EMPLOYEE_REPOSITORY,
             useClass: SbEmployeeRepository,
@@ -44,4 +44,3 @@ import { EmployeeController } from "interface/controllers/employee.controller";
     exports: [EmployeeService],
 })
 export class EmployeeModule {}
-

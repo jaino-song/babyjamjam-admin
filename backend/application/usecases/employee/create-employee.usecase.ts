@@ -10,15 +10,16 @@ export class CreateEmployeeUsecase {
     ) {}
 
     execute(
+        branchid: string,
         name: string,
         workArea: string[],
         phone: string,
         grade: string,
         openToNextWork: boolean,
         registeredDate?: Date,
+        birthday?: string,
     ): Promise<EmployeeEntity> {
-        const employee = EmployeeEntity.create(name, workArea, phone, grade, openToNextWork, registeredDate);
-        return this.employeeRepository.create(employee);
+        const employee = EmployeeEntity.create(name, workArea, phone, grade, openToNextWork, registeredDate, birthday);
+        return this.employeeRepository.create(branchid, employee);
     }
 }
-

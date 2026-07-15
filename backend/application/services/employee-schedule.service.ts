@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import {
     CreateEmployeeScheduleUsecase,
     DeleteEmployeeScheduleUsecase,
@@ -9,6 +9,9 @@ import {
     UpdateEmployeeScheduleUsecase,
 } from "application/usecases/employee-schedule";
 import { EmployeeScheduleEntity } from "domain/entities/employee-schedule.entity";
+import { MessageTriggerService } from "./message-trigger.service";
+import { EmployeeFeedbackLinkService } from "./employee-feedback-link.service";
+import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 
 @Injectable()
 export class EmployeeScheduleService {
@@ -20,9 +23,12 @@ export class EmployeeScheduleService {
         private readonly listEmployeeSchedulesBySecondaryEmployeeIdUsecase: ListEmployeeSchedulesBySecondaryEmployeeIdUsecase,
         private readonly updateEmployeeScheduleUsecase: UpdateEmployeeScheduleUsecase,
         private readonly deleteEmployeeScheduleUsecase: DeleteEmployeeScheduleUsecase,
+        @Optional() private readonly triggerService?: MessageTriggerService,
+        @Optional() private readonly employeeFeedbackLinkService?: EmployeeFeedbackLinkService,
+        @Optional() private readonly serviceRecordLifecycleService?: ServiceRecordLifecycleService,
     ) {}
 
-    create(params: {
+    async create(branchid: string, params: {
         clientId: number;
         primaryEmployeeId: number;
         secondaryEmployeeId: number | null;
@@ -31,7 +37,7 @@ export class EmployeeScheduleService {
         endDate: string;
         replaced?: boolean;
     }): Promise<EmployeeScheduleEntity> {
-        return this.createEmployeeScheduleUsecase.execute({
+        const schedule = await this.createEmployeeScheduleUsecase.execute(branchid, {
             clientId: params.clientId,
             primaryEmployeeId: params.primaryEmployeeId,
             secondaryEmployeeId: params.secondaryEmployeeId ?? null,
@@ -40,39 +46,68 @@ export class EmployeeScheduleService {
             endDate: new Date(params.endDate),
             replaced: params.replaced,
         });
+        this.triggerService
+            ?.syncEmployeeAssignmentRulesForSchedule(branchid, schedule.id, true)
+            ?.catch(() => undefined);
+        await this.serviceRecordLifecycleService?.ensureForClient(schedule.clientId);
+        this.employeeFeedbackLinkService?.scheduleForServiceStart(schedule.id)?.catch(() => undefined);
+        return schedule;
     }
 
-    findAll(): Promise<EmployeeScheduleEntity[]> {
-        return this.listEmployeeSchedulesUsecase.execute();
+    findAll(branchid: string): Promise<EmployeeScheduleEntity[]> {
+        return this.listEmployeeSchedulesUsecase.execute(branchid);
     }
 
-    findById(id: number): Promise<EmployeeScheduleEntity | null> {
-        return this.findEmployeeScheduleByIdUsecase.execute(id);
+    findById(branchid: string, id: number): Promise<EmployeeScheduleEntity | null> {
+        return this.findEmployeeScheduleByIdUsecase.execute(branchid, id);
     }
 
-    findByPrimaryEmployeeId(primaryEmployeeId: number): Promise<EmployeeScheduleEntity[]> {
-        return this.listEmployeeSchedulesByPrimaryEmployeeIdUsecase.execute(primaryEmployeeId);
+    findByPrimaryEmployeeId(
+        branchid: string,
+        primaryEmployeeId: number
+    ): Promise<EmployeeScheduleEntity[]> {
+        return this.listEmployeeSchedulesByPrimaryEmployeeIdUsecase.execute(
+            branchid,
+            primaryEmployeeId
+        );
     }
 
-    findBySecondaryEmployeeId(secondaryEmployeeId: number): Promise<EmployeeScheduleEntity[]> {
-        return this.listEmployeeSchedulesBySecondaryEmployeeIdUsecase.execute(secondaryEmployeeId);
+    findBySecondaryEmployeeId(
+        branchid: string,
+        secondaryEmployeeId: number
+    ): Promise<EmployeeScheduleEntity[]> {
+        return this.listEmployeeSchedulesBySecondaryEmployeeIdUsecase.execute(
+            branchid,
+            secondaryEmployeeId
+        );
     }
 
-    update(id: number, params: {
+    async update(branchid: string, id: number, params: {
         workAddress?: string;
         startDate?: string;
         endDate?: string;
         replaced?: boolean;
     }): Promise<EmployeeScheduleEntity> {
-        return this.updateEmployeeScheduleUsecase.execute(id, {
+        const schedule = await this.updateEmployeeScheduleUsecase.execute(branchid, id, {
             workAddress: params.workAddress,
             startDate: params.startDate ? new Date(params.startDate) : undefined,
             endDate: params.endDate ? new Date(params.endDate) : undefined,
             replaced: params.replaced,
         });
+        await this.serviceRecordLifecycleService?.ensureForClient(schedule.clientId);
+        if (params.endDate) {
+            this.employeeFeedbackLinkService
+                ?.extendExpiryForEndDate(schedule.id, schedule.endDate)
+                ?.catch(() => undefined);
+        }
+        return schedule;
     }
 
-    delete(id: number): Promise<void> {
-        return this.deleteEmployeeScheduleUsecase.execute(id);
+    async delete(branchid: string, id: number): Promise<void> {
+        const schedule = await this.findEmployeeScheduleByIdUsecase.execute(branchid, id);
+        await this.deleteEmployeeScheduleUsecase.execute(branchid, id);
+        if (schedule) {
+            await this.serviceRecordLifecycleService?.ensureForClient(schedule.clientId);
+        }
     }
 }

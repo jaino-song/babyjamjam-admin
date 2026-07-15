@@ -23,7 +23,7 @@ export class EmployeeFactory {
             params.name ?? "Test Employee",
             params.workArea ?? ["인천 연수구", "인천 남동구"],
             params.phone ?? "010-9876-5432",
-            params.grade ?? "1급",
+            params.grade ?? "프리미엄",
             params.openToNextWork ?? true,
             params.registeredDate ?? new Date("2023-01-15"),
         );

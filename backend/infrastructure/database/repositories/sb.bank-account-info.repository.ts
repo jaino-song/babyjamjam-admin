@@ -15,7 +15,7 @@ export class SbBankAccountInfoRepository implements IBankAccountInfoRepository {
 
     async findByArea(area: string): Promise<BankAccountInfoEntity | null> {
         const bankAccountInfo = await this.prismaService.bank_account_info.findUnique({
-            where: { area_id: area },
+            where: { areaId: area },
         });
         return bankAccountInfo ? BankAccountInfoMapper.toDomain(bankAccountInfo) : null;
     }
@@ -29,7 +29,7 @@ export class SbBankAccountInfoRepository implements IBankAccountInfoRepository {
 
     async update(bankAccountInfo: BankAccountInfoEntity): Promise<BankAccountInfoEntity> {
         const updated = await this.prismaService.bank_account_info.update({
-            where: { area_id: bankAccountInfo.area },
+            where: { areaId: bankAccountInfo.area },
             data: BankAccountInfoMapper.toPrismaUpdate(bankAccountInfo),
         });
         return BankAccountInfoMapper.toDomain(updated);
@@ -37,7 +37,7 @@ export class SbBankAccountInfoRepository implements IBankAccountInfoRepository {
 
     async delete(area: string): Promise<void> {
         await this.prismaService.bank_account_info.delete({
-            where: { area_id: area },
+            where: { areaId: area },
         });
     }
 }

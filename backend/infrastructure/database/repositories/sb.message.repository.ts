@@ -8,31 +8,54 @@ import { MessageMapper } from "../mapper/message.mapper";
 export class SbMessageRepository implements IMessageRepository {
     constructor(private prismaService: PrismaService) {}
 
-    async findById(id: number): Promise<MessageEntity | null> {
-        const message = await this.prismaService.message.findUnique({
-            where: { id },
+    async findAll(branchid: string): Promise<MessageEntity[]> {
+        const messages = await this.prismaService.message.findMany({
+            where: { branchId: branchid },
+            orderBy: { createdAt: "desc" },
+        });
+        return messages.map(MessageMapper.toDomain);
+    }
+
+    async findById(branchid: string, id: number): Promise<MessageEntity | null> {
+        const message = await this.prismaService.message.findFirst({
+            where: { id, branchId: branchid },
         });
         return message ? MessageMapper.toDomain(message) : null;
     }
 
-    async create(message: MessageEntity): Promise<MessageEntity> {
+    async create(branchid: string, message: MessageEntity): Promise<MessageEntity> {
         const created = await this.prismaService.message.create({
-            data: MessageMapper.toPrismaCreate(message),
+            data: {
+                ...MessageMapper.toPrismaCreate(message),
+                branchId: branchid,
+            },
         });
         return MessageMapper.toDomain(created);
     }
 
-    async update(message: MessageEntity): Promise<MessageEntity> {
-        const updated = await this.prismaService.message.update({
-            where: { id: message.id },
+    async update(branchid: string, message: MessageEntity): Promise<MessageEntity> {
+        const result = await this.prismaService.message.updateMany({
+            where: { id: message.id, branchId: branchid },
             data: MessageMapper.toPrismaUpdate(message),
         });
+        if (result.count === 0) {
+            throw new Error("Message not found for branch");
+        }
+        const updated = await this.prismaService.message.findFirst({
+            where: { id: message.id, branchId: branchid },
+        });
+        if (!updated) {
+            throw new Error("Message not found after update");
+        }
         return MessageMapper.toDomain(updated);
     }
 
-    async delete(id: number): Promise<void> {
-        await this.prismaService.message.delete({
-            where: { id },
+    async delete(branchid: string, id: number): Promise<void> {
+        const result = await this.prismaService.message.deleteMany({
+            where: { id, branchId: branchid },
         });
+        if (result.count === 0) {
+            throw new Error("Message not found for branch");
+        }
     }
 }

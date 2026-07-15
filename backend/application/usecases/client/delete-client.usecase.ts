@@ -8,12 +8,12 @@ export class DeleteClientUsecase {
         private readonly clientRepository: IClientRepository,
     ) {}
 
-    async execute(id: number): Promise<void> {
-        const client = await this.clientRepository.findById(id);
+    async execute(branchid: string, id: number): Promise<void> {
+        const client = await this.clientRepository.findById(branchid, id);
         if (!client) {
             throw new NotFoundException(`Client with id ${id} not found`);
         }
 
-        await this.clientRepository.delete(id);
+        await this.clientRepository.delete(branchid, id);
     }
 }

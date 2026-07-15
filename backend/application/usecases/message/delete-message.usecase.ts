@@ -8,8 +8,7 @@ export class DeleteMessageUsecase {
         private readonly messageRepository: IMessageRepository,
     ) {}
 
-    async execute(id: number): Promise<void> {
-        await this.messageRepository.delete(id);
+    async execute(branchid: string, id: number): Promise<void> {
+        await this.messageRepository.delete(branchid, id);
     }
 }
-

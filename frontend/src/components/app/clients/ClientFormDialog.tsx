@@ -1,0 +1,1527 @@
+"use client";
+
+import { useState, useEffect, useMemo, useRef, useCallback, type ReactNode } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCreateClient, useUpdateClient } from "@/hooks/useClients";
+import { useClientPhoneDuplicateCheck } from "@/hooks/useClientPhoneDuplicateCheck";
+import { useVoucherPriceInfos } from "@/hooks/useVoucherData";
+import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
+import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
+import { useClientDialogStore } from "@/stores/client-dialog-store";
+import {
+    Client,
+    CreateClientDto,
+    UpdateClientDto,
+    SERVICE_STATUS_OPTIONS
+} from "@/lib/client/types";
+import type { Employee } from "@/hooks/useEmployees";
+import { useLocale } from "@/providers/LocaleProvider";
+import { t } from "@/lib/i18n/translations";
+import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
+import { cn } from "@/lib/utils";
+import { calcEndDateBusinessDays } from "@/lib/date/business-days";
+import voucherOptions from "../messages/templates/json/voucher.json";
+
+import {
+    Dialog,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Spinner } from "@/components/ui/spinner";
+import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
+import {
+    FormField,
+    FormGrid,
+    FormHelperText,
+    FormNativeSelect,
+    FormSection,
+    FormSwitchRow,
+    FormTextInput,
+} from "@/components/app/ui/form-section";
+import {
+    SteppedWizardPanelContent,
+} from "@/components/app/v3/SteppedWizardPanelLayout";
+import {
+    DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME,
+    DETAIL_PANEL_FOOTER_CLASS_NAME,
+    DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME,
+} from "@/components/app/v3/DetailPanel";
+
+export interface ClientFormDialogProps {
+    open: boolean;
+    onClose: () => void;
+    client?: Client | null; // null/undefined for create mode, Client for edit mode
+    onSuccess?: (client: Client) => void; // Optional callback when client is created/updated
+}
+
+export interface ClientFormPanelProps extends Omit<ClientFormDialogProps, "open"> {
+    open?: boolean;
+    activeStep?: number;
+    onActiveStepChange?: (step: number) => void;
+    renderLayout?: (parts: { content: ReactNode; footer: ReactNode }) => ReactNode;
+}
+
+type ClientFormData = Omit<CreateClientDto, "primaryEmployeeId"> & { primaryEmployeeId: number | null };
+
+const PANEL_STEP_CONTENT_CLASS_NAME =
+    "grid w-full grid-cols-1 gap-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(24px*var(--glint-ui-scale,1))] md:grid-cols-2";
+const PANEL_FULL_FIELD_CLASS_NAME = "md:col-span-2";
+export const CLIENT_FORM_STEPPER_STEPS = [
+    { label: "이용자\n정보" },
+    { label: "제공인력\n정보" },
+    { label: "바우처\n정보" },
+    { label: "계약\n정보" },
+] as const;
+
+const CLIENT_FORM_LAST_STEP_INDEX = CLIENT_FORM_STEPPER_STEPS.length - 1;
+
+interface ClientDialogSectionProps {
+    dataComponent: string;
+    title: ReactNode;
+    description: ReactNode;
+    children: ReactNode;
+}
+
+function ClientDialogSection({ dataComponent, title, description, children }: ClientDialogSectionProps) {
+    return (
+        <FormSection
+            data-component={dataComponent}
+            title={title}
+            description={description}
+            headerDataComponent={`${dataComponent}-head`}
+            titleDataComponent={`${dataComponent}-title`}
+            descriptionDataComponent={`${dataComponent}-caption`}
+            bodyDataComponent={`${dataComponent}-body`}
+        >
+            {children}
+        </FormSection>
+    );
+}
+
+// Format number with commas (handles comma-formatted strings too)
+const formatPrice = (price: number | string): string => {
+    if (!price && price !== 0) return "";
+    // Remove existing commas before parsing
+    const cleaned = typeof price === "string" ? price.replace(/,/g, "") : String(price);
+    const num = parseInt(cleaned, 10);
+    if (isNaN(num)) return "";
+    return num.toLocaleString("ko-KR");
+};
+
+// Parse price string to raw number string (removes commas)
+const parsePrice = (value: string | null | undefined): string => {
+    if (!value) return "";
+    return value.replace(/,/g, "");
+};
+
+// Format phone number as XXX-XXXX-XXXX
+const formatPhoneNumber = (value: string): string => {
+    // Remove all non-digit characters
+    const digits = value.replace(/\D/g, "");
+
+    // Apply formatting based on length
+    if (digits.length <= 3) {
+        return digits;
+    } else if (digits.length <= 7) {
+        return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+    } else {
+        return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
+    }
+};
+
+const getPhoneDuplicateCheckFailedMessage = (locale: "ko" | "en"): string =>
+    locale === "ko"
+        ? "문제가 발생했어요. 새로고침 해주세요."
+        : "Something went wrong. Please refresh and try again.";
+
+const getPhoneDuplicateCheckPendingMessage = (locale: "ko" | "en"): string =>
+    locale === "ko"
+        ? "연락처 중복 확인 중입니다. 잠시만 기다려주세요."
+        : "Checking for duplicate phone number. Please wait.";
+
+const getPhoneAvailableMessage = (locale: "ko" | "en"): string =>
+    locale === "ko" ? "등록 가능한 번호입니다." : "This phone number is available.";
+
+// Format ISO date string to yyyy-MM-dd for HTML date input
+const formatDateForInput = (dateString: string | null | undefined): string => {
+    if (!dateString) return "";
+    // Handle ISO format (e.g., "2025-12-26T00:00:00.000Z")
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return "";
+    return date.toISOString().split("T")[0];
+};
+
+const formatDateForCompactInput = (dateString: string | null | undefined): string => {
+    const formattedDate = formatDateForInput(dateString);
+    if (!formattedDate) return "";
+    return `${formattedDate.slice(2, 4)}${formattedDate.slice(5, 7)}${formattedDate.slice(8, 10)}`;
+};
+
+const parseCompactDateInput = (value: string): string => {
+    return value.replace(/\D/g, "").slice(0, 6);
+};
+
+const normalizeCompactDateForSubmit = (value: string): string => {
+    const compactDate = parseCompactDateInput(value);
+    if (compactDate.length !== 6) return value;
+
+    const yearPrefix = Number(compactDate.slice(0, 2)) >= 70 ? "19" : "20";
+    return `${yearPrefix}${compactDate.slice(0, 2)}-${compactDate.slice(2, 4)}-${compactDate.slice(4, 6)}`;
+};
+
+const normalizeDateForCompactState = (value: string | null | undefined): string => {
+    const compactDate = formatDateForCompactInput(value);
+    if (compactDate) return compactDate;
+    return parseCompactDateInput(value ?? "");
+};
+
+const isValidCompactDateInput = (value: string): boolean => {
+    const compactDate = parseCompactDateInput(value);
+    if (compactDate.length !== 6) return false;
+
+    const normalizedDate = normalizeCompactDateForSubmit(compactDate);
+    const date = new Date(`${normalizedDate}T00:00:00`);
+    return (
+        !Number.isNaN(date.getTime()) &&
+        date.getFullYear() === Number(normalizedDate.slice(0, 4)) &&
+        date.getMonth() + 1 === Number(normalizedDate.slice(5, 7)) &&
+        date.getDate() === Number(normalizedDate.slice(8, 10))
+    );
+};
+
+export function ClientFormPanel({
+    open = true,
+    onClose,
+    client,
+    onSuccess,
+    activeStep,
+    onActiveStepChange,
+    renderLayout,
+}: ClientFormPanelProps) {
+    return (
+        <ClientFormContent
+            surface="panel"
+            open={open}
+            onClose={onClose}
+            client={client}
+            onSuccess={onSuccess}
+            activeStep={activeStep}
+            onActiveStepChange={onActiveStepChange}
+            renderLayout={renderLayout}
+        />
+    );
+}
+
+export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFormDialogProps) {
+    return (
+        <ClientFormContent
+            surface="dialog"
+            open={open}
+            onClose={onClose}
+            client={client}
+            onSuccess={onSuccess}
+        />
+    );
+}
+
+function ClientFormContent({
+    surface,
+    open,
+    onClose,
+    client,
+    onSuccess,
+    activeStep: controlledActiveStep,
+    onActiveStepChange,
+    renderLayout,
+}: ClientFormDialogProps & Pick<ClientFormPanelProps, "activeStep" | "onActiveStepChange" | "renderLayout"> & { surface: "dialog" | "panel" }) {
+    const router = useRouter();
+    const searchParams = useSearchParams();
+    const locale = useLocale();
+    const isEditMode = !!client;
+
+    // Read pre-filled name from Zustand store (when opened from ClientAutocomplete)
+    const prefillName = useClientDialogStore((state) => state.prefillName);
+    const clearPrefillName = useClientDialogStore((state) => state.clearPrefillName);
+
+    const createClient = useCreateClient();
+    const updateClient = useUpdateClient();
+
+    // Form state - use extended type to allow null for primaryEmployeeId during form editing
+    const [formData, setFormData] = useState<ClientFormData>({
+        name: "",
+        birthday: "",
+        dueDate: "",
+        address: "",
+        phone: "",
+        primaryEmployeeId: null, // null means "not selected yet"
+        secondaryEmployeeId: null,
+        type: "",
+        duration: null,
+        fullPrice: "",
+        grant: "",
+        actualPrice: "",
+        startDate: "",
+        endDate: "",
+        careCenter: false,
+        voucherClient: true,
+        breastPump: false,
+        serviceStatus: "waiting",
+    });
+
+    const {
+        phoneDigits,
+        isCheckingPhoneDuplicate,
+        isPhoneDuplicate,
+        hasPhoneDuplicateCheckFailed,
+        lastCheckedPhoneDigits,
+        isUsingOriginalPhone,
+        isPhoneCheckReady,
+    } = useClientPhoneDuplicateCheck({
+        phone: formData.phone,
+        originalPhone: client?.phone,
+        enabled: open,
+    });
+    const phoneInlineMessage = phoneDigits.length === 11
+        ? isUsingOriginalPhone || isPhoneCheckReady
+            ? getPhoneAvailableMessage(locale)
+            : isCheckingPhoneDuplicate
+                ? getPhoneDuplicateCheckPendingMessage(locale)
+                : hasPhoneDuplicateCheckFailed
+                    ? getPhoneDuplicateCheckFailedMessage(locale)
+                    : lastCheckedPhoneDigits !== phoneDigits
+                        ? getPhoneDuplicateCheckPendingMessage(locale)
+                        : isPhoneDuplicate
+                            ? t(locale, "clients.form.error-phone-duplicate")
+                            : null
+        : null;
+    const hasPhoneStatusError =
+        phoneDigits.length === 11 &&
+        !isUsingOriginalPhone &&
+        (hasPhoneDuplicateCheckFailed ||
+            (lastCheckedPhoneDigits === phoneDigits && isPhoneDuplicate));
+    const isPhoneCheckBlockingSubmit = phoneDigits.length === 11 && !isPhoneCheckReady;
+
+    const [error, setError] = useState<string | null>(null);
+    const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
+    const [employeeDialogTarget, setEmployeeDialogTarget] = useState<"primary" | "secondary" | null>(null);
+    const contentRef = useRef<HTMLDivElement>(null);
+    const [internalActiveStep, setInternalActiveStep] = useState(0);
+    const activeStep = controlledActiveStep ?? internalActiveStep;
+    const setActiveStep = useCallback(
+        (nextStep: number) => {
+            const clampedStep = Math.max(0, Math.min(nextStep, CLIENT_FORM_LAST_STEP_INDEX));
+            if (controlledActiveStep === undefined) {
+                setInternalActiveStep(clampedStep);
+            }
+            onActiveStepChange?.(clampedStep);
+        },
+        [controlledActiveStep, onActiveStepChange]
+    );
+
+    // Track if prices were manually edited
+    const [pricesManuallyEdited, setPricesManuallyEdited] = useState(false);
+
+    // Fetch voucher price info based on selected type
+    const { data: voucherPriceInfos, isLoading: isPriceLoading } = useVoucherPriceInfos(formData.type || "");
+
+    // Get available durations for the selected voucher type
+    const availableDurations = useMemo(() => {
+        if (!voucherPriceInfos) return [];
+        // Get unique durations sorted
+        const durations = [...new Set(voucherPriceInfos.map(info => Number(info.duration)))];
+        return durations.sort((a, b) => a - b);
+    }, [voucherPriceInfos]);
+
+    const voucherTypeOptions = useMemo(
+        () =>
+            Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => ({
+                label: groupName,
+                options: Object.entries(types).map(([typeValue, typeData]) => ({
+                    value: typeValue,
+                    label: typeData.label,
+                })),
+            })),
+        []
+    );
+
+    const durationOptions = useMemo(
+        () => availableDurations.map((duration) => ({
+            value: String(duration),
+            label: `${duration}일`,
+        })),
+        [availableDurations]
+    );
+
+    const serviceStatusOptions = useMemo(
+        () => SERVICE_STATUS_OPTIONS.map((status) => ({
+            value: status.value,
+            label: status.label,
+        })),
+        []
+    );
+
+    // Get price info for selected type and duration
+    const selectedPriceInfo = useMemo(() => {
+        if (!voucherPriceInfos || !formData.duration) return null;
+        return voucherPriceInfos.find(
+            info => Number(info.duration) === formData.duration
+        );
+    }, [voucherPriceInfos, formData.duration]);
+    const arePriceInputsLocked = !formData.type || !formData.duration || isPriceLoading;
+
+    // Auto-fill prices when type and duration are selected (only if not manually edited)
+    useEffect(() => {
+        if (selectedPriceInfo && !pricesManuallyEdited) {
+            queueMicrotask(() => {
+                setFormData(prev => ({
+                    ...prev,
+                    fullPrice: parsePrice(selectedPriceInfo.fullPrice),
+                    grant: parsePrice(selectedPriceInfo.grant),
+                    actualPrice: parsePrice(selectedPriceInfo.actualPrice),
+                }));
+            });
+        }
+    }, [selectedPriceInfo, pricesManuallyEdited]);
+
+    useEffect(() => {
+        queueMicrotask(() => {
+            setFormData(prev => {
+                const duration = prev.duration;
+                const startDate = prev.startDate ?? "";
+
+                if (!duration || !isValidCompactDateInput(startDate)) {
+                    return prev.endDate ? { ...prev, endDate: "" } : prev;
+                }
+
+                const startDateIso = normalizeCompactDateForSubmit(startDate);
+                const computedEndDateIso = calcEndDateBusinessDays(startDateIso, duration);
+                const computedEndDate = normalizeDateForCompactState(computedEndDateIso);
+
+                return prev.endDate === computedEndDate ? prev : {
+                    ...prev,
+                    endDate: computedEndDate,
+                };
+            });
+        });
+    }, [formData.duration, formData.startDate]);
+
+    // Reset duration when type changes
+    const handleTypeChange = (newType: string) => {
+        setFormData(prev => ({
+            ...prev,
+            type: newType,
+            duration: null, // Reset duration when type changes
+            // Only reset prices if not manually edited
+            ...(pricesManuallyEdited ? {} : {
+                fullPrice: "",
+                grant: "",
+                actualPrice: "",
+            }),
+        }));
+    };
+
+    // Reset form when dialog opens/closes or client changes
+    useEffect(() => {
+        if (open) {
+            let nextFormData: ClientFormData | null = null;
+            let nextPricesManuallyEdited = false;
+
+            if (client) {
+                nextFormData = {
+                    name: client.name,
+                    birthday: client.birthday || "",
+                    dueDate: normalizeDateForCompactState(client.dueDate),
+                    address: client.address || "",
+                    phone: client.phone || "",
+                    primaryEmployeeId: client.primaryEmployee?.id ?? null,
+                    secondaryEmployeeId: client.secondaryEmployee?.id ?? null,
+                    type: client.type || "",
+                    duration: client.duration,
+                    fullPrice: client.fullPrice || "",
+                    grant: client.grant || "",
+                    actualPrice: client.actualPrice || "",
+                    startDate: normalizeDateForCompactState(client.startDate),
+                    endDate: normalizeDateForCompactState(client.endDate),
+                    careCenter: client.careCenter,
+                    voucherClient: client.voucherClient,
+                    breastPump: client.breastPump,
+                    serviceStatus: client.serviceStatus || "waiting",
+                };
+                nextPricesManuallyEdited = Boolean(client.fullPrice || client.grant || client.actualPrice);
+            }
+
+            if (!nextFormData) {
+                nextFormData = {
+                    name: prefillName || "",
+                    birthday: "",
+                    dueDate: "",
+                    address: "",
+                    phone: "",
+                    primaryEmployeeId: null,
+                    secondaryEmployeeId: null,
+                    type: "",
+                    duration: null,
+                    fullPrice: "",
+                    grant: "",
+                    actualPrice: "",
+                    startDate: "",
+                    endDate: "",
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                    serviceStatus: "waiting",
+                };
+                clearPrefillName();
+            }
+
+            nextFormData = {
+                ...nextFormData,
+                dueDate: normalizeDateForCompactState(nextFormData.dueDate),
+                startDate: normalizeDateForCompactState(nextFormData.startDate),
+                endDate: normalizeDateForCompactState(nextFormData.endDate),
+            };
+
+            queueMicrotask(() => {
+                setFormData(nextFormData);
+                setPricesManuallyEdited(nextPricesManuallyEdited);
+                setError(null);
+            });
+        }
+    }, [clearPrefillName, client, open, prefillName]);
+
+    const handleChange = (field: keyof CreateClientDto, value: unknown) => {
+        setFormData(prev => ({ ...prev, [field]: value }));
+    };
+
+    const openEmployeeDialog = (target: "primary" | "secondary") => {
+        setEmployeeDialogTarget(target);
+        setIsEmployeeDialogOpen(true);
+    };
+
+    const handleEmployeeDialogClose = () => {
+        setIsEmployeeDialogOpen(false);
+        setEmployeeDialogTarget(null);
+    };
+
+    const handleEmployeeCreated = (newEmployee: Employee) => {
+        setFormData(prev => {
+            if (employeeDialogTarget === "primary") {
+                return { ...prev, primaryEmployeeId: newEmployee.id };
+            }
+            if (employeeDialogTarget === "secondary") {
+                return { ...prev, secondaryEmployeeId: newEmployee.id };
+            }
+            return prev;
+        });
+    };
+
+    // Handle manual price changes
+    const handlePriceChange = (field: "fullPrice" | "grant" | "actualPrice", value: string) => {
+        setPricesManuallyEdited(true);
+        handleChange(field, value);
+    };
+
+    const scrollToTop = () => {
+        // Scroll the DialogContent (parent of our content div) to top
+        contentRef.current?.parentElement?.scrollTo({ top: 0, behavior: "smooth" });
+    };
+
+    const setErrorAndScroll = (errorMessage: string) => {
+        setError(errorMessage);
+        // Use setTimeout to ensure the Alert is rendered before scrolling
+        setTimeout(scrollToTop, 0);
+    };
+
+    const handleStepChange = (nextStep: number) => {
+        setError(null);
+        setActiveStep(nextStep);
+        setTimeout(scrollToTop, 0);
+    };
+
+    const handleSubmit = async () => {
+        setError(null);
+
+        // Validation - All fields required except secondary employee
+        if (!formData.name.trim()) {
+            setErrorAndScroll(t(locale, "clients.form.error-name-required"));
+            return;
+        }
+        if (!formData.birthday?.trim()) {
+            setErrorAndScroll(t(locale, "clients.form.error-birthday-required"));
+            return;
+        }
+        if (!formData.dueDate?.trim()) {
+            setErrorAndScroll(t(locale, "clients.form.error-due-date-required"));
+            return;
+        }
+        if (!isValidCompactDateInput(formData.dueDate)) {
+            setErrorAndScroll(t(locale, "clients.form.error-due-date-invalid"));
+            return;
+        }
+        if (!formData.address?.trim()) {
+            setErrorAndScroll(t(locale, "clients.form.error-address-required"));
+            return;
+        }
+        if (phoneDigits.length !== 11) {
+            setErrorAndScroll(t(locale, "clients.form.error-phone-required"));
+            return;
+        }
+        if (!isUsingOriginalPhone) {
+            if (isCheckingPhoneDuplicate) {
+                setErrorAndScroll(getPhoneDuplicateCheckPendingMessage(locale));
+                return;
+            }
+            if (hasPhoneDuplicateCheckFailed) {
+                setErrorAndScroll(getPhoneDuplicateCheckFailedMessage(locale));
+                return;
+            }
+            if (lastCheckedPhoneDigits !== phoneDigits) {
+                setErrorAndScroll(getPhoneDuplicateCheckPendingMessage(locale));
+                return;
+            }
+            if (isPhoneDuplicate) {
+                setErrorAndScroll(t(locale, "clients.form.error-phone-duplicate"));
+                return;
+            }
+        }
+        // Check for null/undefined specifically, as 0 can be a valid ID
+        // In edit mode, skip this validation if employee hasn't been selected
+        // (the backend will preserve the existing schedule)
+        if (!formData.type?.trim()) {
+            setErrorAndScroll(t(locale, "clients.form.error-type-required"));
+            return;
+        }
+        if (!formData.duration) {
+            setErrorAndScroll(t(locale, "clients.form.error-duration-required"));
+            return;
+        }
+        if (!formData.fullPrice?.trim()) {
+            setErrorAndScroll(t(locale, "clients.form.error-price-required"));
+            return;
+        }
+        if (!formData.startDate?.trim()) {
+            setErrorAndScroll(t(locale, "clients.form.error-start-date-required"));
+            return;
+        }
+        if (!isValidCompactDateInput(formData.startDate)) {
+            setErrorAndScroll(t(locale, "clients.form.error-start-date-required"));
+            return;
+        }
+        if (!formData.endDate?.trim()) {
+            setErrorAndScroll(t(locale, "clients.form.error-end-date-required"));
+            return;
+        }
+        if (!isValidCompactDateInput(formData.endDate)) {
+            setErrorAndScroll(t(locale, "clients.form.error-end-date-required"));
+            return;
+        }
+
+        try {
+            const normalizedDueDate = normalizeCompactDateForSubmit(formData.dueDate);
+            const normalizedStartDate = normalizeCompactDateForSubmit(formData.startDate);
+            const normalizedEndDate = normalizeCompactDateForSubmit(formData.endDate);
+
+            if (isEditMode && client) {
+                // Build update DTO, excluding null employee IDs to avoid validation errors
+                // (backend @IsOptional only skips undefined, not null)
+                const updateDto: UpdateClientDto = {
+                    name: formData.name,
+                    birthday: formData.birthday,
+                    dueDate: normalizedDueDate || null,
+                    address: formData.address,
+                    phone: formData.phone,
+                    // Only include employee IDs if explicitly selected (not null)
+                    ...(formData.primaryEmployeeId !== null && { primaryEmployeeId: formData.primaryEmployeeId }),
+                    ...(formData.secondaryEmployeeId !== null && { secondaryEmployeeId: formData.secondaryEmployeeId }),
+                    type: formData.type,
+                    duration: formData.duration || null,
+                    fullPrice: formData.fullPrice,
+                    grant: formData.grant,
+                    actualPrice: formData.actualPrice,
+                    startDate: normalizedStartDate || null,
+                    endDate: normalizedEndDate || null,
+                    careCenter: formData.careCenter,
+                    voucherClient: formData.voucherClient,
+                    breastPump: formData.breastPump,
+                    serviceStatus: formData.serviceStatus,
+                };
+                const updatedClient = await updateClient.mutateAsync({ id: client.id, dto: updateDto });
+                onSuccess?.(updatedClient);
+            } else {
+                const createDto: CreateClientDto = {
+                    ...formData,
+                    dueDate: normalizedDueDate,
+                    duration: formData.duration || null,
+                    startDate: normalizedStartDate || null,
+                    endDate: normalizedEndDate || null,
+                };
+                const newClient = await createClient.mutateAsync(createDto);
+                onSuccess?.(newClient);
+            }
+            onClose();
+        } catch (error: unknown) {
+            console.error("Failed to save client:", error);
+            setErrorAndScroll(getErrorMessage(error, locale, "clients.form.error-save-failed"));
+        }
+    };
+
+    const isSubmitting = createClient.isPending || updateClient.isPending;
+
+    const isBasicStepValid = Boolean(
+        formData.name.trim() &&
+        formData.birthday?.trim() &&
+        isValidCompactDateInput(formData.dueDate ?? "") &&
+        formData.address?.trim() &&
+        isPhoneCheckReady
+    );
+    const isEmployeeStepValid = true;
+    const isVoucherStepValid = Boolean(
+        formData.type?.trim() &&
+        formData.duration &&
+        formData.fullPrice?.trim()
+    );
+    const isContractStepValid = Boolean(
+        isValidCompactDateInput(formData.startDate ?? "") &&
+        isValidCompactDateInput(formData.endDate ?? "")
+    );
+    const stepValidation = [
+        isBasicStepValid,
+        isEmployeeStepValid,
+        isVoucherStepValid,
+        isContractStepValid,
+    ] as const;
+    const isCurrentStepValid = stepValidation[activeStep] ?? true;
+    const isFormComplete = isBasicStepValid && isVoucherStepValid && isContractStepValid;
+    const requiredFieldProgressText = `필수 항목 10개 중 ${
+        [
+            Boolean(formData.name.trim()),
+            isValidCompactDateInput(formData.birthday ?? ""),
+            isValidCompactDateInput(formData.dueDate ?? ""),
+            Boolean(formData.address?.trim()),
+            Boolean(formData.phone?.trim()),
+            Boolean(formData.type?.trim()),
+            Boolean(formData.duration),
+            Boolean(formData.fullPrice?.trim()),
+            isValidCompactDateInput(formData.startDate ?? ""),
+            isValidCompactDateInput(formData.endDate ?? ""),
+        ].filter(Boolean).length
+    }개 입력됨`;
+
+    const handleDialogClose = () => {
+        if (searchParams.get("openClientForm") === "1") {
+            router.replace("/clients");
+        }
+
+        onClose();
+    };
+
+    const formTitle = isEditMode
+        ? t(locale, "clients.form.edit-title")
+        : t(locale, "clients.form.add-title");
+    const dialogFormActions = (
+        <div className="ml-auto flex w-full flex-col-reverse gap-2 sm:w-[300px] sm:flex-row sm:justify-end">
+            <Button
+                variant="neutral"
+                size="sm"
+                onClick={handleDialogClose}
+                disabled={isSubmitting}
+                data-component="clients-form-dialog-cancel"
+                className="w-full sm:flex-1"
+            >
+                {t(locale, "common.cancel")}
+            </Button>
+            <Button
+                variant="positive"
+                size="sm"
+                onClick={handleSubmit}
+                disabled={isSubmitting || isPhoneCheckBlockingSubmit}
+                data-component="clients-form-dialog-submit"
+                className="w-full sm:flex-1"
+            >
+                {isSubmitting ? (
+                    <Spinner className="h-4 w-4" />
+                ) : isEditMode ? (
+                    t(locale, "common.save")
+                ) : (
+                    t(locale, "common.create")
+                )}
+            </Button>
+        </div>
+    );
+    const panelFormActions = (
+        <div className="flex w-full flex-wrap items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))]">
+            <span className={DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME}>{requiredFieldProgressText}</span>
+            <div className={DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME}>
+                {activeStep === 0 && (
+                    <Button
+                        variant="neutral"
+                        size="sm"
+                        onClick={handleDialogClose}
+                        disabled={isSubmitting}
+                        className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
+                    >
+                        {t(locale, "common.cancel")}
+                    </Button>
+                )}
+                {activeStep > 0 && (
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleStepChange(activeStep - 1)}
+                        disabled={isSubmitting}
+                        data-component="clients-form-panel-prev"
+                        className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
+                    >
+                        이전
+                    </Button>
+                )}
+                {activeStep < CLIENT_FORM_LAST_STEP_INDEX ? (
+                    <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => handleStepChange(activeStep + 1)}
+                        disabled={!isCurrentStepValid || isSubmitting}
+                        data-component="clients-form-panel-next"
+                        className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
+                    >
+                        다음
+                    </Button>
+                ) : (
+                    <Button
+                        type="button"
+                        size="sm"
+                        onClick={handleSubmit}
+                        disabled={isSubmitting || !isFormComplete}
+                        data-component="clients-form-panel-submit"
+                        className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
+                    >
+                        {isSubmitting ? (
+                            <Spinner className="h-4 w-4" />
+                        ) : isEditMode ? (
+                            t(locale, "common.save")
+                        ) : (
+                            t(locale, "common.create")
+                        )}
+                    </Button>
+                )}
+            </div>
+        </div>
+    );
+
+    const basicInfoSection = (
+        <ClientDialogSection
+            dataComponent="clients-form-dialog-section-basic"
+            title={t(locale, "clients.form.section-basic")}
+            description="고객의 프로필과 연락처를 먼저 입력해 주세요."
+        >
+            <FormGrid data-component="clients-form-dialog-basic-grid">
+                <FormField
+                    data-component="clients-form-dialog-field-name"
+                    htmlFor="name"
+                    label={t(locale, "clients.form.name")}
+                    required
+                >
+                    <FormTextInput
+                        id="name"
+                        placeholder="홍길동"
+                        value={formData.name}
+                        onChange={(e) => handleChange("name", e.target.value)}
+                    />
+                </FormField>
+
+                <FormField
+                    data-component="clients-form-dialog-field-birthday"
+                    htmlFor="birthday"
+                    label={t(locale, "clients.form.birthday")}
+                >
+                    <FormTextInput
+                        id="birthday"
+                        placeholder="YYMMDD"
+                        value={formData.birthday ?? ""}
+                        onChange={(e) => handleChange("birthday", e.target.value)}
+                        maxLength={6}
+                    />
+                    <FormHelperText data-component="clients-form-dialog-field-birthday-helper">
+                        {t(locale, "clients.form.birthday-helper")}
+                    </FormHelperText>
+                </FormField>
+
+                <FormField
+                    data-component="clients-form-dialog-field-due-date"
+                    htmlFor="dueDate"
+                    label={t(locale, "clients.form.due-date")}
+                >
+                    <FormTextInput
+                        id="dueDate"
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="YYMMDD"
+                        value={formData.dueDate || ""}
+                        onChange={(e) => handleChange("dueDate", parseCompactDateInput(e.target.value))}
+                    />
+                </FormField>
+
+                <FormField
+                    data-component="clients-form-dialog-field-phone"
+                    htmlFor="phone"
+                    label={t(locale, "clients.form.phone")}
+                    labelAccessory={phoneInlineMessage ? (
+                        <FormHelperText
+                            id="clients-form-dialog-phone-helper"
+                            data-component="clients-form-dialog-phone-helper"
+                            tone={hasPhoneStatusError ? "error" : "default"}
+                            className={cn("m-0 text-right", isPhoneCheckReady && "text-v3-green")}
+                            aria-live="polite"
+                        >
+                            {phoneInlineMessage}
+                        </FormHelperText>
+                    ) : null}
+                >
+                    <FormTextInput
+                        id="phone"
+                        type="tel"
+                        inputMode="numeric"
+                        placeholder="010-1234-5678"
+                        value={formData.phone ?? ""}
+                        onChange={(e) => {
+                            handleChange("phone", formatPhoneNumber(e.target.value));
+                            setError(null);
+                        }}
+                        maxLength={13}
+                        error={hasPhoneStatusError}
+                        aria-describedby={phoneInlineMessage ? "clients-form-dialog-phone-helper" : undefined}
+                    />
+                </FormField>
+
+                <FormField
+                    data-component="clients-form-dialog-field-address"
+                    htmlFor="address"
+                    label={t(locale, "clients.form.address")}
+                    className="sm:col-span-2"
+                >
+                    <FormTextInput
+                        id="address"
+                        placeholder="상세 주소"
+                        value={formData.address ?? ""}
+                        onChange={(e) => handleChange("address", e.target.value)}
+                    />
+                </FormField>
+            </FormGrid>
+        </ClientDialogSection>
+    );
+
+    const employeeSection = (
+        <ClientDialogSection
+            dataComponent="clients-form-dialog-section-employee"
+            title={t(locale, "clients.form.section-employee")}
+            description="서비스를 담당할 제공인력을 배정해 주세요."
+        >
+            <FormGrid data-component="clients-form-dialog-employee-grid">
+                <EmployeeAutocomplete
+                    value={formData.primaryEmployeeId}
+                    onChange={(id) => handleChange("primaryEmployeeId", id)}
+                    label={t(locale, "clients.form.primary-employee")}
+                    excludeIds={formData.secondaryEmployeeId != null ? [formData.secondaryEmployeeId] : []}
+                    allowManualEntry
+                    onManualEntry={() => {
+                        openEmployeeDialog("primary");
+                    }}
+                />
+                <EmployeeAutocomplete
+                    value={formData.secondaryEmployeeId ?? null}
+                    onChange={(id) => handleChange("secondaryEmployeeId", id)}
+                    label={t(locale, "clients.form.secondary-employee")}
+                    excludeIds={formData.primaryEmployeeId != null ? [formData.primaryEmployeeId] : []}
+                    allowManualEntry
+                    onManualEntry={() => {
+                        openEmployeeDialog("secondary");
+                    }}
+                />
+            </FormGrid>
+        </ClientDialogSection>
+    );
+
+    const voucherInfoSections = (
+        <>
+            <ClientDialogSection
+                dataComponent="clients-form-dialog-section-service"
+                title={t(locale, "clients.form.section-service")}
+                description="바우처 유형과 서비스 기간을 선택해 주세요."
+            >
+                <FormGrid data-component="clients-form-dialog-service-grid">
+                    <FormField
+                        data-component="clients-form-dialog-field-voucher-type"
+                        htmlFor="clients-form-voucher-type"
+                        label={t(locale, "clients.form.voucher-type")}
+                    >
+                        <FormNativeSelect
+                            id="clients-form-voucher-type"
+                            value={formData.type || ""}
+                            options={voucherTypeOptions}
+                            placeholder={t(locale, "clients.form.voucher-type")}
+                            onValueChange={handleTypeChange}
+                            wrapDataComponent="clients-form-dialog-field-voucher-type-select-wrap"
+                            selectDataComponent="clients-form-dialog-field-voucher-type-select"
+                            iconDataComponent="clients-form-dialog-field-voucher-type-select-icon"
+                        />
+                    </FormField>
+
+                    <FormField
+                        data-component="clients-form-dialog-field-duration"
+                        htmlFor="clients-form-duration"
+                        label={t(locale, "clients.form.duration")}
+                    >
+                        <div className="relative">
+                            <FormNativeSelect
+                                id="clients-form-duration"
+                                value={formData.duration?.toString() || ""}
+                                options={durationOptions}
+                                placeholder={t(locale, "clients.form.duration")}
+                                onValueChange={(value) => {
+                                    handleChange("duration", value ? Number(value) : null);
+                                    setPricesManuallyEdited(false);
+                                }}
+                                disabled={!formData.type || isPriceLoading}
+                                wrapDataComponent="clients-form-dialog-field-duration-select-wrap"
+                                selectDataComponent="clients-form-dialog-field-duration-select"
+                                iconDataComponent="clients-form-dialog-field-duration-select-icon"
+                            />
+                            {isPriceLoading && (
+                                <div className="absolute right-10 top-1/2 -translate-y-1/2">
+                                    <Spinner className="h-4 w-4" />
+                                </div>
+                            )}
+                        </div>
+                    </FormField>
+                </FormGrid>
+            </ClientDialogSection>
+
+            <ClientDialogSection
+                dataComponent="clients-form-dialog-section-pricing"
+                title={t(locale, "clients.form.section-pricing")}
+                description="서비스 금액과 지원 금액을 확인하고 조정해 주세요."
+            >
+                <FormGrid data-component="clients-form-dialog-pricing-grid" className="lg:grid-cols-3">
+                    <FormField
+                        data-component="clients-form-dialog-field-full-price"
+                        htmlFor="fullPrice"
+                        label={t(locale, "clients.form.full-price")}
+                    >
+                        <div className="relative">
+                            <FormTextInput
+                                id="fullPrice"
+                                value={arePriceInputsLocked ? "" : formatPrice(formData.fullPrice || "")}
+                                onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
+                                disabled={arePriceInputsLocked}
+                                className="pr-[calc(32px*var(--glint-ui-scale,1))]"
+                            />
+                            <span className="absolute right-[calc(12px*var(--glint-ui-scale,1))] top-1/2 -translate-y-1/2 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">
+                                원
+                            </span>
+                        </div>
+                    </FormField>
+
+                    <FormField
+                        data-component="clients-form-dialog-field-grant"
+                        htmlFor="grant"
+                        label={t(locale, "clients.form.grant")}
+                    >
+                        <div className="relative">
+                            <FormTextInput
+                                id="grant"
+                                value={arePriceInputsLocked ? "" : formatPrice(formData.grant || "")}
+                                onChange={(e) => handlePriceChange("grant", e.target.value.replace(/,/g, ""))}
+                                disabled={arePriceInputsLocked}
+                                className="pr-[calc(32px*var(--glint-ui-scale,1))]"
+                            />
+                            <span className="absolute right-[calc(12px*var(--glint-ui-scale,1))] top-1/2 -translate-y-1/2 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">
+                                원
+                            </span>
+                        </div>
+                    </FormField>
+
+                    <FormField
+                        data-component="clients-form-dialog-field-actual-price"
+                        htmlFor="actualPrice"
+                        label={t(locale, "clients.form.actual-price")}
+                    >
+                        <div className="relative">
+                            <FormTextInput
+                                id="actualPrice"
+                                value={arePriceInputsLocked ? "" : formatPrice(formData.actualPrice || "")}
+                                onChange={(e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, ""))}
+                                disabled={arePriceInputsLocked}
+                                className="pr-[calc(32px*var(--glint-ui-scale,1))]"
+                            />
+                            <span className="absolute right-[calc(12px*var(--glint-ui-scale,1))] top-1/2 -translate-y-1/2 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">
+                                원
+                            </span>
+                        </div>
+                    </FormField>
+                </FormGrid>
+            </ClientDialogSection>
+        </>
+    );
+
+    const contractInfoSections = (
+        <>
+            <ClientDialogSection
+                dataComponent="clients-form-dialog-section-contract"
+                title={t(locale, "clients.form.section-contract")}
+                description="계약 상태와 서비스 일정을 정리해 주세요."
+            >
+                <FormGrid data-component="clients-form-dialog-contract-grid" className="lg:grid-cols-3">
+                    <FormField
+                        data-component="clients-form-dialog-field-contract-status"
+                        htmlFor="clients-form-contract-status"
+                        label={t(locale, "clients.form.contract-status")}
+                    >
+                        <FormNativeSelect
+                            id="clients-form-contract-status"
+                            value={formData.serviceStatus || ""}
+                            options={serviceStatusOptions}
+                            placeholder={t(locale, "clients.form.contract-status")}
+                            onValueChange={(value) => handleChange("serviceStatus", value)}
+                            wrapDataComponent="clients-form-dialog-field-contract-status-select-wrap"
+                            selectDataComponent="clients-form-dialog-field-contract-status-select"
+                            iconDataComponent="clients-form-dialog-field-contract-status-select-icon"
+                        />
+                    </FormField>
+
+                    <FormField
+                        data-component="clients-form-dialog-field-start-date"
+                        htmlFor="startDate"
+                        label={t(locale, "clients.form.start-date")}
+                    >
+                        <FormTextInput
+                            id="startDate"
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={6}
+                            placeholder="YYMMDD"
+                            value={formData.startDate || ""}
+                            onChange={(e) => handleChange("startDate", parseCompactDateInput(e.target.value))}
+                        />
+                    </FormField>
+
+                    <FormField
+                        data-component="clients-form-dialog-field-end-date"
+                        htmlFor="endDate"
+                        label={t(locale, "clients.form.end-date")}
+                    >
+                        <FormTextInput
+                            id="endDate"
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={6}
+                            placeholder="YYMMDD"
+                            value={formData.endDate || ""}
+                            readOnly
+                            aria-readonly="true"
+                        />
+                    </FormField>
+                </FormGrid>
+            </ClientDialogSection>
+
+            <ClientDialogSection
+                dataComponent="clients-form-dialog-section-flags"
+                title={t(locale, "clients.form.section-flags")}
+                description="추가 서비스 옵션을 설정해 주세요."
+            >
+                <div className="grid gap-[calc(12px*var(--glint-ui-scale,1))] lg:grid-cols-3">
+                    <FormSwitchRow
+                        data-component="clients-form-dialog-field-voucher-client"
+                        title={t(locale, "clients.form.voucher-client")}
+                        checked={formData.voucherClient}
+                        onToggle={() => handleChange("voucherClient", !formData.voucherClient)}
+                        buttonAriaLabel={t(locale, "clients.form.voucher-client")}
+                    />
+                    <FormSwitchRow
+                        data-component="clients-form-dialog-field-care-center"
+                        title={t(locale, "clients.form.care-center")}
+                        checked={formData.careCenter === true}
+                        onToggle={() => handleChange("careCenter", !formData.careCenter)}
+                        buttonAriaLabel={t(locale, "clients.form.care-center")}
+                    />
+                    <FormSwitchRow
+                        data-component="clients-form-dialog-field-breast-pump"
+                        title={t(locale, "clients.form.breast-pump")}
+                        checked={formData.breastPump}
+                        onToggle={() => handleChange("breastPump", !formData.breastPump)}
+                        buttonAriaLabel={t(locale, "clients.form.breast-pump")}
+                    />
+                </div>
+            </ClientDialogSection>
+        </>
+    );
+
+    const panelBasicInfoStep = (
+        <>
+            <FormField
+                data-component="clients-form-panel-name-input"
+                htmlFor="name"
+                label={t(locale, "clients.form.name")}
+                required
+            >
+                <FormTextInput
+                    id="name"
+                    placeholder="홍길동"
+                    value={formData.name}
+                    onChange={(event) => handleChange("name", event.target.value)}
+                />
+            </FormField>
+
+            <FormField
+                data-component="clients-form-panel-birthday-input"
+                htmlFor="birthday"
+                label={t(locale, "clients.form.birthday")}
+            >
+                <FormTextInput
+                    id="birthday"
+                    placeholder="YYMMDD"
+                    value={formData.birthday ?? ""}
+                    onChange={(event) => handleChange("birthday", event.target.value)}
+                    maxLength={6}
+                />
+            </FormField>
+
+            <FormField
+                data-component="clients-form-panel-due-date-input"
+                htmlFor="dueDate"
+                label={t(locale, "clients.form.due-date")}
+            >
+                <FormTextInput
+                    id="dueDate"
+                    placeholder="YYMMDD"
+                    inputMode="numeric"
+                    value={formData.dueDate || ""}
+                    onChange={(event) => handleChange("dueDate", parseCompactDateInput(event.target.value))}
+                    maxLength={6}
+                />
+            </FormField>
+
+            <FormField
+                data-component="clients-form-panel-phone-input"
+                htmlFor="phone"
+                label={t(locale, "clients.form.phone")}
+                labelAccessory={phoneInlineMessage ? (
+                    <FormHelperText
+                        id="clients-form-panel-phone-helper"
+                        data-component="clients-form-panel-phone-helper"
+                        tone={hasPhoneStatusError ? "error" : "default"}
+                        className={cn("m-0 text-right", isPhoneCheckReady && "text-v3-green")}
+                        aria-live="polite"
+                    >
+                        {phoneInlineMessage}
+                    </FormHelperText>
+                ) : null}
+            >
+                <FormTextInput
+                    id="phone"
+                    type="tel"
+                    inputMode="numeric"
+                    placeholder="010-1234-5678"
+                    value={formData.phone ?? ""}
+                    onChange={(event) => {
+                        handleChange("phone", formatPhoneNumber(event.target.value));
+                        setError(null);
+                    }}
+                    maxLength={13}
+                    error={hasPhoneStatusError}
+                    aria-describedby={phoneInlineMessage ? "clients-form-panel-phone-helper" : undefined}
+                />
+            </FormField>
+
+            <FormField
+                data-component="clients-form-panel-address-input"
+                htmlFor="address"
+                label={t(locale, "clients.form.address")}
+                className={PANEL_FULL_FIELD_CLASS_NAME}
+            >
+                <FormTextInput
+                    id="address"
+                    placeholder="상세 주소"
+                    value={formData.address ?? ""}
+                    onChange={(event) => handleChange("address", event.target.value)}
+                />
+            </FormField>
+        </>
+    );
+
+    const panelEmployeeStep = (
+        <>
+            <EmployeeAutocomplete
+                value={formData.primaryEmployeeId}
+                onChange={(id) => handleChange("primaryEmployeeId", id)}
+                label={t(locale, "clients.form.primary-employee")}
+                excludeIds={formData.secondaryEmployeeId != null ? [formData.secondaryEmployeeId] : []}
+                allowManualEntry
+                onManualEntry={() => {
+                    openEmployeeDialog("primary");
+                }}
+            />
+            <EmployeeAutocomplete
+                value={formData.secondaryEmployeeId ?? null}
+                onChange={(id) => handleChange("secondaryEmployeeId", id)}
+                label={t(locale, "clients.form.secondary-employee")}
+                excludeIds={formData.primaryEmployeeId != null ? [formData.primaryEmployeeId] : []}
+                allowManualEntry
+                onManualEntry={() => {
+                    openEmployeeDialog("secondary");
+                }}
+            />
+        </>
+    );
+
+    const panelVoucherInfoStep = (
+        <>
+            <FormField
+                data-component="clients-form-panel-voucher-type-field"
+                htmlFor="clients-form-panel-voucher-type"
+                label={t(locale, "clients.form.voucher-type")}
+            >
+                <FormNativeSelect
+                    id="clients-form-panel-voucher-type"
+                    value={formData.type || ""}
+                    options={voucherTypeOptions}
+                    placeholder={t(locale, "clients.form.voucher-type")}
+                    onValueChange={handleTypeChange}
+                    wrapDataComponent="clients-form-panel-voucher-type-select-wrap"
+                    selectDataComponent="clients-form-panel-voucher-type-select"
+                    iconDataComponent="clients-form-panel-voucher-type-select-icon"
+                />
+            </FormField>
+
+            <FormField
+                data-component="clients-form-panel-duration-field"
+                htmlFor="clients-form-panel-duration"
+                label={t(locale, "clients.form.duration")}
+            >
+                <div className="relative">
+                    <FormNativeSelect
+                        id="clients-form-panel-duration"
+                        value={formData.duration?.toString() || ""}
+                        options={durationOptions}
+                        placeholder={t(locale, "clients.form.duration")}
+                        onValueChange={(value) => {
+                            handleChange("duration", value ? Number(value) : null);
+                            setPricesManuallyEdited(false);
+                        }}
+                        disabled={!formData.type || isPriceLoading}
+                        wrapDataComponent="clients-form-panel-duration-select-wrap"
+                        selectDataComponent="clients-form-panel-duration-select"
+                        iconDataComponent="clients-form-panel-duration-select-icon"
+                    />
+                    {isPriceLoading && (
+                        <div className="absolute right-10 top-1/2 -translate-y-1/2">
+                            <Spinner className="h-4 w-4" />
+                        </div>
+                    )}
+                </div>
+            </FormField>
+
+            <FormField
+                data-component="clients-form-panel-full-price-input"
+                htmlFor="fullPrice"
+                label={t(locale, "clients.form.full-price")}
+            >
+                <FormTextInput
+                    id="fullPrice"
+                    value={arePriceInputsLocked ? "" : formatPrice(formData.fullPrice || "")}
+                    onChange={(event) => handlePriceChange("fullPrice", event.target.value.replace(/,/g, ""))}
+                    disabled={arePriceInputsLocked}
+                />
+            </FormField>
+
+            <FormField
+                data-component="clients-form-panel-grant-input"
+                htmlFor="grant"
+                label={t(locale, "clients.form.grant")}
+            >
+                <FormTextInput
+                    id="grant"
+                    value={arePriceInputsLocked ? "" : formatPrice(formData.grant || "")}
+                    onChange={(event) => handlePriceChange("grant", event.target.value.replace(/,/g, ""))}
+                    disabled={arePriceInputsLocked}
+                />
+            </FormField>
+
+            <FormField
+                data-component="clients-form-panel-actual-price-input"
+                htmlFor="actualPrice"
+                label={t(locale, "clients.form.actual-price")}
+            >
+                <FormTextInput
+                    id="actualPrice"
+                    value={arePriceInputsLocked ? "" : formatPrice(formData.actualPrice || "")}
+                    onChange={(event) => handlePriceChange("actualPrice", event.target.value.replace(/,/g, ""))}
+                    disabled={arePriceInputsLocked}
+                />
+            </FormField>
+        </>
+    );
+
+    const panelContractInfoStep = (
+        <>
+            <FormField
+                data-component="clients-form-panel-contract-status-field"
+                htmlFor="clients-form-panel-contract-status"
+                label={t(locale, "clients.form.contract-status")}
+            >
+                <FormNativeSelect
+                    id="clients-form-panel-contract-status"
+                    value={formData.serviceStatus || ""}
+                    options={serviceStatusOptions}
+                    placeholder={t(locale, "clients.form.contract-status")}
+                    onValueChange={(value) => handleChange("serviceStatus", value)}
+                    wrapDataComponent="clients-form-panel-contract-status-select-wrap"
+                    selectDataComponent="clients-form-panel-contract-status-select"
+                    iconDataComponent="clients-form-panel-contract-status-select-icon"
+                />
+            </FormField>
+
+            <FormField
+                data-component="clients-form-panel-start-date-input"
+                htmlFor="startDate"
+                label={t(locale, "clients.form.start-date")}
+            >
+                <FormTextInput
+                    id="startDate"
+                    placeholder="YYMMDD"
+                    inputMode="numeric"
+                    value={formData.startDate || ""}
+                    onChange={(event) => handleChange("startDate", parseCompactDateInput(event.target.value))}
+                    maxLength={6}
+                />
+            </FormField>
+
+            <FormField
+                data-component="clients-form-panel-end-date-input"
+                htmlFor="endDate"
+                label={t(locale, "clients.form.end-date")}
+            >
+                <FormTextInput
+                    id="endDate"
+                    placeholder="YYMMDD"
+                    inputMode="numeric"
+                    value={formData.endDate || ""}
+                    maxLength={6}
+                    readOnly
+                    aria-readonly="true"
+                />
+            </FormField>
+
+            <div className={cn(PANEL_FULL_FIELD_CLASS_NAME, "grid gap-[calc(12px*var(--glint-ui-scale,1))] lg:grid-cols-3")}>
+                <FormSwitchRow
+                    data-component="clients-form-panel-voucher-client-field"
+                    title={t(locale, "clients.form.voucher-client")}
+                    checked={formData.voucherClient}
+                    onToggle={() => handleChange("voucherClient", !formData.voucherClient)}
+                    buttonAriaLabel={t(locale, "clients.form.voucher-client")}
+                />
+                <FormSwitchRow
+                    data-component="clients-form-panel-care-center-field"
+                    title={t(locale, "clients.form.care-center")}
+                    checked={formData.careCenter === true}
+                    onToggle={() => handleChange("careCenter", !formData.careCenter)}
+                    buttonAriaLabel={t(locale, "clients.form.care-center")}
+                />
+                <FormSwitchRow
+                    data-component="clients-form-panel-breast-pump-field"
+                    title={t(locale, "clients.form.breast-pump")}
+                    checked={formData.breastPump}
+                    onToggle={() => handleChange("breastPump", !formData.breastPump)}
+                    buttonAriaLabel={t(locale, "clients.form.breast-pump")}
+                />
+            </div>
+        </>
+    );
+
+    const dialogFormSteps = [
+        basicInfoSection,
+        employeeSection,
+        voucherInfoSections,
+        contractInfoSections,
+    ] as const;
+    const panelFormSteps = [
+        panelBasicInfoStep,
+        panelEmployeeStep,
+        panelVoucherInfoStep,
+        panelContractInfoStep,
+    ] as const;
+
+    const formError = error ? (
+        <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+        </Alert>
+    ) : null;
+
+    const formContent = surface === "panel" ? (
+        <SteppedWizardPanelContent
+            ref={contentRef}
+            dataComponent="clients-form-panel-content"
+            stepContentClassName={PANEL_STEP_CONTENT_CLASS_NAME}
+            feedback={formError}
+        >
+            {panelFormSteps[activeStep]}
+        </SteppedWizardPanelContent>
+    ) : (
+        <div
+            ref={contentRef}
+            data-component="clients-form-dialog-content"
+            className="space-y-5"
+        >
+            {formError}
+            {dialogFormSteps}
+        </div>
+    );
+
+    const panelFooter = panelFormActions;
+    const employeeRegistrationDialog = (
+        <EmployeeFormDialog
+            open={isEmployeeDialogOpen}
+            onClose={handleEmployeeDialogClose}
+            onSuccess={handleEmployeeCreated}
+        />
+    );
+
+    if (surface === "panel" && !open) {
+        return null;
+    }
+
+    if (surface === "panel") {
+        const panelLayout = renderLayout ? renderLayout({ content: formContent, footer: panelFooter }) : (
+            <>
+                {formContent}
+                <footer data-component="detail-panel-footer" className={DETAIL_PANEL_FOOTER_CLASS_NAME}>
+                    {panelFooter}
+                </footer>
+            </>
+        );
+
+        return (
+            <>
+                {panelLayout}
+                {employeeRegistrationDialog}
+            </>
+        );
+    }
+
+    return (
+        <>
+            <Dialog data-component="clients-form-dialog" open={open} onOpenChange={(isOpen) => !isOpen && handleDialogClose()}>
+                <FormDialogShell
+                    dataComponent="clients-form-dialog"
+                    title={formTitle}
+                    contentClassName="space-y-5"
+                    footer={dialogFormActions}
+                >
+                    {formContent}
+                </FormDialogShell>
+            </Dialog>
+            {employeeRegistrationDialog}
+        </>
+    );
+}

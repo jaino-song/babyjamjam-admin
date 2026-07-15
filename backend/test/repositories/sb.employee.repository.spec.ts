@@ -10,19 +10,24 @@ describe("SbEmployeeRepository", () => {
     const createMockPrismaEmployee = () => ({
         findUnique: jest.fn(),
         findMany: jest.fn(),
+        findFirst: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
+        updateMany: jest.fn(),
         delete: jest.fn(),
+        deleteMany: jest.fn(),
     });
 
     const createEmployeeRow = (overrides = {}) => ({
         id: 1,
         name: "Alice",
-        work_area: ["Incheon"],
+        workArea: ["Incheon"],
         phone: "010-1234-5678",
-        grade: "A",
-        open_to_next_work: true,
-        company_registered_date: new Date("2024-01-01T00:00:00.000Z"),
+        grade: "프리미엄",
+        openToNextWork: true,
+        companyRegisteredDate: new Date("2024-01-01T00:00:00.000Z"),
+        primaryEmployeeSchedules: [],
+        secondaryEmployeeSchedules: [],
         ...overrides,
     });
 
@@ -42,11 +47,13 @@ describe("SbEmployeeRepository", () => {
             overrides.name ?? "Test Employee",
             overrides.workArea ?? ["Seoul"],
             overrides.phone ?? "010-0000-0000",
-            overrides.grade ?? "B",
+            overrides.grade ?? "베스트",
             overrides.openToNextWork ?? false,
             overrides.registeredDate ?? new Date("2024-02-01T00:00:00.000Z"),
         );
     };
+
+    const branchId = "org-1";
 
     let employeeModel: ReturnType<typeof createMockPrismaEmployee>;
     let prisma: PrismaService;
@@ -70,37 +77,78 @@ describe("SbEmployeeRepository", () => {
             it("should return the mapped EmployeeEntity", async () => {
                 // Arrange
                 const row = createEmployeeRow();
-                employeeModel.findUnique.mockResolvedValue(row);
+                employeeModel.findFirst.mockResolvedValue(row);
 
                 // Act
-                const result = await repository.findById(1);
+                const result = await repository.findById(branchId, 1);
 
                 // Assert
-                expect(employeeModel.findUnique).toHaveBeenCalledWith({ where: { id: 1 } });
+                expect(employeeModel.findFirst).toHaveBeenCalledWith({
+                    where: { id: 1, branchId: branchId },
+                });
                 expect(result).toBeInstanceOf(EmployeeEntity);
                 expect(result).toMatchObject({
                     id: 1,
                     name: "Alice",
                     workArea: ["Incheon"],
                     phone: "010-1234-5678",
-                    grade: "A",
+                    grade: "프리미엄",
                     openToNextWork: true,
                 });
             });
+
         });
 
         describe("given no employee exists with the specified id", () => {
             it("should return null", async () => {
                 // Arrange
-                employeeModel.findUnique.mockResolvedValue(null);
+                employeeModel.findFirst.mockResolvedValue(null);
 
                 // Act
-                const result = await repository.findById(999);
+                const result = await repository.findById(branchId, 999);
 
                 // Assert
-                expect(employeeModel.findUnique).toHaveBeenCalledWith({ where: { id: 999 } });
+                expect(employeeModel.findFirst).toHaveBeenCalledWith({
+                    where: { id: 999, branchId: branchId },
+                });
                 expect(result).toBeNull();
             });
+        });
+    });
+
+    // ============================================
+    // findByPhone
+    // ============================================
+    describe("findByPhone", () => {
+        it("should return the employee whose normalized phone matches", async () => {
+            const row = createEmployeeRow({ id: 3, phone: "010-1234-5678" });
+            employeeModel.findMany.mockResolvedValue([
+                createEmployeeRow({ id: 2, phone: "010-0000-0000" }),
+                { id: row.id, phone: row.phone },
+            ]);
+            employeeModel.findFirst.mockResolvedValue(row);
+
+            const result = await repository.findByPhone(branchId, "01012345678");
+
+            expect(employeeModel.findMany).toHaveBeenCalledWith({
+                where: { branchId },
+                select: { id: true, phone: true },
+            });
+            expect(employeeModel.findFirst).toHaveBeenCalledWith({
+                where: { id: 3, branchId },
+            });
+            expect(result).toMatchObject({ id: 3, phone: "010-1234-5678" });
+        });
+
+        it("should return null when no employee phone matches", async () => {
+            employeeModel.findMany.mockResolvedValue([
+                { id: 2, phone: "010-0000-0000" },
+            ]);
+
+            const result = await repository.findByPhone(branchId, "01012345678");
+
+            expect(result).toBeNull();
+            expect(employeeModel.findFirst).not.toHaveBeenCalled();
         });
     });
 
@@ -109,22 +157,30 @@ describe("SbEmployeeRepository", () => {
     // ============================================
     describe("findAll", () => {
         describe("given employees exist in the database", () => {
-            it("should return all employees as EmployeeEntity array", async () => {
+            it("should return all employees as EmployeeEntity array with status", async () => {
                 // Arrange
                 const rows = [
-                    createEmployeeRow({ id: 1, name: "Alice" }),
-                    createEmployeeRow({ id: 2, name: "Bob" }),
+                    createEmployeeRow({ id: 1, name: "Alice", openToNextWork: true }),
+                    createEmployeeRow({ id: 2, name: "Bob", openToNextWork: true }),
                 ];
                 employeeModel.findMany.mockResolvedValue(rows);
 
                 // Act
-                const result = await repository.findAll();
+                const result = await repository.findAll(branchId);
 
                 // Assert
-                expect(employeeModel.findMany).toHaveBeenCalledWith();
+                expect(employeeModel.findMany).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        include: expect.objectContaining({
+                            primaryEmployeeSchedules: expect.any(Object),
+                            secondaryEmployeeSchedules: expect.any(Object),
+                        }),
+                        where: { branchId: branchId },
+                    }),
+                );
                 expect(result).toHaveLength(2);
-                expect(result[0]).toMatchObject({ id: 1, name: "Alice" });
-                expect(result[1]).toMatchObject({ id: 2, name: "Bob" });
+                expect(result[0]).toMatchObject({ id: 1, name: "Alice", status: "available" });
+                expect(result[1]).toMatchObject({ id: 2, name: "Bob", status: "available" });
             });
         });
 
@@ -134,10 +190,75 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([]);
 
                 // Act
-                const result = await repository.findAll();
+                const result = await repository.findAll(branchId);
 
                 // Assert
                 expect(result).toEqual([]);
+            });
+        });
+
+        describe("status computation", () => {
+            it("should return status = 'unavailable' when openToNextWork is false", async () => {
+                // Arrange
+                const row = createEmployeeRow({
+                    openToNextWork: false,
+                    primaryEmployeeSchedules: [{ id: 1 }],
+                });
+                employeeModel.findMany.mockResolvedValue([row]);
+
+                // Act
+                const result = await repository.findAll(branchId);
+
+                // Assert
+                expect(result).toHaveLength(1);
+                expect(result[0]?.status).toBe("unavailable");
+            });
+
+            it("should return status = 'working' when has active primary schedule", async () => {
+                // Arrange
+                const row = createEmployeeRow({
+                    openToNextWork: true,
+                    primaryEmployeeSchedules: [{ id: 1 }],
+                });
+                employeeModel.findMany.mockResolvedValue([row]);
+
+                // Act
+                const result = await repository.findAll(branchId);
+
+                // Assert
+                expect(result).toHaveLength(1);
+                expect(result[0]?.status).toBe("working");
+            });
+
+            it("should return status = 'working' when has active secondary schedule", async () => {
+                // Arrange
+                const row = createEmployeeRow({
+                    openToNextWork: true,
+                    secondaryEmployeeSchedules: [{ id: 1 }],
+                });
+                employeeModel.findMany.mockResolvedValue([row]);
+
+                // Act
+                const result = await repository.findAll(branchId);
+
+                // Assert
+                expect(result).toHaveLength(1);
+                expect(result[0]?.status).toBe("working");
+            });
+
+            it("should return status = 'available' when openToNextWork is true and no schedules", async () => {
+                // Arrange
+                const row = createEmployeeRow({
+                    openToNextWork: true,
+                });
+                employeeModel.findMany.mockResolvedValue([row]);
+
+                // Act
+                const result = await repository.findAll(branchId);
+
+                // Assert
+                expect(result).toHaveLength(1);
+                expect(result[0]?.status).toBe("available");
             });
         });
     });
@@ -153,29 +274,56 @@ describe("SbEmployeeRepository", () => {
                 const createdRow = createEmployeeRow({
                     id: 5,
                     name: "Test Employee",
-                    work_area: ["Seoul"],
+                    workArea: ["Seoul"],
                     phone: "010-0000-0000",
-                    grade: "B",
-                    open_to_next_work: false,
+                    grade: "베스트",
+                    openToNextWork: false,
                 });
+                // Mock findFirst for ID generation (returns last employee with id: 4)
+                employeeModel.findFirst.mockResolvedValue({ id: 4 });
                 employeeModel.create.mockResolvedValue(createdRow);
 
                 // Act
-                const result = await repository.create(entity);
+                const result = await repository.create(branchId, entity);
 
                 // Assert
+                expect(employeeModel.findFirst).toHaveBeenCalledWith({
+                    orderBy: { id: "desc" },
+                    select: { id: true },
+                });
                 expect(employeeModel.create).toHaveBeenCalledWith({
                     data: {
-                        id: 0,
+                        id: 5, // Next ID after 4
                         name: "Test Employee",
-                        work_area: ["Seoul"],
+                        workArea: ["Seoul"],
                         phone: "010-0000-0000",
-                        grade: "B",
-                        open_to_next_work: false,
-                        company_registered_date: new Date("2024-02-01T00:00:00.000Z"),
+                        grade: "베스트",
+                        openToNextWork: false,
+                        companyRegisteredDate: new Date("2024-02-01T00:00:00.000Z"),
+                        birthday: null,
+                        branchId: branchId,
                     },
                 });
                 expect(result).toMatchObject({ id: 5, name: "Test Employee" });
+            });
+        });
+
+        describe("given no employees exist yet", () => {
+            it("should start with id 1", async () => {
+                // Arrange
+                const entity = createEmployeeEntity();
+                const createdRow = createEmployeeRow({ id: 1, name: "Test Employee" });
+                employeeModel.findFirst.mockResolvedValue(null); // No employees
+                employeeModel.create.mockResolvedValue(createdRow);
+
+                // Act
+                const result = await repository.create(branchId, entity);
+
+                // Assert
+                expect(employeeModel.create).toHaveBeenCalledWith({
+                    data: expect.objectContaining({ id: 1 }),
+                });
+                expect(result.id).toBe(1);
             });
         });
     });
@@ -192,31 +340,33 @@ describe("SbEmployeeRepository", () => {
                     "Charlie",
                     ["Busan"],
                     "010-2222-0000",
-                    "C",
+                    "스탠다드",
                     true,
                     new Date("2023-12-31T00:00:00.000Z"),
                 );
                 const updatedRow = createEmployeeRow({
                     id: 7,
                     name: "Charlie",
-                    work_area: ["Busan"],
+                    workArea: ["Busan"],
                     phone: "010-2222-0000",
-                    grade: "C",
+                    grade: "스탠다드",
                 });
-                employeeModel.update.mockResolvedValue(updatedRow);
+                employeeModel.updateMany.mockResolvedValue({ count: 1 });
+                employeeModel.findFirst.mockResolvedValue(updatedRow);
 
                 // Act
-                const result = await repository.update(entity);
+                const result = await repository.update(branchId, entity);
 
                 // Assert
-                expect(employeeModel.update).toHaveBeenCalledWith({
-                    where: { id: 7 },
+                expect(employeeModel.updateMany).toHaveBeenCalledWith({
+                    where: { id: 7, branchId: branchId },
                     data: {
                         name: "Charlie",
-                        work_area: ["Busan"],
+                        workArea: ["Busan"],
                         phone: "010-2222-0000",
-                        grade: "C",
-                        open_to_next_work: true,
+                        grade: "스탠다드",
+                        openToNextWork: true,
+                        birthday: null,
                     },
                 });
                 expect(result).toMatchObject({ id: 7, workArea: ["Busan"] });
@@ -231,13 +381,15 @@ describe("SbEmployeeRepository", () => {
         describe("given a valid employee id", () => {
             it("should delete the employee", async () => {
                 // Arrange
-                employeeModel.delete.mockResolvedValue(undefined);
+                employeeModel.deleteMany.mockResolvedValue({ count: 1 });
 
                 // Act
-                await repository.delete(3);
+                await repository.delete(branchId, 3);
 
                 // Assert
-                expect(employeeModel.delete).toHaveBeenCalledWith({ where: { id: 3 } });
+                expect(employeeModel.deleteMany).toHaveBeenCalledWith({
+                    where: { id: 3, branchId: branchId },
+                });
             });
         });
     });
@@ -252,11 +404,11 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([createEmployeeRow()]);
 
                 // Act
-                await repository.findByWorkArea("Incheon");
+                await repository.findByWorkArea(branchId, "Incheon");
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
-                    where: { work_area: { has: "Incheon" } },
+                    where: { workArea: { has: "Incheon" }, branchId: branchId },
                 });
             });
         });
@@ -269,26 +421,27 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([createEmployeeRow()]);
 
                 // Act
-                await repository.findByGrade("A");
+                await repository.findByGrade(branchId, "프리미엄");
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
-                    where: { grade: "A" },
+                    where: { grade: "프리미엄", branchId: branchId },
                 });
             });
+
         });
 
         describe("given different grades", () => {
-            it.each(["A", "B", "C", "D"])("should filter by grade %s", async (grade) => {
+            it.each(["프리미엄", "베스트", "스탠다드", "D"])("should filter by grade %s", async (grade) => {
                 // Arrange
                 employeeModel.findMany.mockResolvedValue([]);
 
                 // Act
-                await repository.findByGrade(grade);
+                await repository.findByGrade(branchId, grade);
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
-                    where: { grade },
+                    where: { grade, branchId: branchId },
                 });
             });
         });
@@ -301,11 +454,11 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([createEmployeeRow()]);
 
                 // Act
-                await repository.findByOpenToNextWork(true);
+                await repository.findByOpenToNextWork(branchId, true);
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
-                    where: { open_to_next_work: true },
+                    where: { openToNextWork: true, branchId: branchId },
                 });
             });
         });
@@ -316,11 +469,11 @@ describe("SbEmployeeRepository", () => {
                 employeeModel.findMany.mockResolvedValue([]);
 
                 // Act
-                await repository.findByOpenToNextWork(false);
+                await repository.findByOpenToNextWork(branchId, false);
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
-                    where: { open_to_next_work: false },
+                    where: { openToNextWork: false, branchId: branchId },
                 });
             });
         });
@@ -334,14 +487,14 @@ describe("SbEmployeeRepository", () => {
                 const date = new Date("2024-05-05T12:00:00.000Z");
 
                 // Act
-                await repository.findByRegisteredDate(date);
+                await repository.findByRegisteredDate(branchId, date);
 
                 // Assert
                 const call = employeeModel.findMany.mock.calls[0][0];
-                expect(call.where.company_registered_date.gte).toBeInstanceOf(Date);
-                expect(call.where.company_registered_date.lte).toBeInstanceOf(Date);
-                expect(call.where.company_registered_date.gte.getTime())
-                    .toBeLessThanOrEqual(call.where.company_registered_date.lte.getTime());
+                expect(call.where.companyRegisteredDate.gte).toBeInstanceOf(Date);
+                expect(call.where.companyRegisteredDate.lte).toBeInstanceOf(Date);
+                expect(call.where.companyRegisteredDate.gte.getTime())
+                    .toBeLessThanOrEqual(call.where.companyRegisteredDate.lte.getTime());
             });
         });
     });
@@ -355,15 +508,16 @@ describe("SbEmployeeRepository", () => {
                 const end = new Date("2024-01-31T23:59:59.000Z");
 
                 // Act
-                await repository.findByRegisteredDateRange(start, end);
+                await repository.findByRegisteredDateRange(branchId, start, end);
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
                     where: {
-                        company_registered_date: {
+                        companyRegisteredDate: {
                             gte: start,
                             lte: end,
                         },
+                        branchId: branchId,
                     },
                 });
             });
@@ -375,33 +529,33 @@ describe("SbEmployeeRepository", () => {
     // ============================================
     describe("changeOpenToNextWork", () => {
         describe("given an employee id and new status", () => {
-            it("should update the open_to_next_work field", async () => {
+            it("should update the openToNextWork field", async () => {
                 // Arrange
-                employeeModel.update.mockResolvedValue(createEmployeeRow());
+                employeeModel.updateMany.mockResolvedValue({ count: 1 });
 
                 // Act
-                await repository.changeOpenToNextWork(10, false);
+                await repository.changeOpenToNextWork(branchId, 10, false);
 
                 // Assert
-                expect(employeeModel.update).toHaveBeenCalledWith({
-                    where: { id: 10 },
-                    data: { open_to_next_work: false },
+                expect(employeeModel.updateMany).toHaveBeenCalledWith({
+                    where: { id: 10, branchId: branchId },
+                    data: { openToNextWork: false },
                 });
             });
         });
 
         describe("given toggling status to true", () => {
-            it("should set open_to_next_work to true", async () => {
+            it("should set openToNextWork to true", async () => {
                 // Arrange
-                employeeModel.update.mockResolvedValue(createEmployeeRow({ open_to_next_work: true }));
+                employeeModel.updateMany.mockResolvedValue({ count: 1 });
 
                 // Act
-                await repository.changeOpenToNextWork(15, true);
+                await repository.changeOpenToNextWork(branchId, 15, true);
 
                 // Assert
-                expect(employeeModel.update).toHaveBeenCalledWith({
-                    where: { id: 15 },
-                    data: { open_to_next_work: true },
+                expect(employeeModel.updateMany).toHaveBeenCalledWith({
+                    where: { id: 15, branchId: branchId },
+                    data: { openToNextWork: true },
                 });
             });
         });
@@ -412,17 +566,17 @@ describe("SbEmployeeRepository", () => {
             it("should return all employees available for next work", async () => {
                 // Arrange
                 const rows = [
-                    createEmployeeRow({ id: 1, open_to_next_work: true }),
-                    createEmployeeRow({ id: 2, open_to_next_work: true }),
+                    createEmployeeRow({ id: 1, openToNextWork: true }),
+                    createEmployeeRow({ id: 2, openToNextWork: true }),
                 ];
                 employeeModel.findMany.mockResolvedValue(rows);
 
                 // Act
-                const result = await repository.findAllOpenToNextWork();
+                const result = await repository.findAllOpenToNextWork(branchId);
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
-                    where: { open_to_next_work: true },
+                    where: { openToNextWork: true, branchId: branchId },
                 });
                 expect(result).toHaveLength(2);
             });

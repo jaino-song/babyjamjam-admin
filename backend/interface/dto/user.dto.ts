@@ -1,4 +1,4 @@
-import { IsString, IsOptional } from "class-validator";
+import { IsIn, IsOptional, IsString, IsUUID } from "class-validator";
 
 export class CreateUserDto {
     @IsString()
@@ -30,7 +30,16 @@ export class UpdateUserDto {
     @IsOptional()
     profileImage?: string | null;
 
-    @IsString()
+    @IsIn(["admin", "manager", "user"])
     @IsOptional()
     role?: string | null;
+}
+
+export class ApproveUserDto {
+    @IsIn(["admin", "manager", "user"])
+    role!: "admin" | "manager" | "user";
+
+    @IsUUID("4")
+    @IsOptional()
+    branchId?: string;
 }

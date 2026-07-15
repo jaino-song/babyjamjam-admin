@@ -17,7 +17,14 @@ export class SbUserRepository implements IUserRepository {
 
     async findByKakaoId(kakaoId: string): Promise<UserEntity | null> {
         const user = await this.prismaService.user.findUnique({
-            where: { kakao_id: kakaoId },
+            where: { kakaoId: kakaoId },
+        });
+        return user ? UserMapper.toDomain(user) : null;
+    }
+
+    async findByEmail(email: string): Promise<UserEntity | null> {
+        const user = await this.prismaService.user.findUnique({
+            where: { email: email },
         });
         return user ? UserMapper.toDomain(user) : null;
     }
@@ -41,5 +48,26 @@ export class SbUserRepository implements IUserRepository {
         await this.prismaService.user.delete({
             where: { id },
         });
+    }
+
+    async findByRoles(roles: string[]): Promise<UserEntity[]> {
+        const users = await this.prismaService.user.findMany({
+            where: {
+                role: { in: roles },
+            },
+        });
+        return users.map(UserMapper.toDomain);
+    }
+
+    async findNotificationRecipientsByBranchId(branchId: string): Promise<UserEntity[]> {
+        const users = await this.prismaService.user.findMany({
+            where: {
+                OR: [
+                    { ownedBranches: { some: { id: branchId } } },
+                    { userBranches: { some: { branchId } } },
+                ],
+            },
+        });
+        return users.map(UserMapper.toDomain);
     }
 }

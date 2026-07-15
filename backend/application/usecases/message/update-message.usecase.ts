@@ -9,15 +9,19 @@ export class UpdateMessageUsecase {
         private readonly messageRepository: IMessageRepository,
     ) {}
 
-    async execute(id: number, title: string, text: string): Promise<MessageEntity> {
-        const message = await this.messageRepository.findById(id);
+    async execute(
+        branchid: string,
+        id: number,
+        title: string,
+        text: string
+    ): Promise<MessageEntity> {
+        const message = await this.messageRepository.findById(branchid, id);
         if (!message) {
             throw new NotFoundException(`Message with id ${id} not found`);
         }
 
         message.edit(title, text);
 
-        return this.messageRepository.update(message);
+        return this.messageRepository.update(branchid, message);
     }
 }
-

@@ -5,11 +5,15 @@ export type {
     Client,
     CreateClientDto,
     UpdateClientDto,
+    TerminateServiceDto,
+    RequestReplacementDto,
     PaginatedResponse,
     EmployeeSummary,
-    ContractStatus,
+    PendingScheduleChange,
+    ServiceStatus,
+    ContractStatus, // deprecated
 } from './types';
-export { CONTRACT_STATUS_OPTIONS } from './types';
+export { SERVICE_STATUS_OPTIONS, CONTRACT_STATUS_OPTIONS } from './types';
 
 // Hooks
 export {
@@ -19,14 +23,16 @@ export {
     useCreateClient,
     useUpdateClient,
     useDeleteClient,
+    useTerminateService,
+    useRequestReplacement,
+    useCompleteReplacement,
+    useApproveScheduleChange,
+    useRejectScheduleChange,
 } from './hooks/use-clients';
 export { clientKeys } from './hooks/keys';
 
-// Components
-export { ClientsTable } from './components/ClientsTable';
-export { ClientFormDialog } from './components/ClientFormDialog';
-export { ClientDetailModal } from './components/ClientDetailModal';
-export { EmployeeAutocomplete } from './components/EmployeeAutocomplete';
-
 // API (for advanced usage)
 export { clientsApi } from './api/clients.api';
+
+// Note: Components are now in components/app/clients/
+// Import them directly from there instead

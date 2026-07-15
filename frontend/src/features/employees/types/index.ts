@@ -1,5 +1,7 @@
 // Employee entity types
 
+export type EmployeeStatus = 'available' | 'working' | 'unavailable';
+
 export interface Employee {
     id: number;
     name: string;
@@ -8,6 +10,7 @@ export interface Employee {
     grade: string;
     openToNextWork: boolean;
     registeredDate: string;
+    status: EmployeeStatus;
 }
 
 export interface CreateEmployeeDto {
@@ -28,9 +31,9 @@ export interface UpdateEmployeeDto {
 
 // Grade options
 export const GRADE_OPTIONS = [
-    { value: 'basic', label: '일반' },
-    { value: 'senior', label: '시니어' },
-    { value: 'manager', label: '관리자' },
+    { value: '프리미엄', label: '프리미엄' },
+    { value: '베스트', label: '베스트' },
+    { value: '스탠다드', label: '스탠다드' },
 ] as const;
 
 export type Grade = typeof GRADE_OPTIONS[number]['value'];

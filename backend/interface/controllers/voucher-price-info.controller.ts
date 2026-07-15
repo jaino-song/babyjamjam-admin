@@ -4,24 +4,30 @@ import {
   Delete,
   Get,
   Patch,
+  ParseIntPipe,
   Post,
   Query,
   UploadedFile,
+  UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { VoucherPriceInfoService } from "application/services/voucher-price-info.service";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import {
   BulkUpdateVoucherPriceInfoDto,
   CreateVoucherPriceInfoDto,
   UpdateVoucherPriceInfoDto,
 } from "interface/dto/voucher-price-info.dto";
+import { parseOptionalInteger } from "interface/parse-integer";
 
 @Controller("voucher-price-infos")
 export class VoucherPriceInfoController {
     constructor(private readonly voucherService: VoucherPriceInfoService) {}
 
     @Post()
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
     create(@Body() dto: CreateVoucherPriceInfoDto) {
         return this.voucherService.create({
             type: dto.type,
@@ -34,23 +40,33 @@ export class VoucherPriceInfoController {
     }
 
     @Get()
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
     list() {
         return this.voucherService.list();
     }
 
     @Get("type")
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
     findByType(@Query("type") type: string, @Query("year") year?: string) {
-        return this.voucherService.findByType(type, year ? Number(year) : undefined);
+        return this.voucherService.findByType(type, parseOptionalInteger(year, "year", { min: 1900, max: 2200 }));
+    }
+
+    @Get("years")
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    getDistinctYears() {
+        return this.voucherService.getDistinctYears();
     }
 
     @Get("id")
-    findById(@Query("id") id: string) {
-        return this.voucherService.findById(Number(id));
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    findById(@Query("id", ParseIntPipe) id: number) {
+        return this.voucherService.findById(id);
     }
 
     @Patch()
-    update(@Query("id") id: string, @Body() dto: UpdateVoucherPriceInfoDto) {
-        return this.voucherService.update(Number(id), {
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    update(@Query("id", ParseIntPipe) id: number, @Body() dto: UpdateVoucherPriceInfoDto) {
+        return this.voucherService.update(id, {
             type: dto.type ?? undefined,
             duration: dto.duration != null ? BigInt(dto.duration) : undefined,
             fullPrice: dto.fullPrice ?? undefined,
@@ -61,8 +77,9 @@ export class VoucherPriceInfoController {
     }
 
     @Delete()
-    delete(@Query("id") id: string) {
-        return this.voucherService.delete(Number(id));
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    delete(@Query("id", ParseIntPipe) id: number) {
+        return this.voucherService.delete(id);
     }
 
     /**
@@ -70,6 +87,7 @@ export class VoucherPriceInfoController {
      * POST /voucher-price-infos/parse-image
      */
     @Post("parse-image")
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
     @UseInterceptors(FileInterceptor("image"))
     parseImage(@UploadedFile() file: Express.Multer.File) {
         return this.voucherService.parseImage(file);
@@ -82,8 +100,8 @@ export class VoucherPriceInfoController {
      * @param dto.year - 적용 연도 (unique constraint: year + type + duration)
      */
     @Post("bulk-update")
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
     bulkUpdate(@Body() dto: BulkUpdateVoucherPriceInfoDto) {
         return this.voucherService.bulkUpdate(dto.items, dto.year);
     }
 }
-

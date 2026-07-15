@@ -1,6 +1,6 @@
-# Imirae Incheon Back Office – Backend
+# BabyJamJam Admin – Backend
 
-NestJS service powering the Imirae Incheon back office system. The project follows **Clean Architecture** principles with clear separation of concerns across domain, application, infrastructure, and interface layers.
+NestJS service powering the BabyJamJam Admin operations platform. The project follows **Clean Architecture** principles with clear separation of concerns across domain, application, infrastructure, and interface layers.
 
 ---
 
@@ -532,17 +532,21 @@ export class ClientController { ... }
 Required environment variables:
 
 ```env
+DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/DATABASE?schema=public
+DIRECT_URL=postgresql://USER:PASSWORD@HOST:5432/DATABASE?schema=public
 JWT_SECRET=your-secret-key
 KAKAO_CLIENT_ID=your-kakao-app-id
 KAKAO_CLIENT_SECRET=your-kakao-secret
-KAKAO_CALLBACK_URL=http://localhost:3000/auth/kakao/callback
+KAKAO_CALLBACK_URL=http://localhost:3001/auth/kakao/callback
 ```
+
+Create `backend/.env` from `backend/env.example` before running `npm run start:dev`.
 
 ---
 
 ## Conventions
 
-### Code Organization
+### Code Branch
 
 - **Domain logic** stays in entities/value objects – controllers remain thin
 - **One use case = one file** – single responsibility
@@ -598,4 +602,4 @@ npm run format             # Run Prettier
 
 ## License
 
-Private – Imirae Incheon
+Private – BabyJamJam

@@ -1,27 +1,15 @@
-import Link from "next/link";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { Box, Button, Typography } from "@mui/material";
-import { t } from "@/app/lib/i18n/translations";
+import type { Locale } from "@/lib/i18n/translations";
 import { getLocale } from "@/app/actions/locale";
-import { getCurrentUser } from "./lib/auth/cookies";
+import LandingPage from "@/components/landing/LandingPage";
 
 export default async function Home() {
-  const token = await getCurrentUser();
-  
-  // Auto redirect to dashboard if authenticated
-  if (token) {
-    redirect("/dashboard");
-  }
+    const cookieStore = await cookies();
+    if (cookieStore.get("auth_token")) {
+        redirect("/dashboard");
+    }
 
-  const locale = await getLocale();
-
-  return (
-    <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh" }}>
-      <Typography variant="h1" fontWeight={700} sx={{ mb: 2, fontSize: "2rem" }}>{t(locale, "common.title")}</Typography>
-      <Typography variant="h6" sx={{ mb: 2 }}>{t(locale, "common.subtitle")}</Typography>
-      <Link href="/login" style={{ textDecoration: "none" }}>
-        <Button variant="contained" color="primary">{t(locale, "common.start")}</Button>
-      </Link>
-    </Box>
-  );
+    const locale = await getLocale();
+    return <LandingPage locale={locale as Locale} />;
 }

@@ -1,5 +1,10 @@
 import { ClientEntity } from "domain/entities/client.entity";
-import { IClientRepository, PaginatedResult } from "domain/repositories/client.repository.interface";
+import {
+    ClientWithInitialSchedule,
+    IClientRepository,
+    InitialClientSchedule,
+    PaginatedResult,
+} from "domain/repositories/client.repository.interface";
 
 /**
  * 테스트용 Mock Client Repository
@@ -37,15 +42,16 @@ export class MockClientRepository implements IClientRepository {
         return Array.from(this.clients.values());
     }
 
-    async findById(id: number): Promise<ClientEntity | null> {
+    async findById(_branchid: string, id: number): Promise<ClientEntity | null> {
         return this.clients.get(id) ?? null;
     }
 
-    async findAll(): Promise<ClientEntity[]> {
+    async findAll(_branchid: string): Promise<ClientEntity[]> {
         return Array.from(this.clients.values());
     }
 
     async findAllPaginated(
+        _branchid: string,
         page: number,
         limit: number,
         search?: string,
@@ -77,7 +83,7 @@ export class MockClientRepository implements IClientRepository {
         };
     }
 
-    async create(client: ClientEntity): Promise<ClientEntity> {
+    async create(_branchid: string, client: ClientEntity): Promise<ClientEntity> {
         // ID가 없으면 자동 생성
         const id = client.id > 0 ? client.id : this.nextId++;
         const newClient = ClientEntity.reconstitute(
@@ -95,7 +101,8 @@ export class MockClientRepository implements IClientRepository {
             client.careCenter,
             client.voucherClient,
             client.birthday,
-            client.contractStatus,
+            client.dueDate,
+            client.serviceStatus,
             client.breastPump,
             client.eDocId,
         );
@@ -103,7 +110,17 @@ export class MockClientRepository implements IClientRepository {
         return newClient;
     }
 
-    async update(client: ClientEntity): Promise<ClientEntity> {
+    async createWithInitialSchedule(
+        branchid: string,
+        client: ClientEntity,
+        _schedule: InitialClientSchedule,
+    ): Promise<ClientWithInitialSchedule> {
+        void _schedule;
+        const created = await this.create(branchid, client);
+        return { client: created, scheduleId: created.id };
+    }
+
+    async update(_branchid: string, client: ClientEntity): Promise<ClientEntity> {
         if (!this.clients.has(client.id)) {
             throw new Error(`Client with id ${client.id} not found`);
         }
@@ -111,10 +128,115 @@ export class MockClientRepository implements IClientRepository {
         return client;
     }
 
-    async delete(id: number): Promise<void> {
+    async delete(_branchid: string, id: number): Promise<void> {
         if (!this.clients.has(id)) {
             throw new Error(`Client with id ${id} not found`);
         }
         this.clients.delete(id);
+    }
+
+    /**
+     * Find clients by start date (P3 scheduler support)
+     */
+    async findByStartDate(_branchid: string, date: Date): Promise<ClientEntity[]> {
+        const startOfDay = new Date(date);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(date);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        return Array.from(this.clients.values()).filter(client => {
+            if (!client.startDate) return false;
+            return client.startDate >= startOfDay && client.startDate <= endOfDay;
+        });
+    }
+
+    /**
+     * Find clients by end date (P3 scheduler support)
+     */
+    async findByEndDate(_branchid: string, date: Date): Promise<ClientEntity[]> {
+        const startOfDay = new Date(date);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(date);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        return Array.from(this.clients.values()).filter(client => {
+            if (!client.endDate) return false;
+            return client.endDate >= startOfDay && client.endDate <= endOfDay;
+        });
+    }
+
+    /**
+     * Find clients by created date (P3 scheduler support)
+     * Note: Mock doesn't have createdAt field, returns empty array
+     */
+    async findByCreatedDate(_branchid: string, _date: Date): Promise<ClientEntity[]> {
+        // Mock doesn't track createdAt, similar to real implementation
+        return [];
+    }
+
+    async findStartingWithinDays(_branchid: string, days: number): Promise<ClientEntity[]> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + days);
+        endDate.setHours(23, 59, 59, 999);
+
+        return Array.from(this.clients.values()).filter(client => {
+            if (!client.startDate) return false;
+            return client.startDate >= today && client.startDate <= endDate;
+        });
+    }
+
+    async findEndingWithinDays(_branchid: string, days: number): Promise<ClientEntity[]> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + days);
+        endDate.setHours(23, 59, 59, 999);
+
+        return Array.from(this.clients.values()).filter(client => {
+            if (!client.endDate) return false;
+            return client.endDate >= today && client.endDate <= endDate;
+        });
+    }
+
+    async findWithIncompleteContractsStartingWithinDays(
+        _branchid: string,
+        days: number
+    ): Promise<ClientEntity[]> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + days);
+        endDate.setHours(23, 59, 59, 999);
+
+        return Array.from(this.clients.values()).filter(client => {
+            if (!client.startDate) return false;
+            const isStartingSoon = client.startDate >= today && client.startDate <= endDate;
+            const hasContractButIncomplete = client.eDocId !== null;
+            return isStartingSoon && hasContractButIncomplete;
+        });
+    }
+
+    async findWithoutContractSentStartingWithinDays(
+        _branchid: string,
+        days: number
+    ): Promise<ClientEntity[]> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + days);
+        endDate.setHours(23, 59, 59, 999);
+
+        return Array.from(this.clients.values()).filter(client => {
+            if (!client.startDate) return false;
+            const isStartingSoon = client.startDate >= today && client.startDate <= endDate;
+            const noContractSent = client.eDocId === null;
+            return isStartingSoon && noContractSent;
+        });
+    }
+
+    async findByPhone(_branchid: string, _normalizedPhone: string): Promise<ClientEntity | null> {
+        return null;
     }
 }

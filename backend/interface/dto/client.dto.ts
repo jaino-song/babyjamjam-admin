@@ -1,11 +1,13 @@
-import { IsBoolean, IsDateString, IsInt, IsOptional, IsString } from "class-validator";
+import { IsBoolean, IsDateString, IsIn, IsInt, IsOptional, IsString } from "class-validator";
+import { SERVICE_STATUS_VALUES } from "domain/value-objects/service-status.vo";
 
 export class CreateClientDto {
     @IsString()
     name!: string;
 
+    @IsOptional()
     @IsInt()
-    primaryEmployeeId!: number;
+    primaryEmployeeId?: number | null;
 
     @IsOptional()
     @IsInt()
@@ -47,8 +49,9 @@ export class CreateClientDto {
     @IsDateString()
     endDate?: string | null;
 
+    @IsOptional()
     @IsBoolean()
-    careCenter!: boolean;
+    careCenter?: boolean | null;
 
     @IsBoolean()
     voucherClient!: boolean;
@@ -58,8 +61,12 @@ export class CreateClientDto {
     birthday?: string | null;
 
     @IsOptional()
-    @IsString()
-    contractStatus?: string | null;
+    @IsDateString()
+    dueDate?: string | null;
+
+    @IsOptional()
+    @IsIn(SERVICE_STATUS_VALUES)
+    serviceStatus?: string | null;
 
     @IsBoolean()
     breastPump!: boolean;
@@ -67,6 +74,14 @@ export class CreateClientDto {
     @IsOptional()
     @IsString()
     eDocId?: string | null;
+
+    @IsOptional()
+    @IsString()
+    areaId?: string | null;
+
+    @IsOptional()
+    @IsBoolean()
+    suppressGreetingSms?: boolean;
 }
 
 export class UpdateClientDto {
@@ -120,7 +135,7 @@ export class UpdateClientDto {
 
     @IsOptional()
     @IsBoolean()
-    careCenter?: boolean;
+    careCenter?: boolean | null;
 
     @IsOptional()
     @IsBoolean()
@@ -131,8 +146,12 @@ export class UpdateClientDto {
     birthday?: string | null;
 
     @IsOptional()
-    @IsString()
-    contractStatus?: string | null;
+    @IsDateString()
+    dueDate?: string | null;
+
+    @IsOptional()
+    @IsIn(SERVICE_STATUS_VALUES)
+    serviceStatus?: string | null;
 
     @IsOptional()
     @IsBoolean()
@@ -141,4 +160,29 @@ export class UpdateClientDto {
     @IsOptional()
     @IsString()
     eDocId?: string | null;
+
+    @IsOptional()
+    @IsString()
+    areaId?: string | null;
+}
+
+/**
+ * DTO for terminating a client's service
+ */
+export class TerminateServiceDto {
+    @IsOptional()
+    @IsString()
+    reason?: string;
+}
+
+/**
+ * DTO for requesting a provider replacement
+ */
+export class RequestReplacementDto {
+    @IsInt()
+    newPrimaryEmployeeId!: number;
+
+    @IsOptional()
+    @IsInt()
+    newSecondaryEmployeeId?: number | null;
 }

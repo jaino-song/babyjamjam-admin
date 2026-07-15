@@ -1,0 +1,80 @@
+name: Backend CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, dev, preview, "feature/**", "fix/**", "ci/**" ]
+    paths:
+      - 'backend/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/backend-ci.yml'
+  # No paths filter on pull_request: this job is a REQUIRED check on dev,
+  # so it must report on every PR — path-filtered required checks block
+  # merges as eternally "expected" when the paths don't match.
+  pull_request:
+    branches: [ main, dev, preview, "feature/**", "fix/**", "ci/**" ]
+
+jobs:
+  verify:
+    name: backend · type-check · lint · test
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+
+    # Throwaway Postgres used ONLY as prisma's shadow database for the
+    # migrations drift guard below — never seeded, never read by tests.
+    # trust auth: no password exists at all (ephemeral localhost container).
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Fail fast on the cheapest, most deterministic gate first.
+      - name: Type check
+        run: pnpm --filter ./backend run type-check
+
+      - name: Lint
+        run: pnpm --filter ./backend run lint
+
+      - name: Unit tests
+        run: pnpm --filter ./backend test
+        env:
+          CI: true
+
+      # Fails when schema.prisma changed without a corresponding migration.
+      # Replays prisma/migrations into the throwaway shadow DB and diffs the
+      # result against the schema — exit 2 on drift.
+      - name: Migrations drift guard
+        run: >-
+          pnpm --filter ./backend exec prisma migrate diff
+          --from-migrations prisma/migrations
+          --to-schema-datamodel prisma/schema.prisma
+          --shadow-database-url "postgresql://postgres@localhost:5432/postgres"
+          --exit-code

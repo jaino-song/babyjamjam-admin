@@ -1,0 +1,57 @@
+name: Frontend CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, dev, preview, "feature/**", "fix/**", "ci/**" ]
+    paths:
+      - 'frontend/**'
+      - 'packages/shared/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/frontend-ci.yml'
+  # No paths filter on pull_request: this job is a REQUIRED check on dev,
+  # so it must report on every PR — path-filtered required checks block
+  # merges as eternally "expected" when the paths don't match.
+  pull_request:
+    branches: [ main, dev, preview, "feature/**", "fix/**", "ci/**" ]
+
+jobs:
+  verify:
+    name: frontend · type-check · lint · test · build
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Fail fast on the cheapest, most deterministic gate first.
+      - name: Type check
+        run: pnpm --filter ./frontend run type-check
+
+      - name: Lint
+        run: pnpm --filter ./frontend run lint
+
+      - name: Unit tests
+        run: pnpm --filter ./frontend test
+        env:
+          CI: true
+
+      - name: Build
+        run: pnpm --filter ./frontend run build

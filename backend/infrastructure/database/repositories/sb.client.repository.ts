@@ -1,49 +1,127 @@
 import { Injectable } from "@nestjs/common";
 import { ClientEntity } from "domain/entities/client.entity";
-import { CLIENT_REPOSITORY, IClientRepository, PaginatedResult } from "domain/repositories/client.repository.interface";
+import {
+    ClientWithInitialSchedule,
+    IClientRepository,
+    InitialClientSchedule,
+    PaginatedResult,
+} from "domain/repositories/client.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { ClientMapper } from "infrastructure/database/mapper/client.mapper";
+import { hasColumn } from "infrastructure/database/schema-capabilities";
+import { normalizePhone } from "application/utils/normalize-phone";
 
 @Injectable()
 export class SbClientRepository implements IClientRepository {
     constructor(private readonly prismaService: PrismaService) {}
 
-    async findById(id: number): Promise<ClientEntity | null> {
-        const client = await this.prismaService.client.findUnique({
-            where: { id },
+    private async getClientSelect() {
+        const supportsCreatedAt = await hasColumn(this.prismaService, "client", "created_at");
+        const supportsAreaId = await hasColumn(this.prismaService, "client", "area_id");
+
+        return {
+            id: true,
+            name: true,
+            address: true,
+            phone: true,
+            type: true,
+            duration: true,
+            fullPrice: true,
+            grant: true,
+            actualPrice: true,
+            startDate: true,
+            endDate: true,
+            careCenter: true,
+            voucherClient: true,
+            birthday: true,
+            dueDate: true,
+            serviceStatus: true,
+            breastPump: true,
+            eDocId: true,
+            // Tenant key — every where-clause already relies on this column,
+            // and reads must carry it so ClientEntity.branchId is populated.
+            branchId: true,
+            ...(supportsCreatedAt ? { createdAt: true } : {}),
+            ...(supportsAreaId ? { areaId: true } : {}),
+        } as const;
+    }
+
+    private async getClientCreateData(client: ClientEntity) {
+        const data = ClientMapper.toPrismaCreate(client);
+        const supportsAreaId = await hasColumn(this.prismaService, "client", "area_id");
+        if (!supportsAreaId) {
+            const { areaId: _areaId, ...withoutAreaId } = data;
+            return withoutAreaId;
+        }
+
+        return data;
+    }
+
+    private async getClientUpdateData(client: ClientEntity) {
+        const data = ClientMapper.toPrismaUpdate(client);
+        const supportsAreaId = await hasColumn(this.prismaService, "client", "area_id");
+        if (!supportsAreaId) {
+            const { areaId: _areaId, ...withoutAreaId } = data;
+            return withoutAreaId;
+        }
+
+        return data;
+    }
+
+    async findById(branchid: string, id: number): Promise<ClientEntity | null> {
+        const select = await this.getClientSelect();
+        const client = await this.prismaService.client.findFirst({
+            where: { id, branchId: branchid },
+            select,
         });
         return client ? ClientMapper.toDomain(client) : null;
     }
 
-    async findAll(): Promise<ClientEntity[]> {
-        const clients = await this.prismaService.client.findMany();
-        return clients.map(ClientMapper.toDomain);
+    async findAll(branchid: string): Promise<ClientEntity[]> {
+        const select = await this.getClientSelect();
+        const clients = await this.prismaService.client.findMany({
+            where: { branchId: branchid },
+            select,
+        });
+        return clients.map((client) => ClientMapper.toDomain(client as any));
     }
 
-    async findAllPaginated(page: number, limit: number, search?: string): Promise<PaginatedResult<ClientEntity>> {
+    async findAllPaginated(
+        branchid: string,
+        page: number,
+        limit: number,
+        search?: string
+    ): Promise<PaginatedResult<ClientEntity>> {
         const skip = (page - 1) * limit;
-        
-        const where = search ? {
-            OR: [
-                { name: { contains: search, mode: 'insensitive' as const } },
-                { address: { contains: search, mode: 'insensitive' as const } },
-                { phone: { contains: search, mode: 'insensitive' as const } },
-            ],
-        } : {};
+
+        const where = {
+            branchId: branchid,
+            ...(search
+                ? {
+                      OR: [
+                          { name: { contains: search, mode: 'insensitive' as const } },
+                          { address: { contains: search, mode: 'insensitive' as const } },
+                          { phone: { contains: search, mode: 'insensitive' as const } },
+                      ],
+                  }
+                : {}),
+        };
 
         try {
+            const select = await this.getClientSelect();
             const [clients, total] = await Promise.all([
                 this.prismaService.client.findMany({
                     where,
                     skip,
                     take: limit,
                     orderBy: { id: 'desc' },
+                    select,
                 }),
                 this.prismaService.client.count({ where }),
             ]);
 
             return {
-                data: clients.map(ClientMapper.toDomain),
+                data: clients.map((client) => ClientMapper.toDomain(client as any)),
                 total,
                 page,
                 limit,
@@ -55,24 +133,277 @@ export class SbClientRepository implements IClientRepository {
         }
     }
 
-    async create(client: ClientEntity): Promise<ClientEntity> {
+    async create(branchid: string, client: ClientEntity): Promise<ClientEntity> {
+        const select = await this.getClientSelect();
+        const data = await this.getClientCreateData(client);
         const created = await this.prismaService.client.create({
-            data: ClientMapper.toPrismaCreate(client),
+            data: {
+                ...data,
+                branchId: branchid,
+            },
+            select,
         });
-        return ClientMapper.toDomain(created);
+        return ClientMapper.toDomain(created as any);
     }
 
-    async update(client: ClientEntity): Promise<ClientEntity> {
-        const updated = await this.prismaService.client.update({
-            where: { id: client.id },
-            data: ClientMapper.toPrismaUpdate(client),
+    async createWithInitialSchedule(
+        branchid: string,
+        client: ClientEntity,
+        schedule: InitialClientSchedule,
+    ): Promise<ClientWithInitialSchedule> {
+        const select = await this.getClientSelect();
+        const data = await this.getClientCreateData(client);
+        const created = await this.prismaService.client.create({
+            data: {
+                ...data,
+                branchId: branchid,
+                employeeSchedules: {
+                    create: {
+                        branchId: branchid,
+                        primaryEmployeeId: schedule.primaryEmployeeId,
+                        secondaryEmployeeId: schedule.secondaryEmployeeId,
+                        workAddress: schedule.workAddress,
+                        startDate: schedule.startDate,
+                        endDate: schedule.endDate,
+                        replaced: false,
+                    },
+                },
+            },
+            select: {
+                ...select,
+                employeeSchedules: {
+                    select: { id: true },
+                    orderBy: { id: "desc" },
+                    take: 1,
+                },
+            },
         });
-        return ClientMapper.toDomain(updated);
+        const scheduleId = created.employeeSchedules[0]?.id;
+        if (scheduleId === undefined) {
+            throw new Error("Initial employee schedule was not created");
+        }
+
+        return {
+            client: ClientMapper.toDomain(created),
+            scheduleId,
+        };
     }
 
-    async delete(id: number): Promise<void> {
-        await this.prismaService.client.delete({
-            where: { id },
+    async update(branchid: string, client: ClientEntity): Promise<ClientEntity> {
+        const select = await this.getClientSelect();
+        const data = await this.getClientUpdateData(client);
+        const result = await this.prismaService.client.updateMany({
+            where: { id: client.id, branchId: branchid },
+            data,
         });
+        if (result.count === 0) {
+            throw new Error("Client not found for branch");
+        }
+        const updated = await this.prismaService.client.findFirst({
+            where: { id: client.id, branchId: branchid },
+            select,
+        });
+        if (!updated) {
+            throw new Error("Client not found after update");
+        }
+        return ClientMapper.toDomain(updated as any);
+    }
+
+    async delete(branchid: string, id: number): Promise<void> {
+        const result = await this.prismaService.client.deleteMany({
+            where: { id, branchId: branchid },
+        });
+        if (result.count === 0) {
+            throw new Error("Client not found for branch");
+        }
+    }
+
+    async findByStartDate(branchid: string, date: Date): Promise<ClientEntity[]> {
+        const select = await this.getClientSelect();
+        // Normalize to start of day for date comparison
+        const startOfDay = new Date(date);
+        startOfDay.setHours(0, 0, 0, 0);
+
+        const endOfDay = new Date(date);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                branchId: branchid,
+                startDate: {
+                    gte: startOfDay,
+                    lte: endOfDay,
+                },
+            },
+            select,
+        });
+        return clients.map((client) => ClientMapper.toDomain(client as any));
+    }
+
+    async findByEndDate(branchid: string, date: Date): Promise<ClientEntity[]> {
+        const select = await this.getClientSelect();
+        // Normalize to start of day for date comparison
+        const startOfDay = new Date(date);
+        startOfDay.setHours(0, 0, 0, 0);
+
+        const endOfDay = new Date(date);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                branchId: branchid,
+                endDate: {
+                    gte: startOfDay,
+                    lte: endOfDay,
+                },
+            },
+            select,
+        });
+        return clients.map((client) => ClientMapper.toDomain(client as any));
+    }
+
+    async findByCreatedDate(branchid: string, date: Date): Promise<ClientEntity[]> {
+        const supportsCreatedAt = await hasColumn(this.prismaService, "client", "created_at");
+        if (!supportsCreatedAt) {
+            return [];
+        }
+
+        const select = await this.getClientSelect();
+        const startOfDay = new Date(date);
+        startOfDay.setHours(0, 0, 0, 0);
+
+        const endOfDay = new Date(date);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                branchId: branchid,
+                createdAt: {
+                    gte: startOfDay,
+                    lte: endOfDay,
+                },
+            },
+            select,
+        });
+        return clients.map((client) => ClientMapper.toDomain(client as any));
+    }
+
+    async findStartingWithinDays(branchid: string, days: number): Promise<ClientEntity[]> {
+        const select = await this.getClientSelect();
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + days);
+        endDate.setHours(23, 59, 59, 999);
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                branchId: branchid,
+                startDate: {
+                    gt: today,
+                    lte: endDate,
+                },
+            },
+            select,
+        });
+        return clients.map((client) => ClientMapper.toDomain(client as any));
+    }
+
+    async findEndingWithinDays(branchid: string, days: number): Promise<ClientEntity[]> {
+        const select = await this.getClientSelect();
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + days);
+        endDate.setHours(23, 59, 59, 999);
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                branchId: branchid,
+                endDate: {
+                    gte: today,
+                    lte: endDate,
+                },
+            },
+            select,
+        });
+        return clients.map((client) => ClientMapper.toDomain(client as any));
+    }
+
+    async findWithIncompleteContractsStartingWithinDays(
+        branchid: string,
+        days: number
+    ): Promise<ClientEntity[]> {
+        const baseSelect = await this.getClientSelect();
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + days);
+        endDate.setHours(23, 59, 59, 999);
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                branchId: branchid,
+                startDate: {
+                    gt: today,
+                    lte: endDate,
+                },
+                eDocId: { not: null },
+                eformsignDocByEDocId: {
+                    statusType: { not: '050' },
+                },
+            },
+            select: {
+                ...baseSelect,
+                eformsignDocByEDocId: {
+                    select: {
+                        documentId: true,
+                        statusType: true,
+                    },
+                },
+            },
+        });
+        return clients.map((client) => ClientMapper.toDomain(client as any));
+    }
+
+    async findWithoutContractSentStartingWithinDays(
+        branchid: string,
+        days: number
+    ): Promise<ClientEntity[]> {
+        const select = await this.getClientSelect();
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + days);
+        endDate.setHours(23, 59, 59, 999);
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                branchId: branchid,
+                startDate: {
+                    gt: today,
+                    lte: endDate,
+                },
+                eDocId: null,
+            },
+            select,
+        });
+        return clients.map((client) => ClientMapper.toDomain(client as any));
+    }
+
+    async findByPhone(branchid: string, normalizedPhone: string): Promise<ClientEntity | null> {
+        const candidates = await this.prismaService.client.findMany({
+            where: { branchId: branchid, phone: { not: null } },
+            select: { id: true, phone: true },
+        });
+        const matched = candidates.find(
+            (row) => normalizePhone(row.phone) === normalizedPhone
+        );
+        if (!matched) return null;
+        return this.findById(branchid, matched.id);
     }
 }

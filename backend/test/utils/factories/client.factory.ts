@@ -19,7 +19,8 @@ export interface CreateClientFactoryParams {
     careCenter?: boolean;
     voucherClient?: boolean;
     birthday?: string | null;
-    contractStatus?: string | null;
+    dueDate?: Date | null;
+    serviceStatus?: string | null;
     breastPump?: boolean;
     eDocId?: string | null;
 }
@@ -44,7 +45,8 @@ export class ClientFactory {
             params.careCenter ?? false,
             params.voucherClient ?? true,
             params.birthday ?? "1990-01-01",
-            params.contractStatus ?? "active",
+            params.dueDate ?? null,
+            params.serviceStatus ?? "active",
             params.breastPump ?? false,
             params.eDocId ?? null,
         );
@@ -91,7 +93,7 @@ export class ClientFactory {
         return ClientFactory.create({
             ...params,
             eDocId: params.eDocId ?? "doc_signed_12345",
-            contractStatus: "signed",
+            serviceStatus: "signed",
         });
     }
 }

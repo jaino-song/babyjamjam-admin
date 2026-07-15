@@ -5,6 +5,7 @@ import { MockClientRepository, ClientFactory } from "../../utils";
 describe("DeleteClientUsecase", () => {
     let usecase: DeleteClientUsecase;
     let mockRepository: MockClientRepository;
+    const branchId = "org-1";
 
     beforeEach(() => {
         mockRepository = new MockClientRepository();
@@ -22,10 +23,10 @@ describe("DeleteClientUsecase", () => {
             mockRepository.setData([existingClient]);
 
             // Act
-            await usecase.execute(1);
+            await usecase.execute(branchId, 1);
 
             // Assert
-            const result = await mockRepository.findById(1);
+            const result = await mockRepository.findById(branchId, 1);
             expect(result).toBeNull();
         });
 
@@ -33,14 +34,14 @@ describe("DeleteClientUsecase", () => {
             // Arrange - empty repository
 
             // Act & Assert
-            await expect(usecase.execute(999)).rejects.toThrow(NotFoundException);
+            await expect(usecase.execute(branchId, 999)).rejects.toThrow(NotFoundException);
         });
 
         it("should throw NotFoundException with correct message", async () => {
             // Arrange - empty repository
 
             // Act & Assert
-            await expect(usecase.execute(42)).rejects.toThrow(
+            await expect(usecase.execute(branchId, 42)).rejects.toThrow(
                 "Client with id 42 not found",
             );
         });
@@ -51,7 +52,7 @@ describe("DeleteClientUsecase", () => {
             mockRepository.setData(clients);
 
             // Act
-            await usecase.execute(2);
+            await usecase.execute(branchId, 2);
 
             // Assert
             const remaining = mockRepository.getAllData();
@@ -65,8 +66,8 @@ describe("DeleteClientUsecase", () => {
             mockRepository.setData(clients);
 
             // Act
-            await usecase.execute(1);
-            await usecase.execute(2);
+            await usecase.execute(branchId, 1);
+            await usecase.execute(branchId, 2);
 
             // Assert
             const remaining = mockRepository.getAllData();

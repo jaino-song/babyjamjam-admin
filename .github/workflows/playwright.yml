@@ -1,16 +1,15 @@
-name: Playwright Tests
+name: Frontend Playwright Tests
 
-# TODO: Re-enable when tests are ready
-# Temporarily disabled - only runs manually
+# Manual-only until Phase 6 stands up the real backend stack in CI
+# (Postgres container + migrate deploy + seed + NestJS boot). The suites
+# are backend-coupled and time out without it — verified 2026-06-06.
+# Blocking per-PR coverage for the frontend lives in frontend-ci.yml.
 on:
-  workflow_dispatch:  # Manual trigger only
-  # push:
-  #   branches: [ main, master, develop ]
-  # pull_request:
-  #   branches: [ main, master, develop ]
+  workflow_dispatch:
 
 jobs:
   test:
+    name: frontend
     timeout-minutes: 60
     runs-on: ubuntu-latest
     defaults:
@@ -19,24 +18,31 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
+
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        run_install: false
     
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '20'
-        cache: 'npm'
-        cache-dependency-path: frontend/package-lock.json
+        cache: 'pnpm'
+        cache-dependency-path: pnpm-lock.yaml
     
     - name: Install dependencies
-      run: npm ci
+      run: pnpm install --frozen-lockfile
+      working-directory: .
     
     - name: Install Playwright Browsers
-      run: npx playwright install --with-deps chromium
+      run: pnpm exec playwright install --with-deps chromium
     
     - name: Run Playwright tests
-      run: npx playwright test
+      run: pnpm exec playwright test
       env:
         CI: true
+        JWT_SECRET: ${{ secrets.JWT_SECRET }}
     
     - name: Upload Playwright Report
       uses: actions/upload-artifact@v4

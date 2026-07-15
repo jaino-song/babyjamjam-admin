@@ -9,8 +9,10 @@ export class ListEmployeeSchedulesBySecondaryEmployeeIdUsecase {
         private readonly employeeScheduleRepository: IEmployeeScheduleRepository,
     ) {}
 
-    execute(secondaryEmployeeId: number): Promise<EmployeeScheduleEntity[]> {
-        return this.employeeScheduleRepository.findBySecondaryEmployeeId(secondaryEmployeeId);
+    execute(branchid: string, secondaryEmployeeId: number): Promise<EmployeeScheduleEntity[]> {
+        return this.employeeScheduleRepository.findBySecondaryEmployeeId(
+            branchid,
+            secondaryEmployeeId
+        );
     }
 }
-

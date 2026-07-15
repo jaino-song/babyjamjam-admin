@@ -8,12 +8,15 @@ describe("SbClientRepository", () => {
     // ============================================
     
     const createMockPrismaClient = () => ({
+        findFirst: jest.fn(),
         findUnique: jest.fn(),
         findMany: jest.fn(),
         count: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
+        updateMany: jest.fn(),
         delete: jest.fn(),
+        deleteMany: jest.fn(),
     });
 
     const createClientRow = (overrides = {}) => ({
@@ -23,17 +26,18 @@ describe("SbClientRepository", () => {
         phone: "010-1111-2222",
         type: "A",
         duration: 15,
-        full_price: "100000",
+        fullPrice: "100000",
         grant: "50000",
-        actual_price: "50000",
-        start_date: new Date("2024-01-01T00:00:00.000Z"),
-        end_date: new Date("2024-06-01T00:00:00.000Z"),
-        care_center: true,
-        voucher_client: false,
+        actualPrice: "50000",
+        startDate: new Date("2024-01-01T00:00:00.000Z"),
+        endDate: new Date("2024-06-01T00:00:00.000Z"),
+        careCenter: true,
+        voucherClient: false,
         birthday: "900101",
-        contract_status: "completed",
-        breast_pump: true,
-        e_doc_id: null,
+        serviceStatus: "completed",
+        breastPump: true,
+        eDocId: null,
+        dueDate: null,
         ...overrides,
     });
 
@@ -51,11 +55,14 @@ describe("SbClientRepository", () => {
         careCenter: false,
         voucherClient: true,
         birthday: "950315",
-        contractStatus: "pending",
+        serviceStatus: "waiting",
         breastPump: false,
         eDocId: null,
+        dueDate: null,
         ...overrides,
     });
+
+    const branchId = "org-1";
 
     let clientModel: ReturnType<typeof createMockPrismaClient>;
     let prisma: PrismaService;
@@ -63,7 +70,10 @@ describe("SbClientRepository", () => {
 
     beforeEach(() => {
         clientModel = createMockPrismaClient();
-        prisma = { client: clientModel } as unknown as PrismaService;
+        prisma = {
+            client: clientModel,
+            $queryRawUnsafe: jest.fn().mockResolvedValue([{ exists: true }]),
+        } as unknown as PrismaService;
         repository = new SbClientRepository(prisma);
     });
 
@@ -79,14 +89,17 @@ describe("SbClientRepository", () => {
             it("should return the mapped ClientEntity", async () => {
                 // Arrange
                 const row = createClientRow();
-                clientModel.findUnique.mockResolvedValue(row);
+                clientModel.findFirst.mockResolvedValue(row);
 
                 // Act
-                const result = await repository.findById(1);
+                const result = await repository.findById(branchId, 1);
 
                 // Assert
-                expect(clientModel.findUnique).toHaveBeenCalledTimes(1);
-                expect(clientModel.findUnique).toHaveBeenCalledWith({ where: { id: 1 } });
+                expect(clientModel.findFirst).toHaveBeenCalledTimes(1);
+                expect(clientModel.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+                    where: { id: 1, branchId: branchId },
+                    select: expect.any(Object),
+                }));
                 expect(result).toBeInstanceOf(ClientEntity);
                 expect(result).toMatchObject({
                     id: 1,
@@ -94,7 +107,7 @@ describe("SbClientRepository", () => {
                     address: "Incheon",
                     careCenter: true,
                     birthday: "900101",
-                    contractStatus: "completed",
+                    serviceStatus: "completed",
                     breastPump: true,
                 });
             });
@@ -103,13 +116,16 @@ describe("SbClientRepository", () => {
         describe("given a client id does not exist", () => {
             it("should return null", async () => {
                 // Arrange
-                clientModel.findUnique.mockResolvedValue(null);
+                clientModel.findFirst.mockResolvedValue(null);
 
                 // Act
-                const result = await repository.findById(999);
+                const result = await repository.findById(branchId, 999);
 
                 // Assert
-                expect(clientModel.findUnique).toHaveBeenCalledWith({ where: { id: 999 } });
+                expect(clientModel.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+                    where: { id: 999, branchId: branchId },
+                    select: expect.any(Object),
+                }));
                 expect(result).toBeNull();
             });
         });
@@ -129,10 +145,13 @@ describe("SbClientRepository", () => {
                 clientModel.findMany.mockResolvedValue(rows);
 
                 // Act
-                const result = await repository.findAll();
+                const result = await repository.findAll(branchId);
 
                 // Assert
-                expect(clientModel.findMany).toHaveBeenCalledWith();
+                expect(clientModel.findMany).toHaveBeenCalledWith(expect.objectContaining({
+                    where: { branchId: branchId },
+                    select: expect.any(Object),
+                }));
                 expect(result).toHaveLength(2);
                 expect(result[0]).toBeInstanceOf(ClientEntity);
                 expect(result[0]).toMatchObject({ id: 1, name: "John" });
@@ -146,7 +165,7 @@ describe("SbClientRepository", () => {
                 clientModel.findMany.mockResolvedValue([]);
 
                 // Act
-                const result = await repository.findAll();
+                const result = await repository.findAll(branchId);
 
                 // Assert
                 expect(result).toEqual([]);
@@ -169,16 +188,19 @@ describe("SbClientRepository", () => {
                 clientModel.count.mockResolvedValue(15);
 
                 // Act
-                const result = await repository.findAllPaginated(1, 10);
+                const result = await repository.findAllPaginated(branchId, 1, 10);
 
                 // Assert
-                expect(clientModel.findMany).toHaveBeenCalledWith({
-                    where: {},
+                expect(clientModel.findMany).toHaveBeenCalledWith(expect.objectContaining({
+                    where: { branchId: branchId },
                     skip: 0,
                     take: 10,
                     orderBy: { id: "desc" },
+                    select: expect.any(Object),
+                }));
+                expect(clientModel.count).toHaveBeenCalledWith({
+                    where: { branchId: branchId },
                 });
-                expect(clientModel.count).toHaveBeenCalledWith({ where: {} });
                 expect(result).toEqual({
                     data: expect.arrayContaining([
                         expect.objectContaining({ id: 1, name: "John" }),
@@ -199,7 +221,7 @@ describe("SbClientRepository", () => {
                 clientModel.count.mockResolvedValue(25);
 
                 // Act
-                await repository.findAllPaginated(2, 10);
+                await repository.findAllPaginated(branchId, 2, 10);
 
                 // Assert
                 expect(clientModel.findMany).toHaveBeenCalledWith(
@@ -218,7 +240,7 @@ describe("SbClientRepository", () => {
                 clientModel.count.mockResolvedValue(100);
 
                 // Act
-                await repository.findAllPaginated(3, 5);
+                await repository.findAllPaginated(branchId, 3, 5);
 
                 // Assert
                 expect(clientModel.findMany).toHaveBeenCalledWith(
@@ -242,18 +264,20 @@ describe("SbClientRepository", () => {
                         { address: { contains: "John", mode: "insensitive" } },
                         { phone: { contains: "John", mode: "insensitive" } },
                     ],
+                    branchId: branchId,
                 };
 
                 // Act
-                const result = await repository.findAllPaginated(1, 10, "John");
+                const result = await repository.findAllPaginated(branchId, 1, 10, "John");
 
                 // Assert
-                expect(clientModel.findMany).toHaveBeenCalledWith({
+                expect(clientModel.findMany).toHaveBeenCalledWith(expect.objectContaining({
                     where: expectedWhere,
                     skip: 0,
                     take: 10,
                     orderBy: { id: "desc" },
-                });
+                    select: expect.any(Object),
+                }));
                 expect(clientModel.count).toHaveBeenCalledWith({ where: expectedWhere });
                 expect(result.data).toHaveLength(1);
                 expect(result.total).toBe(1);
@@ -267,7 +291,7 @@ describe("SbClientRepository", () => {
                 clientModel.count.mockResolvedValue(0);
 
                 // Act
-                const result = await repository.findAllPaginated(1, 10);
+                const result = await repository.findAllPaginated(branchId, 1, 10);
 
                 // Assert
                 expect(result).toEqual({
@@ -287,7 +311,7 @@ describe("SbClientRepository", () => {
                 clientModel.count.mockResolvedValue(20);
 
                 // Act
-                const result = await repository.findAllPaginated(1, 10);
+                const result = await repository.findAllPaginated(branchId, 1, 10);
 
                 // Assert
                 expect(result.totalPages).toBe(2);
@@ -301,7 +325,7 @@ describe("SbClientRepository", () => {
                 clientModel.count.mockResolvedValue(21);
 
                 // Act
-                const result = await repository.findAllPaginated(1, 10);
+                const result = await repository.findAllPaginated(branchId, 1, 10);
 
                 // Assert
                 expect(result.totalPages).toBe(3);
@@ -324,29 +348,32 @@ describe("SbClientRepository", () => {
                 clientModel.create.mockResolvedValue(createdRow);
 
                 // Act
-                const result = await repository.create(entity);
+                const result = await repository.create(branchId, entity);
 
                 // Assert
-                expect(clientModel.create).toHaveBeenCalledWith({
-                    data: {
+                expect(clientModel.create).toHaveBeenCalledWith(expect.objectContaining({
+                    data: expect.objectContaining({
                         name: "Test Client",
                         address: "Test Address",
                         phone: "010-0000-1111",
                         type: "B",
                         duration: 12,
-                        full_price: "120000",
+                        fullPrice: "120000",
                         grant: "60000",
-                        actual_price: "60000",
-                        start_date: new Date("2024-02-01T00:00:00.000Z"),
-                        end_date: new Date("2024-08-01T00:00:00.000Z"),
-                        care_center: false,
-                        voucher_client: true,
+                        actualPrice: "60000",
+                        startDate: new Date("2024-02-01T00:00:00.000Z"),
+                        endDate: new Date("2024-08-01T00:00:00.000Z"),
+                        careCenter: false,
+                        voucherClient: true,
                         birthday: "950315",
-                        contract_status: "pending",
-                        breast_pump: false,
-                        e_doc_id: null,
-                    },
-                });
+                        serviceStatus: "waiting",
+                        breastPump: false,
+                        eDocId: null,
+                        dueDate: null,
+                        branchId: branchId,
+                    }),
+                    select: expect.any(Object),
+                }));
                 expect(result).toBeInstanceOf(ClientEntity);
                 expect(result.id).toBe(5);
             });
@@ -360,7 +387,7 @@ describe("SbClientRepository", () => {
                     phone: null,
                     type: null,
                     birthday: null,
-                    contractStatus: null,
+                    serviceStatus: null,
                 });
                 const createdRow = createClientRow({
                     id: 6,
@@ -368,25 +395,64 @@ describe("SbClientRepository", () => {
                     phone: null,
                     type: null,
                     birthday: null,
-                    contract_status: null,
+                    serviceStatus: null,
                 });
                 clientModel.create.mockResolvedValue(createdRow);
 
                 // Act
-                const result = await repository.create(entity);
+                const result = await repository.create(branchId, entity);
 
                 // Assert
-                expect(clientModel.create).toHaveBeenCalledWith({
+                expect(clientModel.create).toHaveBeenCalledWith(expect.objectContaining({
                     data: expect.objectContaining({
                         address: null,
                         phone: null,
                         type: null,
                         birthday: null,
-                        contract_status: null,
+                        serviceStatus: null,
                     }),
-                });
+                    select: expect.any(Object),
+                }));
                 expect(result.address).toBeNull();
             });
+        });
+
+        it("creates the client and initial employee schedule in one nested write", async () => {
+            const entity = createClientEntity();
+            clientModel.create.mockResolvedValue({
+                ...createClientRow({ id: 9, name: "Test Client" }),
+                employeeSchedules: [{ id: 44 }],
+            });
+
+            const result = await repository.createWithInitialSchedule(branchId, entity, {
+                primaryEmployeeId: 5,
+                secondaryEmployeeId: 6,
+                workAddress: "Test Address",
+                startDate: new Date("2024-02-01T00:00:00.000Z"),
+                endDate: new Date("2024-08-01T00:00:00.000Z"),
+            });
+
+            expect(clientModel.create).toHaveBeenCalledWith(expect.objectContaining({
+                data: expect.objectContaining({
+                    branchId,
+                    employeeSchedules: {
+                        create: {
+                            branchId,
+                            primaryEmployeeId: 5,
+                            secondaryEmployeeId: 6,
+                            workAddress: "Test Address",
+                            startDate: new Date("2024-02-01T00:00:00.000Z"),
+                            endDate: new Date("2024-08-01T00:00:00.000Z"),
+                            replaced: false,
+                        },
+                    },
+                }),
+                select: expect.objectContaining({
+                    employeeSchedules: expect.any(Object),
+                }),
+            }));
+            expect(result.client.id).toBe(9);
+            expect(result.scheduleId).toBe(44);
         });
     });
 
@@ -420,59 +486,184 @@ describe("SbClientRepository", () => {
                     id: 7,
                     name: "Updated Name",
                 });
-                clientModel.update.mockResolvedValue(updatedRow);
+                clientModel.updateMany.mockResolvedValue({ count: 1 });
+                clientModel.findFirst.mockResolvedValue(updatedRow);
 
                 // Act
-                const result = await repository.update(entity);
+                const result = await repository.update(branchId, entity);
 
                 // Assert
-                expect(clientModel.update).toHaveBeenCalledWith({
-                    where: { id: 7 },
+                expect(clientModel.updateMany).toHaveBeenCalledWith({
+                    where: { id: 7, branchId: branchId },
                     data: {
                         name: "Updated Name",
                         address: "Updated Address",
                         phone: "010-3333-4444",
                         type: "C",
                         duration: 6,
-                        full_price: "60000",
+                        fullPrice: "60000",
                         grant: "30000",
-                        actual_price: "30000",
-                        start_date: new Date("2024-03-01T00:00:00.000Z"),
-                        end_date: new Date("2024-09-01T00:00:00.000Z"),
-                        care_center: true,
-                        voucher_client: false,
+                        actualPrice: "30000",
+                        startDate: new Date("2024-03-01T00:00:00.000Z"),
+                        endDate: new Date("2024-09-01T00:00:00.000Z"),
+                        careCenter: true,
+                        voucherClient: false,
                         birthday: "880520",
-                        contract_status: "in_progress",
-                        breast_pump: true,
-                        e_doc_id: null,
+                        serviceStatus: "in_progress",
+                        breastPump: true,
+                        eDocId: null,
+                        dueDate: null,
+                        areaId: null,
                     },
                 });
+                expect(clientModel.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+                    where: { id: 7, branchId: branchId },
+                    select: expect.any(Object),
+                }));
                 expect(result).toBeInstanceOf(ClientEntity);
                 expect(result.id).toBe(7);
             });
         });
 
         describe("given entity with breastPump toggled", () => {
-            it("should correctly update breast_pump field", async () => {
+            it("should correctly update breastPump field", async () => {
                 // Arrange
                 const entity = new ClientEntity(
                     8, "Client", null, null, null, null,
                     null, null, null, null, null, false, false,
                     null, null, true, null, // breastPump = true, eDocId = null
                 );
-                const updatedRow = createClientRow({ id: 8, breast_pump: true });
-                clientModel.update.mockResolvedValue(updatedRow);
+                const updatedRow = createClientRow({ id: 8, breastPump: true });
+                clientModel.updateMany.mockResolvedValue({ count: 1 });
+                clientModel.findFirst.mockResolvedValue(updatedRow);
 
                 // Act
-                await repository.update(entity);
+                await repository.update(branchId, entity);
 
                 // Assert
-                expect(clientModel.update).toHaveBeenCalledWith({
-                    where: { id: 8 },
+                expect(clientModel.updateMany).toHaveBeenCalledWith({
+                    where: { id: 8, branchId: branchId },
                     data: expect.objectContaining({
-                        breast_pump: true,
+                        breastPump: true,
                     }),
                 });
+            });
+        });
+    });
+
+    // ============================================
+    // findStartingWithinDays
+    // ============================================
+    describe("findStartingWithinDays", () => {
+        describe("given clients with start dates within the specified days", () => {
+            it("should query with gt (not gte) to exclude clients starting today", async () => {
+                // Arrange
+                const rows = [createClientRow({ id: 1, name: "Future Client" })];
+                clientModel.findMany.mockResolvedValue(rows);
+
+                // Act
+                await repository.findStartingWithinDays(branchId, 7);
+
+                // Assert
+                const callArgs = clientModel.findMany.mock.calls[0][0];
+                expect(callArgs.where.startDate.gt).toBeDefined();
+                expect(callArgs.where.startDate.gte).toBeUndefined();
+                expect(callArgs.where.startDate.lte).toBeDefined();
+            });
+
+            it("should return mapped ClientEntity array", async () => {
+                // Arrange
+                const rows = [
+                    createClientRow({ id: 1, name: "Client A" }),
+                    createClientRow({ id: 2, name: "Client B" }),
+                ];
+                clientModel.findMany.mockResolvedValue(rows);
+
+                // Act
+                const result = await repository.findStartingWithinDays(branchId, 7);
+
+                // Assert
+                expect(result).toHaveLength(2);
+                expect(result[0]).toBeInstanceOf(ClientEntity);
+                expect(result[0]!.name).toBe("Client A");
+            });
+        });
+
+        describe("given no clients within date range", () => {
+            it("should return empty array", async () => {
+                // Arrange
+                clientModel.findMany.mockResolvedValue([]);
+
+                // Act
+                const result = await repository.findStartingWithinDays(branchId, 7);
+
+                // Assert
+                expect(result).toEqual([]);
+            });
+        });
+    });
+
+    // ============================================
+    // findWithIncompleteContractsStartingWithinDays
+    // ============================================
+    describe("findWithIncompleteContractsStartingWithinDays", () => {
+        describe("given clients with incomplete contracts starting soon", () => {
+            it("should query with gt (not gte) to exclude clients starting today", async () => {
+                // Arrange
+                clientModel.findMany.mockResolvedValue([]);
+
+                // Act
+                await repository.findWithIncompleteContractsStartingWithinDays(branchId, 7);
+
+                // Assert
+                const callArgs = clientModel.findMany.mock.calls[0][0];
+                expect(callArgs.where.startDate.gt).toBeDefined();
+                expect(callArgs.where.startDate.gte).toBeUndefined();
+            });
+
+            it("should filter by eDocId not null and statusType not 050", async () => {
+                // Arrange
+                clientModel.findMany.mockResolvedValue([]);
+
+                // Act
+                await repository.findWithIncompleteContractsStartingWithinDays(branchId, 7);
+
+                // Assert
+                const callArgs = clientModel.findMany.mock.calls[0][0];
+                expect(callArgs.where.eDocId).toEqual({ not: null });
+                expect(callArgs.where.eformsignDocByEDocId.statusType).toEqual({ not: '050' });
+            });
+        });
+    });
+
+    // ============================================
+    // findWithoutContractSentStartingWithinDays
+    // ============================================
+    describe("findWithoutContractSentStartingWithinDays", () => {
+        describe("given clients without contracts sent starting soon", () => {
+            it("should query with gt (not gte) to exclude clients starting today", async () => {
+                // Arrange
+                clientModel.findMany.mockResolvedValue([]);
+
+                // Act
+                await repository.findWithoutContractSentStartingWithinDays(branchId, 7);
+
+                // Assert
+                const callArgs = clientModel.findMany.mock.calls[0][0];
+                expect(callArgs.where.startDate.gt).toBeDefined();
+                expect(callArgs.where.startDate.gte).toBeUndefined();
+            });
+
+            it("should filter by eDocId being null", async () => {
+                // Arrange
+                clientModel.findMany.mockResolvedValue([]);
+
+                // Act
+                await repository.findWithoutContractSentStartingWithinDays(branchId, 7);
+
+                // Assert
+                const callArgs = clientModel.findMany.mock.calls[0][0];
+                expect(callArgs.where.eDocId).toBeNull();
             });
         });
     });
@@ -484,27 +675,31 @@ describe("SbClientRepository", () => {
         describe("given a valid client id", () => {
             it("should delete the client", async () => {
                 // Arrange
-                clientModel.delete.mockResolvedValue(undefined);
+                clientModel.deleteMany.mockResolvedValue({ count: 1 });
 
                 // Act
-                await repository.delete(4);
+                await repository.delete(branchId, 4);
 
                 // Assert
-                expect(clientModel.delete).toHaveBeenCalledTimes(1);
-                expect(clientModel.delete).toHaveBeenCalledWith({ where: { id: 4 } });
+                expect(clientModel.deleteMany).toHaveBeenCalledTimes(1);
+                expect(clientModel.deleteMany).toHaveBeenCalledWith({
+                    where: { id: 4, branchId: branchId },
+                });
             });
         });
 
         describe("given different client ids", () => {
             it.each([1, 10, 100, 999])("should delete client with id %i", async (id) => {
                 // Arrange
-                clientModel.delete.mockResolvedValue(undefined);
+                clientModel.deleteMany.mockResolvedValue({ count: 1 });
 
                 // Act
-                await repository.delete(id);
+                await repository.delete(branchId, id);
 
                 // Assert
-                expect(clientModel.delete).toHaveBeenCalledWith({ where: { id } });
+                expect(clientModel.deleteMany).toHaveBeenCalledWith({
+                    where: { id, branchId: branchId },
+                });
             });
         });
     });

@@ -8,26 +8,41 @@ import { AreaTemplateMapper } from "../mapper/area-template.mapper";
 export class SbAreaTemplateRepository implements IAreaTemplateRepository {
     constructor(private prismaService: PrismaService) {}
 
-    async findAll(): Promise<AreaTemplateEntity[]> {
-        const docTemplates = await this.prismaService.doc_template.findMany();
+    async findAll(branchid: string): Promise<AreaTemplateEntity[]> {
+        const docTemplates = await this.prismaService.doc_template.findMany({
+            where: { area: { branchId: branchid } },
+        });
         return docTemplates.map(AreaTemplateMapper.toDomain);
     }
 
-    async findByArea(area: string): Promise<AreaTemplateEntity | null> {
+    async findByArea(branchid: string, area: string): Promise<AreaTemplateEntity | null> {
         const docTemplate = await this.prismaService.doc_template.findFirst({
-            where: { area_id: area },
+            where: { areaId: area, area: { branchId: branchid } },
         });
         return docTemplate ? AreaTemplateMapper.toDomain(docTemplate) : null;
     }
 
-    async create(areaTemplate: AreaTemplateEntity): Promise<AreaTemplateEntity> {
+    async create(branchid: string, areaTemplate: AreaTemplateEntity): Promise<AreaTemplateEntity> {
+        const area = await this.prismaService.area.findFirst({
+            where: { id: areaTemplate.areaId, branchId: branchid },
+            select: { id: true },
+        });
+        if (!area) {
+            throw new Error("Area not found for branch");
+        }
         const created = await this.prismaService.doc_template.create({
             data: AreaTemplateMapper.toPrismaCreate(areaTemplate),
         });
         return AreaTemplateMapper.toDomain(created);
     }
 
-    async update(areaTemplate: AreaTemplateEntity): Promise<AreaTemplateEntity> {
+    async update(branchid: string, areaTemplate: AreaTemplateEntity): Promise<AreaTemplateEntity> {
+        const existing = await this.prismaService.doc_template.findFirst({
+            where: { id: areaTemplate.id, area: { branchId: branchid } },
+        });
+        if (!existing) {
+            throw new Error("Area template not found for branch");
+        }
         const updated = await this.prismaService.doc_template.update({
             where: { id: areaTemplate.id },
             data: AreaTemplateMapper.toPrismaUpdate(areaTemplate),
@@ -35,9 +50,9 @@ export class SbAreaTemplateRepository implements IAreaTemplateRepository {
         return AreaTemplateMapper.toDomain(updated);
     }
 
-    async delete(id: string): Promise<void> {
-        await this.prismaService.doc_template.delete({
-            where: { id },
+    async delete(branchid: string, id: string): Promise<void> {
+        await this.prismaService.doc_template.deleteMany({
+            where: { id, area: { branchId: branchid } },
         });
     }
 }

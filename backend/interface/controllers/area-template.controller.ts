@@ -1,5 +1,7 @@
-import { Controller, Post, Body, Get, Query, Patch, Delete } from "@nestjs/common";
+import { Controller, Post, Body, Get, Query, Patch, Delete, UseGuards } from "@nestjs/common";
 import { AreaTemplateService } from "application/services/area-template.service";
+import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
+import { JwtGuard } from "infrastructure/auth/jwt.guard";
 
 interface CreateAreaTemplateDto {
     area: string;
@@ -13,31 +15,36 @@ interface UpdateAreaTemplateDto {
 }
 
 @Controller("area-templates")
+@UseGuards(JwtGuard, TenantGuard)
 export class AreaTemplateController {
     constructor(private readonly areaTemplateService: AreaTemplateService) {}
 
     @Post()
-    create(@Body() dto: CreateAreaTemplateDto) {
-        return this.areaTemplateService.create(dto);
+    create(@CurrentTenant() tenant: { branchId?: string }, @Body() dto: CreateAreaTemplateDto) {
+        return this.areaTemplateService.create(tenant.branchId ?? "", dto);
     }
 
     @Get("area")
-    findByArea(@Query("area") area: string) {
-        return this.areaTemplateService.findByArea(area);
+    findByArea(@CurrentTenant() tenant: { branchId?: string }, @Query("area") area: string) {
+        return this.areaTemplateService.findByArea(tenant.branchId ?? "", area);
     }
 
     @Get()
-    findAll() {
-        return this.areaTemplateService.findAll();
+    findAll(@CurrentTenant() tenant: { branchId?: string }) {
+        return this.areaTemplateService.findAll(tenant.branchId ?? "");
     }
 
     @Patch()
-    update(@Query("area") area: string, @Body() dto: UpdateAreaTemplateDto) {
-        return this.areaTemplateService.update(area, dto);
+    update(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Query("area") area: string,
+        @Body() dto: UpdateAreaTemplateDto
+    ) {
+        return this.areaTemplateService.update(tenant.branchId ?? "", area, dto);
     }
 
     @Delete()
-    delete(@Query("area") area: string) {
-        return this.areaTemplateService.delete(area);
+    delete(@CurrentTenant() tenant: { branchId?: string }, @Query("area") area: string) {
+        return this.areaTemplateService.delete(tenant.branchId ?? "", area);
     }
 }

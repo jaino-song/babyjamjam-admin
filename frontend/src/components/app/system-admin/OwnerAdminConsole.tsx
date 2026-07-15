@@ -1,0 +1,1236 @@
+"use client";
+
+import { useDeferredValue, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  AlertTriangle,
+  Bell,
+  Building2,
+  CheckCircle2,
+  KeyRound,
+  MessageCircle,
+  ShieldCheck,
+  UserKey,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
+
+import { NotificationTestSection } from "@/components/app/settings/NotificationTestSection";
+import { TagPill } from "@/components/app/ui/tag-pill";
+import {
+  AnimatedSlotList,
+  AnimatedSlotListItemContent,
+  DetailEmptyState,
+  DetailPanel,
+  DetailSkeleton,
+  InfoCard,
+  InfoRow,
+  ListEmptyState,
+  ListPanel,
+  PageSection,
+  SectionNav,
+  SplitLayout,
+  StatsBar,
+  type SplitLayoutMode,
+  type StatsBarItem,
+} from "@/components/app/v3";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  approveSystemAdminMessageSenderApproval,
+  getSystemAdminBranchRequests,
+  type SystemAdminBranchRequest,
+} from "@/lib/api/system-admin";
+import {
+  approveUser,
+  getPendingUsers,
+  getSystemAdminUsers,
+  rejectUser,
+  type SystemAdminUser,
+} from "@/lib/api/users";
+import { REGISTERABLE_ROLE_OPTIONS, ROLES } from "@/lib/constants/roles";
+import { cn } from "@/lib/utils";
+import { matchesSearchQuery } from "@/lib/search/korean-search";
+
+type AdminSectionId = "branches" | "accounts" | "notifications";
+type StatusVariant = "warning" | "info" | "success" | "destructive";
+type AdminTagPillVariant = "amber" | "emerald" | "sky" | "indigo" | "neutral";
+
+interface AdminDetailRow {
+  label: string;
+  value: string;
+}
+
+interface AdminRequestAction {
+  type: "approve-message-sender";
+  branchId: string;
+}
+
+interface AdminRequest {
+  category: string;
+  statusLabel: string;
+  detailRows: readonly AdminDetailRow[];
+  applicantRows?: readonly AdminDetailRow[];
+  action?: AdminRequestAction;
+}
+
+interface AdminRecord {
+  id: string;
+  title: string;
+  listTitle: string;
+  listSubtitle?: string;
+  listSummary?: string;
+  listStatusLabel?: string;
+  category: string;
+  statusLabel: string;
+  statusVariant: StatusVariant;
+  owner: string;
+  summary: string;
+  tags: readonly string[];
+  detailRows: readonly AdminDetailRow[];
+  applicantRows?: readonly AdminDetailRow[];
+  requests?: readonly AdminRequest[];
+}
+
+interface AdminSection {
+  id: AdminSectionId;
+  label: string;
+  icon: LucideIcon;
+  listTitle: string;
+  listSubtitle: string;
+  searchPlaceholder?: string;
+  tabs?: readonly {
+    label: string;
+    value: string;
+    activeClassName?: string;
+    indicatorClassName?: string;
+  }[];
+  stats: readonly StatsBarItem[];
+  emptyMessage: string;
+  detailEmptyMessage: string;
+  records: readonly AdminRecord[];
+}
+
+interface SectionViewState {
+  tab: string;
+  search: string;
+  selectedRecordId: string | null;
+}
+
+interface AdminListPill {
+  label: string;
+  variant: AdminTagPillVariant;
+}
+
+const BRANCH_MANAGEMENT_TABS: AdminSection["tabs"] = [
+  { label: "전체 지점", value: "all" },
+  { label: "메시지 신청", value: "messaging" },
+  { label: "승인 완료", value: "approved" },
+  { label: "미신청", value: "not_requested" },
+];
+
+const OWNER_ADMIN_SECTIONS = [
+  {
+    id: "branches",
+    label: "지점 관리",
+    icon: Building2,
+    listTitle: "지점 관리",
+    listSubtitle: "실제 지점과 메시지 권한 신청 상태를 관리할 수 있어요",
+    searchPlaceholder: "지점명, 지역, 담당자 검색…",
+    tabs: BRANCH_MANAGEMENT_TABS,
+    stats: [],
+    emptyMessage: "조건에 맞는 지점이 없습니다.",
+    detailEmptyMessage: "지점을 선택하면 운영 정보와 승인 신청이 표시됩니다.",
+    records: [],
+  },
+  {
+    id: "accounts",
+    label: "계정 관리",
+    icon: UserKey,
+    listTitle: "계정 관리",
+    listSubtitle: "등록된 계정과 소속 정보를 확인할 수 있어요",
+    searchPlaceholder: "이름, 이메일, 조직, 역할 검색…",
+    tabs: [
+      { label: "전체", value: "all" },
+      {
+        label: "지점장",
+        value: "branch-manager",
+        activeClassName: "text-amber-700",
+        indicatorClassName: "bg-amber-600",
+      },
+      {
+        label: "매니저",
+        value: "manager",
+        activeClassName: "text-sky-700",
+        indicatorClassName: "bg-sky-600",
+      },
+      { label: "직원", value: "user" },
+      {
+        label: "오너",
+        value: "owner",
+        activeClassName: "text-emerald-700",
+        indicatorClassName: "bg-emerald-600",
+      },
+    ],
+    stats: [],
+    emptyMessage: "조건에 맞는 계정이 없습니다.",
+    detailEmptyMessage: "계정을 선택하면 권한과 소속 정보가 표시됩니다.",
+    records: [],
+  },
+  {
+    id: "notifications",
+    label: "알림 테스트",
+    icon: Bell,
+    listTitle: "알림 테스트",
+    listSubtitle: "실제 브라우저 푸시 발송 상태를 점검할 수 있어요",
+    stats: [],
+    emptyMessage: "사용 가능한 알림 테스트 도구가 없습니다.",
+    detailEmptyMessage: "테스트 도구를 선택하면 실행 화면이 표시됩니다.",
+    records: [
+      {
+        id: "notification-test-broadcast",
+        title: "브라우저 알림 테스트",
+        listTitle: "브라우저 알림 테스트",
+        listSubtitle: "전체 구독 디바이스",
+        listSummary: "실제 푸시 브로드캐스트를 전송합니다.",
+        listStatusLabel: "실행 가능",
+        category: "notifications",
+        statusLabel: "실행 가능",
+        statusVariant: "info",
+        owner: "시스템",
+        summary: "현재 구독된 모든 디바이스에 테스트 알림을 전송합니다.",
+        tags: ["Push", "브로드캐스트"],
+        detailRows: [
+          { label: "대상", value: "현재 구독된 모든 디바이스" },
+          { label: "용도", value: "브라우저 알림 설정 및 수신 상태 확인" },
+        ],
+      },
+    ],
+  },
+] as const satisfies readonly AdminSection[];
+
+const SECTION_ICON_CLASSNAMES: Record<AdminSectionId, string> = {
+  branches: "bg-v3-green-light text-v3-green",
+  accounts: "bg-v3-orange-light text-v3-orange",
+  notifications: "bg-v3-primary-light text-v3-primary",
+};
+
+const CATEGORY_BADGE_STYLE: Record<string, { icon: string }> = {
+  messaging: { icon: "bg-v3-orange-light text-v3-orange" },
+  approved: { icon: "bg-v3-green-light text-v3-green" },
+  not_requested: { icon: "bg-v3-dim-white text-v3-text-muted" },
+  notifications: { icon: "bg-v3-primary-light text-v3-primary" },
+  owner: { icon: "bg-v3-green-light text-v3-green" },
+  admin: { icon: "bg-v3-orange-light text-v3-orange" },
+  "branch-manager": { icon: "bg-v3-orange-light text-v3-orange" },
+  manager: { icon: "bg-sky-100 text-sky-700" },
+  user: { icon: "bg-v3-dim-white text-v3-text-muted" },
+};
+
+function getAdminRolePillVariant(roleLabel: string): AdminTagPillVariant {
+  switch (roleLabel) {
+    case "오너":
+      return "emerald";
+    case "지점장":
+      return "amber";
+    case "매니저":
+      return "sky";
+    default:
+      return "neutral";
+  }
+}
+
+function getBranchRequestPillVariant(category: string): AdminTagPillVariant {
+  switch (category) {
+    case "messaging":
+      return "sky";
+    case "approved":
+      return "emerald";
+    default:
+      return "neutral";
+  }
+}
+
+function getBranchRequestPills(record: AdminRecord): AdminListPill[] {
+  const requestItems =
+    record.requests && record.requests.length > 0
+      ? record.requests.map((request) => ({
+          label: request.statusLabel,
+          variant: getBranchRequestPillVariant(request.category),
+        }))
+      : [
+          {
+            label: record.statusLabel,
+            variant: getBranchRequestPillVariant(record.category),
+          },
+        ];
+  const seenLabels = new Set<string>();
+
+  return requestItems.filter((item) => {
+    if (seenLabels.has(item.label)) return false;
+    seenLabels.add(item.label);
+    return true;
+  });
+}
+
+function getListPillItems(sectionId: AdminSectionId, record: AdminRecord): AdminListPill[] {
+  if (sectionId === "branches") return getBranchRequestPills(record);
+
+  if (sectionId === "accounts" && record.listStatusLabel) {
+    return [
+      {
+        label: record.listStatusLabel,
+        variant: getAdminRolePillVariant(record.listStatusLabel),
+      },
+    ];
+  }
+
+  return record.tags.map((tag) => ({
+    label: tag,
+    variant: sectionId === "notifications" ? "indigo" : "neutral",
+  }));
+}
+
+function getApplicantLabel(record: AdminRecord): string | null {
+  const applicantName =
+    record.applicantRows?.find((row) => row.label === "신청자")?.value ?? record.owner;
+  return applicantName ? `지점장: ${applicantName}` : null;
+}
+
+function formatAccountDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+
+  return new Intl.DateTimeFormat("ko-KR", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function formatBirthDate(value: string | null): string {
+  if (!value) return "-";
+
+  const digits = value.replace(/\D/g, "");
+  if (digits.length === 8) {
+    return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`;
+  }
+  if (digits.length === 6) {
+    return `${digits.slice(0, 2)}-${digits.slice(2, 4)}-${digits.slice(4, 6)}`;
+  }
+  return value;
+}
+
+function getAccountRoleLabel(role: string | null): string {
+  switch (role) {
+    case "owner":
+      return "오너";
+    case "admin":
+      return "지점장";
+    case "manager":
+      return "매니저";
+    case "user":
+      return "직원";
+    default:
+      return "미지정";
+  }
+}
+
+function getDefaultPendingApprovalRole(user: SystemAdminUser): string {
+  const isRegisterableRole = REGISTERABLE_ROLE_OPTIONS.some(
+    (option) => option.value === user.requestedRole,
+  );
+  return isRegisterableRole && user.requestedRole ? user.requestedRole : ROLES.user;
+}
+
+function getAccountCategory(role: string | null): string {
+  switch (role) {
+    case "owner":
+      return "owner";
+    case "admin":
+      return "branch-manager";
+    case "manager":
+      return "manager";
+    default:
+      return "user";
+  }
+}
+
+function getAccountAuthProviderLabel(authProvider: string): string {
+  switch (authProvider) {
+    case "kakao":
+      return "카카오";
+    case "email":
+      return "이메일";
+    case "both":
+      return "카카오 + 이메일";
+    default:
+      return authProvider || "-";
+  }
+}
+
+function getAccountBranchLabel(user: SystemAdminUser): string {
+  if (user.branches.length === 0) return user.role === "owner" ? "오너 전용" : "소속 없음";
+
+  const [firstBranch, ...restBranches] = user.branches;
+  return restBranches.length > 0 ? `${firstBranch.name} 외 ${restBranches.length}곳` : firstBranch.name;
+}
+
+function getAccountBranchSummary(user: SystemAdminUser): string {
+  if (user.branches.length === 0) return user.role === "owner" ? "오너 계정" : "소속 없음";
+
+  return user.branches
+    .map((branch) =>
+      branch.role ? `${branch.name} (${getAccountRoleLabel(branch.role)})` : branch.name,
+    )
+    .join(", ");
+}
+
+function getAccountStatus(user: SystemAdminUser): { label: string; variant: StatusVariant } {
+  if (!user.phone || !user.birthDate) return { label: "추가 정보 필요", variant: "warning" };
+
+  if (user.email && user.authProvider !== "kakao" && !user.emailVerified) {
+    return { label: "이메일 인증 필요", variant: "info" };
+  }
+
+  return { label: "정상", variant: "success" };
+}
+
+function buildAccountStats(users: readonly SystemAdminUser[]): readonly StatsBarItem[] {
+  const ownerUsers = users.filter((user) => user.role === "owner").length;
+  const unverifiedUsers = users.filter(
+    (user) => Boolean(user.email) && user.authProvider !== "kakao" && !user.emailVerified,
+  ).length;
+  const incompleteUsers = users.filter((user) => !user.phone || !user.birthDate).length;
+
+  return [
+    { icon: Users, value: users.length, label: "전체 계정", counter: "명" },
+    { icon: ShieldCheck, value: ownerUsers, label: "오너 계정", counter: "명" },
+    {
+      icon: KeyRound,
+      value: unverifiedUsers,
+      label: "이메일 인증 필요",
+      counter: "명",
+      colorIndex: 1,
+    },
+    {
+      icon: AlertTriangle,
+      value: incompleteUsers,
+      label: "추가 정보 필요",
+      counter: "명",
+      colorIndex: 2,
+    },
+  ];
+}
+
+function buildAccountRecords(users: readonly SystemAdminUser[]): AdminRecord[] {
+  return users.map((user) => {
+    const roleLabel = getAccountRoleLabel(user.role);
+    const authProviderLabel = getAccountAuthProviderLabel(user.authProvider);
+    const accountStatus = getAccountStatus(user);
+
+    return {
+      id: user.id,
+      title: `${roleLabel} 계정`,
+      listTitle: user.name ?? user.email ?? "이름 미등록",
+      listSubtitle: getAccountBranchLabel(user),
+      listStatusLabel: roleLabel,
+      category: getAccountCategory(user.role),
+      statusLabel: accountStatus.label,
+      statusVariant: accountStatus.variant,
+      owner: authProviderLabel,
+      summary: `${authProviderLabel} 로그인`,
+      tags: [],
+      detailRows: [
+        { label: "이름", value: user.name ?? "-" },
+        { label: "이메일", value: user.email ?? "-" },
+        { label: "전화번호", value: user.phone ?? "-" },
+        { label: "생년월일", value: formatBirthDate(user.birthDate) },
+        { label: "역할", value: roleLabel },
+        { label: "인증 방식", value: authProviderLabel },
+        {
+          label: "이메일 인증",
+          value:
+            user.email && user.authProvider !== "kakao"
+              ? user.emailVerified
+                ? "완료"
+                : "미완료"
+              : "해당 없음",
+        },
+        { label: "가입일", value: formatAccountDate(user.createdAt) },
+        { label: "소속", value: getAccountBranchSummary(user) },
+      ],
+    };
+  });
+}
+
+function formatOptionalDate(value: string | null): string {
+  return value ? formatAccountDate(value) : "-";
+}
+
+function getBranchLocationLabel(branch: SystemAdminBranchRequest): string {
+  const location = [branch.region, branch.district].filter(Boolean).join(" ");
+  return location || branch.address || branch.slug;
+}
+
+function getBranchMessageStatus(
+  branch: SystemAdminBranchRequest,
+): { category: string; statusLabel: string; statusVariant: StatusVariant } {
+  switch (branch.messageSenderApproval.approvalStatus) {
+    case "pending":
+      return { category: "messaging", statusLabel: "메시지 신청", statusVariant: "warning" };
+    case "approved":
+      return { category: "approved", statusLabel: "승인 완료", statusVariant: "success" };
+    default:
+      return { category: "not_requested", statusLabel: "미신청", statusVariant: "info" };
+  }
+}
+
+function buildBranchStats(branches: readonly SystemAdminBranchRequest[]): readonly StatsBarItem[] {
+  const pendingRequests = branches.filter(
+    (branch) => branch.messageSenderApproval.approvalStatus === "pending",
+  ).length;
+  const approvedRequests = branches.filter(
+    (branch) => branch.messageSenderApproval.approvalStatus === "approved",
+  ).length;
+  const inactiveBranches = branches.filter((branch) => !branch.isActive).length;
+
+  return [
+    { icon: Building2, value: branches.length, label: "전체 지점", counter: "곳" },
+    {
+      icon: MessageCircle,
+      value: pendingRequests,
+      label: "메시지 신청",
+      counter: "건",
+      colorIndex: 1,
+    },
+    {
+      icon: CheckCircle2,
+      value: approvedRequests,
+      label: "승인 완료",
+      counter: "건",
+      colorIndex: 2,
+    },
+    { icon: AlertTriangle, value: inactiveBranches, label: "비활성 지점", counter: "곳" },
+  ];
+}
+
+function buildBranchRecords(branches: readonly SystemAdminBranchRequest[]): AdminRecord[] {
+  return branches.map((branch) => {
+    const messageStatus = getBranchMessageStatus(branch);
+    const requester = branch.messageSenderApproval.requestedBy;
+    const applicantRows = requester
+      ? [
+          { label: "신청자", value: requester.name ?? "-" },
+          { label: "전화번호", value: requester.phone ?? "-" },
+          { label: "이메일", value: requester.email ?? "-" },
+          { label: "역할", value: getAccountRoleLabel(requester.role) },
+          { label: "신청 날짜", value: formatOptionalDate(branch.messageSenderApproval.requestedAt) },
+        ]
+      : undefined;
+    const detailRows = [
+      { label: "지점명", value: branch.name },
+      { label: "지역", value: getBranchLocationLabel(branch) },
+      { label: "주소", value: branch.address ?? "-" },
+      { label: "대표 전화", value: branch.phone ?? "-" },
+      { label: "이메일", value: branch.email ?? "-" },
+      { label: "운영 상태", value: branch.isActive ? "운영 중" : "비활성" },
+      { label: "오너", value: branch.owner.name ?? branch.owner.email ?? "-" },
+      { label: "수정일", value: formatOptionalDate(branch.updatedAt) },
+    ];
+    const pendingRequest: AdminRequest | null =
+      branch.messageSenderApproval.approvalStatus === "pending"
+        ? {
+            category: "messaging",
+            statusLabel: "메시지 승인 신청",
+            applicantRows,
+            detailRows: [
+              { label: "기관명", value: branch.name },
+              { label: "요청 기능", value: "SMS/LMS 발송" },
+              { label: "상태", value: "접수 대기" },
+            ],
+            action: { type: "approve-message-sender", branchId: branch.id },
+          }
+        : null;
+
+    return {
+      id: branch.id,
+      title: branch.name,
+      listTitle: branch.name,
+      listSubtitle: getBranchLocationLabel(branch),
+      category: messageStatus.category,
+      statusLabel: messageStatus.statusLabel,
+      statusVariant: messageStatus.statusVariant,
+      owner: branch.owner.name ?? branch.owner.email ?? "-",
+      summary:
+        branch.messageSenderApproval.approvalStatus === "pending"
+          ? "메시지 발신번호 승인 신청이 접수되었습니다."
+          : branch.messageSenderApproval.approvalStatus === "approved"
+            ? "메시지 발신번호 승인이 완료된 지점입니다."
+            : "메시지 발신번호 승인 신청이 아직 없습니다.",
+      tags: [],
+      detailRows,
+      applicantRows: pendingRequest ? applicantRows : undefined,
+      requests: pendingRequest ? [pendingRequest] : undefined,
+    };
+  });
+}
+
+function buildOwnerAdminSections(
+  users: readonly SystemAdminUser[],
+  branches: readonly SystemAdminBranchRequest[],
+  options: {
+    isAccountsLoading: boolean;
+    hasAccountsError: boolean;
+    isBranchesLoading: boolean;
+    hasBranchesError: boolean;
+  },
+): readonly AdminSection[] {
+  return OWNER_ADMIN_SECTIONS.map((section): AdminSection => {
+    if (section.id === "branches") {
+      return {
+        ...section,
+        stats: buildBranchStats(branches),
+        records: buildBranchRecords(branches),
+        emptyMessage: options.hasBranchesError
+          ? "지점 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."
+          : options.isBranchesLoading
+            ? "지점 정보를 불러오는 중…"
+            : branches.length === 0
+              ? "등록된 지점이 없습니다."
+              : section.emptyMessage,
+        detailEmptyMessage: options.hasBranchesError
+          ? "지점 정보를 불러오지 못했습니다."
+          : section.detailEmptyMessage,
+      };
+    }
+
+    if (section.id === "accounts") {
+      return {
+        ...section,
+        stats: buildAccountStats(users),
+        records: buildAccountRecords(users),
+        emptyMessage: options.hasAccountsError
+          ? "계정 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."
+          : options.isAccountsLoading
+            ? "계정 정보를 불러오는 중…"
+            : users.length === 0
+              ? "등록된 계정이 없습니다."
+              : section.emptyMessage,
+        detailEmptyMessage: options.hasAccountsError
+          ? "계정 정보를 불러오지 못했습니다."
+          : section.detailEmptyMessage,
+      };
+    }
+
+    return section;
+  });
+}
+
+function filterSectionRecords(section: AdminSection, tab: string, query: string): AdminRecord[] {
+  return section.records.filter((record) => {
+    const matchesTab =
+      tab === "all" ||
+      record.category === tab ||
+      (record.requests?.some((request) => request.category === tab) ?? false);
+    if (!matchesTab) return false;
+    return matchesSearchQuery(query, [
+      record.title,
+      record.summary,
+      record.owner,
+      record.listSubtitle ?? "",
+      ...record.tags,
+      ...record.detailRows.map((row) => row.value),
+      ...(record.applicantRows?.map((row) => row.value) ?? []),
+    ]);
+  });
+}
+
+function createInitialViewState(): Record<AdminSectionId, SectionViewState> {
+  return OWNER_ADMIN_SECTIONS.reduce(
+    (state, section) => ({
+      ...state,
+      [section.id]: { tab: "all", search: "", selectedRecordId: null },
+    }),
+    {} as Record<AdminSectionId, SectionViewState>,
+  );
+}
+
+function resolveSelectedRecordId(
+  section: AdminSection,
+  nextTab: string,
+  nextSearch: string,
+  preferredSelectedRecordId: string | null,
+  shouldAutoSelectFirst: boolean,
+): string | null {
+  const visibleRecords = filterSectionRecords(section, nextTab, nextSearch);
+
+  if (preferredSelectedRecordId === null) {
+    return shouldAutoSelectFirst ? (visibleRecords[0]?.id ?? null) : null;
+  }
+  if (visibleRecords.some((record) => record.id === preferredSelectedRecordId)) {
+    return preferredSelectedRecordId;
+  }
+  return shouldAutoSelectFirst ? (visibleRecords[0]?.id ?? null) : null;
+}
+
+export function OwnerAdminConsole() {
+  const [activeSectionId, setActiveSectionId] = useState<AdminSectionId>("branches");
+  const [splitLayoutMode, setSplitLayoutMode] = useState<SplitLayoutMode | null>(null);
+  const [viewStateBySection, setViewStateBySection] = useState(createInitialViewState);
+  const queryClient = useQueryClient();
+
+  const {
+    data: systemAdminUsers = [],
+    isLoading: isSystemAdminUsersLoading,
+    error: systemAdminUsersError,
+  } = useQuery({ queryKey: ["systemAdminUsers"], queryFn: getSystemAdminUsers });
+  const {
+    data: systemAdminBranchRequests = [],
+    isLoading: isSystemAdminBranchRequestsLoading,
+    error: systemAdminBranchRequestsError,
+  } = useQuery({
+    queryKey: ["systemAdminBranchRequests"],
+    queryFn: getSystemAdminBranchRequests,
+  });
+  const approveMessageSenderMutation = useMutation({
+    mutationFn: approveSystemAdminMessageSenderApproval,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["systemAdminBranchRequests"] });
+    },
+  });
+  const {
+    data: pendingUsers = [],
+    isLoading: isPendingUsersLoading,
+    error: pendingUsersError,
+  } = useQuery({ queryKey: ["pendingUsers"], queryFn: getPendingUsers });
+  const [pendingRoleSelections, setPendingRoleSelections] = useState<Record<string, string>>({});
+  const approveUserMutation = useMutation({
+    mutationFn: ({ id, role, branchId }: { id: string; role: string; branchId?: string }) =>
+      approveUser(id, role, branchId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["pendingUsers"] });
+      void queryClient.invalidateQueries({ queryKey: ["systemAdminUsers"] });
+    },
+  });
+  const rejectUserMutation = useMutation({
+    mutationFn: (id: string) => rejectUser(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["pendingUsers"] });
+      void queryClient.invalidateQueries({ queryKey: ["systemAdminUsers"] });
+    },
+  });
+  const isPendingApprovalActionRunning = approveUserMutation.isPending || rejectUserMutation.isPending;
+
+  const sections = useMemo(
+    () =>
+      buildOwnerAdminSections(systemAdminUsers, systemAdminBranchRequests, {
+        isAccountsLoading: isSystemAdminUsersLoading,
+        hasAccountsError: Boolean(systemAdminUsersError),
+        isBranchesLoading: isSystemAdminBranchRequestsLoading,
+        hasBranchesError: Boolean(systemAdminBranchRequestsError),
+      }),
+    [
+      systemAdminUsers,
+      systemAdminBranchRequests,
+      isSystemAdminUsersLoading,
+      systemAdminUsersError,
+      isSystemAdminBranchRequestsLoading,
+      systemAdminBranchRequestsError,
+    ],
+  );
+  const activeSection =
+    sections.find((section) => section.id === activeSectionId) ?? OWNER_ADMIN_SECTIONS[0];
+  const activeViewState = viewStateBySection[activeSection.id];
+  const deferredSearchQuery = useDeferredValue(activeViewState.search);
+  const filteredRecords = useMemo(
+    () => filterSectionRecords(activeSection, activeViewState.tab, deferredSearchQuery),
+    [activeSection, activeViewState.tab, deferredSearchQuery],
+  );
+  const isActiveSectionLoading =
+    (activeSection.id === "accounts" &&
+      isSystemAdminUsersLoading &&
+      !systemAdminUsersError) ||
+    (activeSection.id === "branches" &&
+      isSystemAdminBranchRequestsLoading &&
+      !systemAdminBranchRequestsError);
+  const shouldAutoSelectFirstRecord = splitLayoutMode === "desktop";
+  const resolvedSelectedRecordId = resolveSelectedRecordId(
+    activeSection,
+    activeViewState.tab,
+    deferredSearchQuery,
+    activeViewState.selectedRecordId,
+    shouldAutoSelectFirstRecord,
+  );
+  const selectedRecord =
+    filteredRecords.find((record) => record.id === resolvedSelectedRecordId) ?? null;
+
+  const updateActiveSectionState = (updater: (current: SectionViewState) => SectionViewState) => {
+    setViewStateBySection((currentState) => ({
+      ...currentState,
+      [activeSection.id]: updater(currentState[activeSection.id]),
+    }));
+  };
+
+  return (
+    <PageSection name="system-admin">
+      <h1 className="sr-only">관리자</h1>
+
+      {activeSection.stats.length > 0 ? (
+        <StatsBar name="system-admin" items={activeSection.stats} />
+      ) : null}
+
+      {activeSection.id === "accounts" ? (
+        <InfoCard
+          title="가입 승인 대기"
+          data-component="system-admin-pending-approvals"
+          className="mb-6"
+        >
+          {isPendingUsersLoading ? (
+            <p className="py-3 text-sm text-v3-text-muted">승인 대기 목록을 불러오는 중…</p>
+          ) : pendingUsersError ? (
+            <p className="py-3 text-sm text-destructive">
+              승인 대기 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.
+            </p>
+          ) : pendingUsers.length === 0 ? (
+            <p className="py-3 text-sm text-v3-text-muted">승인 대기 중인 신청이 없습니다.</p>
+          ) : (
+            <ul data-component="system-admin-pending-approval-list" className="space-y-4">
+              {pendingUsers.map((user) => {
+                const selectedRole =
+                  pendingRoleSelections[user.id] ?? getDefaultPendingApprovalRole(user);
+                const branchId = user.branches[0]?.id;
+                const isApprovingThisRow =
+                  approveUserMutation.isPending && approveUserMutation.variables?.id === user.id;
+                const isRejectingThisRow =
+                  rejectUserMutation.isPending && rejectUserMutation.variables === user.id;
+                const showApproveError =
+                  approveUserMutation.isError && approveUserMutation.variables?.id === user.id;
+                const showRejectError =
+                  rejectUserMutation.isError && rejectUserMutation.variables === user.id;
+
+                return (
+                  <li
+                    key={user.id}
+                    data-component="system-admin-pending-approval-item"
+                    className="space-y-3 border-b border-v3-border pb-4 last:border-b-0 last:pb-0"
+                  >
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-semibold text-v3-dark">
+                          {user.name ?? user.email ?? "이름 미등록"}
+                        </p>
+                        <p className="text-xs text-v3-text-muted">{user.email ?? "-"}</p>
+                      </div>
+                      <span className="text-xs text-v3-text-muted">
+                        {formatAccountDate(user.createdAt)} 신청
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-v3-text-muted">
+                      <span>
+                        신청 지점{" "}
+                        <span className="font-medium text-v3-dark">
+                          {getAccountBranchLabel(user)}
+                        </span>
+                      </span>
+                      <span>
+                        요청 권한{" "}
+                        <span className="font-medium text-v3-dark">
+                          {getAccountRoleLabel(user.requestedRole)}
+                        </span>
+                      </span>
+                    </div>
+
+                    <div
+                      data-component="system-admin-pending-approval-actions"
+                      className="flex flex-wrap items-center gap-2"
+                    >
+                      <select
+                        aria-label={`${user.name ?? user.email ?? "신청자"} 승인 권한 선택`}
+                        data-component="system-admin-pending-approval-role-select"
+                        value={selectedRole}
+                        disabled={isPendingApprovalActionRunning}
+                        onChange={(event) =>
+                          setPendingRoleSelections((prev) => ({
+                            ...prev,
+                            [user.id]: event.target.value,
+                          }))
+                        }
+                        className="h-9 rounded-full border border-v3-border bg-white px-3 text-sm text-v3-dark disabled:opacity-50"
+                      >
+                        {REGISTERABLE_ROLE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="positive"
+                        disabled={isPendingApprovalActionRunning}
+                        onClick={() =>
+                          approveUserMutation.mutate({ id: user.id, role: selectedRole, branchId })
+                        }
+                      >
+                        {isApprovingThisRow ? "승인 중…" : "승인"}
+                      </Button>
+
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="negative-outline"
+                        disabled={isPendingApprovalActionRunning}
+                        onClick={() => rejectUserMutation.mutate(user.id)}
+                      >
+                        {isRejectingThisRow ? "거절 중…" : "거절"}
+                      </Button>
+                    </div>
+
+                    {showApproveError ? (
+                      <p role="alert" className="text-sm text-destructive">
+                        승인 처리에 실패했습니다. 잠시 후 다시 시도해 주세요.
+                      </p>
+                    ) : null}
+                    {showRejectError ? (
+                      <p role="alert" className="text-sm text-destructive">
+                        거절 처리에 실패했습니다. 잠시 후 다시 시도해 주세요.
+                      </p>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </InfoCard>
+      ) : null}
+
+      <div
+        data-component="system-admin-sections"
+        className="flex min-h-0 flex-1 flex-col gap-6 lg:flex-row"
+      >
+        <SectionNav
+          items={sections.map((section) => ({
+            id: section.id,
+            label: section.label,
+            icon: section.icon,
+          }))}
+          activeId={activeSection.id}
+          onSelect={(id) => setActiveSectionId(id as AdminSectionId)}
+          ariaLabel="관리자 기능"
+        />
+
+        <div className="min-h-0 flex-1">
+          <SplitLayout
+            hasSelection={Boolean(selectedRecord)}
+            onModeChange={setSplitLayoutMode}
+            onBack={() =>
+              updateActiveSectionState((current) => ({
+                ...current,
+                selectedRecordId: null,
+              }))
+            }
+          >
+            <ListPanel
+              title={activeSection.listTitle}
+              subtitle={activeSection.listSubtitle}
+              tabs={activeSection.tabs ? [...activeSection.tabs] : undefined}
+              activeTab={activeSection.tabs ? activeViewState.tab : undefined}
+              tabsAriaLabel={activeSection.tabs ? `${activeSection.listTitle} 필터` : undefined}
+              onTabChange={
+                activeSection.tabs
+                  ? (nextTab) =>
+                      updateActiveSectionState((current) => ({
+                        ...current,
+                        tab: nextTab,
+                        selectedRecordId: resolveSelectedRecordId(
+                          activeSection,
+                          nextTab,
+                          current.search,
+                          current.selectedRecordId,
+                          shouldAutoSelectFirstRecord,
+                        ),
+                      }))
+                  : undefined
+              }
+              searchValue={activeSection.searchPlaceholder ? activeViewState.search : undefined}
+              onSearchChange={
+                activeSection.searchPlaceholder
+                  ? (nextSearch) =>
+                      updateActiveSectionState((current) => ({
+                        ...current,
+                        search: nextSearch,
+                        selectedRecordId: resolveSelectedRecordId(
+                          activeSection,
+                          current.tab,
+                          nextSearch,
+                          current.selectedRecordId,
+                          shouldAutoSelectFirstRecord,
+                        ),
+                      }))
+                  : undefined
+              }
+              searchPlaceholder={activeSection.searchPlaceholder}
+              searchAriaLabel={
+                activeSection.searchPlaceholder ? `${activeSection.listTitle} 검색` : undefined
+              }
+            >
+              {!isActiveSectionLoading && filteredRecords.length === 0 ? (
+                <ListEmptyState message={activeSection.emptyMessage} />
+              ) : (
+                <AnimatedSlotList<AdminRecord>
+                  items={filteredRecords}
+                  isLoading={isActiveSectionLoading}
+                  loadingCount={5}
+                  className="space-y-2"
+                  itemDataComponent="system-admin-list-item"
+                  getItemKey={(record) => record.id}
+                  getSlotState={({ item, isLoading: slotLoading }) => ({
+                    isActive: !slotLoading && item?.id === selectedRecord?.id,
+                    isInteractive: !slotLoading && Boolean(item),
+                  })}
+                  onSlotClick={(record) =>
+                    updateActiveSectionState((current) => ({
+                      ...current,
+                      selectedRecordId: record.id,
+                    }))
+                  }
+                  render={({ item: record, isLoading: slotLoading }) => {
+                    if (slotLoading) {
+                      return (
+                        <div
+                          data-component="system-admin-list-skeleton-row"
+                          className="flex min-h-11 items-center gap-3"
+                        >
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-v3-dim-white">
+                            <Skeleton className="h-4 w-4 rounded-md bg-white/70" />
+                          </div>
+                          <div className="min-w-0 flex-1 space-y-2">
+                            <Skeleton className="h-4 w-28 bg-v3-dim-white" />
+                            <Skeleton className="h-3 w-44 bg-v3-dim-white" />
+                          </div>
+                          <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white" />
+                        </div>
+                      );
+                    }
+                    if (!record) return null;
+
+                    const ListIcon =
+                      activeSection.id === "accounts"
+                        ? UserKey
+                        : activeSection.id === "branches"
+                          ? Building2
+                          : Bell;
+                    const listPillItems = getListPillItems(activeSection.id, record);
+                    const isBranchSection = activeSection.id === "branches";
+                    const listSummary = isBranchSection
+                      ? getApplicantLabel(record)
+                      : record.listSummary;
+                    const hasBranchAsidePill =
+                      isBranchSection && activeViewState.tab !== "all" && listPillItems.length > 0;
+                    const hasSingleAsidePill =
+                      !isBranchSection && listPillItems.length === 1;
+                    const hasInlinePills =
+                      !isBranchSection && !hasSingleAsidePill && listPillItems.length > 0;
+
+                    return (
+                      <AnimatedSlotListItemContent
+                        dataComponent="system-admin-list-item"
+                        icon={ListIcon}
+                        iconContainerClassName={cn(
+                          CATEGORY_BADGE_STYLE[record.category]?.icon ??
+                            SECTION_ICON_CLASSNAMES[activeSection.id],
+                        )}
+                        title={record.listTitle}
+                        subtitle={isBranchSection ? undefined : record.listSubtitle}
+                        meta={
+                          listSummary || hasInlinePills ? (
+                            <>
+                              {listSummary ? (
+                                <span className="min-w-0 truncate text-v3-text">{listSummary}</span>
+                              ) : null}
+                              {hasInlinePills
+                                ? listPillItems.map((pill) => (
+                                    <TagPill key={pill.label} variant={pill.variant}>
+                                      {pill.label}
+                                    </TagPill>
+                                  ))
+                                : null}
+                            </>
+                          ) : undefined
+                        }
+                        metaClassName="flex-wrap gap-1 whitespace-normal"
+                        status={
+                          hasBranchAsidePill || hasSingleAsidePill ? (
+                            <div className="flex shrink-0 items-center self-center">
+                              <TagPill variant={listPillItems[0].variant}>
+                                {listPillItems[0].label}
+                              </TagPill>
+                            </div>
+                          ) : undefined
+                        }
+                      />
+                    );
+                  }}
+                />
+              )}
+            </ListPanel>
+
+            {isActiveSectionLoading ? (
+              <DetailSkeleton
+                name="system-admin-detail-skeleton"
+                headerBadge
+                sections={[
+                  { titleWidth: "w-24", rows: ["w-full", "w-4/5", "w-2/3"] },
+                  { titleWidth: "w-20", rows: ["w-full", "w-3/4"] },
+                ]}
+              />
+            ) : selectedRecord ? (
+              <DetailPanel
+                avatar={
+                  <div
+                    className={cn(
+                      "flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px]",
+                      CATEGORY_BADGE_STYLE[selectedRecord.category]?.icon ??
+                        SECTION_ICON_CLASSNAMES[activeSection.id],
+                    )}
+                  >
+                    <activeSection.icon className="h-5 w-5" aria-hidden="true" />
+                  </div>
+                }
+                title={selectedRecord.listTitle}
+                subtitle={
+                  activeSection.id === "branches" ? (
+                    <span className="text-sm text-v3-text-muted">
+                      {selectedRecord.listTitle}의 메시지 발신 권한 상태
+                    </span>
+                  ) : activeSection.id === "accounts" &&
+                    selectedRecord.listSubtitle &&
+                    selectedRecord.listStatusLabel ? (
+                    <span className="flex items-center gap-3 text-sm text-v3-text-muted">
+                      <span className="flex items-center gap-1">
+                        <Building2 className="h-3.5 w-3.5" aria-hidden="true" />
+                        {selectedRecord.listSubtitle}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
+                        {selectedRecord.listStatusLabel}
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="text-sm text-v3-text-muted">{selectedRecord.summary}</span>
+                  )
+                }
+              >
+                {activeSection.id === "notifications" ? (
+                  <div className="space-y-5">
+                    <InfoCard title="테스트 정보">
+                      {selectedRecord.detailRows.map((row) => (
+                        <InfoRow key={row.label} label={row.label} value={row.value} />
+                      ))}
+                    </InfoCard>
+                    <InfoCard title="알림 실행">
+                      <NotificationTestSection />
+                    </InfoCard>
+                  </div>
+                ) : (
+                  <div className="space-y-5">
+                    {(selectedRecord.requests?.length
+                      ? selectedRecord.requests
+                      : [
+                          {
+                            category: selectedRecord.category,
+                            statusLabel: selectedRecord.statusLabel,
+                            detailRows: selectedRecord.detailRows,
+                            applicantRows: selectedRecord.applicantRows,
+                          },
+                        ]
+                    ).map((request, index) => {
+                      const approveAction =
+                        request.action?.type === "approve-message-sender" ? request.action : null;
+                      const infoTitle =
+                        activeSection.id === "accounts"
+                          ? "계정 정보"
+                          : approveAction
+                            ? "메시지 승인 신청"
+                            : "지점 정보";
+
+                      return (
+                        <section
+                          key={`${request.category}-${index}`}
+                          data-component="system-admin-detail-section"
+                          className={cn("space-y-4", index > 0 && "border-t border-v3-border pt-5")}
+                        >
+                          {request.applicantRows ? (
+                            <InfoCard title="신청인 정보">
+                              {request.applicantRows.map((row) => (
+                                <InfoRow key={row.label} label={row.label} value={row.value} />
+                              ))}
+                            </InfoCard>
+                          ) : null}
+                          <InfoCard title={infoTitle}>
+                            {request.detailRows.map((row) => (
+                              <InfoRow key={row.label} label={row.label} value={row.value} />
+                            ))}
+                          </InfoCard>
+                          {approveAction ? (
+                            <div className="space-y-2">
+                              <Button
+                                type="button"
+                                size="md"
+                                variant="positive"
+                                className="w-full sm:w-auto sm:min-w-40"
+                                disabled={approveMessageSenderMutation.isPending}
+                                onClick={() =>
+                                  approveMessageSenderMutation.mutate(approveAction.branchId)
+                                }
+                              >
+                                {approveMessageSenderMutation.isPending ? "승인 중…" : "승인"}
+                              </Button>
+                              {approveMessageSenderMutation.error ? (
+                                <p role="alert" className="text-sm text-destructive">
+                                  승인 처리에 실패했습니다. 잠시 후 다시 시도해 주세요.
+                                </p>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </section>
+                      );
+                    })}
+                  </div>
+                )}
+              </DetailPanel>
+            ) : (
+              <DetailPanel
+                avatar={
+                  <div
+                    className={cn(
+                      "flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px]",
+                      SECTION_ICON_CLASSNAMES[activeSection.id],
+                    )}
+                  >
+                    <activeSection.icon className="h-5 w-5" aria-hidden="true" />
+                  </div>
+                }
+                title={activeSection.listTitle}
+                subtitle={activeSection.detailEmptyMessage}
+                overlay={
+                  <DetailEmptyState
+                    name="system-admin-detail-empty"
+                    icon={activeSection.icon}
+                    message={activeSection.detailEmptyMessage}
+                    className="min-h-0 flex-none"
+                  />
+                }
+              >
+                {null}
+              </DetailPanel>
+            )}
+          </SplitLayout>
+        </div>
+      </div>
+    </PageSection>
+  );
+}

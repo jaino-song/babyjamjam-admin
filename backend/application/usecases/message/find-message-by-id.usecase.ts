@@ -9,8 +9,7 @@ export class FindMessageByIdUsecase {
         private readonly messageRepository: IMessageRepository,
     ) {}
 
-    execute(id: number): Promise<MessageEntity | null> {
-        return this.messageRepository.findById(id);
+    execute(branchid: string, id: number): Promise<MessageEntity | null> {
+        return this.messageRepository.findById(branchid, id);
     }
 }
-

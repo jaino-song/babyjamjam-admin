@@ -1,80 +1,91 @@
-import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
+import { EformsignDocEntity, EformsignDocumentKind } from "domain/entities/eformsign-doc.entity";
 
 type EformsignDocRow = {
     id: number;
-    document_id: string;
-    created_date: Date;
-    updated_date: Date;
-    status_type: string;
-    status_detail: string;
-    step_type: string;
-    step_index: string;
-    step_name: string;
-    step_recipient_type: string;
-    step_recipient_name: string;
-    step_recipient_sms: string;
-    expired_date: Date;
+    documentId: string;
+    createdDate: Date;
+    updatedDate: Date;
+    statusType: string;
+    statusDetail: string;
+    stepType: string;
+    stepIndex: string;
+    stepName: string;
+    stepRecipientType: string;
+    stepRecipientName: string;
+    stepRecipientSms: string;
+    expiredDate: Date;
     expired: boolean;
-    client_id: number;
+    clientId: number;
+    documentKind: string | null;
+    employeeScheduleId: number | null;
+    templateId: string | null;
 };
 
 export class EformsignDocMapper {
     static toDomain(row: EformsignDocRow): EformsignDocEntity {
         return EformsignDocEntity.reconstitute({
             id: row.id,
-            documentId: row.document_id,
-            createdDate: row.created_date,
-            updatedDate: row.updated_date,
-            statusType: row.status_type,
-            statusDetail: row.status_detail,
-            stepType: row.step_type,
-            stepIndex: row.step_index,
-            stepName: row.step_name,
-            stepRecipientType: row.step_recipient_type,
-            stepRecipientName: row.step_recipient_name,
-            stepRecipientSms: row.step_recipient_sms,
-            expiredDate: row.expired_date,
+            documentId: row.documentId,
+            createdDate: row.createdDate,
+            updatedDate: row.updatedDate,
+            statusType: row.statusType,
+            statusDetail: row.statusDetail,
+            stepType: row.stepType,
+            stepIndex: row.stepIndex,
+            stepName: row.stepName,
+            stepRecipientType: row.stepRecipientType,
+            stepRecipientName: row.stepRecipientName,
+            stepRecipientSms: row.stepRecipientSms,
+            expiredDate: row.expiredDate,
             expired: row.expired,
-            clientId: row.client_id,
+            clientId: row.clientId,
+            documentKind: row.documentKind as EformsignDocumentKind | null,
+            employeeScheduleId: row.employeeScheduleId,
+            templateId: row.templateId,
         });
     }
 
-    // static toPrismaCreate(entity: EformsignDocEntity) {
-    //     return {
-    //         document_id: entity.documentId,
-    //         created_date: entity.createdDate,
-    //         updated_date: entity.updatedDate,
-    //         status_type: entity.statusType,
-    //         status_detail: entity.statusDetail,
-    //         step_type: entity.stepType,
-    //         step_index: entity.stepIndex,
-    //         step_name: entity.stepName,
-    //         step_recipient_type: entity.stepRecipientType,
-    //         step_recipient_name: entity.stepRecipientName,
-    //         step_recipient_sms: entity.stepRecipientSms,
-    //         expired_date: entity.expiredDate,
-    //         expired: entity.expired,
-    //         client_id: entity.clientId,
-    //     };
-    // }
+    static toPrismaCreate(entity: EformsignDocEntity) {
+        return {
+            documentId: entity.documentId,
+            createdDate: entity.createdDate,
+            updatedDate: entity.updatedDate,
+            statusType: entity.statusType,
+            statusDetail: entity.statusDetail,
+            stepType: entity.stepType,
+            stepIndex: entity.stepIndex,
+            stepName: entity.stepName,
+            stepRecipientType: entity.stepRecipientType,
+            stepRecipientName: entity.stepRecipientName,
+            stepRecipientSms: entity.stepRecipientSms,
+            expiredDate: entity.expiredDate,
+            expired: entity.expired,
+            clientId: entity.clientId,
+            documentKind: entity.documentKind,
+            employeeScheduleId: entity.employeeScheduleId,
+            templateId: entity.templateId,
+        };
+    }
 
-    // static toPrismaUpdate(entity: EformsignDocEntity) {
-    //     return {
-    //         document_id: entity.documentId,
-    //         created_date: entity.createdDate,
-    //         updated_date: entity.updatedDate,
-    //         status_type: entity.statusType,
-    //         status_detail: entity.statusDetail,
-    //         step_type: entity.stepType,
-    //         step_index: entity.stepIndex,
-    //         step_name: entity.stepName,
-    //         step_recipient_type: entity.stepRecipientType,
-    //         step_recipient_name: entity.stepRecipientName,
-    //         step_recipient_sms: entity.stepRecipientSms,
-    //         expired_date: entity.expiredDate,
-    //         expired: entity.expired,
-    //         client_id: entity.clientId,
-    //     };
-    // }
+    static toPrismaUpdate(entity: EformsignDocEntity) {
+        return {
+            documentId: entity.documentId,
+            createdDate: entity.createdDate,
+            updatedDate: entity.updatedDate,
+            statusType: entity.statusType,
+            statusDetail: entity.statusDetail,
+            stepType: entity.stepType,
+            stepIndex: entity.stepIndex,
+            stepName: entity.stepName,
+            stepRecipientType: entity.stepRecipientType,
+            stepRecipientName: entity.stepRecipientName,
+            stepRecipientSms: entity.stepRecipientSms,
+            expiredDate: entity.expiredDate,
+            expired: entity.expired,
+            clientId: entity.clientId,
+            documentKind: entity.documentKind,
+            employeeScheduleId: entity.employeeScheduleId,
+            templateId: entity.templateId,
+        };
+    }
 }
-

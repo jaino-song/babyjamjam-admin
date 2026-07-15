@@ -1,12 +1,147 @@
-import { api } from "../app/lib/axios/client";
+import axios from "axios";
+import type {
+    AlimtalkProvider,
+    AlimtalkProviderResponse,
+} from "@babyjamjam/shared/types/message";
+import { api } from "@/lib/api/client";
 import { ContractDataDto } from '@/backend/application/dto/contract.dto';
-import { EformsignDocumentsResponse } from '@/app/lib/eformsign/types';
+import {
+    EformsignApiListResponse,
+    CreateEformsignDocRecordRequest,
+    EformsignAuthStatusResponse,
+    EformsignDeleteDocumentsResponse,
+    EformsignDocClientSummary,
+    EformsignDocumentsResponse,
+    EformsignReRequestDocumentRequest,
+    HeadlessDispatchResponse,
+    HeadlessFinalizeResponse,
+} from '@babyjamjam/shared/types/eformsign';
+import type { EformsignStatusCountsResponse } from "@/lib/eformsign/types";
+import type {
+    MessageDeliverySmsType,
+    MessageDeliveryTriggerType,
+    SendMessageDeliverySmsRequest,
+    SendMessageDeliverySmsResponse,
+} from "@babyjamjam/shared/types/message";
+
+const DEFAULT_EFORMSIGN_LIMIT = 100;
+const DEFAULT_EFORMSIGN_SKIP = 0;
+
+export interface FeedbackTemplateIdResponse {
+    templateId: string | null;
+}
+
+export interface LocalEformsignDocRecord {
+    id?: number;
+    documentId: string;
+    createdDate: string;
+    updatedDate: string;
+    statusType: string;
+    statusDetail: string;
+    stepType: string;
+    stepIndex: string;
+    stepName: string;
+    stepRecipientType: string;
+    stepRecipientName: string;
+    stepRecipientSms: string;
+    expiredDate: string;
+    expired: boolean;
+    clientId: number;
+    documentKind: "contract" | "service_feedback_snapshot" | null;
+    employeeScheduleId: number | null;
+    templateId: string | null;
+}
+
+function normalizeDocumentListResponse(
+    response: EformsignApiListResponse,
+    params?: { limit?: number; skip?: number },
+): EformsignDocumentsResponse {
+    return {
+        documents: response.documents ?? [],
+        total_rows: response.total_count ?? response.documents?.length ?? 0,
+        limit: params?.limit ?? DEFAULT_EFORMSIGN_LIMIT,
+        skip: params?.skip ?? DEFAULT_EFORMSIGN_SKIP,
+    };
+}
+
+// Auth API response types
+export interface AuthResponse {
+    success: boolean;
+    message?: string;
+    code?: string;
+    hasKakaoAccount?: boolean;
+    errors?: string[];
+}
+
+export interface LoginResponse extends AuthResponse {
+    accessToken?: string;
+    refreshToken?: string;
+    user?: string;
+}
 
 // Auth API
 export const authApi = {
     kakaoLogin: () => {
-        const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3001";
-        window.location.href = `${API_BASE_URL}/auth/kakao`;
+        window.location.href = "/api/auth/kakao";
+    },
+
+    // Email authentication
+    register: async (params: {
+        email: string;
+        password: string;
+        name?: string;
+        phone: string;
+        birthDate: string;
+        branchId: string;
+        role: string;
+    }): Promise<AuthResponse> => {
+        const { data } = await api.post('/auth/register', params);
+        return data;
+    },
+
+    getBranches: async (): Promise<{ id: string; name: string }[]> => {
+        const { data } = await api.get('/auth/branches/all');
+        return data;
+    },
+
+    checkEmailExists: async (email: string): Promise<{ exists: boolean; linkable: boolean }> => {
+        const { data } = await api.get('/auth/check-email', {
+            params: { email },
+        });
+        return {
+            exists: data?.exists === true,
+            linkable: data?.linkable === true,
+        };
+    },
+
+    login: async (email: string, password: string): Promise<LoginResponse> => {
+        const { data } = await api.post('/auth/login', { email, password });
+        return data;
+    },
+
+    verifyEmail: async (token: string): Promise<AuthResponse> => {
+        const { data } = await api.post('/auth/verify-email', { token });
+        return data;
+    },
+
+    forgotPassword: async (email: string): Promise<AuthResponse> => {
+        const { data } = await api.post('/auth/forgot-password', { email });
+        return data;
+    },
+
+    resetPassword: async (token: string, newPassword: string): Promise<AuthResponse> => {
+        const { data } = await api.post('/auth/reset-password', { token, newPassword });
+        return data;
+    },
+
+    resendVerification: async (email: string): Promise<AuthResponse> => {
+        const { data } = await api.post('/auth/resend-verification', { email });
+        return data;
+    },
+
+    linkPassword: async (password: string): Promise<AuthResponse> => {
+        const { data } = await api.post('/auth/link-password', { password });
+        return data;
     },
 };
 
@@ -22,35 +157,345 @@ export const eformsignApi = {
         const { data } = await api.post('/access-token', { executionTime, memberEmail });
         return data;
     },
+    getAuthStatus: async (): Promise<EformsignAuthStatusResponse> => {
+        const { data } = await api.get('/eformsign/auth-status');
+        return data;
+    },
     refreshAccessToken: async (executionTime: number) => {
         const { data } = await api.post('/refresh-access-token', { executionTime });
         return data;
     },
-    generateDocument: async (contractData: ContractDataDto) => {
-        const { data } = await api.post('/generate-document', { contractData });
+    reRequestDocument: async (
+        documentId: string,
+        params: EformsignReRequestDocumentRequest
+    ): Promise<{ status?: string; code?: string; message?: string }> => {
+        const { data } = await api.post(`/eformsign/documents/${documentId}/re-request`, params);
+        return data;
+    },
+    getDocument: async (documentId: string) => {
+        const { data } = await api.get(`/eformsign/documents/${documentId}`);
+        return data;
+    },
+    // Receipt = page 7 of the document PDF, extracted by the download_files BFF route.
+    // Browser-navigable BFF URL (full /api path, used as href/download — NOT via the axios client).
+    getDocumentReceiptDownloadUrl: (documentId: string): string =>
+        `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document&page=7`,
+    getLocalDocumentRecord: async (documentId: string) => {
+        const { data } = await api.get(`/eformsign-docs/document-id`, {
+            params: { documentId },
+        });
+        return data as { clientId?: number | null } | null;
+    },
+    generateDocument: async (contractData: ContractDataDto, clientId: number) => {
+        const { data } = await api.post('/generate-document', { contractData, clientId });
+        return data;
+    },
+    generateStaffDocument: async (
+        documentId: string,
+        accessToken?: string,
+        refreshToken?: string,
+        prefillEndDate?: string,
+    ) => {
+        const { data } = await api.post('/generate-staff-document', {
+            documentId,
+            accessToken,
+            refreshToken,
+            prefillEndDate,
+        });
+        return data;
+    },
+    // Create eformsign doc record to track document in local DB
+    createDocRecord: async (params: CreateEformsignDocRecordRequest) => {
+        const { data } = await api.post('/eformsign-docs', params);
         return data;
     },
     // Documents APIs - token is read from httpOnly cookie on server
+    // Note: eformsign routes use /eformsign prefix to avoid conflict with file storage /documents
     // Unified endpoint - fetches all documents in single request (more efficient)
-    getAllDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/documents');
+    getAllDocuments: async (params?: { limit?: number; skip?: number; type?: string | null }): Promise<EformsignDocumentsResponse> => {
+        const { data } = await api.get('/eformsign/documents', { params });
         return data;
     },
-    getInProgressDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/documents/in-progress');
+    getInProgressDocuments: async (params?: { limit?: number; skip?: number }): Promise<EformsignDocumentsResponse> => {
+        const { data } = await api.get<EformsignApiListResponse>('/eformsign/documents/in-progress', { params });
+        return normalizeDocumentListResponse(data, params);
+    },
+    getCompletedDocuments: async (params?: { limit?: number; skip?: number }): Promise<EformsignDocumentsResponse> => {
+        const { data } = await api.get<EformsignApiListResponse>('/eformsign/documents/completed', { params });
+        return normalizeDocumentListResponse(data, params);
+    },
+    getExpiredDocuments: async (params?: { limit?: number; skip?: number }): Promise<EformsignDocumentsResponse> => {
+        const { data } = await api.get<EformsignApiListResponse>('/eformsign/documents/expired', { params });
+        return normalizeDocumentListResponse(data, params);
+    },
+    deleteDocuments: async (
+        documentIds: string[],
+        isPermanent: boolean = false
+    ): Promise<EformsignDeleteDocumentsResponse> => {
+        const { data } = await api.delete('/eformsign/documents', {
+            params: { is_permanent: isPermanent },
+            data: { document_ids: documentIds },
+        });
         return data;
     },
-    getCompletedDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/documents/completed');
-        return data;
-    },
-    getRejectedDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/documents/rejected');
-        return data;
+    deleteDocument: async (
+        documentId: string,
+        isPermanent: boolean = false
+    ): Promise<EformsignDeleteDocumentsResponse> => {
+        return eformsignApi.deleteDocuments([documentId], isPermanent);
     },
     // Legacy alias
     getDocuments: async (): Promise<EformsignDocumentsResponse> => {
-        const { data } = await api.get('/documents');
+        const { data } = await api.get('/eformsign/documents');
+        return data;
+    },
+    /**
+     * BJJ-90: backend-driven creation dispatch. Drives the iframe gate
+     * sequence (mode:"01") via headless Chromium so staff don't see the
+     * iframe. Returns ok=false on any failure — the caller falls back to
+     * the existing iframe modal.
+     */
+    dispatchHeadless: async (
+        contractData: ContractDataDto,
+        clientId: number,
+        progressId?: string,
+    ): Promise<HeadlessDispatchResponse> => {
+        const { data } = await api.post('/eformsign-docs/dispatch-headless', {
+            contractData,
+            clientId,
+            progressId,
+        });
+        return data;
+    },
+    /**
+     * BJJ-90: backend-driven staff finalize (mode:"02"). Same fallback
+     * contract — ok=false instructs the caller to open the iframe modal.
+     */
+    finalizeHeadless: async (
+        documentId: string,
+        prefillEndDate?: string,
+        progressId?: string,
+    ): Promise<HeadlessFinalizeResponse> => {
+        const { data } = await api.post('/eformsign-docs/finalize-headless', {
+            documentId,
+            prefillEndDate,
+            progressId,
+        });
+        return data;
+    },
+    getDocumentClientNames: async (): Promise<EformsignDocClientSummary[]> => {
+        const { data } = await api.get('/eformsign-docs/client-names');
+        return data;
+    },
+    getFeedbackTemplateId: async (): Promise<FeedbackTemplateIdResponse> => {
+        const { data } = await api.get('/eformsign-docs/feedback-template-id');
+        return data;
+    },
+    getDocumentsByClientId: async (clientId: number): Promise<LocalEformsignDocRecord[]> => {
+        const { data } = await api.get('/eformsign-docs/client', {
+            params: { clientId },
+        });
+        return data;
+    },
+    // 전체 탭 StatsBar 카운터용 원시 신호. 토큰은 프록시가 서버에서 주입.
+    getDocumentStatusCounts: async (): Promise<EformsignStatusCountsResponse> => {
+        const { data } = await api.get('/eformsign/documents/status-counts');
         return data;
     },
 }
+
+export type { AlimtalkProvider, AlimtalkProviderResponse };
+
+export type MessageSenderApprovalStatus = "not_requested" | "pending" | "approved";
+
+export interface MessageSenderApprovalResponse {
+    approvalStatus: MessageSenderApprovalStatus;
+    isApproved: boolean;
+    canRequest: boolean;
+    requestedAt: string | null;
+    approvedAt: string | null;
+}
+
+export interface MessageAutomationPolicyRow {
+    id: string;
+    label: string;
+    value: string;
+}
+
+export interface MessageAutomationPolicy {
+    id: string;
+    title: string;
+    description: string;
+    active: boolean;
+    requiresApproval: boolean;
+    rows: MessageAutomationPolicyRow[];
+}
+
+export interface MessageAutomationPastTriggerConfig {
+    sendIntervalMinutes: number;
+    ruleOrder: string[];
+}
+
+export interface MessageAutomationPoliciesResponse {
+    policies: MessageAutomationPolicy[];
+    pastTriggerConfig: MessageAutomationPastTriggerConfig;
+}
+
+export interface NotificationPreferencesResponse {
+    emailNotificationsEnabled: boolean;
+    updatedAt?: string;
+}
+
+export type {
+    MessageDeliverySmsType,
+    MessageDeliveryTriggerType,
+    SendMessageDeliverySmsRequest,
+    SendMessageDeliverySmsResponse,
+};
+
+export interface RibbonConfig {
+    enabled: boolean;
+    message: string;
+    backgroundColor: string;
+    textColor: string;
+    linkText: string;
+    linkHref: string;
+    linkColor: string;
+}
+
+export interface RibbonConfigResponse extends RibbonConfig {
+    updatedAt?: string;
+}
+
+export interface ConsultationInquiry {
+    id: string;
+    branchId: string;
+    publicBranchSlug: string;
+    motherName: string;
+    phone: string;
+    address: string;
+    dueDate: string;
+    birthExperience: string;
+    voucherType: string | null;
+    preferredCaregiverName: string | null;
+    referralSource: string;
+    privacyAcceptedAt: string;
+    selectedServices: ConsultationSelectedServices | null;
+    additionalNotes: string | null;
+    source: string;
+    status: string;
+    readAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+    branchName?: string;
+}
+
+export interface ConsultationSelectedServices {
+    plan: {
+        id: string;
+        name: string;
+        priceLabel: string;
+        durationDays: number | null;
+    } | null;
+    addons: Array<{
+        id: string;
+        name: string;
+        priceLabel: string;
+        quantity: number;
+        group: string | null;
+    }>;
+}
+
+export interface ConsultationInquiryListResponse {
+    data: ConsultationInquiry[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+}
+
+export interface ConsultationInquiryListParams {
+    page?: number;
+    limit?: number;
+    search?: string;
+    phone?: string;
+    status?: string;
+    readState?: string;
+}
+
+export const settingsApi = {
+    getAlimtalkProvider: async (): Promise<AlimtalkProviderResponse> => {
+        const { data } = await api.get('/settings/alimtalk-provider');
+        return data;
+    },
+    updateAlimtalkProvider: async (provider: AlimtalkProvider): Promise<AlimtalkProviderResponse> => {
+        const { data } = await api.put('/settings/alimtalk-provider', { provider });
+        return data;
+    },
+    getMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {
+        const { data } = await api.get("/settings/message-sender-approval");
+        return data;
+    },
+    getMessageAutomationPolicies: async (): Promise<MessageAutomationPoliciesResponse> => {
+        const { data } = await api.get("/settings/message-automation-policies");
+        return data;
+    },
+    updateMessageAutomationPastTriggerConfig: async (
+        config: MessageAutomationPastTriggerConfig,
+    ): Promise<MessageAutomationPastTriggerConfig> => {
+        const { data } = await api.put("/settings/message-automation-policies/past-trigger", config);
+        return data;
+    },
+    requestMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {
+        const { data } = await api.post("/settings/message-sender-approval/request");
+        return data;
+    },
+    getNotificationPreferences: async (): Promise<NotificationPreferencesResponse> => {
+        const { data } = await api.get('/settings/notification-preferences');
+        return data;
+    },
+    updateNotificationPreferences: async (emailNotificationsEnabled: boolean): Promise<NotificationPreferencesResponse> => {
+        const { data } = await api.put('/settings/notification-preferences', { emailNotificationsEnabled });
+        return data;
+    },
+    getRibbonConfig: async (): Promise<RibbonConfigResponse> => {
+        const { data } = await api.get('/settings/ribbon-config');
+        return data;
+    },
+    updateRibbonConfig: async (config: RibbonConfig): Promise<RibbonConfigResponse> => {
+        const { data } = await api.put('/settings/ribbon-config', config);
+        return data;
+    },
+}
+
+export const consultationInquiriesApi = {
+    list: async (params: ConsultationInquiryListParams = {}): Promise<ConsultationInquiryListResponse> => {
+        const { data } = await api.get("/consultation-inquiries", { params });
+        return data;
+    },
+    markRead: async (id: string): Promise<ConsultationInquiry> => {
+        const { data } = await api.patch(`/consultation-inquiries/${id}/read`);
+        return data;
+    },
+};
+
+export const messageDeliveryApi = {
+    sendSms: async (
+        payload: SendMessageDeliverySmsRequest
+    ): Promise<SendMessageDeliverySmsResponse> => {
+        try {
+            const { data } = await api.post("/message-deliveries/sms", payload);
+            return data;
+        } catch (error) {
+            if (axios.isAxiosError<{ error?: string; message?: string }>(error)) {
+                const message =
+                    error.response?.data?.error
+                    || error.response?.data?.message
+                    || error.message;
+                throw new Error(message);
+            }
+
+            throw error;
+        }
+    },
+};

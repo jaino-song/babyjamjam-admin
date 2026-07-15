@@ -9,8 +9,7 @@ export class ListEmployeesByRegisteredDateUsecase {
         private readonly employeeRepository: IEmployeeRepository,
     ) {}
 
-    execute(registeredDate: Date): Promise<EmployeeEntity[]> {
-        return this.employeeRepository.findByRegisteredDate(registeredDate);
+    execute(branchid: string, registeredDate: Date): Promise<EmployeeEntity[]> {
+        return this.employeeRepository.findByRegisteredDate(branchid, registeredDate);
     }
 }
-

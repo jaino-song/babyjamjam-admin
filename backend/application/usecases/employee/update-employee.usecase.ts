@@ -8,6 +8,7 @@ export type UpdateEmployeeParams = {
     phone?: string;
     grade?: string;
     openToNextWork?: boolean;
+    birthday?: string;
 };
 
 @Injectable()
@@ -17,8 +18,12 @@ export class UpdateEmployeeUsecase {
         private readonly employeeRepository: IEmployeeRepository,
     ) {}
 
-    async execute(id: number, updates: UpdateEmployeeParams): Promise<EmployeeEntity> {
-        const employee = await this.employeeRepository.findById(id);
+    async execute(
+        branchid: string,
+        id: number,
+        updates: UpdateEmployeeParams
+    ): Promise<EmployeeEntity> {
+        const employee = await this.employeeRepository.findById(branchid, id);
         if (!employee) {
             throw new NotFoundException(`Employee with id ${id} not found`);
         }
@@ -29,9 +34,9 @@ export class UpdateEmployeeUsecase {
             updates.phone,
             updates.grade,
             updates.openToNextWork,
+            updates.birthday,
         );
 
-        return this.employeeRepository.update(employee);
+        return this.employeeRepository.update(branchid, employee);
     }
 }
-

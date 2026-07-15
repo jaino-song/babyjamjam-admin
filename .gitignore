@@ -10,10 +10,18 @@ node_modules/
 
 # testing
 coverage/
+test-results/
+**/test-results/
+frontend/test-results/
+frontend/playwright-report/
+**/playwright-report/
+.playwright-mcp/
+**/lint_report.txt
 
 # next.js
 **/.next/
 out/
+frontend/public/vendor/rhwp/rhwp_bg.wasm
 
 # production
 build/
@@ -21,14 +29,29 @@ build/
 # backend
 backend/dist/
 backend/node_modules/
-backend/prisma/migrations/
 backend/prisma/generated/
-backend/prisma/schema.prisma
+# schema.prisma is tracked and load-bearing (drift guard, prisma generate,
+# migration authoring) — review finding: a tracked-but-ignored file silently
+# falls out of git after a stray `git rm --cached`/recreate. Never ignore it.
 backend/prisma/seed.ts
 
 # misc
 .DS_Store
 *.pem
+
+# editor/tool backup + temp artifacts (audit P4.8 — keep these junk
+# classes from ever being tracked again)
+*.bak
+*.bak2
+**/.temp/
+**/.claude/hookify.*.local.md
+*-opencode.md
+
+# paul planning files (local only)
+.paul/
+
+# sisyphus working files (local only)
+.sisyphus/
 
 # debug
 npm-debug.log*
@@ -38,6 +61,20 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!frontend/.env.example
+!mobile/.env.example
+frontend/auth.json
+mobile/auth.json
+
+# local audit / verification screenshots (Playwright captures from manual debugging)
+audit-*.png
+verify-*.png
+live-*.png
+mockup-*.png
+chat-*.png
+messages-*.png
+alimtalk-*.png
+pages-index-*.png
 
 # vercel
 .vercel
@@ -45,3 +82,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+frontend/auth.json
+BUGFIX.md
+frontend/BUGFIX.md
+.sisyphus/*
+claude.md
+**/claude.md
+CLAUDE.md
+**/CLAUDE.md

@@ -43,9 +43,9 @@ export class BulkUpdateVoucherPriceInfoUsecase {
             await tx.voucher_price_info.update({
               where: { id: existing.id },
               data: {
-                full_price: item.fullPrice,
+                fullPrice: item.fullPrice,
                 grant: item.grant,
-                actual_price: item.actualPrice,
+                actualPrice: item.actualPrice,
               },
             });
             updated.push(existing.id);
@@ -53,26 +53,20 @@ export class BulkUpdateVoucherPriceInfoUsecase {
               `Updated voucher price info: id=${existing.id}, year=${year}, type=${item.type}, duration=${item.duration}`,
             );
           } else {
-            // 새 레코드 생성 (다음 ID 계산)
-            const maxIdResult = await tx.voucher_price_info.aggregate({
-              _max: { id: true },
-            });
-            const newId = (maxIdResult._max.id || 0) + 1;
-
-            await tx.voucher_price_info.create({
+            const createdRow = await tx.voucher_price_info.create({
               data: {
-                id: newId,
                 year: year,
                 type: item.type,
                 duration: BigInt(item.duration),
-                full_price: item.fullPrice,
+                fullPrice: item.fullPrice,
                 grant: item.grant,
-                actual_price: item.actualPrice,
+                actualPrice: item.actualPrice,
               },
+              select: { id: true },
             });
-            created.push(newId);
+            created.push(createdRow.id);
             this.logger.debug(
-              `Created voucher price info: id=${newId}, year=${year}, type=${item.type}, duration=${item.duration}`,
+              `Created voucher price info: id=${createdRow.id}, year=${year}, type=${item.type}, duration=${item.duration}`,
             );
           }
         } catch (error) {

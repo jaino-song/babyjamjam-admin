@@ -1,0 +1,874 @@
+{
+    "version": "2.0",
+    "description": "Comprehensive AI Chat evaluation test cases covering all app features with indirect user queries",
+    "metadata": {
+        "totalTools": 30,
+        "categories": [
+            "terminology",
+            "client",
+            "employee",
+            "contract",
+            "dashboard",
+            "schedule",
+            "voucher",
+            "bankAccount",
+            "message",
+            "indirect",
+            "conversation",
+            "out_of_scope"
+        ]
+    },
+    "testCases": [
+        {
+            "id": "term-001",
+            "category": "terminology",
+            "description": "제공인력 should map to employees, not clients",
+            "input": "현재 등록된 제공인력은 몇명이야?",
+            "expectedIntent": "count_employees",
+            "expectedTools": [
+                "getdashboardstats"
+            ],
+            "responseRules": {
+                "mustNotInclude": [
+                    "산모",
+                    "고객",
+                    "client",
+                    "mother"
+                ],
+                "mustInclude": [
+                    "직원",
+                    "관리사",
+                    "제공인력",
+                    "명"
+                ]
+            }
+        },
+        {
+            "id": "term-002",
+            "category": "terminology",
+            "description": "관리사 is synonym for employee",
+            "input": "관리사 몇 명이야?",
+            "expectedIntent": "count_employees",
+            "expectedTools": [
+                "getdashboardstats"
+            ],
+            "responseRules": {
+                "mustNotInclude": [
+                    "산모",
+                    "고객"
+                ]
+            }
+        },
+        {
+            "id": "term-003",
+            "category": "terminology",
+            "description": "이모님 is synonym for employee",
+            "input": "이모님 총 몇 분이야?",
+            "expectedIntent": "count_employees",
+            "expectedTools": [
+                "getdashboardstats"
+            ]
+        },
+        {
+            "id": "term-004",
+            "category": "terminology",
+            "description": "직원 is synonym for employee",
+            "input": "직원 수 알려줘",
+            "expectedIntent": "count_employees",
+            "expectedTools": [
+                "getdashboardstats"
+            ]
+        },
+        {
+            "id": "term-005",
+            "category": "terminology",
+            "description": "산모 should map to clients",
+            "input": "산모 몇 명 등록되어 있어?",
+            "expectedIntent": "count_clients",
+            "expectedTools": [
+                "getdashboardstats"
+            ],
+            "responseRules": {
+                "mustNotInclude": [
+                    "직원",
+                    "관리사",
+                    "employee"
+                ]
+            }
+        },
+        {
+            "id": "term-006",
+            "category": "terminology",
+            "description": "고객 is synonym for client",
+            "input": "고객 수 알려줘",
+            "expectedIntent": "count_clients",
+            "expectedTools": [
+                "getdashboardstats"
+            ]
+        },
+        {
+            "id": "term-007",
+            "category": "terminology",
+            "description": "이용자 is synonym for client",
+            "input": "이용자 몇 분이야?",
+            "expectedIntent": "count_clients",
+            "expectedTools": [
+                "getdashboardstats"
+            ]
+        },
+        {
+            "id": "term-008",
+            "category": "terminology",
+            "description": "엄마 colloquial for client",
+            "input": "우리 엄마들 몇 분이야?",
+            "expectedIntent": "count_clients",
+            "expectedTools": [
+                "getdashboardstats"
+            ]
+        },
+        {
+            "id": "client-001",
+            "category": "client",
+            "description": "Search client by name",
+            "input": "김영희 산모 찾아줘",
+            "expectedIntent": "search_client",
+            "expectedTools": [
+                "searchclients"
+            ],
+            "expectedArgs": {
+                "query": "김영희"
+            }
+        },
+        {
+            "id": "client-002",
+            "category": "client",
+            "description": "Search client by phone",
+            "input": "010-1234-5678 산모 누구야",
+            "expectedIntent": "search_client",
+            "expectedTools": [
+                "searchclients"
+            ]
+        },
+        {
+            "id": "client-003",
+            "category": "client",
+            "description": "Get specific client details",
+            "input": "박지영 산모 정보 알려줘",
+            "expectedIntent": "get_client",
+            "expectedTools": [
+                "searchclients"
+            ]
+        },
+        {
+            "id": "client-004",
+            "category": "client",
+            "description": "Create new client request",
+            "input": "새 산모 등록해줘",
+            "expectedIntent": "create_client",
+            "expectedTools": [
+                "createclient"
+            ]
+        },
+        {
+            "id": "client-005",
+            "category": "client",
+            "description": "Update client information",
+            "input": "이수진 산모 전화번호 변경해줘",
+            "expectedIntent": "update_client",
+            "expectedTools": [
+                "updateclient"
+            ]
+        },
+        {
+            "id": "client-006",
+            "category": "client",
+            "description": "Delete client",
+            "input": "최민지 산모 삭제해줘",
+            "expectedIntent": "delete_client",
+            "expectedTools": [
+                "deleteclient"
+            ]
+        },
+        {
+            "id": "client-007",
+            "category": "client",
+            "description": "Filter clients - no contract sent",
+            "input": "계약서 미발송 산모",
+            "expectedIntent": "filter_no_contract",
+            "expectedTools": [
+                "getclientsbyfilter"
+            ],
+            "expectedArgs": {
+                "filter": "no-contract"
+            }
+        },
+        {
+            "id": "client-008",
+            "category": "client",
+            "description": "Filter clients - starting soon",
+            "input": "곧 시작하는 산모",
+            "expectedIntent": "filter_starting_soon",
+            "expectedTools": [
+                "getclientsbyfilter"
+            ],
+            "expectedArgs": {
+                "filter": "starting-soon"
+            }
+        },
+        {
+            "id": "client-009",
+            "category": "client",
+            "description": "Filter clients - ending soon",
+            "input": "이번 주 끝나는 산모",
+            "expectedIntent": "filter_ending_soon",
+            "expectedTools": [
+                "getclientsbyfilter"
+            ],
+            "expectedArgs": {
+                "filter": "ending-soon"
+            }
+        },
+        {
+            "id": "client-010",
+            "category": "client",
+            "description": "Filter clients - incomplete contracts",
+            "input": "발송 후 대기 고객",
+            "expectedIntent": "filter_incomplete_contracts",
+            "expectedTools": [
+                "getclientsbyfilter"
+            ],
+            "expectedArgs": {
+                "filter": "incomplete-contracts"
+            }
+        },
+        {
+            "id": "client-011",
+            "category": "client",
+            "description": "Terminate client service",
+            "input": "정하은 산모 서비스 종료해줘",
+            "expectedIntent": "terminate_service",
+            "expectedTools": [
+                "terminateclientservice"
+            ]
+        },
+        {
+            "id": "client-012",
+            "category": "client",
+            "description": "Request employee replacement",
+            "input": "김서연 산모 관리사 교체해줘",
+            "expectedIntent": "employee_replacement",
+            "expectedTools": [
+                "requestemployeereplacement"
+            ]
+        },
+        {
+            "id": "employee-001",
+            "category": "employee",
+            "description": "Search employee by name",
+            "input": "박이모님 검색",
+            "expectedIntent": "search_employee",
+            "expectedTools": [
+                "searchemployees"
+            ]
+        },
+        {
+            "id": "employee-002",
+            "category": "employee",
+            "description": "Search employee by phone",
+            "input": "010-9876-5432 관리사 찾아줘",
+            "expectedIntent": "search_employee",
+            "expectedTools": [
+                "searchemployees"
+            ]
+        },
+        {
+            "id": "employee-003",
+            "category": "employee",
+            "description": "Get available employees",
+            "input": "배정 가능한 관리사",
+            "expectedIntent": "available_employees",
+            "expectedTools": [
+                "getavailableemployees"
+            ]
+        },
+        {
+            "id": "employee-004",
+            "category": "employee",
+            "description": "Get employees by area",
+            "input": "연수구 관리사 목록",
+            "expectedIntent": "employees_by_area",
+            "expectedTools": [
+                "getemployeesbyworkarea"
+            ],
+            "expectedArgs": {
+                "workArea": "연수구"
+            }
+        },
+        {
+            "id": "employee-005",
+            "category": "employee",
+            "description": "Get employees by grade",
+            "input": "A등급 이모님들",
+            "expectedIntent": "employees_by_grade",
+            "expectedTools": [
+                "getemployeesbygrade"
+            ]
+        },
+        {
+            "id": "employee-006",
+            "category": "employee",
+            "description": "Create new employee",
+            "input": "새 관리사 등록해줘",
+            "expectedIntent": "create_employee",
+            "expectedTools": [
+                "createemployee"
+            ]
+        },
+        {
+            "id": "employee-007",
+            "category": "employee",
+            "description": "Update employee info",
+            "input": "김영자 이모님 전화번호 수정",
+            "expectedIntent": "update_employee",
+            "expectedTools": [
+                "updateemployee"
+            ]
+        },
+        {
+            "id": "employee-008",
+            "category": "employee",
+            "description": "Delete employee",
+            "input": "박순자 이모님 삭제해줘",
+            "expectedIntent": "delete_employee",
+            "expectedTools": [
+                "deleteemployee"
+            ]
+        },
+        {
+            "id": "employee-009",
+            "category": "employee",
+            "description": "Change employee availability - available",
+            "input": "이정희 관리사 배정 가능으로 변경",
+            "expectedIntent": "change_availability",
+            "expectedTools": [
+                "changeemployeeavailability"
+            ]
+        },
+        {
+            "id": "employee-010",
+            "category": "employee",
+            "description": "Change employee availability - unavailable",
+            "input": "최영순 이모님 휴무 처리해줘",
+            "expectedIntent": "change_availability",
+            "expectedTools": [
+                "changeemployeeavailability"
+            ]
+        },
+        {
+            "id": "employee-011",
+            "category": "employee",
+            "description": "Get specific employee details",
+            "input": "한미숙 이모님 정보",
+            "expectedIntent": "get_employee",
+            "expectedTools": [
+                "searchemployees"
+            ]
+        },
+        {
+            "id": "contract-001",
+            "category": "contract",
+            "description": "List all contracts",
+            "input": "계약서 목록 보여줘",
+            "expectedIntent": "list_contracts",
+            "expectedTools": [
+                "listallcontracts"
+            ]
+        },
+        {
+            "id": "contract-002",
+            "category": "contract",
+            "description": "List available templates",
+            "input": "사용 가능한 계약서 템플릿",
+            "expectedIntent": "list_templates",
+            "expectedTools": [
+                "listavailabletemplates"
+            ]
+        },
+        {
+            "id": "contract-003",
+            "category": "contract",
+            "description": "Send contract to client (multi-step: search first)",
+            "input": "박지영 산모에게 계약서 발송해줘",
+            "expectedIntent": "send_contract",
+            "expectedTools": [
+                "searchclients"
+            ],
+            "responseRules": {
+                "mustInclude": [
+                    "박지영"
+                ]
+            }
+        },
+        {
+            "id": "contract-004",
+            "category": "contract",
+            "description": "Check contract status (multi-step: search first)",
+            "input": "이수진 산모 계약서 상태 확인",
+            "expectedIntent": "check_contract_status",
+            "expectedTools": [
+                "searchclients"
+            ],
+            "responseRules": {
+                "mustInclude": [
+                    "이수진"
+                ]
+            }
+        },
+        {
+            "id": "dashboard-001",
+            "category": "dashboard",
+            "description": "Get dashboard stats",
+            "input": "대시보드 현황",
+            "expectedIntent": "dashboard_stats",
+            "expectedTools": [
+                "getdashboardstats"
+            ]
+        },
+        {
+            "id": "dashboard-002",
+            "category": "dashboard",
+            "description": "Get overall statistics",
+            "input": "전체 현황 알려줘",
+            "expectedIntent": "dashboard_stats",
+            "expectedTools": [
+                "getdashboardstats"
+            ]
+        },
+        {
+            "id": "schedule-001",
+            "category": "schedule",
+            "description": "List all schedules",
+            "input": "스케줄 목록 보여줘",
+            "expectedIntent": "list_schedules",
+            "expectedTools": [
+                "listschedules"
+            ]
+        },
+        {
+            "id": "schedule-002",
+            "category": "schedule",
+            "description": "Get employee schedule",
+            "input": "김영자 이모님 일정",
+            "expectedIntent": "employee_schedule",
+            "expectedTools": [
+                "getschedulesbyemployee"
+            ]
+        },
+        {
+            "id": "schedule-003",
+            "category": "schedule",
+            "description": "Check work status",
+            "input": "배정 현황 알려줘",
+            "expectedIntent": "list_schedules",
+            "expectedTools": [
+                "listschedules"
+            ]
+        },
+        {
+            "id": "voucher-001",
+            "category": "voucher",
+            "description": "List voucher prices",
+            "input": "바우처 가격표",
+            "expectedIntent": "list_voucher_prices",
+            "expectedTools": [
+                "listvoucherprices"
+            ]
+        },
+        {
+            "id": "voucher-002",
+            "category": "voucher",
+            "description": "Get specific voucher price",
+            "input": "A통합1형 얼마야",
+            "expectedIntent": "get_voucher_price",
+            "expectedTools": [
+                "getvoucherpricebytype"
+            ]
+        },
+        {
+            "id": "voucher-003",
+            "category": "voucher",
+            "description": "General price inquiry",
+            "input": "요금표 보여줘",
+            "expectedIntent": "list_voucher_prices",
+            "expectedTools": [
+                "listvoucherprices"
+            ]
+        },
+        {
+            "id": "bank-001",
+            "category": "bankAccount",
+            "description": "List bank accounts",
+            "input": "계좌 정보 알려줘",
+            "expectedIntent": "list_bank_accounts",
+            "expectedTools": [
+                "listbankaccounts"
+            ]
+        },
+        {
+            "id": "bank-002",
+            "category": "bankAccount",
+            "description": "Get bank account by area",
+            "input": "인천 계좌번호",
+            "expectedIntent": "get_bank_account_by_area",
+            "expectedTools": [
+                "getbankaccountbyarea"
+            ],
+            "expectedArgs": {
+                "area": "인천"
+            }
+        },
+        {
+            "id": "message-001",
+            "category": "message",
+            "description": "Get messages",
+            "input": "메시지 템플릿 목록",
+            "expectedIntent": "list_messages",
+            "expectedTools": [
+                "getmessages"
+            ]
+        },
+        {
+            "id": "message-002",
+            "category": "message",
+            "description": "Create message",
+            "input": "새 메시지 템플릿 만들어줘",
+            "expectedIntent": "create_message",
+            "expectedTools": [
+                "createmessage"
+            ]
+        },
+        {
+            "id": "message-003",
+            "category": "message",
+            "description": "Update message",
+            "input": "입소 안내 메시지 내용 수정해줘",
+            "expectedIntent": "update_message",
+            "expectedTools": [
+                "updatemessage"
+            ]
+        },
+        {
+            "id": "message-004",
+            "category": "message",
+            "description": "Delete message",
+            "input": "퇴소 안내 메시지 삭제",
+            "expectedIntent": "delete_message",
+            "expectedTools": [
+                "deletemessage"
+            ]
+        },
+        {
+            "id": "indirect-001",
+            "category": "indirect",
+            "description": "Shorthand for available employees",
+            "input": "쉬는 사람?",
+            "expectedIntent": "available_employees",
+            "expectedTools": [
+                "getavailableemployees"
+            ]
+        },
+        {
+            "id": "indirect-002",
+            "category": "indirect",
+            "description": "Informal bank account query",
+            "input": "돈 어디로?",
+            "expectedIntent": "list_bank_accounts",
+            "expectedTools": [
+                "listbankaccounts",
+                "getbankaccountbyarea"
+            ]
+        },
+        {
+            "id": "indirect-003",
+            "category": "indirect",
+            "description": "Informal price query",
+            "input": "얼마야?",
+            "expectedIntent": "voucher_prices",
+            "expectedTools": [
+                "listvoucherprices"
+            ]
+        },
+        {
+            "id": "indirect-004",
+            "category": "indirect",
+            "description": "Informal availability query",
+            "input": "빈 관리사 있어?",
+            "expectedIntent": "available_employees",
+            "expectedTools": [
+                "getavailableemployees"
+            ]
+        },
+        {
+            "id": "indirect-005",
+            "category": "indirect",
+            "description": "Colloquial contract pending",
+            "input": "계약서 보냈는데 아직",
+            "expectedIntent": "incomplete_contracts",
+            "expectedTools": [
+                "getclientsbyfilter"
+            ],
+            "expectedArgs": {
+                "filter": "incomplete-contracts"
+            }
+        },
+        {
+            "id": "indirect-006",
+            "category": "indirect",
+            "description": "Colloquial for ending soon",
+            "input": "퇴소 예정인 분들",
+            "expectedIntent": "ending_soon",
+            "expectedTools": [
+                "getclientsbyfilter"
+            ],
+            "expectedArgs": {
+                "filter": "ending-soon"
+            }
+        },
+        {
+            "id": "indirect-007",
+            "category": "indirect",
+            "description": "Colloquial for starting soon",
+            "input": "입소 예정 산모",
+            "expectedIntent": "starting_soon",
+            "expectedTools": [
+                "getclientsbyfilter"
+            ],
+            "expectedArgs": {
+                "filter": "starting-soon"
+            }
+        },
+        {
+            "id": "indirect-008",
+            "category": "indirect",
+            "description": "Informal termination request",
+            "input": "걔 서비스 종료시켜",
+            "expectedIntent": "terminate_service",
+            "expectedTools": [
+                "terminateclientservice"
+            ]
+        },
+        {
+            "id": "indirect-009",
+            "category": "indirect",
+            "description": "Informal replacement request",
+            "input": "걔 이모님 바꿔줘",
+            "expectedIntent": "employee_replacement",
+            "expectedTools": [
+                "requestemployeereplacement"
+            ]
+        },
+        {
+            "id": "indirect-010",
+            "category": "indirect",
+            "description": "Abbreviation for contract not sent",
+            "input": "eformsign 안 보낸 사람",
+            "expectedIntent": "no_contract_sent",
+            "expectedTools": [
+                "getclientsbyfilter"
+            ],
+            "expectedArgs": {
+                "filter": "no-contract"
+            }
+        },
+        {
+            "id": "indirect-011",
+            "category": "indirect",
+            "description": "Colloquial for unsigned contracts",
+            "input": "서명 안 한 산모",
+            "expectedIntent": "incomplete_contracts",
+            "expectedTools": [
+                "getclientsbyfilter"
+            ]
+        },
+        {
+            "id": "indirect-012",
+            "category": "indirect",
+            "description": "Informal overall count",
+            "input": "지금 총 몇 명이야?",
+            "expectedIntent": "dashboard_stats",
+            "expectedTools": [
+                "getdashboardstats"
+            ]
+        },
+        {
+            "id": "indirect-013",
+            "category": "indirect",
+            "description": "Informal for work-able staff",
+            "input": "일할 수 있는 이모님",
+            "expectedIntent": "available_employees",
+            "expectedTools": [
+                "getavailableemployees"
+            ]
+        },
+        {
+            "id": "indirect-014",
+            "category": "indirect",
+            "description": "Vague staff count query",
+            "input": "사람 몇이야?",
+            "expectedIntent": "dashboard_stats",
+            "expectedTools": [
+                "getdashboardstats"
+            ]
+        },
+        {
+            "id": "indirect-015",
+            "category": "indirect",
+            "description": "Informal work assignment query",
+            "input": "근무 일정 좀",
+            "expectedIntent": "list_schedules",
+            "expectedTools": [
+                "listschedules"
+            ]
+        },
+        {
+            "id": "indirect-016",
+            "category": "indirect",
+            "description": "Informal for contract list",
+            "input": "전체 계약 현황",
+            "expectedIntent": "list_contracts",
+            "expectedTools": [
+                "listallcontracts"
+            ]
+        },
+        {
+            "id": "indirect-017",
+            "category": "indirect",
+            "description": "Informal city-based employee query",
+            "input": "인천 쪽 이모님들",
+            "expectedIntent": "employees_by_area",
+            "expectedTools": [
+                "getemployeesbyworkarea"
+            ]
+        },
+        {
+            "id": "indirect-018",
+            "category": "indirect",
+            "description": "Informal for grade-based filtering",
+            "input": "프리미엄 분들 알려줘",
+            "expectedIntent": "employees_by_grade",
+            "expectedTools": [
+                "getemployeesbygrade"
+            ]
+        },
+        {
+            "id": "indirect-019",
+            "category": "indirect",
+            "description": "Informal contract send request",
+            "input": "걔한테 계약서 보내줘",
+            "expectedIntent": "send_contract",
+            "expectedTools": [
+                "createandsendcontract"
+            ]
+        },
+        {
+            "id": "indirect-020",
+            "category": "indirect",
+            "description": "Super informal price check",
+            "input": "B형 얼만데?",
+            "expectedIntent": "get_voucher_price",
+            "expectedTools": [
+                "getvoucherpricebytype"
+            ]
+        },
+        {
+            "id": "conv-001",
+            "category": "conversation",
+            "description": "Basic greeting Korean",
+            "input": "안녕",
+            "expectedIntent": "greeting",
+            "expectedTools": [],
+            "responseRules": {
+                "mustInclude": [
+                    "안녕",
+                    "도와"
+                ]
+            }
+        },
+        {
+            "id": "conv-002",
+            "category": "conversation",
+            "description": "Basic greeting English",
+            "input": "hi",
+            "expectedIntent": "greeting",
+            "expectedTools": [],
+            "responseRules": {
+                "mustInclude": [
+                    "hi",
+                    "hello",
+                    "help"
+                ]
+            }
+        },
+        {
+            "id": "conv-003",
+            "category": "conversation",
+            "description": "Asking capabilities Korean",
+            "input": "뭐 할 수 있어?",
+            "expectedIntent": "list_capabilities",
+            "expectedTools": [],
+            "responseRules": {
+                "mustInclude": [
+                    "산모",
+                    "관리사",
+                    "계약"
+                ]
+            }
+        },
+        {
+            "id": "conv-004",
+            "category": "conversation",
+            "description": "Asking capabilities English",
+            "input": "What can you do?",
+            "expectedIntent": "list_capabilities",
+            "expectedTools": []
+        },
+        {
+            "id": "conv-005",
+            "category": "conversation",
+            "description": "Thank you response",
+            "input": "고마워",
+            "expectedIntent": "acknowledgment",
+            "expectedTools": []
+        },
+        {
+            "id": "scope-001",
+            "category": "out_of_scope",
+            "description": "Weather query should be declined",
+            "input": "오늘 날씨 어때?",
+            "expectedIntent": "out_of_scope",
+            "expectedTools": [],
+            "responseRules": {
+                "mustInclude": [
+                    "어려",
+                    "대신"
+                ]
+            }
+        },
+        {
+            "id": "scope-002",
+            "category": "out_of_scope",
+            "description": "News query should be declined",
+            "input": "오늘 뉴스 알려줘",
+            "expectedIntent": "out_of_scope",
+            "expectedTools": []
+        },
+        {
+            "id": "scope-003",
+            "category": "out_of_scope",
+            "description": "Restaurant recommendation should be declined",
+            "input": "근처 맛집 추천해줘",
+            "expectedIntent": "out_of_scope",
+            "expectedTools": []
+        }
+    ]
+}

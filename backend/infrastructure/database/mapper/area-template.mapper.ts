@@ -2,28 +2,28 @@ import { AreaTemplateEntity } from "domain/entities/area-template.entity";
 
 type AreaTemplateRow = {
     id: string;
-    area_id: string;
-    template_id: string;
-    template_name: string | null;
+    areaId: string;
+    templateId: string;
+    templateName: string | null;
 };
 
 export class AreaTemplateMapper {
     static toDomain(row: AreaTemplateRow): AreaTemplateEntity {
-        return new AreaTemplateEntity(row.id, row.area_id, row.template_id, row.template_name);
+        return new AreaTemplateEntity(row.id, row.areaId, row.templateId, row.templateName);
     }
 
     static toPrismaCreate(entity: AreaTemplateEntity) {
         return {
-            area_id: entity.areaId,
-            template_id: entity.templateId,
-            template_name: entity.templateName,
+            areaId: entity.areaId,
+            templateId: entity.templateId,
+            templateName: entity.templateName,
         };
     }
 
     static toPrismaUpdate(entity: AreaTemplateEntity) {
         return {
-            template_id: entity.templateId,
-            template_name: entity.templateName,
+            templateId: entity.templateId,
+            templateName: entity.templateName,
         };
     }
 }
