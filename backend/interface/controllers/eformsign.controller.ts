@@ -66,6 +66,47 @@ type EformsignListDoc = {
     detail_template_info?: unknown;
 } & Record<string, unknown>;
 
+type TemplateMatch = "include" | "exclude";
+
+function parseTemplateMatch(value: string | undefined): TemplateMatch {
+    if (value === undefined || value === "" || value === "include") {
+        return "include";
+    }
+    if (value === "exclude") {
+        return "exclude";
+    }
+
+    throw new BadRequestException("templateMatch must be include or exclude");
+}
+
+function getDocumentTemplateId(document: EformsignListDoc): string | null {
+    const template = isRecord(document["template"]) ? document["template"] : null;
+    const detailTemplate = isRecord(document.detail_template_info)
+        ? document.detail_template_info
+        : null;
+    const candidates = [template?.["id"], detailTemplate?.["id"], document["template_id"]];
+    const templateId = candidates.find(
+        (candidate): candidate is string => typeof candidate === "string" && candidate.length > 0,
+    );
+
+    return templateId ?? null;
+}
+
+function filterDocumentsByTemplate(
+    documents: EformsignListDoc[],
+    templateId: string | undefined,
+    templateMatch: TemplateMatch,
+): EformsignListDoc[] {
+    if (!templateId) {
+        return documents;
+    }
+
+    return documents.filter((document) => {
+        const matches = getDocumentTemplateId(document) === templateId;
+        return templateMatch === "include" ? matches : !matches;
+    });
+}
+
 const CUSTOMER_NAME_FIELD_IDS = [
     "이용자 성명",
     "이용자성명",
@@ -372,12 +413,15 @@ export class EformsignController {
         limit: number,
         skip: number,
         fetchPage: (limit: number, skip: number) => Promise<{ documents?: EformsignListDoc[] }>,
+        templateId?: string,
+        templateMatch: TemplateMatch = "include",
     ) {
         const documents = await this.collectBranchScopedDocuments(accessToken, branchId, fetchPage);
-        const pageDocuments = documents.slice(skip, skip + limit);
+        const filteredDocuments = filterDocumentsByTemplate(documents, templateId, templateMatch);
+        const pageDocuments = filteredDocuments.slice(skip, skip + limit);
         return {
             documents: await this.enrichDocumentsWithDisplayFields(accessToken, pageDocuments),
-            total_rows: documents.length,
+            total_rows: filteredDocuments.length,
             limit,
             skip,
         };
@@ -563,6 +607,8 @@ export class EformsignController {
         @Query("accessToken") accessToken: string,
         @Query("limit") limit?: string,
         @Query("skip") skip?: string,
+        @Query("templateId") templateId?: string,
+        @Query("templateMatch") templateMatchValue?: string,
     ) {
         try {
             if (!accessToken) {
@@ -573,16 +619,18 @@ export class EformsignController {
             }
             const parsedLimit = parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 });
             const parsedSkip = parseInteger(skip, "skip", { defaultValue: 0, min: 0 });
+            const templateMatch = parseTemplateMatch(templateMatchValue);
             const branchId = tenant.branchId ?? "";
 
             // 인천점(본사): 회사 전체에서 다른 지점 소유분만 빼고 모은 뒤 요청 구간만 잘라 반환.
             // (필터링 때문에 외부 페이지네이션을 그대로 흘리면 페이지 경계에 빈틈이 생긴다.)
             if (await this.isHeadquartersBranch(branchId)) {
                 const hqDocuments = await this.collectHeadquartersDocuments(accessToken, branchId);
-                const pageDocuments = hqDocuments.slice(parsedSkip, parsedSkip + parsedLimit);
+                const filteredDocuments = filterDocumentsByTemplate(hqDocuments, templateId, templateMatch);
+                const pageDocuments = filteredDocuments.slice(parsedSkip, parsedSkip + parsedLimit);
                 return {
                     documents: await this.enrichDocumentsWithDisplayFields(accessToken, pageDocuments),
-                    total_rows: hqDocuments.length,
+                    total_rows: filteredDocuments.length,
                     limit: parsedLimit,
                     skip: parsedSkip,
                 };
@@ -592,10 +640,11 @@ export class EformsignController {
             // (회사 페이지를 그대로 필터하면 지점 문서가 뒤 페이지에 있을 때 무한스크롤이
             //  빈 페이지에서 멈춰 누락되므로, 지점 단위로 페이지네이션한다.)
             const branchDocuments = await this.collectBranchDocuments(accessToken, branchId);
-            const pageDocuments = branchDocuments.slice(parsedSkip, parsedSkip + parsedLimit);
+            const filteredDocuments = filterDocumentsByTemplate(branchDocuments, templateId, templateMatch);
+            const pageDocuments = filteredDocuments.slice(parsedSkip, parsedSkip + parsedLimit);
             return {
                 documents: await this.enrichDocumentsWithDisplayFields(accessToken, pageDocuments),
-                total_rows: branchDocuments.length,
+                total_rows: filteredDocuments.length,
                 limit: parsedLimit,
                 skip: parsedSkip,
             };
@@ -642,6 +691,8 @@ export class EformsignController {
         @Query("accessToken") accessToken: string,
         @Query("limit") limit?: string,
         @Query("skip") skip?: string,
+        @Query("templateId") templateId?: string,
+        @Query("templateMatch") templateMatchValue?: string,
     ) {
         try {
             if (!accessToken) {
@@ -652,6 +703,7 @@ export class EformsignController {
             }
             const parsedLimit = parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 });
             const parsedSkip = parseInteger(skip, "skip", { defaultValue: 0, min: 0 });
+            const templateMatch = parseTemplateMatch(templateMatchValue);
             return await this.getBranchScopedStatusPage(
                 accessToken,
                 tenant.branchId ?? "",
@@ -662,6 +714,8 @@ export class EformsignController {
                     pageLimit,
                     pageSkip,
                 ),
+                templateId,
+                templateMatch,
             );
         } catch (error) {
             throwHttpOrInternalError(error);
@@ -677,6 +731,8 @@ export class EformsignController {
         @Query("accessToken") accessToken: string,
         @Query("limit") limit?: string,
         @Query("skip") skip?: string,
+        @Query("templateId") templateId?: string,
+        @Query("templateMatch") templateMatchValue?: string,
     ) {
         try {
             if (!accessToken) {
@@ -687,6 +743,7 @@ export class EformsignController {
             }
             const parsedLimit = parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 });
             const parsedSkip = parseInteger(skip, "skip", { defaultValue: 0, min: 0 });
+            const templateMatch = parseTemplateMatch(templateMatchValue);
             return await this.getBranchScopedStatusPage(
                 accessToken,
                 tenant.branchId ?? "",
@@ -697,6 +754,8 @@ export class EformsignController {
                     pageLimit,
                     pageSkip,
                 ),
+                templateId,
+                templateMatch,
             );
         } catch (error) {
             throwHttpOrInternalError(error);
@@ -712,6 +771,8 @@ export class EformsignController {
         @Query("accessToken") accessToken: string,
         @Query("limit") limit?: string,
         @Query("skip") skip?: string,
+        @Query("templateId") templateId?: string,
+        @Query("templateMatch") templateMatchValue?: string,
     ) {
         try {
             if (!accessToken) {
@@ -722,6 +783,7 @@ export class EformsignController {
             }
             const parsedLimit = parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 });
             const parsedSkip = parseInteger(skip, "skip", { defaultValue: 0, min: 0 });
+            const templateMatch = parseTemplateMatch(templateMatchValue);
             return await this.getBranchScopedStatusPage(
                 accessToken,
                 tenant.branchId ?? "",
@@ -732,6 +794,8 @@ export class EformsignController {
                     pageLimit,
                     pageSkip,
                 ),
+                templateId,
+                templateMatch,
             );
         } catch (error) {
             throwHttpOrInternalError(error);

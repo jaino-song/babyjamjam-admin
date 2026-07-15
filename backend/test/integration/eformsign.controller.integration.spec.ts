@@ -29,6 +29,7 @@ describe("EformsignController (Integration)", () => {
         | "downloadDocumentFile"
         | "getAllDocuments"
         | "getInProgressDocuments"
+        | "getCompletedDocuments"
         | "getDocumentById"
     >>;
     let areaTemplateService: jest.Mocked<Pick<AreaTemplateService, "findByArea">>;
@@ -64,6 +65,7 @@ describe("EformsignController (Integration)", () => {
                         downloadDocumentFile: jest.fn(),
                         getAllDocuments: jest.fn(),
                         getInProgressDocuments: jest.fn(),
+                        getCompletedDocuments: jest.fn(),
                         getDocumentById: jest.fn(),
                     },
                 },
@@ -283,6 +285,77 @@ describe("EformsignController (Integration)", () => {
         expect(response.body.documents).toEqual([{ id: "branch-1-doc" }]);
         expect(response.body.total_rows).toBe(1);
         expect(eformsignDocService.findAll).toHaveBeenCalledWith("branch-1");
+    });
+
+    it("paginates the template-included branch document set", async () => {
+        eformsignService.getAllDocuments.mockResolvedValue({
+            documents: [
+                { id: "service-record-doc", template: { id: "service-record-template" } },
+                { id: "contract-doc", template: { id: "contract-template" } },
+            ],
+            total_rows: 2,
+            limit: 100,
+            skip: 0,
+        });
+        eformsignDocService.findAll.mockResolvedValue([
+            { documentId: "service-record-doc" },
+            { documentId: "contract-doc" },
+        ] as any);
+
+        const response = await request(app.getHttpServer())
+            .get("/api/documents?accessToken=access-token&templateId=service-record-template&templateMatch=include");
+
+        expect(response.status).toBe(200);
+        expect(response.body).toMatchObject({
+            documents: [{ id: "service-record-doc", template: { id: "service-record-template" } }],
+            total_rows: 1,
+        });
+    });
+
+    it("paginates the template-excluded branch document set", async () => {
+        eformsignService.getAllDocuments.mockResolvedValue({
+            documents: [
+                { id: "service-record-doc", template: { id: "service-record-template" } },
+                { id: "contract-doc", template: { id: "contract-template" } },
+            ],
+            total_rows: 2,
+            limit: 100,
+            skip: 0,
+        });
+        eformsignDocService.findAll.mockResolvedValue([
+            { documentId: "service-record-doc" },
+            { documentId: "contract-doc" },
+        ] as any);
+
+        const response = await request(app.getHttpServer())
+            .get("/api/documents?accessToken=access-token&templateId=service-record-template&templateMatch=exclude");
+
+        expect(response.status).toBe(200);
+        expect(response.body).toMatchObject({
+            documents: [{ id: "contract-doc", template: { id: "contract-template" } }],
+            total_rows: 1,
+        });
+    });
+
+    it("returns an empty completed page when no branch document matches the template", async () => {
+        eformsignService.getCompletedDocuments.mockResolvedValue({
+            documents: [{ id: "contract-doc", template: { id: "contract-template" } }],
+        });
+        eformsignDocService.findAll.mockResolvedValue([{ documentId: "contract-doc" }] as any);
+
+        const response = await request(app.getHttpServer())
+            .get("/api/documents/completed?accessToken=access-token&templateId=service-record-template&templateMatch=include");
+
+        expect(response.status).toBe(200);
+        expect(response.body).toMatchObject({ documents: [], total_rows: 0 });
+    });
+
+    it("rejects an unsupported template match mode", async () => {
+        const response = await request(app.getHttpServer())
+            .get("/api/documents?accessToken=access-token&templateId=service-record-template&templateMatch=unknown");
+
+        expect(response.status).toBe(400);
+        expect(eformsignService.getAllDocuments).not.toHaveBeenCalled();
     });
 
     it("filters per-type document lists to the current branch (no bypass)", async () => {

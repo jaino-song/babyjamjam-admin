@@ -29,6 +29,8 @@ function getDocumentListCacheKey(params: {
     backendPath: string;
     limit: string;
     skip: string;
+    templateId: string;
+    templateMatch: string;
 }): string {
     return [
         hashToken(params.authToken),
@@ -36,6 +38,8 @@ function getDocumentListCacheKey(params: {
         params.backendPath,
         params.limit,
         params.skip,
+        params.templateId,
+        params.templateMatch,
     ].join(":");
 }
 
@@ -87,6 +91,8 @@ export async function GET(request: NextRequest) {
     const limit = searchParams.get("limit") || "100";
     const skip = searchParams.get("skip") || "0";
     const type = searchParams.get("type");
+    const templateId = searchParams.get("templateId") || "";
+    const templateMatch = searchParams.get("templateMatch") || "include";
 
     const backendPathByType: Record<string, string> = {
         "in-progress": "/api/documents/in-progress",
@@ -106,6 +112,8 @@ export async function GET(request: NextRequest) {
         backendPath,
         limit,
         skip,
+        templateId,
+        templateMatch,
     });
     const now = Date.now();
     const cached = documentListCache.get(cacheKey);
@@ -115,8 +123,13 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-        const response = await serverAPIClient.get(`${backendPath}?limit=${limit}&skip=${skip}`, {
-            params: { accessToken },
+        const response = await serverAPIClient.get(backendPath, {
+            params: {
+                accessToken,
+                limit,
+                skip,
+                ...(templateId ? { templateId, templateMatch } : {}),
+            },
             headers: getAuthHeaders(authToken),
         });
 

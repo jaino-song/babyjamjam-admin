@@ -47,18 +47,18 @@ export interface LocalEformsignDocRecord {
     expiredDate: string;
     expired: boolean;
     clientId: number;
-    documentKind: "contract" | "service_feedback_snapshot" | null;
+    documentKind: "contract" | "service_record_snapshot" | null;
     employeeScheduleId: number | null;
     templateId: string | null;
 }
 
-function normalizeDocumentListResponse(
+export function normalizeDocumentListResponse(
     response: EformsignApiListResponse,
     params?: { limit?: number; skip?: number },
 ): EformsignDocumentsResponse {
     return {
         documents: response.documents ?? [],
-        total_rows: response.total_count ?? response.documents?.length ?? 0,
+        total_rows: response.total_rows ?? response.total_count ?? response.documents?.length ?? 0,
         limit: params?.limit ?? DEFAULT_EFORMSIGN_LIMIT,
         skip: params?.skip ?? DEFAULT_EFORMSIGN_SKIP,
     };
@@ -212,19 +212,19 @@ export const eformsignApi = {
     // Documents APIs - token is read from httpOnly cookie on server
     // Note: eformsign routes use /eformsign prefix to avoid conflict with file storage /documents
     // Unified endpoint - fetches all documents in single request (more efficient)
-    getAllDocuments: async (params?: { limit?: number; skip?: number; type?: string | null }): Promise<EformsignDocumentsResponse> => {
+    getAllDocuments: async (params?: { limit?: number; skip?: number; type?: string | null; templateId?: string; templateMatch?: "include" | "exclude" }): Promise<EformsignDocumentsResponse> => {
         const { data } = await api.get('/eformsign/documents', { params });
         return data;
     },
-    getInProgressDocuments: async (params?: { limit?: number; skip?: number }): Promise<EformsignDocumentsResponse> => {
+    getInProgressDocuments: async (params?: { limit?: number; skip?: number; templateId?: string; templateMatch?: "include" | "exclude" }): Promise<EformsignDocumentsResponse> => {
         const { data } = await api.get<EformsignApiListResponse>('/eformsign/documents/in-progress', { params });
         return normalizeDocumentListResponse(data, params);
     },
-    getCompletedDocuments: async (params?: { limit?: number; skip?: number }): Promise<EformsignDocumentsResponse> => {
+    getCompletedDocuments: async (params?: { limit?: number; skip?: number; templateId?: string; templateMatch?: "include" | "exclude" }): Promise<EformsignDocumentsResponse> => {
         const { data } = await api.get<EformsignApiListResponse>('/eformsign/documents/completed', { params });
         return normalizeDocumentListResponse(data, params);
     },
-    getExpiredDocuments: async (params?: { limit?: number; skip?: number }): Promise<EformsignDocumentsResponse> => {
+    getExpiredDocuments: async (params?: { limit?: number; skip?: number; templateId?: string; templateMatch?: "include" | "exclude" }): Promise<EformsignDocumentsResponse> => {
         const { data } = await api.get<EformsignApiListResponse>('/eformsign/documents/expired', { params });
         return normalizeDocumentListResponse(data, params);
     },
