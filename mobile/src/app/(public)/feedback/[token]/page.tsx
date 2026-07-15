@@ -360,10 +360,8 @@ export default function FeedbackPage() {
             const data = await res.json();
             if (data?.ok && data.accessToken) {
                 setAccessToken(data.accessToken);
-            } else if (data?.reason === "locked") {
-                setPhoneError("시도 횟수를 초과했습니다. 지점에 문의해 새 링크를 받아주세요.");
             } else {
-                setPhoneError(`휴대폰 번호가 일치하지 않습니다. (남은 시도 ${data?.attemptsLeft ?? "?"}회)`);
+                setPhoneError("휴대폰 번호가 일치하지 않습니다.");
             }
         } catch {
             setPhoneError("확인 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
