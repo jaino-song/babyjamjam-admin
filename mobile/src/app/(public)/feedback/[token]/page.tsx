@@ -759,7 +759,7 @@ export default function FeedbackPage() {
                         )}
                         {!editing && !canEditCurrentRecord && (
                             <div data-component="feedback-date-mismatch-notice" className="notice">
-                                <span>제공일자({monthDayKo(currentServiceDate)})가 오늘과 달라 입력할 수 없습니다. 서비스 제공 당일에 기록해 주세요.</span>
+                                <span>서비스 제공일자({monthDayKo(currentServiceDate)})가 오늘과 달라 입력할 수 없습니다. 서비스 제공 당일에 기록해 주세요.</span>
                             </div>
                         )}
                         <div data-component="feedback-day-title" className="step-title">{currentDayPage.title}</div>
