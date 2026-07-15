@@ -20,12 +20,29 @@ ALTER INDEX IF EXISTS "employee_feedback_token_link_token_hash_key"
 ALTER INDEX IF EXISTS "employee_feedback_token_access_token_hash_key"
   RENAME TO "service_record_token_access_token_hash_key";
 
--- Primary key constraint (RENAME CONSTRAINT has no IF EXISTS — guard with a DO block)
+-- Primary key + foreign key constraints (RENAME CONSTRAINT has no IF EXISTS — guard with DO blocks).
+-- Prisma derives constraint names from the model name, so the drift guard requires these to match.
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'employee_feedback_token_pkey') THEN
     ALTER TABLE "service_record_token"
       RENAME CONSTRAINT "employee_feedback_token_pkey" TO "service_record_token_pkey";
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'employee_feedback_token_branch_id_fkey') THEN
+    ALTER TABLE "service_record_token"
+      RENAME CONSTRAINT "employee_feedback_token_branch_id_fkey" TO "service_record_token_branch_id_fkey";
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'employee_feedback_token_employee_id_fkey') THEN
+    ALTER TABLE "service_record_token"
+      RENAME CONSTRAINT "employee_feedback_token_employee_id_fkey" TO "service_record_token_employee_id_fkey";
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'employee_feedback_token_schedule_id_fkey') THEN
+    ALTER TABLE "service_record_token"
+      RENAME CONSTRAINT "employee_feedback_token_schedule_id_fkey" TO "service_record_token_schedule_id_fkey";
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'employee_feedback_token_service_record_case_id_fkey') THEN
+    ALTER TABLE "service_record_token"
+      RENAME CONSTRAINT "employee_feedback_token_service_record_case_id_fkey" TO "service_record_token_service_record_case_id_fkey";
   END IF;
 END $$;
 
