@@ -47,6 +47,7 @@ const CASE_SNAPSHOT_INCLUDE = {
             notes: true,
             paymentConfirmed: true,
             momApproval: true,
+            clientSignature: true,
             locked: true,
         },
         orderBy: [{ caseSessionIndex: "asc" }, { serviceDate: "asc" }],
@@ -140,6 +141,7 @@ export class CreateAndSendFeedbackSnapshotUsecase {
             notes: d.notes,
             paymentConfirmed: d.paymentConfirmed,
             momApproval: d.momApproval,
+            clientSignature: d.clientSignature,
         }));
 
         // ceil(N/5) documents; an empty record still yields one (header-only) document.
@@ -366,6 +368,7 @@ export class CreateAndSendFeedbackSnapshotUsecase {
                 notes: day.notes,
                 paymentConfirmed: day.paymentConfirmed,
                 momApproval: day.momApproval,
+                clientSignature: day.clientSignature,
             });
         }
 

@@ -35,6 +35,9 @@ const LIVE = process.env["LIVE_E2E"] === "1";
 
 const TEST_TAG = "E2E-BJJ249-삭제예정";
 const SESSION_COUNT = 7;
+// 1x1 PNG dataURI — satisfies the client-signature requirement; renders as the signature mark in eformsign.
+const TEST_CLIENT_SIGNATURE =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
 const d = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 
@@ -200,6 +203,8 @@ const d = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
                     ...(i === 1 ? { etcService: "예방접종 안내", notes: "E2E 특이사항" } : {}),
                     paymentConfirmed: i % 2 === 1, // odd sessions confirmed
                     momApproval: "approved",
+                    // First-lock submissions now require the client's signature (CLIENT_SIGNATURE_REQUIRED).
+                    clientSignature: TEST_CLIENT_SIGNATURE,
                 },
                 true,
             );
@@ -274,7 +279,8 @@ const d = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
         expect(m1.get("결제 확인 1")).toBe("체크1");
         expect(m1.get("결제 확인 3")).toBe("체크1");
         // mom approval everywhere
-        for (let n = 1; n <= 5; n++) expect(m1.get(`산모확인서명 ${n}`)).toBe("체크1");
+        // 산모확인서명 is now a binary(signature) field — the read API reports presence as "O"/"X".
+        for (let n = 1; n <= 5; n++) expect(m1.get(`산모확인서명 ${n}`)).toBe("O");
 
         // ── Document 2: sessions 6–7 in slots 1–2; slots 3–5 unused ──
         const { doc: doc2, map: m2 } = await fieldsOf(createdDocumentIds[1]!);
@@ -283,8 +289,8 @@ const d = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
         expect(m2.get("일 1")).toBe("06"); // session 6 lands in slot 1
         expect(m2.get("일 2")).toBe("07");
         expect(m2.get("월 3") ?? "").toBe(""); // unused slot: no date
-        expect(m2.get("산모확인서명 1")).toBe("체크1");
-        expect(m2.get("산모확인서명 3") ?? "").toBe(""); // unused slot mark unchecked
+        expect(m2.get("산모확인서명 1")).toBe("O");
+        expect(m2.get("산모확인서명 3")).toBe("X"); // unused slot: empty signature
         expect(m2.get("결제 확인 5") ?? "").toBe("");
     });
 

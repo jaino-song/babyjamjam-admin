@@ -7,7 +7,7 @@ const REVIEWER = { name: "인천 아이미래로", id: "org@example.com", phoneN
 
 const utc = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 
-function makeDays(count: number, startMonth = 7) {
+function makeDays(count: number, startMonth = 7, clientSignature: string | null = null) {
     return Array.from({ length: count }, (_, i) => ({
         sessionIndex: i + 1,
         // distinct, always-valid month/day per session so slot placement is verifiable
@@ -17,6 +17,7 @@ function makeDays(count: number, startMonth = 7) {
         notes: null,
         paymentConfirmed: true,
         momApproval: "approved",
+        clientSignature,
     }));
 }
 
@@ -27,9 +28,10 @@ function setup(opts: {
     branchName?: string | null;
     reviewer?: typeof REVIEWER | null;
     createImpl?: (n: number) => Promise<{ documentId: string; status: string }>;
+    clientSignature?: string | null;
 } = {}) {
     const sessions = opts.sessions ?? 7;
-    const serviceRecordDays = makeDays(sessions);
+    const serviceRecordDays = makeDays(sessions, 7, opts.clientSignature ?? null);
 
     const schedule = {
         id: 99,
@@ -168,6 +170,13 @@ describe("CreateAndSendFeedbackSnapshotUsecase", () => {
         // chunk 1 was persisted before chunk 2 failed
         expect(createEformsignDocUsecase.execute).toHaveBeenCalledTimes(1);
         expect(createEformsignDocUsecase.execute.mock.calls[0][1].stepName).toBe("제공기록지 S99 1/2");
+    });
+
+    it("prefills 산모확인서명 with the clientSignature dataURI read from service_record_day", async () => {
+        const dataUri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB";
+        const { usecase, createDocument } = setup({ sessions: 1, clientSignature: dataUri });
+        await usecase.execute(BRANCH_ID, 99);
+        expect(fieldMap(createDocument.mock.calls[0][1].prefillFields).get("산모확인서명 1")).toBe(dataUri);
     });
 
     it("creates a single header-only document when there are no sessions", async () => {

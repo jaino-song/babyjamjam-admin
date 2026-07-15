@@ -1,4 +1,37 @@
-import { IsString, IsOptional, IsBoolean, IsObject, IsDateString } from "class-validator";
+import {
+    IsBoolean,
+    IsDateString,
+    IsObject,
+    IsOptional,
+    IsString,
+    ValidateBy,
+    ValidationOptions,
+} from "class-validator";
+
+const PNG_DATA_URI_PREFIX = "data:image/png;base64,";
+const MAX_SIGNATURE_BYTES = 192 * 1024;
+const STRICT_BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+function IsValidMomSignature(validationOptions?: ValidationOptions): PropertyDecorator {
+    return ValidateBy({
+        name: "isValidMomSignature",
+        validator: {
+            validate(value: unknown): boolean {
+                if (typeof value !== "string" || !value.startsWith(PNG_DATA_URI_PREFIX)) {
+                    return false;
+                }
+                const body = value.slice(PNG_DATA_URI_PREFIX.length);
+                if (!body || !STRICT_BASE64_PATTERN.test(body)) {
+                    return false;
+                }
+                return Buffer.from(body, "base64").length <= MAX_SIGNATURE_BYTES;
+            },
+            defaultMessage(): string {
+                return "clientSignature must be a PNG data URI no larger than 192KB";
+            },
+        },
+    }, validationOptions);
+}
 
 /** Phone challenge — public endpoint, takes the link token + provider phone. */
 export class VerifyFeedbackPhoneDto {
@@ -32,4 +65,7 @@ export class UpsertSessionDto {
     @IsOptional() @IsBoolean() paymentConfirmed?: boolean;
     /** 산모 확인 (data URL / storage ref). */
     @IsOptional() @IsString() momApproval?: string;
+
+    @IsOptional() @IsString() @IsValidMomSignature()
+    clientSignature?: string;
 }

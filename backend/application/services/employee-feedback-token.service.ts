@@ -14,10 +14,8 @@ export interface FeedbackTokenContext {
 
 export type VerifyPhoneResult =
     | { ok: true; accessToken: string }
-    | { ok: false; reason: "invalid_token" | "wrong_phone" | "locked"; attemptsLeft?: number };
+    | { ok: false; reason: "invalid_token" | "wrong_phone" };
 
-/** Max phone verification attempts before the link is locked (staff must re-issue). */
-export const MAX_PHONE_ATTEMPTS = 5;
 
 interface FeedbackLinkTokenParams {
     branchId: string;
@@ -172,20 +170,18 @@ export class EmployeeFeedbackTokenService {
 
     /**
      * Verify a phone number against the link token. On success mint + persist a new access token.
-     * On failure increment attempts and lock after MAX_PHONE_ATTEMPTS.
+     * Wrong phone numbers may be retried without limit — the attempt count is kept for audit only.
      */
     async verifyPhoneAndMintAccess(linkToken: string, phone: string): Promise<VerifyPhoneResult> {
         const record = await this.resolveLink(linkToken);
         if (!record) return { ok: false, reason: "invalid_token" };
-        if (record.failedAttempts >= MAX_PHONE_ATTEMPTS) return { ok: false, reason: "locked" };
 
         if (this.hash(this.normalizePhone(phone)) !== record.expectedPhoneHash) {
-            const updated = await this.prismaService.employee_feedback_token.update({
+            await this.prismaService.employee_feedback_token.update({
                 where: { id: record.id },
                 data: { failedAttempts: { increment: 1 } },
             });
-            const attemptsLeft = Math.max(0, MAX_PHONE_ATTEMPTS - updated.failedAttempts);
-            return { ok: false, reason: attemptsLeft === 0 ? "locked" : "wrong_phone", attemptsLeft };
+            return { ok: false, reason: "wrong_phone" };
         }
 
         const accessToken = `efa_${randomBytes(32).toString("base64url")}`;

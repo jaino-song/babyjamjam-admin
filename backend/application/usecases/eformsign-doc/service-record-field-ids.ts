@@ -16,8 +16,10 @@
 export const FEEDBACK_TEMPLATE_SESSIONS_PER_DOCUMENT = 5;
 
 /**
- * Value that marks a selection field (결제 확인 / 산모확인서명, and the ①–⑪ selection marks)
- * as "selected".
+ * Value that marks a selection field (결제 확인, and the ①–⑪ selection marks) as "selected".
+ * 산모확인서명 N is NOT a checkbox mark — it is a binary(서명) field filled with a raw
+ * `data:image/png;base64,...` dataURI by the mapper (see `feedbackDayFieldIds` below); this
+ * constant does not apply to it.
  *
  * Per the eformsign API spec, 체크/라디오/콤보/토글 fields are filled by sending the ITEM's
  * configured '값' from the webform designer's 아이템 리스트 — not "true". Every mark item in
@@ -35,7 +37,9 @@ export const CHECKBOX_UNCHECKED_VALUE = "false";
 /**
  * Field bases that are REQUIRED at the creation step (제공업체) and therefore must be present in
  * every document's field list for all 5 slots — even slots with no session — or creation 400s
- * with "Required input value not found". Verified in Spike B.
+ * with "Required input value not found". Verified in Spike B. 결제 확인 is a checkbox mark
+ * (see CHECKBOX_*_VALUE); 산모확인서명 is a binary(서명) field — an empty string "" satisfies the
+ * required check while leaving the signature blank (verified live 2026-07-15).
  */
 export const FEEDBACK_REQUIRED_SLOT_FIELD_BASES = ["결제 확인", "산모확인서명"] as const;
 
@@ -102,6 +106,6 @@ export function feedbackDayFieldIds(n: number) {
         etcService: `기타서비스 ${n}`,
         notes: `특이사항 ${n}`,
         paymentConfirmed: `결제 확인 ${n}`, // required checkbox mark
-        momApproval: `산모확인서명 ${n}`, // required checkbox mark
+        momApproval: `산모확인서명 ${n}`, // required binary(서명) field — dataURI value renders in the PDF; "" satisfies the required check
     };
 }

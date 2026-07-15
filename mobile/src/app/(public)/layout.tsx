@@ -33,7 +33,7 @@ export default function PublicLayout({
 }>) {
   return (
     <html lang="ko">
-      <body className={`${Pretendard.variable} antialiased min-h-screen bg-v3-dim-white`}>
+      <body className={`${Pretendard.variable} antialiased min-h-[100dvh] bg-v3-dim-white`}>
         {children}
       </body>
     </html>

@@ -1,7 +1,4 @@
-import {
-    EmployeeFeedbackTokenService,
-    MAX_PHONE_ATTEMPTS,
-} from "../../application/services/employee-feedback-token.service";
+import { EmployeeFeedbackTokenService } from "../../application/services/employee-feedback-token.service";
 
 /** Minimal in-memory fake of the prisma employee_feedback_token delegate. */
 function makePrismaMock() {
@@ -86,20 +83,20 @@ describe("EmployeeFeedbackTokenService", () => {
         expect(ctx).toEqual({ tokenId: expect.any(String), branchId: "b1", scheduleId: 10, employeeId: 7 });
     });
 
-    it("rejects a wrong phone number, counts down attempts, and locks after MAX_PHONE_ATTEMPTS", async () => {
-        const { svc } = setup();
+    it("rejects a wrong phone number without limit, and a correct one still works after many wrong tries", async () => {
+        const { prisma, svc } = setup();
         const { linkToken } = await svc.issueLink({
             branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "010-1111-2222", expiresAt: future(),
         });
 
-        for (let i = 1; i < MAX_PHONE_ATTEMPTS; i++) {
-            const r = await svc.verifyPhoneAndMintAccess(linkToken, "01000000000");
-            expect(r).toMatchObject({ ok: false, reason: "wrong_phone", attemptsLeft: MAX_PHONE_ATTEMPTS - i });
+        // No lockout: every wrong attempt just returns wrong_phone, never "locked".
+        for (let i = 0; i < 12; i++) {
+            expect(await svc.verifyPhoneAndMintAccess(linkToken, "01000000000")).toEqual({ ok: false, reason: "wrong_phone" });
         }
-        // the MAX-th wrong attempt locks
-        expect(await svc.verifyPhoneAndMintAccess(linkToken, "01000000000")).toMatchObject({ ok: false, reason: "locked" });
-        // a correct phone number no longer works once locked
-        expect(await svc.verifyPhoneAndMintAccess(linkToken, "010-1111-2222")).toMatchObject({ ok: false, reason: "locked" });
+        expect(prisma.__rows[0].failedAttempts).toBe(12); // still counted for audit
+
+        // The correct phone number still mints an access token despite the wrong tries.
+        expect(await svc.verifyPhoneAndMintAccess(linkToken, "010-1111-2222")).toMatchObject({ ok: true });
     });
 
     it("treats an expired token as unusable for both link resolution and access", async () => {
