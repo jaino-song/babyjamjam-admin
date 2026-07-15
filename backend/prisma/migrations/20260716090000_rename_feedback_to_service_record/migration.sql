@@ -91,10 +91,24 @@ UPDATE "system_template_version"
 
 -- =========================================================================
 -- 5) eformsign document classification: service_feedback_snapshot → service_record_snapshot
+--    The eformsign_doc_document_kind_check CHECK (added by 20260709100000) only allows
+--    'contract' | 'service_feedback_snapshot'. Drop it, rewrite the rows, then re-add it
+--    with the new value — otherwise the UPDATE (and all new snapshot inserts) violate it.
 -- =========================================================================
+ALTER TABLE "eformsign_doc" DROP CONSTRAINT IF EXISTS "eformsign_doc_document_kind_check";
+
 UPDATE "eformsign_doc"
   SET document_kind = 'service_record_snapshot'
   WHERE document_kind = 'service_feedback_snapshot';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'eformsign_doc_document_kind_check') THEN
+    ALTER TABLE "eformsign_doc"
+      ADD CONSTRAINT "eformsign_doc_document_kind_check"
+      CHECK ("document_kind" IS NULL OR "document_kind" IN ('contract', 'service_record_snapshot'));
+  END IF;
+END $$;
 
 -- =========================================================================
 -- 6) SMS message-log template key value: service_feedback_link_sms → service_record_link_sms
