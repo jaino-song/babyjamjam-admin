@@ -99,6 +99,10 @@ jobs:
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-user-approval.sql
 
+      - name: Apply service-record mom signature patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260715140000_add_client_signature_to_service_record_day/migration.sql
+
   apply-preview:
     name: apply preview database patches
     if: >-
@@ -298,6 +302,10 @@ jobs:
       - name: Verify user approval + token-version patch
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-user-approval.sql
+
+      - name: Apply service-record mom signature patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260715140000_add_client_signature_to_service_record_day/migration.sql
 
   apply-production:
     name: apply production database patches
@@ -503,3 +511,7 @@ jobs:
       - name: Verify user approval + token-version patch
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-user-approval.sql
+
+      - name: Apply service-record mom signature patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260715140000_add_client_signature_to_service_record_day/migration.sql
