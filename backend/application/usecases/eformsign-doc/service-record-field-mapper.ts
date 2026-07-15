@@ -13,7 +13,7 @@ import {
     feedbackDayFieldIds,
 } from "./service-record-field-ids";
 
-export interface FeedbackHeaderInput {
+export interface ServiceRecordHeaderInput {
     momName: string | null;
     momBirth: string | null; // YYMMDD
     babyName: string | null;
@@ -22,7 +22,7 @@ export interface FeedbackHeaderInput {
     babyWeight: string | null;
 }
 
-export interface FeedbackDayInput {
+export interface ServiceRecordDayInput {
     sessionIndex: number;
     serviceDate: Date;
     answers: Record<string, unknown>;
@@ -86,11 +86,11 @@ function asText(value: unknown): string {
  * are emitted for ALL 5 slots — including unused ones (as unchecked) — or eformsign rejects
  * creation with "Required input value not found".
  */
-export function buildFeedbackDocumentFields(input: {
-    header: FeedbackHeaderInput | null;
+export function buildServiceRecordDocumentFields(input: {
+    header: ServiceRecordHeaderInput | null;
     orgName: string;
     employeeName: string;
-    days: FeedbackDayInput[];
+    days: ServiceRecordDayInput[];
 }): EformsignField[] {
     const { header, orgName, employeeName, days } = input;
     const fields: EformsignField[] = [];

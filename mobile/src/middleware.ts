@@ -171,7 +171,7 @@ const PUBLIC_ROUTES = [
   "/favicon.ico",
   "/manifest.json",
   "/sw.js",
-  "/feedback",
+  "/service-record",
 ];
 
 const PUBLIC_API_ROUTES = [
@@ -186,7 +186,7 @@ const PUBLIC_API_ROUTES = [
   "/api/auth/token",
   "/api/auth/verify-email",
   "/api/health",
-  "/api/feedback",
+  "/api/service-record",
 ];
 
 // Routes that require auth but NOT branch selection
@@ -209,6 +209,20 @@ function apiJsonResponse(error: string, status: number): NextResponse {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // Legacy alias: SMS links issued before the service-record rename pointed at
+  // /feedback/:token (and /api/feedback). Redirect outstanding (unexpired) links to
+  // the new public URL so providers who already received them still reach the wizard.
+  if (pathname === "/api/feedback" || pathname.startsWith("/api/feedback/")) {
+    const url = request.nextUrl.clone();
+    url.pathname = pathname.replace("/api/feedback", "/api/service-record");
+    return NextResponse.redirect(url);
+  }
+  if (pathname === "/feedback" || pathname.startsWith("/feedback/")) {
+    const url = request.nextUrl.clone();
+    url.pathname = pathname.replace("/feedback", "/service-record");
+    return NextResponse.redirect(url);
+  }
 
   if (PUBLIC_API_ROUTES.some((route) => isRouteMatch(pathname, route))) {
     return NextResponse.next();

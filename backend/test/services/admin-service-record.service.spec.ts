@@ -1,10 +1,10 @@
 import { NotFoundException } from "@nestjs/common";
 import { AdminServiceRecordService } from "application/services/admin-service-record.service";
-import { EmployeeFeedbackLinkService } from "application/services/employee-feedback-link.service";
+import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import {
-    SERVICE_FEEDBACK_LINK_RULE_ID,
-    SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
-} from "domain/constants/service-feedback-link-message";
+    SERVICE_RECORD_LINK_RULE_ID,
+    SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
+} from "domain/constants/service-record-link-message";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
@@ -30,7 +30,7 @@ describe("AdminServiceRecordService", () => {
 
     const createLinkService = () => ({
         prepareLink: jest.fn().mockResolvedValue({
-            feedbackUrl: "https://mobile.test/feedback/efl_prepared",
+            serviceRecordUrl: "https://mobile.test/service-record/efl_prepared",
             preparedLinkToken: "efl_prepared",
             expiresAt: new Date("2026-07-13T01:00:00.000Z"),
         }),
@@ -56,14 +56,14 @@ describe("AdminServiceRecordService", () => {
         },
         serviceRecord: null,
         serviceRecordDays: [],
-        feedbackTokens: [],
+        serviceRecordTokens: [],
     });
 
     it("derives link status for none, scheduled, sent, and failed assignments", async () => {
         const prisma = createPrisma();
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
-            createLinkService() as unknown as EmployeeFeedbackLinkService,
+            createLinkService() as unknown as ServiceRecordLinkService,
         );
         prisma.employee_schedule.findMany.mockResolvedValue([
             createSchedule(1, "2026-07-04T00:00:00.000Z"),
@@ -76,7 +76,7 @@ describe("AdminServiceRecordService", () => {
                 id: "job-4",
                 branchId: "branch-1",
                 employeeScheduleId: 4,
-                ruleId: SERVICE_FEEDBACK_LINK_RULE_ID,
+                ruleId: SERVICE_RECORD_LINK_RULE_ID,
                 status: "sent",
                 scheduledFor: new Date("2026-07-01T06:00:00.000Z"),
                 createdAt: new Date("2026-06-30T00:00:00.000Z"),
@@ -85,7 +85,7 @@ describe("AdminServiceRecordService", () => {
                 id: "job-3",
                 branchId: "branch-1",
                 employeeScheduleId: 3,
-                ruleId: SERVICE_FEEDBACK_LINK_RULE_ID,
+                ruleId: SERVICE_RECORD_LINK_RULE_ID,
                 status: "sent",
                 scheduledFor: new Date("2026-07-02T06:00:00.000Z"),
                 createdAt: new Date("2026-07-01T00:00:00.000Z"),
@@ -94,7 +94,7 @@ describe("AdminServiceRecordService", () => {
                 id: "job-2",
                 branchId: "branch-1",
                 employeeScheduleId: 2,
-                ruleId: SERVICE_FEEDBACK_LINK_RULE_ID,
+                ruleId: SERVICE_RECORD_LINK_RULE_ID,
                 status: "pending",
                 scheduledFor: new Date("2026-07-03T06:00:00.000Z"),
                 createdAt: new Date("2026-07-02T00:00:00.000Z"),
@@ -104,7 +104,7 @@ describe("AdminServiceRecordService", () => {
             {
                 id: 400,
                 branchId: "branch-1",
-                templateKey: SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
+                templateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
                 triggerJobId: "job-4",
                 clientId: 100,
                 status: "failed",
@@ -114,7 +114,7 @@ describe("AdminServiceRecordService", () => {
             {
                 id: 300,
                 branchId: "branch-1",
-                templateKey: SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
+                templateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
                 triggerJobId: "job-3",
                 clientId: 100,
                 status: "sent",
@@ -148,7 +148,7 @@ describe("AdminServiceRecordService", () => {
         const overview = await service.getClientOverview("branch-1", 100);
         expect(prisma.employee_schedule.findMany).toHaveBeenCalledWith(expect.objectContaining({
             include: expect.objectContaining({
-                feedbackTokens: {
+                serviceRecordTokens: {
                     where: {
                         OR: [
                             { active: true },
@@ -177,7 +177,7 @@ describe("AdminServiceRecordService", () => {
         expect(prisma.eformsign_doc.findMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({
                 branchId: "branch-1",
-                documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_FEEDBACK_SNAPSHOT,
+                documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT,
                 OR: [{ employeeScheduleId: { in: [1, 2, 3, 4] } }],
             }),
         }));
@@ -198,7 +198,7 @@ describe("AdminServiceRecordService", () => {
         const prisma = createPrisma();
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
-            createLinkService() as unknown as EmployeeFeedbackLinkService,
+            createLinkService() as unknown as ServiceRecordLinkService,
         );
         prisma.employee_schedule.findMany.mockResolvedValue([
             createSchedule(1, "2026-07-04T00:00:00.000Z"),
@@ -209,7 +209,7 @@ describe("AdminServiceRecordService", () => {
             {
                 id: 500,
                 branchId: "branch-1",
-                templateKey: SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
+                templateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
                 triggerJobId: null,
                 clientId: 100,
                 status: "failed",
@@ -233,7 +233,7 @@ describe("AdminServiceRecordService", () => {
         const prisma = createPrisma();
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
-            createLinkService() as unknown as EmployeeFeedbackLinkService,
+            createLinkService() as unknown as ServiceRecordLinkService,
         );
         prisma.employee_schedule.findMany.mockResolvedValue([
             createSchedule(1, "2026-07-04T00:00:00.000Z"),
@@ -255,7 +255,7 @@ describe("AdminServiceRecordService", () => {
         const linkService = createLinkService();
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
-            linkService as unknown as EmployeeFeedbackLinkService,
+            linkService as unknown as ServiceRecordLinkService,
         );
         prisma.employee_schedule.findFirst.mockResolvedValue(null);
 
@@ -269,7 +269,7 @@ describe("AdminServiceRecordService", () => {
         const linkService = createLinkService();
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
-            linkService as unknown as EmployeeFeedbackLinkService,
+            linkService as unknown as ServiceRecordLinkService,
         );
         prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10 });
 
@@ -288,7 +288,7 @@ describe("AdminServiceRecordService", () => {
         const linkService = createLinkService();
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
-            linkService as unknown as EmployeeFeedbackLinkService,
+            linkService as unknown as ServiceRecordLinkService,
         );
         prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10 });
 

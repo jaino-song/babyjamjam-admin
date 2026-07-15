@@ -33,7 +33,7 @@ import { EformsignHeadlessProgressService } from "application/services/eformsign
 import { EformsignHeadlessService } from "infrastructure/automation/eformsign-headless.service";
 import { AreaTemplateModule } from "module/area-template.module";
 import { EformsignDocController } from "interface/controllers/eformsign-doc.controller";
-import { CreateAndSendFeedbackSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-feedback-snapshot.usecase";
+import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase";
 import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
 
 @Module({
@@ -58,8 +58,8 @@ import { ContractClientAssignmentGuardService } from "application/services/contr
         FetchEformsignDocFromApiUsecase,
         // Use cases - Contract creation
         CreateAndSendContractUsecase,
-        // Use case - Feedback snapshot (BJJ-247)
-        CreateAndSendFeedbackSnapshotUsecase,
+        // Use case - Service record snapshot (BJJ-247)
+        CreateAndSendServiceRecordSnapshotUsecase,
         // Use cases - Headless dispatch (BJJ-90)
         DispatchDocumentHeadlessUsecase,
         FinalizeDocumentHeadlessUsecase,
@@ -91,7 +91,7 @@ import { ContractClientAssignmentGuardService } from "application/services/contr
         EformsignDocsEventBus,
         EformsignHeadlessProgressService,
         EFORMSIGN_CLIENT_REPOSITORY,
-        CreateAndSendFeedbackSnapshotUsecase,
+        CreateAndSendServiceRecordSnapshotUsecase,
     ],
 })
 export class EformsignDocModule {}

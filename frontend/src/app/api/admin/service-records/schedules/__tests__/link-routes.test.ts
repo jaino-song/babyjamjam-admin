@@ -37,7 +37,7 @@ describe("service-record feedback link proxy routes", () => {
         mockPost.mockResolvedValue({
             status: 201,
             data: {
-                feedbackUrl: `https://mobile.test/feedback/${preparedLinkToken}`,
+                serviceRecordUrl: `https://mobile.test/service-record/${preparedLinkToken}`,
                 preparedLinkToken,
                 expiresAt: "2026-07-20T00:00:00.000Z",
             },

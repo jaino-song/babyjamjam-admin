@@ -24,7 +24,7 @@ export enum MessageTriggerTemplateKey {
     SERVICE_INFO = "SERVICE_INFO",
     SERVICE_END_REMINDER = "SERVICE_END_REMINDER",
     EMPLOYEE_ASSIGNED = "EMPLOYEE_ASSIGNED",
-    SERVICE_FEEDBACK_LINK = "SERVICE_FEEDBACK_LINK",
+    SERVICE_RECORD_LINK = "SERVICE_RECORD_LINK",
     CLIENT_GREETING = "CLIENT_GREETING",
     PRICE_INFO = "PRICE_INFO",
     REMINDER = "REMINDER",
@@ -171,8 +171,8 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
             aligo_alimtalk: { templateKey: "EMPLOYEE_ASSIGNED" },
         },
     },
-    [MessageTriggerTemplateKey.SERVICE_FEEDBACK_LINK]: {
-        key: MessageTriggerTemplateKey.SERVICE_FEEDBACK_LINK,
+    [MessageTriggerTemplateKey.SERVICE_RECORD_LINK]: {
+        key: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
         name: "제공기록지 작성 링크",
         description: "서비스 시작일 오후 3시에 제공인력에게 제공기록지 작성 링크를 SMS로 발송합니다.",
         allowedEventTypes: [MessageTriggerEventType.SERVICE_START],
@@ -181,7 +181,7 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "employeeName", label: "제공인력명" },
             { key: "clientName", label: "고객명" },
             { key: "serviceStartDate", label: "서비스 시작일" },
-            { key: "feedbackUrl", label: "제공기록지 링크" },
+            { key: "serviceRecordUrl", label: "제공기록지 링크" },
         ],
         providers: {},
     },

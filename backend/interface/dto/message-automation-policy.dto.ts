@@ -11,14 +11,14 @@ import {
 } from "domain/constants/message-automation-policy";
 import { IsArray, IsInt, IsString, Max, Min } from "class-validator";
 import {
-    getServiceFeedbackLinkScheduledFor,
-    getServiceFeedbackTokenExpiresAt,
-    SERVICE_FEEDBACK_LINK_RULE_ID,
-    SERVICE_FEEDBACK_LINK_SMS_AUTOMATION_KEY,
-    SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
-    SERVICE_FEEDBACK_LINK_SMS_TITLE,
-    SERVICE_FEEDBACK_LINK_SMS_TRIGGER_TYPE,
-} from "domain/constants/service-feedback-link-message";
+    getServiceRecordLinkScheduledFor,
+    getServiceRecordTokenExpiresAt,
+    SERVICE_RECORD_LINK_RULE_ID,
+    SERVICE_RECORD_LINK_SMS_AUTOMATION_KEY,
+    SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
+    SERVICE_RECORD_LINK_SMS_TITLE,
+    SERVICE_RECORD_LINK_SMS_TRIGGER_TYPE,
+} from "domain/constants/service-record-link-message";
 import {
     DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
     MessageAutomationPastTriggerConfig,
@@ -200,37 +200,37 @@ export class MessageAutomationPoliciesResponseDto {
                     {
                         id: "message-title",
                         label: "문자 제목",
-                        value: SERVICE_FEEDBACK_LINK_SMS_TITLE,
+                        value: SERVICE_RECORD_LINK_SMS_TITLE,
                     },
                     {
                         id: "trigger-type",
                         label: "트리거 유형",
-                        value: SERVICE_FEEDBACK_LINK_SMS_TRIGGER_TYPE,
+                        value: SERVICE_RECORD_LINK_SMS_TRIGGER_TYPE,
                     },
                     {
                         id: "scheduled-for",
                         label: "예약 발송",
-                        value: `서비스 시작일 ${formatKstDateHour(getServiceFeedbackLinkScheduledFor(REFERENCE_SERVICE_DATE))} KST`,
+                        value: `서비스 시작일 ${formatKstDateHour(getServiceRecordLinkScheduledFor(REFERENCE_SERVICE_DATE))} KST`,
                     },
                     {
                         id: "token-expires-at",
                         label: "링크 만료",
-                        value: `서비스 종료일 ${formatKstDateHour(getServiceFeedbackTokenExpiresAt(REFERENCE_SERVICE_DATE))} KST`,
+                        value: `서비스 종료일 ${formatKstDateHour(getServiceRecordTokenExpiresAt(REFERENCE_SERVICE_DATE))} KST`,
                     },
                     {
                         id: "rule-id",
                         label: "규칙 ID",
-                        value: SERVICE_FEEDBACK_LINK_RULE_ID,
+                        value: SERVICE_RECORD_LINK_RULE_ID,
                     },
                     {
                         id: "automation-key",
                         label: "자동화 키",
-                        value: SERVICE_FEEDBACK_LINK_SMS_AUTOMATION_KEY,
+                        value: SERVICE_RECORD_LINK_SMS_AUTOMATION_KEY,
                     },
                     {
                         id: "template-key",
                         label: "문자 로그 템플릿",
-                        value: SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
+                        value: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
                     },
                 ],
             },

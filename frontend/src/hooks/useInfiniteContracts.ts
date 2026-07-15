@@ -36,17 +36,29 @@ function sortByCreatedDate(docs: EformsignDocument[]): EformsignDocument[] {
 }
 
 export const infiniteContractsQueryKeys = {
-  documents: (status: DocumentFilterType) =>
-    status === null
-      ? eformsignQueryKeys.allDocuments()
-      : eformsignQueryKeys.documentsByType(status),
+  documents: (
+    status: DocumentFilterType,
+    templateFilter?: DocumentTemplateFilter,
+  ) => [
+    ...eformsignQueryKeys.documents(),
+    "infinite",
+    status ?? "all",
+    templateFilter?.templateMatch ?? "all-templates",
+    templateFilter?.templateId ?? null,
+  ] as const,
 };
+
+export interface DocumentTemplateFilter {
+  templateId: string;
+  templateMatch: "include" | "exclude";
+}
 
 interface UseInfiniteContractsOptions {
   enabled?: boolean;
   filterType?: DocumentFilterType;
   /** Names to exclude from the results */
   excludedNames?: readonly string[];
+  templateFilter?: DocumentTemplateFilter;
 }
 
 /**
@@ -77,13 +89,18 @@ export function useInfiniteContracts({
   enabled = true,
   filterType = null,
   excludedNames = EMPTY_EXCLUDED_NAMES,
+  templateFilter,
 }: UseInfiniteContractsOptions = {}) {
   const query = useInfiniteQuery<EformsignDocumentsResponse>({
-    queryKey: infiniteContractsQueryKeys.documents(filterType),
+    queryKey: infiniteContractsQueryKeys.documents(filterType, templateFilter),
     initialPageParam: 0,
     queryFn: async ({ pageParam }) => {
       const skip = typeof pageParam === "number" ? pageParam : 0;
-      const params = { limit: PAGE_SIZE, skip };
+      const params = {
+        limit: PAGE_SIZE,
+        skip,
+        ...(templateFilter ?? {}),
+      };
       switch (filterType) {
         case "in-progress":
           return await eformsignApi.getInProgressDocuments(params);

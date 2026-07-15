@@ -14,10 +14,10 @@ import { DatabaseModule } from "infrastructure/database/database.module";
 import { EmployeeScheduleService } from "application/services/employee-schedule.service";
 import { EmployeeScheduleController } from "interface/controllers/employee-schedule.controller";
 import { MessageModule } from "./message.module";
-import { ServiceFeedbackModule } from "./service-feedback.module";
+import { ServiceRecordEntryModule } from "./service-record-entry.module";
 
 @Module({
-    imports: [DatabaseModule, MessageModule, ServiceFeedbackModule],
+    imports: [DatabaseModule, MessageModule, ServiceRecordEntryModule],
     controllers: [EmployeeScheduleController],
     providers: [
         CreateEmployeeScheduleUsecase,

@@ -1,4 +1,6 @@
 DO $$
+DECLARE
+    _dup boolean;
 BEGIN
     IF to_regclass('public.service_record_case') IS NULL THEN
         RAISE EXCEPTION 'service_record_case table is missing';
@@ -33,14 +35,13 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'duplicate service_record_case rows exist for a client';
     END IF;
-    IF EXISTS (
-        SELECT "service_record_case_id"
-        FROM "employee_feedback_token"
-        WHERE "active" = true AND "service_record_case_id" IS NOT NULL
-        GROUP BY "service_record_case_id"
-        HAVING COUNT(*) > 1
-    ) THEN
-        RAISE EXCEPTION 'multiple active feedback tokens exist for a service record case';
+    -- Token table is employee_feedback_token before 20260716090000, service_record_token after.
+    EXECUTE format(
+        'SELECT EXISTS (SELECT 1 FROM %s WHERE "active" = true AND "service_record_case_id" IS NOT NULL GROUP BY "service_record_case_id" HAVING COUNT(*) > 1)',
+        COALESCE(to_regclass('public.service_record_token'), to_regclass('public.employee_feedback_token'))
+    ) INTO _dup;
+    IF _dup THEN
+        RAISE EXCEPTION 'multiple active service-record tokens exist for a service record case';
     END IF;
     IF EXISTS (
         SELECT 1
@@ -57,7 +58,7 @@ BEGIN
             OR EXISTS (SELECT 1 FROM "employee_schedule" s WHERE s."client_id" = c."id")
             OR EXISTS (
                 SELECT 1 FROM "eformsign_doc" d
-                WHERE d."client_id" = c."id" AND d."document_kind" = 'service_feedback_snapshot'
+                WHERE d."client_id" = c."id" AND d."document_kind" IN ('service_feedback_snapshot', 'service_record_snapshot')
             )
         )
           AND NOT EXISTS (SELECT 1 FROM "service_record_case" rc WHERE rc."client_id" = c."id")

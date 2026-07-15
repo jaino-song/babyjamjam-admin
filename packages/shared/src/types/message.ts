@@ -47,7 +47,7 @@ export type MessageTriggerTemplateKey =
   | "SERVICE_INFO"
   | "SERVICE_END_REMINDER"
   | "EMPLOYEE_ASSIGNED"
-  | "SERVICE_FEEDBACK_LINK"
+  | "SERVICE_RECORD_LINK"
   | "CLIENT_GREETING"
   | "PRICE_INFO"
   | "REMINDER"
@@ -61,7 +61,7 @@ export const SMS_TRIGGER_TO_SYSTEM_TEMPLATE: Partial<
   Record<MessageTriggerTemplateKey, SystemTemplateKey>
 > = {
   SERVICE_INFO: "SERVICE_INFO",
-  SERVICE_FEEDBACK_LINK: "SERVICE_FEEDBACK_LINK",
+  SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK",
   CLIENT_GREETING: "GREETING",
   PRICE_INFO: "PRICE_INFO",
   REMINDER: "REMINDER",
@@ -76,7 +76,7 @@ export const SMS_TRIGGER_TO_SYSTEM_TEMPLATE: Partial<
 // guard without hardcoded per-surface lists.
 export const SMS_TRIGGER_TEMPLATE_KEYS: MessageTriggerTemplateKey[] = [
   "SERVICE_INFO",
-  "SERVICE_FEEDBACK_LINK",
+  "SERVICE_RECORD_LINK",
   "CLIENT_GREETING",
   "PRICE_INFO",
   "REMINDER",

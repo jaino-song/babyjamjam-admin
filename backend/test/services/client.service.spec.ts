@@ -8,7 +8,7 @@ import {
     UpdateClientUsecase,
 } from "../../application/usecases/client";
 import { MessageTriggerService } from "../../application/services/message-trigger.service";
-import { EmployeeFeedbackLinkService } from "../../application/services/employee-feedback-link.service";
+import { ServiceRecordLinkService } from "../../application/services/service-record-link.service";
 import { ClientEntity } from "../../domain/entities/client.entity";
 import { IClientRepository } from "../../domain/repositories/client.repository.interface";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
@@ -90,7 +90,7 @@ describe("ClientService", () => {
         cancelPendingJobsForClientDeletion: jest.fn().mockResolvedValue(undefined),
     });
 
-    const createMockEmployeeFeedbackLinkService = () => ({
+    const createMockServiceRecordLinkService = () => ({
         scheduleForServiceStart: jest.fn().mockResolvedValue(undefined),
         revoke: jest.fn().mockResolvedValue(undefined),
     });
@@ -144,7 +144,7 @@ describe("ClientService", () => {
     let deleteClientUsecase: ReturnType<typeof createMockDeleteClientUsecase>;
     let prismaService: ReturnType<typeof createMockPrismaService>;
     let triggerService: ReturnType<typeof createMockTriggerService>;
-    let employeeFeedbackLinkService: ReturnType<typeof createMockEmployeeFeedbackLinkService>;
+    let serviceRecordLinkService: ReturnType<typeof createMockServiceRecordLinkService>;
     let clientRepository: ReturnType<typeof createMockClientRepository>;
 
     beforeEach(() => {
@@ -156,7 +156,7 @@ describe("ClientService", () => {
         deleteClientUsecase = createMockDeleteClientUsecase();
         prismaService = createMockPrismaService();
         triggerService = createMockTriggerService();
-        employeeFeedbackLinkService = createMockEmployeeFeedbackLinkService();
+        serviceRecordLinkService = createMockServiceRecordLinkService();
         clientRepository = createMockClientRepository();
 
         service = new ClientService(
@@ -169,7 +169,7 @@ describe("ClientService", () => {
             prismaService as unknown as PrismaService,
             clientRepository,
             triggerService as unknown as MessageTriggerService,
-            employeeFeedbackLinkService as unknown as EmployeeFeedbackLinkService,
+            serviceRecordLinkService as unknown as ServiceRecordLinkService,
         );
     });
 
@@ -243,7 +243,7 @@ describe("ClientService", () => {
                 );
                 expect(createClientUsecase.execute).not.toHaveBeenCalled();
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
-                expect(employeeFeedbackLinkService.scheduleForServiceStart).toHaveBeenCalledWith(10);
+                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(10);
                 expect(result).toBe(mockClient);
             });
         });
@@ -428,7 +428,7 @@ describe("ClientService", () => {
                         secondaryEmployeeId: 6,
                     }),
                 );
-                expect(employeeFeedbackLinkService.scheduleForServiceStart).toHaveBeenCalledWith(10);
+                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(10);
             });
         });
 
@@ -484,7 +484,7 @@ describe("ClientService", () => {
                         replaced: false,
                     }),
                 });
-                expect(employeeFeedbackLinkService.scheduleForServiceStart).toHaveBeenCalledWith(33);
+                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(33);
             });
 
             it("rejects an employee that does not belong to the client branch", async () => {
@@ -620,8 +620,8 @@ describe("ClientService", () => {
                         replaced: false,
                     }),
                 });
-                expect(employeeFeedbackLinkService.revoke).toHaveBeenCalledWith(10);
-                expect(employeeFeedbackLinkService.scheduleForServiceStart).toHaveBeenCalledWith(20);
+                expect(serviceRecordLinkService.revoke).toHaveBeenCalledWith(10);
+                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(20);
             });
 
             it("keeps feedback access for the old assignment when replacement creation fails", async () => {
@@ -640,7 +640,7 @@ describe("ClientService", () => {
                 ).rejects.toThrow("schedule insert failed");
 
                 expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
-                expect(employeeFeedbackLinkService.revoke).not.toHaveBeenCalled();
+                expect(serviceRecordLinkService.revoke).not.toHaveBeenCalled();
                 expect(updateClientUsecase.execute).not.toHaveBeenCalled();
             });
 
@@ -668,7 +668,7 @@ describe("ClientService", () => {
                 // Should NOT mark old schedule as replaced or create new schedule
                 expect(prismaService.employee_schedule.update).not.toHaveBeenCalled();
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
-                expect(employeeFeedbackLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
             });
         });
 
@@ -708,7 +708,7 @@ describe("ClientService", () => {
                         replaced: false,
                     }),
                 });
-                expect(employeeFeedbackLinkService.scheduleForServiceStart).toHaveBeenCalledWith(21);
+                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(21);
             });
         });
 
@@ -745,8 +745,8 @@ describe("ClientService", () => {
                         secondaryEmployeeId: null,
                     }),
                 });
-                expect(employeeFeedbackLinkService.revoke).toHaveBeenCalledWith(15);
-                expect(employeeFeedbackLinkService.scheduleForServiceStart).toHaveBeenCalledWith(20);
+                expect(serviceRecordLinkService.revoke).toHaveBeenCalledWith(15);
+                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(20);
             });
         });
 
@@ -1080,8 +1080,8 @@ describe("ClientService", () => {
                     }),
                 });
                 expect(result.serviceStatus).toBe("replacement_requested");
-                expect(employeeFeedbackLinkService.revoke).toHaveBeenCalledWith(10);
-                expect(employeeFeedbackLinkService.scheduleForServiceStart).toHaveBeenCalledWith(20);
+                expect(serviceRecordLinkService.revoke).toHaveBeenCalledWith(10);
+                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(20);
             });
 
             it("should handle replacement with primary employee only", async () => {

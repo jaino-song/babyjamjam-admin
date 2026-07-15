@@ -12,7 +12,7 @@ export class SendAdminServiceRecordLinkDto {
 }
 
 export interface AdminServiceRecordPreparedLinkDto {
-    feedbackUrl: string;
+    serviceRecordUrl: string;
     preparedLinkToken: string;
     expiresAt: Date;
 }

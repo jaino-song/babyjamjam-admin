@@ -524,7 +524,7 @@ function ClientDetailPanelBody({
     });
 
     const clientContractDocs = useMemo(
-        () => (clientContracts ?? []).filter((doc) => doc.documentKind !== "service_feedback_snapshot"),
+        () => (clientContracts ?? []).filter((doc) => doc.documentKind !== "service_record_snapshot"),
         [clientContracts],
     );
 

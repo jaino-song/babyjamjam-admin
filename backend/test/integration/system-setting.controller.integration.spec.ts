@@ -22,14 +22,14 @@ import {
     TRIGGER_JOB_RETRY_DELAY_MS,
 } from "domain/constants/message-automation-policy";
 import {
-    getServiceFeedbackLinkScheduledFor,
-    getServiceFeedbackTokenExpiresAt,
-    SERVICE_FEEDBACK_LINK_RULE_ID,
-    SERVICE_FEEDBACK_LINK_SMS_AUTOMATION_KEY,
-    SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
-    SERVICE_FEEDBACK_LINK_SMS_TITLE,
-    SERVICE_FEEDBACK_LINK_SMS_TRIGGER_TYPE,
-} from "domain/constants/service-feedback-link-message";
+    getServiceRecordLinkScheduledFor,
+    getServiceRecordTokenExpiresAt,
+    SERVICE_RECORD_LINK_RULE_ID,
+    SERVICE_RECORD_LINK_SMS_AUTOMATION_KEY,
+    SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
+    SERVICE_RECORD_LINK_SMS_TITLE,
+    SERVICE_RECORD_LINK_SMS_TRIGGER_TYPE,
+} from "domain/constants/service-record-link-message";
 
 const MS_PER_MINUTE = 60 * 1000;
 const MS_PER_HOUR = 60 * MS_PER_MINUTE;
@@ -241,19 +241,19 @@ describe("SystemSettingController (Integration)", () => {
             expect(getRowValue(response, "past-trigger", "post-start-registration"))
                 .toBe("시작 전 안내 제외");
             expect(getRowValue(response, "service-feedback-link", "message-title"))
-                .toBe(SERVICE_FEEDBACK_LINK_SMS_TITLE);
+                .toBe(SERVICE_RECORD_LINK_SMS_TITLE);
             expect(getRowValue(response, "service-feedback-link", "trigger-type"))
-                .toBe(SERVICE_FEEDBACK_LINK_SMS_TRIGGER_TYPE);
+                .toBe(SERVICE_RECORD_LINK_SMS_TRIGGER_TYPE);
             expect(getRowValue(response, "service-feedback-link", "scheduled-for"))
-                .toBe(`서비스 시작일 ${formatKstDateHour(getServiceFeedbackLinkScheduledFor(REFERENCE_SERVICE_DATE))} KST`);
+                .toBe(`서비스 시작일 ${formatKstDateHour(getServiceRecordLinkScheduledFor(REFERENCE_SERVICE_DATE))} KST`);
             expect(getRowValue(response, "service-feedback-link", "token-expires-at"))
-                .toBe(`서비스 종료일 ${formatKstDateHour(getServiceFeedbackTokenExpiresAt(REFERENCE_SERVICE_DATE))} KST`);
+                .toBe(`서비스 종료일 ${formatKstDateHour(getServiceRecordTokenExpiresAt(REFERENCE_SERVICE_DATE))} KST`);
             expect(getRowValue(response, "service-feedback-link", "rule-id"))
-                .toBe(SERVICE_FEEDBACK_LINK_RULE_ID);
+                .toBe(SERVICE_RECORD_LINK_RULE_ID);
             expect(getRowValue(response, "service-feedback-link", "automation-key"))
-                .toBe(SERVICE_FEEDBACK_LINK_SMS_AUTOMATION_KEY);
+                .toBe(SERVICE_RECORD_LINK_SMS_AUTOMATION_KEY);
             expect(getRowValue(response, "service-feedback-link", "template-key"))
-                .toBe(SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY);
+                .toBe(SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY);
         });
 
         it("should update the branch-scoped past trigger config", async () => {

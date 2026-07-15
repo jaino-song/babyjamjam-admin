@@ -5,11 +5,11 @@ import { SendAligoSmsResult } from "application/dto/aligo/send-sms.dto";
 import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey } from "domain/constants/system-template-registry";
 import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import {
-    SERVICE_FEEDBACK_LINK_SMS_AUTOMATION_KEY,
-    SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
-    SERVICE_FEEDBACK_LINK_SMS_TITLE,
-    SERVICE_FEEDBACK_LINK_SMS_TRIGGER_TYPE,
-} from "domain/constants/service-feedback-link-message";
+    SERVICE_RECORD_LINK_SMS_AUTOMATION_KEY,
+    SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
+    SERVICE_RECORD_LINK_SMS_TITLE,
+    SERVICE_RECORD_LINK_SMS_TRIGGER_TYPE,
+} from "domain/constants/service-record-link-message";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import {
@@ -82,12 +82,12 @@ export const SMS_TEMPLATE_DELIVERY: Partial<Record<MessageTriggerTemplateKey, Sm
         title: "정보 안내",
         systemTemplateKey: SystemTemplateKey.INFO,
     },
-    [MessageTriggerTemplateKey.SERVICE_FEEDBACK_LINK]: {
-        smsLogTemplateKey: SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
-        automationKey: SERVICE_FEEDBACK_LINK_SMS_AUTOMATION_KEY,
-        triggerType: SERVICE_FEEDBACK_LINK_SMS_TRIGGER_TYPE,
-        title: SERVICE_FEEDBACK_LINK_SMS_TITLE,
-        systemTemplateKey: SystemTemplateKey.SERVICE_FEEDBACK_LINK,
+    [MessageTriggerTemplateKey.SERVICE_RECORD_LINK]: {
+        smsLogTemplateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
+        automationKey: SERVICE_RECORD_LINK_SMS_AUTOMATION_KEY,
+        triggerType: SERVICE_RECORD_LINK_SMS_TRIGGER_TYPE,
+        title: SERVICE_RECORD_LINK_SMS_TITLE,
+        systemTemplateKey: SystemTemplateKey.SERVICE_RECORD_LINK,
     },
 };
 
@@ -129,7 +129,7 @@ export class SmsTriggerDeliveryService {
             employeeName: payload.recipientName,
             clientName: payload.recipientName,
             buttonUrl: payload.buttonUrl ?? "",
-            feedbackUrl: payload.buttonUrl ?? "",
+            serviceRecordUrl: payload.buttonUrl ?? "",
             ...payload.templateVariables,
         };
         if (config.systemTemplateKey === SystemTemplateKey.PRICE_INFO) {

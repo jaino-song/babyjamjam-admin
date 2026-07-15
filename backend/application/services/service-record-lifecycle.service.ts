@@ -1,6 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { getServiceFeedbackTokenExpiresAt } from "domain/constants/service-feedback-link-message";
+import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 export const SERVICE_RECORD_CASE_STATUS = {
@@ -98,7 +98,7 @@ export class ServiceRecordLifecycleService {
             existing && isoDate(existing.endDate) !== isoDate(client.endDate),
         );
         const finalizationDueAt = client.endDate
-            ? getServiceFeedbackTokenExpiresAt(client.endDate)
+            ? getServiceRecordTokenExpiresAt(client.endDate)
             : null;
         const status = existing && IMMUTABLE_FINALIZATION_STATUSES.has(existing.status)
             ? existing.status
@@ -163,14 +163,14 @@ export class ServiceRecordLifecycleService {
                     where: { scheduleId: { in: scheduleIds } },
                     data: { serviceRecordCaseId: record.id },
                 }),
-                db.employee_feedback_token.updateMany({
+                db.service_record_token.updateMany({
                     where: { scheduleId: { in: scheduleIds } },
                     data: { serviceRecordCaseId: record.id },
                 }),
                 db.eformsign_doc.updateMany({
                     where: {
                         employeeScheduleId: { in: scheduleIds },
-                        documentKind: "service_feedback_snapshot",
+                        documentKind: "service_record_snapshot",
                     },
                     data: { serviceRecordCaseId: record.id },
                 }),
@@ -179,7 +179,7 @@ export class ServiceRecordLifecycleService {
         }
 
         if (endDateChanged && finalizationDueAt) {
-            await db.employee_feedback_token.updateMany({
+            await db.service_record_token.updateMany({
                 where: {
                     serviceRecordCaseId: record.id,
                     active: true,

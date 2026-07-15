@@ -5,9 +5,9 @@ import { TemplateFieldGrid } from "./TemplateFieldGrid";
 
 export type TemplateMessageDeliveryMode = "sms" | "service-feedback-link";
 
-export interface ServiceFeedbackLinkPreparation {
+export interface ServiceRecordLinkPreparation {
   scheduleId: number;
-  feedbackUrl: string;
+  serviceRecordUrl: string;
   preparedLinkToken: string;
   expiresAt: string;
 }
@@ -17,7 +17,7 @@ export interface TemplateMessageFormLayoutArgs {
   messageCard: ReactNode;
   requiresRecipientName: boolean;
   deliveryMode: TemplateMessageDeliveryMode;
-  serviceFeedbackLinkPreparation?: ServiceFeedbackLinkPreparation | null;
+  serviceRecordLinkPreparation?: ServiceRecordLinkPreparation | null;
 }
 
 export type TemplateMessageFormLayout = (args: TemplateMessageFormLayoutArgs) => ReactNode;
@@ -29,7 +29,7 @@ interface TemplateMessageFormFrameProps {
   messageCard: ReactNode;
   requiresRecipientName?: boolean;
   deliveryMode?: TemplateMessageDeliveryMode;
-  serviceFeedbackLinkPreparation?: ServiceFeedbackLinkPreparation | null;
+  serviceRecordLinkPreparation?: ServiceRecordLinkPreparation | null;
   renderLayout?: TemplateMessageFormLayout;
 }
 
@@ -40,7 +40,7 @@ export function TemplateMessageFormFrame({
   messageCard,
   requiresRecipientName = false,
   deliveryMode = "sms",
-  serviceFeedbackLinkPreparation,
+  serviceRecordLinkPreparation,
   renderLayout,
 }: TemplateMessageFormFrameProps) {
   if (renderLayout) {
@@ -49,7 +49,7 @@ export function TemplateMessageFormFrame({
       messageCard,
       requiresRecipientName,
       deliveryMode,
-      serviceFeedbackLinkPreparation,
+      serviceRecordLinkPreparation,
     })}</>;
   }
 

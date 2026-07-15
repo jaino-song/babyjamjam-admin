@@ -1,9 +1,9 @@
 import {
-    buildFeedbackDocumentFields,
+    buildServiceRecordDocumentFields,
     chunkSessions,
     yymmddToIso,
-    type FeedbackDayInput,
-    type FeedbackHeaderInput,
+    type ServiceRecordDayInput,
+    type ServiceRecordHeaderInput,
 } from "application/usecases/eformsign-doc/service-record-field-mapper";
 import {
     CHECKBOX_CHECKED_VALUE,
@@ -23,7 +23,7 @@ function toMap(fields: Array<{ id: string; value: string }>): Map<string, string
 /** UTC-midnight date, matching Prisma @db.Date reads. */
 const utc = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 
-function day(overrides: Partial<FeedbackDayInput> = {}): FeedbackDayInput {
+function day(overrides: Partial<ServiceRecordDayInput> = {}): ServiceRecordDayInput {
     return {
         sessionIndex: 1,
         serviceDate: utc("2026-07-09"),
@@ -82,8 +82,8 @@ describe("chunkSessions", () => {
     });
 });
 
-describe("buildFeedbackDocumentFields", () => {
-    const header: FeedbackHeaderInput = {
+describe("buildServiceRecordDocumentFields", () => {
+    const header: ServiceRecordHeaderInput = {
         momName: "김산모",
         momBirth: "900101",
         babyName: "김아기",
@@ -93,7 +93,7 @@ describe("buildFeedbackDocumentFields", () => {
     };
 
     it("emits header fields once, with 제공기관/제공인력 always present", () => {
-        const map = toMap(buildFeedbackDocumentFields({ header, orgName: "인천 아이미래로", employeeName: "박제공", days: [day()] }));
+        const map = toMap(buildServiceRecordDocumentFields({ header, orgName: "인천 아이미래로", employeeName: "박제공", days: [day()] }));
         expect(map.get("제공기관 이름")).toBe("인천 아이미래로");
         expect(map.get("제공인력 이름")).toBe("박제공");
         expect(map.get("산모 이름")).toBe("김산모");
@@ -106,7 +106,7 @@ describe("buildFeedbackDocumentFields", () => {
     });
 
     it("maps 제왕절개 and sends empty header fields (required at creation)", () => {
-        const map = toMap(buildFeedbackDocumentFields({
+        const map = toMap(buildServiceRecordDocumentFields({
             header: { momName: null, momBirth: null, babyName: null, babyBirth: null, deliveryType: "제왕절개", babyWeight: null },
             orgName: "기관",
             employeeName: "인력",
@@ -119,7 +119,7 @@ describe("buildFeedbackDocumentFields", () => {
     });
 
     it("works with a null header — required header fields sent blank, delivery marks unchecked", () => {
-        const map = toMap(buildFeedbackDocumentFields({ header: null, orgName: "기관", employeeName: "인력", days: [day()] }));
+        const map = toMap(buildServiceRecordDocumentFields({ header: null, orgName: "기관", employeeName: "인력", days: [day()] }));
         expect(map.get("제공기관 이름")).toBe("기관");
         expect(map.get("산모 이름")).toBe("");
         expect(map.get("자연분만")).toBe(UNCHECKED);
@@ -127,7 +127,7 @@ describe("buildFeedbackDocumentFields", () => {
     });
 
     it("maps a fully-answered session onto slot-1 fields", () => {
-        const map = toMap(buildFeedbackDocumentFields({
+        const map = toMap(buildServiceRecordDocumentFields({
             header,
             orgName: "기관",
             employeeName: "인력",
@@ -192,7 +192,7 @@ describe("buildFeedbackDocumentFields", () => {
     });
 
     it("omits color when 정상변, and ignores unknown radio/absent answers", () => {
-        const map = toMap(buildFeedbackDocumentFields({
+        const map = toMap(buildServiceRecordDocumentFields({
             header: null,
             orgName: "기관",
             employeeName: "인력",
@@ -214,7 +214,7 @@ describe("buildFeedbackDocumentFields", () => {
     });
 
     it("encodes paymentConfirmed as checked/unchecked, independent of clientSignature", () => {
-        const map = toMap(buildFeedbackDocumentFields({
+        const map = toMap(buildServiceRecordDocumentFields({
             header: null,
             orgName: "기관",
             employeeName: "인력",
@@ -226,7 +226,7 @@ describe("buildFeedbackDocumentFields", () => {
 
     it("passes a clientSignature dataURI through to 산모확인서명 unmodified", () => {
         const dataUri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB";
-        const map = toMap(buildFeedbackDocumentFields({
+        const map = toMap(buildServiceRecordDocumentFields({
             header: null,
             orgName: "기관",
             employeeName: "인력",
@@ -236,7 +236,7 @@ describe("buildFeedbackDocumentFields", () => {
     });
 
     it("sends empty string for 산모확인서명 when clientSignature is null", () => {
-        const map = toMap(buildFeedbackDocumentFields({
+        const map = toMap(buildServiceRecordDocumentFields({
             header: null,
             orgName: "기관",
             employeeName: "인력",
@@ -246,7 +246,7 @@ describe("buildFeedbackDocumentFields", () => {
     });
 
     it("emits required marks (unchecked) for every unused slot in a short chunk", () => {
-        const fields = buildFeedbackDocumentFields({
+        const fields = buildServiceRecordDocumentFields({
             header,
             orgName: "기관",
             employeeName: "인력",
@@ -268,7 +268,7 @@ describe("buildFeedbackDocumentFields", () => {
     });
 
     it("reads serviceDate with UTC accessors (no local-timezone drift)", () => {
-        const map = toMap(buildFeedbackDocumentFields({
+        const map = toMap(buildServiceRecordDocumentFields({
             header: null,
             orgName: "기관",
             employeeName: "인력",

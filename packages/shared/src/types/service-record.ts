@@ -98,7 +98,7 @@ export interface SendServiceRecordLinkResponse {
 }
 
 export interface PrepareServiceRecordLinkResponse {
-    feedbackUrl: string;
+    serviceRecordUrl: string;
     preparedLinkToken: string;
     expiresAt: string;
 }

@@ -10,7 +10,7 @@ import {
 } from "application/usecases/employee-schedule";
 import { EmployeeScheduleEntity } from "domain/entities/employee-schedule.entity";
 import { MessageTriggerService } from "./message-trigger.service";
-import { EmployeeFeedbackLinkService } from "./employee-feedback-link.service";
+import { ServiceRecordLinkService } from "./service-record-link.service";
 import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 
 @Injectable()
@@ -24,7 +24,7 @@ export class EmployeeScheduleService {
         private readonly updateEmployeeScheduleUsecase: UpdateEmployeeScheduleUsecase,
         private readonly deleteEmployeeScheduleUsecase: DeleteEmployeeScheduleUsecase,
         @Optional() private readonly triggerService?: MessageTriggerService,
-        @Optional() private readonly employeeFeedbackLinkService?: EmployeeFeedbackLinkService,
+        @Optional() private readonly serviceRecordLinkService?: ServiceRecordLinkService,
         @Optional() private readonly serviceRecordLifecycleService?: ServiceRecordLifecycleService,
     ) {}
 
@@ -50,7 +50,7 @@ export class EmployeeScheduleService {
             ?.syncEmployeeAssignmentRulesForSchedule(branchid, schedule.id, true)
             ?.catch(() => undefined);
         await this.serviceRecordLifecycleService?.ensureForClient(schedule.clientId);
-        this.employeeFeedbackLinkService?.scheduleForServiceStart(schedule.id)?.catch(() => undefined);
+        this.serviceRecordLinkService?.scheduleForServiceStart(schedule.id)?.catch(() => undefined);
         return schedule;
     }
 
@@ -96,7 +96,7 @@ export class EmployeeScheduleService {
         });
         await this.serviceRecordLifecycleService?.ensureForClient(schedule.clientId);
         if (params.endDate) {
-            this.employeeFeedbackLinkService
+            this.serviceRecordLinkService
                 ?.extendExpiryForEndDate(schedule.id, schedule.endDate)
                 ?.catch(() => undefined);
         }

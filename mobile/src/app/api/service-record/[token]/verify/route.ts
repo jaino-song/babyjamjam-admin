@@ -1,0 +1,18 @@
+import { NextRequest } from "next/server";
+import { serverAPIClient } from "@/lib/api/server";
+import { backendJsonResponse, errorResponse, withNoStore } from "@/lib/api/route-utils";
+
+// Public: phone challenge. The [token] path segment IS the link token.
+export async function POST(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+    const { token } = await params;
+    try {
+        const body = await request.json().catch(() => ({}));
+        const response = await serverAPIClient.post("/service-record/verify", {
+            linkToken: token,
+            phone: body?.phone ?? "",
+        });
+        return withNoStore(backendJsonResponse(response));
+    } catch (error) {
+        return errorResponse(error, "verify service record phone");
+    }
+}

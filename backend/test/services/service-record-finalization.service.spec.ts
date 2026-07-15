@@ -3,7 +3,7 @@ import {
     SERVICE_RECORD_CASE_STATUS,
     ServiceRecordLifecycleService,
 } from "application/services/service-record-lifecycle.service";
-import { CreateAndSendFeedbackSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-feedback-snapshot.usecase";
+import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 function setup(options: {
@@ -36,7 +36,7 @@ function setup(options: {
         service_record_snapshot_chunk: {
             count: jest.fn().mockResolvedValue(0),
         },
-        employee_feedback_token: {
+        service_record_token: {
             updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
     };
@@ -55,7 +55,7 @@ function setup(options: {
     const service = new ServiceRecordFinalizationService(
         prismaWithTransaction as unknown as PrismaService,
         lifecycle as unknown as ServiceRecordLifecycleService,
-        snapshot as unknown as CreateAndSendFeedbackSnapshotUsecase,
+        snapshot as unknown as CreateAndSendServiceRecordSnapshotUsecase,
     );
     return { service, prisma: prismaWithTransaction, lifecycle, snapshot };
 }
@@ -79,7 +79,7 @@ describe("ServiceRecordFinalizationService", () => {
                 data: expect.objectContaining({ status: SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED }),
             }),
         );
-        expect(prisma.employee_feedback_token.updateMany).toHaveBeenCalledWith({
+        expect(prisma.service_record_token.updateMany).toHaveBeenCalledWith({
             where: { serviceRecordCaseId: "case-1", active: true },
             data: { active: false, revokedAt: expect.any(Date) },
         });
