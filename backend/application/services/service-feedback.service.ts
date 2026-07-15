@@ -155,8 +155,8 @@ export class ServiceFeedbackService {
     }
 
     /**
-     * Create/update one session record. Sessions are filled in order; a submitted (locked)
-     * session is immutable; the service date is forward-only (skip-safe, no backdating).
+     * Create/update one session record. Sessions are filled in order; submitted sessions
+     * remain editable until finalization, while their service date and first signature stay immutable.
      */
     async upsertSession(ctx: FeedbackTokenContext, sessionIndex: number, dto: UpsertSessionDto, lock: boolean) {
         const aggregate = await this.resolveCase(ctx);
@@ -203,8 +203,8 @@ export class ServiceFeedbackService {
                     },
                 },
             });
-            if (existing?.locked) {
-                throw new ConflictException(`Session ${sessionIndex} has already been submitted and cannot be edited.`);
+            if (existing?.locked && existing.serviceDate.getTime() !== serviceDate.getTime()) {
+                throw new BadRequestException({ code: "SERVICE_DATE_IMMUTABLE" });
             }
 
             if (sessionIndex > 1) {
@@ -231,8 +231,12 @@ export class ServiceFeedbackService {
                 if (!this.hasCompleteHeader(record)) {
                     throw new BadRequestException("서비스 기본정보를 모두 입력해 주세요.");
                 }
+                if (!existing?.locked && !existing?.clientSignature && !dto.clientSignature) {
+                    throw new BadRequestException({ code: "CLIENT_SIGNATURE_REQUIRED" });
+                }
             }
 
+            const submittedAt = lock ? new Date() : existing?.submittedAt ?? null;
             const data = {
                 branchId: ctx.branchId,
                 scheduleId: ctx.scheduleId,
@@ -248,11 +252,11 @@ export class ServiceFeedbackService {
                 notes: this.trimNullable(dto.notes, 2000),
                 paymentConfirmed: dto.paymentConfirmed ?? false,
                 momApproval: dto.momApproval ?? null,
-                locked: lock,
-                submittedAt: lock ? new Date() : null,
+                locked: Boolean(existing?.locked || lock),
+                submittedAt,
             };
 
-            const row = await tx.service_record_day.upsert({
+            let row = await tx.service_record_day.upsert({
                 where: {
                     serviceRecordCaseId_caseSessionIndex: {
                         serviceRecordCaseId: record.id,
@@ -262,6 +266,23 @@ export class ServiceFeedbackService {
                 create: data,
                 update: data,
             });
+            if (lock && dto.clientSignature) {
+                const clientSignedAt = new Date();
+                const signatureWrite = await tx.service_record_day.updateMany({
+                    where: {
+                        serviceRecordCaseId: record.id,
+                        caseSessionIndex: sessionIndex,
+                        clientSignature: null,
+                    },
+                    data: {
+                        clientSignature: dto.clientSignature,
+                        clientSignedAt,
+                    },
+                });
+                if (signatureWrite.count === 1) {
+                    row = { ...row, clientSignature: dto.clientSignature, clientSignedAt };
+                }
+            }
             await this.lifecycleService.recompute(record.id, tx);
             return row;
         });
