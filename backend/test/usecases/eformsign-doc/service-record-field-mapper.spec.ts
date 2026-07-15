@@ -32,6 +32,7 @@ function day(overrides: Partial<FeedbackDayInput> = {}): FeedbackDayInput {
         notes: null,
         paymentConfirmed: false,
         momApproval: null,
+        clientSignature: null,
         ...overrides,
     };
 }
@@ -152,6 +153,7 @@ describe("buildFeedbackDocumentFields", () => {
                 notes: "수면 부족",
                 paymentConfirmed: true,
                 momApproval: "approved",
+                clientSignature: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
             })],
         }));
         // date
@@ -185,7 +187,8 @@ describe("buildFeedbackDocumentFields", () => {
         expect(map.get("특이사항 1")).toBe("수면 부족");
         // required marks
         expect(map.get("결제 확인 1")).toBe(CHECKED);
-        expect(map.get("산모확인서명 1")).toBe(CHECKED);
+        // 산모확인서명 1 is a binary(서명) field — the dataURI passes through unmodified, not a checkmark.
+        expect(map.get("산모확인서명 1")).toBe("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB");
     });
 
     it("omits color when 정상변, and ignores unknown radio/absent answers", () => {
@@ -210,15 +213,36 @@ describe("buildFeedbackDocumentFields", () => {
         expect(map.has("식사 1")).toBe(false);
     });
 
-    it("encodes paymentConfirmed/momApproval as checked/unchecked", () => {
+    it("encodes paymentConfirmed as checked/unchecked, independent of clientSignature", () => {
         const map = toMap(buildFeedbackDocumentFields({
             header: null,
             orgName: "기관",
             employeeName: "인력",
-            days: [day({ paymentConfirmed: false, momApproval: null })],
+            days: [day({ paymentConfirmed: false, clientSignature: null })],
         }));
         expect(map.get("결제 확인 1")).toBe(UNCHECKED);
-        expect(map.get("산모확인서명 1")).toBe(UNCHECKED);
+        expect(map.get("산모확인서명 1")).toBe("");
+    });
+
+    it("passes a clientSignature dataURI through to 산모확인서명 unmodified", () => {
+        const dataUri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB";
+        const map = toMap(buildFeedbackDocumentFields({
+            header: null,
+            orgName: "기관",
+            employeeName: "인력",
+            days: [day({ clientSignature: dataUri })],
+        }));
+        expect(map.get("산모확인서명 1")).toBe(dataUri);
+    });
+
+    it("sends empty string for 산모확인서명 when clientSignature is null", () => {
+        const map = toMap(buildFeedbackDocumentFields({
+            header: null,
+            orgName: "기관",
+            employeeName: "인력",
+            days: [day({ clientSignature: null })],
+        }));
+        expect(map.get("산모확인서명 1")).toBe("");
     });
 
     it("emits required marks (unchecked) for every unused slot in a short chunk", () => {
@@ -231,7 +255,7 @@ describe("buildFeedbackDocumentFields", () => {
         const map = toMap(fields);
         for (const n of [3, 4, 5]) {
             expect(map.get(`결제 확인 ${n}`)).toBe(UNCHECKED);
-            expect(map.get(`산모확인서명 ${n}`)).toBe(UNCHECKED);
+            expect(map.get(`산모확인서명 ${n}`)).toBe(""); // binary(서명) field: "" satisfies required, blank slot
             expect(map.get(`월 ${n}`)).toBe(""); // required date slots sent blank
             expect(map.get(`일 ${n}`)).toBe("");
             expect(map.has(`식사 ${n}`)).toBe(false); // non-required fields still omitted

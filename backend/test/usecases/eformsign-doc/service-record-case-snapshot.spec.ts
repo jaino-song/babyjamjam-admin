@@ -63,6 +63,7 @@ function makeRecord() {
                 notes: null,
                 paymentConfirmed: true,
                 momApproval: "approved",
+                clientSignature: null as string | null,
                 locked: true,
             };
         }),
@@ -132,6 +133,28 @@ describe("client-owned service record snapshot", () => {
             ["제공A", 1],
             ["제공B", 1],
         ]);
+    });
+
+    it("changes sourceHash when a day's clientSignature changes (legacy session gets a signature)", () => {
+        const { usecase } = setup();
+        const buildChunks = (record: ReturnType<typeof makeRecord>) => (usecase as unknown as {
+            buildCaseChunks(value: ReturnType<typeof makeRecord>): Array<{ sourceHash: string }>;
+        }).buildCaseChunks(record);
+
+        const withoutSignature = makeRecord();
+        withoutSignature.requiredSessionCount = 1;
+        withoutSignature.days = [withoutSignature.days[0]!];
+        const hashWithoutSignature = buildChunks(withoutSignature)[0]!.sourceHash;
+
+        const withSignature = makeRecord();
+        withSignature.requiredSessionCount = 1;
+        withSignature.days = [{
+            ...withSignature.days[0]!,
+            clientSignature: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
+        }];
+        const hashWithSignature = buildChunks(withSignature)[0]!.sourceHash;
+
+        expect(hashWithSignature).not.toBe(hashWithoutSignature);
     });
 
     it("reconciles an ambiguous create attempt by title without creating a second document", async () => {
