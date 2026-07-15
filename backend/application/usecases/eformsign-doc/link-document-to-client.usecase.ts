@@ -25,7 +25,7 @@ export class LinkDocumentToClientUsecase {
             throw new NotFoundException(`Document ${documentId} not found`);
         }
 
-        if (doc.documentKind === EFORMSIGN_DOCUMENT_KIND.SERVICE_FEEDBACK_SNAPSHOT) {
+        if (doc.documentKind === EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT) {
             this.logger.debug(`Skipping client contract link for feedback document ${documentId}`);
             return;
         }

@@ -24,7 +24,7 @@ import { useFormStore } from "@/stores/form-store";
 import { ContactInput } from "./form-components/ContactInput";
 import { TemplateFieldGrid, TemplateFieldGridItem } from "./form-components/TemplateFieldGrid";
 import type {
-  ServiceFeedbackLinkPreparation,
+  ServiceRecordLinkPreparation,
   TemplateMessageDeliveryMode,
 } from "./form-components/TemplateMessageFormLayout";
 
@@ -35,9 +35,9 @@ const DEFAULT_LMS_TITLE = "안내";
 const DUPLICATE_SEND_WINDOW_HOURS = 72;
 const DUPLICATE_SEND_WINDOW_MS = DUPLICATE_SEND_WINDOW_HOURS * 60 * 60 * 1000;
 
-type ServiceFeedbackLinkFailureStage = "assignment" | "send";
+type ServiceRecordLinkFailureStage = "assignment" | "send";
 
-const SERVICE_FEEDBACK_LINK_ERROR_MESSAGES: Record<string, string> = {
+const SERVICE_RECORD_LINK_ERROR_MESSAGES: Record<string, string> = {
   "Assignment not found": "선택한 관리사님과 산모님의 배정 일정을 찾지 못해 제공기록지 링크를 발송하지 못했습니다.",
   "제공인력 전화번호가 없습니다": "선택한 관리사님의 전화번호가 없어 제공기록지 링크를 발송하지 못했습니다.",
   "준비된 제공기록지 링크가 만료되었거나 유효하지 않습니다": "제공기록지 링크가 만료되었습니다. 입력 정보를 다시 선택해 새 링크를 준비해 주세요.",
@@ -73,7 +73,7 @@ interface TemplateSendFormProps {
   className?: string;
   formId?: string;
   showSubmitButton?: boolean;
-  serviceFeedbackLinkPreparation?: ServiceFeedbackLinkPreparation | null;
+  serviceRecordLinkPreparation?: ServiceRecordLinkPreparation | null;
   onSubmitStateChange?: (state: TemplateSendFormSubmitState | null) => void;
 }
 
@@ -108,9 +108,9 @@ function normalizeDuplicateMessage(message: string) {
   return message.replace(/\r\n/g, "\n").trim();
 }
 
-function getServiceFeedbackLinkErrorMessage(
+function getServiceRecordLinkErrorMessage(
   error: unknown,
-  failureStage: ServiceFeedbackLinkFailureStage,
+  failureStage: ServiceRecordLinkFailureStage,
 ): string {
   const stageFallback = failureStage === "assignment"
     ? "산모님의 배정 정보를 불러오지 못해 제공기록지 링크를 발송하지 못했습니다."
@@ -126,7 +126,7 @@ function getServiceFeedbackLinkErrorMessage(
     ? payload.message ?? payload.error
     : null;
   if (typeof apiMessage === "string") {
-    const knownMessage = SERVICE_FEEDBACK_LINK_ERROR_MESSAGES[apiMessage.trim()];
+    const knownMessage = SERVICE_RECORD_LINK_ERROR_MESSAGES[apiMessage.trim()];
     if (knownMessage) return knownMessage;
   }
 
@@ -199,7 +199,7 @@ export function TemplateSendForm({
   className,
   formId,
   showSubmitButton = true,
-  serviceFeedbackLinkPreparation,
+  serviceRecordLinkPreparation,
   onSubmitStateChange,
 }: TemplateSendFormProps) {
   const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
@@ -238,7 +238,7 @@ export function TemplateSendForm({
     resetEmployeeFields,
   } = useFormStore();
 
-  const isServiceFeedbackLinkDelivery = deliveryMode === "service-feedback-link";
+  const isServiceRecordLinkDelivery = deliveryMode === "service-feedback-link";
   const recipientPhone = useMemo(
     () => normalizeKoreanPhoneLookupKey(phone),
     [phone],
@@ -272,7 +272,7 @@ export function TemplateSendForm({
         : requiresPriceInfoFields && !voucherYear
           ? "바우처 연도를 선택해 주세요."
           : null;
-  const serviceFeedbackValidationMessage = employeeId === null || !employeeName.trim()
+  const serviceRecordValidationMessage = employeeId === null || !employeeName.trim()
     ? "관리사님을 선택해 주세요."
     : !normalizedEmployeePhone
       ? "관리사님 전화번호를 선택해 주세요."
@@ -287,7 +287,7 @@ export function TemplateSendForm({
       ? `본문은 최대 ${MAX_BODY_LENGTH}자까지 입력할 수 있습니다.`
       : null;
   const currentQueueItem = useMemo<RecipientQueueItem | null>(() => {
-    if (isServiceFeedbackLinkDelivery) return null;
+    if (isServiceRecordLinkDelivery) return null;
 
     if (recipientValidationMessage || templateFieldValidationMessage || messageValidationMessage) {
       return null;
@@ -303,7 +303,7 @@ export function TemplateSendForm({
     };
   }, [
     formattedRecipientPhone,
-    isServiceFeedbackLinkDelivery,
+    isServiceRecordLinkDelivery,
     messageValidationMessage,
     recipientName,
     recipientPhone,
@@ -313,13 +313,13 @@ export function TemplateSendForm({
     trimmedMessage,
   ]);
   const hasQueuedRecipients = recipientQueue.length > 0;
-  const validationMessage = isServiceFeedbackLinkDelivery
-    ? serviceFeedbackValidationMessage
+  const validationMessage = isServiceRecordLinkDelivery
+    ? serviceRecordValidationMessage
     : hasQueuedRecipients
       ? null
       : recipientValidationMessage ?? templateFieldValidationMessage ?? messageValidationMessage;
   const isSubmitDisabled = Boolean(validationMessage)
-    || (isServiceFeedbackLinkDelivery && !serviceFeedbackLinkPreparation)
+    || (isServiceRecordLinkDelivery && !serviceRecordLinkPreparation)
     || isSending
     || isCheckingDuplicate;
   const resolvedFormId = formId ?? `messages-template-send-form-${templateId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
@@ -573,22 +573,22 @@ export function TemplateSendForm({
     }
   };
 
-  const sendServiceFeedbackLink = async () => {
-    if (clientId === null || employeeId === null || !serviceFeedbackLinkPreparation) {
+  const sendServiceRecordLink = async () => {
+    if (clientId === null || employeeId === null || !serviceRecordLinkPreparation) {
       setFeedback({
         tone: "error",
-        message: serviceFeedbackValidationMessage ?? "제공기록지 링크를 준비하고 있습니다. 잠시 후 다시 시도해 주세요.",
+        message: serviceRecordValidationMessage ?? "제공기록지 링크를 준비하고 있습니다. 잠시 후 다시 시도해 주세요.",
       });
       return;
     }
 
     setIsSending(true);
     setFeedback(null);
-    const failureStage: ServiceFeedbackLinkFailureStage = "send";
+    const failureStage: ServiceRecordLinkFailureStage = "send";
 
     try {
-      await serviceRecordsApi.sendLink(serviceFeedbackLinkPreparation.scheduleId, {
-        preparedLinkToken: serviceFeedbackLinkPreparation.preparedLinkToken,
+      await serviceRecordsApi.sendLink(serviceRecordLinkPreparation.scheduleId, {
+        preparedLinkToken: serviceRecordLinkPreparation.preparedLinkToken,
       });
       setFeedback({
         tone: "success",
@@ -599,7 +599,7 @@ export function TemplateSendForm({
     } catch (error) {
       setFeedback({
         tone: "error",
-        message: getServiceFeedbackLinkErrorMessage(error, failureStage),
+        message: getServiceRecordLinkErrorMessage(error, failureStage),
       });
     } finally {
       setIsSending(false);
@@ -614,8 +614,8 @@ export function TemplateSendForm({
       return;
     }
 
-    if (isServiceFeedbackLinkDelivery) {
-      await sendServiceFeedbackLink();
+    if (isServiceRecordLinkDelivery) {
+      await sendServiceRecordLink();
       return;
     }
 
@@ -670,7 +670,7 @@ export function TemplateSendForm({
         ) : null}
       </div>
 
-      {isServiceFeedbackLinkDelivery ? (
+      {isServiceRecordLinkDelivery ? (
         children ? <TemplateFieldGrid>{children}</TemplateFieldGrid> : null
       ) : shouldUseInlinePhoneRecipient ? (
         <>
@@ -726,7 +726,7 @@ export function TemplateSendForm({
         </TemplateFieldGrid>
       )}
 
-      {isServiceFeedbackLinkDelivery ? null : recipientPills}
+      {isServiceRecordLinkDelivery ? null : recipientPills}
 
       {feedback ? (
         <div

@@ -418,8 +418,8 @@ export interface ClientNotificationLogRecord {
 type DetailRowTone = "green" | "primary" | "orange" | "muted" | "burgundy" | "purple";
 const CLIENT_GREETING_SMS_TEMPLATE_KEY = "client_greeting_sms";
 const CLIENT_GREETING_SMS_TITLE = "인사 메시지";
-const SERVICE_FEEDBACK_LINK_SMS_TEMPLATE_KEY = "service_feedback_link_sms";
-const SERVICE_FEEDBACK_LINK_SMS_TITLE = "제공기록지 작성 링크";
+const SERVICE_RECORD_LINK_SMS_TEMPLATE_KEY = "service_record_link_sms";
+const SERVICE_RECORD_LINK_SMS_TITLE = "제공기록지 작성 링크";
 
 function DetailDocRow({
   icon,
@@ -485,7 +485,7 @@ function notificationTitle(log: ClientNotificationLogRecord): string {
   const variableTitle = stringFromUnknown(variables.title);
   if (variableTitle) return variableTitle;
   if (log.templateKey === CLIENT_GREETING_SMS_TEMPLATE_KEY) return CLIENT_GREETING_SMS_TITLE;
-  if (log.templateKey === SERVICE_FEEDBACK_LINK_SMS_TEMPLATE_KEY) return SERVICE_FEEDBACK_LINK_SMS_TITLE;
+  if (log.templateKey === SERVICE_RECORD_LINK_SMS_TEMPLATE_KEY) return SERVICE_RECORD_LINK_SMS_TITLE;
   if (log.templateKey === "manual_sms") return "수동 메시지";
   return log.templateKey || "발송 내역";
 }

@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { CreateAndSendFeedbackSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-feedback-snapshot.usecase";
+import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
     SERVICE_RECORD_CASE_STATUS,
@@ -18,7 +18,7 @@ export class ServiceRecordFinalizationService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly lifecycleService: ServiceRecordLifecycleService,
-        private readonly createSnapshotUsecase: CreateAndSendFeedbackSnapshotUsecase,
+        private readonly createSnapshotUsecase: CreateAndSendServiceRecordSnapshotUsecase,
     ) {}
 
     async processDueCases(referenceDate = new Date(), limit = CASE_BATCH_SIZE): Promise<number> {
@@ -92,7 +92,7 @@ export class ServiceRecordFinalizationService {
                     if (updated.count !== 1) {
                         throw new Error("Service record finalization claim was lost");
                     }
-                    await tx.employee_feedback_token.updateMany({
+                    await tx.service_record_token.updateMany({
                         where: {
                             serviceRecordCaseId: candidate.id,
                             active: true,
@@ -140,9 +140,9 @@ export class ServiceRecordFinalizationService {
             where: {
                 status: SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED,
                 eformsignDocs: {
-                    some: { documentKind: "service_feedback_snapshot" },
+                    some: { documentKind: "service_record_snapshot" },
                     none: {
-                        documentKind: "service_feedback_snapshot",
+                        documentKind: "service_record_snapshot",
                         statusType: { notIn: COMPLETED_DOCUMENT_STATUS_TYPES },
                     },
                 },

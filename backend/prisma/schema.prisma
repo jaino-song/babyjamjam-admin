@@ -212,7 +212,7 @@ model employee {
   branch                     branch?                     @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   primaryEmployeeSchedules   employee_schedule[]         @relation("employee_schedule_primary_employee_idToemployee")
   secondaryEmployeeSchedules employee_schedule[]         @relation("employee_schedule_secondary_employee_idToemployee")
-  employeeFeedbackTokens     employee_feedback_token[]
+  serviceRecordTokens     service_record_token[]
   serviceRecordAssignments   service_record_assignment[]
   serviceRecordDays          service_record_day[]
 
@@ -233,7 +233,7 @@ model employee_schedule {
   branch                  branch?                    @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   primaryEmployee         employee                   @relation("employee_schedule_primary_employee_idToemployee", fields: [primaryEmployeeId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   secondaryEmployee       employee?                  @relation("employee_schedule_secondary_employee_idToemployee", fields: [secondaryEmployeeId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  feedbackTokens          employee_feedback_token[]
+  serviceRecordTokens          service_record_token[]
   serviceRecord           service_record?
   serviceRecordDays       service_record_day[]
   scheduleChangeRequests  schedule_change_request[]
@@ -324,7 +324,7 @@ model branch {
   callIngestTokens             call_ingest_token[]
   callRecords                  call_record[]
   clientDrafts                 client_draft[]
-  employeeFeedbackTokens       employee_feedback_token[]
+  serviceRecordTokens       service_record_token[]
   serviceRecords               service_record[]
   serviceRecordDays            service_record_day[]
   serviceRecordCases           service_record_case[]
@@ -629,7 +629,7 @@ model call_ingest_token {
 
 /// Per-assignment no-login feedback access for a 제공인력.
 /// The SMS link carries the plaintext link token; a phone challenge mints the access token.
-model employee_feedback_token {
+model service_record_token {
   id                  String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   branchId            String               @map("branch_id") @db.Uuid
   scheduleId          Int                  @map("schedule_id")
@@ -649,9 +649,9 @@ model employee_feedback_token {
   employee            employee             @relation(fields: [employeeId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   serviceRecordCase   service_record_case? @relation(fields: [serviceRecordCaseId], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
-  @@index([scheduleId], map: "idx_employee_feedback_token_schedule")
-  @@index([branchId], map: "idx_employee_feedback_token_branch")
-  @@index([serviceRecordCaseId], map: "idx_employee_feedback_token_service_record_case_id")
+  @@index([scheduleId], map: "idx_service_record_token_schedule")
+  @@index([branchId], map: "idx_service_record_token_branch")
+  @@index([serviceRecordCaseId], map: "idx_service_record_token_service_record_case_id")
 }
 
 /// One-time service header per assignment (top of the 제공기록지).
@@ -742,7 +742,7 @@ model service_record_case {
   client                client                          @relation(fields: [clientId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   assignments           service_record_assignment[]
   days                  service_record_day[]
-  feedbackTokens        employee_feedback_token[]
+  serviceRecordTokens        service_record_token[]
   legacyHeaders         service_record[]
   snapshotChunks        service_record_snapshot_chunk[]
   eformsignDocs         eformsign_doc[]

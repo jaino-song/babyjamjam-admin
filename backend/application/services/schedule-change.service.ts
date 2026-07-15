@@ -7,14 +7,14 @@ import {
     Optional,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { getServiceFeedbackTokenExpiresAt } from "domain/constants/service-feedback-link-message";
+import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { addBusinessDaysKr, isBusinessDayKr, nextBusinessDayKr } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { MessageTriggerService } from "./message-trigger.service";
 import {
-    EmployeeFeedbackTokenService,
-    FeedbackTokenContext,
-} from "./employee-feedback-token.service";
+    ServiceRecordTokenService,
+    ServiceRecordTokenContext,
+} from "./service-record-token.service";
 import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 
 function toIso(d: Date): string {
@@ -70,7 +70,7 @@ export class ScheduleChangeService {
 
     constructor(
         private readonly prisma: PrismaService,
-        private readonly tokenService: EmployeeFeedbackTokenService,
+        private readonly tokenService: ServiceRecordTokenService,
         @Optional() private readonly triggerService?: MessageTriggerService,
         @Optional() private readonly lifecycleService?: ServiceRecordLifecycleService,
     ) {}
@@ -132,7 +132,7 @@ export class ScheduleChangeService {
         };
     }
 
-    async preview(ctx: FeedbackTokenContext): Promise<{ sessionIndex: number; fromDate: string; toDate: string }> {
+    async preview(ctx: ServiceRecordTokenContext): Promise<{ sessionIndex: number; fromDate: string; toDate: string }> {
         const record = ctx.serviceRecordCaseId
             ? await this.prisma.service_record_case.findUnique({ where: { id: ctx.serviceRecordCaseId } })
             : await this.lifecycleService?.ensureForSchedule(ctx.scheduleId);
@@ -160,7 +160,7 @@ export class ScheduleChangeService {
         };
     }
 
-    async createRequest(ctx: FeedbackTokenContext): Promise<{ id: string; sessionIndex: number; fromDate: string; toDate: string }> {
+    async createRequest(ctx: ServiceRecordTokenContext): Promise<{ id: string; sessionIndex: number; fromDate: string; toDate: string }> {
         const record = ctx.serviceRecordCaseId
             ? await this.prisma.service_record_case.findUnique({ where: { id: ctx.serviceRecordCaseId } })
             : await this.lifecycleService?.ensureForSchedule(ctx.scheduleId);
@@ -315,13 +315,13 @@ export class ScheduleChangeService {
                 if (syncedRecord) {
                     await this.tokenService.extendExpiryForCase(
                         syncedRecord.id,
-                        getServiceFeedbackTokenExpiresAt(newEndDate),
+                        getServiceRecordTokenExpiresAt(newEndDate),
                         tx,
                     );
                 } else {
                     await this.tokenService.extendExpiryForSchedule(
                         request.scheduleId,
-                        getServiceFeedbackTokenExpiresAt(newEndDate),
+                        getServiceRecordTokenExpiresAt(newEndDate),
                         tx,
                     );
                 }

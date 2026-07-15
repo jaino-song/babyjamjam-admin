@@ -1,4 +1,4 @@
-import { CreateAndSendFeedbackSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-feedback-snapshot.usecase";
+import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase";
 
 const dbDate = (day: number) => new Date(`2026-07-${String(day).padStart(2, "0")}T00:00:00.000Z`);
 
@@ -110,7 +110,7 @@ function setup() {
         createDocument: jest.fn().mockRejectedValue(new TypeError("fetch failed")),
         findDocumentsByTitle: jest.fn().mockResolvedValue([remoteDocument]),
     };
-    const usecase = new CreateAndSendFeedbackSnapshotUsecase(
+    const usecase = new CreateAndSendServiceRecordSnapshotUsecase(
         eformsignClient as never,
         {} as never,
         prismaWithTransaction as never,

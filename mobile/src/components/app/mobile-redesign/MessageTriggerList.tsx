@@ -114,7 +114,7 @@ const TEMPLATE_LABEL: Record<TriggerTemplateKey, string> = {
   SERVICE_INFO: "서비스 안내",
   SERVICE_END_REMINDER: "서비스 종료 안내",
   EMPLOYEE_ASSIGNED: "제공인력 배정 안내",
-  SERVICE_FEEDBACK_LINK: "제공기록지 작성 링크",
+  SERVICE_RECORD_LINK: "제공기록지 작성 링크",
   CLIENT_GREETING: "인사(소개)",
   PRICE_INFO: "비용 안내",
   REMINDER: "리마인드",

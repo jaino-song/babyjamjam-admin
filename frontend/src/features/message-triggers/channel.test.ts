@@ -110,7 +110,7 @@ describe("message trigger channel helpers", () => {
   it("sources the SMS template set and channel resolver from shared", () => {
     expect(SMS_TRIGGER_TEMPLATE_KEYS).toEqual([
       "SERVICE_INFO",
-      "SERVICE_FEEDBACK_LINK",
+      "SERVICE_RECORD_LINK",
       "CLIENT_GREETING",
       "PRICE_INFO",
       "REMINDER",
@@ -119,7 +119,7 @@ describe("message trigger channel helpers", () => {
       "INFO",
     ]);
     expect(getTriggerTemplateChannel("SERVICE_INFO")).toBe("sms");
-    expect(getTriggerTemplateChannel("SERVICE_FEEDBACK_LINK")).toBe("sms");
+    expect(getTriggerTemplateChannel("SERVICE_RECORD_LINK")).toBe("sms");
     expect(getTriggerTemplateChannel("CLIENT_GREETING")).toBe("sms");
     expect(getTriggerTemplateChannel("CLIENT_WELCOME")).toBe("alimtalk");
     expect(getTriggerTemplateChannel("EMPLOYEE_ASSIGNED")).toBe("alimtalk");

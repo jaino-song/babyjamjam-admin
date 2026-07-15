@@ -311,11 +311,11 @@ describe("recipient phone input layout", () => {
       <TemplateSendForm
         templateId="builtin:service-feedback-link"
         templateName="제공기록지 작성 링크"
-        message="{{employeeName}} {{clientName}} {{feedbackUrl}}"
+        message="{{employeeName}} {{clientName}} {{serviceRecordUrl}}"
         deliveryMode="service-feedback-link"
-        serviceFeedbackLinkPreparation={{
+        serviceRecordLinkPreparation={{
           scheduleId: 11,
-          feedbackUrl: "https://mobile.test/feedback/efl_prepared",
+          serviceRecordUrl: "https://mobile.test/service-record/efl_prepared",
           preparedLinkToken: "efl_prepared",
           expiresAt: "2026-07-20T00:00:00.000Z",
         }}
@@ -387,11 +387,11 @@ describe("recipient phone input layout", () => {
       <TemplateSendForm
         templateId="builtin:service-feedback-link"
         templateName="제공기록지 작성 링크"
-        message="{{employeeName}} {{clientName}} {{feedbackUrl}}"
+        message="{{employeeName}} {{clientName}} {{serviceRecordUrl}}"
         deliveryMode="service-feedback-link"
-        serviceFeedbackLinkPreparation={{
+        serviceRecordLinkPreparation={{
           scheduleId: 11,
-          feedbackUrl: "https://mobile.test/feedback/efl_prepared",
+          serviceRecordUrl: "https://mobile.test/service-record/efl_prepared",
           preparedLinkToken: "efl_prepared",
           expiresAt: "2026-07-20T00:00:00.000Z",
         }}
