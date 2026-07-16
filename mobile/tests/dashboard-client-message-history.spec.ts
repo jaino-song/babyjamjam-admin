@@ -114,6 +114,6 @@ test("dashboard client detail uses the same message history as the clients page"
   await page.locator('[data-component="mobile-redesign-detail-tabs"] [data-tab="message"]').click();
 
   const messageTab = page.locator('[data-component="mobile-clients-message-tab"]');
-  await expect(messageTab).toContainText("SMS · service_info_sms");
+  await expect(messageTab).toContainText("메시지 · 메시지");
   await expect(messageTab).not.toContainText("발송 내역이 없습니다.");
 });
