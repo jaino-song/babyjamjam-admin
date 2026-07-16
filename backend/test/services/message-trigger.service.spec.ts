@@ -1584,7 +1584,9 @@ describe("MessageTriggerService", () => {
     });
 
     it("still cancels and rebuilds non-IMMEDIATE jobs on the same resync", async () => {
-        jest.useFakeTimers().setSystemTime(new Date("2026-07-14T00:00:00.000Z"));
+        // Pin the clock like sibling tests: resync/rebuild logic is relative to "now",
+        // so without this the test is date-brittle (passed on the service-start day, failed after).
+        jest.useFakeTimers().setSystemTime(new Date("2026-07-15T00:00:00.000Z"));
         try {
         const greetingRule = createRule({
             id: "rule-greeting-active",
@@ -1626,26 +1628,26 @@ describe("MessageTriggerService", () => {
 
             await reSync.service.syncClientRulesForClient(branchId, 1, false);
 
-            expect(reSync.jobRepository.findPendingByRuleIdsAndClientId).toHaveBeenNthCalledWith(
-                1,
-                [serviceInfoRule.id],
-                1,
-            );
-            expect(reSync.jobRepository.findPendingByRuleIdsAndClientId).toHaveBeenNthCalledWith(
-                2,
-                [greetingRule.id],
-                1,
-            );
-            expect(pendingServiceInfo.status).toBe("canceled");
-            expect(pendingServiceInfo.cancelReason).toBe("Client data changed");
-            expect(pendingGreeting.status).toBe("pending");
-            expect(reSync.jobRepository.upsertPending).toHaveBeenCalledTimes(1);
-            expect(reSync.jobRepository.upsertPending.mock.calls[0][0]).toMatchObject({
-                ruleId: serviceInfoRule.id,
-                status: "pending",
-                clientId: 1,
-                templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
-            });
+        expect(reSync.jobRepository.findPendingByRuleIdsAndClientId).toHaveBeenNthCalledWith(
+            1,
+            [serviceInfoRule.id],
+            1,
+        );
+        expect(reSync.jobRepository.findPendingByRuleIdsAndClientId).toHaveBeenNthCalledWith(
+            2,
+            [greetingRule.id],
+            1,
+        );
+        expect(pendingServiceInfo.status).toBe("canceled");
+        expect(pendingServiceInfo.cancelReason).toBe("Client data changed");
+        expect(pendingGreeting.status).toBe("pending");
+        expect(reSync.jobRepository.upsertPending).toHaveBeenCalledTimes(1);
+        expect(reSync.jobRepository.upsertPending.mock.calls[0][0]).toMatchObject({
+            ruleId: serviceInfoRule.id,
+            status: "pending",
+            clientId: 1,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+        });
         } finally {
             jest.useRealTimers();
         }

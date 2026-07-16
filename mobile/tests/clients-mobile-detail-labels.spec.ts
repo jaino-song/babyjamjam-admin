@@ -111,7 +111,7 @@ test.describe("Mobile clients detail labels", () => {
     const messageTab = page.locator('[data-component="mobile-clients-message-tab"]');
     await expect(messageTab).toBeVisible();
     await expect(messageTab.locator(".info-card-title")).toHaveText("발송 내역");
-    await expect(messageTab).toContainText("SMS · 수동 메시지");
+    await expect(messageTab).toContainText("메시지 · 수동 메시지");
     await expect(page.getByRole("button", { name: "알림톡 발송 현황" })).toHaveCount(0);
     await expect(messageTab.locator(".info-card-title")).not.toContainText("알림톡 ·");
 
