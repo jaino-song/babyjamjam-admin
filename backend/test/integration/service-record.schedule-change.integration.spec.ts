@@ -77,7 +77,7 @@ describe("ServiceRecordEntryController schedule-change endpoints (Integration)",
         await moduleFixture.close();
     });
 
-    describe("GET /service-feedback/schedule-change/preview", () => {
+    describe("GET /service-record/schedule-change/preview", () => {
         it("should expose the preview route and call the schedule-change service with feedback context", async () => {
             scheduleChangeService.preview.mockResolvedValue({
                 sessionIndex: 3,
@@ -102,7 +102,7 @@ describe("ServiceRecordEntryController schedule-change endpoints (Integration)",
         });
     });
 
-    describe("POST /service-feedback/schedule-change", () => {
+    describe("POST /service-record/schedule-change", () => {
         it("should expose the create route and call the schedule-change service with feedback context", async () => {
             scheduleChangeService.createRequest.mockResolvedValue({
                 id: "request-1",
