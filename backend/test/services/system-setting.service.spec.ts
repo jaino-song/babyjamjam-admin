@@ -97,4 +97,78 @@ describe("SystemSettingService", () => {
             expect(result).toBe(entity);
         });
     });
+
+    describe("client auto-registration policy", () => {
+        it("should default to enabled when no setting is stored", async () => {
+            getSettingUsecase.executeWithDefault.mockResolvedValue("true");
+
+            const result = await service.getClientAutoRegistrationEnabled("branch-1");
+
+            expect(getSettingUsecase.executeWithDefault).toHaveBeenCalledWith(
+                "branch:branch-1:client_auto_registration",
+                "true",
+            );
+            expect(result).toBe(true);
+        });
+
+        it("should round-trip a stored value", async () => {
+            const entity = new SystemSettingEntity(
+                "branch:branch-1:client_auto_registration",
+                "false",
+                new Date(),
+            );
+            updateSettingUsecase.execute.mockResolvedValue(entity);
+
+            const setResult = await service.setClientAutoRegistrationEnabled("branch-1", false);
+
+            expect(updateSettingUsecase.execute).toHaveBeenCalledWith(
+                "branch:branch-1:client_auto_registration",
+                "false",
+            );
+            expect(setResult).toBe(entity);
+
+            getSettingUsecase.executeWithDefault.mockResolvedValue("false");
+
+            const getResult = await service.getClientAutoRegistrationEnabled("branch-1");
+
+            expect(getResult).toBe(false);
+        });
+    });
+
+    describe("greeting on auto-registration policy", () => {
+        it("should default to disabled when no setting is stored", async () => {
+            getSettingUsecase.executeWithDefault.mockResolvedValue("false");
+
+            const result = await service.getGreetingOnAutoRegistrationEnabled("branch-1");
+
+            expect(getSettingUsecase.executeWithDefault).toHaveBeenCalledWith(
+                "branch:branch-1:greeting_on_auto_registration",
+                "false",
+            );
+            expect(result).toBe(false);
+        });
+
+        it("should round-trip a stored value", async () => {
+            const entity = new SystemSettingEntity(
+                "branch:branch-1:greeting_on_auto_registration",
+                "true",
+                new Date(),
+            );
+            updateSettingUsecase.execute.mockResolvedValue(entity);
+
+            const setResult = await service.setGreetingOnAutoRegistrationEnabled("branch-1", true);
+
+            expect(updateSettingUsecase.execute).toHaveBeenCalledWith(
+                "branch:branch-1:greeting_on_auto_registration",
+                "true",
+            );
+            expect(setResult).toBe(entity);
+
+            getSettingUsecase.executeWithDefault.mockResolvedValue("true");
+
+            const getResult = await service.getGreetingOnAutoRegistrationEnabled("branch-1");
+
+            expect(getResult).toBe(true);
+        });
+    });
 });

@@ -23,6 +23,14 @@ export class SystemSettingService {
         return `branch:${branchId}:message_automation:past_trigger`;
     }
 
+    private getClientAutoRegistrationKey(branchId: string): string {
+        return `branch:${branchId}:client_auto_registration`;
+    }
+
+    private getGreetingOnAutoRegistrationKey(branchId: string): string {
+        return `branch:${branchId}:greeting_on_auto_registration`;
+    }
+
     async getUserEmailNotificationsEnabled(userId: string): Promise<boolean> {
         const value = await this.getSettingUsecase.executeWithDefault(
             this.getUserEmailNotificationPreferenceKey(userId),
@@ -75,6 +83,38 @@ export class SystemSettingService {
         return this.updateSettingUsecase.execute(
             this.getMessageAutomationPastTriggerConfigKey(branchId),
             JSON.stringify(normalized)
+        );
+    }
+
+    async getClientAutoRegistrationEnabled(branchId: string): Promise<boolean> {
+        const value = await this.getSettingUsecase.executeWithDefault(
+            this.getClientAutoRegistrationKey(branchId),
+            "true"
+        );
+
+        return value === "true";
+    }
+
+    async setClientAutoRegistrationEnabled(branchId: string, enabled: boolean): Promise<SystemSettingEntity> {
+        return this.updateSettingUsecase.execute(
+            this.getClientAutoRegistrationKey(branchId),
+            enabled ? "true" : "false"
+        );
+    }
+
+    async getGreetingOnAutoRegistrationEnabled(branchId: string): Promise<boolean> {
+        const value = await this.getSettingUsecase.executeWithDefault(
+            this.getGreetingOnAutoRegistrationKey(branchId),
+            "false"
+        );
+
+        return value === "true";
+    }
+
+    async setGreetingOnAutoRegistrationEnabled(branchId: string, enabled: boolean): Promise<SystemSettingEntity> {
+        return this.updateSettingUsecase.execute(
+            this.getGreetingOnAutoRegistrationKey(branchId),
+            enabled ? "true" : "false"
         );
     }
 
