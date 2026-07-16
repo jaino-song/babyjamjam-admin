@@ -183,5 +183,8 @@ test("shows the exact prepared service-record URL and sends the same token", asy
     expect(renderedStyle.height).toBeGreaterThan(0);
 
     await page.getByRole("button", { name: "즉시 발송" }).click();
-    await expect.poll(() => sendBody).toEqual({ preparedLinkToken: PREPARED_LINK_TOKEN });
+    await expect.poll(() => sendBody).toEqual({
+        preparedLinkToken: PREPARED_LINK_TOKEN,
+        recipientPhone: "01011112222",
+    });
 });

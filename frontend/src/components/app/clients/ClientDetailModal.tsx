@@ -5,6 +5,7 @@ import { Client, SERVICE_STATUS_OPTIONS, DocumentStatus, type ServiceStatus } fr
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import type { Locale } from "@/app/actions/locale";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 
 import {
     Dialog,
@@ -50,8 +51,7 @@ const getStatusBadge = (status: ServiceStatus | null) => {
 };
 
 const formatDate = (dateStr: string | null): string => {
-    if (!dateStr) return "-";
-    return new Date(dateStr).toLocaleDateString("ko-KR");
+    return formatDateForDisplay(dateStr);
 };
 
 const formatPrice = (price: string | null): string => {

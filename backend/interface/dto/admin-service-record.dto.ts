@@ -1,6 +1,17 @@
 import { Prisma } from "@prisma/client";
 import { IsOptional, IsString, Matches, MaxLength } from "class-validator";
 
+const RECIPIENT_PHONE_PATTERN = /^01[016789]-?\d{3,4}-?\d{4}$/;
+
+export class PrepareAdminServiceRecordLinkDto {
+    @IsOptional()
+    @IsString()
+    @Matches(RECIPIENT_PHONE_PATTERN, {
+        message: "수신 전화번호 형식이 올바르지 않습니다.",
+    })
+    recipientPhone?: string;
+}
+
 export class SendAdminServiceRecordLinkDto {
     @IsOptional()
     @IsString()
@@ -9,6 +20,13 @@ export class SendAdminServiceRecordLinkDto {
         message: "준비된 제공기록지 링크 형식이 올바르지 않습니다.",
     })
     preparedLinkToken?: string;
+
+    @IsOptional()
+    @IsString()
+    @Matches(RECIPIENT_PHONE_PATTERN, {
+        message: "수신 전화번호 형식이 올바르지 않습니다.",
+    })
+    recipientPhone?: string;
 }
 
 export interface AdminServiceRecordPreparedLinkDto {

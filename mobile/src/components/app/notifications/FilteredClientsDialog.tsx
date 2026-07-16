@@ -25,6 +25,7 @@ import { Client, DocumentStatus } from "@/lib/client/types";
 import { ClientDetailModal } from "../clients/ClientDetailModal";
 import { ClientFormDialog } from "../clients/ClientFormDialog";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 
 type FilterType = "starting-soon" | "ending-soon" | "incomplete-contracts" | "no-contract";
 
@@ -57,8 +58,7 @@ const getDocumentStatusBadge = (status: DocumentStatus) => {
 };
 
 const formatDate = (dateStr: string | null): string => {
-    if (!dateStr) return "-";
-    return new Date(dateStr).toLocaleDateString("ko-KR");
+    return formatDateForDisplay(dateStr);
 };
 
 export function FilteredClientsDialog({

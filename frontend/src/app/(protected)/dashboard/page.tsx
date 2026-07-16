@@ -290,9 +290,6 @@ export default function DashboardPage() {
               messageHistoryDataComponentPrefix="dashboard-message-history"
               idPrefix="dashboard-client-detail"
               tabsAriaLabel="고객 상세 정보"
-              tabPanelsClassName="flex min-h-0 flex-1 flex-col"
-              tabPanelsTrackClassName="min-h-0 flex-1"
-              tabPanelsPanelClassName=""
               onScheduleChangeDecided={handleScheduleChangeDecided}
               trailing={
                 <DropdownMenu>

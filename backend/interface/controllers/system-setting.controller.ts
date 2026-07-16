@@ -1,11 +1,8 @@
 import { Body, Controller, Get, Param, Post, Put, Request, UseGuards } from "@nestjs/common";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerGuard } from "infrastructure/auth/owner.guard";
-import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { SystemSettingService } from "application/services/system-setting.service";
 import {
-    UpdateAlimtalkProviderDto,
-    AlimtalkProviderResponseDto,
     UpdateNotificationPreferencesDto,
     NotificationPreferencesResponseDto,
     UpdateRibbonConfigDto,
@@ -29,29 +26,6 @@ export class SystemSettingController {
         private readonly systemSettingService: SystemSettingService,
         private readonly messageSenderApprovalService: MessageSenderApprovalService,
     ) {}
-
-    @Get("alimtalk-provider")
-    async getAlimtalkProvider(): Promise<AlimtalkProviderResponseDto> {
-        const setting = await this.systemSettingService.getAlimtalkProviderSetting();
-        const provider = setting?.getAlimtalkProvider()
-            ?? await this.systemSettingService.getAlimtalkProvider();
-        const enabled = provider !== "none";
-        return AlimtalkProviderResponseDto.from(provider, enabled, setting?.updatedAt);
-    }
-
-    @Put("alimtalk-provider")
-    @UseGuards(OwnerOrAdminGuard)
-    async updateAlimtalkProvider(
-        @Body() dto: UpdateAlimtalkProviderDto
-    ): Promise<AlimtalkProviderResponseDto> {
-        const entity = await this.systemSettingService.setAlimtalkProvider(dto.provider);
-        const enabled = entity.value !== "none";
-        return AlimtalkProviderResponseDto.from(
-            entity.getAlimtalkProvider(),
-            enabled,
-            entity.updatedAt
-        );
-    }
 
     @Get("notification-preferences")
     async getNotificationPreferences(

@@ -114,7 +114,7 @@ export default function AllMenuPage() {
           },
           {
             label: "발송 자동화",
-            href: "/alimtalk",
+            href: "/messages/automation",
             icon: Send,
             tone: "gold",
             value: isMessageRulesInitialLoading ? undefined : `${automationTriggerCount}개`,

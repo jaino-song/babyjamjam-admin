@@ -10,6 +10,7 @@ export interface ServiceRecordLinkPreparation {
   serviceRecordUrl: string;
   preparedLinkToken: string;
   expiresAt: string;
+  recipientPhone: string;
 }
 
 export interface TemplateMessageFormLayoutArgs {

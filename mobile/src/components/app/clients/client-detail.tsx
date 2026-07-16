@@ -1,12 +1,27 @@
 "use client";
 
 import { useState, type KeyboardEvent, type ReactNode } from "react";
-import { CircleAlert, FileCheck2, MessageCircle, MoreVertical, SquarePen, Trash2, User } from "lucide-react";
+import { CircleAlert, FileCheck2, MessageCircle, MoreVertical, RotateCcw, SquarePen, Trash2, User } from "lucide-react";
 
 import { Client } from "@/lib/client/types";
 import { getMobileClientBadges } from "@/lib/client/badges";
 import { EformsignDocument } from "@/lib/eformsign/types";
-import { useClientServiceRecords } from "@/hooks/useServiceRecords";
+import { useClientServiceRecords, useSendServiceRecordLink } from "@/hooks/useServiceRecords";
+import { toast } from "@/hooks/use-toast";
+import { api } from "@/lib/api/client";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
+import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
+import type {
+    PrepareServiceRecordLinkResponse,
+    ServiceRecordOverview,
+} from "@babyjamjam/shared/types/service-record";
+import {
+  MESSAGE_HISTORY_STATUS_LABELS,
+  formatMessageDateTimeCompact,
+  formatMessageFailureReason,
+  getMessageChannelLabel,
+  getMessageHistoryTitle,
+} from "@babyjamjam/shared";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -150,7 +165,7 @@ function compactDateToIsoDate(value: string | null | undefined): string | null {
 function formatIsoDateParts(isoDate: string): string | null {
   const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!match) return null;
-  return `${match[1]}년 ${match[2]}월 ${match[3]}일`;
+  return `${match[1]}.${match[2]}.${match[3]}`;
 }
 
 function isoDateFromTimestamp(value: string | number | null | undefined): string | null {
@@ -216,10 +231,7 @@ function formatDate(dateStr: string | null | undefined): string {
 
   const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) return dateStr;
-  const year = String(date.getFullYear());
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}년 ${month}월 ${day}일`;
+  return formatDateForDisplay(date, dateStr);
 }
 
 function formatPrice(price: string | null): string {
@@ -398,13 +410,14 @@ export function shouldShowMissingContractBadge(client: Client): boolean {
   return client.serviceStatus === "active" && client.documentStatus !== "completed";
 }
 
-export type DetailTabId = "basic" | "contracts" | "alimtalk" | "serviceRecords";
+export type DetailTabId = "basic" | "contracts" | "message" | "serviceRecords";
 
 export interface ClientNotificationLogRecord {
   id: number;
   provider: string;
   templateKey: string;
   receiver: string | null;
+  recipientPhone?: string | null;
   recipientName: string | null;
   clientId: number | null;
   status: "pending" | "sent" | "failed" | string;
@@ -417,9 +430,6 @@ export interface ClientNotificationLogRecord {
 
 type DetailRowTone = "green" | "primary" | "orange" | "muted" | "burgundy" | "purple";
 const CLIENT_GREETING_SMS_TEMPLATE_KEY = "client_greeting_sms";
-const CLIENT_GREETING_SMS_TITLE = "인사 메시지";
-const SERVICE_RECORD_LINK_SMS_TEMPLATE_KEY = "service_record_link_sms";
-const SERVICE_RECORD_LINK_SMS_TITLE = "제공기록지 작성 링크";
 
 function DetailDocRow({
   icon,
@@ -471,23 +481,27 @@ function DetailDocRow({
   );
 }
 
-function notificationChannelLabel(log: ClientNotificationLogRecord): "알림톡" | "SMS" {
-  return log.provider.toLowerCase().includes("sms") ? "SMS" : "알림톡";
+function notificationChannelLabel(log: ClientNotificationLogRecord): string {
+  return getMessageChannelLabel(log.provider);
 }
 
 function notificationVariables(log: ClientNotificationLogRecord): Record<string, unknown> {
   return isRecord(log.variables) ? log.variables : {};
 }
 
+function notificationStringVariables(log: ClientNotificationLogRecord): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(notificationVariables(log))
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+}
+
 function notificationTitle(log: ClientNotificationLogRecord): string {
-  if (log.ruleName?.trim()) return log.ruleName;
-  const variables = notificationVariables(log);
-  const variableTitle = stringFromUnknown(variables.title);
-  if (variableTitle) return variableTitle;
-  if (log.templateKey === CLIENT_GREETING_SMS_TEMPLATE_KEY) return CLIENT_GREETING_SMS_TITLE;
-  if (log.templateKey === SERVICE_RECORD_LINK_SMS_TEMPLATE_KEY) return SERVICE_RECORD_LINK_SMS_TITLE;
-  if (log.templateKey === "manual_sms") return "수동 메시지";
-  return log.templateKey || "발송 내역";
+  return getMessageHistoryTitle({
+    templateKey: log.templateKey,
+    variables: notificationStringVariables(log),
+    ruleName: log.ruleName,
+  });
 }
 
 function isClientGreetingSmsLog(log: ClientNotificationLogRecord): boolean {
@@ -522,11 +536,13 @@ function visibleNotificationLogs(logs: ClientNotificationLogRecord[]): ClientNot
 function notificationStatusLabel(status: string): string {
   switch (status) {
     case "failed":
-      return "실패";
+      return MESSAGE_HISTORY_STATUS_LABELS.failed;
     case "pending":
-      return "대기";
+      return MESSAGE_HISTORY_STATUS_LABELS.pending;
     case "sent":
-      return "완료";
+      return MESSAGE_HISTORY_STATUS_LABELS.sent;
+    case "canceled":
+      return MESSAGE_HISTORY_STATUS_LABELS.canceled;
     default:
       return status || "-";
   }
@@ -540,24 +556,15 @@ function notificationStatusTone(status: string): DetailRowTone {
       return "orange";
     case "sent":
       return "green";
+    case "canceled":
+      return "muted";
     default:
       return "muted";
   }
 }
 
 function formatNotificationTime(createdAt: string): string {
-  const date = new Date(createdAt);
-  if (Number.isNaN(date.getTime())) return createdAt || "-";
-
-  const year = String(date.getFullYear());
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  const time = new Intl.DateTimeFormat("ko-KR", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  }).format(date);
-  return `${year}년 ${month}월 ${day}일 ${time}`;
+  return formatMessageDateTimeCompact(createdAt);
 }
 
 export function ClientDetailContent({
@@ -566,6 +573,8 @@ export function ClientDetailContent({
   activeTab,
   notificationLogs = [],
   isNotificationLogsLoading = false,
+  isNotificationLogsError = false,
+  onRetryNotificationLogs,
   isIssuingContract = false,
   onTabChange,
   onMessage,
@@ -578,6 +587,8 @@ export function ClientDetailContent({
   activeTab: DetailTabId;
   notificationLogs?: ClientNotificationLogRecord[];
   isNotificationLogsLoading?: boolean;
+  isNotificationLogsError?: boolean;
+  onRetryNotificationLogs?: () => void;
   isIssuingContract?: boolean;
   onTabChange: (id: DetailTabId) => void;
   onMessage: () => void;
@@ -593,6 +604,48 @@ export function ClientDetailContent({
   const serviceRecordsQuery = useClientServiceRecords(client.id, {
     enabled: activeTab === "serviceRecords",
   });
+  const [resetLinkModalOpen, setResetLinkModalOpen] = useState(false);
+  const [isResettingLink, setIsResettingLink] = useState(false);
+  const sendLinkMutation = useSendServiceRecordLink();
+
+  const handleResetServiceRecordLink = async () => {
+    setIsResettingLink(true);
+    try {
+      const { data: overview } = await api.get<ServiceRecordOverview>(
+        `/admin/service-records/client/${client.id}`,
+      );
+      const assignments = overview.assignments ?? [];
+      const activeAssignment = assignments.find((assignment) => !assignment.replaced)
+        ?? assignments[0]
+        ?? null;
+      if (!activeAssignment) {
+        toast({
+          description: "발송할 관리사 배정이 없어 링크를 재설정할 수 없습니다.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const { data: prepared } = await api.post<PrepareServiceRecordLinkResponse>(
+        `/admin/service-records/schedules/${activeAssignment.scheduleId}/prepare-link`,
+        {},
+      );
+      await sendLinkMutation.mutateAsync({
+        scheduleId: activeAssignment.scheduleId,
+        clientId: client.id,
+        preparedLinkToken: prepared.preparedLinkToken,
+      });
+      toast({ description: "제공기록지 링크를 재설정하고 메시지를 발송했습니다." });
+      setResetLinkModalOpen(false);
+    } catch {
+      toast({
+        description: "제공기록지 링크 재설정에 실패했습니다. 잠시 후 다시 시도해 주세요.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsResettingLink(false);
+    }
+  };
 
   const group = GROUPS.find((g) => g.match(client)) ?? GROUPS[1];
   const clientBadges = getMobileClientBadges(client);
@@ -979,6 +1032,14 @@ export function ClientDetailContent({
                 수정
               </DropdownMenuItem>
               <DropdownMenuItem
+                onClick={() => setResetLinkModalOpen(true)}
+                className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
+                data-component="mobile-clients-detail-menu-reset-service-record-link"
+              >
+                <RotateCcw className="size-[15px]" strokeWidth={2} />
+                제공기록지 링크 재설정
+              </DropdownMenuItem>
+              <DropdownMenuItem
                 variant="destructive"
                 onClick={() => onDelete(client.id)}
                 className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
@@ -1012,11 +1073,27 @@ export function ClientDetailContent({
         ]}
       />
 
+      <ConfirmActionModal
+        open={resetLinkModalOpen}
+        title="제공기록지 링크를 재설정할까요?"
+        description="기존 링크는 만료되고, 새 링크가 담긴 메시지가 관리사에게 발송됩니다."
+        cancelLabel="취소"
+        confirmLabel="링크 재설정"
+        loading={isResettingLink}
+        onOpenChange={(open) => {
+          if (!isResettingLink) {
+            setResetLinkModalOpen(open);
+          }
+        }}
+        onCancel={() => setResetLinkModalOpen(false)}
+        onConfirm={() => void handleResetServiceRecordLink()}
+      />
+
       <DetailTabPills
         tabs={[
           { id: "basic", label: "기본 정보" },
           { id: "contracts", label: "계약서 정보" },
-          { id: "alimtalk", label: "알림 발송" },
+          { id: "message", label: "알림 발송" },
           { id: "serviceRecords", label: "제공기록지" },
         ]}
         activeTab={activeTab}
@@ -1083,31 +1160,44 @@ export function ClientDetailContent({
         )}
       </MobileDetailTabPanel>
 
-      <MobileDetailTabPanel name="clients" tabId="alimtalk" activeTab={activeTab}>
+      <MobileDetailTabPanel name="clients" tabId="message" activeTab={activeTab}>
         {selectedLog ? (
           <ClientMessageHistoryDetail
             view={{
               title: notificationTitle(selectedLog),
+              templateLabel: notificationTitle(selectedLog),
               channelLabel: notificationChannelLabel(selectedLog),
               statusLabel: notificationStatusLabel(selectedLog.status),
               statusTone: notificationStatusTone(selectedLog.status),
               sentAtLabel: formatNotificationTime(selectedLog.createdAt),
               recipientName: selectedLog.recipientName?.trim() || client.name,
-              recipientPhone: selectedLog.receiver?.trim() || "-",
+              recipientPhone: selectedLog.recipientPhone?.trim() || selectedLog.receiver?.trim() || "-",
               messageBody: selectedLog.messageBody?.trim()
                 ? selectedLog.messageBody
                 : "내용이 없습니다.",
-              failureReason: selectedLog.errorMessage?.trim()
-                ? selectedLog.errorMessage
-                : null,
+              failureReason: formatMessageFailureReason(selectedLog.errorMessage) || null,
             }}
             onBack={() => setSelectedEntry(null)}
           />
         ) : (
           <InfoCard title="발송 내역">
             {isNotificationLogsLoading ? (
-              <div className="detail-empty-state" data-component="mobile-clients-alimtalk-loading">
+              <div className="detail-empty-state" data-component="mobile-clients-message-loading">
                 발송 내역을 불러오는 중입니다.
+              </div>
+            ) : isNotificationLogsError ? (
+              <div className="detail-empty-state" data-component="mobile-clients-message-error">
+                <p>발송 내역을 불러오지 못했습니다.</p>
+                {onRetryNotificationLogs ? (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={onRetryNotificationLogs}
+                    data-component="mobile-clients-message-retry"
+                  >
+                    다시 시도
+                  </button>
+                ) : null}
               </div>
             ) : displayNotificationLogs.length > 0 ? (
               displayNotificationLogs.map((log) => {
@@ -1132,7 +1222,7 @@ export function ClientDetailContent({
                 );
               })
             ) : (
-              <div className="detail-empty-state" data-component="mobile-clients-alimtalk-empty">
+              <div className="detail-empty-state" data-component="mobile-clients-message-empty">
                 발송 내역이 없습니다.
               </div>
             )}

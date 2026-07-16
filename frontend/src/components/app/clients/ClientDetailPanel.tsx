@@ -20,12 +20,15 @@ import {
     normalizeMessageHistoryRecord,
     type MessageHistoryRecord,
 } from "@/components/app/messages/MessageHistoryDetailPanel";
+import { ClientServiceRecordsTab } from "@/components/app/clients/ClientServiceRecordsTab";
 import { clientKeys } from "@/features/clients/hooks/keys";
+import { useClientServiceRecords } from "@/features/service-records/hooks/use-service-records";
 import { dashboardQueryKeys } from "@/hooks/useDashboardStats";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import {
     DetailPanel,
     InfoCard,
@@ -46,7 +49,8 @@ import { Users } from "lucide-react";
 const CLIENT_DETAIL_TABS = [
     { key: "basic", label: "기본 정보" },
     { key: "contracts", label: "계약서 정보" },
-    { key: "alimtalk", label: "메시지 발송 현황" },
+    { key: "messages", label: "알림 발송" },
+    { key: "service-records", label: "제공기록지" },
 ] as const;
 
 const SCHEDULE_CHANGE_DETAIL_TAB = { key: "schedule-change", label: "일정 변경" } as const;
@@ -61,11 +65,11 @@ const CLIENT_MESSAGE_HISTORY_LIST_STATUS_LABELS = {
     sent: "성공",
     failed: "실패",
     pending: "대기",
+    canceled: "취소",
 } satisfies Record<MessageHistoryRecord["status"], string>;
 
 const formatDate = (dateStr: string | null): string => {
-    if (!dateStr) return "-";
-    return new Date(dateStr).toLocaleDateString("ko-KR");
+    return formatDateForDisplay(dateStr);
 };
 
 const formatDateTime = (dateStr: string | null): string => {
@@ -89,15 +93,7 @@ const DOCUMENT_STATUS_BADGE_STATUS = {
 } satisfies Record<DocumentStatusLabel, Parameters<typeof StatusBadge>[0]["status"]>;
 
 const formatScheduleChangeMonthDay = (dateStr: string): string => {
-    const [, month, day] = dateStr.split("-");
-    const monthNumber = Number(month);
-    const dayNumber = Number(day);
-
-    if (!month || !day || Number.isNaN(monthNumber) || Number.isNaN(dayNumber)) {
-        return dateStr;
-    }
-
-    return `${monthNumber}월 ${dayNumber}일`;
+    return formatDateForDisplay(dateStr, dateStr);
 };
 
 const getScheduleChangeErrorCode = (error: unknown): string | null => {
@@ -147,7 +143,7 @@ function ClientMessageHistoryList({
     isError: boolean;
     isLoading: boolean;
     clientName: string;
-    selectedRecordId: number | null;
+    selectedRecordId: number | string | null;
     onSelectRecord: (record: MessageLogRecord) => void;
     dataComponentPrefix: string;
 }) {
@@ -462,7 +458,7 @@ function ClientDetailPanelBody({
         key: "basic",
         clientId: null,
     });
-    const [selectedMessageHistoryId, setSelectedMessageHistoryId] = useState<number | null>(null);
+    const [selectedMessageHistoryId, setSelectedMessageHistoryId] = useState<number | string | null>(null);
     const [isMessageHistoryDetailVisible, setIsMessageHistoryDetailVisible] = useState(false);
     const clearMessageHistorySelectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -507,6 +503,9 @@ function ClientDetailPanelBody({
     };
 
     const isScheduleChangeActionPending = approveScheduleChange.isPending || rejectScheduleChange.isPending;
+    const serviceRecordsQuery = useClientServiceRecords(clientId, {
+        enabled: activeDetailTab === "service-records",
+    });
 
     const {
         data: clientContracts,
@@ -554,7 +553,7 @@ function ClientDetailPanelBody({
     );
 
     const selectedClientMessageDetailRecord = useMemo<MessageHistoryRecord | null>(() => {
-        if (!selectedClientMessageRecord || activeDetailTab !== "alimtalk") {
+        if (!selectedClientMessageRecord || activeDetailTab !== "messages") {
             return null;
         }
 
@@ -612,7 +611,7 @@ function ClientDetailPanelBody({
         if (nextDetailTab === activeDetailTab) return;
 
         setActiveDetailTab(nextDetailTab);
-        if (nextDetailTab !== "alimtalk") {
+        if (nextDetailTab !== "messages") {
             clearClientMessageHistoryDetail();
         }
     };
@@ -886,7 +885,7 @@ function ClientDetailPanelBody({
                             ),
                         },
                         {
-                            key: "alimtalk",
+                            key: "messages",
                             children: (
                                 <ClientMessageHistoryList
                                     records={clientMessageHistory}
@@ -897,6 +896,17 @@ function ClientDetailPanelBody({
                                     selectedRecordId={selectedMessageHistoryId}
                                     onSelectRecord={handleSelectClientMessageHistoryRecord}
                                     dataComponentPrefix={dataComponentPrefix}
+                                />
+                            ),
+                        },
+                        {
+                            key: "service-records",
+                            children: (
+                                <ClientServiceRecordsTab
+                                    overview={serviceRecordsQuery.data}
+                                    clientId={clientId}
+                                    isLoading={serviceRecordsQuery.isLoading}
+                                    isError={serviceRecordsQuery.isError}
                                 />
                             ),
                         },

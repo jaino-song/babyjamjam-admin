@@ -113,5 +113,5 @@ export function formatClientBirthdayForDisplay(value: string | null | undefined)
 
   const month = String(parts.month).padStart(2, "0");
   const day = String(parts.day).padStart(2, "0");
-  return `${parts.year}년 ${month}월 ${day}일`;
+  return `${parts.year}.${month}.${day}`;
 }

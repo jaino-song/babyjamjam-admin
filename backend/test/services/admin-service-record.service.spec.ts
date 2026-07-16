@@ -1,5 +1,6 @@
 import { NotFoundException } from "@nestjs/common";
 import { AdminServiceRecordService } from "application/services/admin-service-record.service";
+import { MessageTriggerService } from "application/services/message-trigger.service";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import {
     SERVICE_RECORD_LINK_RULE_ID,
@@ -34,7 +35,16 @@ describe("AdminServiceRecordService", () => {
             preparedLinkToken: "efl_prepared",
             expiresAt: new Date("2026-07-13T01:00:00.000Z"),
         }),
-        sendNow: jest.fn().mockResolvedValue({ scheduledFor: new Date("2026-07-03T01:00:00.000Z") }),
+        sendNow: jest.fn().mockResolvedValue({
+            scheduledFor: new Date("2026-07-03T01:00:00.000Z"),
+            jobId: "job-manual",
+        }),
+    });
+    const createTriggerService = () => ({
+        dispatchPendingJobNow: jest.fn().mockResolvedValue({
+            id: "job-manual",
+            status: "sent",
+        }),
     });
 
     const createSchedule = (id: number, startDate: string) => ({
@@ -64,6 +74,7 @@ describe("AdminServiceRecordService", () => {
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
             createLinkService() as unknown as ServiceRecordLinkService,
+            createTriggerService() as unknown as MessageTriggerService,
         );
         prisma.employee_schedule.findMany.mockResolvedValue([
             createSchedule(1, "2026-07-04T00:00:00.000Z"),
@@ -199,6 +210,7 @@ describe("AdminServiceRecordService", () => {
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
             createLinkService() as unknown as ServiceRecordLinkService,
+            createTriggerService() as unknown as MessageTriggerService,
         );
         prisma.employee_schedule.findMany.mockResolvedValue([
             createSchedule(1, "2026-07-04T00:00:00.000Z"),
@@ -234,6 +246,7 @@ describe("AdminServiceRecordService", () => {
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
             createLinkService() as unknown as ServiceRecordLinkService,
+            createTriggerService() as unknown as MessageTriggerService,
         );
         prisma.employee_schedule.findMany.mockResolvedValue([
             createSchedule(1, "2026-07-04T00:00:00.000Z"),
@@ -256,6 +269,7 @@ describe("AdminServiceRecordService", () => {
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
             linkService as unknown as ServiceRecordLinkService,
+            createTriggerService() as unknown as MessageTriggerService,
         );
         prisma.employee_schedule.findFirst.mockResolvedValue(null);
 
@@ -270,30 +284,41 @@ describe("AdminServiceRecordService", () => {
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
             linkService as unknown as ServiceRecordLinkService,
+            createTriggerService() as unknown as MessageTriggerService,
         );
         prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10 });
 
-        const result = await service.prepareLink("branch-1", 10);
+        const result = await service.prepareLink("branch-1", 10, "01066211878");
 
         expect(prisma.employee_schedule.findFirst).toHaveBeenCalledWith({
             where: { id: 10, branchId: "branch-1" },
             select: { id: true },
         });
-        expect(linkService.prepareLink).toHaveBeenCalledWith(10);
+        expect(linkService.prepareLink).toHaveBeenCalledWith(10, "01066211878");
         expect(result.preparedLinkToken).toBe("efl_prepared");
     });
 
     it("passes the prepared token through the tenant-checked send path", async () => {
         const prisma = createPrisma();
         const linkService = createLinkService();
+        const triggerService = createTriggerService();
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
             linkService as unknown as ServiceRecordLinkService,
+            triggerService as unknown as MessageTriggerService,
         );
         prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10 });
 
-        await service.sendLinkNow("branch-1", 10, "efl_prepared");
+        await expect(
+            service.sendLinkNow("branch-1", 10, "efl_prepared", "01066211878"),
+        ).resolves.toEqual({
+            ok: true,
+            jobId: "job-manual",
+            status: "sent",
+            scheduledFor: new Date("2026-07-03T01:00:00.000Z"),
+        });
 
-        expect(linkService.sendNow).toHaveBeenCalledWith(10, "efl_prepared");
+        expect(linkService.sendNow).toHaveBeenCalledWith(10, "efl_prepared", "01066211878");
+        expect(triggerService.dispatchPendingJobNow).toHaveBeenCalledWith("job-manual");
     });
 });

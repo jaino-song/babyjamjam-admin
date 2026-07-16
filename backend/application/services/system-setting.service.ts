@@ -2,8 +2,6 @@ import { Injectable } from "@nestjs/common";
 import { GetSettingUsecase, UpdateSettingUsecase } from "application/usecases/system-setting";
 import {
     SystemSettingEntity,
-    AlimtalkProvider,
-    ALIMTALK_PROVIDERS,
     RibbonConfig,
     DEFAULT_RIBBON_CONFIG,
     MessageAutomationPastTriggerConfig,
@@ -23,35 +21,6 @@ export class SystemSettingService {
 
     private getMessageAutomationPastTriggerConfigKey(branchId: string): string {
         return `branch:${branchId}:message_automation:past_trigger`;
-    }
-
-    async getAlimtalkProvider(): Promise<AlimtalkProvider> {
-        const value = await this.getSettingUsecase.executeWithDefault(
-            SystemSettingEntity.ALIMTALK_PROVIDER_KEY,
-            SystemSettingEntity.DEFAULT_ALIMTALK_PROVIDER
-        );
-        return value as AlimtalkProvider;
-    }
-
-    async getAlimtalkProviderSetting(): Promise<SystemSettingEntity | null> {
-        return this.getSettingUsecase.executeEntity(SystemSettingEntity.ALIMTALK_PROVIDER_KEY);
-    }
-
-    async setAlimtalkProvider(provider: AlimtalkProvider): Promise<SystemSettingEntity> {
-        if (!ALIMTALK_PROVIDERS.includes(provider)) {
-            throw new Error(
-                `Invalid alimtalk provider: ${provider}. Valid values are: ${ALIMTALK_PROVIDERS.join(", ")}`
-            );
-        }
-        return this.updateSettingUsecase.execute(
-            SystemSettingEntity.ALIMTALK_PROVIDER_KEY,
-            provider
-        );
-    }
-
-    async isAlimtalkEnabled(): Promise<boolean> {
-        const provider = await this.getAlimtalkProvider();
-        return provider !== "none";
     }
 
     async getUserEmailNotificationsEnabled(userId: string): Promise<boolean> {

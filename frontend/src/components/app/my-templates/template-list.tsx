@@ -18,14 +18,11 @@ import { useMessageTemplates } from "@/hooks/use-message-templates";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { MessageTemplate } from "@/lib/template/types";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 
 // Date formatting helper
 const formatDate = (dateString: string): string => {
-    return new Date(dateString).toLocaleDateString("ko-KR", {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-    });
+    return formatDateForDisplay(dateString);
 };
 
 export const TemplateList = () => {

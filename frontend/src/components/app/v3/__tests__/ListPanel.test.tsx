@@ -44,6 +44,38 @@ describe("ListPanel", () => {
     expect(screen.getByText("항목이 없습니다.")).toBeInTheDocument();
   });
 
+  it("waits for loading to finish before rendering the empty state", () => {
+    const emptyState = <ListEmptyState message="항목이 없습니다." />;
+    const content = <div data-testid="list-panel-content-child">본문</div>;
+    const { container, rerender } = render(
+      <ListPanel title="목록" emptyState={emptyState} isLoading>
+        {content}
+      </ListPanel>,
+    );
+
+    expect(container.querySelector('[data-component="list-panel-overlay"]')).not.toBeInTheDocument();
+    expect(screen.getByTestId("list-panel-content-child")).toBeInTheDocument();
+    expect(screen.queryByText("항목이 없습니다.")).not.toBeInTheDocument();
+
+    rerender(
+      <ListPanel title="목록" emptyState={emptyState} isContentLoading>
+        {content}
+      </ListPanel>,
+    );
+
+    expect(container.querySelector('[data-component="list-panel-overlay"]')).not.toBeInTheDocument();
+    expect(screen.queryByText("항목이 없습니다.")).not.toBeInTheDocument();
+
+    rerender(
+      <ListPanel title="목록" emptyState={emptyState}>
+        {content}
+      </ListPanel>,
+    );
+
+    expect(container.querySelector('[data-component="list-panel-overlay"]')).toBeInTheDocument();
+    expect(screen.getByText("항목이 없습니다.")).toBeInTheDocument();
+  });
+
   it("keeps inline tabs scrollable while search expands as an overlay", () => {
     const { container } = render(
       <ListPanel

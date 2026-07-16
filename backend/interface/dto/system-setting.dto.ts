@@ -1,26 +1,5 @@
-import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString, Matches } from "class-validator";
-import { ALIMTALK_PROVIDERS, AlimtalkProvider, RibbonConfig } from "domain/entities/system-setting.entity";
-
-export class UpdateAlimtalkProviderDto {
-    @IsString()
-    @IsNotEmpty()
-    @IsIn([...ALIMTALK_PROVIDERS])
-    provider!: AlimtalkProvider;
-}
-
-export class AlimtalkProviderResponseDto {
-    provider!: AlimtalkProvider;
-    enabled!: boolean;
-    updatedAt?: string;
-
-    static from(provider: AlimtalkProvider, enabled: boolean, updatedAt?: Date): AlimtalkProviderResponseDto {
-        const dto = new AlimtalkProviderResponseDto();
-        dto.provider = provider;
-        dto.enabled = enabled;
-        dto.updatedAt = updatedAt?.toISOString();
-        return dto;
-    }
-}
+import { IsBoolean, IsOptional, IsString, Matches } from "class-validator";
+import { RibbonConfig } from "domain/entities/system-setting.entity";
 
 export class UpdateNotificationPreferencesDto {
     @IsBoolean()

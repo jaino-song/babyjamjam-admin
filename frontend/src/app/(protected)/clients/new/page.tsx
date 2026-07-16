@@ -19,6 +19,7 @@ import { useClientWizardStore } from "@/stores/client-wizard-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
+import { useNavigationPending } from "@/lib/hooks/use-navigation-pending";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { cn } from "@/lib/utils";
 
@@ -72,6 +73,7 @@ export default function NewClientPage() {
   const router = useRouter();
   const locale = useLocale();
   const createClient = useCreateClient();
+  const { isPending: isSubmitting, beginNavigation } = useNavigationPending(createClient.isPending);
   const prefillName = useClientDialogStore((s) => s.prefillName);
   const clearPrefillName = useClientDialogStore((s) => s.clearPrefillName);
 
@@ -286,6 +288,7 @@ export default function NewClientPage() {
       };
       const newClient = await createClient.mutateAsync(dto);
       reset();
+      beginNavigation();
       router.push(`/clients?id=${newClient.id}`);
     } catch (err: unknown) {
       setError(getErrorMessage(err, locale, "clients.form.error-save-failed"));
@@ -630,7 +633,7 @@ export default function NewClientPage() {
               onStepChange={handleStepChange}
               onComplete={handleComplete}
               completeLabel="등록"
-              isSubmitting={createClient.isPending}
+              isSubmitting={isSubmitting}
               isNextDisabled={
                 currentStep === 0 &&
                 (

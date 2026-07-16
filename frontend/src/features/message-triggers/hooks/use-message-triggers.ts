@@ -13,7 +13,6 @@ import type {
     UpcomingMessageTriggerJob,
     UpdateMessageTriggerRuleDto,
 } from "../types";
-import type { AlimtalkProvider } from "@/services/api";
 
 function normalizeArrayPayload<T>(payload: unknown): T[] {
     if (Array.isArray(payload)) {
@@ -65,17 +64,15 @@ export function useMessageTriggerRule(id: string) {
 }
 
 export function useMessageTriggerTemplates(params: {
-    provider: Exclude<AlimtalkProvider, "none">;
     eventType?: TriggerEventType;
     recipientType?: TriggerRecipientType;
 }) {
     return useQuery<TriggerTemplateCatalogItem[]>({
-        queryKey: messageTriggerKeys.templates(params.provider, params.eventType, params.recipientType),
+        queryKey: messageTriggerKeys.templates("sms", params.eventType, params.recipientType),
         queryFn: () =>
             messageTriggersApi
                 .listTemplates(params)
                 .then((response) => normalizeArrayPayload<TriggerTemplateCatalogItem>(response.data)),
-        enabled: !!params.provider,
     });
 }
 
@@ -88,6 +85,8 @@ export function useUpcomingMessageTriggerJobs(limit = 200) {
                 .then((response) => normalizeArrayPayload<UpcomingMessageTriggerJob>(response.data)),
         staleTime: 0,
         refetchOnMount: "always",
+        refetchInterval: (query) =>
+            query.state.data?.some((job) => job.status === "processing") ? 1_000 : 5_000,
     });
 }
 
@@ -98,6 +97,9 @@ export function useMessageHistory(limit = 200) {
             messageTriggersApi
                 .listHistory(limit)
                 .then((response) => normalizeArrayPayload<MessageLogRecord>(response.data)),
+        staleTime: 0,
+        refetchOnMount: "always",
+        refetchInterval: 5_000,
     });
 }
 

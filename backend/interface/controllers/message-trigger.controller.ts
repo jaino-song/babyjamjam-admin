@@ -5,7 +5,6 @@ import { MessageTriggerService } from "application/services/message-trigger.serv
 import {
     MessageTriggerEventType,
     MessageTriggerRecipientType,
-    type SupportedTriggerProvider,
 } from "domain/constants/message-trigger-catalog";
 import {
     CreateMessageTriggerRuleDto,
@@ -82,10 +81,9 @@ export class MessageTriggerController {
 
     @Get("message-trigger-templates")
     listTemplates(
-        @Query("provider") provider: SupportedTriggerProvider = "aligo_alimtalk",
         @Query("eventType") eventType?: MessageTriggerEventType,
         @Query("recipientType") recipientType?: MessageTriggerRecipientType,
     ) {
-        return this.triggerService.listTemplates({ provider, eventType, recipientType });
+        return this.triggerService.listTemplates({ eventType, recipientType });
     }
 }

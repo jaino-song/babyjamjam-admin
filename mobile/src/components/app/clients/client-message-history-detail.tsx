@@ -14,6 +14,7 @@ export type MessageHistoryDetailTone =
 
 export interface ClientMessageHistoryDetailView {
   title: string;
+  templateLabel: string;
   channelLabel: string;
   statusLabel: string;
   statusTone: MessageHistoryDetailTone;
@@ -25,35 +26,41 @@ export interface ClientMessageHistoryDetailView {
 }
 
 /**
- * Read-only detail view for a single client message-history (alimtalk-log) entry.
+ * Read-only detail view for a single client message-history entry.
  * Presentational only — the caller resolves the display fields from the log record.
  * Mirrors the frontend MessageHistoryDetailPanel using mobile-redesign primitives.
  */
 export function ClientMessageHistoryDetail({
   view,
   onBack,
+  dataComponentPrefix = "mobile-clients-message-history",
+  showBackAction = true,
 }: {
   view: ClientMessageHistoryDetailView;
   onBack: () => void;
+  dataComponentPrefix?: string;
+  showBackAction?: boolean;
 }) {
   const isFailed = view.statusTone === "burgundy";
 
   return (
-    <div className="message-detail pop-up" data-component="mobile-clients-message-history-detail">
-      <button
-        type="button"
-        className="message-detail-back"
-        data-component="mobile-clients-message-history-detail-back"
-        onClick={onBack}
-      >
-        <ChevronLeft size={16} strokeWidth={2.5} />
-        목록으로
-      </button>
+    <div className="message-detail pop-up" data-component={`${dataComponentPrefix}-detail`}>
+      {showBackAction ? (
+        <button
+          type="button"
+          className="message-detail-back"
+          data-component={`${dataComponentPrefix}-detail-back`}
+          onClick={onBack}
+        >
+          <ChevronLeft size={16} strokeWidth={2.5} />
+          목록으로
+        </button>
+      ) : null}
 
-      <div className="message-detail-head" data-component="mobile-clients-message-history-detail-head">
+      <div className="message-detail-head" data-component={`${dataComponentPrefix}-detail-head`}>
         <div
           className={`doc-icon doc-icon-${view.statusTone}`}
-          data-component="mobile-clients-message-history-detail-icon"
+          data-component={`${dataComponentPrefix}-detail-icon`}
         >
           {isFailed ? (
             <CircleAlert size={16} strokeWidth={2.5} />
@@ -63,21 +70,21 @@ export function ClientMessageHistoryDetail({
         </div>
         <div
           className="message-detail-head-text"
-          data-component="mobile-clients-message-history-detail-head-text"
+          data-component={`${dataComponentPrefix}-detail-head-text`}
         >
-          <div className="message-detail-title" data-component="mobile-clients-message-history-detail-title">
+          <div className="message-detail-title" data-component={`${dataComponentPrefix}-detail-title`}>
             {view.title}
           </div>
           <div
             className="message-detail-subtitle"
-            data-component="mobile-clients-message-history-detail-subtitle"
+            data-component={`${dataComponentPrefix}-detail-subtitle`}
           >
             {view.channelLabel} · {view.sentAtLabel}
           </div>
         </div>
         <span
           className={`badge-mini ${view.statusTone}`}
-          data-component="mobile-clients-message-history-detail-status"
+          data-component={`${dataComponentPrefix}-detail-status`}
         >
           {view.statusLabel}
         </span>
@@ -86,7 +93,7 @@ export function ClientMessageHistoryDetail({
       <InfoCard title="발송 정보">
         <InfoRow label="수신자" value={view.recipientName} />
         <InfoRow label="연락처" value={view.recipientPhone} />
-        <InfoRow label="템플릿" value={view.title} />
+        <InfoRow label="템플릿" value={view.templateLabel} />
         <InfoRow label="채널" value={view.channelLabel} />
         {view.failureReason ? (
           <InfoRow label="실패 사유" value={view.failureReason} tone="burgundy" />
@@ -96,7 +103,7 @@ export function ClientMessageHistoryDetail({
       <InfoCard title="메시지 내용">
         <p
           className="message-detail-body"
-          data-component="mobile-clients-message-history-detail-body"
+          data-component={`${dataComponentPrefix}-detail-body`}
         >
           {view.messageBody}
         </p>

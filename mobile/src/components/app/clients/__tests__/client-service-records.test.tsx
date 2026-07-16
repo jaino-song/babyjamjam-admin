@@ -91,7 +91,7 @@ describe("ClientServiceRecords", () => {
         expect(screen.getByText("발송됨")).toBeInTheDocument();
         expect(screen.getByText("발송 실패")).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "링크 수동 전송" })).toBeInTheDocument();
-        expect(screen.getAllByRole("button", { name: "링크 재전송" })).toHaveLength(2);
+        expect(screen.getAllByRole("button", { name: "메시지 재전송" })).toHaveLength(2);
     });
 
     it("opens a confirmation modal before resending a link", async () => {
@@ -102,13 +102,13 @@ describe("ClientServiceRecords", () => {
             ],
         });
 
-        await user.click(screen.getByRole("button", { name: "링크 재전송" }));
+        await user.click(screen.getByRole("button", { name: "메시지 재전송" }));
 
-        expect(screen.getByRole("dialog", { name: "링크를 재전송할까요?" })).toBeInTheDocument();
-        expect(screen.getByText("재전송 시 새 링크가 발급되며 기존 링크는 즉시 사용할 수 없게 됩니다.")).toBeInTheDocument();
+        expect(screen.getByRole("dialog", { name: "메시지를 재전송할까요?" })).toBeInTheDocument();
+        expect(screen.getByText("기존 링크가 그대로 포함된 메시지를 다시 전송합니다.")).toBeInTheDocument();
         expect(mockMutateAsync).not.toHaveBeenCalled();
 
-        await user.click(screen.getByRole("button", { name: "재전송" }));
+        await user.click(screen.getByRole("button", { name: "메시지 재전송" }));
 
         await waitFor(() => {
             expect(mockMutateAsync).toHaveBeenCalledWith({
