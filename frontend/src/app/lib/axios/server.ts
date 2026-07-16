@@ -16,3 +16,11 @@ export const serverAPIClient = axios.create({
     timeout: 60000, // 60 seconds - Railway apps can take time to wake up
     validateStatus: (status) => status < 600, // Accept any status code for better error visibility
 });
+
+serverAPIClient.interceptors.request.use((config) => {
+    if (process.env.LEGACY_DEMO_MODE === "true") {
+        return Promise.reject(new Error("Backend access is disabled in legacy demo mode."));
+    }
+
+    return config;
+});
