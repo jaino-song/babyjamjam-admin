@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { matchesSearchQuery } from "@/lib/search/korean-search";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import {
   FileText,
   FileSignature,
@@ -195,11 +196,7 @@ function matchesDocumentStatusTab(doc: EformsignDocument, tab: string): boolean 
 }
 
 function formatDate(timestamp: number): string {
-  return new Date(timestamp).toLocaleDateString("ko-KR", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
+  return formatDateForDisplay(timestamp);
 }
 
 function formatDateTime(timestamp: number): string {
@@ -1720,7 +1717,7 @@ function ContractDetail({
             <button
               type="button"
               data-component="contracts-detail-preview-trigger"
-              className="flex w-[calc(220px*var(--glint-ui-scale,1))] items-center gap-[calc(12px*var(--glint-ui-scale,1))] rounded-xl bg-[hsl(var(--v3-primary))] px-[calc(16px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))] text-left text-[calc(14px*var(--glint-ui-scale,1))] font-medium text-white transition-all duration-200"
+              className="flex w-[calc(220px*var(--glint-ui-scale,1))] items-center justify-center gap-[calc(12px*var(--glint-ui-scale,1))] rounded-xl bg-[hsl(var(--v3-primary))] px-[calc(16px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))] text-center text-[calc(14px*var(--glint-ui-scale,1))] font-medium text-white transition-all duration-200"
               onClick={() => setIsPreviewOpen(true)}
             >
               <Eye className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] shrink-0" />
@@ -1920,7 +1917,7 @@ function ContractDetail({
         }}
         document={detailedDocument}
         customerName={customerName}
-        canDownloadReceipt={category === "completed"}
+        canDownloadReceipt={category === "completed" && reviewAction !== "preview"}
         onReviewConfirm={
           reviewAction === "preview" && isReviewNeeded
             ? handleServiceRecordReviewConfirm

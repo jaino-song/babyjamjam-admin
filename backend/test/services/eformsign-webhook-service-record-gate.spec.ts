@@ -2,7 +2,7 @@ import { EformsignWebhookService } from "../../application/services/eformsign-we
 
 /**
  * BJJ-247 contract-isolation guarantee: completing a FEEDBACK snapshot document must NOT run
- * the contract-completion side effects (link eDocId / sync endDate / contract alimtalk), which
+ * the contract-completion side effects (link eDocId / sync endDate), which
  * all funnel through handleCompletedDocument(). The gate keys on the document's template_id.
  */
 const FEEDBACK_TPL = "tpl_feedback_123";
@@ -17,7 +17,6 @@ function makeService() {
         updateStatusUsecase: { execute: jest.fn() },
         linkDocumentUsecase: { execute: jest.fn() },
         syncClientEndDateUsecase: { execute: jest.fn() },
-        alimtalkService: {},
         eventBus: { emit: jest.fn() },
         notificationService: {},
         eformsignApiClient: { getAccessToken: jest.fn().mockResolvedValue({ oauth_token: { access_token: "x" } }) },
@@ -30,7 +29,6 @@ function makeService() {
         deps.updateStatusUsecase as any,
         deps.linkDocumentUsecase as any,
         deps.syncClientEndDateUsecase as any,
-        deps.alimtalkService as any,
         deps.eventBus as any,
         deps.notificationService as any,
         deps.eformsignApiClient as any,

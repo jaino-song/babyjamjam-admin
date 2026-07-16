@@ -75,7 +75,7 @@ test.describe('Templates List', () => {
     await expect(page.locator('[data-component="messages-templates-search"]')).toBeVisible();
     await expect(page.locator('[data-component="messages-templates-filters"]')).toBeVisible();
     await expect(page.locator('[data-component="messages-templates-section-header"]').first()).toContainText(
-      '시스템 자동',
+      '기본 템플릿',
     );
     await expect(page.locator('[data-component="messages-templates-row"]')).toHaveCount(2);
     // The row-name node also contains the channel badge ("알림톡"), so an
@@ -86,6 +86,42 @@ test.describe('Templates List', () => {
     await expect(
       page.locator('[data-component="messages-templates-row-name"]').filter({ hasText: '인사(소개)' }),
     ).toBeVisible();
+  });
+
+  test('does not render mock templates or fake send counts when APIs are empty', async ({ page }) => {
+    await mockMessagesApproval(page);
+    await page.route('**/api/system-templates', async (route: Route, request: Request) => {
+      if (request.method() !== 'GET') {
+        await route.fallback();
+        return;
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([]),
+      });
+    });
+    await page.route('**/api/message-templates', async (route: Route, request: Request) => {
+      if (request.method() !== 'GET') {
+        await route.fallback();
+        return;
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([]),
+      });
+    });
+
+    await page.goto('/messages/templates');
+
+    await expect(page.locator('[data-component="messages-templates-empty"]')).toHaveText(
+      '등록된 템플릿이 없습니다.',
+    );
+    await expect(page.locator('[data-component="messages-templates-row"]')).toHaveCount(0);
+    await expect(page.getByText(/5월 \d+건 발송/)).toHaveCount(0);
   });
 
   test('navigates to the current system template detail page on click', async ({ page }) => {

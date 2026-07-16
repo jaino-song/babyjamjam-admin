@@ -15,7 +15,6 @@ export const mobileScreenshotRoutes: ScreenshotRoute[] = [
 
   { slug: "admin", path: "/admin", auth: "authenticated" },
   { slug: "admin-feedback", path: "/admin/feedback", auth: "authenticated" },
-  { slug: "alimtalk", path: "/alimtalk", auth: "authenticated" },
   { slug: "all", path: "/all", auth: "authenticated" },
   { slug: "chat", path: "/chat", auth: "authenticated" },
   { slug: "clients", path: "/clients", auth: "authenticated" },

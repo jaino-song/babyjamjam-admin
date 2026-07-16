@@ -4,9 +4,8 @@ import { useMemo } from "react";
 
 import { useClients } from "@/hooks/useClients";
 import type { Client } from "@/lib/client/types";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import "@/components/app/mobile-redesign/redesign.css";
-
-const WEEKDAY = ["일", "월", "화", "수", "목", "금", "토"] as const;
 
 type ScheduleKind = "start" | "end" | "replacement";
 
@@ -15,16 +14,12 @@ interface ScheduleEntry {
   kind: ScheduleKind;
   dateISO: string;
   dateLabel: string;
-  weekdayLabel: string;
   title: string;
   meta: string;
 }
 
-function formatDate(date: Date): { label: string; weekday: string } {
-  return {
-    label: `${date.getMonth() + 1}/${date.getDate()}`,
-    weekday: WEEKDAY[date.getDay()],
-  };
+function formatDate(date: Date): string {
+  return formatDateForDisplay(date);
 }
 
 function clientEmployeeMeta(c: Client): string {
@@ -44,13 +39,12 @@ function buildEntries(clients: Client[]): ScheduleEntry[] {
     if (client.serviceStatus === "replacement_requested") {
       const fallback = today.toISOString();
       const date = today;
-      const { label, weekday } = formatDate(date);
+      const label = formatDate(date);
       entries.push({
         id: `${client.id}-replacement`,
         kind: "replacement",
         dateISO: fallback,
         dateLabel: label,
-        weekdayLabel: weekday,
         title: `${client.name} 교체 요청`,
         meta: clientEmployeeMeta(client),
       });
@@ -61,13 +55,12 @@ function buildEntries(clients: Client[]): ScheduleEntry[] {
       if (!Number.isNaN(date.getTime())) {
         date.setHours(0, 0, 0, 0);
         if (date >= today && date <= horizon) {
-          const { label, weekday } = formatDate(date);
+          const label = formatDate(date);
           entries.push({
             id: `${client.id}-start`,
             kind: "start",
             dateISO: date.toISOString(),
             dateLabel: label,
-            weekdayLabel: weekday,
             title: `${client.name} 서비스 시작`,
             meta: clientEmployeeMeta(client),
           });
@@ -80,13 +73,12 @@ function buildEntries(clients: Client[]): ScheduleEntry[] {
       if (!Number.isNaN(date.getTime())) {
         date.setHours(0, 0, 0, 0);
         if (date >= today && date <= horizon) {
-          const { label, weekday } = formatDate(date);
+          const label = formatDate(date);
           entries.push({
             id: `${client.id}-end`,
             kind: "end",
             dateISO: date.toISOString(),
             dateLabel: label,
-            weekdayLabel: weekday,
             title: `${client.name} 서비스 종료`,
             meta: clientEmployeeMeta(client),
           });
@@ -167,7 +159,7 @@ export default function EmployeeSchedulePage() {
                 <div className="list-info">
                   <div className="list-name">{entry.title}</div>
                   <div className="list-meta">
-                    {entry.dateLabel} ({entry.weekdayLabel})
+                    {entry.dateLabel}
                   </div>
                 </div>
                 <div className="list-right">

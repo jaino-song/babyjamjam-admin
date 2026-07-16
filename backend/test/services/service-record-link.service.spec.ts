@@ -1,4 +1,4 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import {
@@ -29,6 +29,7 @@ describe("ServiceRecordLinkService", () => {
     });
     const createTokenService = () => ({
         issueLink: jest.fn().mockResolvedValue({ linkToken: "efl_token" }),
+        reuseActiveLink: jest.fn().mockResolvedValue(null),
         prepareLink: jest.fn().mockResolvedValue({ linkToken: "efl_prepared" }),
         activatePreparedLink: jest.fn().mockResolvedValue(true),
         revokeForSchedule: jest.fn().mockResolvedValue(undefined),
@@ -42,7 +43,10 @@ describe("ServiceRecordLinkService", () => {
     const createJobRepository = () => ({
         findPendingByRuleIdsAndEmployeeScheduleId: jest.fn().mockResolvedValue([]),
         update: jest.fn(),
-        upsertPending: jest.fn().mockImplementation(async (job: MessageTriggerJobEntity) => job),
+        upsertPending: jest.fn().mockImplementation(async (job: MessageTriggerJobEntity) => {
+            Object.defineProperty(job, "id", { value: "job-1" });
+            return job;
+        }),
     });
     const createLogRepository = () => ({
         save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log),
@@ -55,6 +59,7 @@ describe("ServiceRecordLinkService", () => {
         clientId: 20,
         startDate: new Date("2026-07-03T00:00:00.000Z"),
         endDate: new Date("2026-07-12T00:00:00.000Z"),
+        replaced: false,
         primaryEmployee: {
             id: 30,
             name: "홍제공",
@@ -122,7 +127,7 @@ describe("ServiceRecordLinkService", () => {
         const result = await service.sendNow(10);
         const after = Date.now();
 
-        expect(tokenService.issueLink).toHaveBeenCalledWith(expect.objectContaining({
+        expect(tokenService.reuseActiveLink).toHaveBeenCalledWith(expect.objectContaining({
             branchId: "branch-1",
             scheduleId: 10,
             employeeId: 30,
@@ -135,18 +140,17 @@ describe("ServiceRecordLinkService", () => {
         expect(job.scheduledFor.getTime()).toBeGreaterThanOrEqual(before);
         expect(job.scheduledFor.getTime()).toBeLessThanOrEqual(after);
         expect(result.scheduledFor).toBe(job.scheduledFor);
+        expect(result.jobId).toBe("job-1");
         expect(job.dedupeKey).toMatch(
             new RegExp(`^${SERVICE_RECORD_LINK_RULE_ID}:schedule:10:primary:manual:[0-9a-f-]{36}$`),
         );
         expect(job.payload.buttonUrl).toBe("https://mobile.test/service-record/efl_token");
     });
 
-    it("sendNow creates a unique UUID dedupe key without exposing the plaintext link token", async () => {
+    it("sendNow reuses the active URL while creating a unique UUID dedupe key for each message", async () => {
         const prisma = createPrisma();
         const tokenService = createTokenService();
-        tokenService.issueLink
-            .mockResolvedValueOnce({ linkToken: "efl_manual_first" })
-            .mockResolvedValueOnce({ linkToken: "efl_manual_second" });
+        tokenService.reuseActiveLink.mockResolvedValue({ linkToken: "efl_existing" });
         const jobRepository = createJobRepository();
         const service = new ServiceRecordLinkService(
             prisma as unknown as PrismaService,
@@ -166,11 +170,14 @@ describe("ServiceRecordLinkService", () => {
         expect(firstJob.dedupeKey).toMatch(
             new RegExp(`^${SERVICE_RECORD_LINK_RULE_ID}:schedule:10:primary:manual:[0-9a-f-]{36}$`),
         );
-        expect(firstJob.dedupeKey).not.toContain("efl_manual_first");
-        expect(secondJob.dedupeKey).not.toContain("efl_manual_second");
+        expect(firstJob.dedupeKey).not.toContain("efl_existing");
+        expect(secondJob.dedupeKey).not.toContain("efl_existing");
+        expect(firstJob.payload.buttonUrl).toBe("https://mobile.test/service-record/efl_existing");
+        expect(secondJob.payload.buttonUrl).toBe("https://mobile.test/service-record/efl_existing");
+        expect(tokenService.issueLink).not.toHaveBeenCalled();
     });
 
-    it("prepares an inactive exact URL without enqueueing or canceling any SMS job", async () => {
+    it("prepares an inactive exact URL for a manually overridden verification phone", async () => {
         const prisma = createPrisma();
         const tokenService = createTokenService();
         const jobRepository = createJobRepository();
@@ -184,13 +191,19 @@ describe("ServiceRecordLinkService", () => {
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
 
-        const result = await service.prepareLink(10);
+        const result = await service.prepareLink(10, "010-6621-1878");
 
+        expect(tokenService.reuseActiveLink).toHaveBeenCalledWith(expect.objectContaining({
+            branchId: "branch-1",
+            scheduleId: 10,
+            employeeId: 30,
+            expectedPhone: "01066211878",
+        }));
         expect(tokenService.prepareLink).toHaveBeenCalledWith(expect.objectContaining({
             branchId: "branch-1",
             scheduleId: 10,
             employeeId: 30,
-            expectedPhone: "010-1111-2222",
+            expectedPhone: "01066211878",
         }));
         expect(result).toEqual({
             serviceRecordUrl: "https://mobile.test/service-record/efl_prepared",
@@ -203,7 +216,28 @@ describe("ServiceRecordLinkService", () => {
         expect(logRepository.findRetryableServiceRecordSmsByScheduleId).not.toHaveBeenCalled();
     });
 
-    it("sendNow reuses the exact prepared URL instead of minting a different link", async () => {
+    it("prepareLink returns the current active URL instead of preparing a replacement token", async () => {
+        const prisma = createPrisma();
+        const tokenService = createTokenService();
+        tokenService.reuseActiveLink.mockResolvedValue({ linkToken: "efl_existing" });
+        const service = new ServiceRecordLinkService(
+            prisma as unknown as PrismaService,
+            tokenService as never,
+            createConfigService() as unknown as ConfigService,
+            createJobRepository() as unknown as IMessageTriggerJobRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
+        );
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+
+        await expect(service.prepareLink(10)).resolves.toEqual({
+            serviceRecordUrl: "https://mobile.test/service-record/efl_existing",
+            preparedLinkToken: "efl_existing",
+            expiresAt: expect.any(Date),
+        });
+        expect(tokenService.prepareLink).not.toHaveBeenCalled();
+    });
+
+    it("sendNow uses a manual phone override for both link verification and SMS delivery", async () => {
         const prisma = createPrisma();
         const tokenService = createTokenService();
         const jobRepository = createJobRepository();
@@ -216,17 +250,19 @@ describe("ServiceRecordLinkService", () => {
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
 
-        await service.sendNow(10, "efl_prepared");
+        await service.sendNow(10, "efl_prepared", "01066211878");
 
         expect(tokenService.activatePreparedLink).toHaveBeenCalledWith(expect.objectContaining({
             linkToken: "efl_prepared",
             branchId: "branch-1",
             scheduleId: 10,
             employeeId: 30,
-            expectedPhone: "010-1111-2222",
+            expectedPhone: "01066211878",
         }));
         expect(tokenService.issueLink).not.toHaveBeenCalled();
         const job = jobRepository.upsertPending.mock.calls[0]?.[0] as MessageTriggerJobEntity;
+        expect(job.recipientPhone).toBe("01066211878");
+        expect(job.payload.recipientPhone).toBe("01066211878");
         expect(job.payload.buttonUrl).toBe("https://mobile.test/service-record/efl_prepared");
         expect(job.payload.messageBody).toContain("https://mobile.test/service-record/efl_prepared");
     });
@@ -389,6 +425,46 @@ describe("ServiceRecordLinkService", () => {
 
         expect(jobRepository.upsertPending).not.toHaveBeenCalled();
         expect(logRepository.save).not.toHaveBeenCalled();
+    });
+
+    it("rejects an invalid manual recipient phone instead of falling back to the stored phone", async () => {
+        const prisma = createPrisma();
+        const jobRepository = createJobRepository();
+        const service = new ServiceRecordLinkService(
+            prisma as unknown as PrismaService,
+            createTokenService() as never,
+            createConfigService() as unknown as ConfigService,
+            jobRepository as unknown as IMessageTriggerJobRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
+        );
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+
+        await expect(service.sendNow(10, undefined, "010-12")).rejects.toBeInstanceOf(
+            BadRequestException,
+        );
+
+        expect(jobRepository.upsertPending).not.toHaveBeenCalled();
+    });
+
+    it("rejects resend for a replaced provider assignment", async () => {
+        const prisma = createPrisma();
+        const tokenService = createTokenService();
+        const jobRepository = createJobRepository();
+        const service = new ServiceRecordLinkService(
+            prisma as unknown as PrismaService,
+            tokenService as never,
+            createConfigService() as unknown as ConfigService,
+            jobRepository as unknown as IMessageTriggerJobRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
+        );
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule({ replaced: true }));
+
+        await expect(service.sendNow(10)).rejects.toBeInstanceOf(NotFoundException);
+        await expect(service.prepareLink(10)).rejects.toBeInstanceOf(NotFoundException);
+        expect(tokenService.reuseActiveLink).not.toHaveBeenCalled();
+        expect(tokenService.issueLink).not.toHaveBeenCalled();
+        expect(tokenService.prepareLink).not.toHaveBeenCalled();
+        expect(jobRepository.upsertPending).not.toHaveBeenCalled();
     });
 
     it("scheduleForServiceStart still swallows scheduling errors", async () => {

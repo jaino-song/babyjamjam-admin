@@ -12,6 +12,291 @@
   --mobile-z-detail: 70;
 }
 
+/* ===== Mobile messages navigation + data pages ===== */
+body:has([data-component="messages"]) [data-component="floating-quick-actions"] {
+  display: none !important;
+}
+
+body:has([data-component="messages"]) [data-component="messages"],
+.message-page-shell {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+body:has([data-component="messages"]) [data-component="messages-content"] {
+  padding: 76px 14px;
+  overflow-y: auto;
+}
+
+.message-navigation-card,
+.message-data-card {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.message-navigation-intro {
+  margin: 2px 16px 10px;
+  color: hsl(var(--v3-text-muted));
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.message-navigation-list,
+.message-data-list {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 4px 8px 12px;
+  scrollbar-width: none;
+}
+
+.message-navigation-list::-webkit-scrollbar,
+.message-data-list::-webkit-scrollbar {
+  display: none;
+}
+
+.message-navigation-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 72px;
+  padding: 12px 10px;
+  border-bottom: 1px solid hsl(var(--v3-border) / 0.65);
+  color: inherit;
+  text-decoration: none;
+}
+
+.message-navigation-row:last-child {
+  border-bottom: 0;
+}
+
+.message-navigation-icon {
+  display: inline-flex;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+}
+
+.message-navigation-icon-primary {
+  color: hsl(var(--v3-primary));
+  background: hsl(var(--v3-primary-light));
+}
+
+.message-navigation-icon-orange {
+  color: #c26720;
+  background: #fff2e8;
+}
+
+.message-navigation-icon-green {
+  color: #27815a;
+  background: #eaf8f1;
+}
+
+.message-navigation-icon-purple {
+  color: #7151a5;
+  background: #f2edfb;
+}
+
+.message-navigation-icon-slate {
+  color: #526173;
+  background: #eef2f6;
+}
+
+.message-navigation-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.message-navigation-copy strong {
+  color: hsl(var(--v3-dark));
+  font-size: 0.86rem;
+}
+
+.message-navigation-copy span {
+  color: hsl(var(--v3-text-muted));
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
+.message-navigation-row > svg {
+  flex: 0 0 auto;
+  color: hsl(var(--v3-text-muted));
+}
+
+.message-data-header {
+  display: flex;
+  align-items: flex-start;
+  padding: 4px 12px 10px;
+}
+
+.message-data-header h1 {
+  margin: 1px 0 3px;
+  color: hsl(var(--v3-dark));
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.message-data-header p {
+  margin: 0;
+  color: hsl(var(--v3-text-muted));
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+
+.message-data-back {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  margin-inline: 12px;
+  padding: 2px 0;
+  color: hsl(var(--v3-primary));
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.4;
+  text-decoration: none;
+}
+
+.message-data-summary {
+  align-self: flex-start;
+  margin: 0 12px 6px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  color: hsl(var(--v3-primary));
+  background: hsl(var(--v3-primary-light));
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.message-data-row {
+  display: flex;
+  gap: 11px;
+  padding: 13px 10px;
+  border-bottom: 1px solid hsl(var(--v3-border) / 0.65);
+}
+
+.message-data-row-button {
+  width: 100%;
+  border-top: 0;
+  border-right: 0;
+  border-left: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.message-data-row-button:hover {
+  background: hsl(var(--v3-primary-light) / 0.45);
+}
+
+.message-data-row-button:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid hsl(var(--v3-primary));
+  outline-offset: -2px;
+}
+
+.message-data-row:last-child {
+  border-bottom: 0;
+}
+
+.message-data-row-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.message-data-row-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.message-data-row-title strong {
+  overflow: hidden;
+  color: hsl(var(--v3-dark));
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-data-row-copy p,
+.message-data-row-copy small,
+.message-data-row-copy em {
+  display: block;
+  margin: 4px 0 0;
+  color: hsl(var(--v3-text-muted));
+  font-size: 0.69rem;
+  font-style: normal;
+  line-height: 1.4;
+}
+
+.message-data-row-copy em {
+  color: #b42318;
+}
+
+.message-data-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+.message-data-status-pending,
+.message-data-status-processing {
+  color: #9a5b16;
+  background: #fff4df;
+}
+
+.message-data-status-sent {
+  color: #287858;
+  background: #eaf8f1;
+}
+
+.message-data-status-failed,
+.message-data-status-canceled {
+  color: #b42318;
+  background: #feeceb;
+}
+
+.message-data-empty {
+  display: flex;
+  min-height: 180px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: hsl(var(--v3-text-muted));
+  text-align: center;
+}
+
+.message-data-empty p {
+  margin: 0;
+  font-size: 0.75rem;
+}
+
+.message-data-spinner {
+  animation: spin 1s linear infinite;
+}
+
 /* ===== Existing top navbar (user identity + bell) ===== */
 .existing-navbar {
   height: 64px;
@@ -3315,15 +3600,15 @@ body:has([data-component="messages"]) [data-component="mobile-bottom-nav"] span 
   line-height: 1;
 }
 
-/* ===== /alimtalk pixel shell — scoped to page-alimtalk.html parity ===== */
-body:has([data-component="alimtalk"]) {
+/* ===== Message automation shell ===== */
+body:has([data-component="messages-shell"]) {
   background: hsl(220, 15%, 88%);
   color: hsl(var(--v3-text));
   font-family: "NanumSquare Neo", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, sans-serif;
   line-height: normal;
 }
 
-body:has([data-component="alimtalk"]) [data-component="app-root"] {
+body:has([data-component="messages-shell"]) [data-component="app-root"] {
   position: relative;
   padding: 12px;
   overflow: hidden;
@@ -3334,7 +3619,7 @@ body:has([data-component="alimtalk"]) [data-component="app-root"] {
     0 0 0 1px rgba(0, 0, 0, 0.6) inset;
 }
 
-body:has([data-component="alimtalk"]) [data-component="app-root"]::before {
+body:has([data-component="messages-shell"]) [data-component="app-root"]::before {
   content: "";
   position: absolute;
   top: 12px;
@@ -3348,7 +3633,7 @@ body:has([data-component="alimtalk"]) [data-component="app-root"]::before {
   pointer-events: none;
 }
 
-body:has([data-component="alimtalk"]) [data-component="app-providers"] {
+body:has([data-component="messages-shell"]) [data-component="app-providers"] {
   position: relative;
   height: 100%;
   min-height: 0;
@@ -3359,7 +3644,7 @@ body:has([data-component="alimtalk"]) [data-component="app-providers"] {
   -webkit-font-smoothing: antialiased;
 }
 
-body:has([data-component="alimtalk"]) [data-component="main-content"] {
+body:has([data-component="messages-shell"]) [data-component="main-content"] {
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -3369,7 +3654,7 @@ body:has([data-component="alimtalk"]) [data-component="main-content"] {
   line-height: normal;
 }
 
-body:has([data-component="alimtalk"]) [data-component="mobile-header"] {
+body:has([data-component="messages-shell"]) [data-component="mobile-header"] {
   position: absolute !important;
   top: 0 !important;
   right: 0 !important;
@@ -3382,15 +3667,15 @@ body:has([data-component="alimtalk"]) [data-component="mobile-header"] {
   z-index: 20;
 }
 
-body:has([data-component="alimtalk"]) [data-component="floating-quick-actions"] {
+body:has([data-component="messages-shell"]) [data-component="floating-quick-actions"] {
   display: none !important;
 }
 
-body:has([data-component="alimtalk"]) [data-component="app-providers"] > .fixed.left-4.right-4.z-50 {
+body:has([data-component="messages-shell"]) [data-component="app-providers"] > .fixed.left-4.right-4.z-50 {
   display: none !important;
 }
 
-body:has([data-component="alimtalk"]) [data-component="alimtalk"] {
+body:has([data-component="messages-shell"]) [data-component="messages-shell"] {
   display: flex;
   height: 100%;
   min-height: 0;
@@ -3399,12 +3684,12 @@ body:has([data-component="alimtalk"]) [data-component="alimtalk"] {
   line-height: normal;
 }
 
-body:has([data-component="alimtalk"]) [data-component="alimtalk-content"] {
+body:has([data-component="messages-shell"]) [data-component="messages-content"] {
   padding: 12px 14px 76px;
   overflow-y: auto;
 }
 
-body:has([data-component="alimtalk"]) [data-component="message-trigger-card"] {
+body:has([data-component="messages-shell"]) [data-component="message-trigger-card"] {
   display: flex;
   flex: 1;
   min-height: 0;
@@ -3412,21 +3697,21 @@ body:has([data-component="alimtalk"]) [data-component="message-trigger-card"] {
   overflow: hidden;
 }
 
-body:has([data-component="alimtalk"]) .list-action {
+body:has([data-component="messages-shell"]) .list-action {
   text-decoration: none;
 }
 
-body:has([data-component="alimtalk"]) .list-title,
-body:has([data-component="alimtalk"]) .list-title-text,
-body:has([data-component="alimtalk"]) .list-action,
-body:has([data-component="alimtalk"]) .section-header,
-body:has([data-component="alimtalk"]) .trigger-title,
-body:has([data-component="alimtalk"]) .trigger-meta,
-body:has([data-component="alimtalk"]) .send-stat {
+body:has([data-component="messages-shell"]) .list-title,
+body:has([data-component="messages-shell"]) .list-title-text,
+body:has([data-component="messages-shell"]) .list-action,
+body:has([data-component="messages-shell"]) .section-header,
+body:has([data-component="messages-shell"]) .trigger-title,
+body:has([data-component="messages-shell"]) .trigger-meta,
+body:has([data-component="messages-shell"]) .send-stat {
   line-height: normal;
 }
 
-body:has([data-component="alimtalk"]) button.message-trigger-row {
+body:has([data-component="messages-shell"]) button.message-trigger-row {
   width: 100%;
   appearance: none;
   border: 0;
@@ -3437,16 +3722,16 @@ body:has([data-component="alimtalk"]) button.message-trigger-row {
   text-align: left;
 }
 
-body:has([data-component="alimtalk"]) button.message-trigger-row:disabled {
+body:has([data-component="messages-shell"]) button.message-trigger-row:disabled {
   cursor: wait;
   opacity: 0.72;
 }
 
-body:has([data-component="alimtalk"]) .message-trigger-row-skeleton {
+body:has([data-component="messages-shell"]) .message-trigger-row-skeleton {
   padding: 12px 10px;
 }
 
-body:has([data-component="alimtalk"]) .trigger-icon {
+body:has([data-component="messages-shell"]) .trigger-icon {
   display: flex;
   width: 38px;
   height: 38px;
@@ -3456,38 +3741,38 @@ body:has([data-component="alimtalk"]) .trigger-icon {
   border-radius: 11px;
 }
 
-body:has([data-component="alimtalk"]) .trigger-icon-primary {
+body:has([data-component="messages-shell"]) .trigger-icon-primary {
   color: hsl(var(--v3-primary));
   background: hsl(var(--v3-primary-light));
 }
 
-body:has([data-component="alimtalk"]) .trigger-icon-orange {
+body:has([data-component="messages-shell"]) .trigger-icon-orange {
   color: hsl(var(--v3-orange));
   background: hsl(var(--v3-orange-light));
 }
 
-body:has([data-component="alimtalk"]) .trigger-icon-green {
+body:has([data-component="messages-shell"]) .trigger-icon-green {
   color: hsl(var(--v3-green));
   background: hsl(var(--v3-green-light));
 }
 
-body:has([data-component="alimtalk"]) .trigger-icon-purple {
+body:has([data-component="messages-shell"]) .trigger-icon-purple {
   color: hsl(267, 50%, 46%);
   background: hsl(267, 50%, 92%);
 }
 
-body:has([data-component="alimtalk"]) .trigger-info {
+body:has([data-component="messages-shell"]) .trigger-info {
   flex: 1;
   min-width: 0;
 }
 
-body:has([data-component="alimtalk"]) .trigger-title {
+body:has([data-component="messages-shell"]) .trigger-title {
   color: hsl(var(--v3-dark));
   font-size: 0.86rem;
   font-weight: 700;
 }
 
-body:has([data-component="alimtalk"]) .trigger-meta {
+body:has([data-component="messages-shell"]) .trigger-meta {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -3496,11 +3781,11 @@ body:has([data-component="alimtalk"]) .trigger-meta {
   font-size: 0.66rem;
 }
 
-body:has([data-component="alimtalk"]) .trigger-meta .sep {
+body:has([data-component="messages-shell"]) .trigger-meta .sep {
   color: hsl(var(--v3-border));
 }
 
-body:has([data-component="alimtalk"]) .send-stat {
+body:has([data-component="messages-shell"]) .send-stat {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -3512,7 +3797,7 @@ body:has([data-component="alimtalk"]) .send-stat {
   font-weight: 700;
 }
 
-body:has([data-component="alimtalk"]) .alimtalk-count-skeleton {
+body:has([data-component="messages-shell"]) .message-count-skeleton {
   display: inline-block;
   width: 36px;
   height: 0.6rem;
@@ -3522,12 +3807,12 @@ body:has([data-component="alimtalk"]) .alimtalk-count-skeleton {
   animation: pulse 0.8s ease-in-out infinite;
 }
 
-body:has([data-component="alimtalk"]) .send-stat.fail {
+body:has([data-component="messages-shell"]) .send-stat.fail {
   color: hsl(var(--v3-burgundy));
   background: hsl(var(--v3-burgundy-light));
 }
 
-body:has([data-component="alimtalk"]) .alimtalk-empty-state {
+body:has([data-component="messages-shell"]) .message-empty-state {
   display: flex;
   min-height: 120px;
   align-items: center;
@@ -3540,7 +3825,7 @@ body:has([data-component="alimtalk"]) .alimtalk-empty-state {
   text-align: center;
 }
 
-body:has([data-component="alimtalk"]) .toggle {
+body:has([data-component="messages-shell"]) .toggle {
   position: relative;
   width: 38px;
   height: 22px;
@@ -3551,7 +3836,7 @@ body:has([data-component="alimtalk"]) .toggle {
   transition: background 0.2s ease;
 }
 
-body:has([data-component="alimtalk"]) .toggle::after {
+body:has([data-component="messages-shell"]) .toggle::after {
   content: "";
   position: absolute;
   top: 2px;
@@ -3564,15 +3849,15 @@ body:has([data-component="alimtalk"]) .toggle::after {
   transition: left 0.2s ease;
 }
 
-body:has([data-component="alimtalk"]) .toggle.on {
+body:has([data-component="messages-shell"]) .toggle.on {
   background: hsl(var(--v3-green));
 }
 
-body:has([data-component="alimtalk"]) .toggle.on::after {
+body:has([data-component="messages-shell"]) .toggle.on::after {
   left: 18px;
 }
 
-body:has([data-component="alimtalk"]) [data-component="mobile-bottom-nav"] {
+body:has([data-component="messages-shell"]) [data-component="mobile-bottom-nav"] {
   position: absolute !important;
   right: 14px !important;
   bottom: 12px !important;
@@ -3590,23 +3875,23 @@ body:has([data-component="alimtalk"]) [data-component="mobile-bottom-nav"] {
   transform: none !important;
 }
 
-body:has([data-component="alimtalk"]) [data-component="mobile-bottom-nav"] > div[aria-hidden="true"] {
+body:has([data-component="messages-shell"]) [data-component="mobile-bottom-nav"] > div[aria-hidden="true"] {
   display: none;
 }
 
-body:has([data-component="alimtalk"]) nav[data-component="mobile-bottom-nav"] a {
+body:has([data-component="messages-shell"]) nav[data-component="mobile-bottom-nav"] a {
   gap: 2px !important;
   padding: 5px 4px !important;
   border-radius: 14px !important;
   font-family: "NanumSquare Neo", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, sans-serif;
 }
 
-body:has([data-component="alimtalk"]) [data-component="mobile-bottom-nav"] svg {
+body:has([data-component="messages-shell"]) [data-component="mobile-bottom-nav"] svg {
   width: 18px;
   height: 18px;
 }
 
-body:has([data-component="alimtalk"]) [data-component="mobile-bottom-nav"] span {
+body:has([data-component="messages-shell"]) [data-component="mobile-bottom-nav"] span {
   font-size: 10px;
   font-weight: 500;
   line-height: 1;
@@ -5386,7 +5671,7 @@ html:has(body [data-component="files"]),
 html:has(body [data-component="messages"]),
 html:has(body [data-component="messages-new-page"]),
 html:has(body [data-component="messages-templates"]),
-html:has(body [data-component="alimtalk"]),
+html:has(body [data-component="messages-shell"]),
 html:has(body [data-component="auth-login"]),
 html:has(body [data-component="auth-forgot-password"]),
 html:has(body [data-component="auth-register"]),
@@ -5408,7 +5693,7 @@ body:has([data-component="files"]),
 body:has([data-component="messages"]),
 body:has([data-component="messages-new-page"]),
 body:has([data-component="messages-templates"]),
-body:has([data-component="alimtalk"]),
+body:has([data-component="messages-shell"]),
 body:has([data-component="auth-login"]),
 body:has([data-component="auth-forgot-password"]),
 body:has([data-component="auth-register"]),
@@ -5430,7 +5715,7 @@ body:has([data-component="files"]) [data-component="app-root"],
 body:has([data-component="messages"]) [data-component="app-root"],
 body:has([data-component="messages-new-page"]) [data-component="app-root"],
 body:has([data-component="messages-templates"]) [data-component="app-root"],
-body:has([data-component="alimtalk"]) [data-component="app-root"],
+body:has([data-component="messages-shell"]) [data-component="app-root"],
 body:has([data-component="auth-login"]) [data-component="app-root"],
 body:has([data-component="auth-forgot-password"]) [data-component="app-root"],
 body:has([data-component="auth-register"]) [data-component="app-root"],
@@ -5455,7 +5740,7 @@ body:has([data-component="files"]) [data-component="app-root"]::before,
 body:has([data-component="messages"]) [data-component="app-root"]::before,
 body:has([data-component="messages-new-page"]) [data-component="app-root"]::before,
 body:has([data-component="messages-templates"]) [data-component="app-root"]::before,
-body:has([data-component="alimtalk"]) [data-component="app-root"]::before,
+body:has([data-component="messages-shell"]) [data-component="app-root"]::before,
 body:has([data-component="auth-login"]) [data-component="app-root"]::before,
 body:has([data-component="auth-forgot-password"]) [data-component="app-root"]::before,
 body:has([data-component="auth-register"]) [data-component="app-root"]::before,
@@ -5478,7 +5763,7 @@ body:has([data-component="files"]) [data-component="app-providers"],
 body:has([data-component="messages"]) [data-component="app-providers"],
 body:has([data-component="messages-new-page"]) [data-component="app-providers"],
 body:has([data-component="messages-templates"]) [data-component="app-providers"],
-body:has([data-component="alimtalk"]) [data-component="app-providers"],
+body:has([data-component="messages-shell"]) [data-component="app-providers"],
 body:has([data-component="auth-login"]) [data-component="app-providers"],
 body:has([data-component="auth-forgot-password"]) [data-component="app-providers"],
 body:has([data-component="auth-register"]) [data-component="app-providers"],
@@ -5500,7 +5785,7 @@ body:has([data-component="files"]) nextjs-portal,
 body:has([data-component="messages"]) nextjs-portal,
 body:has([data-component="messages-new-page"]) nextjs-portal,
 body:has([data-component="messages-templates"]) nextjs-portal,
-body:has([data-component="alimtalk"]) nextjs-portal,
+body:has([data-component="messages-shell"]) nextjs-portal,
 body:has([data-component="auth-login"]) nextjs-portal,
 body:has([data-component="auth-forgot-password"]) nextjs-portal,
 body:has([data-component="auth-register"]) nextjs-portal,
@@ -6363,7 +6648,7 @@ body:has([data-component="contracts"]) [data-component="app-providers"] {
   body:has([data-component="messages"]) [data-component="app-root"],
   body:has([data-component="messages-new-page"]) [data-component="app-root"],
   body:has([data-component="messages-templates"]) [data-component="app-root"],
-  body:has([data-component="alimtalk"]) [data-component="app-root"],
+  body:has([data-component="messages-shell"]) [data-component="app-root"],
   body:has([data-component="auth-login"]) [data-component="app-root"],
   body:has([data-component="auth-forgot-password"]) [data-component="app-root"],
   body:has([data-component="auth-register"]) [data-component="app-root"],

@@ -31,9 +31,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             return invalidScheduleIdResponse();
         }
 
+        const body = await request.json().catch(() => ({}));
         const response = await serverAPIClient.post(
             `/admin/service-records/schedules/${scheduleId}/send-link`,
-            {},
+            body,
             { headers: getAuthHeaders(token) },
         );
         return backendJsonResponse(response);

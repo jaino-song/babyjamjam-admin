@@ -4,19 +4,18 @@ import { useMemo, useState } from "react";
 import type { KeyboardEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { formatMessageDateTimeCompact } from "@babyjamjam/shared";
 
 import "@/components/app/mobile-redesign/redesign.css";
 import { useSystemTemplates } from "@/features/system-templates/hooks";
 import { useMessageTemplates } from "@/hooks/use-message-templates";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import { ListLoadMoreButton, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
-import { Switch } from "@/components/ui/switch";
 
 import styles from "./page.module.css";
 
 type TemplateKind = "system" | "user";
-type TemplateChannel = "kakao" | "sms";
-type TemplateFilter = "전체" | "시스템 자동" | "사용자 작성" | "사용 안 함";
+type TemplateFilter = "전체" | "기본 템플릿" | "지점 템플릿";
 type TemplateIconName =
   | "message"
   | "send"
@@ -31,146 +30,48 @@ interface TemplateRow {
   displayId: string;
   kind: TemplateKind;
   name: string;
-  channel: TemplateChannel;
   eventLabel: string;
-  sendLabel: string;
-  enabled: boolean;
+  updatedLabel: string;
   icon: TemplateIconName;
 }
 
 const TEMPLATE_FILTERS: TemplateFilter[] = [
   "전체",
-  "시스템 자동",
-  "사용자 작성",
-  "사용 안 함",
+  "기본 템플릿",
+  "지점 템플릿",
 ];
 
-const MOCKUP_TEMPLATE_ROWS: TemplateRow[] = [
-  {
-    id: "system-client-welcome",
-    displayId: "CLIENT_WELCOME",
-    kind: "system",
-    name: "고객 등록 환영",
-    channel: "kakao",
-    eventLabel: "고객 등록",
-    sendLabel: "5월 12건 발송",
-    enabled: true,
-    icon: "message",
-  },
-  {
-    id: "system-service-start-d1",
-    displayId: "SERVICE_START_D1",
-    kind: "system",
-    name: "서비스 시작 D-1 안내",
-    channel: "kakao",
-    eventLabel: "서비스 시작 (D-1)",
-    sendLabel: "5월 8건 발송",
-    enabled: true,
-    icon: "send",
-  },
-  {
-    id: "system-service-end",
-    displayId: "SERVICE_END",
-    kind: "system",
-    name: "서비스 종료 안내",
-    channel: "kakao",
-    eventLabel: "서비스 종료",
-    sendLabel: "5월 6건 발송",
-    enabled: true,
-    icon: "check",
-  },
-  {
-    id: "system-employee-assigned",
-    displayId: "EMPLOYEE_ASSIGNED",
-    kind: "system",
-    name: "제공인력 배정 안내",
-    channel: "kakao",
-    eventLabel: "직원 배정",
-    sendLabel: "5월 7건 발송",
-    enabled: false,
-    icon: "userCheck",
-  },
-  {
-    id: "user-visit-change",
-    displayId: "mock-visit-change",
-    kind: "user",
-    name: "방문 일정 변경 안내",
-    channel: "kakao",
-    eventLabel: "사용자 작성",
-    sendLabel: "4월 23건 발송",
-    enabled: true,
-    icon: "thumbsUp",
-  },
-  {
-    id: "user-consultation-confirmed",
-    displayId: "mock-consultation-confirmed",
-    kind: "user",
-    name: "상담 예약 확정",
-    channel: "sms",
-    eventLabel: "사용자 작성",
-    sendLabel: "5월 4건 발송",
-    enabled: true,
-    icon: "message",
-  },
-  {
-    id: "user-satisfaction",
-    displayId: "mock-satisfaction",
-    kind: "user",
-    name: "서비스 만족도 조사",
-    channel: "kakao",
-    eventLabel: "사용자 작성",
-    sendLabel: "5월 11건 발송",
-    enabled: true,
-    icon: "checkCircle",
-  },
-  {
-    id: "user-monthly-billing",
-    displayId: "mock-monthly-billing",
-    kind: "user",
-    name: "월별 정산 안내",
-    channel: "kakao",
-    eventLabel: "사용자 작성",
-    sendLabel: "4월 1건 발송",
-    enabled: false,
-    icon: "calendar",
-  },
+const TEMPLATE_ICONS: TemplateIconName[] = [
+  "message",
+  "send",
+  "check",
+  "userCheck",
+  "thumbsUp",
+  "checkCircle",
+  "calendar",
 ];
-
-const MOCKUP_FILTER_COUNTS: Record<TemplateFilter, string> = {
-  "전체": "12",
-  "시스템 자동": "4",
-  "사용자 작성": "8",
-  "사용 안 함": "2",
-};
 
 const getTemplateDestination = (template: TemplateRow): string => {
   if (template.kind === "system") {
     return `/messages/system-templates/${template.displayId}`;
   }
 
-  return `/messages/new?template=${encodeURIComponent(template.displayId)}`;
+  return `/messages/templates/${encodeURIComponent(template.displayId)}/edit`;
 };
 
 const getFilterCount = (
   rows: TemplateRow[],
   filter: TemplateFilter,
-  useMockupCounts: boolean,
 ): string => {
-  if (useMockupCounts) {
-    return MOCKUP_FILTER_COUNTS[filter];
-  }
-
   if (filter === "전체") return String(rows.length);
-  if (filter === "시스템 자동") return String(rows.filter((row) => row.kind === "system").length);
-  if (filter === "사용자 작성") return String(rows.filter((row) => row.kind === "user").length);
-  return String(rows.filter((row) => !row.enabled).length);
+  if (filter === "기본 템플릿") return String(rows.filter((row) => row.kind === "system").length);
+  return String(rows.filter((row) => row.kind === "user").length);
 };
 
 const matchesFilter = (row: TemplateRow, filter: TemplateFilter): boolean => {
   if (filter === "전체") return true;
-  if (filter === "시스템 자동") return row.kind === "system";
-  if (filter === "사용자 작성") return row.kind === "user";
-  return !row.enabled;
+  if (filter === "기본 템플릿") return row.kind === "system";
+  return row.kind === "user";
 };
 
 const normalizeSearch = (value: string): string => value.trim().toLocaleLowerCase("ko-KR");
@@ -179,10 +80,10 @@ export default function TemplatesPage() {
   const router = useRouter();
   const [activeFilter, setActiveFilter] = useState<TemplateFilter>("전체");
   const [searchQuery, setSearchQuery] = useState("");
-  const [enabledOverrides, setEnabledOverrides] = useState<Record<string, boolean>>({});
 
-  const { data: systemTemplates } = useSystemTemplates();
-  const { data: userTemplates } = useMessageTemplates();
+  const { data: systemTemplates, isLoading: isLoadingSystemTemplates } = useSystemTemplates();
+  const { data: userTemplates, isLoading: isLoadingUserTemplates } = useMessageTemplates();
+  const isLoading = isLoadingSystemTemplates || isLoadingUserTemplates;
 
   const liveRows = useMemo<TemplateRow[]>(() => {
     const systemRows = (systemTemplates || []).map<TemplateRow>((template, index) => ({
@@ -190,11 +91,9 @@ export default function TemplatesPage() {
       displayId: template.templateKey,
       kind: "system",
       name: template.name,
-      channel: "kakao",
-      eventLabel: template.description || "시스템 자동",
-      sendLabel: `${index + 1}건 발송`,
-      enabled: true,
-      icon: MOCKUP_TEMPLATE_ROWS[index % 4]?.icon ?? "message",
+      eventLabel: template.description || "기본 템플릿",
+      updatedLabel: formatMessageDateTimeCompact(template.updatedAt),
+      icon: TEMPLATE_ICONS[index % TEMPLATE_ICONS.length] ?? "message",
     }));
 
     const userRows = (userTemplates || []).map<TemplateRow>((template, index) => ({
@@ -202,36 +101,32 @@ export default function TemplatesPage() {
       displayId: template.id,
       kind: "user",
       name: template.name,
-      channel: "kakao",
-      eventLabel: "사용자 작성",
-      sendLabel: `${index + 1}건 발송`,
-      enabled: true,
-      icon: MOCKUP_TEMPLATE_ROWS[(index % 4) + 4]?.icon ?? "thumbsUp",
+      eventLabel: "지점 템플릿",
+      updatedLabel: formatMessageDateTimeCompact(template.updatedAt),
+      icon: TEMPLATE_ICONS[(index + 4) % TEMPLATE_ICONS.length] ?? "thumbsUp",
     }));
 
     return [...systemRows, ...userRows];
   }, [systemTemplates, userTemplates]);
 
-  const usesMockupRows = liveRows.length === 0;
-  const rows = usesMockupRows ? MOCKUP_TEMPLATE_ROWS : liveRows;
+  const rows = liveRows;
 
   const visibleRows = useMemo(() => {
     const query = normalizeSearch(searchQuery);
     return rows
-      .map((row) => ({ ...row, enabled: enabledOverrides[row.id] ?? row.enabled }))
       .filter((row) => matchesFilter(row, activeFilter))
       .filter((row) => {
         if (!query) return true;
-        return `${row.name} ${row.eventLabel} ${row.channel}`
+        return `${row.name} ${row.eventLabel}`
           .toLocaleLowerCase("ko-KR")
           .includes(query);
       });
-  }, [activeFilter, enabledOverrides, rows, searchQuery]);
+  }, [activeFilter, rows, searchQuery]);
 
   const systemRowsFull = visibleRows.filter((row) => row.kind === "system");
   const userRowsFull = visibleRows.filter((row) => row.kind === "user");
-  const systemTitle = usesMockupRows ? "시스템 자동 · 4개" : `시스템 자동 · ${systemRowsFull.length}개`;
-  const userTitle = usesMockupRows ? "사용자 작성 · 8개" : `사용자 작성 · ${userRowsFull.length}개`;
+  const systemTitle = `기본 템플릿 · ${systemRowsFull.length}개`;
+  const userTitle = `지점 템플릿 · ${userRowsFull.length}개`;
 
   const maxFullCount = Math.max(systemRowsFull.length, userRowsFull.length);
   const { visibleCount, isInitialLoad, hasMore, sentinelRef, scrollContainerRef, loadMore } =
@@ -252,13 +147,6 @@ export default function TemplatesPage() {
       event.preventDefault();
       openTemplate(row);
     }
-  };
-
-  const toggleTemplate = (row: TemplateRow) => {
-    setEnabledOverrides((current) => ({
-      ...current,
-      [row.id]: !(current[row.id] ?? row.enabled),
-    }));
   };
 
   return (
@@ -300,19 +188,23 @@ export default function TemplatesPage() {
                 aria-pressed={activeFilter === filter}
                 onClick={() => setActiveFilter(filter)}
               >
-                {filter} <span className="count">{getFilterCount(rows, filter, usesMockupRows)}</span>
+                {filter} <span className="count">{getFilterCount(rows, filter)}</span>
               </button>
             ))}
           </div>
 
           <div ref={scrollContainerRef} className="list-card-scroll" data-component="messages-templates-scroll">
+            {isLoading ? (
+              <div className="detail-empty-state" data-component="messages-templates-loading">
+                템플릿을 불러오고 있습니다.
+              </div>
+            ) : null}
             {systemRows.length > 0 && (
               <TemplateSection
                 title={systemTitle}
                 rows={systemRows}
                 onOpen={openTemplate}
                 onKeyDown={handleRowKeyDown}
-                onToggle={toggleTemplate}
               />
             )}
             {userRows.length > 0 && (
@@ -321,9 +213,13 @@ export default function TemplatesPage() {
                 rows={userRows}
                 onOpen={openTemplate}
                 onKeyDown={handleRowKeyDown}
-                onToggle={toggleTemplate}
               />
             )}
+            {!isLoading && visibleRows.length === 0 ? (
+              <div className="detail-empty-state" data-component="messages-templates-empty">
+                {searchQuery.trim() ? "조건에 맞는 템플릿이 없습니다." : "등록된 템플릿이 없습니다."}
+              </div>
+            ) : null}
             {!isInitialLoad && hasMore && (
               <ListLoadMoreSentinel
                 sentinelRef={sentinelRef}
@@ -350,13 +246,11 @@ function TemplateSection({
   rows,
   onOpen,
   onKeyDown,
-  onToggle,
 }: {
   title: string;
   rows: TemplateRow[];
   onOpen: (row: TemplateRow) => void;
   onKeyDown: (event: KeyboardEvent<HTMLDivElement>, row: TemplateRow) => void;
-  onToggle: (row: TemplateRow) => void;
 }) {
   return (
     <div className="section-block" data-component="messages-templates-section">
@@ -369,7 +263,6 @@ function TemplateSection({
           row={row}
           onOpen={onOpen}
           onKeyDown={onKeyDown}
-          onToggle={onToggle}
         />
       ))}
     </div>
@@ -380,15 +273,11 @@ function TemplateListRow({
   row,
   onOpen,
   onKeyDown,
-  onToggle,
 }: {
   row: TemplateRow;
   onOpen: (row: TemplateRow) => void;
   onKeyDown: (event: KeyboardEvent<HTMLDivElement>, row: TemplateRow) => void;
-  onToggle: (row: TemplateRow) => void;
 }) {
-  const channelLabel = row.channel === "kakao" ? "알림톡" : "SMS";
-
   return (
     <div
       className="list-item"
@@ -399,9 +288,7 @@ function TemplateListRow({
       onKeyDown={(event) => onKeyDown(event, row)}
     >
       <div
-        className={`${styles.templateIcon} ${
-          row.channel === "kakao" ? styles.templateIconKakao : styles.templateIconSms
-        }`}
+        className={`${styles.templateIcon} ${styles.templateIconSms}`}
         data-component="messages-templates-row-icon"
       >
         <MockupIcon name={row.icon} size={18} />
@@ -409,25 +296,14 @@ function TemplateListRow({
       <div className="list-info" data-component="messages-templates-row-info">
         <div className="list-name" data-component="messages-templates-row-name">
           {row.name}
-          <span
-            className={`${styles.channel} ${
-              row.channel === "kakao" ? styles.channelKakao : styles.channelSms
-            }`}
-          >
-            {channelLabel}
+          <span className={`${styles.channel} ${styles.channelSms}`}>
+            SMS
           </span>
         </div>
         <div className={styles.templateMeta} data-component="messages-templates-row-meta">
-          {row.eventLabel} <span className={styles.metaSeparator}>·</span> {row.sendLabel}
+          {row.eventLabel} <span className={styles.metaSeparator}>·</span> {row.updatedLabel}
         </div>
       </div>
-      <Switch
-        data-component="messages-templates-row-switch"
-        aria-label={`${row.name} 자동 발송`}
-        checked={row.enabled}
-        onClick={(event) => event.stopPropagation()}
-        onCheckedChange={() => onToggle(row)}
-      />
     </div>
   );
 }

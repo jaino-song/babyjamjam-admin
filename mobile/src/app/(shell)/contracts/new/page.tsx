@@ -9,6 +9,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { useFormStore } from "@/stores/form-store";
 import { useEformsign } from "@/hooks/useEformsign";
+import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { useVoucherYears, useVoucherPriceInfos, useAreaTemplates, useAllVoucherPrices } from "@/hooks";
 import { useAllClients, useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useEmployees, type Employee } from "@/hooks/useEmployees";
@@ -164,6 +165,7 @@ const normalizeClientIdentityPhone = (value: string | null | undefined): string 
 
 export default function ContractCreationPage() {
   const router = useRouter();
+  const { isNavigationPending, startNavigation } = useNavigationPending();
   const queryClient = useQueryClient();
   const prefersReducedMotion = useReducedMotion();
 
@@ -645,6 +647,7 @@ export default function ContractCreationPage() {
             }
           }
           queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.allDocuments() });
+          startNavigation();
           setTimeout(() => {
             setIsEformsignModalOpen(false);
             router.push("/contracts");
@@ -787,6 +790,7 @@ export default function ContractCreationPage() {
 
         if (headless.ok) {
           headlessOk = true;
+          startNavigation();
           setCreationProgress({ step: "sent", completed: true, failed: false });
           queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.allDocuments() });
           setTimeout(() => {
@@ -861,7 +865,8 @@ export default function ContractCreationPage() {
   const activeStepMeta = WIZARD_STEPS[activeStep];
   const isFirstStep = activeStep === 0;
   const isLastStep = isContractInfoStep;
-  const isPrimaryDisabled = isSubmitting || !isCurrentStepValid;
+  const isBusy = isSubmitting || isNavigationPending;
+  const isPrimaryDisabled = isBusy || !isCurrentStepValid;
 
   return (
     <>
@@ -1237,7 +1242,7 @@ export default function ContractCreationPage() {
                         <span>기간</span>
                         <span className={styles.amount}>
                           {startDate && endDate
-                            ? `${dayjs(startDate).format("M/D")} → ${dayjs(endDate).format("M/D")}`
+                            ? `${dayjs(startDate).format("YYYY.MM.DD")} → ${dayjs(endDate).format("YYYY.MM.DD")}`
                             : "-"}
                         </span>
                       </div>
@@ -1267,7 +1272,7 @@ export default function ContractCreationPage() {
                 disabled={isPrimaryDisabled}
                 className={cn(styles.wizardButton, styles.primaryButton)}
               >
-                {isSubmitting ? "생성 중..." : isLastStep ? "계약서 생성" : "다음"}
+                {isBusy ? "생성 중..." : isLastStep ? "계약서 생성" : "다음"}
               </button>
             </div>
           </section>
@@ -1291,9 +1296,9 @@ export default function ContractCreationPage() {
         confirmLabel="생성"
         confirmVariant="default"
         actionOrder="cancel-confirm"
-        loading={isSubmitting}
+        loading={isBusy}
         onOpenChange={(open) => {
-          if (!isSubmitting) setIsExistingContractConfirmOpen(open);
+          if (!isBusy) setIsExistingContractConfirmOpen(open);
         }}
         onCancel={() => setIsExistingContractConfirmOpen(false)}
         onConfirm={() => {

@@ -11,6 +11,7 @@ import { ContentPaper } from "../root/content-paper";
 import { useCreateMessageTemplate, useUpdateMessageTemplate } from "@/hooks/use-message-templates";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
+import { useNavigationPending } from "@/lib/hooks/use-navigation-pending";
 import { MessageTemplate, TemplateVariable } from "@/lib/template/types";
 import { extractVariables } from "@/lib/template/variable-parser";
 import { VariableConfigurator } from "./variable-configurator";
@@ -26,6 +27,7 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
     const locale = useLocale();
     const { mutate: createTemplate, isPending: isCreating } = useCreateMessageTemplate();
     const { mutate: updateTemplate, isPending: isUpdating } = useUpdateMessageTemplate();
+    const { isPending, beginNavigation } = useNavigationPending(isCreating || isUpdating);
 
     const [name, setName] = useState(initialData?.name || "");
     const [content, setContent] = useState(initialData?.content || "");
@@ -58,11 +60,17 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
         const data = { name, content, variables };
         if (initialData) {
             updateTemplate({ id: initialData.id, request: data }, {
-                onSuccess: () => router.push("/messages/templates")
+                onSuccess: () => {
+                    beginNavigation();
+                    router.push("/messages/templates");
+                }
             });
         } else {
             createTemplate(data, {
-                onSuccess: () => router.push("/messages/templates")
+                onSuccess: () => {
+                    beginNavigation();
+                    router.push("/messages/templates");
+                }
             });
         }
     };
@@ -74,8 +82,6 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
     const insertVariable = (key: string) => {
         setContent(prev => prev + `{{${key}}}`);
     };
-
-    const isPending = isCreating || isUpdating;
 
     return (
         <div className="flex flex-col gap-6">

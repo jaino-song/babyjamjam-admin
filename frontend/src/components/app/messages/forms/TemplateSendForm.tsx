@@ -1,6 +1,7 @@
 "use client";
 
 import { isAxiosError } from "axios";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Calendar, Loader2, Send, X } from "lucide-react";
 
@@ -9,9 +10,11 @@ import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonMod
 import { StatusBadge } from "@/components/app/ui/status-badge";
 import { Button } from "@/components/ui/button";
 import { filterHistoryRecordsByChannel } from "@/features/message-triggers/channel";
+import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import { useMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
 import type { MessageLogRecord } from "@/features/message-triggers/types";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
+import { useToast } from "@/hooks/use-toast";
 import { messageDeliveryApi } from "@/services/api";
 import type { Client } from "@/lib/client/types";
 import {
@@ -202,6 +205,8 @@ export function TemplateSendForm({
   serviceRecordLinkPreparation,
   onSubmitStateChange,
 }: TemplateSendFormProps) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
@@ -575,10 +580,11 @@ export function TemplateSendForm({
 
   const sendServiceRecordLink = async () => {
     if (clientId === null || employeeId === null || !serviceRecordLinkPreparation) {
-      setFeedback({
-        tone: "error",
-        message: serviceRecordValidationMessage ?? "제공기록지 링크를 준비하고 있습니다. 잠시 후 다시 시도해 주세요.",
-      });
+      const errorMessage =
+        serviceRecordValidationMessage ??
+        "제공기록지 링크를 준비하고 있습니다. 잠시 후 다시 시도해 주세요.";
+      setFeedback({ tone: "error", message: errorMessage });
+      toast({ variant: "destructive", description: errorMessage });
       return;
     }
 
@@ -587,21 +593,35 @@ export function TemplateSendForm({
     const failureStage: ServiceRecordLinkFailureStage = "send";
 
     try {
-      await serviceRecordsApi.sendLink(serviceRecordLinkPreparation.scheduleId, {
+      const response = await serviceRecordsApi.sendLink(serviceRecordLinkPreparation.scheduleId, {
         preparedLinkToken: serviceRecordLinkPreparation.preparedLinkToken,
+        recipientPhone: serviceRecordLinkPreparation.recipientPhone,
       });
-      setFeedback({
-        tone: "success",
-        message: "제공기록지 링크 발송 요청이 접수되었습니다.",
-      });
-      resetEmployeeFields();
-      resetClientFields();
+      const { status } = response.data;
+
+      if (status === "sent") {
+        setFeedback({ tone: "success", message: "제공기록지 링크 즉시 발송이 완료되었습니다." });
+        toast({ description: "제공기록지 링크 즉시 발송이 완료되었습니다." });
+        resetEmployeeFields();
+        resetClientFields();
+      } else if (status === "processing") {
+        setFeedback({ tone: "success", message: "제공기록지 링크를 발송하고 있습니다." });
+        toast({ description: "제공기록지 링크를 발송하고 있습니다." });
+      } else {
+        const errorMessage =
+          status === "pending"
+            ? "즉시 발송에 실패해 재시도 대기열에 등록되었습니다."
+            : "제공기록지 링크 즉시 발송에 실패했습니다.";
+        setFeedback({ tone: "error", message: errorMessage });
+        toast({ variant: "destructive", description: errorMessage });
+      }
     } catch (error) {
-      setFeedback({
-        tone: "error",
-        message: getServiceRecordLinkErrorMessage(error, failureStage),
-      });
+      const errorMessage = getServiceRecordLinkErrorMessage(error, failureStage);
+      setFeedback({ tone: "error", message: errorMessage });
+      toast({ variant: "destructive", description: errorMessage });
     } finally {
+      void queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
+      void queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() });
       setIsSending(false);
     }
   };
@@ -611,6 +631,9 @@ export function TemplateSendForm({
 
     if (validationMessage) {
       setFeedback({ tone: "error", message: validationMessage });
+      if (isServiceRecordLinkDelivery) {
+        toast({ variant: "destructive", description: validationMessage });
+      }
       return;
     }
 

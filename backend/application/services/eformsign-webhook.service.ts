@@ -6,7 +6,6 @@ import {
     type SyncedClientEndDate,
 } from "application/usecases/eformsign-doc/sync-client-end-date.usecase";
 import { EformsignWebhookPayloadDto } from "interface/dto/eformsign-webhook.dto";
-import { AlimtalkService } from "./alimtalk.service";
 import { EformsignDocsEventBus } from "./eformsign-docs-event-bus.service";
 import { NotificationService } from "./notification.service";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
@@ -103,7 +102,6 @@ export class EformsignWebhookService {
         private readonly updateStatusUsecase: UpdateEformsignDocStatusUsecase,
         private readonly linkDocumentUsecase: LinkDocumentToClientUsecase,
         private readonly syncClientEndDateUsecase: SyncClientEndDateUsecase,
-        private readonly alimtalkService: AlimtalkService,
         private readonly eventBus: EformsignDocsEventBus,
         private readonly notificationService: NotificationService,
         @Inject(EFORMSIGN_CLIENT_REPOSITORY)
@@ -123,7 +121,7 @@ export class EformsignWebhookService {
     /**
      * BJJ-247 gate: is this document the daily-feedback snapshot template?
      * A feedback document's completion must NOT trigger contract-completion side
-     * effects (link eDocId / sync endDate / contract alimtalk). No-op (returns false)
+     * effects (link eDocId / sync endDate). No-op (returns false)
      * when EFORMSIGN_FEEDBACK_TEMPLATE_ID is unset, preserving existing behavior.
      */
     private isServiceRecordTemplate(templateId?: string): boolean {
@@ -428,11 +426,6 @@ export class EformsignWebhookService {
                 this.logger.error(`Failed to sync end date for document ${documentId}: ${error}`);
             }
 
-            await this.sendContractSignedAlimtalkByDocumentId(
-                branchid,
-                documentId,
-                workflowName
-            );
         } catch (error) {
             this.logger.error(`Failed to link document ${documentId} to client: ${error}`);
         }
@@ -478,39 +471,6 @@ export class EformsignWebhookService {
         });
         if (completed.count === 1) {
             this.logger.log(`Service record documents completed: case=${document.serviceRecordCaseId}`);
-        }
-    }
-
-    private async sendContractSignedAlimtalkByDocumentId(
-        branchid: string,
-        documentId: string,
-        workflowName: string
-    ): Promise<void> {
-        try {
-            const doc = await this.eformsignDocRepository.findByDocumentId(branchid, documentId);
-            if (!doc) {
-                this.logger.warn(`Cannot send alimtalk: document ${documentId} not found`);
-                return;
-            }
-
-            const client = await this.clientRepository.findById(branchid, doc.clientId);
-            if (!client) {
-                this.logger.warn(`Cannot send alimtalk: client ${doc.clientId} not found`);
-                return;
-            }
-
-            const today = new Date();
-            const contractInfo = {
-                contractType: workflowName || "방문요양 계약서",
-                signedDate: this.formatDate(today),
-                serviceStartDate: client.startDate ? this.formatDate(client.startDate) : this.formatDate(today),
-                employeeName: await this.getEmployeeNameForClient(branchid, doc.clientId),
-            };
-
-            await this.alimtalkService.sendContractSignedAlimtalk(client, contractInfo);
-            this.logger.log(`Contract signed alimtalk sent for client ${client.id}`);
-        } catch (error) {
-            this.logger.error(`Failed to send contract signed alimtalk: ${error}`);
         }
     }
 

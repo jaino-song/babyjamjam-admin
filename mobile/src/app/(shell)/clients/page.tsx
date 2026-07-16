@@ -9,7 +9,7 @@ import { clientQueryKeys, fetchClient, useClient, useDeleteClient } from "@/hook
 import { useEmployees } from "@/hooks/useEmployees";
 import { useInfiniteClients } from "@/hooks/useInfiniteClients";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
-import { fetchAllMessageLogs } from "@/lib/messages/logs";
+import { useClientMessageHistory } from "@/hooks/useClientMessageHistory";
 import { Client } from "@/lib/client/types";
 import { getMobileClientBadges } from "@/lib/client/badges";
 import { getStatusCategory } from "@/lib/eformsign/status-codes";
@@ -17,6 +17,7 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { eformsignApi, withEformsignReauth } from "@/services/api";
 import { t } from "@/lib/i18n/translations";
 import { todayIsoDate } from "@/lib/contracts/date-input";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { parsePositiveIntQueryParam } from "@/lib/query-params";
 import { toast } from "@/hooks/use-toast";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
@@ -36,7 +37,7 @@ import {
   MobileDetailSheet,
   MobileSearchBar,
 } from "@/components/app/mobile-redesign/detail-sheet";
-import { ClientDetailContent, GROUPS, type ClientGroup, type ClientNotificationLogRecord, type DetailTabId } from "@/components/app/clients/client-detail";
+import { ClientDetailContent, GROUPS, type ClientGroup, type DetailTabId } from "@/components/app/clients/client-detail";
 import "@/components/app/mobile-redesign/redesign.css";
 
 const CLIENTS_ROUTE_BODY_CLASS = "mobile-clients-route";
@@ -87,16 +88,13 @@ function formatKoreanDate(dateStr: string | null | undefined): string | null {
     const year = dateOnlyMatch[1];
     const month = dateOnlyMatch[2].padStart(2, "0");
     const day = dateOnlyMatch[3].padStart(2, "0");
-    return `${year}년 ${month}월 ${day}일`;
+    return `${year}.${month}.${day}`;
   }
 
   const normalized = compactDateToIsoDate(dateStr) ?? yymmddToIsoDate(dateStr) ?? dateStr;
   const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) return null;
-  const year = String(date.getFullYear());
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}년 ${month}월 ${day}일`;
+  return formatDateForDisplay(date, "");
 }
 
 function labeledDateMeta(label: string, dateStr: string | null | undefined, c: Client): string {
@@ -161,10 +159,6 @@ function hasContractRequiredBadge(c: Client): boolean {
   return getMobileClientBadges(c).some((badge) => badge.key === "contract_required");
 }
 
-function normalizePhone(value: string | null | undefined): string {
-  return (value ?? "").replace(/\D/g, "");
-}
-
 function contractPrefillDate(value: string | null | undefined): string | undefined {
   if (!value) return undefined;
 
@@ -211,12 +205,12 @@ export default function ClientsPage() {
   const { data: employees = [] } = useEmployees();
   const { data: clientFromParam } = useClient(selectedClientIdFromParam ?? 0);
   const detailClient = selectedClient ?? (selectedClientIdFromParam !== null ? clientFromParam ?? null : null);
-  const { data: notificationLogsData = [], isLoading: isNotificationLogsLoading } = useQuery<ClientNotificationLogRecord[]>({
-    queryKey: ["messages", "logs", "all"],
-    queryFn: () => fetchAllMessageLogs<ClientNotificationLogRecord>(),
-    enabled: Boolean(detailClient),
-    staleTime: 1000 * 60,
-  });
+  const {
+    notificationLogs: detailNotificationLogs,
+    isLoading: isNotificationLogsLoading,
+    isError: isNotificationLogsError,
+    refetch: refetchNotificationLogs,
+  } = useClientMessageHistory(detailClient);
   const { data: syncedContractDoc } = useQuery({
     queryKey: ["eformsign-docs", "sync-status", detailClient?.eDocId],
     queryFn: async () => {
@@ -266,19 +260,6 @@ export default function ClientsPage() {
     queryClient.invalidateQueries({ queryKey: clientQueryKeys.lists() });
     queryClient.invalidateQueries({ queryKey: clientQueryKeys.detail(detailClient.id) });
   }, [detailClient, queryClient, syncedContractDoc]);
-
-  const detailNotificationLogs = useMemo(() => {
-    if (!detailClient || !Array.isArray(notificationLogsData)) return [];
-
-    const clientPhone = normalizePhone(detailClient.phone);
-    return notificationLogsData
-      .filter((log) => {
-        if (log.clientId === detailClient.id) return true;
-        if (!clientPhone) return false;
-        return normalizePhone(log.receiver) === clientPhone;
-      })
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [detailClient, notificationLogsData]);
 
   const handleSelectClient = async (client: Client) => {
     const requestId = selectClientRequestRef.current + 1;
@@ -333,7 +314,7 @@ export default function ClientsPage() {
   };
 
   const handleMessage = (client: Client) => {
-    router.push(`/messages?clientId=${client.id}`);
+    router.push(`/messages/new?clientId=${client.id}`);
   };
 
   const handleIssueContract = (client: Client) => {
@@ -602,6 +583,10 @@ export default function ClientsPage() {
               activeTab={detailSheetTab}
               notificationLogs={detailNotificationLogs}
               isNotificationLogsLoading={isNotificationLogsLoading}
+              isNotificationLogsError={isNotificationLogsError}
+              onRetryNotificationLogs={() => {
+                void refetchNotificationLogs();
+              }}
               isIssuingContract={false}
               onTabChange={setDetailSheetTab}
               onMessage={() => handleMessage(syncedDetailClient ?? detailClient)}

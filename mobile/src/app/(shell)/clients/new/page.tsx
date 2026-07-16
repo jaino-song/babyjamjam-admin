@@ -6,6 +6,7 @@ import { ChevronLeft, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
 import { useClient, useCreateClient, useUpdateClient } from "@/hooks/useClients";
+import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import {
   useAllVoucherPrices,
   useBankAccountInfos,
@@ -190,6 +191,7 @@ const findVoucherPriceByAmounts = (
 
 export default function NewClientPage() {
   const router = useRouter();
+  const { isNavigationPending, startNavigation } = useNavigationPending();
   const searchParams = useSearchParams();
   const editingClientId = parsePositiveIntQueryParam(searchParams.get("clientId"));
   const isEditMode = editingClientId !== null;
@@ -725,6 +727,7 @@ export default function NewClientPage() {
       } else {
         await createClient.mutateAsync(dto);
       }
+      startNavigation();
       router.push(clientsReturnHref);
     } catch (err: unknown) {
       showFloatingError(getErrorMessage(err, locale, "clients.form.error-save-failed"));
@@ -763,7 +766,7 @@ export default function NewClientPage() {
     handleStepChange(activeStep + 1);
   };
 
-  const isSaving = createClient.isPending || updateClient.isPending;
+  const isSaving = createClient.isPending || updateClient.isPending || isNavigationPending;
   const isPrimaryDisabled = isSaving || !isStepSatisfied(activeStep);
 
   return (

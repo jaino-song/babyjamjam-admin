@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 
 type RouteParams = { params: Promise<{ scheduleId: string }> };
+const RECIPIENT_PHONE_PATTERN = /^01[016789]-?\d{3,4}-?\d{4}$/;
 
 function getAuthToken(request: NextRequest): string | null {
     return request.cookies.get("auth_token")?.value || null;
@@ -20,11 +21,21 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     const { scheduleId } = await params;
+    const requestBody = await request.json().catch(() => ({}));
+    const recipientPhone = requestBody && typeof requestBody === "object"
+        ? (requestBody as { recipientPhone?: unknown }).recipientPhone
+        : undefined;
+    if (
+        recipientPhone !== undefined
+        && (typeof recipientPhone !== "string" || !RECIPIENT_PHONE_PATTERN.test(recipientPhone))
+    ) {
+        return NextResponse.json({ error: "Invalid recipient phone" }, { status: 400 });
+    }
 
     try {
         const response = await serverAPIClient.post(
             `/admin/service-records/schedules/${encodeURIComponent(scheduleId)}/prepare-link`,
-            {},
+            recipientPhone ? { recipientPhone } : {},
             { headers: getAuthHeaders(token) },
         );
         return NextResponse.json(response.data ?? {}, {

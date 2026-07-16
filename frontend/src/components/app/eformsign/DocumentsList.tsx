@@ -18,6 +18,7 @@ import { DataTable, type DataTableColumn, type FilterOption } from "@/components
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 
 type DocumentRow = EformsignDocumentView & Record<string, unknown>;
 
@@ -69,11 +70,7 @@ const transformDocument = (doc: EformsignDocument): EformsignDocumentView | null
 
 // Date formatting helper
 const formatDate = (timestamp: number): string => {
-  return new Date(timestamp).toLocaleDateString("ko-KR", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
+  return formatDateForDisplay(timestamp);
 };
 
 export function DocumentsList() {

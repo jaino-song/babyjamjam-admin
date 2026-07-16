@@ -19,6 +19,7 @@ import {
 } from "@/hooks/use-consultation-inquiries";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import type { ConsultationInquiry } from "@/lib/consultation-inquiry/types";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import "@/components/app/mobile-redesign/redesign.css";
 
 type ConsultationStatus = "unread" | "confirmed";
@@ -76,11 +77,8 @@ function formatRelativeTime(iso: string): string {
 }
 
 function formatDueDate(iso: string): { short: string; long: string } {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return { short: "-", long: "-" };
-  const short = `출산 예정 ${date.getMonth() + 1}/${date.getDate()}`;
-  const long = `${date.getFullYear()}. ${date.getMonth() + 1}. ${date.getDate()}.`;
-  return { short, long };
+  const formatted = formatDateForDisplay(iso);
+  return { short: formatted === "-" ? "-" : `출산 예정 ${formatted}`, long: formatted };
 }
 
 function formatConfirmedAt(iso: string | null): string | null {

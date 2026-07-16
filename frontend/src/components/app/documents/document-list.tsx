@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Document } from "@/hooks/use-documents";
 import { DocumentCategory } from "@/hooks/use-document-categories";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 
 interface DocumentListProps {
   documents: Document[];
@@ -25,11 +26,7 @@ export const formatFileSize = (bytes: number): string => {
 };
 
 export const formatDate = (dateString: string): string => {
-  return new Date(dateString).toLocaleDateString("ko-KR", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
+  return formatDateForDisplay(dateString);
 };
 
 const getFileIcon = (mimeType: string) => {

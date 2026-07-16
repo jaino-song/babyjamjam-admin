@@ -1,8 +1,4 @@
 import axios from "axios";
-import type {
-    AlimtalkProvider,
-    AlimtalkProviderResponse,
-} from "@babyjamjam/shared/types/message";
 import { api } from "@/lib/api/client";
 import { ContractDataDto } from '@/backend/application/dto/contract.dto';
 import {
@@ -304,8 +300,6 @@ export const eformsignApi = {
     },
 }
 
-export type { AlimtalkProvider, AlimtalkProviderResponse };
-
 export type MessageSenderApprovalStatus = "not_requested" | "pending" | "approved";
 
 export interface MessageSenderApprovalResponse {
@@ -424,14 +418,6 @@ export interface ConsultationInquiryListParams {
 }
 
 export const settingsApi = {
-    getAlimtalkProvider: async (): Promise<AlimtalkProviderResponse> => {
-        const { data } = await api.get('/settings/alimtalk-provider');
-        return data;
-    },
-    updateAlimtalkProvider: async (provider: AlimtalkProvider): Promise<AlimtalkProviderResponse> => {
-        const { data } = await api.put('/settings/alimtalk-provider', { provider });
-        return data;
-    },
     getMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {
         const { data } = await api.get("/settings/message-sender-approval");
         return data;

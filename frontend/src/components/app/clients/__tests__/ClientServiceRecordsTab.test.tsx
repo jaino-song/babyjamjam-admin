@@ -97,9 +97,9 @@ describe("ClientServiceRecordsTab", () => {
             />,
         );
 
-        expect(screen.getByText("예정일 2026.09.23(수)")).toBeInTheDocument();
-        expect(screen.getByText("예정일 2026.09.29(화)")).toBeInTheDocument();
-        expect(screen.queryByText("예정일 2026.09.24(목)")).not.toBeInTheDocument();
+        expect(screen.getByText("예정일 2026.09.23")).toBeInTheDocument();
+        expect(screen.getByText("예정일 2026.09.29")).toBeInTheDocument();
+        expect(screen.queryByText("예정일 2026.09.24")).not.toBeInTheDocument();
     });
 
     it("renders one continuous client record across provider replacements", () => {
@@ -117,7 +117,16 @@ describe("ClientServiceRecordsTab", () => {
                 finalizedAt: null,
                 documentsCompletedAt: null,
                 lastError: null,
-                header: null,
+                header: {
+                    momName: "산모",
+                    momBirth: "960414",
+                    babyName: "신생아",
+                    babyBirth: "260626",
+                    deliveryType: "자연분만",
+                    babyWeight: "2.6",
+                    createdAt: "2026-07-01T09:00:00.000Z",
+                    updatedAt: "2026-07-01T09:00:00.000Z",
+                },
                 sessions: [
                     {
                         sessionIndex: 1,
@@ -153,7 +162,7 @@ describe("ClientServiceRecordsTab", () => {
             assignments: [first, second],
         };
 
-        render(
+        const { container } = render(
             <ClientServiceRecordsTab
                 overview={overview}
                 clientId={100}
@@ -168,5 +177,64 @@ describe("ClientServiceRecordsTab", () => {
         expect(screen.getByText("제공인력 배정 이력")).toBeInTheDocument();
         expect(screen.getByText(/1회차 ·/)).toBeInTheDocument();
         expect(screen.getByText(/2회차 ·/)).toBeInTheDocument();
+
+        const overviewGrid = container.querySelector<HTMLElement>(
+            '[data-component="clients-detail-service-records-overview-grid"]',
+        );
+        expect(overviewGrid).toHaveClass(
+            "grid",
+            "grid-cols-1",
+            "items-stretch",
+            "lg:grid-cols-3",
+            "[&>*]:content-start",
+        );
+
+        const overviewCards = Array.from(overviewGrid!.children) as HTMLElement[];
+        expect(overviewCards).toHaveLength(3);
+        expect(overviewCards[0]).toHaveTextContent("제공기록지 진행 상태");
+        expect(overviewCards[0]).toHaveTextContent("전자문서 생성-");
+        expect(overviewCards[1]).toHaveTextContent("서비스 기본정보");
+        expect(overviewCards[2]).toHaveTextContent("제공기록지 작성 링크");
+        expect(container).not.toHaveTextContent("양식 v1");
+        expect(container).not.toHaveTextContent("제출 시점의 양식 스냅샷");
+        expect(
+            overviewCards[2].querySelector(
+                '[data-component="clients-detail-service-records-link-card-caption"]',
+            ),
+        ).not.toBeInTheDocument();
+        expect(overviewCards[2].querySelectorAll('[data-component="info-row"]')).toHaveLength(4);
+        expect(overviewCards[2]).toHaveTextContent("제공인력 이름");
+        expect(overviewCards[2]).toHaveTextContent("제공인력 연락처");
+        expect(overviewCards[2]).toHaveTextContent("메시지 최근 발송");
+        expect(overviewCards[2]).toHaveTextContent("제공기록지 본인 인증");
+        expect(overviewCards[2]).toHaveTextContent("완료");
+        expect(overviewCards[2]).not.toHaveTextContent("링크 만료");
+        const resendButton = screen.getByRole("button", { name: "메시지 재전송" });
+        expect(resendButton).toHaveClass("w-full");
+        expect(resendButton).toHaveAttribute("data-variant", "positive");
+        expect(overviewCards[2]).not.toHaveTextContent("기존 링크가 그대로 전송됩니다.");
+        expect(overviewCards[0].querySelector('[data-component="info-row"] > span')).toHaveClass(
+            "text-[calc(12px*var(--glint-ui-scale,1))]",
+        );
+        expect(overviewCards[0].querySelector('[data-component="status-badge"]')).not.toBeInTheDocument();
+        expect(
+            overviewCards[1].querySelector(
+                '[data-component="clients-detail-service-records-header-card-title-row"] [data-component="status-badge"]',
+            ),
+        ).not.toBeInTheDocument();
+        expect(
+            overviewCards[2].querySelector(
+                '[data-component="clients-detail-service-records-link-card-title-row"] [data-component="status-badge"]',
+            ),
+        ).not.toBeInTheDocument();
+        const headerCaption = overviewCards[1].querySelector<HTMLElement>(
+            '[data-component="clients-detail-service-records-header-card-caption"]',
+        );
+        expect(headerCaption).toHaveClass("mt-auto", "text-right");
+        expect(
+            overviewCards[1].querySelector(
+                '[data-component="clients-detail-service-records-header-card-head"] [data-component="clients-detail-service-records-header-card-caption"]',
+            ),
+        ).not.toBeInTheDocument();
     });
 });

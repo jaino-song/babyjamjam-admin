@@ -7,6 +7,7 @@ import {
 } from "domain/constants/service-record-link-message";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { ServiceRecordLinkService } from "./service-record-link.service";
+import { MessageTriggerService } from "./message-trigger.service";
 import {
     AdminServiceRecordAssignmentDto,
     AdminServiceRecordCaseDto,
@@ -56,6 +57,7 @@ export class AdminServiceRecordService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly serviceRecordLinkService: ServiceRecordLinkService,
+        private readonly messageTriggerService: MessageTriggerService,
     ) {}
 
     async getClientOverview(branchId: string, clientId: number): Promise<AdminServiceRecordOverviewDto> {
@@ -165,18 +167,35 @@ export class AdminServiceRecordService {
         };
     }
 
-    async prepareLink(branchId: string, scheduleId: number): Promise<AdminServiceRecordPreparedLinkDto> {
+    async prepareLink(
+        branchId: string,
+        scheduleId: number,
+        recipientPhone?: string,
+    ): Promise<AdminServiceRecordPreparedLinkDto> {
         await this.assertScheduleBelongsToBranch(branchId, scheduleId);
-        return this.serviceRecordLinkService.prepareLink(scheduleId);
+        return this.serviceRecordLinkService.prepareLink(scheduleId, recipientPhone);
     }
 
     async sendLinkNow(
         branchId: string,
         scheduleId: number,
         preparedLinkToken?: string,
-    ): Promise<{ scheduledFor: Date }> {
+        recipientPhone?: string,
+    ) {
         await this.assertScheduleBelongsToBranch(branchId, scheduleId);
-        return this.serviceRecordLinkService.sendNow(scheduleId, preparedLinkToken);
+        const queued = await this.serviceRecordLinkService.sendNow(
+            scheduleId,
+            preparedLinkToken,
+            recipientPhone,
+        );
+        const dispatched = await this.messageTriggerService.dispatchPendingJobNow(queued.jobId);
+
+        return {
+            ok: dispatched.status === "sent",
+            jobId: dispatched.id,
+            status: dispatched.status,
+            scheduledFor: queued.scheduledFor,
+        };
     }
 
     private async assertScheduleBelongsToBranch(branchId: string, scheduleId: number): Promise<void> {

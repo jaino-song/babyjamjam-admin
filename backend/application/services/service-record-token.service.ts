@@ -86,6 +86,41 @@ export class ServiceRecordTokenService {
     }
 
     /**
+     * Reuse the current provider's active link and only extend its expiry.
+     * Provider replacement changes the schedule/employee and revokes the old row,
+     * so only an unchanged assignment can match this lookup.
+     */
+    async reuseActiveLink(params: ServiceRecordLinkTokenParams): Promise<{ linkToken: string } | null> {
+        const record = await this.prismaService.service_record_token.findFirst({
+            where: {
+                branchId: params.branchId,
+                scheduleId: params.scheduleId,
+                employeeId: params.employeeId,
+                expectedPhoneHash: this.hash(this.normalizePhone(params.expectedPhone)),
+                active: true,
+                revokedAt: null,
+            },
+            orderBy: { createdAt: "desc" },
+        });
+        if (!record) return null;
+
+        const updated = await this.prismaService.service_record_token.updateMany({
+            where: {
+                id: record.id,
+                branchId: params.branchId,
+                scheduleId: params.scheduleId,
+                employeeId: params.employeeId,
+                expectedPhoneHash: this.hash(this.normalizePhone(params.expectedPhone)),
+                active: true,
+                revokedAt: null,
+            },
+            data: { expiresAt: params.expiresAt },
+        });
+        if (updated.count === 0) return null;
+        return { linkToken: record.linkTokenHash };
+    }
+
+    /**
      * Prepare the exact link shown in the admin preview without making it usable yet.
      * The plaintext token is returned once and must stay in the authenticated admin's
      * in-memory form state until send activates this same row.
