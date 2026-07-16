@@ -48,6 +48,31 @@ export class UpdateRibbonConfigDto {
     linkColor!: string;
 }
 
+export class UpdateClientRegistrationPolicyDto {
+    @IsBoolean()
+    @IsOptional()
+    clientAutoRegistration?: boolean;
+
+    @IsBoolean()
+    @IsOptional()
+    greetingOnAutoRegistration?: boolean;
+}
+
+export class ClientRegistrationPolicyResponseDto {
+    clientAutoRegistration!: boolean;
+    greetingOnAutoRegistration!: boolean;
+
+    static from(
+        clientAutoRegistration: boolean,
+        greetingOnAutoRegistration: boolean,
+    ): ClientRegistrationPolicyResponseDto {
+        const dto = new ClientRegistrationPolicyResponseDto();
+        dto.clientAutoRegistration = clientAutoRegistration;
+        dto.greetingOnAutoRegistration = greetingOnAutoRegistration;
+        return dto;
+    }
+}
+
 export class RibbonConfigResponseDto {
     enabled!: boolean;
     message!: string;

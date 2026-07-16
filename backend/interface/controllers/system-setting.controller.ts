@@ -7,6 +7,8 @@ import {
     NotificationPreferencesResponseDto,
     UpdateRibbonConfigDto,
     RibbonConfigResponseDto,
+    UpdateClientRegistrationPolicyDto,
+    ClientRegistrationPolicyResponseDto,
 } from "interface/dto/system-setting.dto";
 import {
     MessageSenderApprovalResponseDto,
@@ -92,6 +94,46 @@ export class SystemSettingController {
             },
         );
         return MessageAutomationPastTriggerConfigDto.from(JSON.parse(entity.value));
+    }
+
+    @Get("client-registration-policy")
+    @UseGuards(TenantGuard)
+    async getClientRegistrationPolicy(
+        @CurrentTenant() tenant?: { branchId?: string },
+    ): Promise<ClientRegistrationPolicyResponseDto> {
+        const branchId = tenant?.branchId ?? "";
+        const [clientAutoRegistration, greetingOnAutoRegistration] = await Promise.all([
+            this.systemSettingService.getClientAutoRegistrationEnabled(branchId),
+            this.systemSettingService.getGreetingOnAutoRegistrationEnabled(branchId),
+        ]);
+
+        return ClientRegistrationPolicyResponseDto.from(clientAutoRegistration, greetingOnAutoRegistration);
+    }
+
+    @Put("client-registration-policy")
+    @UseGuards(TenantGuard)
+    async updateClientRegistrationPolicy(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Body() dto: UpdateClientRegistrationPolicyDto,
+    ): Promise<ClientRegistrationPolicyResponseDto> {
+        const branchId = tenant.branchId ?? "";
+
+        if (dto.clientAutoRegistration !== undefined) {
+            await this.systemSettingService.setClientAutoRegistrationEnabled(branchId, dto.clientAutoRegistration);
+        }
+        if (dto.greetingOnAutoRegistration !== undefined) {
+            await this.systemSettingService.setGreetingOnAutoRegistrationEnabled(
+                branchId,
+                dto.greetingOnAutoRegistration,
+            );
+        }
+
+        const [clientAutoRegistration, greetingOnAutoRegistration] = await Promise.all([
+            this.systemSettingService.getClientAutoRegistrationEnabled(branchId),
+            this.systemSettingService.getGreetingOnAutoRegistrationEnabled(branchId),
+        ]);
+
+        return ClientRegistrationPolicyResponseDto.from(clientAutoRegistration, greetingOnAutoRegistration);
     }
 
     @Put("ribbon-config")
