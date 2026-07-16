@@ -1485,6 +1485,10 @@ describe("MessageTriggerService", () => {
     });
 
     it("still cancels and rebuilds non-IMMEDIATE jobs on the same resync", async () => {
+        // Pin the clock like sibling tests: resync/rebuild logic is relative to "now",
+        // so without this the test is date-brittle (passed on the service-start day, failed after).
+        jest.useFakeTimers().setSystemTime(new Date("2026-07-15T00:00:00.000Z"));
+        try {
         const greetingRule = createRule({
             id: "rule-greeting-active",
             eventType: MessageTriggerEventType.CLIENT_CREATED,
@@ -1545,6 +1549,9 @@ describe("MessageTriggerService", () => {
             clientId: 1,
             templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
         });
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     it("schedules offset jobs at 09:00 KST regardless of process timezone", async () => {
