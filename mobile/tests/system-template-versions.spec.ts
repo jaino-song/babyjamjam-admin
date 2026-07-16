@@ -85,7 +85,7 @@ test.describe('System Template Detail Secondary Actions', () => {
 
     await page.locator('[data-component="messages-system-template-trigger-link"]').click();
 
-    await expect(page).toHaveURL('/alimtalk');
-    await expect(page.locator('[data-component="alimtalk"]')).toBeVisible({ timeout: 15000 });
+    await expect(page).toHaveURL('/messages/automation');
+    await expect(page.locator('[data-component="messages"]')).toBeVisible({ timeout: 15000 });
   });
 });

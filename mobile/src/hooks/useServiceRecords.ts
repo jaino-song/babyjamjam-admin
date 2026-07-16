@@ -44,10 +44,10 @@ export function useSendServiceRecordLink() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: async ({ scheduleId }: { scheduleId: number; clientId?: number }) => {
+        mutationFn: async ({ scheduleId, preparedLinkToken }: { scheduleId: number; clientId?: number; preparedLinkToken?: string }) => {
             const { data } = await api.post<SendServiceRecordLinkResponse>(
                 `/admin/service-records/schedules/${scheduleId}/send-link`,
-                {},
+                preparedLinkToken ? { preparedLinkToken } : {},
             );
             return data;
         },

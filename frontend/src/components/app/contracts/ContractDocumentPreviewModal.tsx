@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import type { EformsignDocument } from "@/lib/eformsign/types";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import {
   SharedDocumentPreviewDialog,
   type PreviewMetaItem,
@@ -23,11 +24,7 @@ interface ContractDocumentPreviewModalProps {
 }
 
 function formatDate(timestamp: number): string {
-  return new Date(timestamp).toLocaleDateString("ko-KR", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
+  return formatDateForDisplay(timestamp);
 }
 
 function getPreviewUrl(documentId: string, attachment = false): string {

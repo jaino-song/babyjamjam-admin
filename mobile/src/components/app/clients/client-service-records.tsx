@@ -39,7 +39,6 @@ interface SessionSlot {
 type LinkBadgeTone = "gray" | "blue" | "green" | "burgundy";
 type SessionTone = "green" | "orange" | "muted";
 
-const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"] as const;
 const LINK_STATUS_META: Record<ServiceRecordLinkStatus, { label: string; tone: LinkBadgeTone }> = {
     none: { label: "발송 전", tone: "gray" },
     scheduled: { label: "발송 예약", tone: "blue" },
@@ -246,20 +245,20 @@ function LinkCard({
                     disabled={sendLinkMutation.isPending}
                     onClick={handleSendClick}
                 >
-                    {sendLinkMutation.isPending ? "발송 중..." : isResend ? "링크 재전송" : "링크 수동 전송"}
+                    {sendLinkMutation.isPending ? "발송 중..." : isResend ? "메시지 재전송" : "링크 수동 전송"}
                 </button>
             </div>
             <div className="link-note">
                 {isResend
-                    ? <>재전송 시 <b>새 링크가 발급</b>되며 기존 링크는 즉시 사용할 수 없게 됩니다.</>
+                    ? <>메시지 재전송 시 <b>기존 링크가 그대로 전송</b>됩니다.</>
                     : "서비스 시작일 오후 3시에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요."}
             </div>
             <ConfirmActionModal
                 open={resendModalOpen}
-                title="링크를 재전송할까요?"
-                description="재전송 시 새 링크가 발급되며 기존 링크는 즉시 사용할 수 없게 됩니다."
+                title="메시지를 재전송할까요?"
+                description="기존 링크가 그대로 포함된 메시지를 다시 전송합니다."
                 cancelLabel="취소"
-                confirmLabel="재전송"
+                confirmLabel="메시지 재전송"
                 loading={sendLinkMutation.isPending}
                 onOpenChange={(open) => {
                     if (!sendLinkMutation.isPending) {
@@ -359,7 +358,7 @@ function SessionRow({
     const titleDate = record ? formatShortDateKo(record.serviceDate) : null;
     const meta = record
         ? record.locked
-            ? `제출 ${formatDateTimeKo(record.submittedAt ?? record.updatedAt)} · 잠금`
+            ? `제출 ${formatDateTimeKo(record.submittedAt ?? record.updatedAt)}`
             : `마지막 저장 ${formatDateTimeKo(record.updatedAt)} · 작성 중`
         : `예정일 ${formatDateKo(slot.expectedDate)}`;
     const interactive = Boolean(record);
@@ -642,19 +641,17 @@ function toIsoDate(date: Date): string {
 function formatDateKo(value: string | null): string {
     const date = parseDateForDisplay(value);
     if (!date) return "-";
-    return `${date.getFullYear()}년 ${String(date.getMonth() + 1).padStart(2, "0")}월 ${String(date.getDate()).padStart(2, "0")}일 (${WEEKDAYS[date.getDay()]})`;
+    return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, "0")}.${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function formatShortDateKo(value: string | null): string {
-    const date = parseDateForDisplay(value);
-    if (!date) return "-";
-    return `${String(date.getMonth() + 1).padStart(2, "0")}월 ${String(date.getDate()).padStart(2, "0")}일 (${WEEKDAYS[date.getDay()]})`;
+    return formatDateKo(value);
 }
 
 function formatDateTimeKo(value: string | null): string {
     const date = parseDateForDisplay(value);
     if (!date) return "-";
-    return `${date.getFullYear()}년 ${String(date.getMonth() + 1).padStart(2, "0")}월 ${String(date.getDate()).padStart(2, "0")}일 ${formatTimeKo(value)}`;
+    return `${formatDateKo(value)} ${formatTimeKo(value)}`;
 }
 
 function formatTimeKo(value: string | null): string {

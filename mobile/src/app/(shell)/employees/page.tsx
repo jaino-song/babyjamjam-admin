@@ -21,6 +21,7 @@ import {
 import { useLocale } from "@/providers/LocaleProvider";
 import { useToast } from "@/hooks/use-toast";
 import { t } from "@/lib/i18n/translations";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import {
   Badge,
   ListCard,
@@ -118,22 +119,7 @@ export function buildAllEmployeeRowsForList(employees: Employee[]): Employee[] {
 }
 
 function formatRegisteredDate(value: string | null | undefined): string {
-  if (!value) return "-";
-
-  const isoDate = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (isoDate) {
-    const [, year, month, day] = isoDate;
-    return `${year}년 ${month}월 ${day}일`;
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-
-  const year = String(date.getFullYear());
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-
-  return `${year}년 ${month}월 ${day}일`;
+  return formatDateForDisplay(value);
 }
 
 export function groupForEmployee(e: Employee): EmployeeGroup {

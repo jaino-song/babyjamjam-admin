@@ -18,7 +18,7 @@
     "type-check": "prisma generate && tsc --noEmit",
     "lint": "eslint .",
     "start": "nest start",
-    "start:dev": "nest start --watch",
+    "start:dev": "node scripts/start-dev-lan.mjs",
     "start:prod": "node dist/main",
     "test": "jest",
     "test:watch": "jest --watch",

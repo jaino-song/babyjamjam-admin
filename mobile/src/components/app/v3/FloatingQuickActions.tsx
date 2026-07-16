@@ -5,11 +5,9 @@ import { usePathname } from "next/navigation";
 import type { ComponentType } from "react";
 import { Send, MessageSquare, Calculator } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { KakaoTalkIcon } from "@/components/icons/KakaoTalkIcon";
 import { isLayoutExcluded } from "@/lib/constants/v3-layout";
 import {
   DEFAULT_QUICK_ACTION_COLORS,
-  type QuickActionColor,
   type QuickActionIcon,
 } from "./QuickActionButton";
 
@@ -22,7 +20,6 @@ interface FloatingAction {
 const FLOATING_ACTIONS: FloatingAction[] = [
   { href: "/contracts/new", label: "계약 발송", icon: Send },
   { href: "/messages", label: "메시지", icon: MessageSquare },
-  { href: "#", label: "알림톡", icon: KakaoTalkIcon },
   { href: "/messages", label: "비용계산기", icon: Calculator },
 ];
 

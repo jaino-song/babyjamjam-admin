@@ -50,6 +50,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { formatWorkAreaLabel } from "@/components/app/employees/employee-form.constants";
 import { getEmployeeGradeBadgeStyle, normalizeEmployeeGrade } from "@/features/employees/grade";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 
 const filterItems = [
     { label: "전체", value: "all" },
@@ -89,7 +90,7 @@ function getEmployeeAvatarClassName(openToNextWork: boolean): string {
 
 function formatDate(dateStr: string | null | undefined): string {
     if (!dateStr) return "-";
-    return new Date(dateStr).toLocaleDateString("ko-KR");
+    return formatDateForDisplay(dateStr);
 }
 
 function formatPhoneNumber(phone: string | null | undefined): string {

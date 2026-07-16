@@ -13,6 +13,7 @@ import {
     AlertTriangle,
     MoreVertical,
     Pencil,
+    RotateCcw,
     Trash2,
     FileSignature,
 } from "lucide-react";
@@ -27,6 +28,9 @@ import {
     useDeleteClient,
     useClient,
 } from "@/features/clients/hooks/use-clients";
+import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
+import { useSendServiceRecordLink } from "@/features/service-records/hooks/use-service-records";
+import { useToast } from "@/hooks/use-toast";
 import type { Client, ServiceStatus } from "@/lib/client/types";
 import {
     getClientBadgeAvatarClassName,
@@ -238,6 +242,10 @@ export default function ClientsPage() {
     const [formDialogOpen, setFormDialogOpen] = useState(false);
     const [editingClient, setEditingClient] = useState<Client | null>(null);
     const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
+    const [resetLinkTargetClientId, setResetLinkTargetClientId] = useState<number | null>(null);
+    const [isResettingLink, setIsResettingLink] = useState(false);
+    const sendServiceRecordLink = useSendServiceRecordLink();
+    const { toast } = useToast();
     const [searchQuery, setSearchQuery] = useState("");
     const [activeFilter, setActiveFilter] = useState("all");
     const [activeSection, setActiveSection] = useState<ClientSectionId>("list");
@@ -373,6 +381,42 @@ export default function ClientsPage() {
 
     const handleDeleteRequest = (id: number) => {
         setDeleteTargetClientId(id);
+    };
+
+    const handleResetServiceRecordLinkConfirm = async () => {
+        if (resetLinkTargetClientId === null) return;
+
+        setIsResettingLink(true);
+        try {
+            const overview = await serviceRecordsApi.getClientOverview(resetLinkTargetClientId);
+            const assignments = overview.data.assignments ?? [];
+            const activeAssignment = assignments.find((assignment) => !assignment.replaced)
+                ?? assignments[0]
+                ?? null;
+            if (!activeAssignment) {
+                toast({
+                    description: "발송할 관리사 배정이 없어 링크를 재설정할 수 없습니다.",
+                    variant: "destructive",
+                });
+                return;
+            }
+
+            const prepared = await serviceRecordsApi.prepareLink(activeAssignment.scheduleId);
+            await sendServiceRecordLink.mutateAsync({
+                scheduleId: activeAssignment.scheduleId,
+                clientId: resetLinkTargetClientId,
+                preparedLinkToken: prepared.data.preparedLinkToken,
+            });
+            toast({ description: "제공기록지 링크를 재설정하고 메시지를 발송했습니다." });
+            setResetLinkTargetClientId(null);
+        } catch {
+            toast({
+                description: "제공기록지 링크 재설정에 실패했습니다. 잠시 후 다시 시도해 주세요.",
+                variant: "destructive",
+            });
+        } finally {
+            setIsResettingLink(false);
+        }
     };
 
     const handleDeleteConfirm = async () => {
@@ -632,6 +676,14 @@ export default function ClientsPage() {
                                             {t(locale, "common.edit")}
                                         </DropdownMenuItem>
                                         <DropdownMenuItem
+                                            data-component="clients-detail-menu-reset-service-record-link"
+                                            onClick={() => setResetLinkTargetClientId(activeSelectedClient.id)}
+                                            className="gap-2"
+                                        >
+                                            <RotateCcw className="w-4 h-4" />
+                                            제공기록지 링크 재설정
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
                                             data-component="clients-detail-menu-delete"
                                             onClick={() => handleDeleteRequest(activeSelectedClient.id)}
                                             className="gap-2 text-destructive focus:text-destructive"
@@ -668,6 +720,21 @@ export default function ClientsPage() {
                 onClose={handleFormDialogClose}
                 client={editingClient ?? null}
                 onSuccess={handleClientFormDialogSuccess}
+            />
+
+            <ApprovalTwoButtonModal
+                open={resetLinkTargetClientId !== null}
+                onOpenChange={(open) => {
+                    if (!open && !isResettingLink) setResetLinkTargetClientId(null);
+                }}
+                dataComponent="clients-detail-reset-service-record-link-approval"
+                title="제공기록지 링크를 재설정하시겠습니까?"
+                description="기존 링크는 만료되고, 새 링크가 담긴 메시지가 관리사에게 발송됩니다."
+                isDescriptionVisuallyHidden={false}
+                approvalLabel="링크 재설정"
+                pendingLabel="재설정 중..."
+                isPending={isResettingLink}
+                onApprove={() => void handleResetServiceRecordLinkConfirm()}
             />
 
             <ApprovalTwoButtonModal

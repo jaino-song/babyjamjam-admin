@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 interface InfoRowProps {
   label: string;
   value: React.ReactNode;
+  size?: "default" | "compact";
   className?: string;
   "data-component"?: string;
 }
@@ -14,6 +15,7 @@ interface InfoRowProps {
 export function InfoRow({
   label,
   value,
+  size = "default",
   className,
   "data-component": dataComponent = "info-row",
 }: InfoRowProps) {
@@ -22,8 +24,18 @@ export function InfoRow({
       data-component={dataComponent}
       className={cn("flex items-start gap-[calc(16px*var(--glint-ui-scale,1))] border-b border-v3-border py-[calc(10px*var(--glint-ui-scale,1))] last:border-b-0", className)}
     >
-      <span className="shrink-0 text-[calc(14px*var(--glint-ui-scale,1))] text-v3-text-muted">{label}</span>
-      <span className="ml-auto min-w-0 flex-1 text-right text-[calc(14px*var(--glint-ui-scale,1))] font-semibold text-v3-dark">
+      <span className={cn(
+        "shrink-0 text-v3-text-muted",
+        size === "compact"
+          ? "text-[calc(12px*var(--glint-ui-scale,1))]"
+          : "text-[calc(14px*var(--glint-ui-scale,1))]",
+      )}>{label}</span>
+      <span className={cn(
+        "ml-auto min-w-0 flex-1 text-right font-semibold text-v3-dark",
+        size === "compact"
+          ? "text-[calc(12px*var(--glint-ui-scale,1))]"
+          : "text-[calc(14px*var(--glint-ui-scale,1))]",
+      )}>
         {value}
       </span>
     </div>

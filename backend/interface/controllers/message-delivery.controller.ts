@@ -5,6 +5,7 @@ import {
     Controller,
     Logger,
     Post,
+    ServiceUnavailableException,
     UseGuards,
 } from "@nestjs/common";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
@@ -61,6 +62,21 @@ export class MessageDeliveryController {
         const scheduledTime = triggerType === "scheduled"
             ? dto.scheduledTime?.replace(":", "")
             : undefined;
+        const pendingLog = await this.createPendingSmsLog(
+            branchId,
+            dto,
+            triggerType,
+            scheduledDate,
+            scheduledTime,
+        ).catch((error) => {
+            this.logger.error(
+                `[SMS] Failed to create delivery record before provider request: branchId=${branchId || "unknown"}, error=${this.formatErrorMessage(error)}`,
+            );
+            throw new ServiceUnavailableException(
+                "발송 기록을 생성하지 못해 문자 발송을 시작하지 않았습니다. 잠시 후 다시 시도해 주세요.",
+            );
+        });
+
         const result = await this.aligoService.sendSms({
             receiver: dto.receiver,
             message: dto.message,
@@ -75,23 +91,29 @@ export class MessageDeliveryController {
             this.logger.warn(
                 `[SMS] Aligo request failed: branchId=${branchId || "unknown"}, error=${errorMessage}`,
             );
-            await this.recordFailedSmsLogFromError(
-                branchId,
-                dto,
-                triggerType,
-                error,
-                scheduledDate,
-                scheduledTime,
-            ).catch((logError) => {
-                this.logger.warn(`Failed to record failed SMS delivery log: ${this.formatErrorMessage(logError)}`);
+            await this.updateSmsLog(pendingLog.id, {
+                status: "failed",
+                errorMessage,
+                attempts: 1,
+                lastAttemptAt: new Date(),
+                nextRetryAt: this.nextRetryAt(),
+            }).catch((logError) => {
+                this.logger.error(
+                    `[SMS] Provider request failed and delivery record update also failed: logId=${pendingLog.id}, error=${this.formatErrorMessage(logError)}`,
+                );
             });
             throw new BadGatewayException(errorMessage);
         });
         this.logger.log(
             `[SMS] Aligo response received: branchId=${branchId || "unknown"}, resultCode=${result.response.result_code}, errorCount=${result.response.error_cnt ?? 0}`,
         );
-        await this.recordSmsLog(branchId, dto, result, triggerType).catch((error) => {
-            this.logger.warn(`Failed to record SMS delivery log: ${error instanceof Error ? error.message : String(error)}`);
+        await this.updateSmsLogFromResult(pendingLog.id, result, triggerType).catch((error) => {
+            this.logger.error(
+                `[SMS] Provider accepted request but delivery record update failed: logId=${pendingLog.id}, error=${this.formatErrorMessage(error)}`,
+            );
+            throw new ServiceUnavailableException(
+                "문자 공급자에는 접수되었지만 발송 기록 상태를 갱신하지 못했습니다. 중복 발송하지 말고 관리자에게 문의해 주세요.",
+            );
         });
 
         if (!this.isAcceptedSmsResult(result)) {
@@ -124,66 +146,14 @@ export class MessageDeliveryController {
         };
     }
 
-    private async recordSmsLog(
-        branchId: string,
-        dto: SendSmsMessageDto,
-        result: Awaited<ReturnType<AligoService["sendSms"]>>,
-        triggerType: string,
-    ) {
-        const isAccepted = this.isAcceptedSmsResult(result);
-        const isPartial = this.isPartialSuccessSmsResult(result);
-        const status = isAccepted
-            ? triggerType === "scheduled" ? "pending" : "sent"
-            : "failed";
-        // Aligo's response gives success_cnt / error_cnt but no per-recipient breakdown,
-        // so on a partial-success batch we cannot identify which numbers failed. Retrying
-        // the original comma-joined receiver list would resend to the already-delivered
-        // recipients and produce duplicates, so we disable auto-retry for partial successes
-        // and surface a failed log to staff for manual handling.
-        const errorMessage = isAccepted
-            ? null
-            : isPartial
-                ? `부분 발송 (성공 ${Number(result.response.success_cnt ?? 0)}건 / 실패 ${Number(result.response.error_cnt ?? 0)}건). 실패 수신자를 식별할 수 없어 자동 재전송을 중단했습니다. 실패자에게 수동으로 재발송해 주세요.`
-                : result.response.message;
-        await this.prisma.message_log.create({
-            data: {
-                branchId: branchId || null,
-                provider: "aligo_sms",
-                templateKey: dto.title?.trim() || "manual_sms",
-                receiver: result.request.receiver,
-                clientId: dto.clientId ?? null,
-                recipientName: dto.recipientName ?? null,
-                recipientPhone: result.request.receiver,
-                messageBody: dto.message,
-                variables: {
-                    recipientName: dto.recipientName ?? null,
-                    title: dto.title ?? null,
-                    triggerType,
-                    msgType: result.request.msgType,
-                    scheduledDate: result.request.scheduledDate ?? null,
-                    scheduledTime: result.request.scheduledTime ?? null,
-                    testMode: result.request.testModeYn === "Y" ? "true" : "false",
-                },
-                status,
-                aligoMid: result.response.msg_id ? String(result.response.msg_id) : null,
-                errorMessage,
-                attempts: 1,
-                lastAttemptAt: new Date(),
-                nextRetryAt: isAccepted || isPartial ? null : this.nextRetryAt(),
-            },
-        });
-    }
-
-    private async recordFailedSmsLogFromError(
+    private async createPendingSmsLog(
         branchId: string,
         dto: SendSmsMessageDto,
         triggerType: string,
-        error: unknown,
         scheduledDate?: string,
         scheduledTime?: string,
     ) {
-        const errorMessage = this.formatErrorMessage(error);
-        await this.prisma.message_log.create({
+        return this.prisma.message_log.create({
             data: {
                 branchId: branchId || null,
                 provider: "aligo_sms",
@@ -201,15 +171,61 @@ export class MessageDeliveryController {
                     scheduledDate: scheduledDate ?? null,
                     scheduledTime: scheduledTime ?? null,
                     testMode: dto.testMode ? "true" : "false",
-                    providerError: errorMessage,
                 },
-                status: "failed",
+                status: "pending",
                 aligoMid: null,
-                errorMessage,
-                attempts: 1,
-                lastAttemptAt: new Date(),
-                nextRetryAt: this.nextRetryAt(),
+                errorMessage: null,
+                attempts: 0,
+                lastAttemptAt: null,
+                nextRetryAt: null,
             },
+        });
+    }
+
+    private async updateSmsLogFromResult(
+        logId: number,
+        result: Awaited<ReturnType<AligoService["sendSms"]>>,
+        triggerType: string,
+    ): Promise<void> {
+        const isAccepted = this.isAcceptedSmsResult(result);
+        const isPartial = this.isPartialSuccessSmsResult(result);
+        const status = isAccepted
+            ? triggerType === "scheduled" ? "pending" : "sent"
+            : "failed";
+        // Aligo's batch response does not identify failed recipients. Retrying the
+        // original receiver list after a partial success would duplicate successful sends.
+        const errorMessage = isAccepted
+            ? null
+            : isPartial
+                ? `부분 발송 (성공 ${Number(result.response.success_cnt ?? 0)}건 / 실패 ${Number(result.response.error_cnt ?? 0)}건). 실패 수신자를 식별할 수 없어 자동 재전송을 중단했습니다. 실패자에게 수동으로 재발송해 주세요.`
+                : result.response.message;
+
+        await this.updateSmsLog(logId, {
+            receiver: result.request.receiver,
+            recipientPhone: result.request.receiver,
+            status,
+            aligoMid: result.response.msg_id ? String(result.response.msg_id) : null,
+            errorMessage,
+            attempts: 1,
+            lastAttemptAt: new Date(),
+            nextRetryAt: isAccepted || isPartial ? null : this.nextRetryAt(),
+            variables: {
+                triggerType,
+                msgType: result.request.msgType,
+                scheduledDate: result.request.scheduledDate ?? null,
+                scheduledTime: result.request.scheduledTime ?? null,
+                testMode: result.request.testModeYn === "Y" ? "true" : "false",
+            },
+        });
+    }
+
+    private async updateSmsLog(
+        logId: number,
+        data: Record<string, unknown>,
+    ): Promise<void> {
+        await this.prisma.message_log.update({
+            where: { id: logId },
+            data,
         });
     }
 

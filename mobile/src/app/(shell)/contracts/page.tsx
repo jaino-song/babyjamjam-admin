@@ -36,6 +36,7 @@ import { useEmployees, type Employee } from "@/hooks/useEmployees";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import { useToast } from "@/hooks/use-toast";
 import { fetchAllMessageLogs } from "@/lib/messages/logs";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { EformsignDocument } from "@/lib/eformsign/types";
 import type { EformsignDocumentOption } from "@/lib/eformsign/types";
 import {
@@ -94,7 +95,7 @@ const STAFF_COMPLETION_IFRAME_ID = "contracts_staff_completion_iframe";
 
 type ContractCategory = "in-progress" | "drafting" | "completed" | "expired" | "unknown";
 type FilterKey = "전체" | "대기" | "검토 필요" | "완료" | "기간 만료" | "상태 확인";
-type DetailTabId = "basic" | "signers" | "alimtalk";
+type DetailTabId = "basic" | "signers" | "messages";
 type NotificationStatus = "pending" | "sent" | "failed";
 type NotificationLogRecord = {
   id: number;
@@ -150,7 +151,7 @@ const CONTRACT_SEND_EVENT_KEYWORDS = [
   "mail",
   "sms",
   "kakao",
-  "alimtalk",
+  "messages",
   "발송",
   "전송",
   "송신",
@@ -274,7 +275,7 @@ function formatDate(value: string | number | undefined | null): string {
   if (value === undefined || value === null || value === "") return "-";
   const d = typeof value === "number" ? new Date(value) : new Date(value);
   if (Number.isNaN(d.getTime())) return "-";
-  return d.toLocaleDateString("ko-KR", { year: "numeric", month: "2-digit", day: "2-digit" });
+  return formatDateForDisplay(d);
 }
 
 function formatDateTime(value: string | number | undefined | null): string {
@@ -890,8 +891,9 @@ function buildContractCreationPrefillFromContract(
   };
 }
 
-function notificationChannelLabel(log: NotificationLogRecord): "알림톡" | "메시지" {
-  return log.provider.toLowerCase().includes("sms") ? "메시지" : "알림톡";
+function notificationChannelLabel(log: NotificationLogRecord): "메시지" {
+  void log;
+  return "메시지";
 }
 
 function notificationTitle(log: NotificationLogRecord): string {
@@ -1356,7 +1358,7 @@ function ContractDetailContent({
             tabs={[
               { id: "basic", label: "기본 정보" },
               { id: "signers", label: "서명 진행" },
-              { id: "alimtalk", label: "알림 발송" },
+              { id: "messages", label: "알림 발송" },
             ]}
             activeTab={activeTab}
             onTabChange={(id) => onTabChange(id as DetailTabId)}
@@ -1391,7 +1393,7 @@ function ContractDetailContent({
             </InfoCard>
           </MobileDetailTabPanel>
 
-          <MobileDetailTabPanel name="contracts" tabId="alimtalk" activeTab={activeTab}>
+          <MobileDetailTabPanel name="contracts" tabId="messages" activeTab={activeTab}>
             <InfoCard title="발송 내역">
               {notificationRows.length > 0 ? (
                 notificationRows.map((log) => {

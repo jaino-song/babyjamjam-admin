@@ -27,11 +27,13 @@ export function MessagesPermissionGuard({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const isSenderApprovalRoute = pathname?.startsWith("/messages/sender-approval") ?? false;
+  const isReadOnlyRoute = pathname === "/messages/scheduled" || pathname === "/messages/history";
+  const isPermissionExemptRoute = isSenderApprovalRoute || isReadOnlyRoute;
 
   const { data: senderApproval, isLoading } = useQuery({
     queryKey: MESSAGE_SENDER_APPROVAL_QUERY_KEY,
     queryFn: settingsApi.getMessageSenderApproval,
-    enabled: !isSenderApprovalRoute,
+    enabled: !isPermissionExemptRoute,
   });
 
   const needsSenderApproval = Boolean(senderApproval && !senderApproval.isApproved);
@@ -39,7 +41,7 @@ export function MessagesPermissionGuard({ children }: { children: ReactNode }) {
   const needsRequestPermission = Boolean(
     senderApproval && !senderApproval.isApproved && !senderApproval.canRequest,
   );
-  const shouldShowApprovalModal = !isSenderApprovalRoute && needsSenderApproval;
+  const shouldShowApprovalModal = !isPermissionExemptRoute && needsSenderApproval;
 
   const handleApprovalModalCancel = () => {
     router.replace("/all");
@@ -57,7 +59,7 @@ export function MessagesPermissionGuard({ children }: { children: ReactNode }) {
   return (
     <MessagesPermissionGuardContext.Provider
       value={{
-        isLoading: !isSenderApprovalRoute && isLoading,
+        isLoading: !isPermissionExemptRoute && isLoading,
         needsSenderApproval,
       }}
     >

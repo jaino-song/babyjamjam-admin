@@ -22,10 +22,11 @@ import {
     usePushNotification,
     Notification,
 } from "@/hooks/usePushNotification";
-import { format, isToday, isYesterday } from "date-fns";
+import { format } from "date-fns";
 import { ko } from "date-fns/locale";
 import { FilteredClientsDialog } from "./FilteredClientsDialog";
 import { cn } from "@/lib/utils";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 
 type FilterType = "starting-soon" | "ending-soon" | "incomplete-contracts" | "no-contract";
 
@@ -58,13 +59,7 @@ interface GroupedNotifications {
 }
 
 function formatDateLabel(date: Date): string {
-    if (isToday(date)) {
-        return "오늘";
-    }
-    if (isYesterday(date)) {
-        return "어제";
-    }
-    return format(date, "M월 d일 EEEE", { locale: ko });
+    return formatDateForDisplay(date);
 }
 
 function groupNotificationsByDate(notifications: Notification[]): GroupedNotifications[] {

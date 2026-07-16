@@ -7,14 +7,6 @@ import {
 } from "domain/ports/call-extraction.port";
 import { GeminiCallExtractionAdapter } from "infrastructure/api/gemini-call-extraction.adapter";
 import {
-    AligoAlimtalkResponse,
-    AligoCreateTemplateParams,
-    AligoSendAlimtalkParams,
-    AligoTemplateCreateResponse,
-    AligoTemplateListResponse,
-    IAligoApiPort,
-} from "domain/ports/aligo-api.port";
-import {
     AligoSendSmsParams,
     AligoSmsResponse,
     IAligoSmsApiPort,
@@ -476,41 +468,7 @@ export class E2eEformsignClientStub implements IEformsignClientRepository {
     }
 }
 
-export class E2eAligoApiStub implements IAligoApiPort, IAligoSmsApiPort {
-    sendAlimtalk(params: AligoSendAlimtalkParams): Promise<AligoAlimtalkResponse> {
-        void params;
-        return Promise.resolve({
-            code: 0,
-            message: "stubbed",
-            info: {
-                type: "AT",
-                mid: 1,
-                current: "2026-06-06 00:00:00",
-                unit: 1,
-                total: 1,
-                scnt: 1,
-                fcnt: 0,
-            },
-        });
-    }
-
-    createTemplate(params: AligoCreateTemplateParams): Promise<AligoTemplateCreateResponse> {
-        void params;
-        return Promise.resolve({
-            code: 0,
-            message: "stubbed",
-            info: {},
-        });
-    }
-
-    listTemplates(): Promise<AligoTemplateListResponse> {
-        return Promise.resolve({
-            code: 0,
-            message: "stubbed",
-            list: [],
-        });
-    }
-
+export class E2eAligoApiStub implements IAligoSmsApiPort {
     sendSms(params: AligoSendSmsParams): Promise<AligoSmsResponse> {
         return Promise.resolve({
             result_code: 1,
@@ -581,7 +539,7 @@ export function createEformsignClientRepository(configService: ConfigService): I
         : new EformsignApiClient(configService);
 }
 
-export function createAligoPortClient(configService: ConfigService): IAligoApiPort & IAligoSmsApiPort {
+export function createAligoPortClient(configService: ConfigService): IAligoSmsApiPort {
     return areE2EVendorStubsEnabled(configService)
         ? new E2eAligoApiStub()
         : new AligoApiClient(configService);

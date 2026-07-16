@@ -1,17 +1,9 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
-import {
-    Baby,
-    CalendarDays,
-    ChevronDown,
-    ClipboardList,
-    FileSignature,
-    Link2,
-    UserRound,
-} from "lucide-react";
+import { ChevronDown } from "lucide-react";
 
-import { DetailEmptyState, InfoRow } from "@/components/app/v3";
+import { DetailEmptyState, InfoCard, InfoRow } from "@/components/app/v3";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { StatusPill } from "@/components/app/ui/status-badge";
 import { Button } from "@/components/ui/button";
@@ -19,6 +11,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { calcEndDateBusinessDays } from "@/lib/date/business-days";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { cn } from "@/lib/utils";
 import {
     SERVICE_RECORD_FORM_LAYOUT,
@@ -49,7 +42,6 @@ interface SessionSlot {
     expectedDate: string | null;
 }
 
-const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"] as const;
 const LINK_STATUS_META: Record<ServiceRecordLinkStatus, {
     label: string;
     variant: "neutral" | "primary" | "success" | "warning" | "danger";
@@ -150,27 +142,31 @@ export function ClientServiceRecordsTab({
             <div data-component="clients-detail-service-records" className="space-y-[calc(16px*var(--glint-ui-scale,1))]">
                 {record ? (
                     <>
-                        <RecordStatusCard record={record} />
-                        {activeAssignment ? (
-                            <LinkStatusCard
-                                assignment={activeAssignment}
-                                isPending={sendLinkMutation.isPending
-                                    && sendLinkMutation.variables?.scheduleId === activeAssignment.scheduleId}
-                                onSendLink={() => void handleSendLink(activeAssignment)}
-                            />
-                        ) : (
-                            <ServiceRecordCard
-                                dataComponent="clients-detail-service-records-link-unassigned"
-                                icon={<Link2 className="h-[calc(17px*var(--glint-ui-scale,1))] w-[calc(17px*var(--glint-ui-scale,1))]" />}
-                                title="제공기록지 작성 링크"
-                                subtitle="제공인력 배정 후 작성 링크가 생성됩니다"
-                                right={<StatusPill variant="neutral">배정 대기</StatusPill>}
-                            >
-                                <div />
-                            </ServiceRecordCard>
-                        )}
+                        <div
+                            data-component="clients-detail-service-records-overview-grid"
+                            className="grid grid-cols-1 items-stretch gap-[calc(16px*var(--glint-ui-scale,1))] lg:grid-cols-3 [&>*]:content-start"
+                        >
+                            <RecordStatusCard record={record} />
+                            <ServiceHeaderCard header={record.header} showStatusBadge={false} />
+                            {activeAssignment ? (
+                                <LinkStatusCard
+                                    assignment={activeAssignment}
+                                    isPending={sendLinkMutation.isPending
+                                        && sendLinkMutation.variables?.scheduleId === activeAssignment.scheduleId}
+                                    onSendLink={() => void handleSendLink(activeAssignment)}
+                                    showStatusBadge={false}
+                                />
+                            ) : (
+                                <InfoCard
+                                    data-component="clients-detail-service-records-link-unassigned"
+                                    title="제공기록지 작성 링크"
+                                    description="제공인력 배정 후 작성 링크가 생성됩니다"
+                                >
+                                <ServiceRecordInfoRow label="상태" value={<StatusPill variant="neutral">배정 대기</StatusPill>} />
+                                </InfoCard>
+                            )}
+                        </div>
                         {assignments.length > 1 && <AssignmentHistoryCard assignments={assignments} />}
-                        <ServiceHeaderCard header={record.header} />
                         <ServiceSessionsCard
                             startDate={record.startDate}
                             totalSessions={record.totalSessions}
@@ -222,11 +218,11 @@ export function ClientServiceRecordsTab({
                     if (!open) setPendingResendAssignment(null);
                 }}
                 dataComponent="clients-service-record-resend-approval"
-                title="제공기록지 링크를 재전송하시겠습니까?"
-                description="새 링크가 발급되며 기존 링크는 즉시 사용할 수 없게 됩니다."
+                title="제공기록지 메시지를 재전송하시겠습니까?"
+                description="기존 링크가 그대로 포함된 메시지를 다시 전송합니다."
                 isDescriptionVisuallyHidden={false}
-                approvalLabel="재전송"
-                pendingLabel="재전송 중..."
+                approvalLabel="메시지 재전송"
+                pendingLabel="메시지 재전송 중..."
                 isPending={sendLinkMutation.isPending}
                 onApprove={() => void handleResendConfirm()}
             />
@@ -262,29 +258,28 @@ function ClientServiceRecordsSkeleton() {
     );
 }
 
+function ServiceRecordInfoRow({ label, value }: { label: string; value: ReactNode }) {
+    return <InfoRow label={label} value={value} size="compact" />;
+}
+
 function RecordStatusCard({ record }: { record: ServiceRecordCase }) {
     const status = getRecordStatusMeta(record.status);
     const submitted = record.sessions.filter((session) => session.locked).length;
+
     return (
-        <ServiceRecordCard
-            dataComponent="clients-detail-service-records-status-card"
-            icon={<CalendarDays className="h-[calc(17px*var(--glint-ui-scale,1))] w-[calc(17px*var(--glint-ui-scale,1))]" />}
+        <InfoCard
             title="제공기록지 진행 상태"
-            subtitle="고객 서비스 기간 전체를 하나의 기록지로 관리합니다"
-            right={<StatusPill variant={status.variant}>{status.label}</StatusPill>}
+            data-component="clients-detail-service-records-status-card"
         >
-            <div className="grid grid-cols-2 gap-x-[calc(24px*var(--glint-ui-scale,1))] gap-y-[calc(6px*var(--glint-ui-scale,1))] border-t border-dashed border-v3-border pt-[calc(12px*var(--glint-ui-scale,1))] max-sm:grid-cols-1">
-                <MetaRow label="서비스 기간" value={`${formatDateKo(record.startDate)} - ${formatDateKo(record.endDate)}`} />
-                <MetaRow label="작성 현황" value={`${submitted}/${record.totalSessions}회`} />
-                <MetaRow label="기록 완료" value={formatDateTimeKo(record.completedAt)} />
-                <MetaRow
-                    label="전자문서 생성"
-                    value={record.finalizedAt
-                        ? formatDateTimeKo(record.finalizedAt)
-                        : record.finalizationDueAt ? `${formatDateTimeKo(record.finalizationDueAt)} 이후` : "-"}
-                />
-            </div>
-        </ServiceRecordCard>
+            <ServiceRecordInfoRow label="상태" value={status.label} />
+            <ServiceRecordInfoRow label="서비스 기간" value={`${formatDateKo(record.startDate)} - ${formatDateKo(record.endDate)}`} />
+            <ServiceRecordInfoRow label="작성 현황" value={`${submitted}/${record.totalSessions}회`} />
+            <ServiceRecordInfoRow label="기록 완료" value={formatDateTimeKo(record.completedAt)} />
+            <ServiceRecordInfoRow
+                label="전자문서 생성"
+                value={formatDateTimeKo(record.finalizedAt)}
+            />
+        </InfoCard>
     );
 }
 
@@ -293,13 +288,12 @@ function AssignmentHistoryCard({ assignments }: { assignments: ServiceRecordAssi
         new Date(left.startDate).getTime() - new Date(right.startDate).getTime()
     ));
     return (
-        <ServiceRecordCard
-            dataComponent="clients-detail-service-records-assignment-history"
-            icon={<UserRound className="h-[calc(17px*var(--glint-ui-scale,1))] w-[calc(17px*var(--glint-ui-scale,1))]" />}
+        <InfoCard
+            data-component="clients-detail-service-records-assignment-history"
             title="제공인력 배정 이력"
-            subtitle="담당자가 바뀌어도 회차 기록은 연속해서 이어집니다"
+            description="담당자가 바뀌어도 회차 기록은 연속해서 이어집니다"
         >
-            <div className="border-t border-dashed border-v3-border pt-[calc(8px*var(--glint-ui-scale,1))]">
+            <div>
                 {ordered.map((assignment) => (
                     <div
                         key={assignment.scheduleId}
@@ -319,7 +313,7 @@ function AssignmentHistoryCard({ assignments }: { assignments: ServiceRecordAssi
                     </div>
                 ))}
             </div>
-        </ServiceRecordCard>
+        </InfoCard>
     );
 }
 
@@ -349,116 +343,96 @@ function LinkStatusCard({
     assignment,
     isPending,
     onSendLink,
+    showStatusBadge = true,
 }: {
     assignment: ServiceRecordAssignment;
     isPending: boolean;
     onSendLink: () => void;
+    showStatusBadge?: boolean;
 }) {
     const { link, employee } = assignment;
     const statusMeta = LINK_STATUS_META[link.status];
     const isResend = link.status === "sent" || link.status === "failed";
-    const autoScheduledFor = link.scheduledFor ?? getExpectedAutoSendAt(assignment.startDate);
 
     return (
-        <ServiceRecordCard
-            dataComponent="clients-detail-service-records-link-card"
-            icon={<Link2 className="h-[calc(17px*var(--glint-ui-scale,1))] w-[calc(17px*var(--glint-ui-scale,1))]" />}
+        <InfoCard
+            data-component="clients-detail-service-records-link-card"
             title="제공기록지 작성 링크"
-            subtitle={`${employee.name} · ${formatPhone(employee.phone)} · 문자메시지 발송`}
-            right={<StatusPill variant={statusMeta.variant}>{statusMeta.label}</StatusPill>}
+            titleTrailing={showStatusBadge ? (
+                <div className="ml-auto flex shrink-0 items-center gap-[calc(8px*var(--glint-ui-scale,1))]">
+                    <StatusPill variant={statusMeta.variant}>{statusMeta.label}</StatusPill>
+                </div>
+            ) : undefined}
         >
-            <div className="grid grid-cols-2 gap-x-[calc(24px*var(--glint-ui-scale,1))] gap-y-[calc(6px*var(--glint-ui-scale,1))] border-t border-dashed border-v3-border pt-[calc(12px*var(--glint-ui-scale,1))] max-sm:grid-cols-1">
-                <MetaRow
-                    label={link.status === "none" || link.status === "scheduled" ? "자동 발송 예정" : "최근 발송"}
-                    value={
-                        link.status === "sent"
-                            ? formatDateTimeKo(link.lastSentAt)
-                            : link.status === "none" || link.status === "scheduled"
-                                ? formatDateTimeKo(autoScheduledFor)
-                                : <span className="text-[#b3bcc5]">-</span>
-                    }
-                />
-                <MetaRow
-                    label="발송 이력"
-                    value={link.sentCount > 0 ? `${link.sentCount}회` : <span className="text-[#b3bcc5]">없음</span>}
-                />
-                <MetaRow label="링크 인증" value={<TokenVerificationValue assignment={assignment} />} />
-                <MetaRow label="링크 만료" value={<TokenExpiryValue assignment={assignment} />} />
-            </div>
-            <div className="mt-[calc(14px*var(--glint-ui-scale,1))] flex flex-wrap items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] border-t border-dashed border-v3-border pt-[calc(12px*var(--glint-ui-scale,1))]">
-                <p className="min-w-[200px] flex-1 text-[calc(11.5px*var(--glint-ui-scale,1))] leading-6 text-v3-text-muted">
-                    {isResend
-                        ? <>재전송 시 <b>새 링크가 발급</b>되며 기존 링크는 즉시 사용할 수 없게 됩니다.</>
-                        : "서비스 시작일 15:00에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요."}
-                </p>
+            <ServiceRecordInfoRow label="제공인력 이름" value={employee.name} />
+            <ServiceRecordInfoRow label="제공인력 연락처" value={formatPhone(employee.phone)} />
+            <ServiceRecordInfoRow label="메시지 최근 발송" value={formatDateTimeKo(link.lastSentAt)} />
+            <ServiceRecordInfoRow label="제공기록지 본인 인증" value={<TokenVerificationValue assignment={assignment} />} />
+            <div className="mt-[calc(14px*var(--glint-ui-scale,1))] flex flex-wrap items-center justify-end gap-[calc(12px*var(--glint-ui-scale,1))]">
+                {!isResend && (
+                    <p className="min-w-[200px] flex-1 text-[calc(11.5px*var(--glint-ui-scale,1))] leading-6 text-v3-text-muted">
+                        서비스 시작일 15:00에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요.
+                    </p>
+                )}
                 <Button
                     type="button"
-                    variant={isResend ? "outline" : "default"}
+                    variant="positive"
                     size="sm"
+                    width={isResend ? "lg" : undefined}
                     disabled={isPending}
                     onClick={onSendLink}
                     data-component={isResend
                         ? "clients-detail-service-records-link-resend-button"
                         : "clients-detail-service-records-link-send-button"}
                 >
-                    {isPending ? "발송 중..." : isResend ? "링크 재전송" : "링크 수동 전송"}
+                    {isPending ? "발송 중..." : isResend ? "메시지 재전송" : "링크 수동 전송"}
                 </Button>
             </div>
-        </ServiceRecordCard>
+        </InfoCard>
     );
 }
 
 function TokenVerificationValue({ assignment }: { assignment: ServiceRecordAssignment }) {
     const token = assignment.link.token;
-    if (!token) return <span className="text-[#b3bcc5]">-</span>;
-    if (token.verifiedAt) {
-        return <StatusPill variant="primary">전화번호 인증 완료</StatusPill>;
-    }
-    return <span className="text-v3-text-muted">미인증</span>;
+    return token?.verifiedAt ? "완료" : "미완료";
 }
 
-function TokenExpiryValue({ assignment }: { assignment: ServiceRecordAssignment }) {
-    const token = assignment.link.token;
-    if (!token) return <span className="text-[#b3bcc5]">-</span>;
-
-    if (token.state === "expired") {
-        return (
-            <span className="inline-flex items-center gap-1">
-                <StatusPill variant="danger">만료됨</StatusPill>
-                <span>{formatDateTimeKo(token.expiresAt)}</span>
-            </span>
-        );
-    }
-
-    if (token.state === "revoked") {
-        return (
-            <span className="inline-flex items-center gap-1">
-                <StatusPill variant="danger">회수됨</StatusPill>
-                <span>{formatDateTimeKo(token.expiresAt)}</span>
-            </span>
-        );
-    }
-
-    return <span>{formatDateTimeKo(token.expiresAt)}</span>;
-}
-
-function ServiceHeaderCard({ header }: { header: ServiceRecordHeader | null }) {
+function ServiceHeaderCard({
+    header,
+    showStatusBadge = true,
+}: {
+    header: ServiceRecordHeader | null;
+    showStatusBadge?: boolean;
+}) {
     return (
-        <ServiceRecordCard
-            dataComponent="clients-detail-service-records-header-card"
-            icon={<Baby className="h-[calc(17px*var(--glint-ui-scale,1))] w-[calc(17px*var(--glint-ui-scale,1))]" />}
+        <InfoCard
+            data-component="clients-detail-service-records-header-card"
             title="서비스 기본정보"
-            subtitle={header ? `${formatDateTimeKo(header.createdAt)} 작성` : "산모 및 신생아 정보"}
-            right={<StatusPill variant={header ? "success" : "neutral"}>{header ? "작성 완료" : "작성 전"}</StatusPill>}
+            description={header ? undefined : "산모 및 신생아 정보"}
+            className={header ? "h-full grid-rows-[auto_minmax(0,1fr)]" : undefined}
+            contentClassName={header ? "block min-h-0" : undefined}
+            titleTrailing={showStatusBadge ? (
+                <div className="ml-auto flex shrink-0 items-center gap-[calc(8px*var(--glint-ui-scale,1))]">
+                    <StatusPill variant={header ? "success" : "neutral"}>{header ? "작성 완료" : "작성 전"}</StatusPill>
+                </div>
+            ) : undefined}
         >
             {header ? (
-                <div className="grid grid-cols-2 gap-x-[calc(32px*var(--glint-ui-scale,1))] max-sm:grid-cols-1">
-                    <InfoRow label="산모 성명" value={header.momName || "-"} />
-                    <InfoRow label="산모 생년월일" value={header.momBirth || "-"} />
-                    <InfoRow label="신생아 성명" value={header.babyName || "-"} />
-                    <InfoRow label="신생아 출생일자" value={header.babyBirth || "-"} />
-                    <InfoRow label="분만형태" value={header.deliveryType || "-"} />
-                    <InfoRow label="신생아 몸무게" value={formatBabyWeight(header.babyWeight)} />
+                <div className="flex h-full flex-col">
+                    <div>
+                        <ServiceRecordInfoRow label="산모 성명" value={header.momName || "-"} />
+                        <ServiceRecordInfoRow label="산모 생년월일" value={header.momBirth || "-"} />
+                        <ServiceRecordInfoRow label="신생아 성명" value={header.babyName || "-"} />
+                        <ServiceRecordInfoRow label="신생아 출생일자" value={header.babyBirth || "-"} />
+                        <ServiceRecordInfoRow label="분만형태" value={header.deliveryType || "-"} />
+                        <ServiceRecordInfoRow label="신생아 몸무게" value={formatBabyWeight(header.babyWeight)} />
+                    </div>
+                    <p
+                        data-component="clients-detail-service-records-header-card-caption"
+                        className="mt-auto text-right text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold leading-[1.4] text-v3-text-muted"
+                    >
+                        {formatDateTimeKo(header.createdAt)} 작성
+                    </p>
                 </div>
             ) : (
                 <div className="mt-[calc(12px*var(--glint-ui-scale,1))] rounded-[14px] border-2 border-dashed border-v3-border px-[calc(22px*var(--glint-ui-scale,1))] py-[calc(22px*var(--glint-ui-scale,1))] text-center text-[calc(12.3px*var(--glint-ui-scale,1))] leading-6 text-v3-text-muted">
@@ -467,7 +441,7 @@ function ServiceHeaderCard({ header }: { header: ServiceRecordHeader | null }) {
                     제공인력이 링크 접속 후 산모·신생아 정보를 입력하면 표시됩니다.
                 </div>
             )}
-        </ServiceRecordCard>
+        </InfoCard>
     );
 }
 
@@ -490,15 +464,14 @@ function ServiceSessionsCard({
     const progress = totalSessions > 0 ? Math.round((lockedCount / totalSessions) * 100) : 0;
 
     return (
-        <ServiceRecordCard
-            dataComponent="clients-detail-service-records-sessions"
-            icon={<ClipboardList className="h-[calc(17px*var(--glint-ui-scale,1))] w-[calc(17px*var(--glint-ui-scale,1))]" />}
+        <InfoCard
+            data-component="clients-detail-service-records-sessions"
             title="회차별 제공기록"
-            subtitle={sessions.length > 0
+            description={sessions.length > 0
                 ? "계약 회차를 누르면 기록 상세가 열립니다"
                 : `계약 회차 ${configuredSessions}회`}
-            right={
-                <span className="text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
+            titleTrailing={
+                <span className="ml-auto text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
                     <b className="text-v3-primary">{lockedCount}</b>/{totalSessions} 제출완료
                     {draftCount > 0 ? ` · 임시저장 ${draftCount}` : ""}
                 </span>
@@ -520,7 +493,7 @@ function ServiceSessionsCard({
                     />
                 ))}
             </div>
-        </ServiceRecordCard>
+        </InfoCard>
     );
 }
 
@@ -560,14 +533,11 @@ function SessionRow({ slot, defaultOpen }: { slot: SessionSlot; defaultOpen: boo
                     <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-[calc(8px*var(--glint-ui-scale,1))] text-[calc(13px*var(--glint-ui-scale,1))] font-semibold text-v3-dark">
                             <span>{slot.sessionIndex}회차 · {formatDateKo(record.serviceDate)}</span>
-                            <span className="rounded-[6px] border border-v3-border bg-v3-dim-white px-[calc(6px*var(--glint-ui-scale,1))] py-px text-[calc(10px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
-                                양식 v{record.formVersion ?? 1}
-                            </span>
                         </div>
                         <div className="mt-0.5 text-[calc(11.5px*var(--glint-ui-scale,1))] text-v3-text-muted">
                             {record.employeeName ? `${record.employeeName} · ` : ""}
                             {record.locked
-                                ? <>제출 {formatDateTimeKo(record.submittedAt)} · 잠금 🔒</>
+                                ? <>제출 {formatDateTimeKo(record.submittedAt)}</>
                                 : <>마지막 저장 {formatDateTimeKo(record.updatedAt)} · 작성 중</>}
                         </div>
                     </div>
@@ -647,9 +617,6 @@ function SessionRecordDetail({ record }: { record: ServiceRecordSession }) {
                     </div>
                 </div>
             )}
-            <div className="mt-[calc(12px*var(--glint-ui-scale,1))] text-[calc(10.8px*var(--glint-ui-scale,1))] text-[#b3bcc5]">
-                ※ 제출 시점의 양식 스냅샷(v1) 기준으로 표시됩니다.
-            </div>
         </div>
     );
 }
@@ -779,57 +746,25 @@ function EmptyValue() {
 
 function SignatureDocCard({ signatureDoc }: { signatureDoc: SignatureDocStatus }) {
     return (
-        <ServiceRecordCard
-            dataComponent="clients-detail-service-records-signature-card"
-            icon={<FileSignature className="h-[calc(17px*var(--glint-ui-scale,1))] w-[calc(17px*var(--glint-ui-scale,1))]" />}
+        <InfoCard
+            data-component="clients-detail-service-records-signature-card"
             title={signatureDoc.snapshotChunkIndex
                 ? `제공기록지 전자문서 ${signatureDoc.snapshotChunkIndex}`
                 : "제공기록지 전자문서"}
-            subtitle="서비스 종료 후 자동 생성 · 제공기관 검토"
-            right={<StatusPill variant={getSignatureVariant(signatureDoc.statusDetail)}>{formatSignatureStatus(signatureDoc.statusDetail)}</StatusPill>}
+            description="서비스 종료 후 자동 생성 · 제공기관 검토"
+            titleTrailing={
+                <div className="ml-auto flex shrink-0 items-center gap-[calc(8px*var(--glint-ui-scale,1))]">
+                    <StatusPill variant={getSignatureVariant(signatureDoc.statusDetail)}>{formatSignatureStatus(signatureDoc.statusDetail)}</StatusPill>
+                </div>
+            }
         >
-            <div className="grid grid-cols-2 gap-x-[calc(24px*var(--glint-ui-scale,1))] gap-y-[calc(6px*var(--glint-ui-scale,1))] border-t border-dashed border-v3-border pt-[calc(12px*var(--glint-ui-scale,1))] max-sm:grid-cols-1">
+            <div className="grid grid-cols-2 gap-x-[calc(24px*var(--glint-ui-scale,1))] gap-y-[calc(6px*var(--glint-ui-scale,1))] max-sm:grid-cols-1">
                 <MetaRow label="문서 발송" value={formatDateTimeKo(signatureDoc.createdDate)} />
                 <MetaRow label="상태 갱신" value={formatDateTimeKo(signatureDoc.updatedDate)} />
                 <MetaRow label="단계" value={signatureDoc.stepName} />
                 <MetaRow label="문서 ID" value={signatureDoc.documentId} />
             </div>
-        </ServiceRecordCard>
-    );
-}
-
-function ServiceRecordCard({
-    dataComponent,
-    icon,
-    title,
-    subtitle,
-    right,
-    children,
-}: {
-    dataComponent: string;
-    icon: React.ReactNode;
-    title: string;
-    subtitle: string;
-    right?: ReactNode;
-    children: ReactNode;
-}) {
-    return (
-        <div
-            data-component={dataComponent}
-            className="rounded-[18px] border border-v3-border bg-white p-[calc(18px*var(--glint-ui-scale,1))]"
-        >
-            <div className="mb-[calc(14px*var(--glint-ui-scale,1))] flex items-start gap-[calc(12px*var(--glint-ui-scale,1))]">
-                <div className="flex h-[calc(38px*var(--glint-ui-scale,1))] w-[calc(38px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[12px] bg-v3-primary-light text-v3-primary">
-                    {icon}
-                </div>
-                <div className="min-w-0">
-                    <div className="text-[calc(13.5px*var(--glint-ui-scale,1))] font-bold text-v3-dark">{title}</div>
-                    <div className="mt-0.5 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">{subtitle}</div>
-                </div>
-                {right && <div className="ml-auto flex shrink-0 items-center gap-[calc(8px*var(--glint-ui-scale,1))]">{right}</div>}
-            </div>
-            {children}
-        </div>
+        </InfoCard>
     );
 }
 
@@ -868,11 +803,6 @@ function getExpectedSessionDate(startDate: string | null, sessionIndex: number):
     return calcEndDateBusinessDays(datePart, sessionIndex) || null;
 }
 
-function getExpectedAutoSendAt(startDate: string): string | null {
-    const datePart = datePartOf(startDate);
-    return datePart ? `${datePart}T15:00:00+09:00` : null;
-}
-
 function datePartOf(value: string | null): string | null {
     if (!value) return null;
     const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -880,9 +810,7 @@ function datePartOf(value: string | null): string | null {
 }
 
 function formatDateKo(value: string | null): string {
-    const date = parseDateForDisplay(value);
-    if (!date) return "-";
-    return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, "0")}.${String(date.getDate()).padStart(2, "0")}(${WEEKDAYS[date.getDay()]})`;
+    return formatDateForDisplay(value);
 }
 
 function formatDateTimeKo(value: string | null): string {

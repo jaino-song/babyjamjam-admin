@@ -115,10 +115,10 @@ const HEADER_FIELDS = [
 
 /* ───────────────────────── helpers ───────────────────────── */
 
-const mmdd = (iso: string) => (iso ? iso.slice(5).replace("-", ".") : "");
+const mmdd = (iso: string) => (iso ? iso.slice(0, 10).replaceAll("-", ".") : "");
 const monthDayKo = (iso: string) => {
     const [, month = "", day = ""] = iso.match(/^\d{4}-(\d{2})-(\d{2})$/) ?? [];
-    return `${Number(month)}월 ${Number(day)}일`;
+    return iso ? `${iso.slice(0, 4)}.${month}.${day}` : "";
 };
 interface StoredFormState {
     header?: Record<string, string>;

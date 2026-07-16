@@ -5,6 +5,7 @@ import { serverAPIClient } from "@/lib/api/server";
 
 type RouteParams = { params: Promise<{ scheduleId: string }> };
 const PREPARED_LINK_TOKEN_PATTERN = /^efl_[A-Za-z0-9_-]{40,64}$/;
+const RECIPIENT_PHONE_PATTERN = /^01[016789]-?\d{3,4}-?\d{4}$/;
 
 function getAuthToken(request: NextRequest): string | null {
     return request.cookies.get("auth_token")?.value || null;
@@ -25,17 +26,30 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const preparedLinkToken = requestBody && typeof requestBody === "object"
         ? (requestBody as { preparedLinkToken?: unknown }).preparedLinkToken
         : undefined;
+    const recipientPhone = requestBody && typeof requestBody === "object"
+        ? (requestBody as { recipientPhone?: unknown }).recipientPhone
+        : undefined;
     if (
         preparedLinkToken !== undefined
         && (typeof preparedLinkToken !== "string" || !PREPARED_LINK_TOKEN_PATTERN.test(preparedLinkToken))
     ) {
         return NextResponse.json({ error: "Invalid prepared feedback link" }, { status: 400 });
     }
+    if (
+        recipientPhone !== undefined
+        && (typeof recipientPhone !== "string" || !RECIPIENT_PHONE_PATTERN.test(recipientPhone))
+    ) {
+        return NextResponse.json({ error: "Invalid recipient phone" }, { status: 400 });
+    }
 
     try {
+        const body = {
+            ...(preparedLinkToken ? { preparedLinkToken } : {}),
+            ...(recipientPhone ? { recipientPhone } : {}),
+        };
         const response = await serverAPIClient.post(
             `/admin/service-records/schedules/${encodeURIComponent(scheduleId)}/send-link`,
-            preparedLinkToken ? { preparedLinkToken } : {},
+            body,
             { headers: getAuthHeaders(token) },
         );
         return NextResponse.json(response.data ?? {}, { status: response.status });

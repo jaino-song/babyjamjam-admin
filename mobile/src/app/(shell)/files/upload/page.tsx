@@ -14,6 +14,7 @@ import {
 
 import { useDocumentCategories } from "@/hooks/use-document-categories";
 import { useUploadDocument } from "@/hooks/use-documents";
+import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { useToast } from "@/hooks/use-toast";
 
 import styles from "./page.module.css";
@@ -99,6 +100,7 @@ function CategoryIcon({ kind }: { kind: UploadCategory["kind"] }) {
 
 export default function FileUploadPage() {
   const router = useRouter();
+  const { isNavigationPending, startNavigation } = useNavigationPending();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadMutation = useUploadDocument();
@@ -133,7 +135,8 @@ export default function FileUploadPage() {
       { ...FALLBACK_CATEGORIES[0], valueId: FALLBACK_CATEGORIES[0].id },
     [categories, selectedCategoryId]
   );
-  const progress = uploadMutation.isPending ? Math.round(uploadProgress) : FALLBACK_PROGRESS;
+  const isUploading = uploadMutation.isPending || isNavigationPending;
+  const progress = isUploading ? Math.round(uploadProgress) : FALLBACK_PROGRESS;
   const uploadedBytes = selectedFile ? Math.round((selectedFile.size * progress) / 100) : 0;
 
   const validateFile = useCallback((file: File): string | null => {
@@ -215,6 +218,7 @@ export default function FileUploadPage() {
         onProgress: setUploadProgress,
       });
       toast({ title: "성공", description: "문서가 업로드되었습니다.", variant: "default" });
+      startNavigation();
       router.push("/files");
     } catch {
       toast({ title: "오류", description: "문서 업로드에 실패했습니다.", variant: "destructive" });
@@ -257,7 +261,7 @@ export default function FileUploadPage() {
             accept={ALLOWED_EXTENSIONS}
             className={styles.fileInput}
             onChange={handleFileInputChange}
-            disabled={uploadMutation.isPending}
+            disabled={isUploading}
           />
 
           {selectedFile ? (
@@ -436,10 +440,10 @@ export default function FileUploadPage() {
         <button
           type="button"
           className={`${styles.uploadBtn} ${styles.primary}`}
-          disabled={!selectedFile || !name.trim() || uploadMutation.isPending}
+          disabled={!selectedFile || !name.trim() || isUploading}
           onClick={handleSubmit}
         >
-          {uploadMutation.isPending ? "업로드 중..." : "업로드 완료"}
+          {isUploading ? "업로드 중..." : "업로드 완료"}
         </button>
       </footer>
     </section>

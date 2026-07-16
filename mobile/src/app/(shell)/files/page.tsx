@@ -4,6 +4,7 @@ import { useMemo, useRef, useState, type ReactNode } from "react";
 import { FileImage, FileSpreadsheet, FileText, Image as ImageIcon } from "lucide-react";
 
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import {
   useDocuments,
   getDownloadUrl,
@@ -65,7 +66,7 @@ function relativeUploadLabel(iso: string): string {
   if (diffHr < 24) return `${diffHr}시간 전`;
   const isSameYear = d.getFullYear() === new Date().getFullYear();
   if (isSameYear) return `${d.getMonth() + 1}/${d.getDate()}`;
-  return d.toLocaleDateString("ko-KR", { year: "2-digit", month: "numeric", day: "numeric" });
+  return formatDateForDisplay(d);
 }
 
 function formatDateTime(iso: string): string {
@@ -119,14 +120,7 @@ function PdfContractPreview({
 }) {
   const sliderRef = useRef<HTMLDivElement>(null);
   const [activePage, setActivePage] = useState(0);
-  const created = new Date(doc.createdAt);
-  const issuedDate = Number.isNaN(created.getTime())
-    ? "2025. 5. 11."
-    : created.toLocaleDateString("ko-KR", {
-        year: "numeric",
-        month: "numeric",
-        day: "numeric",
-      });
+  const issuedDate = formatDateForDisplay(doc.createdAt, "2025.05.11");
   const documentCode = `D-${doc.id.slice(0, 8).toUpperCase()}`;
   const baseName = doc.name.replace(/\.[^.]+$/, "");
 

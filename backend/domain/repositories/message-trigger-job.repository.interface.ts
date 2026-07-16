@@ -11,6 +11,10 @@ export interface IMessageTriggerJobRepository {
         branchId: string,
         limit?: number,
     ): Promise<MessageTriggerJobEntity[]>;
+    findTerminalByBranch(
+        branchId: string,
+        limit?: number,
+    ): Promise<MessageTriggerJobEntity[]>;
     findPendingByRuleId(ruleId: string): Promise<MessageTriggerJobEntity[]>;
     findPendingByRuleIdsAndClientId(ruleIds: string[], clientId: number): Promise<MessageTriggerJobEntity[]>;
     findPendingByRuleIdsAndEmployeeScheduleId(

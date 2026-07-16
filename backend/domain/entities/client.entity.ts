@@ -66,7 +66,7 @@ export class ClientEntity {
         public createdAt: Date | null = null,
         public areaId: string | null = null,
         // Owning tenant; populated by ClientMapper on reads so downstream
-        // consumers (e.g. alimtalk log rows) can scope records to the branch.
+        // consumers (e.g. message log rows) can scope records to the branch.
         public branchId: string | null = null,
     ) {}
 

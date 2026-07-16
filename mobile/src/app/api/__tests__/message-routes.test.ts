@@ -5,10 +5,6 @@ import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
 import { GET as listMessageLogs } from "../message-logs/route";
-import {
-  GET as listAlimtalkTemplates,
-  POST as createAlimtalkTemplate,
-} from "../alimtalk-templates/route";
 import { GET as listUpcomingJobs } from "../message-trigger-jobs/upcoming/route";
 import { GET as listTriggerTemplates } from "../message-trigger-templates/route";
 
@@ -33,7 +29,7 @@ function createRequest(path: string, init: { method?: string; body?: BodyInit; h
   });
 }
 
-describe("Alimtalk API routes", () => {
+describe("Message API routes", () => {
   let consoleErrorSpy: jest.SpyInstance;
 
   beforeEach(() => {
@@ -132,31 +128,4 @@ describe("Alimtalk API routes", () => {
     await expect(response.json()).resolves.toEqual({ error: "Failed to fetch message trigger templates" });
   });
 
-  it("preserves backend status and payload when listing Alimtalk templates", async () => {
-    mockGet.mockResolvedValue({
-      status: 206,
-      data: [{ key: "welcome" }],
-    });
-
-    const response = await listAlimtalkTemplates(createRequest("/api/alimtalk-templates"));
-
-    expect(response.status).toBe(206);
-    await expect(response.json()).resolves.toEqual([{ key: "welcome" }]);
-  });
-
-  it("rejects malformed Alimtalk template JSON before proxying", async () => {
-    const response = await createAlimtalkTemplate(
-      createRequest("/api/alimtalk-templates", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{bad-json",
-      }),
-    );
-
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Request body must be valid JSON",
-    });
-    expect(mockPost).not.toHaveBeenCalled();
-  });
 });

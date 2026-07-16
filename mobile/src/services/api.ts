@@ -1,7 +1,3 @@
-import type {
-    AlimtalkProvider,
-    AlimtalkProviderResponse,
-} from "@babyjamjam/shared/types/message";
 import { api } from "@/lib/api/client";
 import { PUBLIC_BACKEND_BASE_URL } from "@/lib/env";
 import {
@@ -402,21 +398,12 @@ export async function withEformsignReauth<T>(fn: () => Promise<T>): Promise<T> {
     }
 }
 
-export type { AlimtalkProvider, AlimtalkProviderResponse };
 export type {
     MessageSenderApprovalResponse,
     MessageSenderApprovalStatus,
 };
 
 export const settingsApi = {
-    getAlimtalkProvider: async (): Promise<AlimtalkProviderResponse> => {
-        const { data } = await api.get('/settings/alimtalk-provider');
-        return data;
-    },
-    updateAlimtalkProvider: async (provider: AlimtalkProvider): Promise<AlimtalkProviderResponse> => {
-        const { data } = await api.put('/settings/alimtalk-provider', { provider });
-        return data;
-    },
     getMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {
         const { data } = await api.get("/settings/message-sender-approval");
         return data;

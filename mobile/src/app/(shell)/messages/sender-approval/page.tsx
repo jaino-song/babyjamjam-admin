@@ -12,6 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MessageSenderApprovalModal } from "@/components/app/messages/MessageSenderApprovalModal";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { useToast } from "@/hooks/use-toast";
 import { useInitialUser } from "@/providers/UserProvider";
 import { settingsApi, type MessageSenderApprovalResponse } from "@/services/api";
@@ -225,6 +226,7 @@ function SenderApprovalForm({
 
 export default function MessageSenderApprovalPage() {
   const router = useRouter();
+  const { isNavigationPending, startNavigation } = useNavigationPending();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const initialUser = useInitialUser();
@@ -246,6 +248,7 @@ export default function MessageSenderApprovalPage() {
       queryClient.setQueryData(MESSAGE_SENDER_APPROVAL_QUERY_KEY, approval);
       setErrorMessage(null);
       toast({ description: "신청이 완료되었습니다." });
+      startNavigation();
       router.replace("/all");
     },
     onError: (error) => {
@@ -288,7 +291,7 @@ export default function MessageSenderApprovalPage() {
               approval={approvalQuery.data}
               branchName={branchName}
               isLoading={approvalQuery.isLoading}
-              isSubmitting={requestApprovalMutation.isPending}
+              isSubmitting={requestApprovalMutation.isPending || isNavigationPending}
               errorMessage={errorMessage}
               onSubmit={() => requestApprovalMutation.mutate()}
             />

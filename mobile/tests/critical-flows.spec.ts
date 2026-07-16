@@ -3,17 +3,12 @@ import { expect, test } from '@playwright/test';
 /**
  * Critical business flows against the REAL backend (no route mocks).
  *
- * These tests MUTATE backend state (sender-approval status transitions,
- * webhook-driven document completion + alimtalk log rows), so they only run
- * in CI where the database is a throwaway per-job container seeded by
- * backend/test/e2e-env/seed-e2e.ts. Never run them against a shared dev DB.
- *
- * Serial: flow 1 transitions the branch through "pending" before restoring
- * "approved"; flow 2's completion alimtalk must not race that window.
+ * These tests MUTATE backend state (sender-approval status transitions), so
+ * they only run in CI where the database is a throwaway per-job container
+ * seeded by backend/test/e2e-env/seed-e2e.ts. Never run them against a shared
+ * dev DB.
  */
 const BACKEND_URL = process.env.DEVELOPMENT_API_BASE_URL || 'http://127.0.0.1:3001';
-const WEBHOOK_SECRET = process.env.EFORMSIGN_WEBHOOK_SECRET || 'e2e-webhook-secret';
-const COMPANY_ID = process.env.EFORMSIGN_COMPANY_ID || 'e2e-stub-company';
 const BRANCH_ID = '33dbe950-1574-4951-b7b4-92d97ab29512';
 
 test.describe.configure({ mode: 'serial' });
@@ -66,110 +61,4 @@ test.describe('Critical flows (real backend)', () => {
     await page.goto('/messages/sender-approval');
     await expect(page.getByText('승인 완료').first()).toBeVisible({ timeout: 15000 });
   });
-
-  test('eformsign completion webhook delivers exactly one alimtalk (replay is idempotent)', async ({
-    page,
-    context,
-  }, testInfo) => {
-    const authToken = (await context.cookies()).find((c) => c.name === 'auth_token')?.value;
-    expect(authToken).toBeTruthy();
-    const authHeaders = { Authorization: `Bearer ${authToken}` };
-
-    const logCount = async (): Promise<number> => {
-      const res = await page.request.get(`${BACKEND_URL}/message-logs`, { headers: authHeaders });
-      expect(res.ok()).toBeTruthy();
-      const body = await res.json();
-      const rows: unknown[] = Array.isArray(body) ? body : (body?.data ?? []);
-      return rows.length;
-    };
-
-    // Provision a fresh document per attempt: the completion claim is a
-    // one-shot state transition, so reusing a seeded document would make
-    // every retry start from "already completed" (duplicate → no alimtalk)
-    // and the test could never pass on retry.
-    const documentId = `e2e-idem-${Date.now()}-r${testInfo.retry}`;
-    const createRes = await page.request.post(`${BACKEND_URL}/eformsign-docs`, {
-      headers: authHeaders,
-      data: {
-        documentId,
-        clientId: 1,
-        statusType: '002',
-        statusDetail: '대기',
-        stepType: '01',
-        stepIndex: '1',
-        stepName: '발송 대기',
-        stepRecipientType: '02',
-        stepRecipientName: '홍테스트',
-        stepRecipientSms: '01012345678',
-        expiredDate: '2027-01-01T00:00:00.000Z',
-      },
-    });
-    expect(createRes.ok()).toBeTruthy();
-
-    // Shape must satisfy EformsignWebhookPayloadDto exactly — the global
-    // ValidationPipe rejects missing required fields with a 400.
-    const webhookPayload = {
-      webhook_id: 'e2e-idempotency-check',
-      webhook_name: 'e2e-webhook',
-      company_id: COMPANY_ID,
-      event_type: 'ready_document_pdf',
-      ready_document_pdf: {
-        document_id: documentId,
-        document_title: `${documentId} 계약서`,
-        workflow_seq: 1,
-        workflow_name: '완료',
-        template_id: 'tpl-test',
-        template_name: '테스트 템플릿',
-        document_status: 'doc_complete',
-      },
-    };
-    const webhookHeaders = {
-      Authorization: `Bearer ${WEBHOOK_SECRET}`,
-      'Content-Type': 'application/json',
-    };
-
-    const before = await logCount();
-
-    // First completion webhook: claims the completion and sends the
-    // contract-signed alimtalk (recorded as a log row; vendor call stubbed).
-    const first = await page.request.post(`${BACKEND_URL}/webhooks/eformsign`, {
-      headers: webhookHeaders,
-      data: webhookPayload,
-    });
-    expect(first.status()).toBe(200);
-    expect(await first.json()).toMatchObject({ success: true });
-
-    await expect.poll(logCount, { timeout: 15000 }).toBe(before + 1);
-
-    // Replayed webhook: the completion claim is already taken — the document
-    // update reports "duplicate" and NO second alimtalk is sent.
-    const replay = await page.request.post(`${BACKEND_URL}/webhooks/eformsign`, {
-      headers: webhookHeaders,
-      data: webhookPayload,
-    });
-    expect(replay.status()).toBe(200);
-
-    // Give any (incorrect) duplicate send time to land before asserting.
-    await page.waitForTimeout(3000);
-    expect(await logCount()).toBe(before + 1);
-
-    // An unauthenticated webhook is rejected outright (guard fail-closed).
-    const badAuth = await page.request.post(`${BACKEND_URL}/webhooks/eformsign`, {
-      headers: { 'Content-Type': 'application/json' },
-      data: webhookPayload,
-    });
-    expect([401, 403]).toContain(badAuth.status());
-  });
-
-  // NOTE (flow 3 disposition, 2026-06-08): "contract lifecycle completion"
-  // ends in this suite at the webhook-completion segment above. The upstream
-  // finalize step (POST /eformsign-docs/finalize-headless) cannot be e2e-
-  // tested under the vendor-stub charter: eformsign's Open API has no
-  // approve/send endpoint, so finalize drives the vendor-hosted embedded SDK
-  // iframe (efs_embedded_v2.js from the eformsign CDN) with backend-side
-  // Playwright clicking the SDK's 전송 button — real vendor servers plus a
-  // browser runtime the CI backend job does not provision. Stubbing that
-  // would mean serving a counterfeit SDK and asserting our mock clicks our
-  // mock. The DB-side completion lifecycle (claim → link → end-date sync →
-  // alimtalk → idempotent replay) IS exercised above against the real stack.
 });

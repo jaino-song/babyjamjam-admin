@@ -91,9 +91,6 @@ describe("EformsignWebhookService", () => {
     const syncClientEndDateUsecase = {
         execute: jest.fn(),
     };
-    const alimtalkService = {
-        sendContractSignedAlimtalk: jest.fn(),
-    };
     const eformsignApiClient = {
         getAccessToken: jest.fn(),
         getDocument: jest.fn(),
@@ -130,7 +127,6 @@ describe("EformsignWebhookService", () => {
             updateStatusUsecase as never,
             linkDocumentUsecase as never,
             syncClientEndDateUsecase as never,
-            alimtalkService as never,
             eventBus as never,
             notificationService as never,
             eformsignApiClient as never,
@@ -166,7 +162,6 @@ describe("EformsignWebhookService", () => {
         clientRepository.findById.mockResolvedValue(createClientEntity());
         employeeScheduleRepository.findByClientId.mockResolvedValue([]);
         employeeRepository.findById.mockResolvedValue(null);
-        alimtalkService.sendContractSignedAlimtalk.mockResolvedValue(undefined);
     });
 
     afterEach(() => {
@@ -222,7 +217,6 @@ describe("EformsignWebhookService", () => {
             "test-access-token",
             expect.objectContaining({ persist: expect.any(Function) }),
         );
-        expect(alimtalkService.sendContractSignedAlimtalk).toHaveBeenCalledTimes(1);
     });
 
     it("should call link and sync usecases for DOC_COMPLETE ready_document_pdf events", async () => {
@@ -249,7 +243,6 @@ describe("EformsignWebhookService", () => {
             "test-access-token",
             expect.objectContaining({ persist: expect.any(Function) }),
         );
-        expect(alimtalkService.sendContractSignedAlimtalk).toHaveBeenCalledTimes(1);
     });
 
     it("should notify branch users when a document reaches review-required status", async () => {
@@ -387,7 +380,7 @@ describe("EformsignWebhookService", () => {
         });
     });
 
-    it("should acknowledge duplicate completion webhooks without sending alimtalk twice", async () => {
+    it("should acknowledge duplicate completion webhooks without repeating completion side effects", async () => {
         eformsignDocRepository.claimCompletionStatus
             .mockResolvedValueOnce("claimed")
             .mockResolvedValueOnce("duplicate");
@@ -397,7 +390,6 @@ describe("EformsignWebhookService", () => {
 
         expect(linkDocumentUsecase.execute).toHaveBeenCalledTimes(1);
         expect(syncClientEndDateUsecase.execute).toHaveBeenCalledTimes(1);
-        expect(alimtalkService.sendContractSignedAlimtalk).toHaveBeenCalledTimes(1);
         expect(eventBus.emit).toHaveBeenCalledTimes(1);
     });
 });
