@@ -672,17 +672,36 @@ describe("SbClientRepository", () => {
     // delete
     // ============================================
     describe("delete", () => {
-        describe("given a valid client id", () => {
-            it("should delete the client", async () => {
-                // Arrange
-                clientModel.deleteMany.mockResolvedValue({ count: 1 });
+        const createTxMock = () => ({
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(null),
+                delete: jest.fn(),
+            },
+            service_record_day: {
+                count: jest.fn().mockResolvedValue(0),
+            },
+            client: {
+                deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+        });
 
+        let tx: ReturnType<typeof createTxMock>;
+
+        beforeEach(() => {
+            tx = createTxMock();
+            (prisma as unknown as { $transaction: jest.Mock }).$transaction = jest
+                .fn()
+                .mockImplementation(async (cb: (txClient: unknown) => Promise<unknown>) => cb(tx));
+        });
+
+        describe("given a valid client id", () => {
+            it("should delete the client inside a transaction", async () => {
                 // Act
                 await repository.delete(branchId, 4);
 
                 // Assert
-                expect(clientModel.deleteMany).toHaveBeenCalledTimes(1);
-                expect(clientModel.deleteMany).toHaveBeenCalledWith({
+                expect(tx.client.deleteMany).toHaveBeenCalledTimes(1);
+                expect(tx.client.deleteMany).toHaveBeenCalledWith({
                     where: { id: 4, branchId: branchId },
                 });
             });
@@ -690,14 +709,11 @@ describe("SbClientRepository", () => {
 
         describe("given different client ids", () => {
             it.each([1, 10, 100, 999])("should delete client with id %i", async (id) => {
-                // Arrange
-                clientModel.deleteMany.mockResolvedValue({ count: 1 });
-
                 // Act
                 await repository.delete(branchId, id);
 
                 // Assert
-                expect(clientModel.deleteMany).toHaveBeenCalledWith({
+                expect(tx.client.deleteMany).toHaveBeenCalledWith({
                     where: { id, branchId: branchId },
                 });
             });

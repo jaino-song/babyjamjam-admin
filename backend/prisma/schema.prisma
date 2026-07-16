@@ -80,6 +80,7 @@ model client {
   name                   String
   address                String?
   phone                  String?
+  suppressGreetingSms    Boolean                   @default(false) @map("suppress_greeting_sms")
   type                   String?
   duration               Int?                      @db.SmallInt
   fullPrice              String?                   @map("full_price")
@@ -200,14 +201,15 @@ model eformsign_doc {
 }
 
 model employee {
-  id                         Int                         @id @db.SmallInt
+  id                         Int                         @id @default(autoincrement()) @db.SmallInt
   name                       String
   workArea                   String[]                    @map("work_area")
-  phone                      String                      @unique
+  phone                      String
   grade                      String
   openToNextWork             Boolean                     @default(true) @map("open_to_next_work")
   companyRegisteredDate      DateTime?                   @map("company_registered_date") @db.Date
   birthday                   String?                     @db.VarChar(6)
+  deletedAt                  DateTime?                   @map("deleted_at") @db.Timestamptz(6)
   branchId                   String?                     @map("branch_id") @db.Uuid
   branch                     branch?                     @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   primaryEmployeeSchedules   employee_schedule[]         @relation("employee_schedule_primary_employee_idToemployee")
@@ -216,6 +218,7 @@ model employee {
   serviceRecordAssignments   service_record_assignment[]
   serviceRecordDays          service_record_day[]
 
+  @@unique([branchId, phone], map: "employee_branch_id_phone_key")
   @@index([branchId], map: "idx_employee_branch")
 }
 
@@ -231,8 +234,8 @@ model employee_schedule {
   branchId                String?                    @map("branch_id") @db.Uuid
   client                  client                     @relation(fields: [clientId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   branch                  branch?                    @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  primaryEmployee         employee                   @relation("employee_schedule_primary_employee_idToemployee", fields: [primaryEmployeeId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  secondaryEmployee       employee?                  @relation("employee_schedule_secondary_employee_idToemployee", fields: [secondaryEmployeeId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  primaryEmployee         employee                   @relation("employee_schedule_primary_employee_idToemployee", fields: [primaryEmployeeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  secondaryEmployee       employee?                  @relation("employee_schedule_secondary_employee_idToemployee", fields: [secondaryEmployeeId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   serviceRecordTokens          service_record_token[]
   serviceRecord           service_record?
   serviceRecordDays       service_record_day[]

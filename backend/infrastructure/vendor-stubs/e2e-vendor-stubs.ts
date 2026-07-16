@@ -339,6 +339,51 @@ export function areE2EVendorStubsEnabled(configService: Pick<ConfigService, "get
     return configService.get<string>(E2E_VENDOR_STUBS_ENV) === "1";
 }
 
+/**
+ * Fail-fast guard for the opposite direction from the NODE_ENV=production
+ * check in main.ts: in a test-like boot, a MISSING or misspelled
+ * E2E_VENDOR_STUBS must never silently fall through to the real Aligo /
+ * eformsign / Gemini clients (createAligoPortClient / createEformsignClientRepository /
+ * createGeminiGateway above all fail open to the real client when the flag
+ * isn't exactly "1").
+ *
+ * "Test-like" is NOT just NODE_ENV==="test" — the one place this repo boots
+ * main.ts under e2e conditions (.github/workflows/mobile-ci.yml `e2e` job)
+ * deliberately sets NODE_ENV=development (only production is special-cased
+ * elsewhere) alongside CI=true and E2E_VENDOR_STUBS=1. Jest unit specs never
+ * invoke bootstrap() at all (see test/e2e/call-inbox.e2e.spec.ts header — the
+ * AppModule can't even be built under ts-jest), so NODE_ENV=test alone would
+ * never actually cover the real failure mode this guards against. Hence:
+ * NODE_ENV==="test" OR CI==="true" (and never for NODE_ENV==="production",
+ * which already has its own dedicated guard and must not regress).
+ */
+export function assertVendorStubsConfigured(configService: Pick<ConfigService, "get">): void {
+    const nodeEnv = configService.get<string>("NODE_ENV");
+    if (nodeEnv === "production") {
+        return;
+    }
+
+    const isCi = configService.get<string>("CI") === "true";
+    const isTestLikeEnv = nodeEnv === "test" || isCi;
+    if (!isTestLikeEnv) {
+        return;
+    }
+
+    const rawValue = configService.get<string>(E2E_VENDOR_STUBS_ENV);
+    if (rawValue === "1") {
+        return;
+    }
+
+    const nearMissHint = rawValue !== undefined && rawValue !== ""
+        ? ` 감지된 값 "${rawValue}"은 정확히 "1"이 아니므로 무효 처리되어 실 API가 호출됩니다 (detected value "${rawValue}" is not exactly "1" — it is silently ignored and real vendor APIs will be called).`
+        : "";
+
+    throw new Error(
+        `E2E/test 환경에서는 ${E2E_VENDOR_STUBS_ENV}=1이 필수입니다 — 실제 외부 API(Aligo/eformsign/Gemini) 호출을 차단합니다.${nearMissHint} ` +
+        `(${E2E_VENDOR_STUBS_ENV} must be exactly "1" in test/e2e environments to block real vendor API calls.)`,
+    );
+}
+
 export function buildEformsignStubTokenResponse(): EformsignTokenResponse {
     return {
         oauth_token: {

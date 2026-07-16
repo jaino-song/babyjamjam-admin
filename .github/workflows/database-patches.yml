@@ -107,6 +107,14 @@ jobs:
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260716090000_rename_feedback_to_service_record/migration.sql
 
+      - name: Apply employee/client hardening patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260717000000_employee_client_hardening/migration.sql
+
+      - name: Verify employee/client hardening patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-employee-client-hardening.sql
+
   apply-preview:
     name: apply preview database patches
     if: >-
@@ -314,6 +322,14 @@ jobs:
       - name: Apply feedback to service-record rename patch
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260716090000_rename_feedback_to_service_record/migration.sql
+
+      - name: Apply employee/client hardening patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260717000000_employee_client_hardening/migration.sql
+
+      - name: Verify employee/client hardening patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-employee-client-hardening.sql
 
   apply-production:
     name: apply production database patches
@@ -527,3 +543,11 @@ jobs:
       - name: Apply feedback to service-record rename patch
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260716090000_rename_feedback_to_service_record/migration.sql
+
+      - name: Apply employee/client hardening patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260717000000_employee_client_hardening/migration.sql
+
+      - name: Verify employee/client hardening patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-employee-client-hardening.sql
