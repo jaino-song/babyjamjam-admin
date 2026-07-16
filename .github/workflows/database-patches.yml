@@ -65,6 +65,12 @@ jobs:
             exit 1
           fi
 
+      - name: Apply message schema compatibility patches
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713120000_repair_message_table_renames/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260709000000_message_automation_hardening/migration.sql
+
       - name: Apply eformsign document relation patches
         working-directory: backend
         run: |
@@ -92,6 +98,14 @@ jobs:
       - name: Verify user approval + token-version patch
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-user-approval.sql
+
+      - name: Apply service-record mom signature patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260715140000_add_client_signature_to_service_record_day/migration.sql
+
+      - name: Apply feedback to service-record rename patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260716090000_rename_feedback_to_service_record/migration.sql
 
   apply-preview:
     name: apply preview database patches
@@ -134,6 +148,12 @@ jobs:
             echo "PREVIEW_DIRECT_URL or PREVIEW_DATABASE_URL secret is required."
             exit 1
           fi
+
+      - name: Apply message schema compatibility patches
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713120000_repair_message_table_renames/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260709000000_message_automation_hardening/migration.sql
 
       - name: Apply idempotent database patches
         working-directory: backend
@@ -286,6 +306,14 @@ jobs:
       - name: Verify user approval + token-version patch
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-user-approval.sql
+
+      - name: Apply service-record mom signature patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260715140000_add_client_signature_to_service_record_day/migration.sql
+
+      - name: Apply feedback to service-record rename patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260716090000_rename_feedback_to_service_record/migration.sql
 
   apply-production:
     name: apply production database patches
@@ -334,6 +362,12 @@ jobs:
             exit 1
           fi
 
+      - name: Apply message schema compatibility patches
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713120000_repair_message_table_renames/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260709000000_message_automation_hardening/migration.sql
+
       - name: Apply idempotent database patches
         working-directory: backend
         run: |
@@ -485,3 +519,11 @@ jobs:
       - name: Verify user approval + token-version patch
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-user-approval.sql
+
+      - name: Apply service-record mom signature patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260715140000_add_client_signature_to_service_record_day/migration.sql
+
+      - name: Apply feedback to service-record rename patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260716090000_rename_feedback_to_service_record/migration.sql

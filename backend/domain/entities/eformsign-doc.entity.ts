@@ -1,6 +1,6 @@
 export const EFORMSIGN_DOCUMENT_KIND = {
     CONTRACT: "contract",
-    SERVICE_FEEDBACK_SNAPSHOT: "service_feedback_snapshot",
+    SERVICE_RECORD_SNAPSHOT: "service_record_snapshot",
 } as const;
 
 export type EformsignDocumentKind =

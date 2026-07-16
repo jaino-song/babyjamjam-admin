@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { ScheduleChangeService } from "application/services/schedule-change.service";
-import { EmployeeFeedbackTokenService } from "application/services/employee-feedback-token.service";
+import { ServiceRecordTokenService } from "application/services/service-record-token.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -160,7 +160,7 @@ describe("ScheduleChangeService", () => {
 
         service = new ScheduleChangeService(
             prismaService as unknown as PrismaService,
-            tokenService as unknown as EmployeeFeedbackTokenService,
+            tokenService as unknown as ServiceRecordTokenService,
             triggerService as unknown as MessageTriggerService,
             lifecycleService as unknown as ServiceRecordLifecycleService,
         );

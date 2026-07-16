@@ -14,7 +14,7 @@ import { diffBusinessDaysKr } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { computeServiceStatus, isServiceStatus, SERVICE_STATUS, SERVICE_STATUS_VALUES, ServiceStatusType } from "domain/value-objects/service-status.vo";
 import { MessageTriggerService } from "./message-trigger.service";
-import { EmployeeFeedbackLinkService } from "./employee-feedback-link.service";
+import { ServiceRecordLinkService } from "./service-record-link.service";
 import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 
 const FILTER_DAYS_THRESHOLD = 7;
@@ -143,7 +143,7 @@ export class ClientService {
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
         @Optional() private readonly triggerService?: MessageTriggerService,
-        @Optional() private readonly employeeFeedbackLinkService?: EmployeeFeedbackLinkService,
+        @Optional() private readonly serviceRecordLinkService?: ServiceRecordLinkService,
         @Optional() private readonly serviceRecordLifecycleService?: ServiceRecordLifecycleService,
     ) {}
 
@@ -391,7 +391,7 @@ export class ClientService {
                         endDate: endDate ?? existing.endDate ?? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
                     });
                     if (assignment.replacedScheduleId !== null) {
-                        this.employeeFeedbackLinkService
+                        this.serviceRecordLinkService
                             ?.revoke(assignment.replacedScheduleId)
                             ?.catch(() => undefined);
                     }
@@ -401,7 +401,7 @@ export class ClientService {
                             ?.catch((error) => {
                                 this.logger.error(`Failed to sync employee assignment triggers: ${error}`);
                             });
-                        this.employeeFeedbackLinkService
+                        this.serviceRecordLinkService
                             ?.scheduleForServiceStart(assignment.createdScheduleId)
                             ?.catch((error) => {
                                 this.logger.error(`Failed to schedule feedback link SMS: ${error}`);
@@ -470,7 +470,7 @@ export class ClientService {
                 ?.catch((error) => {
                     this.logger.error(`Failed to sync employee assignment triggers: ${error}`);
                 });
-            this.employeeFeedbackLinkService
+            this.serviceRecordLinkService
                 ?.scheduleForServiceStart(createdScheduleId)
                 ?.catch((error) => {
                     this.logger.error(`Failed to schedule feedback link SMS: ${error}`);
@@ -794,7 +794,7 @@ export class ClientService {
             replacedScheduleId = assignment.replacedScheduleId;
         }
         if (replacedScheduleId !== null) {
-            this.employeeFeedbackLinkService?.revoke(replacedScheduleId)?.catch(() => undefined);
+            this.serviceRecordLinkService?.revoke(replacedScheduleId)?.catch(() => undefined);
         }
 
         const updatedClient = await this.updateClientUsecase.execute(branchid, id, {
@@ -829,7 +829,7 @@ export class ClientService {
                 ?.catch((error) => {
                     this.logger.error(`Failed to sync employee assignment triggers: ${error}`);
                 });
-            this.employeeFeedbackLinkService
+            this.serviceRecordLinkService
                 ?.scheduleForServiceStart(createdScheduleId)
                 ?.catch((error) => {
                     this.logger.error(`Failed to schedule feedback link SMS: ${error}`);
@@ -887,7 +887,7 @@ export class ClientService {
             select: { id: true },
         });
         for (const activeSchedule of activeSchedules) {
-            this.employeeFeedbackLinkService?.revoke(activeSchedule.id)?.catch(() => undefined);
+            this.serviceRecordLinkService?.revoke(activeSchedule.id)?.catch(() => undefined);
         }
         await this.serviceRecordLifecycleService?.markTerminated(clientId);
 
@@ -933,7 +933,7 @@ export class ClientService {
                 where: { id: currentSchedule.id },
                 data: { replaced: true, endDate: new Date() },
             });
-            this.employeeFeedbackLinkService?.revoke(currentSchedule.id)?.catch(() => undefined);
+            this.serviceRecordLinkService?.revoke(currentSchedule.id)?.catch(() => undefined);
         }
 
         // Create new schedule with new employees
@@ -955,7 +955,7 @@ export class ClientService {
                 this.logger.error(`Failed to sync replacement assignment triggers: ${error}`);
             });
         await this.serviceRecordLifecycleService?.ensureForClient(clientId);
-        this.employeeFeedbackLinkService
+        this.serviceRecordLinkService
             ?.scheduleForServiceStart(replacementSchedule.id)
             ?.catch((error) => {
                 this.logger.error(`Failed to schedule replacement feedback link SMS: ${error}`);

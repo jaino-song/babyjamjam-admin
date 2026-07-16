@@ -22,6 +22,16 @@ function isAxiosErrorLike(error: unknown): error is AxiosError {
   );
 }
 
+function containsPreparedLinkToken(data: unknown): boolean {
+  if (typeof data === "string") {
+    return data.includes("preparedLinkToken");
+  }
+
+  return typeof data === "object"
+    && data !== null
+    && Object.prototype.hasOwnProperty.call(data, "preparedLinkToken");
+}
+
 export function captureApiError(error: unknown): void {
   if (!isAxiosErrorLike(error) || error.code === "ERR_CANCELED") return;
 
@@ -34,6 +44,12 @@ export function captureApiError(error: unknown): void {
   const method = (error.config?.method ?? "unknown").toUpperCase();
   const path = getRequestPath(error.config?.url);
   const statusLabel = status ? String(status) : "network";
+  const capturedError = containsPreparedLinkToken(error.config?.data)
+    ? Object.assign(
+        new Error(`Sensitive API request failed: ${method} ${path} (${statusLabel})`),
+        { name: "ApiRequestError" },
+      )
+    : error;
 
   Sentry.withScope((scope) => {
     scope.setLevel(status && status >= 500 ? "error" : "warning");
@@ -48,6 +64,6 @@ export function captureApiError(error: unknown): void {
       runtime: typeof window === "undefined" ? "server" : "browser",
     });
     scope.setFingerprint(["api-error", method, path, statusLabel]);
-    Sentry.captureException(error);
+    Sentry.captureException(capturedError);
   });
 }

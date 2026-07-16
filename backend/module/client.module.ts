@@ -17,10 +17,10 @@ import { MessageModule } from "./message.module";
 import { AligoModule } from "./aligo.module";
 import { SystemSettingModule } from "./system-setting.module";
 import { SystemTemplateModule } from "./system-template.module";
-import { ServiceFeedbackModule } from "./service-feedback.module";
+import { ServiceRecordEntryModule } from "./service-record-entry.module";
 
 @Module({
-    imports: [DatabaseModule, MessageModule, AligoModule, SystemSettingModule, SystemTemplateModule, ServiceFeedbackModule],
+    imports: [DatabaseModule, MessageModule, AligoModule, SystemSettingModule, SystemTemplateModule, ServiceRecordEntryModule],
     controllers: [ClientController],
     providers: [
         CreateClientUsecase,

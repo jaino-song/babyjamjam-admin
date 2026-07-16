@@ -1,4 +1,4 @@
-import { CreateAndSendFeedbackSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-feedback-snapshot.usecase";
+import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase";
 
 const dbDate = (day: number) => new Date(`2026-07-${String(day).padStart(2, "0")}T00:00:00.000Z`);
 
@@ -63,6 +63,7 @@ function makeRecord() {
                 notes: null,
                 paymentConfirmed: true,
                 momApproval: "approved",
+                clientSignature: null as string | null,
                 locked: true,
             };
         }),
@@ -109,7 +110,7 @@ function setup() {
         createDocument: jest.fn().mockRejectedValue(new TypeError("fetch failed")),
         findDocumentsByTitle: jest.fn().mockResolvedValue([remoteDocument]),
     };
-    const usecase = new CreateAndSendFeedbackSnapshotUsecase(
+    const usecase = new CreateAndSendServiceRecordSnapshotUsecase(
         eformsignClient as never,
         {} as never,
         prismaWithTransaction as never,
@@ -132,6 +133,28 @@ describe("client-owned service record snapshot", () => {
             ["제공A", 1],
             ["제공B", 1],
         ]);
+    });
+
+    it("changes sourceHash when a day's clientSignature changes (legacy session gets a signature)", () => {
+        const { usecase } = setup();
+        const buildChunks = (record: ReturnType<typeof makeRecord>) => (usecase as unknown as {
+            buildCaseChunks(value: ReturnType<typeof makeRecord>): Array<{ sourceHash: string }>;
+        }).buildCaseChunks(record);
+
+        const withoutSignature = makeRecord();
+        withoutSignature.requiredSessionCount = 1;
+        withoutSignature.days = [withoutSignature.days[0]!];
+        const hashWithoutSignature = buildChunks(withoutSignature)[0]!.sourceHash;
+
+        const withSignature = makeRecord();
+        withSignature.requiredSessionCount = 1;
+        withSignature.days = [{
+            ...withSignature.days[0]!,
+            clientSignature: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
+        }];
+        const hashWithSignature = buildChunks(withSignature)[0]!.sourceHash;
+
+        expect(hashWithSignature).not.toBe(hashWithoutSignature);
     });
 
     it("reconciles an ambiguous create attempt by title without creating a second document", async () => {

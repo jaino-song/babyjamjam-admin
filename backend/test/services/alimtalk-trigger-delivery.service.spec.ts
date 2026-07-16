@@ -92,12 +92,12 @@ describe("AlimtalkTriggerDeliveryService", () => {
     it("throws a config deferred error when the template is unmapped for the provider", async () => {
         const { sendAligoAlimtalkUsecase, service } = createService();
 
-        const error = await captureError(service.sendJob(createJob(MessageTriggerTemplateKey.SERVICE_FEEDBACK_LINK)));
+        const error = await captureError(service.sendJob(createJob(MessageTriggerTemplateKey.SERVICE_RECORD_LINK)));
 
         expect(error).toBeInstanceOf(TriggerJobDeferredError);
         expect(error).toMatchObject({
             kind: "config",
-            message: "Template SERVICE_FEEDBACK_LINK is not available for provider aligo_alimtalk",
+            message: "Template SERVICE_RECORD_LINK is not available for provider aligo_alimtalk",
         });
         expect(sendAligoAlimtalkUsecase.execute).not.toHaveBeenCalled();
     });

@@ -2,11 +2,11 @@ import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { message_log, message_trigger_job, Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
-    SERVICE_FEEDBACK_LINK_RULE_ID,
-    SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
-} from "domain/constants/service-feedback-link-message";
+    SERVICE_RECORD_LINK_RULE_ID,
+    SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
+} from "domain/constants/service-record-link-message";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
-import { EmployeeFeedbackLinkService } from "./employee-feedback-link.service";
+import { ServiceRecordLinkService } from "./service-record-link.service";
 import {
     AdminServiceRecordAssignmentDto,
     AdminServiceRecordCaseDto,
@@ -14,6 +14,7 @@ import {
     AdminServiceRecordLinkDto,
     AdminServiceRecordLinkStatus,
     AdminServiceRecordOverviewDto,
+    AdminServiceRecordPreparedLinkDto,
     AdminServiceRecordSessionDto,
     AdminServiceRecordSignatureDocDto,
     AdminServiceRecordTokenDto,
@@ -26,15 +27,15 @@ type ScheduleForOverview = Prisma.employee_scheduleGetPayload<{
         primaryEmployee: true;
         serviceRecord: true;
         serviceRecordDays: true;
-        feedbackTokens: true;
+        serviceRecordTokens: true;
     };
 }>;
 type CaseForOverview = Prisma.service_record_caseGetPayload<{
     include: { days: true };
 }>;
 
-type FeedbackLinkJob = message_trigger_job;
-type FeedbackLinkLog = message_log;
+type ServiceRecordLinkJob = message_trigger_job;
+type ServiceRecordLinkLog = message_log;
 type SignatureDocRow = Prisma.eformsign_docGetPayload<{
     select: {
         employeeScheduleId: true;
@@ -54,7 +55,7 @@ export class AdminServiceRecordService {
 
     constructor(
         private readonly prisma: PrismaService,
-        private readonly employeeFeedbackLinkService: EmployeeFeedbackLinkService,
+        private readonly serviceRecordLinkService: ServiceRecordLinkService,
     ) {}
 
     async getClientOverview(branchId: string, clientId: number): Promise<AdminServiceRecordOverviewDto> {
@@ -70,7 +71,15 @@ export class AdminServiceRecordService {
                     primaryEmployee: true,
                     serviceRecord: true,
                     serviceRecordDays: { orderBy: { sessionIndex: "asc" } },
-                    feedbackTokens: { orderBy: { createdAt: "desc" } },
+                    serviceRecordTokens: {
+                        where: {
+                            OR: [
+                                { active: true },
+                                { revokedAt: { not: null } },
+                            ],
+                        },
+                        orderBy: { createdAt: "desc" },
+                    },
                 },
                 orderBy: { startDate: "desc" },
             }),
@@ -81,7 +90,7 @@ export class AdminServiceRecordService {
             where: {
                 branchId,
                 employeeScheduleId: { in: scheduleIds },
-                ruleId: SERVICE_FEEDBACK_LINK_RULE_ID,
+                ruleId: SERVICE_RECORD_LINK_RULE_ID,
             },
             orderBy: { createdAt: "desc" },
         }) : [];
@@ -89,7 +98,7 @@ export class AdminServiceRecordService {
         const logs = scheduleIds.length > 0 ? await this.prisma.message_log.findMany({
             where: {
                 branchId,
-                templateKey: SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
+                templateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
                 OR: [
                     ...(jobIds.length > 0 ? [{ triggerJobId: { in: jobIds } }] : []),
                     { clientId, triggerJobId: null },
@@ -97,7 +106,7 @@ export class AdminServiceRecordService {
             },
             orderBy: { createdAt: "desc" },
         }) : [];
-        const signatureDocs = await this.findServiceFeedbackSignatureDocs(
+        const signatureDocs = await this.findServiceRecordSignatureDocs(
             branchId,
             scheduleIds,
             record?.id ?? null,
@@ -156,7 +165,21 @@ export class AdminServiceRecordService {
         };
     }
 
-    async sendLinkNow(branchId: string, scheduleId: number): Promise<{ scheduledFor: Date }> {
+    async prepareLink(branchId: string, scheduleId: number): Promise<AdminServiceRecordPreparedLinkDto> {
+        await this.assertScheduleBelongsToBranch(branchId, scheduleId);
+        return this.serviceRecordLinkService.prepareLink(scheduleId);
+    }
+
+    async sendLinkNow(
+        branchId: string,
+        scheduleId: number,
+        preparedLinkToken?: string,
+    ): Promise<{ scheduledFor: Date }> {
+        await this.assertScheduleBelongsToBranch(branchId, scheduleId);
+        return this.serviceRecordLinkService.sendNow(scheduleId, preparedLinkToken);
+    }
+
+    private async assertScheduleBelongsToBranch(branchId: string, scheduleId: number): Promise<void> {
         const schedule = await this.prisma.employee_schedule.findFirst({
             where: { id: scheduleId, branchId },
             select: { id: true },
@@ -164,14 +187,12 @@ export class AdminServiceRecordService {
         if (!schedule) {
             throw new NotFoundException("Assignment not found");
         }
-
-        return this.employeeFeedbackLinkService.sendNow(scheduleId);
     }
 
     private mapAssignment(
         schedule: ScheduleForOverview,
-        jobs: FeedbackLinkJob[],
-        logs: FeedbackLinkLog[],
+        jobs: ServiceRecordLinkJob[],
+        logs: ServiceRecordLinkLog[],
         signatureDoc: AdminServiceRecordSignatureDocDto | null,
     ): AdminServiceRecordAssignmentDto {
         return {
@@ -184,7 +205,7 @@ export class AdminServiceRecordService {
                 name: schedule.primaryEmployee.name,
                 phone: schedule.primaryEmployee.phone,
             },
-            link: this.deriveLink(jobs, logs, schedule.feedbackTokens[0] ?? null),
+            link: this.deriveLink(jobs, logs, schedule.serviceRecordTokens[0] ?? null),
             header: schedule.serviceRecord ? this.mapHeader(schedule.serviceRecord) : null,
             totalSessions: schedule.client.duration ?? 0,
             sessions: schedule.serviceRecordDays.map((session) => this.mapSession(session)),
@@ -193,9 +214,9 @@ export class AdminServiceRecordService {
     }
 
     private deriveLink(
-        jobs: FeedbackLinkJob[],
-        logs: FeedbackLinkLog[],
-        token: ScheduleForOverview["feedbackTokens"][number] | null,
+        jobs: ServiceRecordLinkJob[],
+        logs: ServiceRecordLinkLog[],
+        token: ScheduleForOverview["serviceRecordTokens"][number] | null,
     ): AdminServiceRecordLinkDto {
         const sentLogs = logs
             .filter((log) => log.status === "sent")
@@ -227,7 +248,7 @@ export class AdminServiceRecordService {
         };
     }
 
-    private mapToken(token: ScheduleForOverview["feedbackTokens"][number]): AdminServiceRecordTokenDto {
+    private mapToken(token: ScheduleForOverview["serviceRecordTokens"][number]): AdminServiceRecordTokenDto {
         return {
             issuedAt: token.createdAt,
             verifiedAt: token.verifiedAt,
@@ -236,7 +257,7 @@ export class AdminServiceRecordService {
         };
     }
 
-    private getTokenState(token: ScheduleForOverview["feedbackTokens"][number]): AdminServiceRecordTokenState {
+    private getTokenState(token: ScheduleForOverview["serviceRecordTokens"][number]): AdminServiceRecordTokenState {
         if (token.revokedAt) return "revoked";
         if (token.expiresAt.getTime() < Date.now()) return "expired";
         if (token.active) return "active";
@@ -287,11 +308,11 @@ export class AdminServiceRecordService {
         };
     }
 
-    private logActivityTime(log: FeedbackLinkLog): number {
+    private logActivityTime(log: ServiceRecordLinkLog): number {
         return (log.lastAttemptAt ?? log.createdAt).getTime();
     }
 
-    private async findServiceFeedbackSignatureDocs(
+    private async findServiceRecordSignatureDocs(
         branchId: string,
         scheduleIds: number[],
         serviceRecordCaseId: string | null,
@@ -300,7 +321,7 @@ export class AdminServiceRecordService {
             return await this.prisma.eformsign_doc.findMany({
                 where: {
                     branchId,
-                    documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_FEEDBACK_SNAPSHOT,
+                    documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT,
                     OR: [
                         ...(serviceRecordCaseId ? [{ serviceRecordCaseId }] : []),
                         ...(scheduleIds.length > 0 ? [{ employeeScheduleId: { in: scheduleIds } }] : []),
@@ -323,7 +344,7 @@ export class AdminServiceRecordService {
                 ],
             });
         } catch (error) {
-            if (!isPendingEformsignFeedbackColumnError(error)) {
+            if (!isPendingEformsignServiceRecordColumnError(error)) {
                 throw error;
             }
 
@@ -335,7 +356,7 @@ export class AdminServiceRecordService {
     }
 }
 
-function isPendingEformsignFeedbackColumnError(error: unknown): boolean {
+function isPendingEformsignServiceRecordColumnError(error: unknown): boolean {
     const code = typeof error === "object" && error !== null && "code" in error
         ? (error as { code?: unknown }).code
         : undefined;
@@ -351,7 +372,7 @@ function isPendingEformsignFeedbackColumnError(error: unknown): boolean {
     return /document_kind|employee_schedule_id|template_id|service_record_case_id|snapshot_version|snapshot_chunk_index|documentKind|employeeScheduleId|templateId|serviceRecordCaseId|snapshotVersion|snapshotChunkIndex/i.test(haystack);
 }
 
-function jobIdsForSchedule(jobs: FeedbackLinkJob[], scheduleId: number): Set<string> {
+function jobIdsForSchedule(jobs: ServiceRecordLinkJob[], scheduleId: number): Set<string> {
     return new Set(
         jobs
             .filter((job) => job.employeeScheduleId === scheduleId)
@@ -360,7 +381,7 @@ function jobIdsForSchedule(jobs: FeedbackLinkJob[], scheduleId: number): Set<str
 }
 
 /** Permanent-failure logs carry no trigger job; their scheduleId lives only in the variables payload. */
-function logScheduleId(log: FeedbackLinkLog): number | null {
+function logScheduleId(log: ServiceRecordLinkLog): number | null {
     const variables = log.variables;
     if (!variables || typeof variables !== "object" || Array.isArray(variables)) return null;
     const raw = (variables as Record<string, unknown>)["scheduleId"];

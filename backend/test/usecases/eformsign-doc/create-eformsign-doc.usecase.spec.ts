@@ -112,12 +112,12 @@ describe("CreateEformsignDocUsecase", () => {
         const result = await usecase.execute(branchId, createParams({
             documentId: "feedback-doc-1",
             linkToClient: false,
-            documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_FEEDBACK_SNAPSHOT,
+            documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT,
             employeeScheduleId: 33,
             templateId: "feedback-template-1",
         }));
 
-        expect(result.documentKind).toBe(EFORMSIGN_DOCUMENT_KIND.SERVICE_FEEDBACK_SNAPSHOT);
+        expect(result.documentKind).toBe(EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT);
         expect(result.employeeScheduleId).toBe(33);
         expect(result.templateId).toBe("feedback-template-1");
         expect(clientRepository.update).not.toHaveBeenCalled();

@@ -4,7 +4,7 @@ export enum SystemTemplateKey {
   THANKS = 'THANKS',
   SURVEY = 'SURVEY',
   SERVICE_INFO = 'SERVICE_INFO',
-  SERVICE_FEEDBACK_LINK = 'SERVICE_FEEDBACK_LINK',
+  SERVICE_RECORD_LINK = 'SERVICE_RECORD_LINK',
   REMINDER = 'REMINDER',
   INFO = 'INFO',
 }
@@ -238,8 +238,8 @@ blog.naver.com/imirae-incheon`,
 아기의 건강과 엄마의 안정을 위해 최선을 다하겠습니다. 감사합니다.`,
   },
 
-  [SystemTemplateKey.SERVICE_FEEDBACK_LINK]: {
-    key: SystemTemplateKey.SERVICE_FEEDBACK_LINK,
+  [SystemTemplateKey.SERVICE_RECORD_LINK]: {
+    key: SystemTemplateKey.SERVICE_RECORD_LINK,
     name: '제공기록지 작성 링크',
     description: '서비스 시작일 오후 3시에 제공인력에게 발송되는 제공기록지 작성 링크 SMS',
     requiredVariables: [
@@ -258,7 +258,7 @@ blog.naver.com/imirae-incheon`,
         description: '제공기록지 대상 고객명',
       },
       {
-        key: 'feedbackUrl',
+        key: 'serviceRecordUrl',
         label: '제공기록지 링크',
         type: 'string',
         required: true,
@@ -276,7 +276,7 @@ blog.naver.com/imirae-incheon`,
 감사합니다.
 
 제공기록지 링크
-{{feedbackUrl}}`,
+{{serviceRecordUrl}}`,
   },
 
   [SystemTemplateKey.REMINDER]: {

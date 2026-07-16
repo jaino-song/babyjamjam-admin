@@ -453,8 +453,28 @@ export default function ContractsPage() {
   useEformsignDocsLiveStream(isAuthenticated);
   const { toast } = useToast();
   const deleteDocument = useDeleteEformsignDocument();
+  const { data: feedbackTemplateConfig, isLoading: isFeedbackTemplateLoading } = useQuery({
+    queryKey: ["eformsign-docs", "feedback-template-id"],
+    queryFn: () => eformsignApi.getFeedbackTemplateId(),
+    enabled: isAuthenticated,
+    staleTime: 1000 * 60 * 60,
+  });
+  const feedbackTemplateId = feedbackTemplateConfig?.templateId ?? null;
   const activeListTab = activeSection === "service-records" ? serviceRecordActiveTab : activeTab;
   const filterType: DocumentFilterType = activeListTab === "all" ? null : (activeListTab as DocumentFilterType);
+  const templateFilter = useMemo(
+    () => feedbackTemplateId
+      ? {
+          templateId: feedbackTemplateId,
+          templateMatch: activeSection === "service-records" ? "include" as const : "exclude" as const,
+        }
+      : undefined,
+    [activeSection, feedbackTemplateId],
+  );
+  const canFetchDocuments =
+    isAuthenticated &&
+    !isFeedbackTemplateLoading &&
+    (activeSection !== "service-records" || Boolean(feedbackTemplateId));
 
   // Fetch filtered docs with infinite scroll for the current tab
   const {
@@ -465,9 +485,10 @@ export default function ContractsPage() {
     fetchNextPage,
     error,
   } = useInfiniteContracts({
-    enabled: isAuthenticated,
+    enabled: canFetchDocuments,
     filterType,
     excludedNames: EXCLUDED_CUSTOMER_NAMES,
+    templateFilter,
   });
   // 전체 탭 StatsBar 카운터: 서버가 지점(인천=회사 전체) 상태 신호를 한 번 모아 내려주고
   // foldContractStats로 접는다. 무한 스크롤 목록과 분리되어, 스크롤하지 않아도 정확하다.
@@ -477,49 +498,33 @@ export default function ContractsPage() {
     enabled: isAuthenticated,
     staleTime: 1000 * 60 * 5,
   });
-  const { data: feedbackTemplateConfig, isLoading: isFeedbackTemplateLoading } = useQuery({
-    queryKey: ["eformsign-docs", "feedback-template-id"],
-    queryFn: () => eformsignApi.getFeedbackTemplateId(),
-    enabled: isAuthenticated,
-    staleTime: 1000 * 60 * 60,
-  });
-  const feedbackTemplateId = feedbackTemplateConfig?.templateId ?? null;
-  const isServiceRecordDoc = useCallback(
-    (doc: EformsignDocument) => Boolean(feedbackTemplateId && doc.template?.id === feedbackTemplateId),
-    [feedbackTemplateId],
-  );
-
   const isBootstrappingAuth = isLoadingAuth && !isAuthenticated;
   // Initial loading: first auth bootstrap or first "all" data fetch
-  const isInitialLoading = isBootstrappingAuth || isLoadingInfinite;
+  const isInitialLoading = isBootstrappingAuth || isFeedbackTemplateLoading || isLoadingInfinite;
   // Content loading: fetching filtered data after initial load is complete
   const isContentLoading = !isInitialLoading && isLoadingInfinite;
   // Stats are derived from the "전체" tab's data and are independent of which
   // tab is currently being fetched — only show the skeleton until the very
   // first stats payload lands.
   const isStatsLoading = isBootstrappingAuth || isCountsLoading;
-  const isServiceRecordListLoading = isInitialLoading || isFeedbackTemplateLoading;
+  const isServiceRecordListLoading = isInitialLoading;
 
   // Use infinite scroll documents, with optional local search filter
-  const documents = useMemo(() => {
-    const contractDocuments = feedbackTemplateId
-      ? infiniteDocuments.filter((doc) => !isServiceRecordDoc(doc))
-      : infiniteDocuments;
-    return contractDocuments.filter((doc) => matchesDocumentSearch(doc, searchQuery));
-  }, [feedbackTemplateId, infiniteDocuments, isServiceRecordDoc, searchQuery]);
+  const documents = useMemo(
+    () => infiniteDocuments.filter((doc) => matchesDocumentSearch(doc, searchQuery)),
+    [infiniteDocuments, searchQuery],
+  );
 
   const serviceRecordDocuments = useMemo(() => {
     if (!feedbackTemplateId) return [];
     return infiniteDocuments.filter(
       (doc) =>
-        isServiceRecordDoc(doc) &&
         matchesDocumentStatusTab(doc, serviceRecordActiveTab) &&
         matchesDocumentSearch(doc, serviceRecordSearchQuery),
     );
   }, [
     feedbackTemplateId,
     infiniteDocuments,
-    isServiceRecordDoc,
     serviceRecordActiveTab,
     serviceRecordSearchQuery,
   ]);

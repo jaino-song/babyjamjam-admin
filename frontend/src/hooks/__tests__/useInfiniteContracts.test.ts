@@ -1,5 +1,8 @@
 import type { EformsignDocumentsResponse } from "@/lib/eformsign/types";
-import { getNextContractsPageParam } from "../useInfiniteContracts";
+import {
+  getNextContractsPageParam,
+  infiniteContractsQueryKeys,
+} from "../useInfiniteContracts";
 
 function createPage({
   documentCount,
@@ -23,6 +26,18 @@ function createPage({
 }
 
 describe("getNextContractsPageParam", () => {
+  it("stops when the filtered result set is empty", () => {
+    expect(
+      getNextContractsPageParam(createPage({ documentCount: 0, totalRows: 0 })),
+    ).toBeUndefined();
+  });
+
+  it("stops when the filtered result set contains one loaded document", () => {
+    expect(
+      getNextContractsPageParam(createPage({ documentCount: 1, totalRows: 1 })),
+    ).toBeUndefined();
+  });
+
   it("stops immediately when the first page contains the full result set", () => {
     expect(
       getNextContractsPageParam(createPage({ documentCount: 20, totalRows: 20 })),
@@ -47,5 +62,20 @@ describe("getNextContractsPageParam", () => {
     expect(
       getNextContractsPageParam(createPage({ documentCount: 0, totalRows: 40 })),
     ).toBeUndefined();
+  });
+});
+
+describe("infiniteContractsQueryKeys", () => {
+  it("separates included and excluded template result sets", () => {
+    const included = infiniteContractsQueryKeys.documents(null, {
+      templateId: "service-record-template",
+      templateMatch: "include",
+    });
+    const excluded = infiniteContractsQueryKeys.documents(null, {
+      templateId: "service-record-template",
+      templateMatch: "exclude",
+    });
+
+    expect(included).not.toEqual(excluded);
   });
 });

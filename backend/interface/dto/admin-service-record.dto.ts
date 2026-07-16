@@ -1,4 +1,21 @@
 import { Prisma } from "@prisma/client";
+import { IsOptional, IsString, Matches, MaxLength } from "class-validator";
+
+export class SendAdminServiceRecordLinkDto {
+    @IsOptional()
+    @IsString()
+    @MaxLength(80)
+    @Matches(/^efl_[A-Za-z0-9_-]{40,64}$/, {
+        message: "준비된 제공기록지 링크 형식이 올바르지 않습니다.",
+    })
+    preparedLinkToken?: string;
+}
+
+export interface AdminServiceRecordPreparedLinkDto {
+    serviceRecordUrl: string;
+    preparedLinkToken: string;
+    expiresAt: Date;
+}
 
 export type AdminServiceRecordLinkStatus = "none" | "scheduled" | "sent" | "failed" | "canceled";
 export type AdminServiceRecordTokenState = "active" | "expired" | "revoked" | null;

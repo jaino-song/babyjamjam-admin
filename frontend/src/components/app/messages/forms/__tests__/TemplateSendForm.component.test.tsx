@@ -311,8 +311,14 @@ describe("recipient phone input layout", () => {
       <TemplateSendForm
         templateId="builtin:service-feedback-link"
         templateName="제공기록지 작성 링크"
-        message="{{employeeName}} {{clientName}} {{feedbackUrl}}"
+        message="{{employeeName}} {{clientName}} {{serviceRecordUrl}}"
         deliveryMode="service-feedback-link"
+        serviceRecordLinkPreparation={{
+          scheduleId: 11,
+          serviceRecordUrl: "https://mobile.test/service-record/efl_prepared",
+          preparedLinkToken: "efl_prepared",
+          expiresAt: "2026-07-20T00:00:00.000Z",
+        }}
         onSubmitStateChange={onSubmitStateChange}
       >
         <div data-testid="service-feedback-fields" />
@@ -331,9 +337,11 @@ describe("recipient phone input layout", () => {
     fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
 
     await waitFor(() => {
-      expect(mockedGetClientOverview).toHaveBeenCalledWith(20);
-      expect(mockedSendServiceRecordLink).toHaveBeenCalledWith(11);
+      expect(mockedSendServiceRecordLink).toHaveBeenCalledWith(11, {
+        preparedLinkToken: "efl_prepared",
+      });
     });
+    expect(mockedGetClientOverview).not.toHaveBeenCalled();
     expect(mockedSendSms).not.toHaveBeenCalled();
     expect(
       document.querySelector('[data-component="messages-template-send-form-feedback"]'),
@@ -379,8 +387,14 @@ describe("recipient phone input layout", () => {
       <TemplateSendForm
         templateId="builtin:service-feedback-link"
         templateName="제공기록지 작성 링크"
-        message="{{employeeName}} {{clientName}} {{feedbackUrl}}"
+        message="{{employeeName}} {{clientName}} {{serviceRecordUrl}}"
         deliveryMode="service-feedback-link"
+        serviceRecordLinkPreparation={{
+          scheduleId: 11,
+          serviceRecordUrl: "https://mobile.test/service-record/efl_prepared",
+          preparedLinkToken: "efl_prepared",
+          expiresAt: "2026-07-20T00:00:00.000Z",
+        }}
       />,
     );
 

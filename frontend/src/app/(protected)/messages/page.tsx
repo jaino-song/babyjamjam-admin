@@ -105,7 +105,7 @@ import {
 } from "lucide-react";
 import { GreetingMessageForm } from "@/components/app/messages/forms/GreetingMessageForm";
 import { ServiceInfoMessageForm } from "@/components/app/messages/forms/service-info-message-form";
-import { ServiceFeedbackLinkMessageForm } from "@/components/app/messages/forms/ServiceFeedbackLinkMessageForm";
+import { ServiceRecordLinkMessageForm } from "@/components/app/messages/forms/ServiceRecordLinkMessageForm";
 import { PriceInfoMessageForm } from "@/components/app/messages/forms/PriceInfoMessageForm";
 import { ReminderMessageForm } from "@/components/app/messages/forms/ReminderMessageForm";
 import { ThanksMessageForm } from "@/components/app/messages/forms/ThanksMessageForm";
@@ -356,7 +356,7 @@ const TEMPLATE_DETAIL_TABS = [
 const BUILTIN_TEMPLATE_SYSTEM_KEYS: Record<BuiltinTemplateType, SystemTemplateKey> = {
   greeting: "GREETING",
   "service-info": "SERVICE_INFO",
-  "service-feedback-link": "SERVICE_FEEDBACK_LINK",
+  "service-feedback-link": "SERVICE_RECORD_LINK",
   "price-info": "PRICE_INFO",
   reminder: "REMINDER",
   thanks: "THANKS",
@@ -530,7 +530,7 @@ const FormComponents: Record<
 > = {
   greeting: GreetingMessageForm,
   "service-info": ServiceInfoMessageForm,
-  "service-feedback-link": ServiceFeedbackLinkMessageForm,
+  "service-feedback-link": ServiceRecordLinkMessageForm,
   "price-info": PriceInfoMessageForm,
   reminder: ReminderMessageForm,
   thanks: ThanksMessageForm,
@@ -1657,6 +1657,7 @@ export default function MessagesPage() {
     messageCard,
     requiresRecipientName,
     deliveryMode,
+    serviceRecordLinkPreparation,
   }) => {
     const flattenedMessageCard = isValidElement(messageCard)
       ? cloneElement(messageCard as ReactElement<{ layout?: "flat" }>, { layout: "flat" })
@@ -1674,6 +1675,7 @@ export default function MessagesPage() {
           message={templatePreviewMessage}
           requiresRecipientName={requiresRecipientName}
           deliveryMode={deliveryMode}
+          serviceRecordLinkPreparation={serviceRecordLinkPreparation}
           className="h-full"
           formId={TEMPLATE_SEND_FORM_ID}
           showSubmitButton={false}

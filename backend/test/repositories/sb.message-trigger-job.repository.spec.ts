@@ -253,7 +253,7 @@ describe("SbMessageTriggerJobRepository", () => {
             /INSERT INTO "message_trigger_job" \([\s\S]*next_attempt_at,\s*updated_at[\s\S]*\)\s*VALUES/,
         );
         // branch_id is the ONLY uuid-cast parameter: rule_id is a text column and system rules
-        // use non-uuid ids ("system:service_feedback_link") — casting it to uuid breaks the insert.
+        // use non-uuid ids ("system:service_record_link") — casting it to uuid breaks the insert.
         expect(sqlText.match(/::uuid/g)).toHaveLength(1);
         expect(sqlText).toMatch(/0,\s*NULL,\s*now\(\)/);
         const normalizedSqlText = sqlText.replace(/\s+/g, " ");

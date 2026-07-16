@@ -202,7 +202,7 @@ const TRIGGER_TEMPLATE_MESSAGE_FALLBACKS: Record<TriggerTemplateKey, string> = {
 서비스 시작일: #{서비스시작일}
 
 세부 내용을 확인해 주세요.`,
-  SERVICE_FEEDBACK_LINK: `[사회서비스 제공자 품질평가 A등급]
+  SERVICE_RECORD_LINK: `[사회서비스 제공자 품질평가 A등급]
 안녕하세요, 인천 아이미래로 입니다 :)
 
 {{employeeName}} 관리사님, {{clientName}} 산모님의 서비스 제공기록지 작성 링크입니다.
@@ -213,7 +213,7 @@ const TRIGGER_TEMPLATE_MESSAGE_FALLBACKS: Record<TriggerTemplateKey, string> = {
 감사합니다.
 
 제공기록지 링크
-{{feedbackUrl}}`,
+{{serviceRecordUrl}}`,
   CLIENT_GREETING: `[아이미래 인천]
 #{고객명}님, 안녕하세요.
 

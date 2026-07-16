@@ -28,7 +28,7 @@ import { MessageDeliveryModule } from "module/message-delivery.module";
 import { CallInboxModule } from "module/call-inbox.module";
 import { ConsultationInquiryModule } from "module/consultation-inquiry.module";
 import { SystemAdminModule } from "module/system-admin.module";
-import { ServiceFeedbackModule } from "module/service-feedback.module";
+import { ServiceRecordEntryModule } from "module/service-record-entry.module";
 import { getJwtSecret } from "./infrastructure/auth/jwt-secret";
 import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
 
@@ -76,7 +76,7 @@ const ENV_FILE_PATHS = [
         CallInboxModule,
         ConsultationInquiryModule,
         SystemAdminModule,
-        ServiceFeedbackModule,
+        ServiceRecordEntryModule,
     ],
     controllers: [EformsignController],
     providers: [EformsignService, JwtStrategy, ContractClientAssignmentGuardService],

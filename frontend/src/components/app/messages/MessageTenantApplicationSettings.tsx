@@ -49,7 +49,7 @@ import {
 
 const UNIFIED_SENDER_PHONE = "010-9641-1878";
 const DUPLICATE_SEND_POLICY_ITEM_ID = "duplicate-send-confirmation";
-const SERVICE_FEEDBACK_LINK_POLICY_ID = "service-feedback-link";
+const SERVICE_RECORD_LINK_POLICY_ID = "service-feedback-link";
 const SMS_RETRY_POLICY_ID = "sms-retry";
 const PAST_TRIGGER_POLICY_ID = "past-trigger";
 const DEFAULT_PAST_TRIGGER_CONFIG: MessageAutomationPastTriggerConfig = {
@@ -153,7 +153,7 @@ function formatRequestedAt(date: Date) {
 }
 
 function getAutomationPolicyIcon(policyId: string) {
-  if (policyId === SERVICE_FEEDBACK_LINK_POLICY_ID) {
+  if (policyId === SERVICE_RECORD_LINK_POLICY_ID) {
     return CalendarClock;
   }
 

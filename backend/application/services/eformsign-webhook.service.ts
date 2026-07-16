@@ -126,7 +126,7 @@ export class EformsignWebhookService {
      * effects (link eDocId / sync endDate / contract alimtalk). No-op (returns false)
      * when EFORMSIGN_FEEDBACK_TEMPLATE_ID is unset, preserving existing behavior.
      */
-    private isFeedbackTemplate(templateId?: string): boolean {
+    private isServiceRecordTemplate(templateId?: string): boolean {
         const feedbackTemplateId = process.env["EFORMSIGN_FEEDBACK_TEMPLATE_ID"];
         return Boolean(feedbackTemplateId && templateId && templateId === feedbackTemplateId);
     }
@@ -190,17 +190,17 @@ export class EformsignWebhookService {
                 "ready_document_pdf",
             );
             if (!claimed) {
-                if (this.isFeedbackTemplate(template_id)) {
-                    await this.handleFeedbackSnapshotCompleted(branchid, documentId);
+                if (this.isServiceRecordTemplate(template_id)) {
+                    await this.handleServiceRecordSnapshotCompleted(branchid, documentId);
                 }
                 return;
             }
 
-            if (this.isFeedbackTemplate(template_id)) {
+            if (this.isServiceRecordTemplate(template_id)) {
                 this.logger.log(
                     `Document ${documentId} is a feedback snapshot (template ${template_id}); skipping contract-completion side effects (BJJ-247 gate).`
                 );
-                await this.handleFeedbackSnapshotCompleted(branchid, documentId);
+                await this.handleServiceRecordSnapshotCompleted(branchid, documentId);
             } else {
                 await this.handleCompletedDocument(branchid, documentId, workflow_name, "PDF event");
             }
@@ -291,8 +291,8 @@ export class EformsignWebhookService {
                 status,
             );
             if (!claimed) {
-                if (this.isFeedbackTemplate(template_id)) {
-                    await this.handleFeedbackSnapshotCompleted(branchid, documentId);
+                if (this.isServiceRecordTemplate(template_id)) {
+                    await this.handleServiceRecordSnapshotCompleted(branchid, documentId);
                 }
                 return;
             }
@@ -321,11 +321,11 @@ export class EformsignWebhookService {
         await this.notifyReviewRequiredIfNeeded(branchid, documentId, document_title, statusType);
 
         if (status === DOCUMENT_STATUS.DOC_COMPLETE) {
-            if (this.isFeedbackTemplate(template_id)) {
+            if (this.isServiceRecordTemplate(template_id)) {
                 this.logger.log(
                     `Document ${documentId} is a feedback snapshot (template ${template_id}); skipping contract-completion side effects (BJJ-247 gate).`
                 );
-                await this.handleFeedbackSnapshotCompleted(branchid, documentId);
+                await this.handleServiceRecordSnapshotCompleted(branchid, documentId);
             } else {
                 await this.handleCompletedDocument(branchid, documentId, workflow_name, "document event");
             }
@@ -387,11 +387,11 @@ export class EformsignWebhookService {
         source: string,
     ): Promise<void> {
         const doc = await this.eformsignDocRepository.findByDocumentId(branchid, documentId);
-        if (doc?.documentKind === EFORMSIGN_DOCUMENT_KIND.SERVICE_FEEDBACK_SNAPSHOT) {
+        if (doc?.documentKind === EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT) {
             this.logger.log(
                 `Document ${documentId} is a feedback snapshot row; skipping contract-completion side effects (${source}).`,
             );
-            await this.handleFeedbackSnapshotCompleted(branchid, documentId);
+            await this.handleServiceRecordSnapshotCompleted(branchid, documentId);
             return;
         }
 
@@ -438,7 +438,7 @@ export class EformsignWebhookService {
         }
     }
 
-    private async handleFeedbackSnapshotCompleted(
+    private async handleServiceRecordSnapshotCompleted(
         branchId: string,
         documentId: string,
     ): Promise<void> {
@@ -447,7 +447,7 @@ export class EformsignWebhookService {
             where: {
                 branchId,
                 documentId,
-                documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_FEEDBACK_SNAPSHOT,
+                documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT,
                 serviceRecordCaseId: { not: null },
             },
             select: { serviceRecordCaseId: true },
@@ -458,7 +458,7 @@ export class EformsignWebhookService {
             where: {
                 branchId,
                 serviceRecordCaseId: document.serviceRecordCaseId,
-                documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_FEEDBACK_SNAPSHOT,
+                documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT,
                 statusType: { notIn: [...COMPLETED_STATUS_CODES] },
             },
         });

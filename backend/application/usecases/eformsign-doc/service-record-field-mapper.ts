@@ -13,7 +13,7 @@ import {
     feedbackDayFieldIds,
 } from "./service-record-field-ids";
 
-export interface FeedbackHeaderInput {
+export interface ServiceRecordHeaderInput {
     momName: string | null;
     momBirth: string | null; // YYMMDD
     babyName: string | null;
@@ -22,7 +22,7 @@ export interface FeedbackHeaderInput {
     babyWeight: string | null;
 }
 
-export interface FeedbackDayInput {
+export interface ServiceRecordDayInput {
     sessionIndex: number;
     serviceDate: Date;
     answers: Record<string, unknown>;
@@ -30,6 +30,7 @@ export interface FeedbackDayInput {
     notes: string | null;
     paymentConfirmed: boolean;
     momApproval: string | null; // non-null => approved
+    clientSignature: string | null; // dataURI "data:image/png;base64,<b64>" or null/"" — sent as-is to the binary(서명) field
 }
 
 export interface EformsignField {
@@ -85,11 +86,11 @@ function asText(value: unknown): string {
  * are emitted for ALL 5 slots — including unused ones (as unchecked) — or eformsign rejects
  * creation with "Required input value not found".
  */
-export function buildFeedbackDocumentFields(input: {
-    header: FeedbackHeaderInput | null;
+export function buildServiceRecordDocumentFields(input: {
+    header: ServiceRecordHeaderInput | null;
     orgName: string;
     employeeName: string;
-    days: FeedbackDayInput[];
+    days: ServiceRecordDayInput[];
 }): EformsignField[] {
     const { header, orgName, employeeName, days } = input;
     const fields: EformsignField[] = [];
@@ -129,7 +130,7 @@ export function buildFeedbackDocumentFields(input: {
             pushRequired(ids.month, "");
             pushRequired(ids.day, "");
             pushCheck(ids.paymentConfirmed, false);
-            pushCheck(ids.momApproval, false);
+            pushRequired(ids.momApproval, "");
             continue;
         }
 
@@ -173,7 +174,9 @@ export function buildFeedbackDocumentFields(input: {
         pushText(ids.etcService, day.etcService);
         pushText(ids.notes, day.notes);
         pushCheck(ids.paymentConfirmed, day.paymentConfirmed === true);
-        pushCheck(ids.momApproval, day.momApproval != null && day.momApproval !== "");
+        // 산모확인서명 N is a binary(서명) field, not a checkbox mark — the raw dataURI renders in the
+        // PDF; "" satisfies the creation-step required check while leaving the mark blank.
+        pushRequired(ids.momApproval, day.clientSignature ?? "");
     }
 
     return fields;

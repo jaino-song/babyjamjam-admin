@@ -106,7 +106,7 @@ describe("LinkDocumentToClientUsecase", () => {
 
     it("does not link service feedback snapshot documents to the client contract pointer", async () => {
         eformsignDocRepository.findByDocumentId.mockResolvedValue(createDoc({
-            documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_FEEDBACK_SNAPSHOT,
+            documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT,
         }));
 
         await expect(usecase.execute(branchId, documentId)).resolves.toBeUndefined();

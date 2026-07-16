@@ -16,11 +16,11 @@ export function isPublicAuthPath(pathname: string | null | undefined): boolean {
   if (!pathname) return false;
   // Normalize trailing slash
   const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
-  // No-login 제공기록지 capture (BJJ-247): the dynamic /feedback/[token] route is a public,
+  // No-login 제공기록지 capture (BJJ-247): the dynamic /service-record/[token] route is a public,
   // shell-free page opened from an SMS link with no auth cookie. Treating it as a public path
   // keeps the authenticated app shell and the 401 → /login redirect (lib/api/client.ts) from
   // hijacking it — same "skip auth shell / no login redirect" treatment the auth pages get.
-  if (normalized === "/feedback" || normalized.startsWith("/feedback/")) return true;
+  if (normalized === "/service-record" || normalized.startsWith("/service-record/")) return true;
   return PUBLIC_AUTH_PATHS.has(normalized);
 }
 

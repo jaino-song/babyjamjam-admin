@@ -81,8 +81,13 @@ ALTER TABLE "service_record_day"
 ALTER TABLE "service_record_day"
     ALTER COLUMN "schedule_id" DROP NOT NULL;
 
-ALTER TABLE "employee_feedback_token"
-    ADD COLUMN IF NOT EXISTS "service_record_case_id" UUID;
+-- Guarded for rerunnability: after 20260716090000 renames this table to
+-- service_record_token, re-runs of this patch must no-op instead of failing.
+DO $$ BEGIN
+    IF to_regclass('public.employee_feedback_token') IS NOT NULL THEN
+        ALTER TABLE "employee_feedback_token" ADD COLUMN IF NOT EXISTS "service_record_case_id" UUID;
+    END IF;
+END $$;
 
 ALTER TABLE "eformsign_doc"
     ADD COLUMN IF NOT EXISTS "service_record_case_id" UUID,
@@ -164,7 +169,8 @@ BEGIN
         ALTER TABLE "service_record_day" ADD CONSTRAINT "service_record_day_employee_id_fkey"
             FOREIGN KEY ("employee_id") REFERENCES "employee"("id") ON DELETE SET NULL ON UPDATE NO ACTION;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'employee_feedback_token_service_record_case_id_fkey') THEN
+    IF to_regclass('public.employee_feedback_token') IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'employee_feedback_token_service_record_case_id_fkey') THEN
         ALTER TABLE "employee_feedback_token" ADD CONSTRAINT "employee_feedback_token_service_record_case_id_fkey"
             FOREIGN KEY ("service_record_case_id") REFERENCES "service_record_case"("id") ON DELETE SET NULL ON UPDATE NO ACTION;
     END IF;
@@ -192,7 +198,11 @@ CREATE INDEX IF NOT EXISTS "idx_service_record_day_case" ON "service_record_day"
 CREATE INDEX IF NOT EXISTS "idx_service_record_day_employee" ON "service_record_day"("employee_id");
 CREATE UNIQUE INDEX IF NOT EXISTS "uniq_service_record_day_case_session"
     ON "service_record_day"("service_record_case_id", "case_session_index");
-CREATE INDEX IF NOT EXISTS "idx_employee_feedback_token_service_record_case_id" ON "employee_feedback_token"("service_record_case_id");
+DO $$ BEGIN
+    IF to_regclass('public.employee_feedback_token') IS NOT NULL THEN
+        CREATE INDEX IF NOT EXISTS "idx_employee_feedback_token_service_record_case_id" ON "employee_feedback_token"("service_record_case_id");
+    END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS "idx_eformsign_doc_service_record_case_id" ON "eformsign_doc"("service_record_case_id");
 
 INSERT INTO "service_record_case" (
@@ -337,31 +347,37 @@ FROM missing_days m
 LEFT JOIN existing_max x ON x."case_id" = m."case_id"
 WHERE d."id" = m."id";
 
-UPDATE "employee_feedback_token" t
-SET "service_record_case_id" = rc."id"
-FROM "employee_schedule" s
-JOIN "service_record_case" rc ON rc."client_id" = s."client_id"
-WHERE t."schedule_id" = s."id"
-  AND t."service_record_case_id" IS DISTINCT FROM rc."id";
+-- Guarded for rerunnability: skip once the table has been renamed to service_record_token
+-- (the backfill + dedupe + partial unique index already carried through the rename).
+DO $$ BEGIN
+    IF to_regclass('public.employee_feedback_token') IS NOT NULL THEN
+        UPDATE "employee_feedback_token" t
+        SET "service_record_case_id" = rc."id"
+        FROM "employee_schedule" s
+        JOIN "service_record_case" rc ON rc."client_id" = s."client_id"
+        WHERE t."schedule_id" = s."id"
+          AND t."service_record_case_id" IS DISTINCT FROM rc."id";
 
-WITH active_tokens AS (
-    SELECT
-        t."id",
-        ROW_NUMBER() OVER (
-            PARTITION BY t."service_record_case_id"
-            ORDER BY t."created_at" DESC, t."id" DESC
-        ) AS "rank"
-    FROM "employee_feedback_token" t
-    WHERE t."service_record_case_id" IS NOT NULL AND t."active" = true
-)
-UPDATE "employee_feedback_token" t
-SET "active" = false, "revoked_at" = COALESCE(t."revoked_at", CURRENT_TIMESTAMP)
-FROM active_tokens a
-WHERE t."id" = a."id" AND a."rank" > 1;
+        WITH active_tokens AS (
+            SELECT
+                t."id",
+                ROW_NUMBER() OVER (
+                    PARTITION BY t."service_record_case_id"
+                    ORDER BY t."created_at" DESC, t."id" DESC
+                ) AS "rank"
+            FROM "employee_feedback_token" t
+            WHERE t."service_record_case_id" IS NOT NULL AND t."active" = true
+        )
+        UPDATE "employee_feedback_token" t
+        SET "active" = false, "revoked_at" = COALESCE(t."revoked_at", CURRENT_TIMESTAMP)
+        FROM active_tokens a
+        WHERE t."id" = a."id" AND a."rank" > 1;
 
-CREATE UNIQUE INDEX IF NOT EXISTS "uniq_employee_feedback_token_active_case"
-    ON "employee_feedback_token"("service_record_case_id")
-    WHERE "active" = true AND "service_record_case_id" IS NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS "uniq_employee_feedback_token_active_case"
+            ON "employee_feedback_token"("service_record_case_id")
+            WHERE "active" = true AND "service_record_case_id" IS NOT NULL;
+    END IF;
+END $$;
 
 UPDATE "eformsign_doc" d
 SET "service_record_case_id" = rc."id"

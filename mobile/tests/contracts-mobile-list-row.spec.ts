@@ -957,7 +957,10 @@ test.describe("Mobile contracts list rows", () => {
     await routeDocumentDetails(page, [
       {
         ...STAGE_DOCUMENTS.documents[0],
-        fields: [{ id: "제공인력 1 성명", value: "문서제공인력" }],
+        fields: [
+          { id: "이용자 성명", value: "대기고객" },
+          { id: "제공인력 1 성명", value: "문서제공인력" },
+        ],
       },
     ]);
     await routeDocumentClientSummaries(page, [
