@@ -1043,12 +1043,52 @@ describe("ClientService", () => {
                 const client = createWaitingClient("2026-07-16", "completed-document");
                 listClientsUsecase.execute.mockResolvedValue([client]);
                 prismaService.eformsign_doc.findMany.mockResolvedValue([
-                    { documentId: "completed-document", statusType: "003" },
+                    { clientId: 1, statusType: "003" },
                 ]);
 
                 const [result] = await service.findAll(branchId);
 
                 expect(result?.badges.some((badge) => badge.key === "contract_required")).toBe(false);
+            });
+
+            it("should use the latest contract instead of the pinned eDocId for the badge", async () => {
+                const client = createWaitingClient("2026-07-16", "old-rejected-document");
+                listClientsUsecase.execute.mockResolvedValue([client]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    { clientId: 1, statusType: "003" },
+                    { clientId: 1, statusType: "080" },
+                ]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.eDocId).toBe("old-rejected-document");
+                expect(result?.documentStatus).toBe("completed");
+                expect(result?.badges.some((badge) => badge.key === "contract_required")).toBe(false);
+                expect(prismaService.eformsign_doc.findMany).toHaveBeenCalledWith({
+                    where: {
+                        clientId: { in: [1] },
+                        OR: [
+                            { documentKind: "contract" },
+                            { documentKind: null },
+                        ],
+                    },
+                    orderBy: [
+                        { createdDate: "desc" },
+                        { id: "desc" },
+                    ],
+                    select: { clientId: true, statusType: true },
+                });
+                expect(prismaService.eformsign_doc.findMany).toHaveBeenCalledTimes(1);
+            });
+
+            it("should keep the existing badge behavior when the client has no contract documents", async () => {
+                listClientsUsecase.execute.mockResolvedValue([createWaitingClient("2026-07-16")]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.documentStatus).toBeNull();
+                expect(result?.badges.some((badge) => badge.key === "contract_required")).toBe(true);
             });
 
             it("should keep showing contract required after service starts", async () => {

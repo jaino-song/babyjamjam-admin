@@ -9,6 +9,7 @@ import {
     UpdateClientUsecase,
 } from "application/usecases/client";
 import { ClientEntity } from "domain/entities/client.entity";
+import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import { diffBusinessDaysKr } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -632,15 +633,27 @@ export class ClientService {
         });
         const pendingScheduleChangeMap = new Map(pendingScheduleChanges.map(change => [change.clientId, change]));
 
-        // Batch fetch eformsign_docs for all clients with eDocId
-        const eDocIds = clients.map(c => c.eDocId).filter((id): id is string => id !== null);
-        const docs = eDocIds.length > 0
-            ? await this.prismaService.eformsign_doc.findMany({
-                where: { documentId: { in: eDocIds } },
-                select: { documentId: true, statusType: true },
-            })
-            : [];
-        const docStatusMap = new Map(docs.map(d => [d.documentId, d.statusType]));
+        // 현재 페이지 고객의 계약 문서만 한 번에 조회하고, 고객별 최신 상태를 사용한다.
+        const contractDocs = await this.prismaService.eformsign_doc.findMany({
+            where: {
+                clientId: { in: clientIds },
+                OR: [
+                    { documentKind: EFORMSIGN_DOCUMENT_KIND.CONTRACT },
+                    { documentKind: null },
+                ],
+            },
+            orderBy: [
+                { createdDate: "desc" },
+                { id: "desc" },
+            ],
+            select: { clientId: true, statusType: true },
+        });
+        const latestContractStatusMap = new Map<number, string>();
+        for (const doc of contractDocs) {
+            if (!latestContractStatusMap.has(doc.clientId)) {
+                latestContractStatusMap.set(doc.clientId, doc.statusType);
+            }
+        }
 
         // Compute and update service status for each client (lazy update strategy)
         const clientsNeedingUpdate: { id: number; newStatus: ServiceStatusType }[] = [];
@@ -660,7 +673,7 @@ export class ClientService {
             if (client.serviceStatus !== computedStatus) {
                 clientsNeedingUpdate.push({ id: client.id, newStatus: computedStatus });
             }
-            const documentStatus = this.mapStatusTypeToDocumentStatus(docStatusMap.get(client.eDocId ?? ''));
+            const documentStatus = this.mapStatusTypeToDocumentStatus(latestContractStatusMap.get(client.id));
             const badges = this.buildClientBadges({
                 serviceStatus: computedStatus,
                 documentStatus,
