@@ -30,13 +30,18 @@ export const getCurrentUser = cache(async (): Promise<AuthUser | null> => {
     }
 
     // Send token as Bearer token in Authorization header
-    const { data } = await serverAPIClient.get(`/auth/me`, {
+    const { data } = await serverAPIClient.get<AuthUser>(`/auth/me`, {
       headers: {
         Authorization: `Bearer ${authToken.value}`,
       },
     });
 
-    console.log("[getCurrentUser] User fetched successfully:", data?.name);
+    if (!data?.id) {
+      console.error("[getCurrentUser] Invalid user response");
+      return null;
+    }
+
+    console.log("[getCurrentUser] User fetched successfully:", data.name);
     return data;
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Unknown error";

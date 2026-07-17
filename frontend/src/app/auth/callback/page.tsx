@@ -6,13 +6,38 @@ import { Box, Typography } from "@mui/material";
 import { MoonLoader } from "react-spinners";
 import { exchangeToken } from "./actions";
 
+type ExchangeTokenResult = Awaited<ReturnType<typeof exchangeToken>>;
+
+const exchangeTokenPromises = new Map<string, Promise<ExchangeTokenResult>>();
+
+function exchangeTokenOnce(code: string): Promise<ExchangeTokenResult> {
+    const existingPromise = exchangeTokenPromises.get(code);
+    if (existingPromise) {
+        return existingPromise;
+    }
+
+    const promise = exchangeToken(code).finally(() => {
+        setTimeout(() => exchangeTokenPromises.delete(code), 60_000);
+    });
+    exchangeTokenPromises.set(code, promise);
+    return promise;
+}
+
 export default function AuthCallbackPage() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
+        let cancelled = false;
+
         const exchangeCodeForTokens = async () => {
+            const callbackError = searchParams.get("error");
+            if (callbackError) {
+                setError(callbackError);
+                return;
+            }
+
             const code = searchParams.get("code");
 
             console.log("[Auth Callback] Starting token exchange");
@@ -28,7 +53,11 @@ export default function AuthCallbackPage() {
                 console.log("[Auth Callback] Using server action for token exchange");
                 
                 // Use server action - bypasses Safari's client-side restrictions
-                const result = await exchangeToken(code);
+                const result = await exchangeTokenOnce(code);
+
+                if (cancelled) {
+                    return;
+                }
                 
                 if (!result.success) {
                     console.error("[Auth Callback] Token exchange failed:", result.error);
@@ -36,8 +65,11 @@ export default function AuthCallbackPage() {
                     return;
                 }
 
-                console.log("[Auth Callback] Token exchange successful");
-                console.log("[Auth Callback] Redirecting to dashboard");
+                if (result.onboardingRequired) {
+                    router.replace(result.onboardingRoute || "/kakao/onboarding");
+                    return;
+                }
+
                 router.replace("/dashboard");
             }
             catch (err) {
@@ -46,7 +78,11 @@ export default function AuthCallbackPage() {
                 setError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
             }
         }
-        exchangeCodeForTokens();
+        void exchangeCodeForTokens();
+
+        return () => {
+            cancelled = true;
+        };
     }, [searchParams, router]);
 
     if (error) {
