@@ -6,6 +6,7 @@ export interface IEmployeeRepository {
     create(branchid: string, employee: EmployeeEntity): Promise<EmployeeEntity>;
     update(branchid: string, employee: EmployeeEntity): Promise<EmployeeEntity>;
     delete(branchid: string, id: number): Promise<void>;
+    hasActiveAssignments?(branchid: string, id: number): Promise<boolean>;
     findAll(branchid: string): Promise<EmployeeEntity[]>;
     findByWorkArea(branchid: string, workArea: string): Promise<EmployeeEntity[]>;
     findByGrade(branchid: string, grade: string): Promise<EmployeeEntity[]>;
