@@ -152,6 +152,7 @@ export class ServiceRecordLinkService {
             this.logger.log(`Service record access revoked for schedule ${scheduleId}`);
         } catch (error) {
             this.logger.error(`Failed to revoke feedback link for schedule ${scheduleId}: ${error}`);
+            throw error;
         }
     }
 
@@ -166,6 +167,7 @@ export class ServiceRecordLinkService {
             }
         } catch (error) {
             this.logger.error(`Failed to extend feedback token expiry for schedule ${scheduleId}: ${error}`);
+            throw error;
         }
     }
 

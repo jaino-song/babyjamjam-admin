@@ -152,6 +152,17 @@ export class ClientService {
         @Optional() private readonly serviceRecordLifecycleService?: ServiceRecordLifecycleService,
     ) {}
 
+    private async revokeServiceRecordLinkAfterCommit(clientId: number, scheduleId: number): Promise<void> {
+        try {
+            await this.serviceRecordLinkService?.revoke(scheduleId);
+        } catch (error) {
+            this.logger.error(
+                `[SERVICE_RECORD_LINK_REVOKE_FAILED] 제공기록지 링크 폐기 실패 — 고객 ${clientId}, ` +
+                `스케줄 ${scheduleId} 수동 확인 필요: ${error}`,
+            );
+        }
+    }
+
     private assertAllowedServiceStatus(status: string | null | undefined): void {
         if (status == null) return;
 
@@ -426,9 +437,10 @@ export class ClientService {
                         endDate: endDate ?? existing.endDate ?? new Date(Date.now() + DEFAULT_SERVICE_PERIOD_MS),
                     });
                     if (assignment.replacedScheduleId !== null) {
-                        this.serviceRecordLinkService
-                            ?.revoke(assignment.replacedScheduleId)
-                            ?.catch(() => undefined);
+                        await this.revokeServiceRecordLinkAfterCommit(
+                            existing.id,
+                            assignment.replacedScheduleId,
+                        );
                     }
                     if (assignment.createdScheduleId !== null) {
                         await this.triggerService
@@ -910,7 +922,7 @@ export class ClientService {
         });
 
         if (replacedScheduleId !== null) {
-            this.serviceRecordLinkService?.revoke(replacedScheduleId)?.catch(() => undefined);
+            await this.revokeServiceRecordLinkAfterCommit(id, replacedScheduleId);
         }
         const updatedClient = await this.findClientByIdUsecase.execute(branchid, id);
         if (!updatedClient) {
@@ -985,7 +997,7 @@ export class ClientService {
             select: { id: true },
         });
         for (const activeSchedule of activeSchedules) {
-            this.serviceRecordLinkService?.revoke(activeSchedule.id)?.catch(() => undefined);
+            await this.revokeServiceRecordLinkAfterCommit(clientId, activeSchedule.id);
         }
         await this.serviceRecordLifecycleService?.markTerminated(clientId);
 
@@ -1060,7 +1072,7 @@ export class ClientService {
             });
         });
         if (replacedScheduleId !== null) {
-            this.serviceRecordLinkService?.revoke(replacedScheduleId)?.catch(() => undefined);
+            await this.revokeServiceRecordLinkAfterCommit(clientId, replacedScheduleId);
         }
         this.triggerService
             ?.syncEmployeeAssignmentRulesForSchedule(branchid, replacementSchedule.id, true)

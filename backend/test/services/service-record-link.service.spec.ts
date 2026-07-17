@@ -500,4 +500,56 @@ describe("ServiceRecordLinkService", () => {
             new Date("2026-07-12T20:00:00+09:00"),
         );
     });
+
+    it("revokes an existing token and pending jobs", async () => {
+        const tokenService = createTokenService();
+        const jobRepository = createJobRepository();
+        const service = new ServiceRecordLinkService(
+            createPrisma() as unknown as PrismaService,
+            tokenService as never,
+            createConfigService() as unknown as ConfigService,
+            jobRepository as unknown as IMessageTriggerJobRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
+        );
+
+        await service.revoke(10);
+
+        expect(tokenService.revokeForSchedule).toHaveBeenCalledWith(10);
+        expect(jobRepository.findPendingByRuleIdsAndEmployeeScheduleId).toHaveBeenCalledWith(
+            [SERVICE_RECORD_LINK_RULE_ID],
+            10,
+        );
+    });
+
+    it("rethrows token revocation failures", async () => {
+        const tokenService = createTokenService();
+        const error = new Error("token revoke failed");
+        tokenService.revokeForSchedule.mockRejectedValue(error);
+        const service = new ServiceRecordLinkService(
+            createPrisma() as unknown as PrismaService,
+            tokenService as never,
+            createConfigService() as unknown as ConfigService,
+            createJobRepository() as unknown as IMessageTriggerJobRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
+        );
+
+        await expect(service.revoke(10)).rejects.toBe(error);
+    });
+
+    it("rethrows token expiry extension failures", async () => {
+        const tokenService = createTokenService();
+        const error = new Error("token extension failed");
+        tokenService.extendExpiryForSchedule.mockRejectedValue(error);
+        const service = new ServiceRecordLinkService(
+            createPrisma() as unknown as PrismaService,
+            tokenService as never,
+            createConfigService() as unknown as ConfigService,
+            createJobRepository() as unknown as IMessageTriggerJobRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
+        );
+
+        await expect(
+            service.extendExpiryForEndDate(10, new Date("2026-07-12T00:00:00.000Z")),
+        ).rejects.toBe(error);
+    });
 });

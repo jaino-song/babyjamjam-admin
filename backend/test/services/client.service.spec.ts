@@ -1,3 +1,5 @@
+import { Logger } from "@nestjs/common";
+
 import { ClientService } from "../../application/services/client.service";
 import {
     CreateClientUsecase,
@@ -1327,6 +1329,37 @@ describe("ClientService", () => {
                 expect(result.serviceStatus).toBe("replacement_requested");
                 expect(serviceRecordLinkService.revoke).toHaveBeenCalledWith(10);
                 expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(20);
+            });
+
+            it("keeps the committed replacement and logs when link revocation fails", async () => {
+                const mockClient = createClientEntity();
+                const updatedClient = new ClientEntity(
+                    1, "Test Client", "Test Address", "010-1234-5678", "A형", 15,
+                    "100000", "50000", "50000", new Date(), new Date("2024-06-01"),
+                    false, true, "900101", "replacement_requested", false, null
+                );
+                findClientByIdUsecase.execute
+                    .mockResolvedValueOnce(mockClient)
+                    .mockResolvedValueOnce(updatedClient);
+                prismaService.employee_schedule.findFirst.mockResolvedValue({ id: 10 });
+                prismaService.employee_schedule.update.mockResolvedValue({});
+                prismaService.employee_schedule.create.mockResolvedValue({ id: 20, clientId: 1 });
+                serviceRecordLinkService.revoke.mockRejectedValue(new Error("revoke failed"));
+                const errorLog = jest.spyOn(Logger.prototype, "error").mockImplementation();
+
+                await expect(service.requestReplacement(branchId, 1, 7)).resolves.toBe(updatedClient);
+
+                expect(prismaService.client.updateMany).toHaveBeenCalledWith({
+                    where: { id: 1, branchId },
+                    data: { serviceStatus: "replacement_requested" },
+                });
+                expect(prismaService.employee_schedule.update).toHaveBeenCalledWith({
+                    where: { id: 10 },
+                    data: { replaced: true, endDate: expect.any(Date) },
+                });
+                expect(errorLog).toHaveBeenCalledWith(expect.stringContaining(
+                    "[SERVICE_RECORD_LINK_REVOKE_FAILED] 제공기록지 링크 폐기 실패 — 고객 1",
+                ));
             });
 
             it("should handle replacement with primary employee only", async () => {
