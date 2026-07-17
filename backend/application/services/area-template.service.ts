@@ -9,8 +9,18 @@ import {
 } from "application/usecases/area-template";
 import { AreaTemplateEntity } from "domain/entities/area-template.entity";
 
-const DEFAULT_TEMPLATE_AREA_ID = "default";
-const DEFAULT_TEMPLATE_NAME = "인천 아이미래로 전자계약서";
+const LEGACY_CONTRACT_TEMPLATES = [
+    {
+        areaId: "Namdonggu",
+        configKey: "EFORMSIGN_NAMDONG_TEMPLATE_ID",
+        templateName: "인천 아이미래로 남동구 계약서",
+    },
+    {
+        areaId: "Seogu",
+        configKey: "EFORMSIGN_SEOGU_TEMPLATE_ID",
+        templateName: "인천 아이미래로 서구 계약서",
+    },
+] as const;
 
 @Injectable()
 export class AreaTemplateService {
@@ -29,16 +39,16 @@ export class AreaTemplateService {
 
     async findAll(): Promise<AreaTemplateEntity[]> {
         const templates = await this.listAreaTemplatesUsecase.execute();
-        return templates.length > 0 ? templates : [this.getDefaultTemplate()];
+        return templates.length > 0 ? templates : this.getConfiguredTemplates();
     }
 
     async findByArea(area: string): Promise<AreaTemplateEntity | null> {
         const template = await this.findAreaTemplateByAreaUsecase.execute(area);
-        if (template || area !== DEFAULT_TEMPLATE_AREA_ID) {
+        if (template) {
             return template;
         }
 
-        return this.getDefaultTemplate();
+        return this.getConfiguredTemplates().find((configured) => configured.areaId === area) ?? null;
     }
 
     update(area: string, params: { templateId?: string, templateName?: string | null }): Promise<AreaTemplateEntity> {
@@ -49,12 +59,14 @@ export class AreaTemplateService {
         return this.deleteAreaTemplateUsecase.execute(area);
     }
 
-    private getDefaultTemplate(): AreaTemplateEntity {
-        return AreaTemplateEntity.reconstitute(
-            DEFAULT_TEMPLATE_AREA_ID,
-            DEFAULT_TEMPLATE_AREA_ID,
-            this.configService.getOrThrow<string>("EFORMSIGN_TEMPLATE_ID"),
-            DEFAULT_TEMPLATE_NAME,
+    private getConfiguredTemplates(): AreaTemplateEntity[] {
+        return LEGACY_CONTRACT_TEMPLATES.map(({ areaId, configKey, templateName }) =>
+            AreaTemplateEntity.reconstitute(
+                areaId,
+                areaId,
+                this.configService.getOrThrow<string>(configKey),
+                templateName,
+            ),
         );
     }
 }
