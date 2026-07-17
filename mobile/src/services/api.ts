@@ -403,7 +403,24 @@ export type {
     MessageSenderApprovalStatus,
 };
 
+export interface ClientRegistrationPolicy {
+    clientAutoRegistration: boolean;
+    greetingOnAutoRegistration: boolean;
+}
+
+export type ClientRegistrationPolicyPatch = Partial<ClientRegistrationPolicy>;
+
 export const settingsApi = {
+    getClientRegistrationPolicy: async (): Promise<ClientRegistrationPolicy> => {
+        const { data } = await api.get("/settings/client-registration-policy");
+        return data;
+    },
+    updateClientRegistrationPolicy: async (
+        patch: ClientRegistrationPolicyPatch,
+    ): Promise<ClientRegistrationPolicy> => {
+        const { data } = await api.put("/settings/client-registration-policy", patch);
+        return data;
+    },
     getMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {
         const { data } = await api.get("/settings/message-sender-approval");
         return data;

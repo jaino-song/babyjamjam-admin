@@ -136,7 +136,7 @@ describe("MessageTriggerList", () => {
 
     renderPage();
 
-    expect(screen.getByText("신규 고객 인사 SMS")).toBeInTheDocument();
+    expect(screen.queryByText("신규 고객 인사 SMS")).not.toBeInTheDocument();
     expect(screen.getByText("실제 서비스 시작 규칙")).toBeInTheDocument();
     expect(screen.queryByText("고객 등록 환영")).not.toBeInTheDocument();
 
@@ -188,19 +188,9 @@ describe("MessageTriggerList", () => {
     expect(serviceInfoRow.querySelector("svg")).toHaveClass("lucide-message-square-text");
   });
 
-  it("shows the UI-only SMS greeting trigger when no real trigger rule exists", () => {
+  it("shows an empty state when no real trigger rule exists", () => {
     renderPage();
 
-    expect(screen.getByText("신규 고객 인사 SMS")).toBeInTheDocument();
-    expect(screen.getByText("고객 등록 즉시 · 고객 번호")).toBeInTheDocument();
-    expect(screen.queryByText("서비스 종료 안내")).not.toBeInTheDocument();
-  });
-
-  it("does not call the live rule mutation when the UI-only SMS trigger is pressed", async () => {
-    renderPage();
-
-    fireEvent.click(screen.getByRole("button", { name: /신규 고객 인사 SMS/ }));
-
-    expect(updateMutate).not.toHaveBeenCalled();
+    expect(screen.getByText("등록된 자동 전송 트리거가 없습니다.")).toBeInTheDocument();
   });
 });

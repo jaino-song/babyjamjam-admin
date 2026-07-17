@@ -3,6 +3,7 @@
 import Link from "next/link";
 
 import { MessageTriggerList } from "@/components/app/mobile-redesign/MessageTriggerList";
+import { ClientRegistrationPolicySettings } from "@/components/app/mobile-redesign/ClientRegistrationPolicySettings";
 import "@/components/app/mobile-redesign/redesign.css";
 
 export function MessagesTriggersPage() {
@@ -20,6 +21,7 @@ export function MessagesTriggersPage() {
                 <p>고객 일정에 맞춘 자동 발송 규칙을 관리합니다.</p>
               </div>
             </div>
+            <ClientRegistrationPolicySettings />
             <MessageTriggerList />
           </div>
         </div>

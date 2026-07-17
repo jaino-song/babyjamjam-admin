@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
     Workflow,
     Users,
@@ -68,6 +69,7 @@ import {
 } from "@/components/app/v3";
 import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
+import { settingsApi, type ClientRegistrationPolicy } from "@/services/api";
 
 const FILTER_CHIPS = [
     { label: "전체", value: "all" },
@@ -89,7 +91,6 @@ type ClientAutomationItem = {
     id: "eformsign-auto-client-registration";
     title: string;
     subtitle: string;
-    defaultEnabled: boolean;
     icon: typeof FileSignature;
 };
 
@@ -98,7 +99,6 @@ const CLIENT_AUTOMATION_ITEMS: readonly ClientAutomationItem[] = [
         id: "eformsign-auto-client-registration",
         title: "전자문서 자동 고객 등록",
         subtitle: "전자문서 생성 시 고객 정보가 자동으로 등록됩니다.",
-        defaultEnabled: true,
         icon: FileSignature,
     },
 ];
@@ -127,21 +127,33 @@ const filterValueToStatus = (filter: string): ServiceStatus | null => {
 };
 
 function ClientAutomationSection() {
+    const { toast } = useToast();
+    const queryClient = useQueryClient();
+    const { data: policy, isLoading } = useQuery({
+        queryKey: ["settings", "client-registration-policy"],
+        queryFn: settingsApi.getClientRegistrationPolicy,
+    });
     const [selectedAutomationId, setSelectedAutomationId] = useState<ClientAutomationItem["id"] | null>(null);
-    const [automationEnabledById, setAutomationEnabledById] = useState<Record<ClientAutomationItem["id"], boolean>>(() =>
-        CLIENT_AUTOMATION_ITEMS.reduce(
-            (acc, item) => ({
-                ...acc,
-                [item.id]: item.defaultEnabled,
-            }),
-            {} as Record<ClientAutomationItem["id"], boolean>,
-        ),
-    );
+    const updatePolicy = useMutation({
+        mutationFn: settingsApi.updateClientRegistrationPolicy,
+        onMutate: async ({ clientAutoRegistration }: { clientAutoRegistration?: boolean }) => {
+            await queryClient.cancelQueries({ queryKey: ["settings", "client-registration-policy"] });
+            const previous = queryClient.getQueryData<ClientRegistrationPolicy>(["settings", "client-registration-policy"]);
+            queryClient.setQueryData<ClientRegistrationPolicy>(["settings", "client-registration-policy"], (current) =>
+                current && clientAutoRegistration !== undefined ? { ...current, clientAutoRegistration } : current,
+            );
+            return { previous };
+        },
+        onError: (_error, _variables, context) => {
+            if (context?.previous) queryClient.setQueryData(["settings", "client-registration-policy"], context.previous);
+            toast({ variant: "destructive", description: "고객 자동 등록 설정 저장 중 오류가 발생했습니다." });
+        },
+        onSuccess: (saved) => queryClient.setQueryData(["settings", "client-registration-policy"], saved),
+        onSettled: () => void queryClient.invalidateQueries({ queryKey: ["settings", "client-registration-policy"] }),
+    });
     const selectedAutomation =
         CLIENT_AUTOMATION_ITEMS.find((item) => item.id === selectedAutomationId) ?? null;
-    const selectedAutomationEnabled = selectedAutomation
-        ? automationEnabledById[selectedAutomation.id]
-        : false;
+    const selectedAutomationEnabled = selectedAutomation ? policy?.clientAutoRegistration === true : false;
 
     return (
         <section data-component="clients-automation-section" className="flex h-full min-h-0 flex-1 flex-col">
@@ -179,14 +191,10 @@ function ClientAutomationSection() {
                                             <Switch
                                                 data-component="clients-automation-item-toggle"
                                                 aria-label={`${item.title} 사용`}
-                                                checked={automationEnabledById[item.id]}
+                                                checked={policy?.clientAutoRegistration === true}
+                                                disabled={isLoading || updatePolicy.isPending}
                                                 onClick={(event) => event.stopPropagation()}
-                                                onCheckedChange={(checked) =>
-                                                    setAutomationEnabledById((current) => ({
-                                                        ...current,
-                                                        [item.id]: checked,
-                                                    }))
-                                                }
+                                                onCheckedChange={(checked) => updatePolicy.mutate({ clientAutoRegistration: checked })}
                                                 className="ml-auto shrink-0"
                                             />
                                         )}
