@@ -301,6 +301,7 @@ ${resolvedServiceRecordUrl}`;
     <TemplateMessageFormFrame
       dataComponent="messages-service-feedback-link-form"
       fields={fields}
+      fieldsLayout="stack"
       messageCard={messageCard}
       deliveryMode="service-feedback-link"
       serviceRecordLinkPreparation={currentPreparation}

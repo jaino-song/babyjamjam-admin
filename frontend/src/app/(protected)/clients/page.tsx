@@ -30,7 +30,7 @@ import {
     useClient,
 } from "@/features/clients/hooks/use-clients";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
-import { useSendServiceRecordLink } from "@/features/service-records/hooks/use-service-records";
+import { getScheduleChangeErrorMessage } from "@/features/service-records/utils/schedule-change-error";
 import { useToast } from "@/hooks/use-toast";
 import type { Client, ServiceStatus } from "@/lib/client/types";
 import {
@@ -47,6 +47,8 @@ import {
 import { ClientDetailPanel } from "@/components/app/clients/ClientDetailPanel";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
+import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/ServiceRecordLinkResetResultModal";
+import { ServiceScheduleChangeModal } from "@/components/app/clients/ServiceScheduleChangeModal";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -73,6 +75,7 @@ import { settingsApi, type ClientRegistrationPolicy } from "@/services/api";
 
 const FILTER_CHIPS = [
     { label: "전체", value: "all" },
+    { label: "예약 전", value: "pre_booking" },
     { label: "대기", value: "waiting" },
     { label: "교체 요청", value: "replacement_requested" },
     { label: "진행중", value: "active" },
@@ -109,8 +112,25 @@ const toDate = (value: string | null): Date | null => {
     return Number.isNaN(date.getTime()) ? null : date;
 };
 
+const getTodayIsoDate = (): string => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, "0");
+    const day = String(today.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+};
+
+interface ServiceScheduleChangeTarget {
+    scheduleId: number;
+    sessionIndex: number;
+    currentDate: string;
+    minimumDate: string;
+}
+
 const filterValueToStatus = (filter: string): ServiceStatus | null => {
     switch (filter) {
+        case "pre_booking":
+            return "pre_booking";
         case "waiting":
             return "waiting";
         case "replacement_requested":
@@ -251,9 +271,14 @@ export default function ClientsPage() {
     const [editingClient, setEditingClient] = useState<Client | null>(null);
     const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
     const [resetLinkTargetClientId, setResetLinkTargetClientId] = useState<number | null>(null);
+    const [resetServiceRecordUrl, setResetServiceRecordUrl] = useState<string | null>(null);
     const [isResettingLink, setIsResettingLink] = useState(false);
-    const sendServiceRecordLink = useSendServiceRecordLink();
+    const [scheduleChangeTarget, setScheduleChangeTarget] = useState<ServiceScheduleChangeTarget | null>(null);
+    const [selectedScheduleChangeDate, setSelectedScheduleChangeDate] = useState("");
+    const [isPreparingScheduleChange, setIsPreparingScheduleChange] = useState(false);
+    const [isApplyingScheduleChange, setIsApplyingScheduleChange] = useState(false);
     const { toast } = useToast();
+    const queryClient = useQueryClient();
     const [searchQuery, setSearchQuery] = useState("");
     const [activeFilter, setActiveFilter] = useState("all");
     const [activeSection, setActiveSection] = useState<ClientSectionId>("list");
@@ -403,20 +428,15 @@ export default function ClientsPage() {
                 ?? null;
             if (!activeAssignment) {
                 toast({
-                    description: "발송할 관리사 배정이 없어 링크를 재설정할 수 없습니다.",
+                    description: "관리사 배정이 없어 링크를 재설정할 수 없습니다.",
                     variant: "destructive",
                 });
                 return;
             }
 
-            const prepared = await serviceRecordsApi.prepareLink(activeAssignment.scheduleId);
-            await sendServiceRecordLink.mutateAsync({
-                scheduleId: activeAssignment.scheduleId,
-                clientId: resetLinkTargetClientId,
-                preparedLinkToken: prepared.data.preparedLinkToken,
-            });
-            toast({ description: "제공기록지 링크를 재설정하고 메시지를 발송했습니다." });
+            const reset = await serviceRecordsApi.resetLink(activeAssignment.scheduleId);
             setResetLinkTargetClientId(null);
+            setResetServiceRecordUrl(reset.data.serviceRecordUrl);
         } catch {
             toast({
                 description: "제공기록지 링크 재설정에 실패했습니다. 잠시 후 다시 시도해 주세요.",
@@ -424,6 +444,88 @@ export default function ClientsPage() {
             });
         } finally {
             setIsResettingLink(false);
+        }
+    };
+
+    const handleOpenServiceScheduleChange = async (clientId: number) => {
+        setIsPreparingScheduleChange(true);
+        try {
+            const overview = await serviceRecordsApi.getClientOverview(clientId);
+            const assignments = overview.data.assignments ?? [];
+            const activeAssignment = assignments.find((assignment) => !assignment.replaced)
+                ?? assignments[0]
+                ?? null;
+            if (!activeAssignment) {
+                toast({
+                    description: "관리사 배정이 없어 서비스 일정을 변경할 수 없습니다.",
+                    variant: "destructive",
+                });
+                return;
+            }
+
+            const preview = await serviceRecordsApi.previewScheduleChange(activeAssignment.scheduleId);
+            const today = getTodayIsoDate();
+            const minimumDate = preview.data.minimumDate > today
+                ? preview.data.minimumDate
+                : today;
+            setSelectedScheduleChangeDate(minimumDate);
+            setScheduleChangeTarget({
+                scheduleId: activeAssignment.scheduleId,
+                sessionIndex: preview.data.sessionIndex,
+                currentDate: preview.data.fromDate,
+                minimumDate,
+            });
+        } catch {
+            toast({
+                description: "변경할 수 있는 다음 서비스 일정을 불러오지 못했습니다.",
+                variant: "destructive",
+            });
+        } finally {
+            setIsPreparingScheduleChange(false);
+        }
+    };
+
+    const handleApplyServiceScheduleChange = async () => {
+        if (!scheduleChangeTarget) return;
+
+        setIsApplyingScheduleChange(true);
+        try {
+            const changed = await serviceRecordsApi.applyScheduleChange(scheduleChangeTarget.scheduleId, {
+                toDate: selectedScheduleChangeDate,
+            });
+            setSelectedClient((currentClient) => {
+                if (!currentClient || currentClient.id !== changed.data.clientId) return currentClient;
+                return {
+                    ...currentClient,
+                    endDate: changed.data.newEndDate,
+                    pendingScheduleChange: null,
+                };
+            });
+            setScheduleChangeTarget(null);
+            setSelectedScheduleChangeDate("");
+            await queryClient.invalidateQueries({ queryKey: ["clients"] });
+            toast({
+                description: `서비스 일정과 종료일(${changed.data.newEndDate})이 변경되었습니다.`,
+            });
+        } catch (error) {
+            toast({
+                description: getScheduleChangeErrorMessage(error),
+                variant: "destructive",
+            });
+        } finally {
+            setIsApplyingScheduleChange(false);
+        }
+    };
+
+    const handleCopyResetServiceRecordLink = async (serviceRecordUrl: string) => {
+        try {
+            await navigator.clipboard.writeText(serviceRecordUrl);
+            toast({ description: "제공기록지 링크를 복사했습니다." });
+        } catch {
+            toast({
+                description: "링크 복사에 실패했습니다. 링크를 직접 선택해 복사해 주세요.",
+                variant: "destructive",
+            });
         }
     };
 
@@ -684,6 +786,15 @@ export default function ClientsPage() {
                                             {t(locale, "common.edit")}
                                         </DropdownMenuItem>
                                         <DropdownMenuItem
+                                            data-component="clients-detail-menu-change-service-schedule"
+                                            disabled={isPreparingScheduleChange}
+                                            onClick={() => void handleOpenServiceScheduleChange(activeSelectedClient.id)}
+                                            className="gap-2"
+                                        >
+                                            <CalendarDays className="w-4 h-4" />
+                                            서비스 일정 변경
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
                                             data-component="clients-detail-menu-reset-service-record-link"
                                             onClick={() => setResetLinkTargetClientId(activeSelectedClient.id)}
                                             className="gap-2"
@@ -737,13 +848,37 @@ export default function ClientsPage() {
                 }}
                 dataComponent="clients-detail-reset-service-record-link-approval"
                 title="제공기록지 링크를 재설정하시겠습니까?"
-                description="기존 링크는 만료되고, 새 링크가 담긴 메시지가 관리사에게 발송됩니다."
+                description="기존 링크는 만료되고 새 링크가 생성됩니다. 메시지는 발송되지 않습니다."
                 isDescriptionVisuallyHidden={false}
                 approvalLabel="링크 재설정"
                 pendingLabel="재설정 중..."
                 isPending={isResettingLink}
                 onApprove={() => void handleResetServiceRecordLinkConfirm()}
             />
+
+            <ServiceRecordLinkResetResultModal
+                open={resetServiceRecordUrl !== null}
+                serviceRecordUrl={resetServiceRecordUrl ?? ""}
+                onClose={() => setResetServiceRecordUrl(null)}
+                onCopy={(serviceRecordUrl) => void handleCopyResetServiceRecordLink(serviceRecordUrl)}
+            />
+
+            {scheduleChangeTarget ? (
+                <ServiceScheduleChangeModal
+                    open
+                    sessionIndex={scheduleChangeTarget.sessionIndex}
+                    currentDate={scheduleChangeTarget.currentDate}
+                    minimumDate={scheduleChangeTarget.minimumDate}
+                    selectedDate={selectedScheduleChangeDate}
+                    isPending={isApplyingScheduleChange}
+                    onDateChange={setSelectedScheduleChangeDate}
+                    onClose={() => {
+                        setScheduleChangeTarget(null);
+                        setSelectedScheduleChangeDate("");
+                    }}
+                    onSubmit={() => void handleApplyServiceScheduleChange()}
+                />
+            ) : null}
 
             <ApprovalTwoButtonModal
                 open={deleteTargetClientId !== null}

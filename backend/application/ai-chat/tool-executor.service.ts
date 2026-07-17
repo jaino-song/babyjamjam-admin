@@ -42,6 +42,7 @@ const CLIENT_FILTERS = [
 ] as const;
 
 const CLIENT_SERVICE_STATUSES = [
+    "pre_booking",
     "waiting",
     "replacement_requested",
     "active",

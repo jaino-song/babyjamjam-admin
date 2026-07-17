@@ -104,7 +104,7 @@ describe("ClientServiceRecords", () => {
 
         await user.click(screen.getByRole("button", { name: "메시지 재전송" }));
 
-        expect(screen.getByRole("dialog", { name: "메시지를 재전송할까요?" })).toBeInTheDocument();
+        expect(screen.getByRole("dialog", { name: "제공기록지 메시지를 재전송하시겠습니까?" })).toBeInTheDocument();
         expect(screen.getByText("기존 링크가 그대로 포함된 메시지를 다시 전송합니다.")).toBeInTheDocument();
         expect(mockMutateAsync).not.toHaveBeenCalled();
 
@@ -148,6 +148,51 @@ describe("ClientServiceRecords", () => {
 
         expect(screen.getByText("1회차 제공기록")).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "‹ 목록으로" })).toBeInTheDocument();
-        expect(screen.getByText("✓ 완료")).toBeInTheDocument();
+        expect(screen.getByText("완료")).toBeInTheDocument();
+        expect(screen.queryByText("✓ 완료")).not.toBeInTheDocument();
+    });
+
+    it("opens an empty detail for an unsubmitted session", async () => {
+        const user = userEvent.setup();
+        renderComponent({
+            assignments: [
+                createAssignment(1, "sent"),
+            ],
+        });
+
+        await user.click(screen.getByRole("button", { name: /1회차/ }));
+
+        expect(screen.getByText("1회차 제공기록")).toBeInTheDocument();
+        expect(screen.getAllByText("-").length).toBeGreaterThan(0);
+        expect(screen.getByRole("button", { name: "‹ 목록으로" })).toBeInTheDocument();
+    });
+
+    it("resets the mobile detail scroll before opening a session", async () => {
+        const user = userEvent.setup();
+        const animationFrame = jest.spyOn(window, "requestAnimationFrame")
+            .mockImplementation((callback) => {
+                callback(0);
+                return 1;
+            });
+
+        const { container } = render(
+            <div className="detail-body">
+                <ClientServiceRecords
+                    client={client}
+                    activeTab="serviceRecords"
+                    overview={{ assignments: [createAssignment(1, "sent")] }}
+                    isLoading={false}
+                    isError={false}
+                />
+            </div>,
+        );
+        const scrollContainer = container.querySelector(".detail-body") as HTMLDivElement;
+        scrollContainer.scrollTop = 480;
+
+        await user.click(screen.getByRole("button", { name: /1회차/ }));
+
+        expect(scrollContainer.scrollTop).toBe(0);
+        expect(screen.getByText("1회차 제공기록")).toBeInTheDocument();
+        animationFrame.mockRestore();
     });
 });

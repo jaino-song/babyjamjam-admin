@@ -15,8 +15,8 @@ export interface DashboardAnalyticsClient {
 
 const CONTRACT_START_WINDOW_DAYS = 7;
 const SERVICE_START_WINDOW_DAYS = 7;
-const EXCLUDED_CONTRACT_START_SERVICE_STATUSES = new Set(["completed", "terminated"]);
-const EXCLUDED_UPCOMING_SERVICE_STATUSES = new Set(["completed", "terminated"]);
+const EXCLUDED_CONTRACT_START_SERVICE_STATUSES = new Set(["pre_booking", "completed", "terminated"]);
+const EXCLUDED_UPCOMING_SERVICE_STATUSES = new Set(["pre_booking", "completed", "terminated"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);

@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 
 const STATUS_FILTER_OPTIONS: Array<{ value: ServiceStatus | null; label: string }> = [
     { value: null, label: "전체" },
+    { value: "pre_booking", label: "예약 전" },
     { value: "waiting", label: "대기" },
     { value: "replacement_requested", label: "교체 요청" },
     { value: "active", label: "진행중" },
@@ -29,6 +30,7 @@ const STATUS_FILTER_OPTIONS: Array<{ value: ServiceStatus | null; label: string 
 
 const getStatusBadgeVariant = (status: ServiceStatus | null) => {
     switch (status) {
+        case "pre_booking": return "outline";
         case "waiting": return "v3-pending";
         case "replacement_requested": return "v3-expired";
         case "active": return "v3-active";

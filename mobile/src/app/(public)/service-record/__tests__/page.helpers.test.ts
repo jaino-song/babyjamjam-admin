@@ -9,6 +9,14 @@ describe("canEditDailyRecord", () => {
         expect(canEditDailyRecord(false, "2026-07-14", "2026-07-15")).toBe(false);
         expect(canEditDailyRecord(false, "2026-07-15", "2026-07-15")).toBe(true);
     });
+
+    it("allows a new record outside the service date when the dev override is enabled", () => {
+        expect(canEditDailyRecord(false, "2026-07-14", "2026-07-15", true)).toBe(true);
+    });
+
+    it("keeps the same-day gate when the dev override is disabled", () => {
+        expect(canEditDailyRecord(false, "2026-07-14", "2026-07-15", false)).toBe(false);
+    });
 });
 
 describe("isDayButtonDisabled", () => {

@@ -76,6 +76,8 @@ export type EmailUserValidationResult =
     | UserValidationResult
     | PendingAccountOnboardingValidationResult;
 
+export type KakaoLoginClient = 'desktop' | 'mobile' | 'legacy';
+
 export interface PendingKakaoSignupExchangeResult {
     onboardingRequired: true;
     onboardingRoute: "/kakao/onboarding";
@@ -1864,11 +1866,11 @@ export class AuthService {
     }
 
     /**
-     * Create a Kakao login state token carrying the originating client (mobile/desktop) and a
+     * Create a Kakao login state token carrying the originating client and a
      * random nonce. The caller stores the nonce in a single-use httpOnly cookie so the callback
      * can bind the round-trip to this browser (login-CSRF protection).
      */
-    async createKakaoLoginState(client: 'mobile' | 'desktop'): Promise<{ signedState: string; nonce: string }> {
+    async createKakaoLoginState(client: KakaoLoginClient): Promise<{ signedState: string; nonce: string }> {
         const nonce = crypto.randomBytes(32).toString('hex');
         const signedState = await this.jwt.signAsync(
             { client, purpose: 'kakao_login', nonce },
@@ -1879,19 +1881,24 @@ export class AuthService {
 
     /**
      * Verify a Kakao login state token and confirm its nonce matches the browser cookie.
-     * Returns the originating client, or null if the state is missing/forged/expired or the
+     * Returns the allowlisted originating client, or null if the state is missing/forged/expired or the
      * nonce does not match.
      */
     async verifyKakaoLoginState(
         signedState: string,
         expectedNonce: string | undefined,
-    ): Promise<{ client: 'mobile' | 'desktop' } | null> {
+    ): Promise<{ client: KakaoLoginClient } | null> {
         if (!expectedNonce) return null;
         try {
             const decoded = await this.jwt.verifyAsync<{ client?: string; purpose: string; nonce?: string }>(signedState);
             if (decoded.purpose !== 'kakao_login') return null;
             if (!decoded.nonce || !this.timingSafeEqualStrings(decoded.nonce, expectedNonce)) return null;
-            return { client: decoded.client === 'mobile' ? 'mobile' : 'desktop' };
+            const client: KakaoLoginClient = decoded.client === 'mobile'
+                ? 'mobile'
+                : decoded.client === 'legacy'
+                    ? 'legacy'
+                    : 'desktop';
+            return { client };
         } catch {
             return null;
         }

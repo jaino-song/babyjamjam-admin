@@ -383,7 +383,7 @@ export default function NewClientPage() {
     setField("careCenter", editingClient.careCenter);
     setField("voucherClient", editingClient.voucherClient);
     setField("breastPump", editingClient.breastPump);
-    setField("serviceStatus", editingClient.serviceStatus ?? "waiting");
+    setField("serviceStatus", editingClient.serviceStatus ?? "pre_booking");
     setField("areaId", editingClient.areaId ?? "");
     setPricesManuallyEdited(Boolean(editingClient.fullPrice || editingClient.grant || editingClient.actualPrice));
   }, [editingClient, setField, setPricesManuallyEdited]);

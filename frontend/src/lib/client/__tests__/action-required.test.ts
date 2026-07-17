@@ -34,6 +34,15 @@ function createClient(overrides: Partial<Client> = {}): Client {
 }
 
 describe("getActionRequiredStatus", () => {
+  it("returns no action for a pre-booking client even if a start date is present", () => {
+    const result = getActionRequiredStatus(createClient({
+      serviceStatus: "pre_booking",
+      startDate: "2026-07-15",
+    }));
+
+    expect(result).toBeNull();
+  });
+
   const referenceDate = new Date("2026-03-17T09:00:00.000Z");
 
   it("returns replacement requested with highest priority", () => {

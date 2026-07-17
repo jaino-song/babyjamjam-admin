@@ -47,6 +47,7 @@ export type ClientBadgeKey = "contract_required" | "breast_pump" | "service_stat
 export type ClientBadgeTone = "danger" | "success" | "primary" | "warning" | "neutral";
 export type ClientBadgeStatus =
     | "active"
+    | "preBooking"
     | "pending"
     | "review"
     | "terminated"
@@ -179,6 +180,8 @@ export class ClientService {
         tone: ClientBadgeTone;
     } {
         switch (status) {
+            case SERVICE_STATUS.PRE_BOOKING:
+                return { status: "preBooking", label: "예약 전", tone: "neutral" };
             case SERVICE_STATUS.ACTIVE:
                 return { status: "active", label: "진행중", tone: "primary" };
             case SERVICE_STATUS.WAITING:
@@ -1219,7 +1222,7 @@ export class ClientService {
                         eDocId: null,
                         OR: [
                             { serviceStatus: null },
-                            { serviceStatus: { notIn: [SERVICE_STATUS.COMPLETED, SERVICE_STATUS.TERMINATED] } },
+                            { serviceStatus: { notIn: [SERVICE_STATUS.PRE_BOOKING, SERVICE_STATUS.COMPLETED, SERVICE_STATUS.TERMINATED] } },
                         ],
                         startDate: { lte: sendThresholdDate },
                     },
@@ -1227,7 +1230,7 @@ export class ClientService {
                         eDocId: { not: null },
                         OR: [
                             { serviceStatus: null },
-                            { serviceStatus: { notIn: [SERVICE_STATUS.COMPLETED, SERVICE_STATUS.TERMINATED] } },
+                            { serviceStatus: { notIn: [SERVICE_STATUS.PRE_BOOKING, SERVICE_STATUS.COMPLETED, SERVICE_STATUS.TERMINATED] } },
                         ],
                         startDate: { lte: signatureThresholdDate },
                         eformsignDocByEDocId: { statusType: { not: "050" } },
@@ -1271,7 +1274,11 @@ export class ClientService {
                     };
                 }
 
-                if (serviceStatus === SERVICE_STATUS.COMPLETED || serviceStatus === SERVICE_STATUS.TERMINATED) {
+                if (
+                    serviceStatus === SERVICE_STATUS.PRE_BOOKING ||
+                    serviceStatus === SERVICE_STATUS.COMPLETED ||
+                    serviceStatus === SERVICE_STATUS.TERMINATED
+                ) {
                     return null;
                 }
 

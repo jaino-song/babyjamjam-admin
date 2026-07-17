@@ -120,9 +120,9 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         startDate: "",
         endDate: "",
         careCenter: false,
-        voucherClient: true,
+        voucherClient: false,
         breastPump: false,
-        serviceStatus: "waiting",
+        serviceStatus: "pre_booking",
     });
 
     const [error, setError] = useState<string | null>(null);
@@ -208,7 +208,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                 careCenter: client.careCenter,
                 voucherClient: client.voucherClient,
                 breastPump: client.breastPump,
-                serviceStatus: client.serviceStatus || "waiting",
+                serviceStatus: client.serviceStatus || "pre_booking",
             }
             : {
                 name: prefillName || "",
@@ -226,9 +226,9 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                 startDate: "",
                 endDate: "",
                 careCenter: false,
-                voucherClient: true,
+                voucherClient: false,
                 breastPump: false,
-                serviceStatus: "waiting" as const,
+                serviceStatus: "pre_booking" as const,
             };
         const nextPricesManuallyEdited = client
             ? Boolean(client.fullPrice || client.grant || client.actualPrice)
@@ -268,7 +268,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     const handleSubmit = async () => {
         setError(null);
 
-        // Validation - All fields required except secondary employee
+        // 고객 기본 정보만 필수이며 서비스 정보는 상담 단계에서 비워둘 수 있다.
         if (!formData.name.trim()) {
             setErrorAndScroll(t(locale, "clients.form.error-name-required"));
             return;
@@ -289,30 +289,6 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
             setErrorAndScroll(t(locale, "clients.form.error-phone-required"));
             return;
         }
-        // Check for null/undefined specifically, as 0 can be a valid ID
-        // In edit mode, skip this validation if employee hasn't been selected
-        // (the backend will preserve the existing schedule)
-        if (!formData.type?.trim()) {
-            setErrorAndScroll(t(locale, "clients.form.error-type-required"));
-            return;
-        }
-        if (!formData.duration) {
-            setErrorAndScroll(t(locale, "clients.form.error-duration-required"));
-            return;
-        }
-        if (!formData.fullPrice?.trim()) {
-            setErrorAndScroll(t(locale, "clients.form.error-price-required"));
-            return;
-        }
-        if (!formData.startDate?.trim()) {
-            setErrorAndScroll(t(locale, "clients.form.error-start-date-required"));
-            return;
-        }
-        if (!formData.endDate?.trim()) {
-            setErrorAndScroll(t(locale, "clients.form.error-end-date-required"));
-            return;
-        }
-
         try {
             if (isEditMode && client) {
                 // Build update DTO, excluding null employee IDs to avoid validation errors
@@ -342,10 +318,24 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                 onSuccess?.(updatedClient);
             } else {
                 const createDto: CreateClientDto = {
-                    ...formData,
+                    name: formData.name,
+                    birthday: formData.birthday || null,
+                    dueDate: formData.dueDate || null,
+                    address: formData.address || null,
+                    phone: formData.phone || null,
+                    primaryEmployeeId: formData.primaryEmployeeId,
+                    secondaryEmployeeId: formData.secondaryEmployeeId,
+                    type: formData.type || null,
                     duration: formData.duration || null,
+                    fullPrice: formData.fullPrice || null,
+                    grant: formData.grant || null,
+                    actualPrice: formData.actualPrice || null,
                     startDate: formData.startDate || null,
                     endDate: formData.endDate || null,
+                    careCenter: formData.careCenter,
+                    voucherClient: formData.voucherClient,
+                    breastPump: formData.breastPump,
+                    serviceStatus: formData.serviceStatus,
                 };
                 const newClient = await createClient.mutateAsync(createDto);
                 onSuccess?.(newClient);

@@ -234,28 +234,95 @@ export function ClientServiceRecordsTab({
 
 function ClientServiceRecordsSkeleton() {
     return (
-        <div data-component="clients-detail-service-records-skeleton-list" className="space-y-[calc(16px*var(--glint-ui-scale,1))]">
-            {[0, 1, 2].map((index) => (
-                <div
-                    key={index}
-                    data-component="clients-detail-service-records-skeleton-card"
-                    className="rounded-[18px] border border-v3-border bg-white p-[calc(18px*var(--glint-ui-scale,1))]"
+        <div data-component="clients-detail-service-records" className="space-y-[calc(16px*var(--glint-ui-scale,1))]">
+            <div
+                data-component="clients-detail-service-records-overview-grid"
+                className="grid grid-cols-1 items-stretch gap-[calc(16px*var(--glint-ui-scale,1))] lg:grid-cols-3 [&>*]:content-start"
+            >
+                <InfoCard
+                    title="제공기록지 진행 상태"
+                    data-component="clients-detail-service-records-status-card"
                 >
-                    <div className="flex items-start gap-[calc(12px*var(--glint-ui-scale,1))]">
-                        <Skeleton className="h-[calc(38px*var(--glint-ui-scale,1))] w-[calc(38px*var(--glint-ui-scale,1))] shrink-0 rounded-[12px] bg-v3-dim-white" />
-                        <div className="min-w-0 flex-1 space-y-2">
-                            <Skeleton className="h-[calc(15px*var(--glint-ui-scale,1))] w-[calc(150px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
-                            <Skeleton className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(220px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
+                    {[
+                        "상태",
+                        "서비스 기간",
+                        "작성 현황",
+                        "기록 완료",
+                        "전자문서 생성",
+                    ].map((label) => (
+                        <ServiceRecordInfoRowSkeleton key={label} label={label} />
+                    ))}
+                </InfoCard>
+
+                <InfoCard
+                    title="서비스 기본정보"
+                    data-component="clients-detail-service-records-header-card"
+                >
+                    {[
+                        "산모 성명",
+                        "산모 생년월일",
+                        "신생아 성명",
+                        "신생아 출생일자",
+                        "분만형태",
+                        "신생아 몸무게",
+                    ].map((label) => (
+                        <ServiceRecordInfoRowSkeleton key={label} label={label} />
+                    ))}
+                </InfoCard>
+
+                <InfoCard
+                    title="제공기록지 작성 링크"
+                    data-component="clients-detail-service-records-link-card"
+                >
+                    {[
+                        "제공인력 이름",
+                        "제공인력 연락처",
+                        "메시지 최근 발송",
+                        "제공기록지 본인 인증",
+                    ].map((label) => (
+                        <ServiceRecordInfoRowSkeleton key={label} label={label} />
+                    ))}
+                    <Skeleton className="mt-[calc(14px*var(--glint-ui-scale,1))] h-9 w-full rounded-full bg-white/70" />
+                </InfoCard>
+            </div>
+
+            <InfoCard
+                title="회차별 제공기록"
+                data-component="clients-detail-service-records-sessions"
+                titleTrailing={(
+                    <Skeleton className="ml-auto h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(96px*var(--glint-ui-scale,1))] bg-white/70" />
+                )}
+            >
+                <div className="mt-[calc(8px*var(--glint-ui-scale,1))]">
+                    {[0, 1, 2].map((index) => (
+                        <div
+                            key={index}
+                            className="flex items-center gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-v3-border px-[calc(4px*var(--glint-ui-scale,1))] py-[calc(13px*var(--glint-ui-scale,1))] last:border-b-0"
+                        >
+                            <Skeleton className="h-[calc(30px*var(--glint-ui-scale,1))] w-[calc(30px*var(--glint-ui-scale,1))] shrink-0 rounded-full bg-white/70" />
+                            <div className="min-w-0 flex-1 space-y-1.5">
+                                <Skeleton className="h-[calc(13px*var(--glint-ui-scale,1))] w-[calc(72px*var(--glint-ui-scale,1))] bg-white/70" />
+                                <Skeleton className="h-[calc(11px*var(--glint-ui-scale,1))] w-[calc(132px*var(--glint-ui-scale,1))] bg-white/70" />
+                            </div>
+                            <Skeleton className="h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(58px*var(--glint-ui-scale,1))] shrink-0 rounded-full bg-white/70" />
                         </div>
-                        <Skeleton className="h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(68px*var(--glint-ui-scale,1))] rounded-full bg-v3-dim-white" />
-                    </div>
-                    <div className="mt-[calc(14px*var(--glint-ui-scale,1))] grid grid-cols-2 gap-x-[calc(24px*var(--glint-ui-scale,1))] gap-y-2 border-t border-dashed border-v3-border pt-[calc(12px*var(--glint-ui-scale,1))] max-sm:grid-cols-1">
-                        {[0, 1, 2, 3].map((row) => (
-                            <Skeleton key={row} className="h-[calc(18px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
-                        ))}
-                    </div>
+                    ))}
                 </div>
-            ))}
+            </InfoCard>
+        </div>
+    );
+}
+
+function ServiceRecordInfoRowSkeleton({ label }: { label: string }) {
+    return (
+        <div
+            data-component="info-row"
+            className="flex items-start gap-[calc(16px*var(--glint-ui-scale,1))] border-b border-v3-border py-[calc(10px*var(--glint-ui-scale,1))] last:border-b-0"
+        >
+            <span className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">
+                {label}
+            </span>
+            <Skeleton className="ml-auto h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(88px*var(--glint-ui-scale,1))] bg-white/70" />
         </div>
     );
 }
@@ -463,15 +530,11 @@ function ServiceSessionsCard({
     const lockedCount = sessions.filter((session) => session.locked).length;
     const draftCount = sessions.filter((session) => !session.locked).length;
     const totalSessions = slots.length;
-    const progress = totalSessions > 0 ? Math.round((lockedCount / totalSessions) * 100) : 0;
 
     return (
         <InfoCard
             data-component="clients-detail-service-records-sessions"
             title="회차별 제공기록"
-            description={sessions.length > 0
-                ? "계약 회차를 누르면 기록 상세가 열립니다"
-                : `계약 회차 ${configuredSessions}회`}
             titleTrailing={
                 <span className="ml-auto text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
                     <b className="text-v3-primary">{lockedCount}</b>/{totalSessions} 제출완료
@@ -479,13 +542,6 @@ function ServiceSessionsCard({
                 </span>
             }
         >
-            <div className="mt-[calc(10px*var(--glint-ui-scale,1))] h-[calc(6px*var(--glint-ui-scale,1))] overflow-hidden rounded-full bg-v3-dim-white">
-                <div
-                    data-component="clients-detail-service-records-progress"
-                    className={cn("h-full rounded-full bg-v3-primary transition-[width] duration-300", progress === 100 && "bg-v3-green")}
-                    style={{ width: `${progress}%` }}
-                />
-            </div>
             <div data-component="clients-detail-service-records-session-list" className="mt-[calc(8px*var(--glint-ui-scale,1))]">
                 {slots.map((slot, index) => (
                     <SessionRow
@@ -503,18 +559,31 @@ function SessionRow({ slot, defaultOpen }: { slot: SessionSlot; defaultOpen: boo
     const { record } = slot;
     if (!record) {
         return (
-            <div data-component="clients-detail-service-records-session-item" className="border-b border-v3-dim-white last:border-b-0">
-                <div className="flex items-center gap-[calc(12px*var(--glint-ui-scale,1))] px-[calc(4px*var(--glint-ui-scale,1))] py-[calc(13px*var(--glint-ui-scale,1))] opacity-75">
-                    <SessionNumber index={slot.sessionIndex} state="idle" />
-                    <div className="min-w-0">
-                        <div className="text-[calc(13px*var(--glint-ui-scale,1))] font-semibold text-v3-dark">{slot.sessionIndex}회차</div>
-                        <div className="mt-0.5 text-[calc(11.5px*var(--glint-ui-scale,1))] text-v3-text-muted">예정일 {formatDateKo(slot.expectedDate)}</div>
-                    </div>
-                    <div className="ml-auto shrink-0">
-                        <StatusPill variant="neutral">미작성</StatusPill>
-                    </div>
-                </div>
-            </div>
+            <Collapsible
+                defaultOpen={defaultOpen}
+                data-component="clients-detail-service-records-session-item"
+                className="border-b border-v3-dim-white last:border-b-0"
+            >
+                <CollapsibleTrigger asChild>
+                    <button
+                        type="button"
+                        className="group flex w-full items-center gap-[calc(12px*var(--glint-ui-scale,1))] px-[calc(4px*var(--glint-ui-scale,1))] py-[calc(13px*var(--glint-ui-scale,1))] text-left opacity-75"
+                    >
+                        <SessionNumber index={slot.sessionIndex} state="idle" />
+                        <div className="min-w-0">
+                            <div className="text-[calc(13px*var(--glint-ui-scale,1))] font-semibold text-v3-dark">{slot.sessionIndex}회차</div>
+                            <div className="mt-0.5 text-[calc(11.5px*var(--glint-ui-scale,1))] text-v3-text-muted">예정일 {formatDateKo(slot.expectedDate)}</div>
+                        </div>
+                        <div className="ml-auto flex shrink-0 items-center gap-[calc(10px*var(--glint-ui-scale,1))] text-right">
+                            <StatusPill variant="neutral">미작성</StatusPill>
+                            <ChevronDown className="h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(14px*var(--glint-ui-scale,1))] text-v3-text-muted transition-transform group-data-[state=open]:rotate-180" />
+                        </div>
+                    </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                    <EmptySessionRecordDetail />
+                </CollapsibleContent>
+            </Collapsible>
         );
     }
 
@@ -623,6 +692,50 @@ function SessionRecordDetail({ record }: { record: ServiceRecordSession }) {
     );
 }
 
+function EmptySessionRecordDetail() {
+    return (
+        <div
+            data-component="clients-detail-service-records-session-detail"
+            className="px-[calc(4px*var(--glint-ui-scale,1))] pb-[calc(18px*var(--glint-ui-scale,1))] pl-[calc(46px*var(--glint-ui-scale,1))]"
+        >
+            {SERVICE_RECORD_FORM_LAYOUT.map((section) => (
+                <div key={section.id}>
+                    <div className="mb-[calc(4px*var(--glint-ui-scale,1))] mt-[calc(14px*var(--glint-ui-scale,1))] flex items-center gap-[calc(6px*var(--glint-ui-scale,1))] text-[calc(11px*var(--glint-ui-scale,1))] font-bold tracking-[0.05em] text-v3-text-muted">
+                        <span
+                            className={cn(
+                                "h-[calc(7px*var(--glint-ui-scale,1))] w-[calc(7px*var(--glint-ui-scale,1))] rounded-full",
+                                section.tone === "mom" && "bg-v3-burgundy",
+                                section.tone === "baby" && "bg-v3-primary",
+                                section.tone === "finish" && "bg-v3-green",
+                            )}
+                        />
+                        {section.title}
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-[calc(28px*var(--glint-ui-scale,1))] max-sm:grid-cols-1">
+                        {section.fields.map((field) => (
+                            <div
+                                key={field.key}
+                                className={cn(
+                                    "flex items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-dashed border-v3-dim-white py-[calc(7px*var(--glint-ui-scale,1))]",
+                                    field.kind === "text" && "col-span-full items-start",
+                                )}
+                            >
+                                <span className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">{field.label}</span>
+                                <span
+                                    data-component="clients-detail-service-records-session-empty-value"
+                                    className="text-right text-[calc(12px*var(--glint-ui-scale,1))] font-medium text-v3-dark"
+                                >
+                                    -
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+}
+
 function RecordFieldRow({
     field,
     answers,
@@ -641,7 +754,10 @@ function RecordFieldRow({
             )}
         >
             <span className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">{field.label}</span>
-            <div className="flex min-w-0 flex-wrap items-center justify-end gap-[calc(5px*var(--glint-ui-scale,1))] text-right text-[calc(12.3px*var(--glint-ui-scale,1))] font-medium text-v3-dark">
+            <div
+                data-component="clients-detail-service-records-session-value"
+                className="flex min-w-0 flex-wrap items-center justify-end gap-[calc(5px*var(--glint-ui-scale,1))] text-right text-[calc(12px*var(--glint-ui-scale,1))] font-medium text-v3-dark"
+            >
                 {renderFieldValue(field, answers, record)}
             </div>
         </div>
@@ -658,13 +774,13 @@ function renderFieldValue(
         if (field.key === "notes") return <FreeTextValue value={record.notes} />;
         if (field.key === "paymentConfirmed") {
             return record.paymentConfirmed
-                ? <span className="font-semibold text-v3-green">✓ 완료</span>
-                : <span className="text-[#b3bcc5]">미확인</span>;
+                ? <span>완료</span>
+                : <span className="text-v3-text-muted">미확인</span>;
         }
         if (field.key === "hasMomApproval") {
             return record.hasMomApproval
-                ? <span className="font-semibold text-v3-green">✓ 서명함</span>
-                : <span className="text-[#b3bcc5]">서명 전</span>;
+                ? <span>서명함</span>
+                : <span className="text-v3-text-muted">서명 전</span>;
         }
     }
 
@@ -672,7 +788,7 @@ function renderFieldValue(
         const values = Array.isArray(answers[field.key]) ? answers[field.key] as unknown[] : [];
         if (values.length === 0) return <EmptyValue />;
         return values.map((value) => (
-            <AnswerChip key={String(value)} value={String(value)} field={field} />
+            <AnswerText key={String(value)} value={String(value)} />
         ));
     }
 
@@ -682,8 +798,8 @@ function renderFieldValue(
         if (!hasDisplayValue(value)) return <EmptyValue />;
         return (
             <>
-                <AnswerChip value={String(value)} field={field} />
-                {hasDisplayValue(colorValue) && <AnswerChip value={String(colorValue)} tone="neutral" />}
+                <AnswerText value={String(value)} />
+                {hasDisplayValue(colorValue) && <AnswerText value={String(colorValue)} />}
             </>
         );
     }
@@ -702,48 +818,17 @@ function renderFieldValue(
     return <EmptyValue />;
 }
 
-function AnswerChip({
-    value,
-    field,
-    tone,
-}: {
-    value: string;
-    field?: ServiceRecordFieldDescriptor;
-    tone?: "neutral" | "warn" | "primary";
-}) {
-    const resolvedTone = tone ?? (
-        field?.normalValues?.includes(value)
-            ? "neutral"
-            : field?.normalValues
-                ? "warn"
-                : "primary"
-    );
-
-    return (
-        <span
-            className={cn(
-                "rounded-[8px] px-[calc(9px*var(--glint-ui-scale,1))] py-[calc(2.5px*var(--glint-ui-scale,1))] text-[calc(11px*var(--glint-ui-scale,1))] font-medium",
-                resolvedTone === "neutral" && "bg-v3-dim-white text-v3-text",
-                resolvedTone === "warn" && "bg-[hsl(32,100%,94%)] text-[hsl(32,100%,35%)]",
-                resolvedTone === "primary" && "bg-v3-primary-light text-v3-primary",
-            )}
-        >
-            {value}
-        </span>
-    );
+function AnswerText({ value }: { value: string }) {
+    return <span>{value}</span>;
 }
 
 function FreeTextValue({ value }: { value: string | null }) {
-    if (!value) return <span className="text-[#b3bcc5]">미입력</span>;
-    return (
-        <span className="flex-1 rounded-[10px] bg-v3-dim-white px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(9px*var(--glint-ui-scale,1))] text-left text-[calc(12.2px*var(--glint-ui-scale,1))] font-normal leading-6 text-v3-text">
-            {value}
-        </span>
-    );
+    if (!value) return <EmptyValue />;
+    return <span className="min-w-0 whitespace-pre-wrap text-left">{value}</span>;
 }
 
 function EmptyValue() {
-    return <span className="text-[calc(11.8px*var(--glint-ui-scale,1))] font-normal italic text-[#b3bcc5]">미입력</span>;
+    return <span className="text-v3-text-muted">미입력</span>;
 }
 
 function SignatureDocCard({ signatureDoc }: { signatureDoc: SignatureDocStatus }) {

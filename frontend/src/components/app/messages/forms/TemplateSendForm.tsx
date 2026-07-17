@@ -694,7 +694,7 @@ export function TemplateSendForm({
       </div>
 
       {isServiceRecordLinkDelivery ? (
-        children ? <TemplateFieldGrid>{children}</TemplateFieldGrid> : null
+        children ? <TemplateFieldGrid layout="stack">{children}</TemplateFieldGrid> : null
       ) : shouldUseInlinePhoneRecipient ? (
         <>
           <div
@@ -711,10 +711,10 @@ export function TemplateSendForm({
               />
             ) : phoneAutocompleteField}
           </div>
-          {children ? <TemplateFieldGrid>{children}</TemplateFieldGrid> : null}
+          {children ? <TemplateFieldGrid layout="stack">{children}</TemplateFieldGrid> : null}
         </>
       ) : (
-        <TemplateFieldGrid>
+        <TemplateFieldGrid layout="stack">
           {requiresRecipientName ? (
             <>
               <TemplateFieldGridItem dataComponent="messages-template-send-form-recipient-field">

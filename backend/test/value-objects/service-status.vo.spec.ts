@@ -5,7 +5,6 @@
 
 import {
     SERVICE_STATUS,
-    ServiceStatusType,
     computeServiceStatus,
     shouldUpdateStatus,
     isManualStatus,
@@ -13,6 +12,7 @@ import {
 
 describe("SERVICE_STATUS constants", () => {
     it("should have all expected status values", () => {
+        expect(SERVICE_STATUS.PRE_BOOKING).toBe("pre_booking");
         expect(SERVICE_STATUS.WAITING).toBe("waiting");
         expect(SERVICE_STATUS.ACTIVE).toBe("active");
         expect(SERVICE_STATUS.COMPLETED).toBe("completed");
@@ -30,6 +30,12 @@ describe("computeServiceStatus", () => {
     };
 
     describe("given manual statuses", () => {
+        it("should preserve pre-booking status without service dates", () => {
+            const result = computeServiceStatus("pre_booking", null, null);
+
+            expect(result).toBe(SERVICE_STATUS.PRE_BOOKING);
+        });
+
         it("should preserve terminated status", () => {
             const pastStart = daysFromNow(-30);
             const pastEnd = daysFromNow(-10);
@@ -101,24 +107,24 @@ describe("computeServiceStatus", () => {
     });
 
     describe("given null dates", () => {
-        it("should return waiting when start date is null", () => {
+        it("should return pre-booking when start date is null", () => {
             const result = computeServiceStatus(null, null, daysFromNow(30));
-            expect(result).toBe(SERVICE_STATUS.WAITING);
+            expect(result).toBe(SERVICE_STATUS.PRE_BOOKING);
         });
 
-        it("should return waiting when end date is null", () => {
+        it("should return pre-booking when end date is null", () => {
             const result = computeServiceStatus(null, daysFromNow(-10), null);
-            expect(result).toBe(SERVICE_STATUS.WAITING);
+            expect(result).toBe(SERVICE_STATUS.PRE_BOOKING);
         });
 
-        it("should return waiting when both dates are null", () => {
+        it("should return pre-booking when both dates are null", () => {
             const result = computeServiceStatus(null, null, null);
-            expect(result).toBe(SERVICE_STATUS.WAITING);
+            expect(result).toBe(SERVICE_STATUS.PRE_BOOKING);
         });
 
-        it("should return waiting when dates are null even with existing status", () => {
+        it("should return pre-booking when dates are null even with existing status", () => {
             const result = computeServiceStatus("active", null, null);
-            expect(result).toBe(SERVICE_STATUS.WAITING);
+            expect(result).toBe(SERVICE_STATUS.PRE_BOOKING);
         });
     });
 
@@ -196,6 +202,10 @@ describe("shouldUpdateStatus", () => {
 });
 
 describe("isManualStatus", () => {
+    it("should return true for pre-booking", () => {
+        expect(isManualStatus("pre_booking")).toBe(true);
+    });
+
     it("should return true for terminated", () => {
         expect(isManualStatus("terminated")).toBe(true);
     });

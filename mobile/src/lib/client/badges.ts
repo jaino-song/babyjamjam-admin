@@ -22,6 +22,7 @@ export interface MobileClientBadge {
 }
 
 const PRIMARY_CLIENT_BADGE_KEYS = ["contract_required", "service_status"] as const satisfies readonly ClientBadgeKey[];
+const SCHEDULE_CHANGE_BADGE_LABEL = "일정 변경";
 
 const CLIENT_BADGE_ORDER: Record<ClientBadgeKey, number> = {
   contract_required: 10,
@@ -49,6 +50,8 @@ const CLIENT_BADGE_TONE_BY_TONE = {
 
 function mapServiceStatusToBadgeStatus(status: Client["serviceStatus"]): ClientBadgeStatus {
   switch (status) {
+    case "pre_booking":
+      return "preBooking";
     case "active":
       return "active";
     case "waiting":
@@ -77,7 +80,12 @@ function legacyClientBadges(client: Client): ClientBadge[] {
   badges.push({
     key: "service_status",
     status: mapServiceStatusToBadgeStatus(client.serviceStatus),
-    label: client.serviceStatus === "replacement_requested" ? "교체 요청" : undefined,
+    label:
+      client.serviceStatus === "pre_booking"
+        ? "예약 전"
+        : client.serviceStatus === "replacement_requested"
+          ? "교체 요청"
+          : undefined,
     priority: CLIENT_BADGE_ORDER.service_status,
   });
 
@@ -100,9 +108,26 @@ function legacyClientBadges(client: Client): ClientBadge[] {
   return badges;
 }
 
+function applyScheduleChangeBadge(client: Client, badges: ClientBadge[]): ClientBadge[] {
+  if (!client.pendingScheduleChange) return badges;
+
+  const serviceStatusBadge = badges.find((badge) => badge.key === "service_status");
+  const scheduleChangeBadge: ClientBadge = {
+    key: "service_status",
+    status: "scheduleChange",
+    label: SCHEDULE_CHANGE_BADGE_LABEL,
+    tone: "danger",
+    priority: serviceStatusBadge?.priority ?? CLIENT_BADGE_ORDER.service_status,
+  };
+
+  if (!serviceStatusBadge) return [scheduleChangeBadge, ...badges];
+  return badges.map((badge) => badge === serviceStatusBadge ? scheduleChangeBadge : badge);
+}
+
 export function getClientBadges(client: Client | null | undefined): ClientBadge[] {
   if (!client) return [];
-  return client.badges?.length ? client.badges : legacyClientBadges(client);
+  const badges = client.badges?.length ? client.badges : legacyClientBadges(client);
+  return applyScheduleChangeBadge(client, badges);
 }
 
 export function prioritizeClientBadges(badges: ClientBadge[]): ClientBadge[] {

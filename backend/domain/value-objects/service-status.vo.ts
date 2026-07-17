@@ -3,6 +3,7 @@
  * Based on service lifecycle and date calculations
  */
 export const SERVICE_STATUS = {
+    PRE_BOOKING: "pre_booking",       // 예약 전 - 상담만 진행되어 서비스가 아직 없음
     WAITING: "waiting",               // 대기 - start_date not yet reached
     ACTIVE: "active",                 // 진행중 - currently between start_date and end_date
     COMPLETED: "completed",           // 완료 - end_date has passed
@@ -13,6 +14,7 @@ export const SERVICE_STATUS = {
 export type ServiceStatusType = (typeof SERVICE_STATUS)[keyof typeof SERVICE_STATUS];
 
 export const SERVICE_STATUS_VALUES: ServiceStatusType[] = [
+    SERVICE_STATUS.PRE_BOOKING,
     SERVICE_STATUS.WAITING,
     SERVICE_STATUS.REPLACEMENT_REQUESTED,
     SERVICE_STATUS.ACTIVE,
@@ -26,6 +28,7 @@ export function isServiceStatus(value: string | null | undefined): value is Serv
 
 // Manual statuses that should NOT be auto-updated based on dates
 const MANUAL_STATUSES: ServiceStatusType[] = [
+    SERVICE_STATUS.PRE_BOOKING,
     SERVICE_STATUS.TERMINATED,
     SERVICE_STATUS.REPLACEMENT_REQUESTED,
 ];
@@ -49,9 +52,9 @@ export function computeServiceStatus(
         return currentStatus as ServiceStatusType;
     }
 
-    // If dates are not set, default to waiting
+    // 서비스 일정이 없으면 아직 예약이 확정되지 않은 고객이다.
     if (!startDate || !endDate) {
-        return SERVICE_STATUS.WAITING;
+        return SERVICE_STATUS.PRE_BOOKING;
     }
 
     const now = new Date();

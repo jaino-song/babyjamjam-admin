@@ -11,6 +11,7 @@ export type ClientBadgeKey = "contract_required" | "breast_pump" | "service_stat
 export type ClientBadgeTone = "danger" | "success" | "primary" | "warning" | "neutral";
 export type ClientBadgeStatus =
     | "active"
+    | "preBooking"
     | "pending"
     | "review"
     | "scheduleChange"
@@ -138,6 +139,7 @@ export interface PaginatedResponse<T> {
 
 // Service status options (renamed from Contract status)
 export const SERVICE_STATUS_OPTIONS = [
+    { value: "pre_booking", label: "예약 전", labelEn: "Pre-booking", color: "default" as const },
     { value: "waiting", label: "대기", labelEn: "Waiting", color: "warning" as const },
     { value: "replacement_requested", label: "교체 요청", labelEn: "Replacement Requested", color: "error" as const },
     { value: "active", label: "진행중", labelEn: "Active", color: "info" as const },
