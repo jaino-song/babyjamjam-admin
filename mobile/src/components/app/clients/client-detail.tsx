@@ -362,6 +362,15 @@ export interface ClientGroup {
 
 export const GROUPS: ClientGroup[] = [
   {
+    key: "pre_booking",
+    title: "예약 전",
+    badge: "예약 전",
+    badgeTone: "muted",
+    badgeMini: "muted",
+    match: (c) => c.serviceStatus === "pre_booking",
+    counter: "명",
+  },
+  {
     key: "active",
     title: "진행중",
     badge: "진행중",

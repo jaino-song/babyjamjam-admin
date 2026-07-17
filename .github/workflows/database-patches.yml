@@ -123,6 +123,14 @@ jobs:
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-employee-client-hardening.sql
 
+      - name: Apply client pre-booking status patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260717120000_add_client_pre_booking_status/migration.sql
+
+      - name: Verify client pre-booking status patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-client-pre-booking-status.sql
+
   apply-preview:
     name: apply preview database patches
     if: >-
@@ -346,6 +354,14 @@ jobs:
       - name: Verify employee/client hardening patch
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-employee-client-hardening.sql
+
+      - name: Apply client pre-booking status patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260717120000_add_client_pre_booking_status/migration.sql
+
+      - name: Verify client pre-booking status patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-client-pre-booking-status.sql
 
   apply-production:
     name: apply production database patches
@@ -575,3 +591,11 @@ jobs:
       - name: Verify employee/client hardening patch
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-employee-client-hardening.sql
+
+      - name: Apply client pre-booking status patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260717120000_add_client_pre_booking_status/migration.sql
+
+      - name: Verify client pre-booking status patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-client-pre-booking-status.sql

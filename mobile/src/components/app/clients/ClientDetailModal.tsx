@@ -34,6 +34,7 @@ const getStatusBadge = (status: string | null) => {
     if (!option) return <Badge variant="outline" className="bg-muted text-muted-foreground border-muted">-</Badge>;
 
     const variantMap: Record<string, "v3-active" | "v3-pending" | "v3-expired" | "outline"> = {
+        pre_booking: "outline",
         active: "v3-active",
         pending: "v3-pending",
         waiting: "v3-pending",

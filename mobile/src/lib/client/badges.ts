@@ -49,6 +49,8 @@ const CLIENT_BADGE_TONE_BY_TONE = {
 
 function mapServiceStatusToBadgeStatus(status: Client["serviceStatus"]): ClientBadgeStatus {
   switch (status) {
+    case "pre_booking":
+      return "preBooking";
     case "active":
       return "active";
     case "waiting":
@@ -77,7 +79,12 @@ function legacyClientBadges(client: Client): ClientBadge[] {
   badges.push({
     key: "service_status",
     status: mapServiceStatusToBadgeStatus(client.serviceStatus),
-    label: client.serviceStatus === "replacement_requested" ? "교체 요청" : undefined,
+    label:
+      client.serviceStatus === "pre_booking"
+        ? "예약 전"
+        : client.serviceStatus === "replacement_requested"
+          ? "교체 요청"
+          : undefined,
     priority: CLIENT_BADGE_ORDER.service_status,
   });
 

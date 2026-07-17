@@ -49,9 +49,9 @@ const INITIAL_FORM: ClientWizardFormData = {
   startDate: "",
   endDate: "",
   careCenter: false,
-  voucherClient: true,
+  voucherClient: false,
   breastPump: false,
-  serviceStatus: "waiting",
+  serviceStatus: "pre_booking",
   areaId: "",
 };
 

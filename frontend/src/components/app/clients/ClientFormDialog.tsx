@@ -263,9 +263,9 @@ function ClientFormContent({
         startDate: "",
         endDate: "",
         careCenter: false,
-        voucherClient: true,
+        voucherClient: false,
         breastPump: false,
-        serviceStatus: "waiting",
+        serviceStatus: "pre_booking",
     });
 
     const {
@@ -445,7 +445,7 @@ function ClientFormContent({
                     careCenter: client.careCenter,
                     voucherClient: client.voucherClient,
                     breastPump: client.breastPump,
-                    serviceStatus: client.serviceStatus || "waiting",
+                    serviceStatus: client.serviceStatus || "pre_booking",
                 };
                 nextPricesManuallyEdited = Boolean(client.fullPrice || client.grant || client.actualPrice);
             }
@@ -467,9 +467,9 @@ function ClientFormContent({
                     startDate: "",
                     endDate: "",
                     careCenter: false,
-                    voucherClient: true,
+                    voucherClient: false,
                     breastPump: false,
-                    serviceStatus: "waiting",
+                    serviceStatus: "pre_booking",
                 };
                 clearPrefillName();
             }
@@ -541,7 +541,7 @@ function ClientFormContent({
     const handleSubmit = async () => {
         setError(null);
 
-        // Validation - All fields required except secondary employee
+        // 고객 기본 정보만 필수이며 서비스 정보는 상담 단계에서 비워둘 수 있다.
         if (!formData.name.trim()) {
             setErrorAndScroll(t(locale, "clients.form.error-name-required"));
             return;
@@ -584,42 +584,10 @@ function ClientFormContent({
                 return;
             }
         }
-        // Check for null/undefined specifically, as 0 can be a valid ID
-        // In edit mode, skip this validation if employee hasn't been selected
-        // (the backend will preserve the existing schedule)
-        if (!formData.type?.trim()) {
-            setErrorAndScroll(t(locale, "clients.form.error-type-required"));
-            return;
-        }
-        if (!formData.duration) {
-            setErrorAndScroll(t(locale, "clients.form.error-duration-required"));
-            return;
-        }
-        if (!formData.fullPrice?.trim()) {
-            setErrorAndScroll(t(locale, "clients.form.error-price-required"));
-            return;
-        }
-        if (!formData.startDate?.trim()) {
-            setErrorAndScroll(t(locale, "clients.form.error-start-date-required"));
-            return;
-        }
-        if (!isValidCompactDateInput(formData.startDate)) {
-            setErrorAndScroll(t(locale, "clients.form.error-start-date-required"));
-            return;
-        }
-        if (!formData.endDate?.trim()) {
-            setErrorAndScroll(t(locale, "clients.form.error-end-date-required"));
-            return;
-        }
-        if (!isValidCompactDateInput(formData.endDate)) {
-            setErrorAndScroll(t(locale, "clients.form.error-end-date-required"));
-            return;
-        }
-
         try {
             const normalizedDueDate = normalizeCompactDateForSubmit(formData.dueDate);
-            const normalizedStartDate = normalizeCompactDateForSubmit(formData.startDate);
-            const normalizedEndDate = normalizeCompactDateForSubmit(formData.endDate);
+            const normalizedStartDate = normalizeCompactDateForSubmit(formData.startDate ?? "");
+            const normalizedEndDate = normalizeCompactDateForSubmit(formData.endDate ?? "");
 
             if (isEditMode && client) {
                 // Build update DTO, excluding null employee IDs to avoid validation errors
@@ -649,11 +617,24 @@ function ClientFormContent({
                 onSuccess?.(updatedClient);
             } else {
                 const createDto: CreateClientDto = {
-                    ...formData,
+                    name: formData.name,
+                    birthday: formData.birthday || null,
                     dueDate: normalizedDueDate,
+                    address: formData.address || null,
+                    phone: formData.phone || null,
+                    primaryEmployeeId: formData.primaryEmployeeId,
+                    secondaryEmployeeId: formData.secondaryEmployeeId,
+                    type: formData.type || null,
                     duration: formData.duration || null,
+                    fullPrice: formData.fullPrice || null,
+                    grant: formData.grant || null,
+                    actualPrice: formData.actualPrice || null,
                     startDate: normalizedStartDate || null,
                     endDate: normalizedEndDate || null,
+                    careCenter: formData.careCenter,
+                    voucherClient: formData.voucherClient,
+                    breastPump: formData.breastPump,
+                    serviceStatus: formData.serviceStatus,
                 };
                 const newClient = await createClient.mutateAsync(createDto);
                 onSuccess?.(newClient);
@@ -675,15 +656,8 @@ function ClientFormContent({
         isPhoneCheckReady
     );
     const isEmployeeStepValid = true;
-    const isVoucherStepValid = Boolean(
-        formData.type?.trim() &&
-        formData.duration &&
-        formData.fullPrice?.trim()
-    );
-    const isContractStepValid = Boolean(
-        isValidCompactDateInput(formData.startDate ?? "") &&
-        isValidCompactDateInput(formData.endDate ?? "")
-    );
+    const isVoucherStepValid = true;
+    const isContractStepValid = true;
     const stepValidation = [
         isBasicStepValid,
         isEmployeeStepValid,
@@ -691,19 +665,14 @@ function ClientFormContent({
         isContractStepValid,
     ] as const;
     const isCurrentStepValid = stepValidation[activeStep] ?? true;
-    const isFormComplete = isBasicStepValid && isVoucherStepValid && isContractStepValid;
-    const requiredFieldProgressText = `필수 항목 10개 중 ${
+    const isFormComplete = isBasicStepValid;
+    const requiredFieldProgressText = `필수 항목 5개 중 ${
         [
             Boolean(formData.name.trim()),
             isValidCompactDateInput(formData.birthday ?? ""),
             isValidCompactDateInput(formData.dueDate ?? ""),
             Boolean(formData.address?.trim()),
             Boolean(formData.phone?.trim()),
-            Boolean(formData.type?.trim()),
-            Boolean(formData.duration),
-            Boolean(formData.fullPrice?.trim()),
-            isValidCompactDateInput(formData.startDate ?? ""),
-            isValidCompactDateInput(formData.endDate ?? ""),
         ].filter(Boolean).length
     }개 입력됨`;
 
@@ -948,7 +917,7 @@ function ClientFormContent({
             <ClientDialogSection
                 dataComponent="clients-form-dialog-section-service"
                 title={t(locale, "clients.form.section-service")}
-                description="바우처 유형과 서비스 기간을 선택해 주세요."
+                description="선택 항목입니다. 상담 단계에서는 입력하지 않아도 됩니다."
             >
                 <FormGrid data-component="clients-form-dialog-service-grid">
                     <FormField
@@ -1070,7 +1039,7 @@ function ClientFormContent({
             <ClientDialogSection
                 dataComponent="clients-form-dialog-section-contract"
                 title={t(locale, "clients.form.section-contract")}
-                description="계약 상태와 서비스 일정을 정리해 주세요."
+                description="선택 항목입니다. 예약이 확정되면 서비스 일정을 입력해 주세요."
             >
                 <FormGrid data-component="clients-form-dialog-contract-grid" className="lg:grid-cols-3">
                     <FormField

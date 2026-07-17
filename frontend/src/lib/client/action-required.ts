@@ -43,7 +43,11 @@ export function getActionRequiredStatus(
     return { reason: "교체 요청", priority: 1 };
   }
 
-  if (client.serviceStatus === "completed" || client.serviceStatus === "terminated") {
+  if (
+    client.serviceStatus === "pre_booking" ||
+    client.serviceStatus === "completed" ||
+    client.serviceStatus === "terminated"
+  ) {
     return null;
   }
 
