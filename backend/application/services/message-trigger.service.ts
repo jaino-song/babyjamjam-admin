@@ -626,7 +626,7 @@ export class MessageTriggerService {
 
         const clients = await this.prisma.client.findMany({
             where: { branchId, phone: { not: null } },
-            select: { id: true, phone: true, createdAt: true },
+            select: { id: true, phone: true, createdAt: true, suppressGreetingSms: true },
         });
         const clientsByPhone = new Map<string, typeof clients>();
         for (const client of clients) {
@@ -652,7 +652,13 @@ export class MessageTriggerService {
         }
 
         for (const [clientId, jobIds] of orphanIdsByReplacementClient) {
-            await this.syncClientRulesForClient(branchId, clientId, true);
+            const client = clients.find((candidate) => candidate.id === clientId);
+            await this.syncClientRulesForClient(
+                branchId,
+                clientId,
+                true,
+                client?.suppressGreetingSms ?? false,
+            );
             await this.jobRepository.markOrphanedJobsReconciled(jobIds, clientId);
         }
     }
@@ -1217,6 +1223,15 @@ export class MessageTriggerService {
     }
 
     private validateRule(params: UpsertRuleParams): void {
+        const template = MESSAGE_TRIGGER_TEMPLATE_CATALOG[params.templateKey];
+        if (!template) {
+            throw new BadRequestException("Unknown template key");
+        }
+
+        if (!template.providers.sms) {
+            throw new BadRequestException("SMS 발송 채널이 없는 템플릿입니다.");
+        }
+
         if (!EVENT_RECIPIENT_OPTIONS[params.eventType].includes(params.recipientType)) {
             throw new BadRequestException("Invalid recipient for selected event type");
         }
@@ -1244,9 +1259,6 @@ export class MessageTriggerService {
             throw new BadRequestException("Template is not compatible with the selected event and recipient");
         }
 
-        if (!MESSAGE_TRIGGER_TEMPLATE_CATALOG[params.templateKey]) {
-            throw new BadRequestException("Unknown template key");
-        }
     }
 
     private async cancelPendingJobsForRule(ruleId: string, reason: string): Promise<void> {

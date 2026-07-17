@@ -107,6 +107,7 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "serviceType", label: "서비스 타입" },
         ],
         providers: {
+            sms: { templateKey: "CLIENT_WELCOME" },
         },
     },
     [MessageTriggerTemplateKey.SERVICE_START_REMINDER]: {
@@ -121,6 +122,7 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "timingText", label: "발송 기준 문구" },
         ],
         providers: {
+            sms: { templateKey: "SERVICE_START_REMINDER" },
         },
     },
     [MessageTriggerTemplateKey.SERVICE_INFO]: {
@@ -148,6 +150,7 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "timingText", label: "발송 기준 문구" },
         ],
         providers: {
+            sms: { templateKey: "SERVICE_END_REMINDER" },
         },
     },
     [MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED]: {
@@ -165,6 +168,7 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "serviceStartDate", label: "서비스 시작일" },
         ],
         providers: {
+            sms: { templateKey: "EMPLOYEE_ASSIGNED" },
         },
     },
     [MessageTriggerTemplateKey.SERVICE_RECORD_LINK]: {
