@@ -1,6 +1,7 @@
 "use client";
 
 import { Pencil, Trash2, X } from "lucide-react";
+import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
 import { Client, SERVICE_STATUS_OPTIONS, DocumentStatus, type ServiceStatus } from "@/lib/client/types";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
@@ -166,7 +167,7 @@ export function ClientDetailModal({
                         </h4>
                         <div className="space-y-3">
                             <InfoRow label={t(locale, "clients.form.name")} value={client.name} />
-                            <InfoRow label={t(locale, "clients.form.birthday")} value={client.birthday} />
+                            <InfoRow label={t(locale, "clients.form.birthday")} value={formatBirthdayYYMMDD(client.birthday ?? "") || "-"} />
                             <InfoRow label={t(locale, "clients.form.due-date")} value={formatDate(client.dueDate)} />
                             <InfoRow label={t(locale, "clients.form.phone")} value={client.phone} />
                             <InfoRow label={t(locale, "clients.form.address")} value={client.address} />

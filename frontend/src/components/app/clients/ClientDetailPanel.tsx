@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { MESSAGE_HISTORY_STATUS_LABELS } from "@babyjamjam/shared";
+import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -61,13 +63,6 @@ type ClientDetailTabKey =
 
 const CLIENT_MESSAGE_HISTORY_LIMIT = 500;
 const CLIENT_MESSAGE_DETAIL_SLIDE_DURATION_MS = 300;
-const CLIENT_MESSAGE_HISTORY_LIST_STATUS_LABELS = {
-    sent: "성공",
-    failed: "실패",
-    pending: "대기",
-    canceled: "취소",
-} satisfies Record<MessageHistoryRecord["status"], string>;
-
 const formatDate = (dateStr: string | null): string => {
     return formatDateForDisplay(dateStr);
 };
@@ -247,7 +242,7 @@ function ClientMessageHistoryList({
                                             statusBorderClassName
                                         )}
                                     >
-                                        {CLIENT_MESSAGE_HISTORY_LIST_STATUS_LABELS[normalizedRecord.status]}
+                                        {MESSAGE_HISTORY_STATUS_LABELS[normalizedRecord.status]}
                                     </span>
                                 </div>
                             }
@@ -797,7 +792,7 @@ function ClientDetailPanelBody({
                                         />
                                         <InfoRow
                                             label={t(locale, "clients.form.birthday")}
-                                            value={client.birthday || "-"}
+                                            value={formatBirthdayYYMMDD(client.birthday ?? "") || "-"}
                                         />
                                         <InfoRow
                                             label={t(locale, "clients.form.due-date")}
