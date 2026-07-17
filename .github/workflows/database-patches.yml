@@ -99,6 +99,14 @@ jobs:
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-user-approval.sql
 
+      - name: Apply auth session + outbox patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260717090000_add_auth_sessions/migration.sql
+
+      - name: Verify auth session + outbox patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-auth-sessions.sql
+
       - name: Apply service-record mom signature patch
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260715140000_add_client_signature_to_service_record_day/migration.sql
@@ -306,6 +314,14 @@ jobs:
       - name: Verify user approval + token-version patch
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-user-approval.sql
+
+      - name: Apply auth session + outbox patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260717090000_add_auth_sessions/migration.sql
+
+      - name: Verify auth session + outbox patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-auth-sessions.sql
 
       - name: Apply service-record mom signature patch
         working-directory: backend
@@ -519,6 +535,14 @@ jobs:
       - name: Verify user approval + token-version patch
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-user-approval.sql
+
+      - name: Apply auth session + outbox patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260717090000_add_auth_sessions/migration.sql
+
+      - name: Verify auth session + outbox patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-auth-sessions.sql
 
       - name: Apply service-record mom signature patch
         working-directory: backend

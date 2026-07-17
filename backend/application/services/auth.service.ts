@@ -1,26 +1,30 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable, Logger, UnauthorizedException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
 import { JwtService } from "@nestjs/jwt";
 import * as crypto from "crypto";
 import * as bcrypt from "bcrypt";
 import { EMAIL_PORT, EmailPort } from "../../domain/ports/email.port";
 import { AUTH_TOKEN_REPOSITORY, IAuthTokenRepository } from "../../domain/repositories/auth-token.repository.interface";
-import { AuthTokenEntity } from "../../domain/entities/auth-token.entity";
-import { getAuthTokenExpiresIn } from "./auth-token-policy";
 import { maskEmail } from "application/utils/mask";
 import { isVisibleStaffBranchSlug } from "domain/constants/branch-routing.constants";
+import { AuthSessionService } from "./auth-session.service";
+import { AuthEmailTokenService } from "./auth-email-token.service";
 
 export const NO_ACCESSIBLE_BRANCH_MESSAGE = "접근 가능한 지점이 없습니다. 관리자에게 문의해 주세요.";
 
 export interface KakaoData {
     kakaoId: string;
     email?: string;
+    emailValid?: boolean;
+    emailVerified?: boolean;
     name?: string;
     profileImage?: string;
 }
 
 export interface TokenPayload {
     sub: string;
+    sid: string;
     role: string | null;
     tokenVersion: number;
     branchId?: string;
@@ -117,12 +121,18 @@ export class AuthService {
     private readonly logger = new Logger(AuthService.name);
     private readonly BCRYPT_SALT_ROUNDS = 12;
     private readonly FRONTEND_URL: string;
+    private publicBranchCache: {
+        expiresAt: number;
+        value: Array<{ id: string; name: string }>;
+    } | null = null;
 
     constructor(
         private prisma: PrismaService,
         private jwt: JwtService,
         @Inject(EMAIL_PORT) private emailService: EmailPort,
         @Inject(AUTH_TOKEN_REPOSITORY) private authTokenRepository: IAuthTokenRepository,
+        private readonly authSessionService: AuthSessionService,
+        private readonly authEmailTokens: AuthEmailTokenService = new AuthEmailTokenService(),
     ) {
         const nodeEnv = process.env['NODE_ENV'];
         if (nodeEnv === "production") {
@@ -137,31 +147,20 @@ export class AuthService {
     private async issueBranchTokens(
         user: { id: string; role: string | null; approvalStatus: string; tokenVersion: number },
         branchId: string,
-        branchRole: string
+        branchRole: string,
+        sessionId?: string,
     ): Promise<{ accessToken: string; refreshToken: string }> {
         this.assertUserApproved(user);
-        const payload = {
-            sub: user.id,
-            role: user.role,
-            tokenVersion: user.tokenVersion,
-            branchId,
-            branchRole,
-        };
-
-        const tokenExpiresIn = getAuthTokenExpiresIn(user.role);
-        const signOptions = { expiresIn: tokenExpiresIn };
-        const refreshSignOptions = { expiresIn: tokenExpiresIn };
-
-        const accessToken = await this.jwt.signAsync(
-            { ...payload, type: 'access' },
-            signOptions
-        );
-        const refreshToken = await this.jwt.signAsync(
-            { ...payload, type: 'refresh' },
-            refreshSignOptions
-        );
-
-        return { accessToken, refreshToken };
+        return sessionId
+            ? this.authSessionService.changeSessionBranch(
+                sessionId,
+                user,
+                { branchId, branchRole },
+            )
+            : this.authSessionService.issueSession(
+                user,
+                { branchId, branchRole },
+            );
     }
 
     private getPendingAccountOnboardingProfile(
@@ -239,24 +238,8 @@ export class AuthService {
         }));
 
         if (user.role === 'owner') {
-            const payload = {
-                sub: user.id,
-                role: user.role,
-                tokenVersion: user.tokenVersion,
-            };
-
-            const tokenExpiresIn = getAuthTokenExpiresIn(user.role);
-            const signOptions = { expiresIn: tokenExpiresIn };
-            const refreshSignOptions = { expiresIn: tokenExpiresIn };
-
-            const refreshToken = await this.jwt.signAsync(
-                { ...payload, type: 'refresh' },
-                refreshSignOptions
-            );
-            const accessToken = await this.jwt.signAsync(
-                { ...payload, type: 'access' },
-                signOptions
-            );
+            const { accessToken, refreshToken } =
+                await this.authSessionService.issueSession(user);
 
             return {
                 user: user.id,
@@ -296,25 +279,11 @@ export class AuthService {
             requiresBranchSelection = true;
         }
 
-        const payload = {
-            sub: user.id,
-            role: user.role,
-            tokenVersion: user.tokenVersion,
-            ...(branchId && { branchId, branchRole }),
-        };
-
-        const tokenExpiresIn = getAuthTokenExpiresIn(user.role);
-        const signOptions = { expiresIn: tokenExpiresIn };
-        const refreshSignOptions = { expiresIn: tokenExpiresIn };
-
-        const refreshToken = await this.jwt.signAsync(
-            { ...payload, type: 'refresh' },
-            refreshSignOptions
-        );
-        const accessToken = await this.jwt.signAsync(
-            { ...payload, type: 'access' },
-            signOptions
-        );
+        const { accessToken, refreshToken } =
+            await this.authSessionService.issueSession(user, {
+                branchId,
+                branchRole,
+            });
 
         return {
             user: user.id,
@@ -334,49 +303,30 @@ export class AuthService {
 
     async validateKakaoUser(kakaoData: KakaoData): Promise<KakaoUserValidationResult> {
         // First, try to find user by kakaoId
-        let user = await this.prisma.user.findFirst({
+        const user = await this.prisma.user.findFirst({
             where: {
                 kakaoId: kakaoData.kakaoId
             },
         });
 
         if (!user) {
-            // If not found by kakaoId, check if a user exists with the same email
-            // This enables account linking: email-registered users can login with Kakao
-            if (kakaoData.email) {
-                const existingUserByEmail = await this.prisma.user.findUnique({
-                    where: { email: kakaoData.email.toLowerCase() },
-                });
-
-                if (existingUserByEmail) {
-                    // Link Kakao account to existing email-based account
-                    this.logger.log(`Linking Kakao account to existing email user: ${existingUserByEmail.id}`);
-                    user = await this.prisma.user.update({
-                        where: { id: existingUserByEmail.id },
-                        data: {
-                            kakaoId: kakaoData.kakaoId,
-                            authProvider: existingUserByEmail.passwordHash ? 'both' : 'kakao',
-                            // Update profile info from Kakao if not already set
-                            name: existingUserByEmail.name || kakaoData.name,
-                            profileImage: existingUserByEmail.profileImage || kakaoData.profileImage,
-                        },
-                    });
-                }
-            }
-
-            // If still no user found, start a pending Kakao onboarding flow instead.
-            if (!user) {
-                return {
-                    onboardingRequired: true,
-                    onboardingKind: "kakao_signup",
-                    pendingSignupData: {
-                        kakaoId: kakaoData.kakaoId,
-                        email: kakaoData.email?.toLowerCase(),
-                        name: kakaoData.name,
-                        profileImage: kakaoData.profileImage,
-                    },
-                };
-            }
+            const trustedEmail = kakaoData.email
+                && kakaoData.emailValid
+                && kakaoData.emailVerified
+                ? kakaoData.email.toLowerCase()
+                : undefined;
+            return {
+                onboardingRequired: true,
+                onboardingKind: "kakao_signup",
+                pendingSignupData: {
+                    kakaoId: kakaoData.kakaoId,
+                    email: trustedEmail,
+                    emailValid: Boolean(trustedEmail),
+                    emailVerified: Boolean(trustedEmail),
+                    name: kakaoData.name,
+                    profileImage: kakaoData.profileImage,
+                },
+            };
         }
 
         return this.createLoginResultForUser(user);
@@ -390,7 +340,30 @@ export class AuthService {
         return branch.isActive === true && isVisibleStaffBranchSlug(branch.slug ?? "");
     }
 
-    async selectBranch(userid: string, branchid: string): Promise<{ accessToken: string; refreshToken: string }> {
+    async getPublicActiveBranches(): Promise<Array<{ id: string; name: string }>> {
+        if (this.publicBranchCache && this.publicBranchCache.expiresAt > Date.now()) {
+            return this.publicBranchCache.value;
+        }
+        const branches = await this.prisma.branch.findMany({
+            where: { isActive: true },
+            select: { id: true, name: true, slug: true },
+            orderBy: { name: "asc" },
+        });
+        const value = branches
+            .filter((branch) => isVisibleStaffBranchSlug(branch.slug))
+            .map(({ id, name }) => ({ id, name }));
+        this.publicBranchCache = {
+            expiresAt: Date.now() + 300_000,
+            value,
+        };
+        return value;
+    }
+
+    async selectBranch(
+        userid: string,
+        branchid: string,
+        sessionId?: string,
+    ): Promise<{ accessToken: string; refreshToken: string }> {
         const user = await this.prisma.user.findUnique({ where: { id: userid } });
         if (!user) {
             throw new UnauthorizedException("User not found");
@@ -405,7 +378,7 @@ export class AuthService {
             if (!org || !this.isSelectableBranch(org)) {
                 throw new ForbiddenException("Branch not found");
             }
-            return this.issueBranchTokens(user, branchid, 'owner');
+            return this.issueBranchTokens(user, branchid, 'owner', sessionId);
         }
 
         // Regular users must be linked to the branch
@@ -424,13 +397,14 @@ export class AuthService {
             throw new ForbiddenException("User does not belong to this branch");
         }
 
-        return this.issueBranchTokens(user, branchid, userOrg.role ?? 'member');
+        return this.issueBranchTokens(user, branchid, userOrg.role ?? 'member', sessionId);
     }
 
     async switchBranch(
         userid: string,
         _currentbranchid: string,
-        newbranchid: string
+        newbranchid: string,
+        sessionId?: string,
     ): Promise<{ accessToken: string; refreshToken: string }> {
         const user = await this.prisma.user.findUnique({ where: { id: userid } });
         if (!user) {
@@ -446,7 +420,7 @@ export class AuthService {
             if (!org || !this.isSelectableBranch(org)) {
                 throw new ForbiddenException("Branch not found");
             }
-            return this.issueBranchTokens(user, newbranchid, 'owner');
+            return this.issueBranchTokens(user, newbranchid, 'owner', sessionId);
         }
 
         // Regular users must be linked to the branch
@@ -465,7 +439,7 @@ export class AuthService {
             throw new ForbiddenException("User does not belong to target branch");
         }
 
-        return this.issueBranchTokens(user, newbranchid, userOrg.role ?? 'member');
+        return this.issueBranchTokens(user, newbranchid, userOrg.role ?? 'member', sessionId);
     }
 
     async getUserBranches(userid: string): Promise<Array<{ id: string; name: string; slug: string; role: string }>> {
@@ -540,8 +514,7 @@ export class AuthService {
         token: string;
         expiresAt: Date;
         userId?: string;
-        accessToken?: string;
-        refreshToken?: string;
+        sessionId?: string;
         requiresBranchSelection?: boolean;
         kakaoData?: KakaoData;
     }): Promise<void> {
@@ -550,8 +523,7 @@ export class AuthService {
                 kind: params.kind,
                 tokenHash: this.hashToken(params.token),
                 userId: params.userId,
-                accessToken: params.accessToken,
-                refreshToken: params.refreshToken,
+                sessionId: params.sessionId,
                 requiresBranchSelection: params.requiresBranchSelection ?? false,
                 kakaoId: params.kakaoData?.kakaoId,
                 email: params.kakaoData?.email,
@@ -657,12 +629,16 @@ export class AuthService {
     async createAuthCode(tokens: { accessToken: string; refreshToken: string; requiresBranchSelection?: boolean }): Promise<string> {
         await this.pruneAuthFlowStates();
 
+        const decoded = this.jwt.decode<{ sid?: string }>(tokens.accessToken);
+        if (!decoded?.sid) {
+            throw new UnauthorizedException("Authorization session is invalid");
+        }
+
         const code = this.generateToken();
         await this.createAuthFlowState({
             kind: "auth_code",
             token: code,
-            accessToken: tokens.accessToken,
-            refreshToken: tokens.refreshToken,
+            sessionId: decoded.sid,
             requiresBranchSelection: tokens.requiresBranchSelection,
             expiresAt: new Date(Date.now() + 30 * 1000),
         });
@@ -711,13 +687,15 @@ export class AuthService {
         ]);
 
         if (stored.kind === "auth_code") {
-            if (!stored.accessToken || !stored.refreshToken) {
+            if (!stored.sessionId) {
                 throw new UnauthorizedException("Authorization code payload is invalid");
             }
 
+            const tokens = await this.authSessionService.issueTokensForAuthorizationCode(
+                stored.sessionId,
+            );
             return {
-                accessToken: stored.accessToken,
-                refreshToken: stored.refreshToken,
+                ...tokens,
                 requiresBranchSelection: stored.requiresBranchSelection || undefined,
             };
         }
@@ -1090,82 +1068,57 @@ export class AuthService {
     }
 
     async refreshTokens(refreshToken: string): Promise<{ accessToken: string; refreshToken: string }> {
-        try {
-            // Verify and decode the refresh token
-            const decoded = await this.jwt.verifyAsync<TokenPayload>(refreshToken);
+        return this.authSessionService.rotateRefreshToken(refreshToken);
+    }
 
-            // Check that this is a refresh token
-            if (decoded.type !== 'refresh') {
-                throw new UnauthorizedException("Invalid token type");
-            }
+    async logoutSession(userId: string, sessionId: string): Promise<void> {
+        await this.authSessionService.revokeSession(sessionId, userId, "logout");
+        this.logger.log(JSON.stringify({
+            event: "auth_logout",
+            result: "success",
+            sessionId,
+        }));
+    }
 
-            // Look up the user
-            const user = await this.prisma.user.findUnique({
-                where: { id: decoded.sub },
-            });
-
-            if (!user) {
-                throw new UnauthorizedException("User not found");
-            }
-
-            this.assertUserApproved(user);
-            if (decoded.tokenVersion === undefined || decoded.tokenVersion !== user.tokenVersion) {
-                throw new UnauthorizedException("Token has been revoked");
-            }
-
-            // Generate new tokens with the same logic as validateKakaoUser
-            const payload: Omit<TokenPayload, "type"> = {
-                sub: user.id,
-                role: user.role,
-                tokenVersion: user.tokenVersion,
-            };
-
-            const decodedBranchId = decoded.branchId ?? decoded.organizationId;
-
-            if (decodedBranchId) {
-                const stillMember = await this.prisma.user_branch.findFirst({
-                    where: { userId: decoded.sub, branchId: decodedBranchId },
-                    select: {
-                        role: true,
-                        branch: { select: { slug: true, isActive: true } },
-                    },
-                });
-                if (stillMember && this.isSelectableBranch(stillMember.branch)) {
-                    payload.branchId = decodedBranchId;
-                    payload.branchRole = stillMember.role ?? undefined;
-                }
-            }
-
-            const tokenExpiresIn = getAuthTokenExpiresIn(user.role);
-            const signOptions = { expiresIn: tokenExpiresIn };
-            const refreshSignOptions = { expiresIn: tokenExpiresIn };
-
-            const newRefreshToken = await this.jwt.signAsync(
-                { ...payload, type: 'refresh' },
-                refreshSignOptions
+    async logoutWithCredentials(params: {
+        refreshToken?: string;
+        accessToken?: string;
+    }): Promise<void> {
+        if (params.refreshToken) {
+            await this.authSessionService.revokeSessionByRefreshToken(
+                params.refreshToken,
+                "logout",
             );
-            const newAccessToken = await this.jwt.signAsync(
-                { ...payload, type: 'access' },
-                signOptions
+        } else if (params.accessToken) {
+            await this.authSessionService.revokeSessionByAccessToken(
+                params.accessToken,
+                "logout",
             );
-
-            return {
-                accessToken: newAccessToken,
-                refreshToken: newRefreshToken,
-            };
-        } catch (error) {
-            if (error instanceof UnauthorizedException || error instanceof ForbiddenException) {
-                throw error;
-            }
-            throw new UnauthorizedException("Invalid or expired refresh token");
         }
+        this.logger.log(JSON.stringify({
+            event: "auth_logout",
+            result: "success",
+        }));
+    }
+
+    async logoutAllSessions(userId: string): Promise<void> {
+        await this.authSessionService.revokeAllUserSessions(userId, "logout_all");
+        await this.prisma.user.update({
+            where: { id: userId },
+            data: { tokenVersion: { increment: 1 } },
+        });
+        this.logger.log(JSON.stringify({
+            event: "auth_logout_all",
+            result: "success",
+            userId,
+        }));
     }
 
     // ==================== Email Authentication Methods ====================
 
     /**
      * Validate password strength
-     * Requirements: min 8 chars, lowercase, number, special char
+     * Requirements: min 8 chars, uppercase, lowercase, number, special char
      */
     validatePasswordStrength(password: string): PasswordValidationResult {
         const errors: string[] = [];
@@ -1175,6 +1128,9 @@ export class AuthService {
         }
         if (!/[a-z]/.test(password)) {
             errors.push('비밀번호에 소문자가 포함되어야 합니다.');
+        }
+        if (!/[A-Z]/.test(password)) {
+            errors.push('비밀번호에 대문자가 포함되어야 합니다.');
         }
         if (!/[0-9]/.test(password)) {
             errors.push('비밀번호에 숫자가 포함되어야 합니다.');
@@ -1265,30 +1221,51 @@ export class AuthService {
 
         const passwordHash = await this.hashPassword(password);
 
-        const user = await this.prisma.user.create({
-            data: {
-                email: email.toLowerCase(),
-                name: name || null,
-                phone: phone,
-                birthDate: birthDate,
-                passwordHash: passwordHash,
-                role: null,
-                requestedRole: role,
-                approvalStatus: 'pending',
-                authProvider: 'email',
-                emailVerified: false,
-            },
-        });
+        const verificationToken = this.authEmailTokens.createToken();
+        const now = new Date();
+        const user = await this.prisma.$transaction(async (tx) => {
+            const createdUser = await tx.user.create({
+                data: {
+                    email: email.toLowerCase(),
+                    name: name || null,
+                    phone,
+                    birthDate,
+                    passwordHash,
+                    role: null,
+                    requestedRole: role,
+                    approvalStatus: 'pending',
+                    authProvider: 'email',
+                    emailVerified: false,
+                },
+            });
 
-        await this.prisma.user_branch.create({
-            data: {
-                userId: user.id,
-                branchId: branchId,
-                role: null,
-            },
+            await tx.user_branch.create({
+                data: {
+                    userId: createdUser.id,
+                    branchId,
+                    role: null,
+                },
+            });
+            await tx.auth_token.create({
+                data: {
+                    id: verificationToken.tokenId,
+                    userId: createdUser.id,
+                    token: verificationToken.tokenHash,
+                    type: "email_verification",
+                    expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+                },
+            });
+            await tx.auth_email_outbox.create({
+                data: {
+                    userId: createdUser.id,
+                    authTokenId: verificationToken.tokenId,
+                    kind: "email_verification",
+                    recipient: createdUser.email!,
+                    name: createdUser.name,
+                },
+            });
+            return createdUser;
         });
-
-        await this.sendVerificationEmail(user.id, user.email!);
 
         return {
             success: true,
@@ -1301,29 +1278,36 @@ export class AuthService {
      * Send a verification email to the user
      */
     async sendVerificationEmail(userId: string, email: string): Promise<void> {
-        // Delete any existing verification tokens for this user
-        await this.authTokenRepository.deleteByUserIdAndType(userId, 'email_verification');
-
-        // Generate token
-        const rawToken = this.generateToken();
-        const hashedToken = this.hashToken(rawToken);
-
-        // Create token entity
-        const tokenEntity = AuthTokenEntity.createEmailVerificationToken(userId, hashedToken);
-        await this.authTokenRepository.create(tokenEntity);
-
-        // Build verification URL
-        const verificationUrl = `${this.FRONTEND_URL}/verify-email?token=${rawToken}`;
-
-        // Get user name
         const user = await this.prisma.user.findUnique({
             where: { id: userId },
             select: { name: true },
         });
-
-        // Send email
-        await this.emailService.sendVerificationEmail(email, user?.name || null, verificationUrl);
-        this.logger.log(`Verification email sent to ${maskEmail(email)}`);
+        const verificationToken = this.authEmailTokens.createToken();
+        const now = new Date();
+        await this.prisma.$transaction(async (tx) => {
+            await tx.auth_token.deleteMany({
+                where: { userId, type: "email_verification" },
+            });
+            await tx.auth_token.create({
+                data: {
+                    id: verificationToken.tokenId,
+                    userId,
+                    token: verificationToken.tokenHash,
+                    type: "email_verification",
+                    expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+                },
+            });
+            await tx.auth_email_outbox.create({
+                data: {
+                    userId,
+                    authTokenId: verificationToken.tokenId,
+                    kind: "email_verification",
+                    recipient: email,
+                    name: user?.name ?? null,
+                },
+            });
+        });
+        this.logger.log(`Verification email queued for ${maskEmail(email)}`);
     }
 
     /**
@@ -1349,17 +1333,22 @@ export class AuthService {
             );
         }
 
-        // Mark token as used
-        tokenEntity.markAsUsed();
-        await this.authTokenRepository.update(tokenEntity);
-
-        // Update user's emailVerified status
-        await this.prisma.user.update({
-            where: { id: tokenEntity.userId },
-            data: {
-                emailVerified: true,
-                emailVerifiedAt: new Date(),
-            },
+        await this.prisma.$transaction(async (tx) => {
+            const consumed = await this.authTokenRepository.consumeWithinTx(
+                tx,
+                hashedToken,
+                "email_verification",
+            );
+            if (!consumed) {
+                throw new BadRequestException("이미 사용되었거나 만료된 인증 토큰입니다.");
+            }
+            await tx.user.update({
+                where: { id: tokenEntity.userId },
+                data: {
+                    emailVerified: true,
+                    emailVerifiedAt: new Date(),
+                },
+            });
         });
 
         this.logger.log(`Email verified for user ${tokenEntity.userId}`);
@@ -1431,23 +1420,33 @@ export class AuthService {
             };
         }
 
-        // Delete any existing reset tokens for this user
-        await this.authTokenRepository.deleteByUserIdAndType(user.id, 'password_reset');
-
-        // Generate token
-        const rawToken = this.generateToken();
-        const hashedToken = this.hashToken(rawToken);
-
-        // Create token entity
-        const tokenEntity = AuthTokenEntity.createPasswordResetToken(user.id, hashedToken);
-        await this.authTokenRepository.create(tokenEntity);
-
-        // Build reset URL
-        const resetUrl = `${this.FRONTEND_URL}/reset-password?token=${rawToken}`;
-
         try {
-            await this.emailService.sendPasswordResetEmail(user.email!, user.name, resetUrl);
-            this.logger.log(`Password reset email sent to ${maskEmail(email)}`);
+            const resetToken = this.authEmailTokens.createToken();
+            const now = new Date();
+            await this.prisma.$transaction(async (tx) => {
+                await tx.auth_token.deleteMany({
+                    where: { userId: user.id, type: "password_reset" },
+                });
+                await tx.auth_token.create({
+                    data: {
+                        id: resetToken.tokenId,
+                        userId: user.id,
+                        token: resetToken.tokenHash,
+                        type: "password_reset",
+                        expiresAt: new Date(now.getTime() + 60 * 60 * 1000),
+                    },
+                });
+                await tx.auth_email_outbox.create({
+                    data: {
+                        userId: user.id,
+                        authTokenId: resetToken.tokenId,
+                        kind: "password_reset",
+                        recipient: user.email!,
+                        name: user.name,
+                    },
+                });
+            });
+            this.logger.log(`Password reset email queued for ${maskEmail(email)}`);
         } catch (error) {
             this.logger.error(
                 `Failed to send password reset email to ${maskEmail(email)}`,
@@ -1478,19 +1477,28 @@ export class AuthService {
         const tokenEntity = await this.authTokenRepository.findByToken(hashedToken);
 
         if (!tokenEntity) {
-            throw new BadRequestException('유효하지 않은 재설정 토큰입니다.');
+            throw new BadRequestException({
+                code: "AUTH_RESET_TOKEN_INVALID",
+                message: "유효하지 않은 재설정 토큰입니다.",
+            });
         }
 
         if (tokenEntity.type !== 'password_reset') {
-            throw new BadRequestException('유효하지 않은 재설정 토큰입니다.');
+            throw new BadRequestException({
+                code: "AUTH_RESET_TOKEN_INVALID",
+                message: "유효하지 않은 재설정 토큰입니다.",
+            });
         }
 
         if (!tokenEntity.isValid()) {
-            throw new BadRequestException(
-                tokenEntity.isExpired()
-                    ? '재설정 토큰이 만료되었습니다. 새 재설정 이메일을 요청해주세요.'
-                    : '이미 사용된 재설정 토큰입니다.'
-            );
+            throw new BadRequestException({
+                code: tokenEntity.isExpired()
+                    ? "AUTH_RESET_TOKEN_EXPIRED"
+                    : "AUTH_RESET_TOKEN_USED",
+                message: tokenEntity.isExpired()
+                    ? "재설정 토큰이 만료되었습니다. 새 재설정 이메일을 요청해주세요."
+                    : "이미 사용된 재설정 토큰입니다.",
+            });
         }
 
         // Hash new password
@@ -1503,7 +1511,10 @@ export class AuthService {
                 'password_reset',
             );
             if (!consumed) {
-                throw new BadRequestException('이미 사용되었거나 만료된 재설정 토큰입니다.');
+                throw new BadRequestException({
+                    code: "AUTH_RESET_TOKEN_USED",
+                    message: "이미 사용되었거나 만료된 재설정 토큰입니다.",
+                });
             }
 
             const user = await tx.user.findUnique({
@@ -1518,6 +1529,16 @@ export class AuthService {
                     passwordHash,
                     authProvider,
                     tokenVersion: { increment: 1 },
+                },
+            });
+            await tx.auth_session.updateMany({
+                where: {
+                    userId: tokenEntity.userId,
+                    revokedAt: null,
+                },
+                data: {
+                    revokedAt: new Date(),
+                    revokedReason: "password_reset",
                 },
             });
         });
@@ -1577,6 +1598,7 @@ export class AuthService {
     async linkPasswordToOAuthAccount(
         userId: string,
         password: string,
+        currentSessionId?: string,
     ): Promise<RegistrationResult> {
         const user = await this.prisma.user.findUnique({
             where: { id: userId },
@@ -1606,15 +1628,27 @@ export class AuthService {
         // Hash password
         const passwordHash = await this.hashPassword(password);
 
-        // Update user
-        await this.prisma.user.update({
-            where: { id: userId },
-            data: {
-                passwordHash: passwordHash,
-                authProvider: 'both',
-                emailVerified: true, // OAuth users are trusted
-                emailVerifiedAt: new Date(),
-            },
+        await this.prisma.$transaction(async (tx) => {
+            await tx.user.update({
+                where: { id: userId },
+                data: {
+                    passwordHash,
+                    authProvider: 'both',
+                    emailVerified: true,
+                    emailVerifiedAt: new Date(),
+                },
+            });
+            await tx.auth_session.updateMany({
+                where: {
+                    userId,
+                    revokedAt: null,
+                    ...(currentSessionId ? { id: { not: currentSessionId } } : {}),
+                },
+                data: {
+                    revokedAt: new Date(),
+                    revokedReason: "password_linked",
+                },
+            });
         });
 
         this.logger.log(`Password linked to OAuth account for user ${userId}`);
@@ -1632,41 +1666,113 @@ export class AuthService {
     async linkKakaoToAccount(
         userId: string,
         kakaoData: KakaoData,
+        currentSessionId: string,
+        linkingStateToken: string,
     ): Promise<RegistrationResult> {
-        const user = await this.prisma.user.findUnique({
-            where: { id: userId },
-        });
-
-        if (!user) {
-            throw new UnauthorizedException('사용자를 찾을 수 없습니다.');
+        const trustedKakaoEmail = kakaoData.email
+            && kakaoData.emailValid
+            && kakaoData.emailVerified
+            ? kakaoData.email.toLowerCase()
+            : null;
+        let decodedState: {
+            userId: string;
+            sessionId: string;
+            purpose: string;
+        };
+        try {
+            decodedState = await this.jwt.verifyAsync(linkingStateToken);
+        } catch {
+            throw new UnauthorizedException("카카오 연결 세션이 유효하지 않습니다.");
+        }
+        if (
+            decodedState.purpose !== "link_kakao"
+            || decodedState.userId !== userId
+            || decodedState.sessionId !== currentSessionId
+        ) {
+            throw new UnauthorizedException("카카오 연결 세션이 유효하지 않습니다.");
         }
 
-        if (user.kakaoId) {
-            throw new BadRequestException('이미 카카오 계정이 연결되어 있습니다.');
-        }
+        await this.prisma.$transaction(async (tx) => {
+            const now = new Date();
+            const activeSession = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                SELECT "id"
+                FROM "auth_session"
+                WHERE "id" = CAST(${currentSessionId} AS UUID)
+                  AND "user_id" = CAST(${userId} AS UUID)
+                  AND "revoked_at" IS NULL
+                  AND "expires_at" > NOW()
+                FOR UPDATE
+            `);
+            if (activeSession.length !== 1) {
+                throw new UnauthorizedException("카카오 연결 세션이 만료되었습니다.");
+            }
 
-        // Check if this Kakao account is already linked to another user
-        const existingKakaoUser = await this.prisma.user.findFirst({
-            where: { kakaoId: kakaoData.kakaoId },
-        });
+            const state = await tx.auth_flow_state.findUnique({
+                where: { tokenHash: this.hashToken(linkingStateToken) },
+            });
+            if (
+                !state
+                || state.kind !== "kakao_link_state"
+                || state.userId !== userId
+                || state.sessionId !== currentSessionId
+                || state.consumedAt
+                || state.expiresAt.getTime() <= now.getTime()
+            ) {
+                throw new UnauthorizedException("카카오 연결 세션이 유효하지 않습니다.");
+            }
 
-        if (existingKakaoUser) {
-            throw new BadRequestException('이 카카오 계정은 이미 다른 계정에 연결되어 있습니다.');
-        }
+            const user = await tx.user.findUnique({
+                where: { id: userId },
+            });
+            if (!user) {
+                throw new UnauthorizedException('사용자를 찾을 수 없습니다.');
+            }
+            if (user.kakaoId) {
+                throw new BadRequestException('이미 카카오 계정이 연결되어 있습니다.');
+            }
+            const existingKakaoUser = await tx.user.findFirst({
+                where: { kakaoId: kakaoData.kakaoId },
+                select: { id: true },
+            });
+            if (existingKakaoUser) {
+                throw new BadRequestException('이 카카오 계정은 이미 다른 계정에 연결되어 있습니다.');
+            }
+            if (!user.email || trustedKakaoEmail !== user.email.toLowerCase()) {
+                throw new BadRequestException({
+                    code: "KAKAO_EMAIL_CONFIRMATION_REQUIRED",
+                    message: "기존 계정과 동일한 인증된 카카오 이메일이 필요합니다.",
+                });
+            }
 
-        // Determine authProvider based on whether user has password
-        const authProvider = user.passwordHash ? 'both' : 'kakao';
+            const consumed = await tx.auth_flow_state.updateMany({
+                where: { id: state.id, consumedAt: null },
+                data: { consumedAt: now },
+            });
+            if (consumed.count !== 1) {
+                throw new UnauthorizedException("카카오 연결 세션이 이미 사용되었습니다.");
+            }
 
-        // Update user with Kakao info
-        await this.prisma.user.update({
-            where: { id: userId },
-            data: {
-                kakaoId: kakaoData.kakaoId,
-                authProvider: authProvider,
-                // Update profile info from Kakao if not already set
-                name: user.name || kakaoData.name,
-                profileImage: user.profileImage || kakaoData.profileImage,
-            },
+            const authProvider = user.passwordHash ? 'both' : 'kakao';
+            await tx.user.update({
+                where: { id: userId },
+                data: {
+                    kakaoId: kakaoData.kakaoId,
+                    authProvider,
+                    name: user.name || kakaoData.name,
+                    profileImage: user.profileImage || kakaoData.profileImage,
+                },
+            });
+            await tx.auth_session.updateMany({
+                where: {
+                    userId,
+                    revokedAt: null,
+                    id: { not: currentSessionId },
+                },
+                data: {
+                    revokedAt: new Date(),
+                    revokedReason: "kakao_linked",
+                },
+            });
         });
 
         this.logger.log(`Kakao account linked to user ${userId}`);
@@ -1681,29 +1787,77 @@ export class AuthService {
      * Create a linking state token for OAuth account linking
      * The state contains the user ID to link after OAuth callback
      */
-    async createLinkingState(userId: string): Promise<string> {
+    async createLinkingState(userId: string, sessionId: string): Promise<string> {
         const state = crypto.randomBytes(32).toString('hex');
         const payload = {
             userId,
+            sessionId,
             purpose: 'link_kakao',
             state,
         };
 
         // Sign the state to prevent tampering
         const signedState = await this.jwt.signAsync(payload, { expiresIn: '10m' });
+        await this.createAuthFlowState({
+            kind: "kakao_link_state",
+            token: signedState,
+            userId,
+            sessionId,
+            expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        });
         return signedState;
     }
 
     /**
      * Verify and decode a linking state token
      */
-    async verifyLinkingState(signedState: string): Promise<{ userId: string; purpose: string } | null> {
+    async verifyLinkingState(signedState: string): Promise<{ userId: string; sessionId: string; purpose: string } | null> {
         try {
-            const decoded = await this.jwt.verifyAsync<{ userId: string; purpose: string; state: string }>(signedState);
-            if (decoded.purpose !== 'link_kakao') {
+            const decoded = await this.jwt.verifyAsync<{ userId: string; sessionId: string; purpose: string; state: string }>(signedState);
+            if (decoded.purpose !== 'link_kakao' || !decoded.sessionId) {
                 return null;
             }
-            return { userId: decoded.userId, purpose: decoded.purpose };
+            const now = new Date();
+            const stored = await this.prisma.auth_flow_state.findUnique({
+                where: { tokenHash: this.hashToken(signedState) },
+                select: {
+                    id: true,
+                    kind: true,
+                    userId: true,
+                    sessionId: true,
+                    expiresAt: true,
+                    consumedAt: true,
+                },
+            });
+            if (
+                !stored
+                || stored.kind !== "kakao_link_state"
+                || stored.userId !== decoded.userId
+                || stored.sessionId !== decoded.sessionId
+                || stored.consumedAt
+                || stored.expiresAt.getTime() <= now.getTime()
+            ) {
+                return null;
+            }
+
+            const session = await this.prisma.auth_session.findFirst({
+                where: {
+                    id: decoded.sessionId,
+                    userId: decoded.userId,
+                    revokedAt: null,
+                    expiresAt: { gt: now },
+                },
+                select: { id: true },
+            });
+            if (!session) {
+                return null;
+            }
+
+            return {
+                userId: decoded.userId,
+                sessionId: decoded.sessionId,
+                purpose: decoded.purpose,
+            };
         } catch {
             return null;
         }

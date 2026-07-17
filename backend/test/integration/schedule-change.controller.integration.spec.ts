@@ -59,6 +59,12 @@ describe("ScheduleChangeController (Integration)", () => {
             canActivate: (context: ExecutionContext) => {
                 const requestContext = context.switchToHttp().getRequest();
                 requestContext.user = tenant;
+                requestContext.tenant = {
+                    userId: tenant.userId,
+                    branchId: tenant.branchId,
+                    globalRole: tenant.role,
+                    branchRole: tenant.branchRole,
+                };
                 return true;
             },
         };

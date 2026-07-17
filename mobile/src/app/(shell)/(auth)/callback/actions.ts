@@ -6,6 +6,10 @@ import { jwtDecode } from "jwt-decode";
 
 import { serverAPIClient } from "@/lib/api/server";
 import { getServerRuntimeConfig } from "@/lib/env";
+import {
+    ACCESS_TOKEN_MAX_AGE_SECONDS,
+    getRefreshSessionMaxAgeSeconds,
+} from "@/lib/auth/session-policy";
 
 interface TokenPayload {
     sub: string;
@@ -45,7 +49,7 @@ export async function exchangeToken(code: string): Promise<{ success: boolean; e
             secure: isSecureCookie,
             sameSite: "lax", // Changed to lax for same-origin navigation
             path: "/",
-            maxAge: role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
+            maxAge: ACCESS_TOKEN_MAX_AGE_SECONDS,
         });
 
         cookieStore.set("refresh_token", data.refreshToken, {
@@ -53,7 +57,7 @@ export async function exchangeToken(code: string): Promise<{ success: boolean; e
             secure: isSecureCookie,
             sameSite: "lax", // Changed to lax for same-origin navigation
             path: "/",
-            maxAge: 7 * 24 * 60 * 60,
+            maxAge: getRefreshSessionMaxAgeSeconds(role),
         });
 
         console.log("[Server Action] Token exchange successful");

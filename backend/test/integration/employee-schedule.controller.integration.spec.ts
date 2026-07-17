@@ -59,6 +59,12 @@ describe("EmployeeScheduleController (Integration)", () => {
                     role: "admin",
                     branchRole: "admin",
                 };
+                requestContext.tenant = {
+                    userId: "user-1",
+                    branchId: "org-1",
+                    globalRole: "admin",
+                    branchRole: "admin",
+                };
                 return true;
             },
         };

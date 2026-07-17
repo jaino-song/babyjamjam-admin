@@ -12,6 +12,8 @@ interface KakaoProfile {
     _json: {
         kakao_account: {
             email: string;
+            is_email_valid?: boolean;
+            is_email_verified?: boolean;
         };
         properties: {
             profile_image: string;
@@ -39,6 +41,8 @@ export class KakaoStrategy extends PassportStrategy(Strategy) {
             kakaoId: profile.id.toString(),
             name: profile.username,
             email: profile._json.kakao_account.email,
+            emailValid: profile._json.kakao_account.is_email_valid === true,
+            emailVerified: profile._json.kakao_account.is_email_verified === true,
             profileImage: profile._json.properties.profile_image,
         } as KakaoData;
     }

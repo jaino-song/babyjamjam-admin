@@ -61,6 +61,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+!backend/test/auth-e2e/.env.example
 !frontend/.env.example
 !mobile/.env.example
 frontend/auth.json

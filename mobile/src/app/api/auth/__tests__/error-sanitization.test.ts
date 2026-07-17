@@ -45,13 +45,13 @@ function createRequest(path: string): NextRequest {
     // handler reaches the mocked upstream instead of 400ing at validation.
     body: JSON.stringify({
       email: "user@example.com",
-      password: "password",
-      newPassword: "password",
+      password: "Password1!",
+      newPassword: "Password1!",
       token: "token",
       name: "테스트",
       phone: "01012345678",
       birthDate: "1990-01-01",
-      branchId: "branch-1",
+      branchId: "550e8400-e29b-41d4-a716-446655440000",
       role: "manager",
     }),
   });
@@ -75,6 +75,27 @@ function createAxiosError(): AxiosError {
         hasKakaoAccount: true,
         stack: "stack trace",
         diagnostics: { host: "auth-primary.internal" },
+      },
+    } as never,
+  );
+}
+
+function createConcurrentRefreshError(): AxiosError {
+  return new AxiosError(
+    "concurrent refresh",
+    "ERR_BAD_RESPONSE",
+    {} as never,
+    undefined,
+    {
+      status: 401,
+      statusText: "Unauthorized",
+      headers: {},
+      config: {} as never,
+      data: {
+        statusCode: 401,
+        code: "AUTH_REFRESH_REPLAY_CONCURRENT",
+        message: "Invalid or expired refresh token",
+        error: "Unauthorized",
       },
     } as never,
   );
@@ -172,5 +193,26 @@ describe("auth API error sanitization", () => {
     expect(logged).not.toContain("/tmp/auth-handler");
     expect(logged).not.toContain("https://internal-api.local");
     expect(logged).not.toContain("auth-primary.internal");
+  });
+
+  it("keeps cookies intact when the backend reports a concurrent refresh", async () => {
+    mockCookies.mockResolvedValue({
+      get: jest.fn((name: string) => {
+        if (name === "refresh_token") return { value: "refresh-token" };
+        if (name === "auto_login") return { value: "1" };
+        return undefined;
+      }),
+    });
+    mockPost.mockRejectedValue(createConcurrentRefreshError());
+
+    const response = await refresh();
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("retry-after")).toBe("1");
+    expect(response.headers.get("set-cookie")).toBeNull();
+    await expect(response.json()).resolves.toEqual({
+      code: "AUTH_REFRESH_REPLAY_CONCURRENT",
+      error: "Authentication refresh already in progress",
+    });
   });
 });

@@ -15,6 +15,19 @@ export class SbUserRepository implements IUserRepository {
         return user ? UserMapper.toDomain(user) : null;
     }
 
+    async findByIdInBranch(id: string, branchId: string): Promise<UserEntity | null> {
+        const user = await this.prismaService.user.findFirst({
+            where: {
+                id,
+                OR: [
+                    { userBranches: { some: { branchId } } },
+                    { ownedBranches: { some: { id: branchId } } },
+                ],
+            },
+        });
+        return user ? UserMapper.toDomain(user) : null;
+    }
+
     async findByKakaoId(kakaoId: string): Promise<UserEntity | null> {
         const user = await this.prismaService.user.findUnique({
             where: { kakaoId: kakaoId },
@@ -44,10 +57,61 @@ export class SbUserRepository implements IUserRepository {
         return UserMapper.toDomain(updated);
     }
 
+    async updateInBranch(
+        user: UserEntity,
+        branchId: string,
+        branchRole?: string,
+    ): Promise<UserEntity | null> {
+        return this.prismaService.$transaction(async (tx) => {
+            const updated = await tx.user.updateMany({
+                where: {
+                    id: user.id,
+                    userBranches: { some: { branchId } },
+                },
+                data: UserMapper.toPrismaUpdate(user),
+            });
+
+            if (updated.count !== 1) {
+                return null;
+            }
+
+            if (branchRole !== undefined) {
+                const membership = await tx.user_branch.updateMany({
+                    where: {
+                        userId: user.id,
+                        branchId,
+                    },
+                    data: { role: branchRole },
+                });
+                if (membership.count !== 1) {
+                    return null;
+                }
+            }
+
+            const persisted = await tx.user.findFirst({
+                where: {
+                    id: user.id,
+                    userBranches: { some: { branchId } },
+                },
+            });
+            return persisted ? UserMapper.toDomain(persisted) : null;
+        });
+    }
+
     async delete(id: string): Promise<void> {
         await this.prismaService.user.delete({
             where: { id },
         });
+    }
+
+    async deleteMembership(id: string, branchId: string): Promise<boolean> {
+        const deleted = await this.prismaService.user_branch.deleteMany({
+            where: {
+                userId: id,
+                branchId,
+            },
+        });
+        return deleted.count === 1;
     }
 
     async findByRoles(roles: string[]): Promise<UserEntity[]> {
