@@ -42,11 +42,8 @@ async function bootstrap() {
         res.send("Server is running");
     });
 
-    // WARNING: DO NOT CHANGE - Railway Deployment Configuration
-    // The port MUST be hardcoded to 3001 and "nest start" must be used.
-    // Changing to process.env.PORT or "node dist/main" will break Railway deployment.
-    // See commit 993b0d63 for details on why this configuration is required.
-    await app.listen(3001);
+    const port = Number(process.env['PORT'] ?? 3001);
+    await app.listen(port, "0.0.0.0");
     console.log("Server is running");
 }
 bootstrap();
