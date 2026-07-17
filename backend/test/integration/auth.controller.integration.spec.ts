@@ -343,7 +343,11 @@ describe("AuthController (Integration)", () => {
                 success: true,
                 ...validationResult,
             });
-            expect(rateLimitGuard.resetForKey).toHaveBeenCalledWith(expect.any(String), "test@example.com");
+            expect(rateLimitGuard.resetForKey).toHaveBeenCalledWith(
+                expect.any(String),
+                "test@example.com",
+                "post:login",
+            );
         });
 
         it("should return pending onboarding payload for incomplete existing users", async () => {

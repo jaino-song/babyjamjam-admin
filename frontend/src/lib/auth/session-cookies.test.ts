@@ -1,5 +1,8 @@
 import { setAuthSessionCookies } from "@/lib/auth/session-cookies";
-import { SESSION_MAX_AGE_SECONDS_BY_ROLE } from "@/lib/auth/session-policy";
+import {
+  ACCESS_TOKEN_MAX_AGE_SECONDS,
+  SESSION_MAX_AGE_SECONDS_BY_ROLE,
+} from "@/lib/auth/session-policy";
 
 interface RecordedCookie {
   name: string;
@@ -44,7 +47,10 @@ describe("setAuthSessionCookies", () => {
 
     expect(store.cookies).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ name: "auth_token", options: expect.objectContaining({ maxAge }) }),
+        expect.objectContaining({
+          name: "auth_token",
+          options: expect.objectContaining({ maxAge: ACCESS_TOKEN_MAX_AGE_SECONDS }),
+        }),
         expect.objectContaining({ name: "refresh_token", options: expect.objectContaining({ maxAge }) }),
         expect.objectContaining({ name: "auto_login", value: "1", options: expect.objectContaining({ maxAge }) }),
       ]),

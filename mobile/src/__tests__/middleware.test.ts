@@ -26,8 +26,10 @@ describe("middleware API route protection", () => {
   it("redirects the login page to home when a valid access token exists", async () => {
     mockJwtDecode.mockReturnValue({
       sub: "user-1",
+      sid: "session-1",
       role: "manager",
       type: "access",
+      exp: Math.floor(Date.now() / 1000) + 60,
     });
 
     const response = await middleware(createRequest("/login", "auth_token=session-token"));
@@ -67,8 +69,10 @@ describe("middleware API route protection", () => {
   it("rejects protected API routes when the session has no selected branch", async () => {
     mockJwtDecode.mockReturnValue({
       sub: "user-1",
+      sid: "session-1",
       role: "manager",
       type: "access",
+      exp: Math.floor(Date.now() / 1000) + 60,
     });
 
     const response = await middleware(createRequest("/api/clients", "auth_token=session-token"));
@@ -80,8 +84,10 @@ describe("middleware API route protection", () => {
   it("allows protected API routes with auth and selected branch", async () => {
     mockJwtDecode.mockReturnValue({
       sub: "user-1",
+      sid: "session-1",
       role: "manager",
       type: "access",
+      exp: Math.floor(Date.now() / 1000) + 60,
     });
 
     const response = await middleware(createRequest(
@@ -91,5 +97,34 @@ describe("middleware API route protection", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-middleware-next")).toBe("1");
+  });
+
+  it("does not clear cookies when another request is already rotating refresh", async () => {
+    mockJwtDecode.mockReturnValue({
+      sub: "user-1",
+      sid: "session-1",
+      role: "manager",
+      type: "access",
+      exp: Math.floor(Date.now() / 1000) - 60,
+    });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        code: "AUTH_REFRESH_REPLAY_CONCURRENT",
+      }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const response = await middleware(createRequest(
+      "/clients",
+      "auth_token=expired; refresh_token=current; selected_branch_id=branch-1",
+    ));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost/clients");
+    expect(response.headers.get("retry-after")).toBe("1");
+    expect(response.headers.get("set-cookie")).toBeNull();
+    fetchMock.mockRestore();
   });
 });

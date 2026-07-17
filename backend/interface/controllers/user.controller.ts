@@ -1,4 +1,18 @@
-import { Controller, Post, Body, Get, Query, Patch, Delete, Param, Req, UseGuards, ForbiddenException } from "@nestjs/common";
+import {
+    Body,
+    Controller,
+    Delete,
+    ForbiddenException,
+    Get,
+    Param,
+    Patch,
+    Post,
+    Query,
+    Req,
+    Res,
+    UseGuards,
+} from "@nestjs/common";
+import type { Response } from "express";
 import { UserService } from "application/services/user.service";
 import { CreateUserDto, UpdateUserDto, ApproveUserDto } from "../dto/user.dto";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
@@ -11,6 +25,12 @@ type AuthenticatedRequest = { user: { userId: string; role: string; branchId?: s
 @UseGuards(JwtGuard, OwnerOrAdminGuard)
 export class UserController {
     constructor(private readonly userService: UserService) {}
+
+    private markLegacyUserApi(response: Response): void {
+        response.setHeader("Deprecation", "true");
+        response.setHeader("Sunset", "Fri, 16 Oct 2026 00:00:00 GMT");
+        response.setHeader("Link", '</users/{userId}>; rel="successor-version"');
+    }
 
     @Get()
     findDirectory(
@@ -36,14 +56,54 @@ export class UserController {
     }
 
     @Get("id")
-    findById(@Query("id") id: string) {
+    @UseGuards(JwtGuard, OwnerOnlyGuard)
+    findById(
+        @Query("id") id: string,
+        @Res({ passthrough: true }) response: Response,
+    ) {
+        this.markLegacyUserApi(response);
         return this.userService.findById(id);
     }
     
     @Patch()
+    @UseGuards(JwtGuard, OwnerOnlyGuard)
     update(
         @Req() req: AuthenticatedRequest,
         @Query("id") id: string,
+        @Body() updateUserDto: UpdateUserDto,
+        @Res({ passthrough: true }) response: Response,
+    ) {
+        this.markLegacyUserApi(response);
+        return this.userService.update(id, {
+            name: updateUserDto.name ?? undefined,
+            email: updateUserDto.email ?? undefined,
+            profileImage: updateUserDto.profileImage ?? undefined,
+            role: updateUserDto.role,
+            callerRole: req.user.role,
+        });
+    }
+
+    @Delete()
+    @UseGuards(JwtGuard, OwnerOnlyGuard)
+    delete(
+        @Query("id") id: string,
+        @Res({ passthrough: true }) response: Response,
+    ) {
+        this.markLegacyUserApi(response);
+        return this.userService.delete(id);
+    }
+
+    @Get(":id")
+    @UseGuards(JwtGuard, OwnerOnlyGuard)
+    findGlobalUserById(@Param("id") id: string) {
+        return this.userService.findById(id);
+    }
+
+    @Patch(":id")
+    @UseGuards(JwtGuard, OwnerOnlyGuard)
+    updateGlobalUser(
+        @Req() req: AuthenticatedRequest,
+        @Param("id") id: string,
         @Body() updateUserDto: UpdateUserDto,
     ) {
         return this.userService.update(id, {
@@ -55,8 +115,9 @@ export class UserController {
         });
     }
 
-    @Delete()
-    delete(@Query("id") id: string) {
+    @Delete(":id")
+    @UseGuards(JwtGuard, OwnerOnlyGuard)
+    deleteGlobalUser(@Param("id") id: string) {
         return this.userService.delete(id);
     }
 

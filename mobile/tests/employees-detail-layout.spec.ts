@@ -82,7 +82,7 @@ test.describe("employees mobile detail layout", () => {
     expect(geometry.bottom).toBe(844);
     expect(geometry.top).toBeGreaterThan(0);
     expect(geometry.top).toBeLessThan(60);
-    await expect(page.getByText("2026년 05월 30일")).toBeVisible();
+    await expect(page.getByText("2026.05.30")).toBeVisible();
 
     await page.getByRole("button", { name: "담당 고객" }).click();
     await expect(page.locator(".info-card-title", { hasText: "현재 담당" })).toBeVisible();

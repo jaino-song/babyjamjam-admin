@@ -35,6 +35,11 @@ export class UpdateUserDto {
     role?: string | null;
 }
 
+export class UpdateBranchUserDto {
+    @IsIn(["admin", "manager", "user"])
+    branchRole!: "admin" | "manager" | "user";
+}
+
 export class ApproveUserDto {
     @IsIn(["admin", "manager", "user"])
     role!: "admin" | "manager" | "user";

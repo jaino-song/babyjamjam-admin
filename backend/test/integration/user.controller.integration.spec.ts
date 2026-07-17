@@ -520,13 +520,7 @@ describe("UserController (Integration)", () => {
                 );
             });
 
-            it("should thread a non-owner caller's role through so the service layer can enforce owner-only role changes", async () => {
-                // Arrange
-                mockJwtGuard.canActivate.mockImplementationOnce((context) => {
-                    const req = context.switchToHttp().getRequest();
-                    req.user = { userId: "admin-user-id", role: "admin" };
-                    return true;
-                });
+            it("should keep the legacy query update wrapper owner-only", async () => {
                 const updateDto = { role: "admin" };
                 userService.update.mockResolvedValue(createMockUser({ id: "target-user", role: "admin" }));
 
@@ -542,7 +536,7 @@ describe("UserController (Integration)", () => {
                     "target-user",
                     expect.objectContaining({
                         role: "admin",
-                        callerRole: "admin",
+                        callerRole: "owner",
                     }),
                 );
             });

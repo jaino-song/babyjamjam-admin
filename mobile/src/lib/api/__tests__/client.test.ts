@@ -1,4 +1,9 @@
-import { isEformsignTokenEndpoint } from "../client";
+import { AxiosError } from "axios";
+
+import {
+    isConcurrentAuthRefreshError,
+    isEformsignTokenEndpoint,
+} from "../client";
 
 describe("isEformsignTokenEndpoint", () => {
     it.each([
@@ -27,5 +32,25 @@ describe("isEformsignTokenEndpoint", () => {
         undefined,
     ])("does not classify %s as eformsign token-backed", (url) => {
         expect(isEformsignTokenEndpoint(url)).toBe(false);
+    });
+});
+
+describe("isConcurrentAuthRefreshError", () => {
+    it("recognizes the retryable BFF refresh response", () => {
+        const error = new AxiosError(
+            "refresh already in progress",
+            "ERR_BAD_RESPONSE",
+            {} as never,
+            undefined,
+            {
+                status: 409,
+                statusText: "Conflict",
+                headers: {},
+                config: {} as never,
+                data: { code: "AUTH_REFRESH_REPLAY_CONCURRENT" },
+            } as never,
+        );
+
+        expect(isConcurrentAuthRefreshError(error)).toBe(true);
     });
 });

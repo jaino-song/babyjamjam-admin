@@ -1,5 +1,6 @@
 import axios from "axios";
 import { api } from "@/lib/api/client";
+import type { RegisterRequest } from "@babyjamjam/shared";
 import { ContractDataDto } from '@/backend/application/dto/contract.dto';
 import {
     EformsignApiListResponse,
@@ -82,15 +83,7 @@ export const authApi = {
     },
 
     // Email authentication
-    register: async (params: {
-        email: string;
-        password: string;
-        name?: string;
-        phone: string;
-        birthDate: string;
-        branchId: string;
-        role: string;
-    }): Promise<AuthResponse> => {
+    register: async (params: RegisterRequest): Promise<AuthResponse> => {
         const { data } = await api.post('/auth/register', params);
         return data;
     },

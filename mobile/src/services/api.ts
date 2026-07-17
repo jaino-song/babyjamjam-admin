@@ -15,6 +15,7 @@ import type {
     MessageSenderApprovalResponse,
     MessageSenderApprovalStatus,
 } from "@babyjamjam/shared/types/message";
+import type { RegisterRequest } from "@babyjamjam/shared";
 import { safeStorageSetItem } from "@/lib/safe-storage";
 import { isAxiosError } from "axios";
 
@@ -163,8 +164,13 @@ export const authApi = {
     },
 
     // Email authentication
-    register: async (email: string, password: string, name?: string): Promise<AuthResponse> => {
-        const { data } = await api.post('/auth/register', { email, password, name });
+    register: async (params: RegisterRequest): Promise<AuthResponse> => {
+        const { data } = await api.post('/auth/register', params);
+        return data;
+    },
+
+    getBranches: async (): Promise<{ id: string; name: string }[]> => {
+        const { data } = await api.get('/auth/branches/all');
         return data;
     },
 

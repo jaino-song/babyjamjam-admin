@@ -162,6 +162,12 @@ describe("MessageTriggerController (Integration)", () => {
                     role: "admin",
                     branchRole: "admin",
                 };
+                requestContext.tenant = {
+                    userId: "user-1",
+                    branchId,
+                    globalRole: "admin",
+                    branchRole: "admin",
+                };
                 return true;
             },
         };
