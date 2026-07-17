@@ -375,6 +375,7 @@ describe("NewMessagePage", () => {
 
     const dialog = screen.getByRole("dialog", { name: "미리보기" });
     expect(dialog).toBeInTheDocument();
+    expect(dialog).toHaveClass("h-auto", "max-h-[calc(100dvh-2rem)]", "w-[calc(100vw-2rem)]");
     expect(within(dialog).getByText("SMS 미리보기")).toBeInTheDocument();
     expect(within(dialog).getByText("안녕하세요, 인천 아이미래로 입니다 :)")).toBeInTheDocument();
   });

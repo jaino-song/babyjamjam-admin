@@ -71,7 +71,7 @@
 }
 
 :global(body:has([data-component="messages-templates"]) .filter-pill) {
-  min-height: 28px;
+  min-height: 44px;
 }
 
 :global(body:has([data-component="messages-templates"]) .search-bar input::placeholder) {
@@ -113,6 +113,7 @@
 
 .backLink {
   display: flex;
+  min-height: 44px;
   align-items: center;
   gap: 2px;
   padding: 8px 10px;
@@ -142,6 +143,7 @@
 
 .headerAction {
   display: inline-flex;
+  min-height: 44px;
   align-items: center;
   padding: 8px 4px;
   color: hsl(var(--v3-primary));

@@ -22,6 +22,26 @@ const MOCK_DOCUMENTS = {
   skip: 0,
 };
 
+const SECTION_DOCUMENTS = {
+  documents: [
+    MOCK_DOCUMENTS.documents[0],
+    {
+      ...MOCK_DOCUMENTS.documents[0],
+      id: "service-record-1",
+      document_number: "RECORD-001",
+      template: { id: "service-record-template", name: "산모신생아 제공기록지" },
+      document_name: "김산모 제공기록지",
+      current_status: {
+        ...MOCK_DOCUMENTS.documents[0].current_status,
+        step_recipients: [{ recipient_type: "signer", name: "김산모" }],
+      },
+    },
+  ],
+  total_rows: 2,
+  limit: 20,
+  skip: 0,
+};
+
 const STAGE_DOCUMENTS = {
   documents: [
     {
@@ -309,6 +329,47 @@ async function routeDocumentPdfPreview(page: Page) {
 
 test.describe("Mobile contracts list rows", () => {
   test.use({ viewport: { width: 390, height: 844 } });
+
+  test("separates maternal contracts and service records with section navigation", async ({ page }) => {
+    await page.route("**/api/access-token", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ success: true }),
+      });
+    });
+    await page.route("**/api/eformsign-docs/feedback-template-id**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ templateId: "service-record-template" }),
+      });
+    });
+    await page.route("**/api/eformsign/documents**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(SECTION_DOCUMENTS),
+      });
+    });
+    await routeDocumentClientSummaries(page, []);
+    await routeNotificationLogs(page);
+
+    await page.goto("/contracts");
+
+    const maternalContractsButton = page.getByRole("button", { name: "산모 계약서" });
+    const serviceRecordsButton = page.getByRole("button", { name: "제공기록지" });
+    await expect(maternalContractsButton).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator('[data-component="mobile-contracts-row"]')).toHaveCount(1);
+    await expect(page.locator('[data-component="mobile-contracts-row"]')).toContainText("홍길동");
+
+    await serviceRecordsButton.click();
+
+    await expect(serviceRecordsButton).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator('[data-component="mobile-redesign-list-title"]')).toContainText("제공기록지");
+    await expect(page.locator('[data-component="mobile-contracts-row"]')).toHaveCount(1);
+    await expect(page.locator('[data-component="mobile-contracts-row"]')).toContainText("김산모");
+  });
 
   test("renders contract rows with the shared list item structure", async ({ page }) => {
     await page.route("**/api/access-token", async (route) => {

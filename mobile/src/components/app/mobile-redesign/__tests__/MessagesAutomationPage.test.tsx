@@ -1,15 +1,27 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 import {
   MESSAGE_NAVIGATION_ITEMS,
   MessagesAutomationPage,
 } from "../MessagesAutomationPage";
 
-describe("MessagesAutomationPage", () => {
-  it("exposes every frontend message section as a mobile navigation destination", () => {
-    render(<MessagesAutomationPage />);
+const mockPush = jest.fn();
 
-    expect(screen.getByRole("navigation", { name: "메시지 기능" })).toBeInTheDocument();
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockPush }),
+}));
+
+describe("MessagesAutomationPage", () => {
+  beforeEach(() => {
+    mockPush.mockReset();
+  });
+
+  it("exposes every message section through the compact section navigation", () => {
+    const { container } = render(<MessagesAutomationPage />);
+
+    const navigation = screen.getByRole("navigation", { name: "메시지 기능" });
+    expect(navigation).toHaveAttribute("data-component", "section-nav-mobile");
+    expect(navigation).toHaveAttribute("data-mode", "compact");
     expect(MESSAGE_NAVIGATION_ITEMS.map((item) => item.title)).toEqual([
       "전송하기",
       "발송 예정",
@@ -20,8 +32,15 @@ describe("MessagesAutomationPage", () => {
     ]);
 
     for (const item of MESSAGE_NAVIGATION_ITEMS) {
-      expect(screen.getByRole("link", { name: new RegExp(item.title) }))
-        .toHaveAttribute("href", item.href);
+      expect(screen.getByRole("button", { name: item.title })).toBeInTheDocument();
     }
+
+    expect(screen.getByRole("button", { name: "전송하기" }))
+      .toHaveAttribute("aria-pressed", "true");
+    expect(container.querySelector(".message-navigation-row")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "발송 예정" }));
+
+    expect(mockPush).toHaveBeenCalledWith("/messages/scheduled");
   });
 });
