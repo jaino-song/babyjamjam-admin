@@ -104,6 +104,8 @@ function labeledDateMeta(label: string, dateStr: string | null | undefined, c: C
 
 function clientMeta(c: Client) {
   switch (c.serviceStatus) {
+    case "pre_booking":
+      return labeledDateMeta("상담 등록일", c.createdAt, c);
     case "waiting":
       return labeledDateMeta("예정일", c.dueDate, c);
     case "active":

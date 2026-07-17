@@ -73,6 +73,7 @@ import { settingsApi, type ClientRegistrationPolicy } from "@/services/api";
 
 const FILTER_CHIPS = [
     { label: "전체", value: "all" },
+    { label: "예약 전", value: "pre_booking" },
     { label: "대기", value: "waiting" },
     { label: "교체 요청", value: "replacement_requested" },
     { label: "진행중", value: "active" },
@@ -111,6 +112,8 @@ const toDate = (value: string | null): Date | null => {
 
 const filterValueToStatus = (filter: string): ServiceStatus | null => {
     switch (filter) {
+        case "pre_booking":
+            return "pre_booking";
         case "waiting":
             return "waiting";
         case "replacement_requested":
