@@ -46,4 +46,12 @@ export class AdminServiceRecordController {
             body?.recipientPhone,
         );
     }
+
+    @Post("schedules/:scheduleId/reset-link")
+    resetLink(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Param("scheduleId", ParseIntPipe) scheduleId: number,
+    ) {
+        return this.adminServiceRecordService.resetLink(tenant.branchId ?? "", scheduleId);
+    }
 }

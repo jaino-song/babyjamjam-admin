@@ -6,6 +6,7 @@ import { NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 
 import { POST as prepareLink } from "../[scheduleId]/prepare-link/route";
+import { POST as resetLink } from "../[scheduleId]/reset-link/route";
 import { POST as sendLink } from "../[scheduleId]/send-link/route";
 
 jest.mock("@/lib/api/server", () => ({
@@ -83,6 +84,34 @@ describe("service-record feedback link proxy routes", () => {
         );
     });
 
+    it("resets a link without calling the send endpoint", async () => {
+        mockPost.mockResolvedValue({
+            status: 201,
+            data: {
+                serviceRecordUrl: `https://mobile.test/service-record/${preparedLinkToken}`,
+                expiresAt: "2026-07-20T00:00:00.000Z",
+            },
+        });
+
+        const response = await resetLink(
+            createRequest("/api/admin/service-records/schedules/11/reset-link"),
+            { params: Promise.resolve({ scheduleId: "11" }) },
+        );
+
+        expect(response.status).toBe(201);
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        expect(mockPost).toHaveBeenCalledWith(
+            "/admin/service-records/schedules/11/reset-link",
+            {},
+            { headers: { Authorization: "Bearer token-1" } },
+        );
+        expect(mockPost).not.toHaveBeenCalledWith(
+            expect.stringContaining("/send-link"),
+            expect.anything(),
+            expect.anything(),
+        );
+    });
+
     it("rejects malformed prepared tokens before they reach the backend", async () => {
         const response = await sendLink(
             createRequest("/api/admin/service-records/schedules/11/send-link", {
@@ -111,6 +140,16 @@ describe("service-record feedback link proxy routes", () => {
     it("requires admin authentication before preparing a bearer link", async () => {
         const response = await prepareLink(
             createRequest("/api/admin/service-records/schedules/11/prepare-link", undefined, false),
+            { params: Promise.resolve({ scheduleId: "11" }) },
+        );
+
+        expect(response.status).toBe(401);
+        expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it("requires admin authentication before resetting a bearer link", async () => {
+        const response = await resetLink(
+            createRequest("/api/admin/service-records/schedules/11/reset-link", undefined, false),
             { params: Promise.resolve({ scheduleId: "11" }) },
         );
 

@@ -4,7 +4,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api/client";
 import type {
+    ApplyServiceScheduleChangeRequest,
+    ApplyServiceScheduleChangeResponse,
+    ResetServiceRecordLinkResponse,
     SendServiceRecordLinkResponse,
+    ServiceScheduleChangePreviewResponse,
     ServiceRecordOverview,
 } from "@babyjamjam/shared/types/service-record";
 
@@ -21,6 +25,34 @@ function isValidClientId(clientId: number | null): clientId is number {
 
 export async function fetchClientServiceRecords(clientId: number): Promise<ServiceRecordOverview> {
     const { data } = await api.get<ServiceRecordOverview>(`/admin/service-records/client/${clientId}`);
+    return data;
+}
+
+export async function resetServiceRecordLink(scheduleId: number): Promise<ResetServiceRecordLinkResponse> {
+    const { data } = await api.post<ResetServiceRecordLinkResponse>(
+        `/admin/service-records/schedules/${scheduleId}/reset-link`,
+        {},
+    );
+    return data;
+}
+
+export async function previewServiceScheduleChange(
+    scheduleId: number,
+): Promise<ServiceScheduleChangePreviewResponse> {
+    const { data } = await api.get<ServiceScheduleChangePreviewResponse>(
+        `/schedule-change-requests/schedules/${scheduleId}/preview`,
+    );
+    return data;
+}
+
+export async function applyServiceScheduleChange(
+    scheduleId: number,
+    request: ApplyServiceScheduleChangeRequest,
+): Promise<ApplyServiceScheduleChangeResponse> {
+    const { data } = await api.post<ApplyServiceScheduleChangeResponse>(
+        `/schedule-change-requests/schedules/${scheduleId}/apply`,
+        request,
+    );
     return data;
 }
 

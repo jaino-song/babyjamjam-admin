@@ -19,6 +19,7 @@ const statusBadgeVariants = cva(
         outline: "bg-transparent border-border text-v3-dark",
 
         // Existing semantic aliases
+        pre_booking: "bg-[hsl(220,20%,97%)] border-[hsl(220,20%,90%)] text-v3-text-muted",
         waiting: "bg-[hsl(47,100%,92%)] border-[hsla(38,92%,35%,0.18)] text-[hsl(38,92%,35%)]",
         in_progress: "bg-[hsl(214,80%,95%)] border-[hsl(214,70%,85%)] text-v3-primary",
         completed: "bg-[hsl(137,60%,94%)] border-[hsl(137,34%,84%)] text-v3-green",

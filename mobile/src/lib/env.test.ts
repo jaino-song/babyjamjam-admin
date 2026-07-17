@@ -59,4 +59,32 @@ describe("env", () => {
         expect(env.PUBLIC_BACKEND_BASE_URL).toBe("http://localhost:3001");
         expect(env.getServerRuntimeConfig().backendBaseUrl).toBe("http://localhost:3001");
     });
+
+    it("enables dev-only behavior for local development and the dev deployment branch", async () => {
+        const localEnv = await loadEnvModule({
+            NODE_ENV: "development",
+            NEXT_PUBLIC_VERCEL_GIT_COMMIT_REF: undefined,
+        });
+        const devBranchEnv = await loadEnvModule({
+            NODE_ENV: "production",
+            NEXT_PUBLIC_API_BASE_URL: "https://api.example.com",
+            NEXT_PUBLIC_VERCEL_GIT_COMMIT_REF: "dev",
+        });
+
+        expect(localEnv.IS_DEV_DEPLOYMENT).toBe(true);
+        expect(devBranchEnv.IS_DEV_DEPLOYMENT).toBe(true);
+    });
+
+    it.each(["preview", "main"])(
+        "keeps dev-only behavior disabled on the %s deployment branch",
+        async (branch) => {
+            const env = await loadEnvModule({
+                NODE_ENV: "production",
+                NEXT_PUBLIC_API_BASE_URL: "https://api.example.com",
+                NEXT_PUBLIC_VERCEL_GIT_COMMIT_REF: branch,
+            });
+
+            expect(env.IS_DEV_DEPLOYMENT).toBe(false);
+        },
+    );
 });

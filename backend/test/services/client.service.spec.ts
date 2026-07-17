@@ -1100,6 +1100,25 @@ describe("ClientService", () => {
 
                 expect(client?.badges[0]?.key).toBe("contract_required");
             });
+
+            it("should show a neutral pre-booking badge without requiring a contract", async () => {
+                const preBookingClient = createWaitingClient("2026-07-16");
+                preBookingClient.startDate = null;
+                preBookingClient.endDate = null;
+                preBookingClient.serviceStatus = "pre_booking";
+                listClientsUsecase.execute.mockResolvedValue([preBookingClient]);
+
+                const [client] = await service.findAll(branchId);
+
+                expect(client?.badges).toEqual([
+                    expect.objectContaining({
+                        key: "service_status",
+                        status: "preBooking",
+                        label: "예약 전",
+                        tone: "neutral",
+                    }),
+                ]);
+            });
         });
     });
 

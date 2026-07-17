@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import { ClientServiceRecordsTab } from "../ClientServiceRecordsTab";
 import type { ServiceRecordAssignment, ServiceRecordOverview } from "@/features/service-records/types";
@@ -56,6 +56,39 @@ describe("ClientServiceRecordsTab", () => {
         toast.mockReset();
     });
 
+    it("keeps the service-record card containers mounted while loading", () => {
+        const { container } = render(
+            <ClientServiceRecordsTab
+                clientId={100}
+                isLoading
+                isError={false}
+            />,
+        );
+
+        expect(
+            container.querySelector('[data-component="clients-detail-service-records"]'),
+        ).toBeInTheDocument();
+        expect(
+            container.querySelector('[data-component="clients-detail-service-records-overview-grid"]'),
+        ).toBeInTheDocument();
+        expect(
+            container.querySelector('[data-component="clients-detail-service-records-status-card"]'),
+        ).toHaveTextContent("제공기록지 진행 상태");
+        expect(
+            container.querySelector('[data-component="clients-detail-service-records-header-card"]'),
+        ).toHaveTextContent("서비스 기본정보");
+        expect(
+            container.querySelector('[data-component="clients-detail-service-records-link-card"]'),
+        ).toHaveTextContent("제공기록지 작성 링크");
+        expect(
+            container.querySelector('[data-component="clients-detail-service-records-sessions"]'),
+        ).toHaveTextContent("회차별 제공기록");
+        expect(container.querySelectorAll('[data-slot="skeleton"].animate-pulse').length).toBeGreaterThan(0);
+        expect(
+            container.querySelector('[data-component="clients-detail-service-records-skeleton-card"]'),
+        ).not.toBeInTheDocument();
+    });
+
     it("renders the main link states", () => {
         const overview: ServiceRecordOverview = {
             assignments: [
@@ -102,6 +135,38 @@ describe("ClientServiceRecordsTab", () => {
         expect(screen.queryByText("예정일 2026.09.24")).not.toBeInTheDocument();
     });
 
+    it("opens unsubmitted sessions with empty detail values", () => {
+        const assignment = createAssignment(1, "none");
+        const { container } = render(
+            <ClientServiceRecordsTab
+                overview={{ assignments: [assignment] }}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+            />,
+        );
+
+        const trigger = screen.getByRole("button", { name: /1회차/ });
+        expect(trigger).toHaveAttribute("aria-expanded", "false");
+
+        fireEvent.click(trigger);
+
+        expect(trigger).toHaveAttribute("aria-expanded", "true");
+        expect(screen.getByText("산모 기록")).toBeInTheDocument();
+        expect(screen.getByText("신생아 기록")).toBeInTheDocument();
+        expect(screen.getByText("서비스 기록")).toBeInTheDocument();
+        expect(screen.getByText("산모 서명")).toBeInTheDocument();
+        const detail = container.querySelector(
+            '[data-component="clients-detail-service-records-session-detail"]',
+        );
+        expect(detail).toBeInTheDocument();
+        const emptyValues = detail!.querySelectorAll(
+            '[data-component="clients-detail-service-records-session-empty-value"]',
+        );
+        expect(emptyValues.length).toBeGreaterThan(0);
+        expect(Array.from(emptyValues).every((value) => value.textContent === "-")).toBe(true);
+    });
+
     it("renders one continuous client record across provider replacements", () => {
         const first = { ...createAssignment(1, "sent"), replaced: true };
         const second = createAssignment(2, "sent");
@@ -134,7 +199,10 @@ describe("ClientServiceRecordsTab", () => {
                         locked: true,
                         submittedAt: "2026-07-01T10:00:00.000Z",
                         updatedAt: "2026-07-01T10:00:00.000Z",
-                        answers: {},
+                        answers: {
+                            perineum: ["이상없음"],
+                            sitzBath: "실시",
+                        },
                         etcService: null,
                         notes: null,
                         paymentConfirmed: true,
@@ -177,6 +245,10 @@ describe("ClientServiceRecordsTab", () => {
         expect(screen.getByText("제공인력 배정 이력")).toBeInTheDocument();
         expect(screen.getByText(/1회차 ·/)).toBeInTheDocument();
         expect(screen.getByText(/2회차 ·/)).toBeInTheDocument();
+        expect(screen.queryByText("계약 회차를 누르면 기록 상세가 열립니다")).not.toBeInTheDocument();
+        expect(
+            container.querySelector('[data-component="clients-detail-service-records-progress"]'),
+        ).not.toBeInTheDocument();
 
         const overviewGrid = container.querySelector<HTMLElement>(
             '[data-component="clients-detail-service-records-overview-grid"]',
@@ -228,6 +300,32 @@ describe("ClientServiceRecordsTab", () => {
                 '[data-component="clients-detail-service-records-link-card-title-row"] [data-component="status-badge"]',
             ),
         ).not.toBeInTheDocument();
+        const sessionDetail = container.querySelector<HTMLElement>(
+            '[data-component="clients-detail-service-records-session-detail"]',
+        );
+        expect(sessionDetail).toBeInTheDocument();
+        const sessionValues = sessionDetail!.querySelectorAll(
+            '[data-component="clients-detail-service-records-session-value"]',
+        );
+        expect(sessionValues.length).toBeGreaterThan(0);
+        sessionValues.forEach((value) => {
+            expect(value).toHaveClass(
+                "text-[calc(12px*var(--glint-ui-scale,1))]",
+                "font-medium",
+                "text-v3-dark",
+            );
+        });
+        expect(within(sessionDetail!).getByText("이상없음")).not.toHaveClass(
+            "rounded-[8px]",
+            "bg-v3-dim-white",
+        );
+        expect(within(sessionDetail!).getByText("실시")).not.toHaveClass(
+            "rounded-[8px]",
+            "bg-v3-primary-light",
+        );
+        expect(sessionDetail).not.toHaveTextContent("✓");
+        expect(within(sessionDetail!).getByText("완료")).not.toHaveClass("text-v3-green");
+        expect(within(sessionDetail!).getByText("서명함")).not.toHaveClass("text-v3-green");
         const headerCaption = overviewCards[1].querySelector<HTMLElement>(
             '[data-component="clients-detail-service-records-header-card-caption"]',
         );

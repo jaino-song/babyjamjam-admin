@@ -2526,13 +2526,15 @@ body:has([data-component="files"] .nav-stack.show-detail) [data-component="mobil
 }
 
 [data-component="clients"] .badge-mini.muted {
-  border-color: hsl(var(--v3-border));
+  background: hsl(220, 20%, 97%);
+  color: hsl(214, 10%, 55%);
+  border-color: hsl(220, 20%, 90%);
 }
 
 [data-component="clients"] .badge-mini.gray {
-  background: hsl(var(--v3-dim-white));
-  color: hsl(var(--v3-text-muted));
-  border-color: hsl(var(--v3-border));
+  background: hsl(220, 20%, 97%);
+  color: hsl(214, 10%, 55%);
+  border-color: hsl(220, 20%, 90%);
 }
 
 [data-component="clients"] .badge-mini.primary {
@@ -2667,9 +2669,10 @@ body:has([data-component="files"] .nav-stack.show-detail) [data-component="mobil
 }
 
 [data-component="mobile-clients-service-records"] .service-record-snapshot-note {
-  padding: 4px;
-  font-size: 0.62rem;
+  padding: 12px 4px;
+  font-size: 0.6875rem;
   font-weight: 500;
+  line-height: 1.5;
 }
 
 [data-slot="skeleton"].service-record-skeleton-loader {

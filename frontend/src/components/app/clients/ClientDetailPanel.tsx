@@ -117,6 +117,19 @@ const formatPrice = (price: string | null): string => {
     return `${num.toLocaleString("ko-KR")}원`;
 };
 
+export function getClientDetailSubtitle(
+    client: Pick<Client, "type" | "duration" | "serviceStatus">,
+): string {
+    const clientType = client.type || "일반";
+    const hasDuration = client.duration !== null;
+
+    if (client.serviceStatus === "pre_booking" && !hasDuration) {
+        return clientType;
+    }
+
+    return `${clientType} · ${hasDuration ? `${client.duration}일` : "-"}`;
+}
+
 function getClientMessageHistoryTime(record: MessageLogRecord) {
     const timestamp = getMessageHistoryTimestamp(record);
     const time = new Date(timestamp).getTime();
@@ -707,12 +720,7 @@ function ClientDetailPanelBody({
                             ))}
                     </>
                 }
-                subtitle={
-                    <>
-                        {client.type || "일반"} ·{" "}
-                        {client.duration ? `${client.duration}일` : "-"}
-                    </>
-                }
+                subtitle={getClientDetailSubtitle(client)}
                 trailing={trailing}
                 tabs={
                     <DetailTabs
@@ -742,39 +750,50 @@ function ClientDetailPanelBody({
                                             title="서비스 일정 변경 요청이 있습니다."
                                             data-component={`${dataComponentPrefix}-schedule-change-card`}
                                         >
+                                            <InfoRow
+                                                label="기존 날짜"
+                                                value={formatScheduleChangeMonthDay(activeScheduleChange.fromDate)}
+                                                size="compact"
+                                            />
+                                            <InfoRow
+                                                label="변경 날짜"
+                                                value={formatScheduleChangeMonthDay(activeScheduleChange.toDate)}
+                                                size="compact"
+                                            />
+                                            <InfoRow
+                                                label="회차"
+                                                value={`${activeScheduleChange.sessionIndex}회차`}
+                                                size="compact"
+                                            />
+                                            <InfoRow
+                                                label="종료일"
+                                                value={`${activeScheduleChange.oldEndDate} → ${activeScheduleChange.newEndDate}`}
+                                                size="compact"
+                                            />
                                             <div
-                                                data-component={`${dataComponentPrefix}-schedule-change-content`}
-                                                className="space-y-[calc(12px*var(--glint-ui-scale,1))]"
+                                                data-component={`${dataComponentPrefix}-schedule-change-actions`}
+                                                className="mt-[calc(14px*var(--glint-ui-scale,1))] flex flex-wrap items-center justify-end gap-[calc(12px*var(--glint-ui-scale,1))]"
                                             >
-                                                <p className="text-[calc(14px*var(--glint-ui-scale,1))] font-semibold text-v3-dark">
-                                                    기존 날짜: {formatScheduleChangeMonthDay(activeScheduleChange.fromDate)} → 변경 날짜: {formatScheduleChangeMonthDay(activeScheduleChange.toDate)}
-                                                </p>
-                                                <p className="text-[calc(13px*var(--glint-ui-scale,1))] text-v3-text-muted">
-                                                    회차: {activeScheduleChange.sessionIndex}회차 · 종료일 {activeScheduleChange.oldEndDate} → {activeScheduleChange.newEndDate}
-                                                </p>
-                                                <div
-                                                    data-component={`${dataComponentPrefix}-schedule-change-actions`}
-                                                    className="flex justify-end gap-2"
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    width="sm"
+                                                    disabled={isScheduleChangeActionPending}
+                                                    onClick={() => void handleRejectScheduleChange()}
                                                 >
-                                                    <Button
-                                                        type="button"
-                                                        variant="outline"
-                                                        size="sm"
-                                                        disabled={isScheduleChangeActionPending}
-                                                        onClick={() => void handleRejectScheduleChange()}
-                                                    >
-                                                        거부
-                                                    </Button>
-                                                    <Button
-                                                        type="button"
-                                                        variant="positive"
-                                                        size="sm"
-                                                        disabled={isScheduleChangeActionPending}
-                                                        onClick={() => void handleApproveScheduleChange()}
-                                                    >
-                                                        승인
-                                                    </Button>
-                                                </div>
+                                                    거부
+                                                </Button>
+                                                <Button
+                                                    type="button"
+                                                    variant="positive"
+                                                    size="sm"
+                                                    width="sm"
+                                                    disabled={isScheduleChangeActionPending}
+                                                    onClick={() => void handleApproveScheduleChange()}
+                                                >
+                                                    승인
+                                                </Button>
                                             </div>
                                         </InfoCard>
                                     ),

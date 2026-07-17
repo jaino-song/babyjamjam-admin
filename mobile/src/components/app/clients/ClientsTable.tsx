@@ -20,6 +20,7 @@ import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonMod
 
 const STATUS_FILTER_OPTIONS = [
     { value: null, label: "전체" },
+    { value: "pre_booking", label: "예약 전" },
     { value: "active", label: "진행중" },
     { value: "pending", label: "대기" },
     { value: "completed", label: "완료" },
@@ -28,6 +29,7 @@ const STATUS_FILTER_OPTIONS = [
 
 const getStatusBadgeVariant = (status: string | null) => {
     switch (status) {
+        case "pre_booking": return "outline";
         case "active": return "v3-active";
         case "pending": return "v3-pending";
         case "waiting": return "v3-pending";

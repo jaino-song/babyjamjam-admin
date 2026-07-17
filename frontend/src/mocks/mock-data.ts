@@ -158,6 +158,7 @@ export const mockUserBranches: UserBranch[] = [
 
 export type ServiceStatus =
   | 'active'
+  | 'pre_booking'
   | 'waiting'
   | 'completed'
   | 'terminated'

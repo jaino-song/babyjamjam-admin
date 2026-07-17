@@ -20,6 +20,7 @@ const createMockPrismaService = () => ({
         update: jest.fn(),
     },
     employee_schedule: {
+        findFirst: jest.fn(),
         findUnique: jest.fn(),
         update: jest.fn(),
     },
@@ -29,6 +30,7 @@ const createMockPrismaService = () => ({
         update: jest.fn(),
     },
     service_record_case: {
+        findFirst: jest.fn(),
         findUnique: jest.fn().mockResolvedValue({ id: "case-1", formVersion: 1 }),
     },
     client: {
@@ -291,6 +293,181 @@ describe("ScheduleChangeService", () => {
             );
 
             await expectConflictCode(() => service.createRequest(ctx), "REQUEST_ALREADY_PENDING");
+        });
+    });
+
+    describe("admin schedule change", () => {
+        it("should preview the next unlocked session within the current tenant", async () => {
+            prismaService.employee_schedule.findFirst.mockResolvedValue(createSchedule());
+            prismaService.service_record_case.findFirst.mockResolvedValue({ id: "case-1" });
+            prismaService.service_record_day.findMany.mockResolvedValue([
+                createDay(1, "2026-07-15", true),
+                createDay(2, "2026-07-16", true),
+                createDay(3, "2026-07-20", false),
+            ]);
+
+            await expect(service.previewAdminChange(BRANCH_ID, SCHEDULE_ID)).resolves.toEqual({
+                sessionIndex: 3,
+                fromDate: "2026-07-20",
+                minimumDate: "2026-07-20",
+            });
+            expect(prismaService.employee_schedule.findFirst).toHaveBeenCalledWith({
+                where: { id: SCHEDULE_ID, branchId: BRANCH_ID },
+                include: { client: true },
+            });
+        });
+
+        it("should apply the selected date and cascade later unlocked sessions", async () => {
+            txPrismaService.employee_schedule.findFirst.mockResolvedValue(createSchedule({
+                endDate: toDbDate("2026-07-29"),
+            }));
+            txPrismaService.service_record_case.findFirst.mockResolvedValue({
+                id: "case-1",
+                formVersion: 1,
+            });
+            txPrismaService.schedule_change_request.findFirst.mockResolvedValue(null);
+            txPrismaService.service_record_day.findMany
+                .mockResolvedValueOnce([
+                    createDay(1, "2026-07-15", true),
+                    createDay(2, "2026-07-16", true),
+                    createDay(3, "2026-07-20", false),
+                    createDay(4, "2026-07-21", false),
+                ])
+                .mockResolvedValueOnce([createDay(4, "2026-07-21", false)]);
+            txPrismaService.schedule_change_request.create.mockResolvedValue(createRequest({
+                status: "approved",
+                fromDate: toDbDate("2026-07-20"),
+                toDate: toDbDate("2026-07-23"),
+                oldEndDate: toDbDate("2026-07-29"),
+                newEndDate: toDbDate("2026-08-03"),
+                decidedBy: USER_ID,
+                decidedAt: toDbDate("2026-07-17"),
+            }));
+
+            await expect(
+                service.applyAdminChange(SCHEDULE_ID, "2026-07-23", tenant),
+            ).resolves.toMatchObject({
+                status: "approved",
+                sessionIndex: 3,
+                fromDate: "2026-07-20",
+                toDate: "2026-07-23",
+                newEndDate: "2026-08-03",
+            });
+            expect(txPrismaService.service_record_day.upsert).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    update: { serviceDate: toDbDate("2026-07-23") },
+                }),
+            );
+            expect(txPrismaService.service_record_day.update).toHaveBeenCalledWith({
+                where: { id: "day-4" },
+                data: { serviceDate: toDbDate("2026-07-24") },
+            });
+            expect(txPrismaService.employee_schedule.update).toHaveBeenCalledWith({
+                where: { id: SCHEDULE_ID },
+                data: { endDate: toDbDate("2026-08-03") },
+            });
+            expect(txPrismaService.client.update).toHaveBeenCalledWith({
+                where: { id: CLIENT_ID },
+                data: { endDate: toDbDate("2026-08-03") },
+            });
+            expect(lifecycleService.ensureForClient).toHaveBeenCalledWith(
+                CLIENT_ID,
+                txPrismaService,
+            );
+            expect(tokenService.extendExpiryForCase).toHaveBeenCalledWith(
+                "case-1",
+                new Date("2026-08-03T20:00:00+09:00"),
+                txPrismaService,
+            );
+            expect(txPrismaService.schedule_change_request.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({
+                    branchId: BRANCH_ID,
+                    scheduleId: SCHEDULE_ID,
+                    sessionIndex: 3,
+                    fromDate: toDbDate("2026-07-20"),
+                    toDate: toDbDate("2026-07-23"),
+                    status: "approved",
+                    decidedBy: USER_ID,
+                    decidedAt: expect.any(Date),
+                }),
+            });
+        });
+
+        it("should supersede a pending request when an admin applies a schedule change directly", async () => {
+            const pendingRequest = createRequest({
+                fromDate: toDbDate("2026-07-20"),
+                toDate: toDbDate("2026-07-21"),
+                oldEndDate: toDbDate("2026-07-29"),
+                newEndDate: toDbDate("2026-07-30"),
+            });
+            txPrismaService.employee_schedule.findFirst.mockResolvedValue(createSchedule({
+                endDate: toDbDate("2026-07-29"),
+            }));
+            txPrismaService.service_record_case.findFirst.mockResolvedValue({
+                id: "case-1",
+                formVersion: 1,
+            });
+            txPrismaService.schedule_change_request.findFirst.mockResolvedValue(pendingRequest);
+            txPrismaService.service_record_day.findMany
+                .mockResolvedValueOnce([
+                    createDay(1, "2026-07-15", true),
+                    createDay(2, "2026-07-16", true),
+                    createDay(3, "2026-07-20", false),
+                ])
+                .mockResolvedValueOnce([]);
+            txPrismaService.schedule_change_request.create.mockResolvedValue(createRequest({
+                id: "admin-change-1",
+                status: "approved",
+                fromDate: toDbDate("2026-07-20"),
+                toDate: toDbDate("2026-07-21"),
+                oldEndDate: toDbDate("2026-07-29"),
+                newEndDate: toDbDate("2026-07-30"),
+                decidedBy: USER_ID,
+                decidedAt: toDbDate("2026-07-17"),
+            }));
+
+            await expect(
+                service.applyAdminChange(SCHEDULE_ID, "2026-07-21", tenant),
+            ).resolves.toMatchObject({
+                status: "approved",
+                fromDate: "2026-07-20",
+                toDate: "2026-07-21",
+            });
+            expect(txPrismaService.schedule_change_request.update).toHaveBeenCalledWith({
+                where: { id: pendingRequest.id },
+                data: {
+                    status: "stale",
+                    decidedBy: USER_ID,
+                    decidedAt: expect.any(Date),
+                },
+            });
+        });
+
+        it("should reject a selected date that does not postpone the session", async () => {
+            txPrismaService.employee_schedule.findFirst.mockResolvedValue(createSchedule());
+            txPrismaService.service_record_case.findFirst.mockResolvedValue({
+                id: "case-1",
+                formVersion: 1,
+            });
+            txPrismaService.schedule_change_request.findFirst.mockResolvedValue(null);
+            txPrismaService.service_record_day.findMany.mockResolvedValue([
+                createDay(1, "2026-07-15", true),
+                createDay(2, "2026-07-16", true),
+                createDay(3, "2026-07-20", false),
+            ]);
+
+            await expectConflictCode(
+                () => service.applyAdminChange(SCHEDULE_ID, "2026-07-20", tenant),
+                "SCHEDULE_DATE_NOT_POSTPONED",
+            );
+            expect(txPrismaService.service_record_day.upsert).not.toHaveBeenCalled();
+        });
+
+        it("should reject a calendar date that does not exist", async () => {
+            await expect(
+                service.applyAdminChange(SCHEDULE_ID, "2026-02-30", tenant),
+            ).rejects.toBeInstanceOf(BadRequestException);
+            expect(prismaService.$transaction).not.toHaveBeenCalled();
         });
     });
 

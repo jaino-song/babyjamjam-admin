@@ -35,6 +35,7 @@ const getStatusBadge = (status: ServiceStatus | null) => {
     if (!option) return <Badge variant="outline" className="bg-muted text-muted-foreground border-muted">-</Badge>;
 
     const variantMap: Record<ServiceStatus, "v3-active" | "v3-pending" | "v3-expired" | "outline"> = {
+        pre_booking: "outline",
         waiting: "v3-pending",
         replacement_requested: "v3-expired",
         active: "v3-active",

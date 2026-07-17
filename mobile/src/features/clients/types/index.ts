@@ -24,6 +24,15 @@ export interface ClientBadge {
     priority?: number;
 }
 
+export interface PendingScheduleChange {
+    id: string;
+    sessionIndex: number;
+    fromDate: string;
+    toDate: string;
+    oldEndDate: string;
+    newEndDate: string;
+}
+
 // Client entity types
 export interface Client {
     id: number;
@@ -52,6 +61,7 @@ export interface Client {
     hasSigned: boolean;
     documentStatus: DocumentStatus;    // eformsign document status: created/opened/completed
     badges?: ClientBadge[];
+    pendingScheduleChange?: PendingScheduleChange | null;
 }
 
 // Create client DTO - Frontend sends employeeId, backend converts to scheduleId
@@ -125,6 +135,7 @@ export interface PaginatedResponse<T> {
 
 // Service status options (renamed from Contract status)
 export const SERVICE_STATUS_OPTIONS = [
+    { value: "pre_booking", label: "예약 전", labelEn: "Pre-booking", color: "default" as const },
     { value: "waiting", label: "대기", labelEn: "Waiting", color: "warning" as const },
     { value: "replacement_requested", label: "교체 요청", labelEn: "Replacement Requested", color: "error" as const },
     { value: "active", label: "진행중", labelEn: "Active", color: "info" as const },

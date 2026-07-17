@@ -2,6 +2,7 @@ export type ClientBadgeKey = "contract_required" | "breast_pump" | "service_stat
 
 export type ClientBadgeStatus =
     | "active"
+    | "preBooking"
     | "pending"
     | "review"
     | "scheduleChange"
@@ -22,6 +23,7 @@ export interface ClientBadgeStatusToken {
 export const CLIENT_BADGE_STATUS_TOKENS = {
     service_status: {
         active: { variant: "primary", defaultLabel: "진행중" },
+        preBooking: { variant: "neutral", defaultLabel: "예약 전" },
         signed: { variant: "success", defaultLabel: "서명완료" },
         pending: { variant: "warning", defaultLabel: "대기" },
         review: { variant: "primary", defaultLabel: "검토 필요" },
@@ -43,6 +45,7 @@ export const CLIENT_BADGE_STATUS_TOKENS = {
 
 const DEFAULT_CLIENT_BADGE_KEY_BY_STATUS = {
     active: "service_status",
+    preBooking: "service_status",
     signed: "service_status",
     pending: "service_status",
     review: "service_status",

@@ -9,6 +9,7 @@ import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneB
 import { SignaturePad } from "@/components/app/service-record/SignaturePad";
 import { DEFAULT_PROVIDER_NAME, ProviderInfo } from "@/components/service-record/provider-info";
 import { isBusinessDayKr, isoDateInKorea, nextBusinessDayKr } from "@/lib/date/business-days";
+import { IS_DEV_DEPLOYMENT } from "@/lib/env";
 
 /* ───────────────────────── form definition (mirrors the 제공기록지) ───────────────────────── */
 
@@ -159,8 +160,13 @@ const hasDisplayValue = (value: unknown): boolean => {
     return true;
 };
 
-export function canEditDailyRecord(editing: boolean, serviceDate: string, today = isoDateInKorea()): boolean {
-    return editing || serviceDate === today;
+export function canEditDailyRecord(
+    editing: boolean,
+    serviceDate: string,
+    today = isoDateInKorea(),
+    allowDateMismatch = IS_DEV_DEPLOYMENT,
+): boolean {
+    return allowDateMismatch || editing || serviceDate === today;
 }
 
 interface DayButtonState {
@@ -228,13 +234,72 @@ function formatReviewFieldValue(
 }
 
 type Screen = "loading" | "invalid" | "phone" | "service" | "overview" | "day" | "done";
+type HistoryMode = "none" | "push" | "replace";
+
+interface WizardHistoryTarget {
+    screen: "phone" | "service" | "overview" | "day" | "done";
+    day?: number;
+    pageIdx?: number;
+}
+
+const HISTORY_SCREENS = new Set<WizardHistoryTarget["screen"]>([
+    "phone",
+    "service",
+    "overview",
+    "day",
+    "done",
+]);
+
+function writeWizardHistory(
+    screen: Screen,
+    mode: Exclude<HistoryMode, "none">,
+    day?: number,
+    pageIdx?: number,
+): void {
+    if (typeof window === "undefined") return;
+
+    const url = new URL(window.location.href);
+    if (HISTORY_SCREENS.has(screen as WizardHistoryTarget["screen"])) {
+        url.searchParams.set("step", screen);
+    } else {
+        url.searchParams.delete("step");
+    }
+    if (screen === "day" && day !== undefined && pageIdx !== undefined) {
+        url.searchParams.set("day", String(day));
+        url.searchParams.set("page", String(pageIdx));
+    } else {
+        url.searchParams.delete("day");
+        url.searchParams.delete("page");
+    }
+
+    const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+    if (mode === "push") window.history.pushState(null, "", nextUrl);
+    else window.history.replaceState(null, "", nextUrl);
+}
+
+function readWizardHistory(): WizardHistoryTarget | null {
+    if (typeof window === "undefined") return null;
+
+    const params = new URLSearchParams(window.location.search);
+    const screen = params.get("step");
+    if (!screen || !HISTORY_SCREENS.has(screen as WizardHistoryTarget["screen"])) return null;
+    if (screen !== "day") return { screen: screen as WizardHistoryTarget["screen"] };
+
+    const rawDay = params.get("day");
+    const rawPageIdx = params.get("page");
+    if (rawDay === null || rawPageIdx === null) return null;
+
+    const day = Number(rawDay);
+    const pageIdx = Number(rawPageIdx);
+    if (!Number.isInteger(day) || !Number.isInteger(pageIdx)) return null;
+    return { screen: "day", day, pageIdx };
+}
 
 export default function ServiceRecordPage() {
     const params = useParams<{ token: string }>();
     const token = params?.token ?? "";
 
     const [screen, setScreen] = useState<Screen>("loading");
-    const [accessToken, setAccessToken] = useState<string | null>(null);
     const [phone, setPhone] = useState("");
     const [phoneError, setPhoneError] = useState<string | null>(null);
     const [ctx, setCtx] = useState<ServiceRecordContext | null>(null);
@@ -251,40 +316,38 @@ export default function ServiceRecordPage() {
     const [scheduleChangeBusy, setScheduleChangeBusy] = useState(false);
     const [errorNotificationMessage, setErrorNotificationMessage] = useState<string | null>(null);
 
+    const navigateTo = useCallback((
+        nextScreen: Screen,
+        options: { mode?: HistoryMode; day?: number; pageIdx?: number } = {},
+    ) => {
+        setScreen(nextScreen);
+        if (options.day !== undefined) setDay(options.day);
+        if (options.pageIdx !== undefined) setPageIdx(options.pageIdx);
+        if (options.mode && options.mode !== "none") {
+            writeWizardHistory(nextScreen, options.mode, options.day, options.pageIdx);
+        }
+    }, []);
+
     const api = useCallback(
         async (path: string, init: RequestInit = {}) => {
             const res = await fetch(`/api/service-record/${token}${path}`, {
                 ...init,
                 headers: {
                     "Content-Type": "application/json",
-                    ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
                     ...(init.headers ?? {}),
                 },
             });
             return res;
         },
-        [token, accessToken],
+        [token],
     );
 
-    // initial: is the link valid?
-    useEffect(() => {
-        let alive = true;
-        (async () => {
-            try {
-                const res = await fetch(`/api/service-record/${token}/link`);
-                const data = await res.json();
-                if (!alive) return;
-                setScreen(data?.valid ? "phone" : "invalid");
-            } catch {
-                if (alive) setScreen("invalid");
-            }
-        })();
-        return () => { alive = false; };
-    }, [token]);
-
-    const loadContext = useCallback(async () => {
+    const loadContext = useCallback(async (historyMode: HistoryMode = "replace") => {
         const res = await api("/context");
-        if (!res.ok) { setScreen("invalid"); return; }
+        if (!res.ok) {
+            navigateTo(res.status === 401 || res.status === 403 ? "phone" : "invalid", { mode: historyMode });
+            return;
+        }
         const data: ServiceRecordContext = await res.json();
         const stored = readStoredFormState(token);
         const serverHeader = (data.header as Record<string, string>) ?? {};
@@ -299,32 +362,91 @@ export default function ServiceRecordPage() {
             clearStoredFormState(token);
             setEditing(false);
             setMomSignature(null);
-            setScreen("overview");
+            navigateTo("overview", { mode: historyMode });
             return;
         }
 
-        const storedDay = stored?.day;
-        const canResumeDay = Boolean(
-            data.header
-            && stored?.draft
-            && storedDay
-            && storedDay >= 1
-            && storedDay <= data.totalSessions
-            && !data.sessions.some((session) => session.sessionIndex === storedDay && session.locked),
-        );
-        if (canResumeDay && storedDay && stored?.draft) {
-            setDay(storedDay);
-            setPageIdx(Math.min(Math.max(stored.pageIdx ?? 0, 0), DAY_PAGES.length - 1));
-            setDraft(stored.draft);
-            setEditing(false);
-            setMomSignature(null);
-            setScreen("day");
-            return;
-        }
         setEditing(false);
         setMomSignature(null);
-        setScreen(data.header ? "overview" : "service");
-    }, [api, token]);
+        navigateTo(data.header ? "overview" : "service", { mode: historyMode });
+    }, [api, navigateTo, token]);
+
+    // Validate the public link first, then restore a previously verified browser session.
+    useEffect(() => {
+        let alive = true;
+        (async () => {
+            try {
+                const res = await fetch(`/api/service-record/${token}/link`);
+                const data = await res.json();
+                if (!alive) return;
+                if (!data?.valid) {
+                    navigateTo("invalid", { mode: "replace" });
+                    return;
+                }
+                await loadContext("replace");
+            } catch {
+                if (alive) navigateTo("invalid", { mode: "replace" });
+            }
+        })();
+        return () => { alive = false; };
+    }, [loadContext, navigateTo, token]);
+
+    useEffect(() => {
+        const handlePopState = () => {
+            const target = readWizardHistory();
+            if (!target) return;
+
+            if (target.screen === "phone") {
+                if (ctx?.header) navigateTo("overview", { mode: "replace" });
+                else navigateTo("phone", { mode: "none" });
+                return;
+            }
+            if (target.screen === "service") {
+                if (ctx?.header) navigateTo("overview", { mode: "replace" });
+                else navigateTo("service", { mode: "none" });
+                return;
+            }
+            if (target.screen === "overview") {
+                navigateTo(ctx?.header ? "overview" : "service", { mode: ctx?.header ? "none" : "replace" });
+                return;
+            }
+            if (target.screen === "done") {
+                navigateTo("done", { mode: "none" });
+                return;
+            }
+            if (!ctx?.header || target.day === undefined || target.pageIdx === undefined) {
+                navigateTo(ctx?.header ? "overview" : "service", { mode: "replace" });
+                return;
+            }
+
+            const targetDay = Math.min(Math.max(target.day, 1), Math.max(ctx.totalSessions, 1));
+            const targetPageIdx = Math.min(Math.max(target.pageIdx, 0), DAY_PAGES.length - 1);
+            const session = ctx.sessions.find((row) => row.sessionIndex === targetDay);
+            const isLockedSession = Boolean(session?.locked);
+            setEditing(isLockedSession);
+            setMomSignature(null);
+            if (isLockedSession && session) {
+                setDraft({
+                    _date: session.serviceDate.slice(0, 10),
+                    ...(session.answers ?? {}),
+                    etcService: session.etcService ?? "",
+                    notes: session.notes ?? "",
+                    paymentConfirmed: Boolean(session.paymentConfirmed),
+                });
+            } else {
+                const stored = readStoredFormState(token);
+                if (stored?.day === targetDay && stored.draft) setDraft(stored.draft);
+            }
+            navigateTo("day", {
+                mode: "none",
+                day: targetDay,
+                pageIdx: targetPageIdx,
+            });
+        };
+
+        window.addEventListener("popstate", handlePopState);
+        return () => window.removeEventListener("popstate", handlePopState);
+    }, [ctx, navigateTo, token]);
 
     const lockedDays = useMemo(() => new Set((ctx?.sessions ?? []).filter((s) => s.locked).map((s) => s.sessionIndex)), [ctx]);
     const nextOpenDay = useCallback(() => {
@@ -358,8 +480,8 @@ export default function ServiceRecordPage() {
                 method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phone }),
             });
             const data = await res.json();
-            if (data?.ok && data.accessToken) {
-                setAccessToken(data.accessToken);
+            if (data?.ok) {
+                await loadContext("push");
             } else {
                 setPhoneError("휴대폰 번호가 일치하지 않습니다.");
             }
@@ -376,7 +498,6 @@ export default function ServiceRecordPage() {
             setPhone(`${digits.slice(0, 3)}-${digits.slice(3, middleEnd)}-${digits.slice(middleEnd)}`);
         }
     }
-    useEffect(() => { if (accessToken) loadContext(); }, [accessToken, loadContext]);
     useEffect(() => {
         if (screen === "service") {
             writeStoredFormState(token, { ...(readStoredFormState(token) ?? {}), header });
@@ -397,8 +518,7 @@ export default function ServiceRecordPage() {
                 return;
             }
             clearStoredFormState(token);
-            await loadContext();
-            setScreen("overview");
+            await loadContext("replace");
         } finally { setBusy(false); }
     }
 
@@ -408,11 +528,11 @@ export default function ServiceRecordPage() {
         if (shouldEdit && !session?.locked) return;
         if (!shouldEdit && d !== nextOpenDay()) return;
 
-        setDay(d);
         setEditing(shouldEdit);
         setMomSignature(null);
+        let initialPageIdx: number;
         if (shouldEdit && session) {
-            setPageIdx(DAY_PAGES.length - 1);
+            initialPageIdx = DAY_PAGES.length - 1;
             setDraft({
                 _date: session.serviceDate.slice(0, 10),
                 ...(session.answers ?? {}),
@@ -421,10 +541,16 @@ export default function ServiceRecordPage() {
                 paymentConfirmed: Boolean(session.paymentConfirmed),
             });
         } else {
-            setPageIdx(0);
-            setDraft({ _date: defaultDate(d), ...DEFAULT_DAILY_ANSWERS });
+            const stored = readStoredFormState(token);
+            const canRestoreDraft = stored?.day === d && Boolean(stored.draft);
+            initialPageIdx = canRestoreDraft
+                ? Math.min(Math.max(stored?.pageIdx ?? 0, 0), DAY_PAGES.length - 1)
+                : 0;
+            setDraft(canRestoreDraft && stored?.draft
+                ? stored.draft
+                : { _date: defaultDate(d), ...DEFAULT_DAILY_ANSWERS });
         }
-        setScreen("day");
+        navigateTo("day", { mode: "push", day: d, pageIdx: initialPageIdx });
     }
 
     async function submitDay() {
@@ -461,7 +587,7 @@ export default function ServiceRecordPage() {
             setSubmitModalOpen(false);
             setEditing(false);
             setMomSignature(null);
-            await loadContext();
+            await loadContext("push");
         } finally { setBusy(false); }
     }
 
@@ -655,7 +781,7 @@ export default function ServiceRecordPage() {
 
                 {screen === "service" && (
                     <>
-                        <button data-component="service-record-service-back" className="text-back" type="button" onClick={() => setScreen("phone")}>이전</button>
+                        <button data-component="service-record-service-back" className="text-back" type="button" onClick={() => window.history.back()}>이전</button>
                         <div data-component="service-record-service-title" className="step-title">서비스 기본정보</div>
                         <div data-component="service-record-readonly-row" className="ro"><span>제공인력</span><b>{ctx?.employee.name}</b></div>
                         <div data-component="service-record-readonly-row" className="ro"><span>제공기관</span><b>{ctx?.org?.name ?? DEFAULT_PROVIDER_NAME}</b></div>
@@ -685,7 +811,6 @@ export default function ServiceRecordPage() {
 
                 {screen === "overview" && ctx && (
                     <>
-                        <button data-component="service-record-overview-back" className="text-back" type="button" onClick={() => setScreen("service")}>이전</button>
                         <div data-component="service-record-overview-title" className="step-title">제공기록표</div>
                         <p className="muted">서비스 제공 기록은 해당 날짜에만 기록이 가능합니다. 제출된 기록은 눌러서 수정할 수 있습니다.</p>
                         <div data-component="service-record-day-grid" className="days">
@@ -729,20 +854,7 @@ export default function ServiceRecordPage() {
                             data-component="service-record-day-back"
                             className="text-back"
                             type="button"
-                            onClick={() => {
-                                if (editing) {
-                                    if (isMomConfirmationPage) {
-                                        setEditing(false);
-                                        setMomSignature(null);
-                                        setScreen("overview");
-                                    } else {
-                                        setPageIdx(DAY_PAGES.length - 1);
-                                    }
-                                    return;
-                                }
-                                if (pageIdx > 0) setPageIdx(pageIdx - 1);
-                                else setScreen("overview");
-                            }}
+                            onClick={() => window.history.back()}
                         >
                             이전
                         </button>
@@ -774,7 +886,11 @@ export default function ServiceRecordPage() {
                                 <MomConfirmationReview
                                     draft={draft}
                                     editing={editing}
-                                    onEdit={(sectionIndex) => setPageIdx(sectionIndex)}
+                                    onEdit={(sectionIndex) => navigateTo("day", {
+                                        mode: "push",
+                                        day,
+                                        pageIdx: sectionIndex,
+                                    })}
                                 />
                                 <SignaturePad
                                     value={signatureValue}
@@ -806,7 +922,11 @@ export default function ServiceRecordPage() {
                                 <button
                                     className="btn primary"
                                     disabled={!canEditCurrentRecord || !isCurrentPageComplete}
-                                    onClick={() => setPageIdx(editing ? DAY_PAGES.length - 1 : pageIdx + 1)}
+                                    onClick={() => navigateTo("day", {
+                                        mode: "push",
+                                        day,
+                                        pageIdx: editing ? DAY_PAGES.length - 1 : pageIdx + 1,
+                                    })}
                                 >
                                     {editing ? "저장" : "다음"}
                                 </button>

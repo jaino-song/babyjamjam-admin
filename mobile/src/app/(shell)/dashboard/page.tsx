@@ -2,13 +2,14 @@
 
 import { redirect, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Calendar, File, Send, User } from "lucide-react";
 
 const ALL_FILTER = "전체";
 const DASHBOARD_ROUTE_BODY_CLASS = "mobile-dashboard-route";
 
 import { useDashboardAnalytics } from "@/hooks/useDashboardAnalytics";
-import { useClients, useDeleteClient } from "@/hooks/useClients";
+import { clientQueryKeys, useClients, useDeleteClient } from "@/hooks/useClients";
 import { useClientMessageHistory } from "@/hooks/useClientMessageHistory";
 import { useSyncStaleEformsignStatuses } from "@/hooks/useSyncStaleEformsignStatuses";
 import type { Client } from "@/lib/client/types";
@@ -195,6 +196,7 @@ export default function DashboardPage() {
   }, []);
 
   const router = useRouter();
+  const queryClient = useQueryClient();
   const locale = useLocale();
   const deleteClient = useDeleteClient();
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
@@ -211,8 +213,23 @@ export default function DashboardPage() {
 
   const openClient = useCallback((c: Client) => {
     setSelectedClient(c);
-    setDetailTab("basic");
+    setDetailTab(c.pendingScheduleChange ? "scheduleChange" : "basic");
   }, []);
+  const handleClientUpdated = useCallback((updatedClient: Client) => {
+    setSelectedClient(updatedClient);
+    queryClient.setQueryData(clientQueryKeys.detail(updatedClient.id), updatedClient);
+    queryClient.setQueriesData<{ data: Client[] }>(
+      { queryKey: clientQueryKeys.lists() },
+      (previous) => previous
+        ? {
+            ...previous,
+            data: previous.data.map((client) =>
+              client.id === updatedClient.id ? updatedClient : client,
+            ),
+          }
+        : previous,
+    );
+  }, [queryClient]);
   const closeDetail = useCallback(() => setSelectedClient(null), []);
   const handleEdit = useCallback((c: Client) => {
     setEditingClient(c);
@@ -459,6 +476,7 @@ export default function DashboardPage() {
               onIssueContract={handleIssueContract}
               onEdit={handleEdit}
               onDelete={handleDeleteRequest}
+              onClientUpdated={handleClientUpdated}
             />
           ) : (
             <div className="detail-body" data-component="mobile-dashboard-detail-empty" />

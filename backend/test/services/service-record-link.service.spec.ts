@@ -237,6 +237,43 @@ describe("ServiceRecordLinkService", () => {
         expect(tokenService.prepareLink).not.toHaveBeenCalled();
     });
 
+    it("resetLink issues a fresh active URL without enqueueing an SMS", async () => {
+        const prisma = createPrisma();
+        const tokenService = createTokenService();
+        const jobRepository = createJobRepository();
+        const logRepository = createLogRepository();
+        const service = new ServiceRecordLinkService(
+            prisma as unknown as PrismaService,
+            tokenService as never,
+            createConfigService() as unknown as ConfigService,
+            jobRepository as unknown as IMessageTriggerJobRepository,
+            logRepository as unknown as IMessageLogRepository,
+        );
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+
+        await expect(service.resetLink(10)).resolves.toEqual({
+            serviceRecordUrl: "https://mobile.test/service-record/efl_token",
+            expiresAt: expect.any(Date),
+        });
+
+        expect(tokenService.issueLink).toHaveBeenCalledWith(expect.objectContaining({
+            branchId: "branch-1",
+            scheduleId: 10,
+            employeeId: 30,
+            expectedPhone: "010-1111-2222",
+        }));
+        expect(tokenService.reuseActiveLink).not.toHaveBeenCalled();
+        expect(tokenService.prepareLink).not.toHaveBeenCalled();
+        expect(tokenService.activatePreparedLink).not.toHaveBeenCalled();
+        expect(prisma.message_trigger_rule.upsert).not.toHaveBeenCalled();
+        expect(jobRepository.findPendingByRuleIdsAndEmployeeScheduleId).toHaveBeenCalledWith(
+            [SERVICE_RECORD_LINK_RULE_ID],
+            10,
+        );
+        expect(logRepository.findRetryableServiceRecordSmsByScheduleId).toHaveBeenCalledWith(10);
+        expect(jobRepository.upsertPending).not.toHaveBeenCalled();
+    });
+
     it("sendNow uses a manual phone override for both link verification and SMS delivery", async () => {
         const prisma = createPrisma();
         const tokenService = createTokenService();

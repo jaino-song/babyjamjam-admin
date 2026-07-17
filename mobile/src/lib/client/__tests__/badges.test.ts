@@ -41,4 +41,26 @@ describe("getMobileClientBadges", () => {
   it("does not synthesize dashboard-only action labels", () => {
     expect(getMobileClientBadges(BASE_CLIENT).map((badge) => badge.label)).not.toContain("발송 대기");
   });
+
+  it("replaces the service status with the schedule-change badge while a request is pending", () => {
+    const badges = getMobileClientBadges({
+      ...BASE_CLIENT,
+      pendingScheduleChange: {
+        id: "request-1",
+        sessionIndex: 3,
+        fromDate: "2026-07-20",
+        toDate: "2026-07-21",
+        oldEndDate: "2026-07-31",
+        newEndDate: "2026-08-01",
+      },
+    });
+
+    expect(badges.find((badge) => badge.key === "service_status")).toEqual(
+      expect.objectContaining({
+        status: "scheduleChange",
+        label: "일정 변경",
+        tone: "burgundy",
+      }),
+    );
+  });
 });

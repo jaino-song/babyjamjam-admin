@@ -85,21 +85,21 @@ export function ApprovalTwoButtonModal({
         <DialogHeader
           data-component={headerDataComponent ?? `${dataComponent}-header`}
           className={cn(
-            "justify-center pb-0 text-center sm:text-center",
+            "gap-1 justify-center pb-0 text-left sm:text-left",
             size === "compact" && "flex-1",
           )}
         >
           <DialogTitle
             data-component={titleDataComponent ?? `${dataComponent}-title`}
             aria-label={titleAriaLabel}
-            className="text-[calc(14px*var(--v3-ui-scale,1))] leading-5"
+            className="text-left text-[calc(16px*var(--v3-ui-scale,1))] leading-[calc(24px*var(--v3-ui-scale,1))]"
           >
             {title}
           </DialogTitle>
           <DialogDescription
             data-component={descriptionDataComponent ?? `${dataComponent}-description`}
             className={cn(
-              "mt-[calc(6px*var(--v3-ui-scale,1))] text-[calc(12px*var(--v3-ui-scale,1))] leading-[calc(20px*var(--v3-ui-scale,1))] text-v3-text-muted",
+              "mt-0 text-[calc(14px*var(--v3-ui-scale,1))] leading-[calc(20px*var(--v3-ui-scale,1))] text-v3-text-muted",
               isDescriptionVisuallyHidden && "sr-only",
             )}
           >
