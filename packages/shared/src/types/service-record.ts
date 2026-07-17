@@ -107,6 +107,33 @@ export interface PrepareServiceRecordLinkResponse {
     expiresAt: string;
 }
 
+export interface ResetServiceRecordLinkResponse {
+    serviceRecordUrl: string;
+    expiresAt: string;
+}
+
+export interface ServiceScheduleChangePreviewResponse {
+    sessionIndex: number;
+    fromDate: string;
+    minimumDate: string;
+}
+
+export interface ApplyServiceScheduleChangeRequest {
+    toDate: string;
+}
+
+export interface ApplyServiceScheduleChangeResponse {
+    id: string;
+    scheduleId: number;
+    clientId: number;
+    sessionIndex: number;
+    fromDate: string;
+    toDate: string;
+    oldEndDate: string;
+    newEndDate: string;
+    status: "approved";
+}
+
 export interface PrepareServiceRecordLinkRequest {
     recipientPhone?: string;
 }

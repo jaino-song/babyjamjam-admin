@@ -144,6 +144,45 @@ export class ServiceRecordLinkService {
         };
     }
 
+    /** Replace the active assignment link without scheduling or dispatching an SMS. */
+    async resetLink(scheduleId: number): Promise<{
+        serviceRecordUrl: string;
+        expiresAt: Date;
+    }> {
+        const schedule = await this.prisma.employee_schedule.findUnique({
+            where: { id: scheduleId },
+            include: { primaryEmployee: true },
+        });
+        if (!schedule || !schedule.branchId || schedule.replaced) {
+            throw new NotFoundException("Assignment not found");
+        }
+
+        const employee = schedule.primaryEmployee;
+        const resolvedRecipientPhone = this.resolveRecipientPhone(employee.phone);
+        if (!resolvedRecipientPhone) {
+            throw new BadRequestException("제공인력 전화번호가 없습니다");
+        }
+
+        await this.cancelPendingServiceRecordJobs(scheduleId, "Service record link reset without resend");
+        await this.supersedeRetryableServiceRecordSmsLogs(scheduleId, "Service record link reset without resend");
+
+        const serviceRecordCase = await this.lifecycleService?.ensureForClient(schedule.clientId);
+        const expiresAt = this.resolveExpiry(serviceRecordCase?.endDate ?? schedule.endDate, true);
+        const { linkToken } = await this.tokenService.issueLink({
+            branchId: schedule.branchId,
+            scheduleId,
+            employeeId: employee.id,
+            ...(serviceRecordCase ? { serviceRecordCaseId: serviceRecordCase.id } : {}),
+            expectedPhone: resolvedRecipientPhone,
+            expiresAt,
+        });
+
+        return {
+            serviceRecordUrl: this.buildServiceRecordUrl(linkToken),
+            expiresAt,
+        };
+    }
+
     /** Revoke an assignment's feedback access (replacement / termination). */
     async revoke(scheduleId: number): Promise<void> {
         try {

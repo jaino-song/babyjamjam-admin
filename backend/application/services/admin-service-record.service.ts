@@ -16,6 +16,7 @@ import {
     AdminServiceRecordLinkStatus,
     AdminServiceRecordOverviewDto,
     AdminServiceRecordPreparedLinkDto,
+    AdminServiceRecordResetLinkDto,
     AdminServiceRecordSessionDto,
     AdminServiceRecordSignatureDocDto,
     AdminServiceRecordTokenDto,
@@ -174,6 +175,11 @@ export class AdminServiceRecordService {
     ): Promise<AdminServiceRecordPreparedLinkDto> {
         await this.assertScheduleBelongsToBranch(branchId, scheduleId);
         return this.serviceRecordLinkService.prepareLink(scheduleId, recipientPhone);
+    }
+
+    async resetLink(branchId: string, scheduleId: number): Promise<AdminServiceRecordResetLinkDto> {
+        await this.assertScheduleBelongsToBranch(branchId, scheduleId);
+        return this.serviceRecordLinkService.resetLink(scheduleId);
     }
 
     async sendLinkNow(

@@ -11,6 +11,7 @@ interface ApprovalTwoButtonModalProps {
   onOpenChange: (open: boolean) => void;
   title: ReactNode;
   description: ReactNode;
+  children?: ReactNode;
   cancelLabel?: ReactNode;
   approvalLabel: ReactNode;
   pendingLabel?: ReactNode;
@@ -19,6 +20,7 @@ interface ApprovalTwoButtonModalProps {
   approvalDisabled?: boolean;
   approvalVariant?: "positive" | "destructive";
   isDescriptionVisuallyHidden?: boolean;
+  size?: "compact" | "detail";
   dataComponent?: string;
 }
 
@@ -27,6 +29,7 @@ export function ApprovalTwoButtonModal({
   onOpenChange,
   title,
   description,
+  children,
   cancelLabel = "취소",
   approvalLabel,
   pendingLabel,
@@ -35,6 +38,7 @@ export function ApprovalTwoButtonModal({
   approvalDisabled = false,
   approvalVariant = "positive",
   isDescriptionVisuallyHidden = true,
+  size = "compact",
   dataComponent = "approval-two-button-modal",
 }: ApprovalTwoButtonModalProps) {
   const handleOpenChange = (nextOpen: boolean) => {
@@ -47,26 +51,36 @@ export function ApprovalTwoButtonModal({
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
           data-component={`${dataComponent}-overlay`}
-          className="fixed inset-0 z-[250] bg-black/50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0"
+          className="fixed inset-0 z-[250] bg-black/45 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0"
         />
         <DialogPrimitive.Content
           data-component={dataComponent}
-          className="fixed left-1/2 top-1/2 z-[251] flex aspect-[5/3] w-[calc(100vw-2.5rem)] max-w-[300px] -translate-x-1/2 -translate-y-1/2 flex-col rounded-[28px] border-0 bg-v3-dim-white p-4 shadow-[0_20px_60px_hsla(214,50%,20%,0.15)] outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0 data-[state=open]:zoom-in-95 data-[state=closed]:zoom-out-95"
+          onOpenAutoFocus={(event) => {
+            if (size === "detail") event.preventDefault();
+          }}
+          className={cn(
+            "fixed left-1/2 top-1/2 z-[251] flex w-[calc(min(100vw,390px)-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col rounded-[24px] border-0 bg-v3-dim-white p-5 shadow-[0_20px_60px_hsla(214,50%,20%,0.18)] outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0 data-[state=open]:zoom-in-95 data-[state=closed]:zoom-out-95",
+            size === "compact" && "min-h-[176px] max-w-[358px]",
+            size === "detail" && "max-h-[calc(100dvh-2rem)] max-w-[358px]",
+          )}
         >
           <div
             data-component={`${dataComponent}-header`}
-            className="flex flex-1 flex-col items-center justify-center gap-2 text-center"
+            className={cn(
+              "flex flex-col justify-center gap-1 text-left",
+              size === "compact" && "flex-1",
+            )}
           >
             <DialogPrimitive.Title
               data-component={`${dataComponent}-title`}
-              className="text-[0.875rem] font-bold leading-5 text-v3-dark"
+              className="text-left text-[calc(16px*var(--v3-ui-scale,1))] font-bold leading-[calc(24px*var(--v3-ui-scale,1))] text-v3-dark"
             >
               {title}
             </DialogPrimitive.Title>
             <DialogPrimitive.Description
               data-component={`${dataComponent}-description`}
               className={cn(
-                "text-[0.75rem] leading-5 text-v3-text-muted",
+                "mt-0 text-[calc(14px*var(--v3-ui-scale,1))] leading-[calc(20px*var(--v3-ui-scale,1))] text-v3-text-muted",
                 isDescriptionVisuallyHidden && "sr-only",
               )}
             >
@@ -74,12 +88,21 @@ export function ApprovalTwoButtonModal({
             </DialogPrimitive.Description>
           </div>
 
-          <div data-component={`${dataComponent}-footer`} className="flex gap-2">
+          {children ? (
+            <div
+              data-component={`${dataComponent}-body`}
+              className={cn("min-h-0", size === "detail" && "overflow-y-auto")}
+            >
+              {children}
+            </div>
+          ) : null}
+
+          <div data-component={`${dataComponent}-footer`} className="mt-4 flex gap-2">
             <Button
               type="button"
               variant="v3-outline"
               size="sm"
-              className="w-1/2"
+              className="h-11 w-1/2 text-sm"
               data-component={`${dataComponent}-cancel`}
               disabled={isPending}
               onClick={() => handleOpenChange(false)}
@@ -90,7 +113,7 @@ export function ApprovalTwoButtonModal({
               type="button"
               variant={approvalVariant === "destructive" ? "destructive" : "v3"}
               size="sm"
-              className="w-1/2 rounded-full"
+              className="h-11 w-1/2 rounded-full text-sm"
               data-component={`${dataComponent}-approve`}
               disabled={isPending || approvalDisabled}
               aria-busy={isPending || undefined}

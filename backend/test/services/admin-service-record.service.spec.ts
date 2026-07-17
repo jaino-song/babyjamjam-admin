@@ -39,6 +39,10 @@ describe("AdminServiceRecordService", () => {
             scheduledFor: new Date("2026-07-03T01:00:00.000Z"),
             jobId: "job-manual",
         }),
+        resetLink: jest.fn().mockResolvedValue({
+            serviceRecordUrl: "https://mobile.test/service-record/efl_reset",
+            expiresAt: new Date("2026-07-13T01:00:00.000Z"),
+        }),
     });
     const createTriggerService = () => ({
         dispatchPendingJobNow: jest.fn().mockResolvedValue({
@@ -320,5 +324,26 @@ describe("AdminServiceRecordService", () => {
 
         expect(linkService.sendNow).toHaveBeenCalledWith(10, "efl_prepared", "01066211878");
         expect(triggerService.dispatchPendingJobNow).toHaveBeenCalledWith("job-manual");
+    });
+
+    it("resets a link after tenant validation without dispatching a message", async () => {
+        const prisma = createPrisma();
+        const linkService = createLinkService();
+        const triggerService = createTriggerService();
+        const service = new AdminServiceRecordService(
+            prisma as unknown as PrismaService,
+            linkService as unknown as ServiceRecordLinkService,
+            triggerService as unknown as MessageTriggerService,
+        );
+        prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10 });
+
+        await expect(service.resetLink("branch-1", 10)).resolves.toEqual({
+            serviceRecordUrl: "https://mobile.test/service-record/efl_reset",
+            expiresAt: new Date("2026-07-13T01:00:00.000Z"),
+        });
+
+        expect(linkService.resetLink).toHaveBeenCalledWith(10);
+        expect(linkService.sendNow).not.toHaveBeenCalled();
+        expect(triggerService.dispatchPendingJobNow).not.toHaveBeenCalled();
     });
 });

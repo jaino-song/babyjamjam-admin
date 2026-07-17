@@ -27,6 +27,7 @@ interface TemplateMessageFormFrameProps {
   dataComponent: string;
   className?: string;
   fields: ReactNode;
+  fieldsLayout?: "grid" | "stack";
   messageCard: ReactNode;
   requiresRecipientName?: boolean;
   deliveryMode?: TemplateMessageDeliveryMode;
@@ -38,6 +39,7 @@ export function TemplateMessageFormFrame({
   dataComponent,
   className,
   fields,
+  fieldsLayout = "grid",
   messageCard,
   requiresRecipientName = false,
   deliveryMode = "sms",
@@ -56,7 +58,7 @@ export function TemplateMessageFormFrame({
 
   return (
     <div data-component={dataComponent} className={cn("flex flex-col gap-4 animate-fade-in", className)}>
-      {fields ? <TemplateFieldGrid>{fields}</TemplateFieldGrid> : null}
+      {fields ? <TemplateFieldGrid layout={fieldsLayout}>{fields}</TemplateFieldGrid> : null}
       {messageCard}
     </div>
   );

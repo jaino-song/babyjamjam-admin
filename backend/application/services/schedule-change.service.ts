@@ -220,6 +220,206 @@ export class ScheduleChangeService {
         }
     }
 
+    async previewAdminChange(
+        branchId: string,
+        scheduleId: number,
+    ): Promise<{ sessionIndex: number; fromDate: string; minimumDate: string }> {
+        const schedule = await this.prisma.employee_schedule.findFirst({
+            where: { id: scheduleId, branchId },
+            include: { client: true },
+        });
+        if (!schedule) throw new NotFoundException("Assignment not found");
+
+        const record = await this.prisma.service_record_case.findFirst({
+            where: { branchId, clientId: schedule.clientId },
+        });
+        if (!record) throw new NotFoundException("Service record not found");
+
+        const days = await this.prisma.service_record_day.findMany({
+            where: { serviceRecordCaseId: record.id },
+            orderBy: { caseSessionIndex: "asc" },
+        });
+        const target = this.computeTarget(schedule, schedule.client, days.map((day) => ({
+            sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
+            serviceDate: day.serviceDate,
+            locked: day.locked,
+        })));
+
+        return {
+            sessionIndex: target.sessionIndex,
+            fromDate: target.fromDate,
+            minimumDate: target.fromDate,
+        };
+    }
+
+    async applyAdminChange(
+        scheduleId: number,
+        selectedDate: string,
+        tenant: { branchId?: string; userId?: string },
+    ) {
+        const branchId = tenant.branchId ?? "";
+        const selectedDateValue = toDbDate(selectedDate);
+        if (Number.isNaN(selectedDateValue.getTime()) || toIso(selectedDateValue) !== selectedDate) {
+            throw new BadRequestException({ code: "INVALID_SCHEDULE_DATE" });
+        }
+
+        let scheduleIdForSync: number | null = null;
+        let clientIdForSync: number | null = null;
+
+        try {
+            const result = await this.prisma.$transaction(async (tx) => {
+                const schedule = await tx.employee_schedule.findFirst({
+                    where: { id: scheduleId, branchId },
+                    include: { client: true, primaryEmployee: true },
+                });
+                if (!schedule) throw new NotFoundException("Assignment not found");
+                if (!schedule.endDate) {
+                    throw new BadRequestException("Assignment has no end date");
+                }
+
+                const record = await tx.service_record_case.findFirst({
+                    where: { branchId, clientId: schedule.clientId },
+                });
+                if (!record) throw new NotFoundException("Service record not found");
+
+                const pendingRequest = await tx.schedule_change_request.findFirst({
+                    where: { scheduleId, status: "pending" },
+                });
+
+                const days = await tx.service_record_day.findMany({
+                    where: { serviceRecordCaseId: record.id },
+                    orderBy: { caseSessionIndex: "asc" },
+                });
+                const target = this.computeTarget(schedule, schedule.client, days.map((day) => ({
+                    sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
+                    serviceDate: day.serviceDate,
+                    locked: day.locked,
+                })));
+                if (selectedDate <= target.fromDate) {
+                    throw new ConflictException({ code: "SCHEDULE_DATE_NOT_POSTPONED" });
+                }
+
+                const totalSessions = schedule.client.duration;
+                if (!totalSessions || totalSessions <= 0) {
+                    throw new BadRequestException("Client has no session duration");
+                }
+                const newEndDateIso = addBusinessDaysKr(
+                    selectedDate,
+                    totalSessions - target.sessionIndex,
+                );
+                const newEndDate = toDbDate(newEndDateIso);
+
+                await tx.service_record_day.upsert({
+                    where: {
+                        serviceRecordCaseId_caseSessionIndex: {
+                            serviceRecordCaseId: record.id,
+                            caseSessionIndex: target.sessionIndex,
+                        },
+                    },
+                    update: { serviceDate: selectedDateValue },
+                    create: {
+                        branchId,
+                        scheduleId,
+                        serviceRecordCaseId: record.id,
+                        caseSessionIndex: target.sessionIndex,
+                        employeeId: schedule.primaryEmployeeId,
+                        employeeNameSnapshot: schedule.primaryEmployee.name,
+                        formVersion: record.formVersion,
+                        sessionIndex: target.sessionIndex,
+                        serviceDate: selectedDateValue,
+                    },
+                });
+
+                const unlockedRows = await tx.service_record_day.findMany({
+                    where: {
+                        serviceRecordCaseId: record.id,
+                        caseSessionIndex: { gt: target.sessionIndex },
+                        locked: false,
+                    },
+                    orderBy: { caseSessionIndex: "asc" },
+                });
+                for (const row of unlockedRows) {
+                    await tx.service_record_day.update({
+                        where: { id: row.id },
+                        data: {
+                            serviceDate: toDbDate(addBusinessDaysKr(
+                                selectedDate,
+                                (row.caseSessionIndex ?? row.sessionIndex) - target.sessionIndex,
+                            )),
+                        },
+                    });
+                }
+
+                await tx.employee_schedule.update({
+                    where: { id: scheduleId },
+                    data: { endDate: newEndDate },
+                });
+                await tx.client.update({
+                    where: { id: schedule.clientId },
+                    data: { endDate: newEndDate },
+                });
+
+                const syncedRecord = await this.lifecycleService?.ensureForClient(
+                    schedule.clientId,
+                    tx,
+                );
+                await this.tokenService.extendExpiryForCase(
+                    syncedRecord?.id ?? record.id,
+                    getServiceRecordTokenExpiresAt(newEndDate),
+                    tx,
+                );
+
+                const decidedAt = new Date();
+                if (pendingRequest) {
+                    await tx.schedule_change_request.update({
+                        where: { id: pendingRequest.id },
+                        data: {
+                            status: "stale",
+                            decidedBy: tenant.userId ?? null,
+                            decidedAt,
+                        },
+                    });
+                }
+
+                return tx.schedule_change_request.create({
+                    data: {
+                        branchId,
+                        scheduleId,
+                        clientId: schedule.clientId,
+                        sessionIndex: target.sessionIndex,
+                        fromDate: toDbDate(target.fromDate),
+                        toDate: selectedDateValue,
+                        oldEndDate: schedule.endDate,
+                        newEndDate,
+                        status: "approved",
+                        decidedBy: tenant.userId ?? null,
+                        decidedAt,
+                    },
+                });
+            });
+
+            scheduleIdForSync = result.scheduleId;
+            clientIdForSync = result.clientId;
+            return this.serializeRequest(result);
+        } finally {
+            if (scheduleIdForSync && branchId) {
+                await this.triggerService
+                    ?.syncEmployeeAssignmentRulesForSchedule(branchId, scheduleIdForSync, true)
+                    ?.catch(() => undefined);
+            }
+            if (clientIdForSync && branchId) {
+                await this.triggerService
+                    ?.syncClientRulesForClient(branchId, clientIdForSync, false)
+                    ?.catch((error) => {
+                        this.logger.error(
+                            `Failed to resync client trigger rules for client ${clientIdForSync}`,
+                            error instanceof Error ? error.stack : String(error),
+                        );
+                    });
+            }
+        }
+    }
+
     async approve(requestId: string, tenant: { branchId?: string; userId?: string }) {
         let scheduleIdForSync: number | null = null;
         let branchIdForSync: string | null = null;

@@ -21,13 +21,30 @@ describe("ApprovalTwoButtonModal", () => {
     );
 
     const dialog = screen.getByRole("dialog");
+    const header = dialog.querySelector('[data-slot="dialog-header"]');
+    const title = screen.getByText("직원을 삭제하시겠습니까?");
     const description = screen.getByText("삭제한 직원 정보는 복구할 수 없습니다.");
     const cancelButton = screen.getByRole("button", { name: "취소" });
     const approvalButton = screen.getByRole("button", { name: "삭제" });
 
     expect(dialog).toHaveAttribute("data-component", "employees-delete-approval");
     expect(dialog).toHaveClass("aspect-[5/3]", "sm:max-w-[300px]");
+    expect(header).toHaveClass("gap-1");
+    expect(header).not.toHaveClass("gap-2");
+    expect(header).toHaveClass("text-left", "sm:text-left");
+    expect(header).not.toHaveClass("text-center", "sm:text-center");
+    expect(title).toHaveClass(
+      "text-left",
+      "text-[calc(16px*var(--v3-ui-scale,1))]",
+      "leading-[calc(24px*var(--v3-ui-scale,1))]",
+    );
     expect(description).toHaveClass("sr-only");
+    expect(description).toHaveClass(
+      "text-[calc(14px*var(--v3-ui-scale,1))]",
+      "leading-[calc(20px*var(--v3-ui-scale,1))]",
+    );
+    expect(description).toHaveClass("mt-0");
+    expect(description).not.toHaveClass("mt-[calc(6px*var(--glint-ui-scale,1))]");
     expect(cancelButton).toHaveClass("w-1/2");
     expect(cancelButton).toHaveAttribute("data-variant", "neutral");
     expect(approvalButton).toHaveClass("w-1/2");

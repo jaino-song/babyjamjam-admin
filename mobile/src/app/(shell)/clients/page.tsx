@@ -267,7 +267,7 @@ export default function ClientsPage() {
     const requestId = selectClientRequestRef.current + 1;
     selectClientRequestRef.current = requestId;
     setSelectedClient(client);
-    setDetailSheetTab("basic");
+    setDetailSheetTab(client.pendingScheduleChange ? "scheduleChange" : "basic");
 
     try {
       const freshClient = await queryClient.fetchQuery({
@@ -278,6 +278,7 @@ export default function ClientsPage() {
       if (selectClientRequestRef.current !== requestId) return;
 
       setSelectedClient(freshClient);
+      setDetailSheetTab(freshClient.pendingScheduleChange ? "scheduleChange" : "basic");
 
       if (!freshClient.eDocId || freshClient.documentStatus === "completed") return;
 
@@ -299,6 +300,13 @@ export default function ClientsPage() {
     } catch {
       // Keep the already-open list row detail. Row selection should not be blocked by refresh failures.
     }
+  };
+
+  const handleClientUpdated = (updatedClient: Client) => {
+    setSelectedClient(updatedClient);
+    queryClient.setQueryData(clientQueryKeys.detail(updatedClient.id), updatedClient);
+    void queryClient.invalidateQueries({ queryKey: clientQueryKeys.lists() });
+    void queryClient.invalidateQueries({ queryKey: clientQueryKeys.detail(updatedClient.id) });
   };
 
   const handleCloseDetailSheet = () => {
@@ -595,6 +603,7 @@ export default function ClientsPage() {
               onIssueContract={handleIssueContract}
               onEdit={handleEdit}
               onDelete={handleDeleteRequest}
+              onClientUpdated={handleClientUpdated}
             />
           ) : (
             <div className="detail-body" data-component="mobile-clients-detail-empty" />

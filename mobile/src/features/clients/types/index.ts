@@ -24,6 +24,15 @@ export interface ClientBadge {
     priority?: number;
 }
 
+export interface PendingScheduleChange {
+    id: string;
+    sessionIndex: number;
+    fromDate: string;
+    toDate: string;
+    oldEndDate: string;
+    newEndDate: string;
+}
+
 // Client entity types
 export interface Client {
     id: number;
@@ -52,6 +61,7 @@ export interface Client {
     hasSigned: boolean;
     documentStatus: DocumentStatus;    // eformsign document status: created/opened/completed
     badges?: ClientBadge[];
+    pendingScheduleChange?: PendingScheduleChange | null;
 }
 
 // Create client DTO - Frontend sends employeeId, backend converts to scheduleId

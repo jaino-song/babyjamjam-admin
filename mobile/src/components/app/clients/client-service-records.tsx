@@ -22,7 +22,7 @@ import {
 } from "@babyjamjam/shared/utils/date";
 
 import { InfoCard, InfoRow } from "@/components/app/mobile-redesign/detail-sheet";
-import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
+import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSendServiceRecordLink } from "@/hooks/useServiceRecords";
 import { toast } from "@/hooks/use-toast";
@@ -107,11 +107,15 @@ export function ClientServiceRecords({
         );
     }
 
-    if (selectedAssignment && selectedSession) {
+    if (selectedAssignment && selectedEntry) {
+        const selectedSlot = buildSessionSlots(selectedAssignment)
+            .find((slot) => slot.sessionIndex === selectedEntry.sessionIndex) ?? null;
         return (
             <div data-component="mobile-clients-service-records">
                 <ServiceRecordSessionDetail
-                    record={selectedSession}
+                    record={selectedSession ?? null}
+                    sessionIndex={selectedEntry.sessionIndex}
+                    expectedDate={selectedSlot?.expectedDate ?? null}
                     onBack={() => setSelectedEntry(null)}
                 />
             </div>
@@ -135,12 +139,22 @@ export function ClientServiceRecords({
                     <ServiceSessionsCard
                         assignment={assignment}
                         delay={assignmentIndex * 180 + 120}
-                        onSelectSession={(sessionIndex) =>
-                            setSelectedEntry({
+                        onSelectSession={(sessionIndex, trigger) => {
+                            const selectSession = () => setSelectedEntry({
                                 key: detailKey,
                                 assignmentScheduleId: assignment.scheduleId,
                                 sessionIndex,
-                            })}
+                            });
+                            const scrollContainer = trigger.closest(".detail-body");
+
+                            if (scrollContainer instanceof HTMLElement && scrollContainer.scrollTop > 0) {
+                                scrollContainer.scrollTop = 0;
+                                window.requestAnimationFrame(selectSession);
+                                return;
+                            }
+
+                            selectSession();
+                        }}
                     />
                 </div>
             ))}
@@ -260,20 +274,21 @@ function LinkCard({
                     ? <>메시지 재전송 시 <b>기존 링크가 그대로 전송</b>됩니다.</>
                     : "서비스 시작일 오후 3시에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요."}
             </div>
-            <ConfirmActionModal
+            <ApprovalTwoButtonModal
                 open={resendModalOpen}
-                title="메시지를 재전송할까요?"
-                description="기존 링크가 그대로 포함된 메시지를 다시 전송합니다."
-                cancelLabel="취소"
-                confirmLabel="메시지 재전송"
-                loading={sendLinkMutation.isPending}
                 onOpenChange={(open) => {
                     if (!sendLinkMutation.isPending) {
                         setResendModalOpen(open);
                     }
                 }}
-                onCancel={() => setResendModalOpen(false)}
-                onConfirm={handleConfirmResend}
+                dataComponent="mobile-clients-service-records-resend-approval"
+                title="제공기록지 메시지를 재전송하시겠습니까?"
+                description="기존 링크가 그대로 포함된 메시지를 다시 전송합니다."
+                isDescriptionVisuallyHidden={false}
+                approvalLabel="메시지 재전송"
+                pendingLabel="메시지 재전송 중..."
+                isPending={sendLinkMutation.isPending}
+                onApprove={handleConfirmResend}
             />
         </InfoCard>
     );
@@ -321,7 +336,7 @@ function ServiceSessionsCard({
 }: {
     assignment: ServiceRecordAssignment;
     delay: number;
-    onSelectSession: (sessionIndex: number) => void;
+    onSelectSession: (sessionIndex: number, trigger: HTMLElement) => void;
 }) {
     const slots = buildSessionSlots(assignment);
     const lockedCount = assignment.sessions.filter((session) => session.locked).length;
@@ -348,7 +363,7 @@ function ServiceSessionsCard({
                 <SessionRow
                     key={slot.sessionIndex}
                     slot={slot}
-                    onSelect={() => onSelectSession(slot.sessionIndex)}
+                    onSelect={(trigger) => onSelectSession(slot.sessionIndex, trigger)}
                 />
             ))}
         </div>
@@ -360,7 +375,7 @@ function SessionRow({
     onSelect,
 }: {
     slot: SessionSlot;
-    onSelect: () => void;
+    onSelect: (trigger: HTMLElement) => void;
 }) {
     const record = slot.record;
     const tone: SessionTone = record ? (record.locked ? "green" : "orange") : "muted";
@@ -371,23 +386,20 @@ function SessionRow({
             ? `제출 ${formatDateTimeKo(record.submittedAt ?? record.updatedAt)}`
             : `마지막 저장 ${formatDateTimeKo(record.updatedAt)} · 작성 중`
         : `예정일 ${formatDateKo(slot.expectedDate)}`;
-    const interactive = Boolean(record);
-
     const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-        if (!interactive) return;
         if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
-            onSelect();
+            onSelect(event.currentTarget);
         }
     };
 
     return (
         <div
-            className={cn("doc-row", interactive && "doc-row-tappable")}
-            role={interactive ? "button" : undefined}
-            tabIndex={interactive ? 0 : undefined}
+            className="doc-row doc-row-tappable"
+            role="button"
+            tabIndex={0}
             data-component="mobile-clients-service-records-session-row"
-            onClick={interactive ? onSelect : undefined}
+            onClick={(event) => onSelect(event.currentTarget)}
             onKeyDown={handleKeyDown}
         >
             <div className={`doc-icon doc-icon-${tone}`}>{slot.sessionIndex}</div>
@@ -404,15 +416,19 @@ function SessionRow({
 
 function ServiceRecordSessionDetail({
     record,
+    sessionIndex,
+    expectedDate,
     onBack,
 }: {
-    record: ServiceRecordSession;
+    record: ServiceRecordSession | null;
+    sessionIndex: number;
+    expectedDate: string | null;
     onBack: () => void;
 }) {
-    const answers = getAnswerObject(record.answers);
+    const answers = getAnswerObject(record?.answers ?? {});
     const unknownEntries = Object.entries(answers)
         .filter(([key, value]) => !SERVICE_RECORD_LAYOUT_ANSWER_KEYS.has(key) && hasDisplayValue(value));
-    const statusTone = record.locked ? "green" : "orange";
+    const statusTone: SessionTone = record ? (record.locked ? "green" : "orange") : "muted";
 
     return (
         <div className="message-detail pop-up" data-component="mobile-clients-service-records-session-detail">
@@ -426,17 +442,19 @@ function ServiceRecordSessionDetail({
             </button>
 
             <div className="message-detail-head">
-                <div className={`doc-icon doc-icon-${statusTone}`}>{record.sessionIndex}</div>
+                <div className={`doc-icon doc-icon-${statusTone}`}>{sessionIndex}</div>
                 <div className="message-detail-head-text">
-                    <div className="message-detail-title">{record.sessionIndex}회차 제공기록</div>
+                    <div className="message-detail-title">{sessionIndex}회차 제공기록</div>
                     <div className="message-detail-subtitle">
-                        제공일 {formatDateKo(record.serviceDate)} · {record.locked
-                            ? `제출 ${formatTimeKo(record.submittedAt ?? record.updatedAt)}`
-                            : `마지막 저장 ${formatTimeKo(record.updatedAt)}`}
+                        {record
+                            ? <>제공일 {formatDateKo(record.serviceDate)} · {record.locked
+                                ? `제출 ${formatTimeKo(record.submittedAt ?? record.updatedAt)}`
+                                : `마지막 저장 ${formatTimeKo(record.updatedAt)}`}</>
+                            : <>예정일 {formatDateKo(expectedDate)}</>}
                     </div>
                 </div>
-                <span className={`badge-mini ${statusTone}`}>
-                    {record.locked ? "제출완료" : "임시저장"}
+                <span className="message-detail-subtitle">
+                    {record ? (record.locked ? "제출완료" : "임시저장") : "미작성"}
                 </span>
             </div>
 
@@ -475,16 +493,16 @@ function SessionFieldRow({
 }: {
     field: ServiceRecordFieldDescriptor;
     answers: Record<string, unknown>;
-    record: ServiceRecordSession;
+    record: ServiceRecordSession | null;
 }) {
     const display = formatFieldValue(field, answers, record);
 
-    if (field.kind === "text") {
+    if (field.kind === "text" && display.value) {
         return (
             <div className="info-row service-record-text-row">
                 <span className="info-row-label">{field.label}</span>
                 <span className={cn("message-detail-body", !display.value && "info-row-value-muted")}>
-                    {display.value || "미입력"}
+                    {display.value || "-"}
                 </span>
             </div>
         );
@@ -493,8 +511,7 @@ function SessionFieldRow({
     return (
         <InfoRow
             label={field.label}
-            value={display.value || "미입력"}
-            tone={display.tone}
+            value={display.value || "-"}
         />
     );
 }
@@ -502,20 +519,18 @@ function SessionFieldRow({
 function formatFieldValue(
     field: ServiceRecordFieldDescriptor,
     answers: Record<string, unknown>,
-    record: ServiceRecordSession,
-): { value: ReactNode; tone?: "green" | "burgundy" | "muted" } {
+    record: ServiceRecordSession | null,
+): { value: ReactNode } {
     if (field.source === "session") {
-        if (field.key === "etcService") return { value: record.etcService ?? "" };
-        if (field.key === "notes") return { value: record.notes ?? "" };
+        if (field.key === "etcService") return { value: record?.etcService ?? "" };
+        if (field.key === "notes") return { value: record?.notes ?? "" };
         if (field.key === "paymentConfirmed") {
-            return record.paymentConfirmed
-                ? { value: "✓ 완료", tone: "green" }
-                : { value: "미확인", tone: "muted" };
+            if (!record) return { value: "" };
+            return record.paymentConfirmed ? { value: "완료" } : { value: "미확인" };
         }
         if (field.key === "hasMomApproval") {
-            return record.hasMomApproval
-                ? { value: "✓ 서명함", tone: "green" }
-                : { value: "서명 전", tone: "muted" };
+            if (!record) return { value: "" };
+            return record.hasMomApproval ? { value: "서명함" } : { value: "서명 전" };
         }
     }
 
@@ -523,7 +538,7 @@ function formatFieldValue(
         const answerValue = answers[field.key];
         const values = Array.isArray(answerValue) ? answerValue.filter(hasDisplayValue).map(String) : [];
         const value = values.join(", ");
-        return { value, tone: answerTone(value, field) };
+        return { value };
     }
 
     if (field.kind === "radio") {
@@ -532,7 +547,7 @@ function formatFieldValue(
             ? String(answers.stool_color)
             : "";
         const displayValue = [value, colorValue].filter(Boolean).join(" · ");
-        return { value: displayValue, tone: answerTone(displayValue, field) };
+        return { value: displayValue };
     }
 
     if (field.kind === "counts") {
@@ -548,21 +563,6 @@ function formatFieldValue(
     }
 
     return { value: "" };
-}
-
-function answerTone(
-    value: string,
-    field: ServiceRecordFieldDescriptor,
-): "burgundy" | "muted" | undefined {
-    if (!value) return "muted";
-    if (value === "이상없음") return "muted";
-    if (field.normalValues && !field.normalValues.some((normalValue) => value.includes(normalValue))) {
-        return "burgundy";
-    }
-    if (["열상", "울혈", "통증", "이상변"].some((abnormalValue) => value.includes(abnormalValue))) {
-        return "burgundy";
-    }
-    return undefined;
 }
 
 function sortAssignmentsNewestFirst(assignments: ServiceRecordAssignment[]): ServiceRecordAssignment[] {
@@ -708,14 +708,37 @@ function SkeletonInfoRow({
 function ServiceRecordsSkeleton() {
     return (
         <div className="detail-column" data-component="mobile-clients-service-records-skeleton" aria-hidden>
-            <div className="info-card pop-up">
-                <Skeleton className={cn(SERVICE_RECORD_SKELETON_CLASS, "info-card-title h-3 w-28 rounded-md")} />
+            <div className="info-card pop-up" data-component="mobile-clients-service-records-link-skeleton">
+                <Skeleton className={cn(SERVICE_RECORD_SKELETON_CLASS, "info-card-title h-3 w-32 rounded-md")} />
                 <SkeletonInfoRow labelClassName="w-8" valueClassName="w-14" />
                 <SkeletonInfoRow labelClassName="w-14" valueClassName="w-36" />
                 <SkeletonInfoRow labelClassName="w-16" valueClassName="w-28" />
                 <SkeletonInfoRow labelClassName="w-16" valueClassName="w-10" />
                 <SkeletonInfoRow labelClassName="w-16" valueClassName="w-24" />
                 <SkeletonInfoRow labelClassName="w-16" valueClassName="w-36" />
+                <Skeleton className={cn(SERVICE_RECORD_SKELETON_CLASS, "mt-3 h-10 w-full rounded-2xl")} />
+            </div>
+            <div className="info-card pop-up" data-component="mobile-clients-service-records-header-skeleton">
+                <Skeleton className={cn(SERVICE_RECORD_SKELETON_CLASS, "info-card-title h-3 w-24 rounded-md")} />
+                {Array.from({ length: 6 }, (_, index) => (
+                    <SkeletonInfoRow key={index} labelClassName="w-16" valueClassName="w-28" />
+                ))}
+            </div>
+            <div className="info-card pop-up" data-component="mobile-clients-service-records-sessions-skeleton">
+                <div className="service-record-card-title-row">
+                    <Skeleton className={cn(SERVICE_RECORD_SKELETON_CLASS, "info-card-title h-3 w-24 rounded-md")} />
+                    <Skeleton className={cn(SERVICE_RECORD_SKELETON_CLASS, "h-3 w-20 rounded-md")} />
+                </div>
+                {Array.from({ length: 3 }, (_, index) => (
+                    <div key={index} className="doc-row">
+                        <Skeleton className={cn(SERVICE_RECORD_SKELETON_CLASS, "h-8 w-8 shrink-0 rounded-full")} />
+                        <div className="flex-1 space-y-1.5">
+                            <Skeleton className={cn(SERVICE_RECORD_SKELETON_CLASS, "h-3 w-20 rounded-md")} />
+                            <Skeleton className={cn(SERVICE_RECORD_SKELETON_CLASS, "h-3 w-32 rounded-md")} />
+                        </div>
+                        <Skeleton className={cn(SERVICE_RECORD_SKELETON_CLASS, "h-6 w-14 rounded-full")} />
+                    </div>
+                ))}
             </div>
         </div>
     );

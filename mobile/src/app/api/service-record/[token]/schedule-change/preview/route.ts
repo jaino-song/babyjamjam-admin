@@ -1,10 +1,11 @@
 import { NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import { backendJsonResponse, errorResponse, withNoStore } from "@/lib/api/route-utils";
+import { getServiceRecordAuthorization } from "@/lib/api/service-record-auth";
 
-// Guarded by the minted access token (forwarded from the page's Authorization header).
+// Guarded by the minted access token from the path-scoped HttpOnly cookie.
 export async function GET(request: NextRequest) {
-    const authorization = request.headers.get("authorization") ?? "";
+    const authorization = getServiceRecordAuthorization(request);
     try {
         const response = await serverAPIClient.get("/service-record/schedule-change/preview", {
             headers: { Authorization: authorization },
