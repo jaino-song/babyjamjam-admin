@@ -7,6 +7,7 @@ export * from "./list-other-branch-document-ids.usecase";
 
 // Local DB use cases - Write
 export * from "./create-eformsign-doc.usecase";
+export * from "./adopt-eformsign-doc.usecase";
 export * from "./update-eformsign-doc-status.usecase";
 export * from "./link-document-to-client.usecase";
 export * from "./list-client-names-by-branch.usecase";

@@ -1,0 +1,35 @@
+import { AdoptEformsignDocUsecase } from "application/usecases/eformsign-doc/adopt-eformsign-doc.usecase";
+
+describe("AdoptEformsignDocUsecase", () => {
+    it("uses document-id upsert semantics on repeated adoption", async () => {
+        const create = { execute: jest.fn().mockResolvedValue({ documentId: "doc-1" }) };
+        const usecase = new AdoptEformsignDocUsecase(
+            { execute: jest.fn().mockResolvedValue({ oauth_token: { access_token: "token" } }) } as never,
+            { execute: jest.fn().mockResolvedValue({
+                id: "doc-1",
+                document_name: "계약서 - 고객",
+                template: { id: "template-1" },
+                current_status: {
+                    status_type: "060",
+                    status_doc_detail: "서명 요청됨",
+                    step_type: "01",
+                    step_index: "1",
+                    step_name: "서명 요청",
+                    step_recipients: [{ recipient_type: "01", id: "01012345678", name: "고객" }],
+                    expired_date: 0,
+                },
+            }) } as never,
+            create as never,
+            { findByPhone: jest.fn() } as never,
+        );
+
+        await usecase.execute("branch-1", { documentId: "doc-1", clientId: 7 });
+        await usecase.execute("branch-1", { documentId: "doc-1", clientId: 7 });
+
+        expect(create.execute).toHaveBeenCalledTimes(2);
+        expect(create.execute).toHaveBeenNthCalledWith(2, "branch-1", expect.objectContaining({
+            documentId: "doc-1",
+            clientId: 7,
+        }));
+    });
+});
