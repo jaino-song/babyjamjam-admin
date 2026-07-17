@@ -108,7 +108,7 @@ model client {
   voucher_client     Boolean
   birthday           String?             @db.VarChar(6)
   breast_pump        Boolean             @default(false)
-  contract_status    String?
+  contract_status    String?             @map("service_status")
   e_doc_id           String?             @unique
   signed_doc         eformsign_doc?      @relation("client_signed_doc", fields: [e_doc_id], references: [document_id], onUpdate: NoAction)
   eformsign_docs     eformsign_doc[]     @relation("eformsign_doc_client")
