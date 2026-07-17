@@ -255,12 +255,18 @@ export const eformsignApi = {
         contractData: ContractDataDto,
         clientId: number,
         progressId?: string,
-    ): Promise<HeadlessDispatchResponse> => {
+        force?: boolean,
+    ): Promise<Omit<HeadlessDispatchResponse, "fallbackHint"> & { remoteDocumentId?: string; existingDocumentId?: string; fallbackHint?: "iframe" | "adopt" | "manual_check" | "adopt-or-manual" }> => {
         const { data } = await api.post('/eformsign-docs/dispatch-headless', {
             contractData,
             clientId,
             progressId,
+            force,
         });
+        return data;
+    },
+    adoptDocument: async (documentId: string, clientId?: number): Promise<{ id?: number; documentId: string }> => {
+        const { data } = await api.post('/eformsign-docs/adopt', { documentId, clientId });
         return data;
     },
     /**

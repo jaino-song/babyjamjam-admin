@@ -76,6 +76,8 @@ export interface CreateClientDto {
     serviceStatus?: ServiceStatus | null;
     areaId?: string | null;
     suppressGreetingSms?: boolean;
+    source?: "contract_auto_registration";
+    reuseExistingClient?: boolean;
 }
 
 // Update client DTO - Frontend sends employeeId, backend converts to scheduleId

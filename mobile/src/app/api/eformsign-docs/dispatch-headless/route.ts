@@ -19,6 +19,7 @@ const dispatchHeadlessSchema = z
         contractData: z.object({}).passthrough(),
         clientId: z.number().int().min(1),
         progressId: z.string().optional(),
+        force: z.boolean().optional(),
     })
     .passthrough();
 

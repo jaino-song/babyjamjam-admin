@@ -1,5 +1,6 @@
 "use client";
 import dayjs from "dayjs";
+import { isAxiosError } from "axios";
 import "dayjs/locale/ko";
 import { useRouter } from "next/navigation";
 import { Check, X } from "lucide-react";
@@ -25,6 +26,7 @@ import {
 } from "@/components/ui/select";
 import type { WizardStep } from "@/components/app/v3";
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
+import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import {
   Dialog,
   DialogContent,
@@ -32,7 +34,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useCallback, useState, useEffect, type ReactNode } from "react";
+import { useCallback, useState, useEffect, useRef, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEformsign } from "@/hooks/useEformsign";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
@@ -175,7 +177,7 @@ import { ContactInput } from "@/components/app/messages/forms/form-components/Co
 import { TitleTextInputMolecule } from "@/components/app/messages/forms/form-components/TitleTextInputMolecule";
 import { ContractClientSelector } from "@/components/app/contracts/ContractClientSelector";
 import { ContractEmployeeSelector } from "@/components/app/contracts/ContractEmployeeSelector";
-import { useCreateClient, useUpdateClient } from "@/hooks/useClients";
+import { useCreateClient, useDeleteClient, useUpdateClient } from "@/hooks/useClients";
 import { useEmployees } from "@/hooks/useEmployees";
 import type { Client } from "@/lib/client/types";
 import type { Employee } from "@/hooks/useEmployees";
@@ -351,8 +353,22 @@ export const ContractCreationForm = ({
   );
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreationSuccessOpen, setIsCreationSuccessOpen] = useState(false);
+  const confirmationResolverRef = useRef<((approved: boolean) => void) | null>(null);
+  const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
+  const requestConfirmation = (message: string): Promise<boolean> => {
+    setConfirmationMessage(message);
+    return new Promise((resolve) => {
+      confirmationResolverRef.current = resolve;
+    });
+  };
+  const resolveConfirmation = (approved: boolean) => {
+    confirmationResolverRef.current?.(approved);
+    confirmationResolverRef.current = null;
+    setConfirmationMessage(null);
+  };
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [allowIframeFallback, setAllowIframeFallback] = useState(false);
   const [creationProgress, setCreationProgress] = useState<HeadlessProgressState>(INITIAL_CREATION_PROGRESS);
   const [dueDateInput, setDueDateInput] = useState("");
   const [startDateInput, setStartDateInput] = useState("");
@@ -469,6 +485,7 @@ export const ContractCreationForm = ({
   const { data: voucherYears = [], isLoading: isVoucherYearsLoading } = useVoucherYears();
   const { data: employees } = useEmployees();
   const createClientMutation = useCreateClient();
+  const deleteClientMutation = useDeleteClient();
   const updateClientMutation = useUpdateClient();
   const stepLabels = t(locale, "contract-msg.pagination-steps") as unknown as string[];
 
@@ -507,6 +524,7 @@ export const ContractCreationForm = ({
     setIsDialogOpen(false);
     setIsSubmitting(false);
     setSubmitError(null);
+    setAllowIframeFallback(false);
     setCreationProgress(INITIAL_CREATION_PROGRESS);
   };
 
@@ -655,6 +673,7 @@ export const ContractCreationForm = ({
     setIsDialogOpen(false);
     setCreationProgress(INITIAL_CREATION_PROGRESS);
 
+    let autoRegisteredClientId: number | null = null;
     try {
       let finalClientId = clientId;
       const normalizedDueDate = parseYymmddInputToIso(dueDateInput) ?? "";
@@ -664,7 +683,7 @@ export const ContractCreationForm = ({
       };
 
       if (!clientId) {
-        const newClient = await createClientMutation.mutateAsync({
+        const autoRegistrationPayload = {
           name,
           phone,
           birthday: birthday || undefined,
@@ -681,10 +700,25 @@ export const ContractCreationForm = ({
           careCenter: null,
           voucherClient: hasPositivePrice(grant),
           breastPump: false,
-          serviceStatus: isFutureDate(startDate) ? "waiting" : null,
+          serviceStatus: isFutureDate(startDate) ? "waiting" as const : null,
           areaId: area || null,
-        });
+          source: "contract_auto_registration" as const,
+        };
+        let newClient;
+        let reusedExistingClient = false;
+        try {
+          newClient = await createClientMutation.mutateAsync(autoRegistrationPayload);
+        } catch (error) {
+          if (!isAxiosError<{ message?: string; clientId?: number }>(error) || error.response?.status !== 409) throw error;
+          const conflict = error.response.data;
+          if (!conflict.clientId) throw new Error(conflict.message || "고객 자동 등록에 실패했습니다.");
+          const shouldReuse = await requestConfirmation("이미 같은 전화번호의 고객이 있습니다. 기존 고객으로 계약을 진행할까요?");
+          if (!shouldReuse) return;
+          reusedExistingClient = true;
+          newClient = await createClientMutation.mutateAsync({ ...autoRegistrationPayload, reuseExistingClient: true });
+        }
         finalClientId = newClient.id;
+        if (!reusedExistingClient) autoRegisteredClientId = newClient.id;
         setClientId(newClient.id);
       } else {
         await updateClientMutation.mutateAsync({
@@ -814,10 +848,42 @@ export const ContractCreationForm = ({
             return;
           }
 
+          if (headless.reason === "local_persist_failed" && headless.remoteDocumentId) {
+            try {
+              await eformsignApi.adoptDocument(headless.remoteDocumentId, finalClientId);
+              setCreationProgress({ step: "sent", completed: true, failed: false });
+              queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
+              setIsCreationSuccessOpen(true);
+            } catch {
+              setSubmitError("문서는 생성되었으나 등록에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+              markCreationProgressFailed();
+            }
+            return;
+          }
+          if (headless.reason === "remote_unconfirmed" || headless.fallbackHint === "adopt-or-manual" || headless.fallbackHint === "manual_check") {
+            setSubmitError("문서 생성 상태를 확인할 수 없습니다. 전자문서 목록에서 확인 후 다시 시도해 주세요.");
+            markCreationProgressFailed();
+            return;
+          }
+          if (headless.reason === "duplicate_pending_document") {
+            setSubmitError("최근 생성된 진행 중 문서가 있습니다.");
+            markCreationProgressFailed();
+            if (await requestConfirmation("최근 생성된 진행 중 문서가 있습니다. 그래도 새로 생성하시겠습니까?")) {
+              const forced = await eformsignApi.dispatchHeadless(contractData, finalClientId, progressId, true);
+              if (forced.ok) {
+                setCreationProgress({ step: "sent", completed: true, failed: false });
+                queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
+                setIsCreationSuccessOpen(true);
+              }
+            }
+            return;
+          }
+
           console.warn(
             "[contract-creation] headless dispatch returned ok=false",
             headless.reason,
           );
+          setAllowIframeFallback(headless.fallbackHint === "iframe");
           setSubmitError(getSafeHeadlessFailureMessage(headless.reason));
           setCreationProgress((current) => ({
             step: headless.failedStep && isHeadlessProgressStepKey(headless.failedStep)
@@ -902,11 +968,27 @@ export const ContractCreationForm = ({
         });
       }, 500);
     } catch (error) {
+      if (autoRegisteredClientId) {
+        const baseMessage = error instanceof Error ? error.message : "계약서 생성 중 오류가 발생했습니다.";
+        setSubmitError(`${baseMessage} 방금 자동 등록된 고객이 남아 있습니다.`);
+        if (window.confirm("방금 자동 등록된 고객이 남아 있습니다. 고객을 삭제할까요?")) {
+          try {
+            await deleteClientMutation.mutateAsync(autoRegisteredClientId);
+            setClientId(null);
+          } catch (deleteError) {
+            if (isAxiosError<{ message?: string }>(deleteError)) {
+              setSubmitError(deleteError.response?.data.message || "고객 삭제에 실패했습니다.");
+            }
+          }
+        }
+      }
       console.error("Error creating contract:", error);
       setIsDialogOpen(false);
       setActiveStep(CONTRACT_INFO_STEP_INDEX);
       markCreationProgressFailed();
-      setSubmitError(error instanceof Error ? error.message : "계약서 생성 중 오류가 발생했습니다.");
+      if (!autoRegisteredClientId) {
+        setSubmitError(error instanceof Error ? error.message : "계약서 생성 중 오류가 발생했습니다.");
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -1483,7 +1565,7 @@ export const ContractCreationForm = ({
           </Button>
         ) : hasProcessingFailure ? (
           <>
-            <Button
+            {allowIframeFallback ? <Button
               type="button"
               variant="outline"
               size="sm"
@@ -1493,7 +1575,7 @@ export const ContractCreationForm = ({
               className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
             >
               수동 입력
-            </Button>
+            </Button> : null}
             <Button
               type="button"
               size="sm"
@@ -1554,6 +1636,18 @@ export const ContractCreationForm = ({
         title="계약서가 성공적으로 생성되었습니다."
         description="전자문서 생성과 전송이 완료되었습니다."
         onAcknowledge={handleCreationSuccessAcknowledged}
+      />
+      <ApprovalTwoButtonModal
+        open={confirmationMessage !== null}
+        onOpenChange={(open) => {
+          if (!open) resolveConfirmation(false);
+        }}
+        dataComponent="contract-creation-confirmation"
+        title="계약서 생성 확인"
+        description={confirmationMessage ?? ""}
+        isDescriptionVisuallyHidden={false}
+        approvalLabel="확인"
+        onApprove={() => resolveConfirmation(true)}
       />
     </>
   );
