@@ -176,6 +176,22 @@ describe("AuthController (Integration)", () => {
                 expect(authService.createKakaoLoginState).toHaveBeenCalled();
                 expect(String(response.headers['set-cookie'] ?? "")).toContain("kakao_oauth_nonce=");
             });
+
+            it("binds legacy logins to the signed legacy client", async () => {
+                const response = await request(app.getHttpServer())
+                    .get("/auth/kakao?client=legacy");
+
+                expect(response.status).toBe(302);
+                expect(authService.createKakaoLoginState).toHaveBeenCalledWith("legacy");
+            });
+
+            it("falls back to desktop for an unrecognized client", async () => {
+                const response = await request(app.getHttpServer())
+                    .get("/auth/kakao?client=https://attacker.example.com");
+
+                expect(response.status).toBe(302);
+                expect(authService.createKakaoLoginState).toHaveBeenCalledWith("desktop");
+            });
         });
     });
 
@@ -276,6 +292,25 @@ describe("AuthController (Integration)", () => {
                 // Assert
                 expect(response.status).toBe(302);
                 expect(response.headers['location']).toBe(`https://app.example.com/callback?code=${authCode}`);
+            });
+
+            it("returns a signed legacy login to the allowlisted legacy callback", async () => {
+                const authCode = "legacy-auth-code";
+                authService.verifyKakaoLoginState.mockResolvedValueOnce({ client: "legacy" });
+                authService.validateKakaoUser.mockResolvedValue({
+                    user: mockUser.id,
+                    ...mockTokens,
+                });
+                authService.createAuthCode.mockResolvedValue(authCode);
+                process.env['NODE_ENV'] = "production";
+
+                const response = await request(app.getHttpServer())
+                    .get("/auth/kakao/callback?state=valid-legacy-state");
+
+                expect(response.status).toBe(302);
+                expect(response.headers['location']).toBe(
+                    `https://imirae-incheon-back-office.vercel.app/auth/callback?code=${authCode}`,
+                );
             });
         });
 
