@@ -14,7 +14,7 @@ export const serverAPIClient = axios.create({
         "Content-Type": "application/json",
     },
     timeout: 60000, // 60 seconds - Railway apps can take time to wake up
-    validateStatus: (status) => status < 400,
+    validateStatus: (status) => status < 600, // Accept any status code for better error visibility
 });
 
 serverAPIClient.interceptors.request.use((config) => {

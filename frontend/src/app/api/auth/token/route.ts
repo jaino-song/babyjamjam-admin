@@ -4,8 +4,6 @@ import { serverAPIClient } from "@/app/lib/axios/server";
 import { AxiosError } from "axios";
 import { jwtDecode } from "jwt-decode";
 
-import { classifyTokenExchangeResponse } from "@/app/auth/callback/token-response";
-
 interface TokenPayload {
     sub: string;
     role: string | null;
@@ -19,6 +17,7 @@ interface APIErrorResponse {
 }
 
 const isProduction = process.env.NODE_ENV === "production";
+const API_URL = isProduction ? process.env.NEXT_PUBLIC_API_BASE_URL : process.env.DEVELOPMENT_API_BASE_URL;
 
 export async function POST(request: NextRequest) {
     try {
@@ -30,48 +29,19 @@ export async function POST(request: NextRequest) {
         }
 
         const { data } = await serverAPIClient.post("/auth/token", { code });
+
         const cookieStore = await cookies();
-        const result = classifyTokenExchangeResponse(data);
-
-        if (result.kind === "account-onboarding" || result.kind === "kakao-onboarding") {
-            const pendingCookieName = result.kind === "account-onboarding"
-                ? "pending_account_onboarding"
-                : "pending_kakao_signup";
-            const stalePendingCookieName = result.kind === "account-onboarding"
-                ? "pending_kakao_signup"
-                : "pending_account_onboarding";
-
-            cookieStore.set(pendingCookieName, result.pendingToken, {
-                httpOnly: true,
-                secure: isProduction,
-                sameSite: "lax",
-                path: "/",
-                maxAge: 30 * 60,
-            });
-            cookieStore.delete(stalePendingCookieName);
-            cookieStore.delete("auth_token");
-            cookieStore.delete("refresh_token");
-
-            return NextResponse.json({
-                onboardingRequired: true,
-                onboardingRoute: result.onboardingRoute,
-            });
-        }
-
-        if (result.kind !== "authenticated") {
-            return NextResponse.json({ error: "Token Exchange Failed" }, { status: 502 });
-        }
 
         let role = "user";
         try {
-            const decoded = jwtDecode<TokenPayload>(result.accessToken);
+            const decoded = jwtDecode<TokenPayload>(data.accessToken);
             role = decoded.role || "user";
         }
         catch {
             console.error("Failed to decode token");
         }
 
-        cookieStore.set("auth_token", result.accessToken, {
+        cookieStore.set("auth_token", data.accessToken, {
             httpOnly: true,
             secure: true,  // Must be true with sameSite: 'none'
             sameSite: "none",  // Required for mobile browsers during OAuth redirects
@@ -79,7 +49,7 @@ export async function POST(request: NextRequest) {
             maxAge: role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
         })
 
-        cookieStore.set("refresh_token", result.refreshToken, {
+        cookieStore.set("refresh_token", data.refreshToken, {
             httpOnly: true,
             secure: true,  // Must be true with sameSite: 'none'
             sameSite: "none",  // Required for mobile browsers during OAuth redirects
@@ -97,7 +67,7 @@ export async function POST(request: NextRequest) {
             console.error("Error Name:", error.name);
             console.error("Error Message:", error.message);
             if ('code' in error) {
-                console.error("Error Code:", (error as { code?: unknown }).code);
+                console.error("Error Code:", (error as any).code);
             }
         }
 
