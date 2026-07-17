@@ -355,9 +355,9 @@ describe('EmployeesTable', () => {
     it('displays English status badges', () => {
       render(<EmployeesTable />);
 
-      expect(screen.getByText('Available')).toBeInTheDocument();
-      expect(screen.getByText('Working')).toBeInTheDocument();
-      expect(screen.getByText('Unavailable')).toBeInTheDocument();
+      expect(screen.getByText('근무 가능')).toBeInTheDocument();
+      expect(screen.getByText('근무 중')).toBeInTheDocument();
+      expect(screen.getByText('근무 불가')).toBeInTheDocument();
     });
   });
 });

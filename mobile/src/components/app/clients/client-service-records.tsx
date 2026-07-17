@@ -13,6 +13,13 @@ import type {
     ServiceRecordOverview,
     ServiceRecordSession,
 } from "@babyjamjam/shared/types/service-record";
+import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
+import { calcEndDateBusinessDays } from "@babyjamjam/shared/utils/business-days";
+import {
+    formatDateForDisplay,
+    formatDateTimeKo,
+    parseDateForDisplay,
+} from "@babyjamjam/shared/utils/date";
 
 import { InfoCard, InfoRow } from "@/components/app/mobile-redesign/detail-sheet";
 import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
@@ -286,7 +293,10 @@ function ServiceHeaderCard({
             {header ? (
                 <>
                     <InfoRow label="산모 성명" value={header.momName ?? "-"} />
-                    <InfoRow label="산모 생년월일" value={header.momBirth ?? "-"} />
+                    <InfoRow
+                        label="산모 생년월일"
+                        value={header.momBirth ? formatBirthdayYYMMDD(header.momBirth) : "-"}
+                    />
                     <InfoRow label="신생아 성명" value={header.babyName ?? "-"} />
                     <InfoRow label="신생아 출생일자" value={header.babyBirth ?? "-"} />
                     <InfoRow label="분만형태" value={header.deliveryType ?? "-"} />
@@ -582,15 +592,9 @@ function buildSessionSlots(assignment: ServiceRecordAssignment): SessionSlot[] {
 }
 
 function getExpectedSessionDate(startDate: string, sessionIndex: number): string | null {
-    const start = parseDateOnly(startDate);
-    if (!start) return null;
-
-    let cursor = toBusinessDay(start);
-    for (let index = 1; index < sessionIndex; index += 1) {
-        cursor = nextBusinessDay(cursor);
-    }
-
-    return toIsoDate(cursor);
+    const datePart = datePartOf(startDate);
+    if (!datePart) return null;
+    return calcEndDateBusinessDays(datePart, sessionIndex) || null;
 }
 
 function endDateExpiry(endDate: string): string | null {
@@ -604,54 +608,18 @@ function isPastDate(value: string | null): boolean {
     return !Number.isNaN(date.getTime()) && date.getTime() < Date.now();
 }
 
-function parseDateOnly(value: string | null): Date | null {
-    const datePart = datePartOf(value);
-    if (!datePart) return null;
-    const [year, month, day] = datePart.split("-").map(Number);
-    if (!year || !month || !day) return null;
-    return new Date(year, month - 1, day);
-}
-
 function datePartOf(value: string | null): string | null {
     if (!value) return null;
     const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
     return match?.[0] ?? null;
 }
 
-function toBusinessDay(date: Date): Date {
-    const cursor = new Date(date);
-    while (cursor.getDay() === 0 || cursor.getDay() === 6) {
-        cursor.setDate(cursor.getDate() + 1);
-    }
-    return cursor;
-}
-
-function nextBusinessDay(date: Date): Date {
-    const cursor = new Date(date);
-    do {
-        cursor.setDate(cursor.getDate() + 1);
-    } while (cursor.getDay() === 0 || cursor.getDay() === 6);
-    return cursor;
-}
-
-function toIsoDate(date: Date): string {
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-
 function formatDateKo(value: string | null): string {
-    const date = parseDateForDisplay(value);
-    if (!date) return "-";
-    return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, "0")}.${String(date.getDate()).padStart(2, "0")}`;
+    return formatDateForDisplay(value);
 }
 
 function formatShortDateKo(value: string | null): string {
     return formatDateKo(value);
-}
-
-function formatDateTimeKo(value: string | null): string {
-    const date = parseDateForDisplay(value);
-    if (!date) return "-";
-    return `${formatDateKo(value)} ${formatTimeKo(value)}`;
 }
 
 function formatTimeKo(value: string | null): string {
@@ -662,14 +630,6 @@ function formatTimeKo(value: string | null): string {
         minute: "2-digit",
         hour12: true,
     }).format(date);
-}
-
-function parseDateForDisplay(value: string | null): Date | null {
-    if (!value) return null;
-    const dateOnly = parseDateOnly(value);
-    if (dateOnly && value.length <= 10) return dateOnly;
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function formatPhone(phone: string): string {
