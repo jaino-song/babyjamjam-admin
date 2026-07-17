@@ -12,10 +12,17 @@ export default function AuthCallbackPage() {
 
     useEffect(() => {
         const exchangeCodeForTokens = async () => {
+            const oauthError = searchParams.get("error");
             const code = searchParams.get("code");
 
             console.log("[Auth Callback] Starting token exchange");
             console.log("[Auth Callback] Code present:", !!code);
+
+            if (oauthError) {
+                console.error("[Auth Callback] OAuth provider returned an error");
+                setError(oauthError);
+                return;
+            }
 
             if (!code) {
                 console.error("[Auth Callback] No code in URL");
