@@ -4,6 +4,7 @@ import {
     CreateEmployeeUsecase,
     DeleteEmployeeUsecase,
     FindEmployeeByIdUsecase,
+    ListActiveClientsByEmployeeUsecase,
     ListEmployeesByGradeUsecase,
     ListEmployeesByOpenStatusUsecase,
     ListEmployeesByRegisteredDateRangeUsecase,
@@ -25,6 +26,7 @@ import { EmployeeController } from "interface/controllers/employee.controller";
     providers: [
         CreateEmployeeUsecase,
         FindEmployeeByIdUsecase,
+        ListActiveClientsByEmployeeUsecase,
         UpdateEmployeeUsecase,
         DeleteEmployeeUsecase,
         ListEmployeesUsecase,

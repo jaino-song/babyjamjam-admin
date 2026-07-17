@@ -20,6 +20,7 @@ describe("SbEmployeeRepository", () => {
 
     const createMockPrismaEmployeeSchedule = () => ({
         count: jest.fn(),
+        findMany: jest.fn(),
     });
 
     const createEmployeeRow = (overrides = {}) => ({
@@ -158,6 +159,85 @@ describe("SbEmployeeRepository", () => {
 
             expect(result).toBeNull();
             expect(employeeModel.findFirst).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("findActiveClientsByEmployee", () => {
+        it("should query only current non-replaced assignments and map primary and secondary roles", async () => {
+            employeeScheduleModel.findMany.mockResolvedValue([
+                {
+                    primaryEmployeeId: 7,
+                    secondaryEmployeeId: null,
+                    startDate: new Date("2026-07-01T00:00:00.000Z"),
+                    endDate: new Date("2026-12-31T00:00:00.000Z"),
+                    client: {
+                        id: 11,
+                        name: "박서연",
+                        serviceStatus: "active",
+                        startDate: new Date("2026-07-01T00:00:00.000Z"),
+                        endDate: new Date("2026-12-31T00:00:00.000Z"),
+                    },
+                },
+                {
+                    primaryEmployeeId: 3,
+                    secondaryEmployeeId: 7,
+                    startDate: new Date("2026-08-01T00:00:00.000Z"),
+                    endDate: new Date("2027-01-31T00:00:00.000Z"),
+                    client: {
+                        id: 12,
+                        name: "김민지",
+                        serviceStatus: "waiting",
+                        startDate: new Date("2026-08-01T00:00:00.000Z"),
+                        endDate: null,
+                    },
+                },
+            ]);
+
+            const result = await repository.findActiveClientsByEmployee(branchId, 7);
+
+            expect(employeeScheduleModel.findMany).toHaveBeenCalledWith({
+                where: {
+                    branchId,
+                    replaced: false,
+                    endDate: { gte: expect.any(Date) },
+                    OR: [
+                        { primaryEmployeeId: 7 },
+                        { secondaryEmployeeId: 7 },
+                    ],
+                },
+                select: {
+                    primaryEmployeeId: true,
+                    secondaryEmployeeId: true,
+                    client: {
+                        select: {
+                            id: true,
+                            name: true,
+                            serviceStatus: true,
+                            startDate: true,
+                            endDate: true,
+                        },
+                    },
+                },
+                orderBy: { startDate: "asc" },
+            });
+            expect(result).toEqual([
+                {
+                    clientId: 11,
+                    clientName: "박서연",
+                    role: "primary",
+                    startDate: new Date("2026-07-01T00:00:00.000Z"),
+                    endDate: new Date("2026-12-31T00:00:00.000Z"),
+                    serviceStatus: "active",
+                },
+                {
+                    clientId: 12,
+                    clientName: "김민지",
+                    role: "secondary",
+                    startDate: new Date("2026-08-01T00:00:00.000Z"),
+                    endDate: null,
+                    serviceStatus: "waiting",
+                },
+            ]);
         });
     });
 

@@ -5,6 +5,7 @@ import {
     CreateEmployeeUsecase,
     DeleteEmployeeUsecase,
     FindEmployeeByIdUsecase,
+    ListActiveClientsByEmployeeUsecase,
     ListEmployeesByGradeUsecase,
     ListEmployeesByOpenStatusUsecase,
     ListEmployeesByRegisteredDateRangeUsecase,
@@ -16,7 +17,11 @@ import {
 } from "application/usecases/employee";
 import { normalizeEmployeeGrade } from "domain/constants/employee-grade.constants";
 import { EmployeeEntity } from "domain/entities/employee.entity";
-import { EMPLOYEE_REPOSITORY, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
+import {
+    ActiveClientByEmployee,
+    EMPLOYEE_REPOSITORY,
+    IEmployeeRepository,
+} from "domain/repositories/employee.repository.interface";
 import { normalizePhone } from "application/utils/normalize-phone";
 
 export type EmployeeUpdateParams = {
@@ -33,6 +38,7 @@ export class EmployeeService {
     constructor(
         private readonly createEmployeeUsecase: CreateEmployeeUsecase,
         private readonly findEmployeeByIdUsecase: FindEmployeeByIdUsecase,
+        private readonly listActiveClientsByEmployeeUsecase: ListActiveClientsByEmployeeUsecase,
         private readonly updateEmployeeUsecase: UpdateEmployeeUsecase,
         private readonly deleteEmployeeUsecase: DeleteEmployeeUsecase,
         private readonly listEmployeesUsecase: ListEmployeesUsecase,
@@ -69,6 +75,10 @@ export class EmployeeService {
 
     findById(branchid: string, id: number): Promise<EmployeeEntity | null> {
         return this.findEmployeeByIdUsecase.execute(branchid, id);
+    }
+
+    listActiveClients(branchid: string, id: number): Promise<ActiveClientByEmployee[]> {
+        return this.listActiveClientsByEmployeeUsecase.execute(branchid, id);
     }
 
     async update(branchid: string, id: number, params: EmployeeUpdateParams): Promise<EmployeeEntity> {

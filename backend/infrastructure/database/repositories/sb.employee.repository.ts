@@ -1,6 +1,9 @@
 import { Injectable } from "@nestjs/common";
 import { EmployeeEntity } from "domain/entities/employee.entity";
-import { IEmployeeRepository } from "domain/repositories/employee.repository.interface";
+import {
+    ActiveClientByEmployee,
+    IEmployeeRepository,
+} from "domain/repositories/employee.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { EmployeeMapper } from "infrastructure/database/mapper/employee.mapper";
 import { normalizePhone } from "application/utils/normalize-phone";
@@ -78,6 +81,45 @@ export class SbEmployeeRepository implements IEmployeeRepository {
             },
         });
         return count > 0;
+    }
+
+    async findActiveClientsByEmployee(branchid: string, id: number): Promise<ActiveClientByEmployee[]> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const schedules = await this.prismaService.employee_schedule.findMany({
+            where: {
+                branchId: branchid,
+                replaced: false,
+                endDate: { gte: today },
+                OR: [
+                    { primaryEmployeeId: id },
+                    { secondaryEmployeeId: id },
+                ],
+            },
+            select: {
+                primaryEmployeeId: true,
+                secondaryEmployeeId: true,
+                client: {
+                    select: {
+                        id: true,
+                        name: true,
+                        serviceStatus: true,
+                        startDate: true,
+                        endDate: true,
+                    },
+                },
+            },
+            orderBy: { startDate: "asc" },
+        });
+
+        return schedules.map((schedule) => ({
+            clientId: schedule.client.id,
+            clientName: schedule.client.name,
+            role: schedule.primaryEmployeeId === id ? "primary" : "secondary",
+            startDate: schedule.client.startDate,
+            endDate: schedule.client.endDate,
+            serviceStatus: schedule.client.serviceStatus,
+        }));
     }
 
     async findAll(branchid: string): Promise<EmployeeEntity[]> {
