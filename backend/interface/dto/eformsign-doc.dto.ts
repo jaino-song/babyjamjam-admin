@@ -120,15 +120,31 @@ export class DispatchHeadlessRequestDto {
     @IsOptional()
     @IsString()
     progressId?: string;
+
+    @IsOptional()
+    @IsBoolean()
+    force?: boolean;
 }
 
 export interface DispatchHeadlessResponseDto {
     ok: boolean;
     documentId?: string;
+    remoteDocumentId?: string;
+    existingDocumentId?: string;
     durationMs: number;
     reason?: string;
     failedStep?: EformsignHeadlessProgressStep;
-    fallbackHint?: "iframe";
+    fallbackHint?: "iframe" | "adopt" | "manual_check" | "adopt-or-manual";
+}
+
+export class AdoptEformsignDocDto {
+    @IsString()
+    @IsNotEmpty()
+    documentId!: string;
+
+    @IsOptional()
+    @IsNumber()
+    clientId?: number;
 }
 
 /**

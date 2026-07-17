@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, ForbiddenException, Get, Headers, Ip, Post, Query, Req, Request, Res, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Headers, Ip, Logger, Post, Query, Req, Request, Res, UseGuards } from "@nestjs/common";
 import { Response, Request as ExpressRequest } from "express";
 import { AuthGuard } from "@nestjs/passport";
 import { AuthService, NO_ACCESSIBLE_BRANCH_MESSAGE, type KakaoUserValidationResult } from "../../application/services/auth.service";
@@ -19,7 +19,7 @@ import {
 } from "interface/dto/email-auth.dto";
 import { SelectBranchDto, SwitchBranchDto } from "interface/dto/branch-auth.dto";
 import { CompleteKakaoOnboardingDto } from "interface/dto/kakao-onboarding.dto";
-import { isVisibleStaffBranchSlug } from "domain/constants/branch-routing.constants";
+import { LogoutDto } from "interface/dto/logout.dto";
 import { getKakaoOAuthConfig } from "infrastructure/auth/kakao-config";
 
 @Controller("auth")
@@ -27,6 +27,7 @@ export class AuthController {
     private static readonly PENDING_SIGNUP_TOKEN_HEADER = "x-pending-signup-token";
     private static readonly PENDING_ONBOARDING_TOKEN_HEADER = "x-pending-onboarding-token";
     private static readonly OAUTH_NONCE_COOKIE = "kakao_oauth_nonce";
+    private readonly logger = new Logger(AuthController.name);
 
     constructor(
         private readonly authService: AuthService,
@@ -65,7 +66,14 @@ export class AuthController {
         const linkingInfo = state ? await this.authService.verifyLinkingState(state) : null;
         if (linkingInfo) {
             console.log(`[Auth] Linking Kakao account to user ${linkingInfo.userId}`);
-            return this.completeKakaoLink(linkingInfo.userId, req.user, res, this.resolveFrontendURL("desktop"));
+            return this.completeKakaoLink(
+                linkingInfo.userId,
+                linkingInfo.sessionId,
+                state!,
+                req.user,
+                res,
+                this.resolveFrontendURL("desktop"),
+            );
         }
 
         // Login/registration flow: state is a signed JWT carrying { client, nonce }.
@@ -229,7 +237,7 @@ export class AuthController {
 
         // Reset rate limit on successful registration
         if (result.success) {
-            await this.rateLimitGuard.resetForKey(ip, body.email);
+            await this.rateLimitGuard.resetForKey(ip, body.email, "post:register");
         }
 
         return result;
@@ -254,38 +262,44 @@ export class AuthController {
 
     @Post("login")
     @UseGuards(RateLimitGuard)
-    async login(@Body() body: LoginDto, @Ip() ip: string, @Req() req: ExpressRequest) {
-        const result = await this.authService.validateEmailPassword(
-            body.email,
-            body.password,
-        );
+    async login(@Body() body: LoginDto, @Ip() ip: string) {
+        const startedAt = Date.now();
+        try {
+            const result = await this.authService.validateEmailPassword(
+                body.email,
+                body.password,
+            );
 
-        if (!result) {
-            // Don't reset rate limit on failed login
-            return {
-                success: false,
-                message: '이메일 또는 비밀번호가 올바르지 않습니다.',
-            };
-        }
+            if (!result) {
+                return {
+                    success: false,
+                    message: '이메일 또는 비밀번호가 올바르지 않습니다.',
+                };
+            }
 
-        // Reset rate limit on successful login
-        await this.rateLimitGuard.resetForKey(ip, body.email);
+            await this.rateLimitGuard.resetForKey(ip, body.email, "post:login");
 
-        if ("onboardingRequired" in result && result.onboardingRequired) {
-            const pendingAccountOnboardingToken = await this.authService.startPendingAccountOnboarding(result.userId);
+            if ("onboardingRequired" in result && result.onboardingRequired) {
+                const pendingAccountOnboardingToken = await this.authService.startPendingAccountOnboarding(result.userId);
+
+                return {
+                    success: true,
+                    onboardingRequired: true,
+                    onboardingRoute: "/onboarding",
+                    pendingAccountOnboardingToken,
+                };
+            }
 
             return {
                 success: true,
-                onboardingRequired: true,
-                onboardingRoute: "/onboarding",
-                pendingAccountOnboardingToken,
+                ...result,
             };
+        } finally {
+            this.logger.log(JSON.stringify({
+                event: "auth_login_duration_ms",
+                durationMs: Date.now() - startedAt,
+            }));
         }
-
-        return {
-            success: true,
-            ...result,
-        };
     }
 
     @Post("verify-email")
@@ -314,7 +328,11 @@ export class AuthController {
     @Post("link-password")
     @UseGuards(JwtGuard)
     async linkPassword(@Body() body: LinkPasswordDto, @Request() req: any) {
-        return this.authService.linkPasswordToOAuthAccount(req.user.userId, body.password);
+        return this.authService.linkPasswordToOAuthAccount(
+            req.user.userId,
+            body.password,
+            req.user.sessionId,
+        );
     }
 
     /**
@@ -324,7 +342,10 @@ export class AuthController {
     @Get("kakao/link")
     @UseGuards(JwtGuard)
     async initiateKakaoLink(@Request() req: any, @Res() res: Response) {
-        const state = await this.authService.createLinkingState(req.user.userId);
+        const state = await this.authService.createLinkingState(
+            req.user.userId,
+            req.user.sessionId,
+        );
         res.redirect(this.buildKakaoAuthorizeUrl(state));
     }
 
@@ -334,12 +355,19 @@ export class AuthController {
      */
     private async completeKakaoLink(
         userId: string,
+        sessionId: string,
+        linkingStateToken: string,
         kakaoData: any,
         res: Response,
         frontendURL: string,
     ) {
         try {
-            await this.authService.linkKakaoToAccount(userId, kakaoData);
+            await this.authService.linkKakaoToAccount(
+                userId,
+                kakaoData,
+                sessionId,
+                linkingStateToken,
+            );
 
             // Redirect to frontend with success
             res.redirect(`${frontendURL}/dashboard/settings?kakao_linked=true`);
@@ -362,14 +390,7 @@ export class AuthController {
     @Get("branches/all")
     @UseGuards(RateLimitGuard)
     async getAllActiveBranches() {
-        const branches = await this.prisma.branch.findMany({
-            where: { isActive: true },
-            select: { id: true, name: true, slug: true },
-            orderBy: { name: 'asc' },
-        });
-        return branches
-            .filter((branch) => isVisibleStaffBranchSlug(branch.slug))
-            .map(({ id, name }) => ({ id, name }));
+        return this.authService.getPublicActiveBranches();
     }
 
     @Post("select-branch")
@@ -381,7 +402,8 @@ export class AuthController {
     ) {
         const tokens = await this.authService.selectBranch(
             req.user.userId,
-            body.branchId
+            body.branchId,
+            req.user.sessionId,
         );
 
         this.setAuthCookies(res, tokens);
@@ -399,7 +421,8 @@ export class AuthController {
         const tokens = await this.authService.switchBranch(
             req.user.userId,
             body.currentBranchId,
-            body.newBranchId
+            body.newBranchId,
+            req.user.sessionId,
         );
 
         this.setAuthCookies(res, tokens);
@@ -408,13 +431,40 @@ export class AuthController {
     }
 
     @Post("logout")
-    async logout(@Res({ passthrough: true }) res: Response) {
+    async logout(
+        @Body() body: LogoutDto,
+        @Req() req: ExpressRequest,
+        @Res({ passthrough: true }) res: Response,
+    ) {
+        const authorization = req.headers.authorization;
+        const accessToken = authorization?.startsWith("Bearer ")
+            ? authorization.slice("Bearer ".length)
+            : undefined;
+        await this.authService.logoutWithCredentials({
+            refreshToken: body.refreshToken || req.cookies?.["refresh_token"],
+            accessToken,
+        });
         // Clear auth cookies
         res.clearCookie('auth_token', { path: '/' });
         res.clearCookie('refresh_token', { path: '/' });
         res.clearCookie('selected_branch_id', { path: '/' });
+        res.clearCookie('auto_login', { path: '/' });
 
         return { success: true, message: 'Logged out successfully' };
+    }
+
+    @Post("logout-all")
+    @UseGuards(JwtGuard)
+    async logoutAll(
+        @Request() req: any,
+        @Res({ passthrough: true }) res: Response,
+    ) {
+        await this.authService.logoutAllSessions(req.user.userId);
+        res.clearCookie('auth_token', { path: '/' });
+        res.clearCookie('refresh_token', { path: '/' });
+        res.clearCookie('selected_branch_id', { path: '/' });
+        res.clearCookie('auto_login', { path: '/' });
+        return { success: true, message: 'Logged out from all sessions' };
     }
 
     // ==================== Private Helper Methods ====================
@@ -481,14 +531,14 @@ export class AuthController {
     private setAuthCookies(res: Response, tokens: { accessToken: string; refreshToken: string }) {
         const isProduction = process.env['NODE_ENV'] === 'production';
         const role = this.getRoleFromToken(tokens.accessToken);
-        const maxAge = getAuthTokenMaxAgeMs(role);
+        const refreshMaxAge = getAuthTokenMaxAgeMs(role);
 
         res.cookie('auth_token', tokens.accessToken, {
             httpOnly: true,
             secure: isProduction,
             sameSite: 'lax',
             path: '/',
-            maxAge,
+            maxAge: 15 * 60 * 1000,
         });
 
         res.cookie('refresh_token', tokens.refreshToken, {
@@ -496,7 +546,7 @@ export class AuthController {
             secure: isProduction,
             sameSite: 'lax',
             path: '/',
-            maxAge,
+            maxAge: refreshMaxAge,
         });
     }
 }

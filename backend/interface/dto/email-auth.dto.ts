@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsEmail, IsIn, IsNotEmpty, IsOptional, IsString, IsUUID, Matches, MinLength } from 'class-validator';
+import { IsEmail, IsIn, IsNotEmpty, IsString, IsUUID, Matches, MinLength } from 'class-validator';
 
 const NAME_PATTERN = /^[\p{L} ]+$/u;
 
@@ -11,6 +11,10 @@ export class RegisterDto {
     @IsString()
     @IsNotEmpty({ message: '비밀번호는 필수입니다.' })
     @MinLength(8, { message: '비밀번호는 최소 8자 이상이어야 합니다.' })
+    @Matches(/[A-Z]/, { message: '비밀번호에 대문자가 포함되어야 합니다.' })
+    @Matches(/[a-z]/, { message: '비밀번호에 소문자가 포함되어야 합니다.' })
+    @Matches(/[0-9]/, { message: '비밀번호에 숫자가 포함되어야 합니다.' })
+    @Matches(/[^A-Za-z0-9]/, { message: '비밀번호에 특수문자가 포함되어야 합니다.' })
     password!: string;
 
     @IsString()
@@ -69,6 +73,10 @@ export class ResetPasswordDto {
     @IsString()
     @IsNotEmpty({ message: '새 비밀번호는 필수입니다.' })
     @MinLength(8, { message: '비밀번호는 최소 8자 이상이어야 합니다.' })
+    @Matches(/[A-Z]/, { message: '비밀번호에 대문자가 포함되어야 합니다.' })
+    @Matches(/[a-z]/, { message: '비밀번호에 소문자가 포함되어야 합니다.' })
+    @Matches(/[0-9]/, { message: '비밀번호에 숫자가 포함되어야 합니다.' })
+    @Matches(/[^A-Za-z0-9]/, { message: '비밀번호에 특수문자가 포함되어야 합니다.' })
     newPassword!: string;
 }
 
@@ -82,5 +90,9 @@ export class LinkPasswordDto {
     @IsString()
     @IsNotEmpty({ message: '비밀번호는 필수입니다.' })
     @MinLength(8, { message: '비밀번호는 최소 8자 이상이어야 합니다.' })
+    @Matches(/[A-Z]/, { message: '비밀번호에 대문자가 포함되어야 합니다.' })
+    @Matches(/[a-z]/, { message: '비밀번호에 소문자가 포함되어야 합니다.' })
+    @Matches(/[0-9]/, { message: '비밀번호에 숫자가 포함되어야 합니다.' })
+    @Matches(/[^A-Za-z0-9]/, { message: '비밀번호에 특수문자가 포함되어야 합니다.' })
     password!: string;
 }

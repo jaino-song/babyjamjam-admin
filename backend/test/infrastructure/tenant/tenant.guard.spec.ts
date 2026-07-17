@@ -16,6 +16,9 @@ describe('TenantGuard', () => {
 
     beforeEach(() => {
         mockPrismaService = {
+            branch: {
+                findUnique: jest.fn(),
+            },
             user_branch: {
                 findFirst: jest.fn(),
             },
@@ -35,13 +38,16 @@ describe('TenantGuard', () => {
                     userId: 'user-123',
                     branchId: 'org-123',
                     role: 'user',
-                    branchRole: 'admin',
                 };
-                const mockContext = createMockContext(user);
+                const request = { user };
+                const mockContext = {
+                    switchToHttp: () => ({
+                        getRequest: () => request,
+                    }),
+                };
                 mockPrismaService.user_branch.findFirst.mockResolvedValue({
-                    user_id: user.userId,
-                    branch_id: user.branchId,
                     role: 'admin',
+                    branch: { isActive: true },
                 });
 
                 // #when
@@ -51,6 +57,40 @@ describe('TenantGuard', () => {
                 expect(result).toBe(true);
                 expect(tenantContext.userId).toBe(user.userId);
                 expect(tenantContext.branchId).toBe(user.branchId);
+                expect(tenantContext.globalRole).toBe('user');
+                expect(tenantContext.branchRole).toBe('admin');
+                expect(request).toHaveProperty('tenant', {
+                    userId: user.userId,
+                    branchId: user.branchId,
+                    globalRole: 'user',
+                    branchRole: 'admin',
+                });
+            });
+        });
+
+        describe('given an owner and an active branch', () => {
+            it('should use the verified owner tenant principal', async () => {
+                const user = {
+                    userId: 'owner-123',
+                    branchId: 'org-123',
+                    role: 'owner',
+                };
+                const request = { user };
+                mockPrismaService.branch.findUnique.mockResolvedValue({
+                    id: user.branchId,
+                    isActive: true,
+                });
+
+                await guard.canActivate({
+                    switchToHttp: () => ({ getRequest: () => request }),
+                } as any);
+
+                expect(request).toHaveProperty('tenant', {
+                    userId: user.userId,
+                    branchId: user.branchId,
+                    globalRole: 'owner',
+                    branchRole: 'owner',
+                });
             });
         });
 

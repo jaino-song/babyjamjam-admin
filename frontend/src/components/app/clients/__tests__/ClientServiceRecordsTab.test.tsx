@@ -194,6 +194,7 @@ describe("ClientServiceRecordsTab", () => {
         expect(overviewCards[0]).toHaveTextContent("제공기록지 진행 상태");
         expect(overviewCards[0]).toHaveTextContent("전자문서 생성-");
         expect(overviewCards[1]).toHaveTextContent("서비스 기본정보");
+        expect(overviewCards[1]).toHaveTextContent("1996.04.14");
         expect(overviewCards[2]).toHaveTextContent("제공기록지 작성 링크");
         expect(container).not.toHaveTextContent("양식 v1");
         expect(container).not.toHaveTextContent("제출 시점의 양식 스냅샷");

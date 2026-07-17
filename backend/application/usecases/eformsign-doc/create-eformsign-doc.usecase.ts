@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import { extractPhoneCandidates, normalizePhone } from "application/utils/normalize-phone";
+import { extractPhoneCandidates } from "application/utils/normalize-phone";
 import {
     EFORMSIGN_DOCUMENT_KIND,
     EformsignDocEntity,
@@ -27,6 +27,10 @@ export interface CreateEformsignDocParams {
     templateId?: string | null;
 }
 
+export type CreateEformsignDocResult = EformsignDocEntity & {
+    warnings?: Array<"client_link_failed">;
+};
+
 @Injectable()
 export class CreateEformsignDocUsecase {
     private readonly logger = new Logger(CreateEformsignDocUsecase.name);
@@ -41,7 +45,7 @@ export class CreateEformsignDocUsecase {
     async execute(
         branchid: string,
         params: CreateEformsignDocParams
-    ): Promise<EformsignDocEntity> {
+    ): Promise<CreateEformsignDocResult> {
         const now = new Date();
         const linkedClient = params.linkToClient
             ? await this.resolveLinkedClient(branchid, params)
@@ -66,7 +70,8 @@ export class CreateEformsignDocUsecase {
             employeeScheduleId: params.employeeScheduleId ?? null,
             templateId: params.templateId ?? null,
         });
-        const createdDoc = await this.eformsignDocRepository.create(branchid, entity);
+        const createdDoc = await this.eformsignDocRepository.upsertByDocumentId(branchid, entity);
+        const warnings: Array<"client_link_failed"> = [];
 
         // If linkToClient is true, also update client.e_doc_id to track this document
         if (params.linkToClient) {
@@ -80,12 +85,12 @@ export class CreateEformsignDocUsecase {
                     this.logger.warn(`Client ${clientId} not found, skipping e_doc_id update`);
                 }
             } catch (error) {
-                // Log but don't fail the whole operation if client update fails
                 this.logger.error(`Failed to link document to client: ${error}`);
+                warnings.push("client_link_failed");
             }
         }
 
-        return createdDoc;
+        return Object.assign(createdDoc, warnings.length > 0 ? { warnings } : {});
     }
 
     private async resolveLinkedClient(
@@ -93,12 +98,11 @@ export class CreateEformsignDocUsecase {
         params: CreateEformsignDocParams,
     ): Promise<ClientEntity | null> {
         const explicitClient = await this.clientRepository.findById(branchid, params.clientId);
-        const candidatePhones = extractPhoneCandidates(params.stepRecipientSms);
-        const explicitPhone = normalizePhone(explicitClient?.phone);
-
-        if (explicitClient && explicitPhone && candidatePhones.includes(explicitPhone)) {
+        if (explicitClient) {
             return explicitClient;
         }
+
+        const candidatePhones = extractPhoneCandidates(params.stepRecipientSms);
 
         for (const phone of candidatePhones) {
             const matchedClient = await this.clientRepository.findByPhone(branchid, phone);
@@ -113,6 +117,6 @@ export class CreateEformsignDocUsecase {
             return matchedClient;
         }
 
-        return explicitClient;
+        return null;
     }
 }

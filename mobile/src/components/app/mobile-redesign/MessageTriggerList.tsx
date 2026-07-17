@@ -46,28 +46,7 @@ interface LiveTriggerDisplayRow extends BaseTriggerDisplayRow {
   rule: MessageTriggerRule;
 }
 
-interface UiTriggerDisplayRow extends BaseTriggerDisplayRow {
-  kind: "ui";
-  id: string;
-  isActive: boolean;
-}
-
-type TriggerDisplayRow = LiveTriggerDisplayRow | UiTriggerDisplayRow;
-
-export const UI_ONLY_AUTOMATION_TRIGGER_COUNT = 1;
-
-const CLIENT_GREETING_SMS_TRIGGER: UiTriggerDisplayRow = {
-  kind: "ui",
-  id: "client-greeting-sms",
-  title: "신규 고객 인사 SMS",
-  timingLabel: "고객 등록 즉시 · 고객 번호",
-  channelLabel: "SMS",
-  icon: MessageSquareText,
-  tone: "primary",
-  monthlyCount: 0,
-  failedCount: 0,
-  isActive: true,
-};
+type TriggerDisplayRow = LiveTriggerDisplayRow;
 
 const EVENT_SORT_ORDER: Record<TriggerEventType, number> = {
   CLIENT_CREATED: 0,
@@ -187,15 +166,7 @@ export function MessageTriggerList() {
     });
   }, [isLogsError, isLogsLoading, logs, rules]);
 
-  const allDisplayRows = useMemo<TriggerDisplayRow[]>(() => (
-    [
-      CLIENT_GREETING_SMS_TRIGGER,
-      ...displayRows,
-    ]
-  ), [displayRows]);
-
   const handleToggle = useCallback((row: TriggerDisplayRow) => {
-    if (row.kind === "ui") return;
     const nextActive = !row.rule.isActive;
 
     updateRuleMutation.mutate({
@@ -209,12 +180,12 @@ export function MessageTriggerList() {
       <div className="section-block" data-component="message-trigger-section">
         <div className="section-header" data-component="message-trigger-section-header">자동 전송 트리거</div>
 
-        {allDisplayRows.map((row) => {
+        {displayRows.map((row) => {
           const Icon = row.icon;
-          const rowActive = row.kind === "live" ? row.rule.isActive : row.isActive;
-          const rowKey = row.kind === "live" ? row.rule.id : row.id;
-          const triggerKey = row.kind === "live" ? row.rule.templateKey : row.id;
-          const triggerId = row.kind === "live" ? row.rule.id : row.id;
+          const rowActive = row.rule.isActive;
+          const rowKey = row.rule.id;
+          const triggerKey = row.rule.templateKey;
+          const triggerId = row.rule.id;
 
           return (
             <button
@@ -226,7 +197,7 @@ export function MessageTriggerList() {
               data-trigger-id={triggerId}
               data-trigger-key={triggerKey}
               data-trigger-channel={row.channelLabel}
-              disabled={row.kind === "live" && updateRuleMutation.isPending}
+              disabled={updateRuleMutation.isPending}
               onClick={() => handleToggle(row)}
             >
               <div
@@ -239,10 +210,10 @@ export function MessageTriggerList() {
               <div className="trigger-info" data-component="message-trigger-info">
                 <div className="trigger-title" data-component="message-trigger-title">{row.title}</div>
                 <div className="trigger-meta" data-component="message-trigger-meta">
-                  <span className={`send-stat ${row.kind === "live" && (isLogsError || (row.failedCount ?? 0) > 0) ? "fail" : ""}`}>
-                    {isLogsLoading && row.kind === "live" ? (
+                  <span className={`send-stat ${isLogsError || (row.failedCount ?? 0) > 0 ? "fail" : ""}`}>
+                    {isLogsLoading ? (
                       <span className="message-count-skeleton" aria-label="발송 건수 집계 중" />
-                    ) : isLogsError && row.kind === "live" ? (
+                    ) : isLogsError ? (
                       "집계 실패"
                     ) : (
                       `${monthLabel} ${row.monthlyCount ?? 0}건`
@@ -284,7 +255,7 @@ export function MessageTriggerList() {
           </div>
         )}
 
-        {!isRulesLoading && !isRulesError && allDisplayRows.length === 0 && (
+        {!isRulesLoading && !isRulesError && displayRows.length === 0 && (
           <div className="message-empty-state" data-component="message-trigger-empty">
             등록된 자동 전송 트리거가 없습니다.
           </div>

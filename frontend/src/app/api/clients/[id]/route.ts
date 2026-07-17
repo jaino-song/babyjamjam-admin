@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
+import { errorResponse } from "@/lib/api/route-utils";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -72,10 +73,6 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         });
         return NextResponse.json({ success: true });
     } catch (error) {
-        console.error("[API] Error deleting client:", error);
-        return NextResponse.json(
-            { error: "Failed to delete client" },
-            { status: 500 }
-        );
+        return errorResponse(error, "delete client");
     }
 }

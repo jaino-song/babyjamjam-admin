@@ -1,13 +1,15 @@
 import { DeleteEmployeeUsecase } from "application/usecases/employee/delete-employee.usecase";
+import { IEmployeeRepository } from "domain/repositories/employee.repository.interface";
 import { MockEmployeeRepository, EmployeeFactory } from "../../utils";
 
 describe("DeleteEmployeeUsecase", () => {
     let usecase: DeleteEmployeeUsecase;
-    let mockRepository: MockEmployeeRepository;
+    let mockRepository: MockEmployeeRepository & Pick<Required<IEmployeeRepository>, "hasActiveAssignments">;
     const branchId = "org-1";
 
     beforeEach(() => {
-        mockRepository = new MockEmployeeRepository();
+        mockRepository = new MockEmployeeRepository() as MockEmployeeRepository & Pick<Required<IEmployeeRepository>, "hasActiveAssignments">;
+        mockRepository.hasActiveAssignments = jest.fn().mockResolvedValue(false);
         usecase = new DeleteEmployeeUsecase(mockRepository);
     });
 
@@ -16,6 +18,17 @@ describe("DeleteEmployeeUsecase", () => {
     });
 
     describe("execute", () => {
+        it("should reject deletion when the employee has an active assignment", async () => {
+            const employee = EmployeeFactory.create({ id: 1 });
+            mockRepository.setData([employee]);
+            jest.mocked(mockRepository.hasActiveAssignments!).mockResolvedValue(true);
+
+            await expect(usecase.execute(branchId, 1)).rejects.toMatchObject({
+                status: 409,
+                message: "진행 중인 배정이 있는 직원은 삭제할 수 없습니다. 배정 종료 또는 교체 후 다시 시도해 주세요.",
+            });
+            expect(await mockRepository.findById(branchId, 1)).toBe(employee);
+        });
         // ============================================
         // Successful Deletion
         // ============================================

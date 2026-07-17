@@ -13,6 +13,7 @@ describe("EmployeeController (Integration)", () => {
     // ============================================
 
     let app: INestApplication;
+    let moduleFixture: TestingModule;
     let employeeService: jest.Mocked<EmployeeService>;
 
     type EmployeeOverrides = Partial<{
@@ -48,6 +49,7 @@ describe("EmployeeController (Integration)", () => {
             findByRegisteredDate: jest.fn(),
             findByRegisteredDateRange: jest.fn(),
             findAllOpenToNextWork: jest.fn(),
+            listActiveClients: jest.fn(),
             checkPhoneExists: jest.fn(),
             changeOpenStatus: jest.fn(),
             update: jest.fn(),
@@ -63,11 +65,17 @@ describe("EmployeeController (Integration)", () => {
                     role: "admin",
                     branchRole: "admin",
                 };
+                requestContext.tenant = {
+                    userId: "user-1",
+                    branchId: "org-1",
+                    globalRole: "admin",
+                    branchRole: "admin",
+                };
                 return true;
             },
         };
 
-        const moduleFixture: TestingModule = await Test.createTestingModule({
+        moduleFixture = await Test.createTestingModule({
             controllers: [EmployeeController],
             providers: [
                 {
@@ -258,6 +266,38 @@ describe("EmployeeController (Integration)", () => {
 
             expect(response.status).toBe(400);
             expect(employeeService.findById).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("GET /employees/:id/active-clients", () => {
+        it("should return the active client response shape", async () => {
+            employeeService.listActiveClients.mockResolvedValue([
+                {
+                    clientId: 11,
+                    clientName: "박서연",
+                    role: "primary",
+                    startDate: new Date("2026-07-01T00:00:00.000Z"),
+                    endDate: new Date("2026-12-31T00:00:00.000Z"),
+                    serviceStatus: "active",
+                },
+            ]);
+
+            const controller = moduleFixture.get(EmployeeController);
+            const response = await controller.listActiveClients({ branchId: "org-1" }, "7");
+
+            expect(employeeService.listActiveClients).toHaveBeenCalledWith("org-1", 7);
+            expect(JSON.parse(JSON.stringify(response))).toMatchInlineSnapshot(`
+[
+  {
+    "clientId": 11,
+    "clientName": "박서연",
+    "endDate": "2026-12-31T00:00:00.000Z",
+    "role": "primary",
+    "serviceStatus": "active",
+    "startDate": "2026-07-01T00:00:00.000Z",
+  },
+]
+`);
         });
     });
 

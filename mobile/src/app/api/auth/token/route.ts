@@ -7,6 +7,10 @@ import { z } from "zod";
 import { parseBody } from "@/lib/api/route-utils";
 import { serverAPIClient } from "@/lib/api/server";
 import { getServerRuntimeConfig } from "@/lib/env";
+import {
+    ACCESS_TOKEN_MAX_AGE_SECONDS,
+    getRefreshSessionMaxAgeSeconds,
+} from "@/lib/auth/session-policy";
 
 // Mirrors backend TokenExchangeDto: code is the required authorization code
 // exchanged for tokens. Passthrough preserves forward-compatible fields.
@@ -33,10 +37,6 @@ const {
 } = getServerRuntimeConfig();
 
 // 30일 세션을 부여받는 권한 있는 역할들
-const EXTENDED_SESSION_ROLES = new Set(["owner", "creator"]);
-const EXTENDED_SESSION_MAX_AGE = 30 * 24 * 60 * 60; // 30 days
-const DEFAULT_SESSION_MAX_AGE = 3 * 24 * 60 * 60;   // 3 days
-
 function getErrorCode(error: Error): string | undefined {
     if (!("code" in error)) {
         return undefined;
@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
             secure: isSecureCookie,
             sameSite: isSecureCookie ? "none" : "lax",
             path: "/",
-            maxAge: EXTENDED_SESSION_ROLES.has(role) ? EXTENDED_SESSION_MAX_AGE : DEFAULT_SESSION_MAX_AGE,
+            maxAge: ACCESS_TOKEN_MAX_AGE_SECONDS,
         })
 
         cookieStore.set("refresh_token", data.refreshToken, {
@@ -100,7 +100,7 @@ export async function POST(request: NextRequest) {
             secure: isSecureCookie,
             sameSite: isSecureCookie ? "none" : "lax",
             path: "/",
-            maxAge: 7 * 24 * 60 * 60,
+            maxAge: getRefreshSessionMaxAgeSeconds(role),
         })
         return NextResponse.json({ message: "Success" }, { status: 200 });
     } catch (error) {

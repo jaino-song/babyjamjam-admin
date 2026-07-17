@@ -6,8 +6,8 @@ describe("formatDateForDisplay", () => {
     expect(formatDateForDisplay("2026-07-14")).toBe("2026.07.14");
   });
 
-  it("preserves the calendar date from ISO date strings", () => {
-    expect(formatDateForDisplay("2026-07-14T00:00:00.000Z")).toBe("2026.07.14");
+  it("converts timestamp values to the KST calendar date", () => {
+    expect(formatDateForDisplay("2026-07-16T15:30:00.000Z")).toBe("2026.07.17");
   });
 
   it("returns the fallback for empty or invalid values", () => {

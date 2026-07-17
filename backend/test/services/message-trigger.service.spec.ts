@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import {
+    MESSAGE_TRIGGER_TEMPLATE_CATALOG,
     MessageTriggerEventType,
     MessageTriggerOffsetType,
     MessageTriggerRecipientType,
@@ -364,17 +365,40 @@ describe("MessageTriggerService", () => {
                 id: 42,
                 phone: "01012345678",
                 createdAt: new Date("2026-07-12T01:00:00.000Z"),
+                suppressGreetingSms: false,
             },
         ]);
         jest.spyOn(service, "syncClientRulesForClient").mockResolvedValue(undefined);
 
         await service.listUpcomingJobs(branchId);
 
-        expect(service.syncClientRulesForClient).toHaveBeenCalledWith(branchId, 42, true);
+        expect(service.syncClientRulesForClient).toHaveBeenCalledWith(branchId, 42, true, false);
         expect(jobRepository.markOrphanedJobsReconciled).toHaveBeenCalledWith(
             ["orphaned-job"],
             42,
         );
+    });
+
+    it("reconciles a replacement client without creating greeting jobs when SMS greeting is suppressed", async () => {
+        const { service, prisma, jobRepository } = createService();
+        const orphanedJob = createJob({
+            id: "orphaned-suppressed-greeting",
+            clientId: null,
+            recipientPhone: "010-1234-5678",
+            createdAt: new Date("2026-07-01T00:00:00.000Z"),
+        });
+        jobRepository.findRecoverableOrphanedClientJobs.mockResolvedValue([orphanedJob]);
+        prisma.client.findMany.mockResolvedValue([{
+            id: 42,
+            phone: "01012345678",
+            createdAt: new Date("2026-07-12T01:00:00.000Z"),
+            suppressGreetingSms: true,
+        }]);
+        jest.spyOn(service, "syncClientRulesForClient").mockResolvedValue(undefined);
+
+        await service.listUpcomingJobs(branchId);
+
+        expect(service.syncClientRulesForClient).toHaveBeenCalledWith(branchId, 42, true, true);
     });
 
     it("does not reuse an orphan for a client that predates the old job", async () => {
@@ -563,6 +587,34 @@ describe("MessageTriggerService", () => {
         expect(ruleRepository.markJobsStale).toHaveBeenCalledWith(createdRule.id);
         expect(internals.rebuildJobsForRule).not.toHaveBeenCalled();
         expect(jobRepository.cancelPendingByRuleId).not.toHaveBeenCalled();
+    });
+
+    it("rejects a fake template without an SMS provider when creating a rule", async () => {
+        const { service, ruleRepository } = createService();
+        const fakeTemplateKey = "FAKE_SMS_DISABLED" as MessageTriggerTemplateKey;
+        const catalog = MESSAGE_TRIGGER_TEMPLATE_CATALOG as Record<string, unknown>;
+        catalog[fakeTemplateKey] = {
+            key: fakeTemplateKey,
+            name: "가짜 템플릿",
+            description: "SMS provider 가드 테스트",
+            allowedEventTypes: [MessageTriggerEventType.CLIENT_CREATED],
+            allowedRecipientTypes: [MessageTriggerRecipientType.CLIENT],
+            requiredVariables: [],
+            providers: {},
+        };
+
+        try {
+            await expect(service.createRule(branchId, {
+                name: "가짜 규칙",
+                eventType: MessageTriggerEventType.CLIENT_CREATED,
+                offsetType: MessageTriggerOffsetType.IMMEDIATE,
+                recipientType: MessageTriggerRecipientType.CLIENT,
+                templateKey: fakeTemplateKey,
+            })).rejects.toThrow("SMS 발송 채널이 없는 템플릿입니다.");
+            expect(ruleRepository.create).not.toHaveBeenCalled();
+        } finally {
+            delete catalog[fakeTemplateKey];
+        }
     });
 
     it("updateRule batch-cancels pending jobs and marks stale without rebuilding in-request", async () => {

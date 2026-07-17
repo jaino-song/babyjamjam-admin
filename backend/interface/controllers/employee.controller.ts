@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { EmployeeService } from "application/services/employee.service";
 import {
     ChangeEmployeeOpenStatusDto,
@@ -81,6 +81,17 @@ export class EmployeeController {
     @Get("id")
     findById(@CurrentTenant() tenant: { branchId?: string }, @Query("id") id: string) {
         return this.employeeService.findById(tenant.branchId ?? "", parseInteger(id, "id", { min: 1 }));
+    }
+
+    @Get(":id/active-clients")
+    listActiveClients(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Param("id") id: string,
+    ) {
+        return this.employeeService.listActiveClients(
+            tenant.branchId ?? "",
+            parseInteger(id, "id", { min: 1 }),
+        );
     }
 
     @Patch("open-status")

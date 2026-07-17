@@ -11,6 +11,7 @@ import {
 } from "react";
 import {
   MESSAGE_EVENT_LABELS,
+  MESSAGE_HISTORY_STATUS_LABELS,
   MESSAGE_JOB_STATUS_LABELS,
   MESSAGE_RECIPIENT_LABELS,
   MESSAGE_SECTION_DEFINITIONS,
@@ -205,10 +206,10 @@ type PlaceholderSectionId = Exclude<MessageSectionId, "send" | "templates" | "tr
 const TEMPLATE_SEND_FORM_ID = "messages-template-send-form-active";
 
 function getMessageHistoryListStatusMeta(status: MessageHistoryRecord["status"]) {
-  if (status === "sent") return { label: "완료", variant: "success" as const };
-  if (status === "pending") return { label: "대기", variant: "warning" as const };
-  if (status === "canceled") return { label: "취소", variant: "neutral" as const };
-  return { label: "실패", variant: "danger" as const };
+  if (status === "sent") return { label: MESSAGE_HISTORY_STATUS_LABELS.sent, variant: "success" as const };
+  if (status === "pending") return { label: MESSAGE_HISTORY_STATUS_LABELS.pending, variant: "warning" as const };
+  if (status === "canceled") return { label: MESSAGE_HISTORY_STATUS_LABELS.canceled, variant: "neutral" as const };
+  return { label: MESSAGE_HISTORY_STATUS_LABELS.failed, variant: "danger" as const };
 }
 
 function getMessageHistoryAvatarClassName(status: MessageHistoryRecord["status"]): string {

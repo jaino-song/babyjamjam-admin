@@ -2,6 +2,8 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
+import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
+import { formatDateTimeKo } from "@babyjamjam/shared/utils/date";
 
 import { DetailEmptyState, InfoCard, InfoRow } from "@/components/app/v3";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
@@ -421,7 +423,7 @@ function ServiceHeaderCard({
                 <div className="flex h-full flex-col">
                     <div>
                         <ServiceRecordInfoRow label="산모 성명" value={header.momName || "-"} />
-                        <ServiceRecordInfoRow label="산모 생년월일" value={header.momBirth || "-"} />
+                        <ServiceRecordInfoRow label="산모 생년월일" value={formatBirthdayYYMMDD(header.momBirth ?? "") || "-"} />
                         <ServiceRecordInfoRow label="신생아 성명" value={header.babyName || "-"} />
                         <ServiceRecordInfoRow label="신생아 출생일자" value={header.babyBirth || "-"} />
                         <ServiceRecordInfoRow label="분만형태" value={header.deliveryType || "-"} />
@@ -811,18 +813,6 @@ function datePartOf(value: string | null): string | null {
 
 function formatDateKo(value: string | null): string {
     return formatDateForDisplay(value);
-}
-
-function formatDateTimeKo(value: string | null): string {
-    const date = parseDateForDisplay(value);
-    if (!date) return "-";
-    return `${formatDateKo(value)} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-}
-
-function parseDateForDisplay(value: string | null): Date | null {
-    if (!value) return null;
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function formatPhone(phone: string): string {

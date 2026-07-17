@@ -1,5 +1,6 @@
 import {
     AUTH_COOKIE_NAMES,
+    ACCESS_TOKEN_MAX_AGE_SECONDS,
     decodeRoleFromAccessToken,
     getSessionMaxAgeSeconds,
     isSecureAuthCookie,
@@ -44,10 +45,18 @@ export function setAuthSessionCookies(
     const baseOptions = getBaseAuthCookieOptions();
 
     if (autoLogin) {
-        const persistentOptions = { ...baseOptions, maxAge };
-        cookieStore.set(AUTH_COOKIE_NAMES.accessToken, accessToken, persistentOptions);
-        cookieStore.set(AUTH_COOKIE_NAMES.refreshToken, refreshToken, persistentOptions);
-        cookieStore.set(AUTH_COOKIE_NAMES.autoLogin, "1", persistentOptions);
+        cookieStore.set(AUTH_COOKIE_NAMES.accessToken, accessToken, {
+            ...baseOptions,
+            maxAge: ACCESS_TOKEN_MAX_AGE_SECONDS,
+        });
+        cookieStore.set(AUTH_COOKIE_NAMES.refreshToken, refreshToken, {
+            ...baseOptions,
+            maxAge,
+        });
+        cookieStore.set(AUTH_COOKIE_NAMES.autoLogin, "1", {
+            ...baseOptions,
+            maxAge,
+        });
         return;
     }
 
@@ -61,14 +70,14 @@ export function setAuthAccessCookie(
     accessToken: string,
     autoLogin = true,
 ): void {
-    const role = decodeRoleFromAccessToken(accessToken);
-    const maxAge = getSessionMaxAgeSeconds(role);
     const baseOptions = getBaseAuthCookieOptions();
 
     cookieStore.set(
         AUTH_COOKIE_NAMES.accessToken,
         accessToken,
-        autoLogin ? { ...baseOptions, maxAge } : baseOptions,
+        autoLogin
+            ? { ...baseOptions, maxAge: ACCESS_TOKEN_MAX_AGE_SECONDS }
+            : baseOptions,
     );
 }
 

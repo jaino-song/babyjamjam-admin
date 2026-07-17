@@ -24,6 +24,9 @@ describe("UserService", () => {
             user_branch: {
                 updateMany: jest.fn().mockResolvedValue({ count: 1 }),
             },
+            auth_session: {
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
             $transaction: jest.fn(),
         };
         prisma.$transaction.mockImplementation(async (callback) => callback(prisma));

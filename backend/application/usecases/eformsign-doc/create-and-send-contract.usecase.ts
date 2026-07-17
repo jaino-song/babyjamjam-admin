@@ -16,6 +16,7 @@ export interface CreateAndSendContractResult {
     success: boolean;
     documentId?: string;
     error?: string;
+    remoteDocumentId?: string;
 }
 
 @Injectable()
@@ -47,6 +48,7 @@ export class CreateAndSendContractUsecase {
             return { success: false, error: "고객 연락처가 없습니다" };
         }
 
+        let remoteDocumentId: string | undefined;
         try {
             await this.assignmentGuard.assertAssignedClient(branchid, clientId);
             const executionTime = Date.now();
@@ -103,6 +105,7 @@ export class CreateAndSendContractUsecase {
                     sms: client.phone,
                 },
             });
+            remoteDocumentId = result.documentId;
 
             await this.createEformsignDocUsecase.execute(branchid, {
                 documentId: result.documentId,
@@ -132,6 +135,7 @@ export class CreateAndSendContractUsecase {
             return {
                 success: false,
                 error: error instanceof Error ? error.message : "계약서 생성에 실패했습니다",
+                remoteDocumentId,
             };
         }
     }

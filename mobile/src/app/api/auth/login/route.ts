@@ -7,6 +7,10 @@ import { z } from "zod";
 import { getUpstreamErrorStatus, logUpstreamError, parseBody, sanitizeUpstreamClientError } from "@/lib/api/route-utils";
 import { serverAPIClient } from "@/lib/api/server";
 import { getServerRuntimeConfig } from "@/lib/env";
+import {
+    ACCESS_TOKEN_MAX_AGE_SECONDS,
+    getRefreshSessionMaxAgeSeconds,
+} from "@/lib/auth/session-policy";
 
 // Mirrors backend LoginDto (email-auth.dto.ts): email is @IsEmail() and
 // password is @IsString() @IsNotEmpty(), both required. autoLogin is a
@@ -58,8 +62,6 @@ export async function POST(request: NextRequest) {
             console.error("Failed to decode token");
         }
 
-        const isPrivileged = ["owner", "admin", "manager"].includes(role);
-
         const baseCookieOptions = {
             httpOnly: true,
             secure: isSecureCookie,
@@ -70,11 +72,11 @@ export async function POST(request: NextRequest) {
         if (autoLogin) {
             cookieStore.set("auth_token", data.accessToken, {
                 ...baseCookieOptions,
-                maxAge: isPrivileged ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
+                maxAge: ACCESS_TOKEN_MAX_AGE_SECONDS,
             });
             cookieStore.set("refresh_token", data.refreshToken, {
                 ...baseCookieOptions,
-                maxAge: isPrivileged ? 7 * 24 * 60 * 60 : 1 * 24 * 60 * 60,
+                maxAge: getRefreshSessionMaxAgeSeconds(role),
             });
             cookieStore.set("auto_login", "1", {
                 ...baseCookieOptions,

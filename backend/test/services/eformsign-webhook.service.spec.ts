@@ -1,4 +1,5 @@
 import { EformsignWebhookService } from "application/services/eformsign-webhook.service";
+import { UpdateEformsignDocStatusUsecase } from "application/usecases/eformsign-doc/update-eformsign-doc-status.usecase";
 import { ClientEntity } from "domain/entities/client.entity";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 import { EformsignWebhookPayloadDto } from "interface/dto/eformsign-webhook.dto";
@@ -105,6 +106,7 @@ describe("EformsignWebhookService", () => {
         findByDocumentId: jest.fn(),
         findBranchIdByDocumentId: jest.fn(),
         claimCompletionStatus: jest.fn(),
+        update: jest.fn(),
     };
     const employeeScheduleRepository = {
         findByClientId: jest.fn(),
@@ -391,5 +393,68 @@ describe("EformsignWebhookService", () => {
         expect(linkDocumentUsecase.execute).toHaveBeenCalledTimes(1);
         expect(syncClientEndDateUsecase.execute).toHaveBeenCalledTimes(1);
         expect(eventBus.emit).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps a completed document's status when a stale document_action webhook arrives after completion (P1-11)", async () => {
+        // Wire the REAL usecase (the single write gateway) instead of the jest.fn()
+        // mock used elsewhere in this file, so the guard inside
+        // UpdateEformsignDocStatusUsecase.execute is actually exercised end-to-end.
+        const realUpdateStatusUsecase = new UpdateEformsignDocStatusUsecase(eformsignDocRepository as never);
+        const serviceWithRealUsecase = new EformsignWebhookService(
+            realUpdateStatusUsecase as never,
+            linkDocumentUsecase as never,
+            syncClientEndDateUsecase as never,
+            eventBus as never,
+            notificationService as never,
+            eformsignApiClient as never,
+            clientRepository as never,
+            eformsignDocRepository as never,
+            employeeScheduleRepository as never,
+            employeeRepository as never,
+            undefined,
+            serviceRecordLifecycle as never,
+        );
+
+        eformsignDocRepository.findByDocumentId.mockResolvedValue(
+            EformsignDocEntity.reconstitute({
+                id: 1,
+                documentId,
+                createdDate: new Date("2026-05-01T00:00:00.000Z"),
+                updatedDate: new Date("2026-05-03T00:00:00.000Z"),
+                statusType: "050",
+                statusDetail: "완료",
+                stepType: "05",
+                stepIndex: "3",
+                stepName: "이용자",
+                stepRecipientType: "01",
+                stepRecipientName: "직원",
+                stepRecipientSms: "01012345678",
+                expiredDate: new Date("2026-06-01T00:00:00.000Z"),
+                expired: false,
+                clientId: 9,
+            }),
+        );
+
+        const staleDocumentActionPayload: EformsignWebhookPayloadDto = {
+            webhook_id: "wh-3",
+            webhook_name: "test",
+            company_id: "company-1",
+            event_type: "document_action",
+            document: {
+                id: documentId,
+                document_title: "산모신생아건강관리서비스 계약서",
+                template_id: "template-1",
+                template_name: "template",
+                workflow_seq: 3,
+                workflow_name: "직원 확정",
+                status: "doc_complete",
+                action: "doc_open_participant",
+                updated_date: Date.now(),
+            },
+        };
+
+        await expect(serviceWithRealUsecase.processWebhook(staleDocumentActionPayload)).resolves.toBeUndefined();
+
+        expect(eformsignDocRepository.update).not.toHaveBeenCalled();
     });
 });

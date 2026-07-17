@@ -8,6 +8,10 @@ import {
   GET as getMessageSenderApproval,
   POST as requestMessageSenderApproval,
 } from "../message-sender-approval/route";
+import {
+  GET as getClientRegistrationPolicy,
+  PUT as updateClientRegistrationPolicy,
+} from "../client-registration-policy/route";
 
 jest.mock("@/lib/api/server", () => ({
   serverAPIClient: {
@@ -115,6 +119,26 @@ describe("settings API routes", () => {
     expect(mockPost).toHaveBeenCalledWith(
       "/settings/message-sender-approval/request",
       approvalBody,
+      { headers: { Authorization: "Bearer auth-token" } },
+    );
+  });
+
+  it("proxies client registration policy reads and partial updates", async () => {
+    const policy = { clientAutoRegistration: true, greetingOnAutoRegistration: false };
+    mockGet.mockResolvedValue({ status: 200, data: policy });
+    mockPut.mockResolvedValue({ status: 200, data: { ...policy, greetingOnAutoRegistration: true } });
+
+    expect((await getClientRegistrationPolicy(createRequest("/api/settings/client-registration-policy"))).status).toBe(200);
+    const response = await updateClientRegistrationPolicy(createRequest("/api/settings/client-registration-policy", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ greetingOnAutoRegistration: true }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mockPut).toHaveBeenCalledWith(
+      "/settings/client-registration-policy",
+      { greetingOnAutoRegistration: true },
       { headers: { Authorization: "Bearer auth-token" } },
     );
   });

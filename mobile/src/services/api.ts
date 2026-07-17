@@ -15,6 +15,7 @@ import type {
     MessageSenderApprovalResponse,
     MessageSenderApprovalStatus,
 } from "@babyjamjam/shared/types/message";
+import type { RegisterRequest } from "@babyjamjam/shared";
 import { safeStorageSetItem } from "@/lib/safe-storage";
 import { isAxiosError } from "axios";
 
@@ -163,8 +164,13 @@ export const authApi = {
     },
 
     // Email authentication
-    register: async (email: string, password: string, name?: string): Promise<AuthResponse> => {
-        const { data } = await api.post('/auth/register', { email, password, name });
+    register: async (params: RegisterRequest): Promise<AuthResponse> => {
+        const { data } = await api.post('/auth/register', params);
+        return data;
+    },
+
+    getBranches: async (): Promise<{ id: string; name: string }[]> => {
+        const { data } = await api.get('/auth/branches/all');
         return data;
     },
 
@@ -261,14 +267,20 @@ export const eformsignApi = {
         contractData: ContractDataDto,
         clientId: number,
         progressId?: string,
-    ): Promise<HeadlessDispatchResponse> => {
+        force?: boolean,
+    ): Promise<Omit<HeadlessDispatchResponse, "fallbackHint"> & { remoteDocumentId?: string; existingDocumentId?: string; fallbackHint?: "iframe" | "adopt" | "manual_check" | "adopt-or-manual" }> => {
         const { data } = await api.post('/eformsign-docs/dispatch-headless', {
             contractData,
             clientId,
             progressId,
+            force,
         }, {
             timeout: HEADLESS_DISPATCH_TIMEOUT_MS,
         });
+        return data;
+    },
+    adoptDocument: async (documentId: string, clientId?: number): Promise<{ id?: number; documentId: string }> => {
+        const { data } = await api.post('/eformsign-docs/adopt', { documentId, clientId });
         return data;
     },
     // Staff completion (mode:"02") — builds iframe options for the staff finalize step.
@@ -403,7 +415,24 @@ export type {
     MessageSenderApprovalStatus,
 };
 
+export interface ClientRegistrationPolicy {
+    clientAutoRegistration: boolean;
+    greetingOnAutoRegistration: boolean;
+}
+
+export type ClientRegistrationPolicyPatch = Partial<ClientRegistrationPolicy>;
+
 export const settingsApi = {
+    getClientRegistrationPolicy: async (): Promise<ClientRegistrationPolicy> => {
+        const { data } = await api.get("/settings/client-registration-policy");
+        return data;
+    },
+    updateClientRegistrationPolicy: async (
+        patch: ClientRegistrationPolicyPatch,
+    ): Promise<ClientRegistrationPolicy> => {
+        const { data } = await api.put("/settings/client-registration-policy", patch);
+        return data;
+    },
     getMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {
         const { data } = await api.get("/settings/message-sender-approval");
         return data;

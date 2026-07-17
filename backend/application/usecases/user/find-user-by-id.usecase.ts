@@ -9,8 +9,9 @@ export class FindUserByIdUsecase {
         private readonly userRepository: IUserRepository,
     ) {}
 
-    execute(id: string): Promise<UserEntity | null> {
-        return this.userRepository.findById(id);
+    execute(id: string, branchId?: string): Promise<UserEntity | null> {
+        return branchId
+            ? this.userRepository.findByIdInBranch(id, branchId)
+            : this.userRepository.findById(id);
     }
 }
-

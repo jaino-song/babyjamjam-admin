@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CheckCircle, AlertTriangle } from "lucide-react";
+import { getResetPasswordErrorMessage } from "@babyjamjam/shared";
 import { authApi } from "@/services/api";
 import { resetPasswordSchema, checkPasswordStrength, type ResetPasswordFormData } from "@/lib/validations/auth";
 import { CardContainer } from "@/components/auth/card-container";
@@ -77,7 +78,13 @@ export default function ResetPasswordPage() {
             }
         } catch (err) {
             console.error("Reset password error:", err);
-            setError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
+            const errorData = err && typeof err === "object" && "response" in err
+                ? (err as { response?: { data?: { code?: unknown } } }).response?.data
+                : undefined;
+            setError(
+                getResetPasswordErrorMessage(errorData?.code)
+                ?? "네트워크 오류가 발생했습니다. 다시 시도해 주세요.",
+            );
         } finally {
             setIsLoading(false);
         }
