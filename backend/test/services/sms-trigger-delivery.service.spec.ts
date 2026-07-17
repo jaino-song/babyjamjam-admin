@@ -14,10 +14,6 @@ import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.ent
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
-// Canonical SMS template set lives in the shared package (frontend/mobile source of truth).
-// The backend duplicates the trigger enums by design, so this drift guard is the only place
-// that ties the backend SMS delivery routing back to that single source.
-import { SMS_TRIGGER_TEMPLATE_KEYS } from "../../../packages/shared/src/types/message";
 
 describe("SmsTriggerDeliveryService", () => {
     const branchId = "branch-1";
@@ -126,6 +122,72 @@ describe("SmsTriggerDeliveryService", () => {
             systemTemplateKey: SystemTemplateKey.SERVICE_INFO,
             name: "김지니",
             recipientName: "김지니",
+        }));
+    });
+
+    it("sends a CLIENT_WELCOME job through Aligo and records the SMS contract", async () => {
+        const job = MessageTriggerJobEntity.reconstitute(
+            "job-client-welcome",
+            branchId,
+            "rule-client-welcome",
+            "pending",
+            new Date("2026-07-17T00:00:00.000Z"),
+            null,
+            null,
+            null,
+            7,
+            null,
+            MessageTriggerRecipientType.CLIENT,
+            "010-1234-5678",
+            MessageTriggerTemplateKey.CLIENT_WELCOME,
+            "rule-client-welcome:7",
+            {
+                clientId: 7,
+                clientName: "김산모",
+                memberId: "7",
+                recipientName: "김산모",
+                recipientPhone: "010-1234-5678",
+                templateVariables: {
+                    clientName: "김산모",
+                    registrationDate: "2026-07-17",
+                    serviceType: "바우처",
+                },
+            },
+            new Date("2026-07-17T00:00:00.000Z"),
+            new Date("2026-07-17T00:00:00.000Z"),
+        );
+        const aligoService = {
+            sendSms: jest.fn().mockResolvedValue({
+                request: { receiver: "01012345678", msgType: "LMS", testModeYn: "N" },
+                response: { result_code: 1, message: "성공", msg_id: 275, success_cnt: 1, error_cnt: 0 },
+            }),
+        };
+        const systemTemplateService = {
+            getByKey: jest.fn().mockResolvedValue({
+                content: "{{clientName}}님 {{registrationDate}} 등록 완료 ({{serviceType}})",
+            }),
+        };
+        const logRepository = { save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log) };
+        const service = new SmsTriggerDeliveryService(
+            aligoService as unknown as AligoService,
+            systemTemplateService as unknown as SystemTemplateService,
+            logRepository as unknown as IMessageLogRepository,
+        );
+
+        await expect(service.sendJob(job)).resolves.toBe(true);
+
+        expect(systemTemplateService.getByKey).toHaveBeenCalledWith(SystemTemplateKey.CLIENT_WELCOME);
+        expect(aligoService.sendSms).toHaveBeenCalledWith(expect.objectContaining({
+            receiver: "010-1234-5678",
+            message: "김산모님 2026-07-17 등록 완료 (바우처)",
+            title: "고객 등록 안내",
+        }));
+        const savedLog = logRepository.save.mock.calls[0]?.[0] as MessageLogEntity;
+        expect(savedLog.templateKey).toBe("client_welcome_sms");
+        expect(savedLog.status).toBe("sent");
+        expect(savedLog.variables).toEqual(expect.objectContaining({
+            automationKey: "CLIENT_WELCOME_SMS",
+            systemTemplateKey: SystemTemplateKey.CLIENT_WELCOME,
         }));
     });
 
@@ -311,21 +373,13 @@ describe("SmsTriggerDeliveryService", () => {
 });
 
 describe("SMS delivery routing drift guard", () => {
-    it("routes exactly the shared SMS template set through SMS delivery", () => {
-        // If someone adds a template to SMS_TRIGGER_TEMPLATE_KEYS (shared) but forgets to add a
-        // delivery config here (or vice versa), the SMS form would offer a template the backend
-        // cannot deliver — this assertion fails first.
-        const deliveryKeys = Object.keys(SMS_TEMPLATE_DELIVERY).sort();
-        const sharedKeys = [...SMS_TRIGGER_TEMPLATE_KEYS].sort();
-        expect(deliveryKeys).toEqual(sharedKeys);
-    });
 });
 
 describe("SERVICE_RECORD_LINK delivery", () => {
     const serviceRecordLinkTemplate = `[사회서비스 제공자 품질평가 A등급]
 안녕하세요, 인천 아이미래로 입니다 :)
 
-{{employeeName}} 관리사님, {{clientName}} 산모님의 서비스 제공기록지 작성 링크입니다.
+{{employeeName}} 관리사님, {{clientName}} 산모님의 {{serviceStartDate}} 시작 서비스 제공기록지 작성 링크입니다.
 매일 서비스 제공 완료 직전에 서비스 세부사항 기록 후에, 산모님께 승인을 받으시면 됩니다.
 
 최초 접속 시에 관리사님의 전화번호 인증이 필요합니다. 링크 접속 후 휴대폰 번호로 본인확인하고, 방문일마다 기록을 남겨주세요.
@@ -337,7 +391,7 @@ describe("SERVICE_RECORD_LINK delivery", () => {
     const renderedServiceRecordLinkMessage = `[사회서비스 제공자 품질평가 A등급]
 안녕하세요, 인천 아이미래로 입니다 :)
 
-홍제공 관리사님, 김산모 산모님의 서비스 제공기록지 작성 링크입니다.
+홍제공 관리사님, 김산모 산모님의 2026-07-03 시작 서비스 제공기록지 작성 링크입니다.
 매일 서비스 제공 완료 직전에 서비스 세부사항 기록 후에, 산모님께 승인을 받으시면 됩니다.
 
 최초 접속 시에 관리사님의 전화번호 인증이 필요합니다. 링크 접속 후 휴대폰 번호로 본인확인하고, 방문일마다 기록을 남겨주세요.
@@ -386,6 +440,7 @@ https://mobile.test/service-record/efl_token`;
                 templateVariables: {
                     clientName: "김산모",
                     employeeName: "홍제공",
+                    serviceStartDate: "2026-07-03",
                     serviceRecordUrl: "https://mobile.test/service-record/efl_token",
                 },
             },

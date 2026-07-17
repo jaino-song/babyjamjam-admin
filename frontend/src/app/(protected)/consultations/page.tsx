@@ -32,6 +32,7 @@ import {
     useMarkConsultationInquiryRead,
 } from "@/hooks/useConsultationInquiries";
 import type { ConsultationInquiry } from "@/services/api";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 
 const READ_TABS = [
     { label: "읽지 않음", value: "unread" },
@@ -46,14 +47,7 @@ const CONSULTATION_DETAIL_TABS = [
 type ConsultationDetailTabKey = (typeof CONSULTATION_DETAIL_TABS)[number]["key"];
 
 function formatDate(value: string): string {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return "-";
-
-    return date.toLocaleDateString("ko-KR", {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-    });
+    return formatDateForDisplay(value);
 }
 
 function formatDateTime(value: string): string {

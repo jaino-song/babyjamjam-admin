@@ -75,7 +75,7 @@ export function ListPanel({
   const hasSearch = searchValue !== undefined && !!onSearchChange;
   const showControls = showTabs || hasSearch;
   const showContentSkeleton = (isLoading || isContentLoading) && contentSkeleton;
-  const resolvedOverlay = overlay ?? emptyState;
+  const resolvedOverlay = overlay ?? (isLoading || isContentLoading ? undefined : emptyState);
   const headerAlignmentClass = subtitle ? "items-start" : "items-center";
   const headerClassName =
     headerPadding === "default"

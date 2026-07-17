@@ -38,6 +38,13 @@ export function isEformsignTokenEndpoint(url?: string): boolean {
     ));
 }
 
+export function isConcurrentAuthRefreshError(error: unknown): boolean {
+    return axios.isAxiosError(error)
+        && error.response?.status === 409
+        && (error.response?.data as { code?: string } | undefined)?.code
+            === "AUTH_REFRESH_REPLAY_CONCURRENT";
+}
+
 // Token refresh state management
 let isEformsignRefreshing = false;
 let isAuthRefreshing = false;
@@ -148,6 +155,11 @@ api.interceptors.response.use(
                 processQueue(authFailedQueue);
                 return axios(originalRequest);
             } catch (refreshError) {
+                if (isConcurrentAuthRefreshError(refreshError)) {
+                    await new Promise((resolve) => setTimeout(resolve, 250));
+                    processQueue(authFailedQueue);
+                    return axios(originalRequest);
+                }
                 processQueue(authFailedQueue, refreshError as AxiosError);
 
                 // If refresh fails, redirect to login (unless already on auth page).

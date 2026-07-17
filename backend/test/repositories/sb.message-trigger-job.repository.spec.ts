@@ -237,6 +237,36 @@ describe("SbMessageTriggerJobRepository", () => {
         });
     });
 
+    it("findUpcomingPendingByBranch keeps future, overdue, and processing jobs visible", async () => {
+        messageTriggerJobModel.findMany.mockResolvedValue([]);
+
+        await repository.findUpcomingPendingByBranch("branch-1", 25);
+
+        expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith({
+            where: {
+                branchId: "branch-1",
+                status: { in: ["pending", "processing"] },
+            },
+            orderBy: { scheduledFor: "asc" },
+            take: 25,
+        });
+    });
+
+    it("findTerminalByBranch returns failed and canceled jobs newest first", async () => {
+        messageTriggerJobModel.findMany.mockResolvedValue([]);
+
+        await repository.findTerminalByBranch("branch-1", 25);
+
+        expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith({
+            where: {
+                branchId: "branch-1",
+                status: { in: ["failed", "canceled"] },
+            },
+            orderBy: { updatedAt: "desc" },
+            take: 25,
+        });
+    });
+
     it("upsertPending falls back to findUnique when the guarded update matches no row (sent row stays immutable)", async () => {
         queryRaw.mockResolvedValue([]);
         messageTriggerJobModel.findUnique.mockResolvedValue(createRow({

@@ -1,3 +1,5 @@
+import type { MessageTriggerJobStatus } from "./message";
+
 export type ServiceRecordLinkStatus = "none" | "scheduled" | "sent" | "failed" | "canceled";
 export type ServiceRecordTokenState = "active" | "expired" | "revoked" | null;
 
@@ -93,7 +95,9 @@ export interface ServiceRecordOverview {
 }
 
 export interface SendServiceRecordLinkResponse {
-    ok: true;
+    ok: boolean;
+    jobId: string;
+    status: MessageTriggerJobStatus;
     scheduledFor: string;
 }
 
@@ -103,6 +107,11 @@ export interface PrepareServiceRecordLinkResponse {
     expiresAt: string;
 }
 
+export interface PrepareServiceRecordLinkRequest {
+    recipientPhone?: string;
+}
+
 export interface SendServiceRecordLinkRequest {
     preparedLinkToken?: string;
+    recipientPhone?: string;
 }

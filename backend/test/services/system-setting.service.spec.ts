@@ -1,7 +1,7 @@
 import { SystemSettingService } from "application/services/system-setting.service";
 import { GetSettingUsecase } from "application/usecases/system-setting/get-setting.usecase";
 import { UpdateSettingUsecase } from "application/usecases/system-setting/update-setting.usecase";
-import { SystemSettingEntity, AlimtalkProvider } from "domain/entities/system-setting.entity";
+import { SystemSettingEntity } from "domain/entities/system-setting.entity";
 
 describe("SystemSettingService", () => {
     const createMockGetSettingUsecase = () => ({
@@ -29,111 +29,6 @@ describe("SystemSettingService", () => {
 
     afterEach(() => {
         jest.clearAllMocks();
-    });
-
-    describe("getAlimtalkProvider", () => {
-        it("should return the current provider when set", async () => {
-            getSettingUsecase.executeWithDefault.mockResolvedValue("aligo_alimtalk");
-
-            const result = await service.getAlimtalkProvider();
-
-            expect(getSettingUsecase.executeWithDefault).toHaveBeenCalledWith(
-                "alimtalk_provider",
-                "aligo_alimtalk"
-            );
-            expect(result).toBe("aligo_alimtalk");
-        });
-
-        it("should return default 'aligo_alimtalk' when not set", async () => {
-            getSettingUsecase.executeWithDefault.mockResolvedValue("aligo_alimtalk");
-
-            const result = await service.getAlimtalkProvider();
-
-            expect(result).toBe("aligo_alimtalk");
-        });
-
-        it("should return 'none' when disabled", async () => {
-            getSettingUsecase.executeWithDefault.mockResolvedValue("none");
-
-            const result = await service.getAlimtalkProvider();
-
-            expect(result).toBe("none");
-        });
-    });
-
-    describe("getAlimtalkProviderSetting", () => {
-        it("should return the stored provider setting entity with updatedAt", async () => {
-            const entity = new SystemSettingEntity(
-                "alimtalk_provider",
-                "aligo_alimtalk",
-                new Date("2026-05-28T12:00:00.000Z")
-            );
-            getSettingUsecase.executeEntity.mockResolvedValue(entity);
-
-            const result = await service.getAlimtalkProviderSetting();
-
-            expect(getSettingUsecase.executeEntity).toHaveBeenCalledWith("alimtalk_provider");
-            expect(result).toBe(entity);
-        });
-    });
-
-    describe("setAlimtalkProvider", () => {
-        it("should update the provider setting", async () => {
-            const entity = new SystemSettingEntity(
-                "alimtalk_provider",
-                "aligo_alimtalk",
-                new Date()
-            );
-            updateSettingUsecase.execute.mockResolvedValue(entity);
-
-            const result = await service.setAlimtalkProvider("aligo_alimtalk");
-
-            expect(updateSettingUsecase.execute).toHaveBeenCalledWith(
-                "alimtalk_provider",
-                "aligo_alimtalk"
-            );
-            expect(result.value).toBe("aligo_alimtalk");
-        });
-
-        it.each(["aligo_alimtalk", "none"] as AlimtalkProvider[])(
-            "should accept valid provider '%s'",
-            async (provider) => {
-                const entity = new SystemSettingEntity(
-                    "alimtalk_provider",
-                    provider,
-                    new Date()
-                );
-                updateSettingUsecase.execute.mockResolvedValue(entity);
-
-                const result = await service.setAlimtalkProvider(provider);
-
-                expect(result.value).toBe(provider);
-            }
-        );
-
-        it("should throw error for invalid provider", async () => {
-            await expect(
-                service.setAlimtalkProvider("invalid" as AlimtalkProvider)
-            ).rejects.toThrow("Invalid alimtalk provider");
-        });
-    });
-
-    describe("isAlimtalkEnabled", () => {
-        it("should return true when provider is aligo_alimtalk", async () => {
-            getSettingUsecase.executeWithDefault.mockResolvedValue("aligo_alimtalk");
-
-            const result = await service.isAlimtalkEnabled();
-
-            expect(result).toBe(true);
-        });
-
-        it("should return false when provider is none", async () => {
-            getSettingUsecase.executeWithDefault.mockResolvedValue("none");
-
-            const result = await service.isAlimtalkEnabled();
-
-            expect(result).toBe(false);
-        });
     });
 
     describe("message automation past trigger config", () => {
@@ -200,6 +95,80 @@ describe("SystemSettingService", () => {
                 }),
             );
             expect(result).toBe(entity);
+        });
+    });
+
+    describe("client auto-registration policy", () => {
+        it("should default to enabled when no setting is stored", async () => {
+            getSettingUsecase.executeWithDefault.mockResolvedValue("true");
+
+            const result = await service.getClientAutoRegistrationEnabled("branch-1");
+
+            expect(getSettingUsecase.executeWithDefault).toHaveBeenCalledWith(
+                "branch:branch-1:client_auto_registration",
+                "true",
+            );
+            expect(result).toBe(true);
+        });
+
+        it("should round-trip a stored value", async () => {
+            const entity = new SystemSettingEntity(
+                "branch:branch-1:client_auto_registration",
+                "false",
+                new Date(),
+            );
+            updateSettingUsecase.execute.mockResolvedValue(entity);
+
+            const setResult = await service.setClientAutoRegistrationEnabled("branch-1", false);
+
+            expect(updateSettingUsecase.execute).toHaveBeenCalledWith(
+                "branch:branch-1:client_auto_registration",
+                "false",
+            );
+            expect(setResult).toBe(entity);
+
+            getSettingUsecase.executeWithDefault.mockResolvedValue("false");
+
+            const getResult = await service.getClientAutoRegistrationEnabled("branch-1");
+
+            expect(getResult).toBe(false);
+        });
+    });
+
+    describe("greeting on auto-registration policy", () => {
+        it("should default to disabled when no setting is stored", async () => {
+            getSettingUsecase.executeWithDefault.mockResolvedValue("false");
+
+            const result = await service.getGreetingOnAutoRegistrationEnabled("branch-1");
+
+            expect(getSettingUsecase.executeWithDefault).toHaveBeenCalledWith(
+                "branch:branch-1:greeting_on_auto_registration",
+                "false",
+            );
+            expect(result).toBe(false);
+        });
+
+        it("should round-trip a stored value", async () => {
+            const entity = new SystemSettingEntity(
+                "branch:branch-1:greeting_on_auto_registration",
+                "true",
+                new Date(),
+            );
+            updateSettingUsecase.execute.mockResolvedValue(entity);
+
+            const setResult = await service.setGreetingOnAutoRegistrationEnabled("branch-1", true);
+
+            expect(updateSettingUsecase.execute).toHaveBeenCalledWith(
+                "branch:branch-1:greeting_on_auto_registration",
+                "true",
+            );
+            expect(setResult).toBe(entity);
+
+            getSettingUsecase.executeWithDefault.mockResolvedValue("true");
+
+            const getResult = await service.getGreetingOnAutoRegistrationEnabled("branch-1");
+
+            expect(getResult).toBe(true);
         });
     });
 });

@@ -43,7 +43,6 @@ import {
 } from "@/lib/api/system-admin";
 import {
   approveUser,
-  getPendingUsers,
   getSystemAdminUsers,
   rejectUser,
   type SystemAdminUser,
@@ -74,6 +73,12 @@ interface AdminRequest {
   action?: AdminRequestAction;
 }
 
+interface PendingAccountApproval {
+  userId: string;
+  branchId?: string;
+  requestedRole: string;
+}
+
 interface AdminRecord {
   id: string;
   title: string;
@@ -90,6 +95,7 @@ interface AdminRecord {
   detailRows: readonly AdminDetailRow[];
   applicantRows?: readonly AdminDetailRow[];
   requests?: readonly AdminRequest[];
+  pendingAccountApproval?: PendingAccountApproval;
 }
 
 interface AdminSection {
@@ -152,6 +158,12 @@ const OWNER_ADMIN_SECTIONS = [
     searchPlaceholder: "이름, 이메일, 조직, 역할 검색…",
     tabs: [
       { label: "전체", value: "all" },
+      {
+        label: "가입 대기",
+        value: "pending",
+        activeClassName: "text-amber-700",
+        indicatorClassName: "bg-amber-600",
+      },
       {
         label: "지점장",
         value: "branch-manager",
@@ -220,6 +232,7 @@ const CATEGORY_BADGE_STYLE: Record<string, { icon: string }> = {
   approved: { icon: "bg-v3-green-light text-v3-green" },
   not_requested: { icon: "bg-v3-dim-white text-v3-text-muted" },
   notifications: { icon: "bg-v3-primary-light text-v3-primary" },
+  pending: { icon: "bg-amber-100 text-amber-700" },
   owner: { icon: "bg-v3-green-light text-v3-green" },
   admin: { icon: "bg-v3-orange-light text-v3-orange" },
   "branch-manager": { icon: "bg-v3-orange-light text-v3-orange" },
@@ -231,6 +244,7 @@ function getAdminRolePillVariant(roleLabel: string): AdminTagPillVariant {
   switch (roleLabel) {
     case "오너":
       return "emerald";
+    case "가입 대기":
     case "지점장":
       return "amber";
     case "매니저":
@@ -425,28 +439,41 @@ function buildAccountStats(users: readonly SystemAdminUser[]): readonly StatsBar
 
 function buildAccountRecords(users: readonly SystemAdminUser[]): AdminRecord[] {
   return users.map((user) => {
+    const isPendingApproval = user.approvalStatus === "pending";
     const roleLabel = getAccountRoleLabel(user.role);
+    const requestedRoleLabel = getAccountRoleLabel(user.requestedRole);
     const authProviderLabel = getAccountAuthProviderLabel(user.authProvider);
     const accountStatus = getAccountStatus(user);
+    const pendingAccountApproval = isPendingApproval
+      ? {
+          userId: user.id,
+          branchId: user.branches[0]?.id,
+          requestedRole: getDefaultPendingApprovalRole(user),
+        }
+      : undefined;
 
     return {
       id: user.id,
-      title: `${roleLabel} 계정`,
+      title: isPendingApproval ? "가입 승인 대기" : `${roleLabel} 계정`,
       listTitle: user.name ?? user.email ?? "이름 미등록",
       listSubtitle: getAccountBranchLabel(user),
-      listStatusLabel: roleLabel,
-      category: getAccountCategory(user.role),
-      statusLabel: accountStatus.label,
-      statusVariant: accountStatus.variant,
+      listSummary: isPendingApproval ? `요청 권한: ${requestedRoleLabel}` : undefined,
+      listStatusLabel: isPendingApproval ? "가입 대기" : roleLabel,
+      category: isPendingApproval ? "pending" : getAccountCategory(user.role),
+      statusLabel: isPendingApproval ? "가입 대기" : accountStatus.label,
+      statusVariant: isPendingApproval ? "warning" : accountStatus.variant,
       owner: authProviderLabel,
-      summary: `${authProviderLabel} 로그인`,
+      summary: isPendingApproval ? "가입 승인 검토가 필요한 계정입니다." : `${authProviderLabel} 로그인`,
       tags: [],
       detailRows: [
         { label: "이름", value: user.name ?? "-" },
         { label: "이메일", value: user.email ?? "-" },
         { label: "전화번호", value: user.phone ?? "-" },
         { label: "생년월일", value: formatBirthDate(user.birthDate) },
-        { label: "역할", value: roleLabel },
+        {
+          label: isPendingApproval ? "요청 권한" : "역할",
+          value: isPendingApproval ? requestedRoleLabel : roleLabel,
+        },
         { label: "인증 방식", value: authProviderLabel },
         {
           label: "이메일 인증",
@@ -460,6 +487,7 @@ function buildAccountRecords(users: readonly SystemAdminUser[]): AdminRecord[] {
         { label: "가입일", value: formatAccountDate(user.createdAt) },
         { label: "소속", value: getAccountBranchSummary(user) },
       ],
+      pendingAccountApproval,
     };
   });
 }
@@ -699,24 +727,17 @@ export function OwnerAdminConsole() {
       void queryClient.invalidateQueries({ queryKey: ["systemAdminBranchRequests"] });
     },
   });
-  const {
-    data: pendingUsers = [],
-    isLoading: isPendingUsersLoading,
-    error: pendingUsersError,
-  } = useQuery({ queryKey: ["pendingUsers"], queryFn: getPendingUsers });
   const [pendingRoleSelections, setPendingRoleSelections] = useState<Record<string, string>>({});
   const approveUserMutation = useMutation({
     mutationFn: ({ id, role, branchId }: { id: string; role: string; branchId?: string }) =>
       approveUser(id, role, branchId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["pendingUsers"] });
       void queryClient.invalidateQueries({ queryKey: ["systemAdminUsers"] });
     },
   });
   const rejectUserMutation = useMutation({
     mutationFn: (id: string) => rejectUser(id),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["pendingUsers"] });
       void queryClient.invalidateQueries({ queryKey: ["systemAdminUsers"] });
     },
   });
@@ -778,133 +799,6 @@ export function OwnerAdminConsole() {
 
       {activeSection.stats.length > 0 ? (
         <StatsBar name="system-admin" items={activeSection.stats} />
-      ) : null}
-
-      {activeSection.id === "accounts" ? (
-        <InfoCard
-          title="가입 승인 대기"
-          data-component="system-admin-pending-approvals"
-          className="mb-6"
-        >
-          {isPendingUsersLoading ? (
-            <p className="py-3 text-sm text-v3-text-muted">승인 대기 목록을 불러오는 중…</p>
-          ) : pendingUsersError ? (
-            <p className="py-3 text-sm text-destructive">
-              승인 대기 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.
-            </p>
-          ) : pendingUsers.length === 0 ? (
-            <p className="py-3 text-sm text-v3-text-muted">승인 대기 중인 신청이 없습니다.</p>
-          ) : (
-            <ul data-component="system-admin-pending-approval-list" className="space-y-4">
-              {pendingUsers.map((user) => {
-                const selectedRole =
-                  pendingRoleSelections[user.id] ?? getDefaultPendingApprovalRole(user);
-                const branchId = user.branches[0]?.id;
-                const isApprovingThisRow =
-                  approveUserMutation.isPending && approveUserMutation.variables?.id === user.id;
-                const isRejectingThisRow =
-                  rejectUserMutation.isPending && rejectUserMutation.variables === user.id;
-                const showApproveError =
-                  approveUserMutation.isError && approveUserMutation.variables?.id === user.id;
-                const showRejectError =
-                  rejectUserMutation.isError && rejectUserMutation.variables === user.id;
-
-                return (
-                  <li
-                    key={user.id}
-                    data-component="system-admin-pending-approval-item"
-                    className="space-y-3 border-b border-v3-border pb-4 last:border-b-0 last:pb-0"
-                  >
-                    <div className="flex flex-wrap items-baseline justify-between gap-2">
-                      <div>
-                        <p className="text-sm font-semibold text-v3-dark">
-                          {user.name ?? user.email ?? "이름 미등록"}
-                        </p>
-                        <p className="text-xs text-v3-text-muted">{user.email ?? "-"}</p>
-                      </div>
-                      <span className="text-xs text-v3-text-muted">
-                        {formatAccountDate(user.createdAt)} 신청
-                      </span>
-                    </div>
-
-                    <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-v3-text-muted">
-                      <span>
-                        신청 지점{" "}
-                        <span className="font-medium text-v3-dark">
-                          {getAccountBranchLabel(user)}
-                        </span>
-                      </span>
-                      <span>
-                        요청 권한{" "}
-                        <span className="font-medium text-v3-dark">
-                          {getAccountRoleLabel(user.requestedRole)}
-                        </span>
-                      </span>
-                    </div>
-
-                    <div
-                      data-component="system-admin-pending-approval-actions"
-                      className="flex flex-wrap items-center gap-2"
-                    >
-                      <select
-                        aria-label={`${user.name ?? user.email ?? "신청자"} 승인 권한 선택`}
-                        data-component="system-admin-pending-approval-role-select"
-                        value={selectedRole}
-                        disabled={isPendingApprovalActionRunning}
-                        onChange={(event) =>
-                          setPendingRoleSelections((prev) => ({
-                            ...prev,
-                            [user.id]: event.target.value,
-                          }))
-                        }
-                        className="h-9 rounded-full border border-v3-border bg-white px-3 text-sm text-v3-dark disabled:opacity-50"
-                      >
-                        {REGISTERABLE_ROLE_OPTIONS.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="positive"
-                        disabled={isPendingApprovalActionRunning}
-                        onClick={() =>
-                          approveUserMutation.mutate({ id: user.id, role: selectedRole, branchId })
-                        }
-                      >
-                        {isApprovingThisRow ? "승인 중…" : "승인"}
-                      </Button>
-
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="negative-outline"
-                        disabled={isPendingApprovalActionRunning}
-                        onClick={() => rejectUserMutation.mutate(user.id)}
-                      >
-                        {isRejectingThisRow ? "거절 중…" : "거절"}
-                      </Button>
-                    </div>
-
-                    {showApproveError ? (
-                      <p role="alert" className="text-sm text-destructive">
-                        승인 처리에 실패했습니다. 잠시 후 다시 시도해 주세요.
-                      </p>
-                    ) : null}
-                    {showRejectError ? (
-                      <p role="alert" className="text-sm text-destructive">
-                        거절 처리에 실패했습니다. 잠시 후 다시 시도해 주세요.
-                      </p>
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </InfoCard>
       ) : null}
 
       <div
@@ -1150,6 +1044,11 @@ export function OwnerAdminConsole() {
                     ).map((request, index) => {
                       const approveAction =
                         request.action?.type === "approve-message-sender" ? request.action : null;
+                      const pendingAccountApproval = selectedRecord.pendingAccountApproval;
+                      const selectedPendingRole = pendingAccountApproval
+                        ? (pendingRoleSelections[pendingAccountApproval.userId] ??
+                          pendingAccountApproval.requestedRole)
+                        : null;
                       const infoTitle =
                         activeSection.id === "accounts"
                           ? "계정 정보"
@@ -1175,6 +1074,83 @@ export function OwnerAdminConsole() {
                               <InfoRow key={row.label} label={row.label} value={row.value} />
                             ))}
                           </InfoCard>
+                          {pendingAccountApproval && selectedPendingRole ? (
+                            <div className="space-y-2">
+                              <div
+                                data-component="system-admin-pending-approval-actions"
+                                className="flex flex-wrap items-center gap-2"
+                              >
+                                <select
+                                  aria-label={`${selectedRecord.listTitle} 승인 권한 선택`}
+                                  data-component="system-admin-pending-approval-role-select"
+                                  value={selectedPendingRole}
+                                  disabled={isPendingApprovalActionRunning}
+                                  onChange={(event) =>
+                                    setPendingRoleSelections((previousSelections) => ({
+                                      ...previousSelections,
+                                      [pendingAccountApproval.userId]: event.target.value,
+                                    }))
+                                  }
+                                  className="h-9 rounded-full border border-v3-border bg-white px-3 text-sm text-v3-dark disabled:opacity-50"
+                                >
+                                  {REGISTERABLE_ROLE_OPTIONS.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="positive"
+                                  disabled={isPendingApprovalActionRunning}
+                                  onClick={() =>
+                                    approveUserMutation.mutate({
+                                      id: pendingAccountApproval.userId,
+                                      role: selectedPendingRole,
+                                      branchId: pendingAccountApproval.branchId,
+                                    })
+                                  }
+                                >
+                                  {approveUserMutation.isPending &&
+                                  approveUserMutation.variables?.id ===
+                                    pendingAccountApproval.userId
+                                    ? "승인 중…"
+                                    : "승인"}
+                                </Button>
+
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="negative-outline"
+                                  disabled={isPendingApprovalActionRunning}
+                                  onClick={() =>
+                                    rejectUserMutation.mutate(pendingAccountApproval.userId)
+                                  }
+                                >
+                                  {rejectUserMutation.isPending &&
+                                  rejectUserMutation.variables === pendingAccountApproval.userId
+                                    ? "거절 중…"
+                                    : "거절"}
+                                </Button>
+                              </div>
+
+                              {approveUserMutation.isError &&
+                              approveUserMutation.variables?.id ===
+                                pendingAccountApproval.userId ? (
+                                <p role="alert" className="text-sm text-destructive">
+                                  승인 처리에 실패했습니다. 잠시 후 다시 시도해 주세요.
+                                </p>
+                              ) : null}
+                              {rejectUserMutation.isError &&
+                              rejectUserMutation.variables === pendingAccountApproval.userId ? (
+                                <p role="alert" className="text-sm text-destructive">
+                                  거절 처리에 실패했습니다. 잠시 후 다시 시도해 주세요.
+                                </p>
+                              ) : null}
+                            </div>
+                          ) : null}
                           {approveAction ? (
                             <div className="space-y-2">
                               <Button

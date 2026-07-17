@@ -144,4 +144,19 @@ describe("MessagesPermissionGuard", () => {
     });
     expect(screen.queryByText("메시지 전송 권한이 필요합니다.")).not.toBeInTheDocument();
   });
+
+  it.each(["/messages/scheduled", "/messages/history"])(
+    "allows the read-only route %s before sender approval",
+    async (pathname) => {
+      mockPathname = pathname;
+
+      renderGuard();
+
+      expect(screen.getByTestId("messages-route-child")).toBeInTheDocument();
+      await waitFor(() => {
+        expect(mockGetMessageSenderApproval).not.toHaveBeenCalled();
+      });
+      expect(screen.queryByText("메시지 전송 권한이 필요합니다.")).not.toBeInTheDocument();
+    },
+  );
 });

@@ -1,4 +1,8 @@
 export enum SystemTemplateKey {
+  CLIENT_WELCOME = 'CLIENT_WELCOME',
+  SERVICE_START_REMINDER = 'SERVICE_START_REMINDER',
+  SERVICE_END_REMINDER = 'SERVICE_END_REMINDER',
+  EMPLOYEE_ASSIGNED = 'EMPLOYEE_ASSIGNED',
   PRICE_INFO = 'PRICE_INFO',
   GREETING = 'GREETING',
   THANKS = 'THANKS',
@@ -32,6 +36,93 @@ export interface TemplateContract {
 }
 
 export const SYSTEM_TEMPLATE_REGISTRY: Record<SystemTemplateKey, TemplateContract> = {
+  [SystemTemplateKey.CLIENT_WELCOME]: {
+    key: SystemTemplateKey.CLIENT_WELCOME,
+    name: '고객 등록 안내',
+    description: '신규 고객 등록 및 서비스 정보 안내',
+    requiredVariables: [
+      { key: 'clientName', label: '고객명', type: 'string', required: true },
+      { key: 'registrationDate', label: '등록일', type: 'string', required: true },
+      { key: 'serviceType', label: '서비스 타입', type: 'string', required: true },
+    ],
+    defaultContent: `[사회서비스 제공자 품질평가 A등급]
+{{clientName}} 산모님~♡
+
+인천 아이미래로에 고객 등록이 완료되었습니다 :)
+
+등록일: {{registrationDate}}
+서비스 타입: {{serviceType}}
+
+서비스 준비 과정에서 필요한 사항은 담당자가 안내드리겠습니다.
+
+아기의 건강과 엄마의 안정을 위해 최선을 다하겠습니다. 감사합니다.`,
+  },
+
+  [SystemTemplateKey.SERVICE_START_REMINDER]: {
+    key: SystemTemplateKey.SERVICE_START_REMINDER,
+    name: '서비스 시작 알림',
+    description: '서비스 시작 일정 안내',
+    requiredVariables: [
+      { key: 'clientName', label: '고객명', type: 'string', required: true },
+      { key: 'serviceStartDate', label: '서비스 시작일', type: 'string', required: true },
+      { key: 'timingText', label: '발송 기준 문구', type: 'string', required: true },
+    ],
+    defaultContent: `[사회서비스 제공자 품질평가 A등급]
+{{clientName}} 산모님~♡
+
+산후관리서비스 시작 일정을 안내드립니다 :)
+
+서비스 시작일: {{serviceStartDate}}
+발송 기준: {{timingText}}
+
+서비스가 원활히 시작될 수 있도록 잘 준비하겠습니다.
+
+아기의 건강과 엄마의 안정을 위해 최선을 다하겠습니다. 감사합니다.`,
+  },
+
+  [SystemTemplateKey.SERVICE_END_REMINDER]: {
+    key: SystemTemplateKey.SERVICE_END_REMINDER,
+    name: '서비스 종료 알림',
+    description: '서비스 종료 일정 안내',
+    requiredVariables: [
+      { key: 'clientName', label: '고객명', type: 'string', required: true },
+      { key: 'serviceEndDate', label: '서비스 종료일', type: 'string', required: true },
+      { key: 'timingText', label: '발송 기준 문구', type: 'string', required: true },
+    ],
+    defaultContent: `[사회서비스 제공자 품질평가 A등급]
+{{clientName}} 산모님~♡
+
+산후관리서비스 종료 일정을 안내드립니다.
+
+서비스 종료일: {{serviceEndDate}}
+발송 기준: {{timingText}}
+
+남은 서비스 기간도 편안하고 만족스럽게 이용하실 수 있도록 최선을 다하겠습니다 :)
+
+아기의 건강과 엄마의 안정을 위해 최선을 다하겠습니다. 감사합니다.`,
+  },
+
+  [SystemTemplateKey.EMPLOYEE_ASSIGNED]: {
+    key: SystemTemplateKey.EMPLOYEE_ASSIGNED,
+    name: '직원 배정 알림',
+    description: '관리사에게 고객 배정 및 서비스 시작 일정 안내',
+    requiredVariables: [
+      { key: 'employeeName', label: '직원명', type: 'string', required: true },
+      { key: 'clientName', label: '고객명', type: 'string', required: true },
+      { key: 'serviceStartDate', label: '서비스 시작일', type: 'string', required: true },
+    ],
+    defaultContent: `[사회서비스 제공자 품질평가 A등급]
+안녕하세요, 인천 아이미래로 입니다 :)
+
+{{employeeName}} 관리사님께 {{clientName}} 산모님 서비스가 배정되었습니다.
+
+서비스 시작일: {{serviceStartDate}}
+
+서비스 시작 전 고객 정보와 일정을 확인해 주세요.
+
+감사합니다.`,
+  },
+
   [SystemTemplateKey.PRICE_INFO]: {
     key: SystemTemplateKey.PRICE_INFO,
     name: '비용 안내',
@@ -258,6 +349,13 @@ blog.naver.com/imirae-incheon`,
         description: '제공기록지 대상 고객명',
       },
       {
+        key: 'serviceStartDate',
+        label: '서비스 시작일',
+        type: 'string',
+        required: true,
+        description: '배정된 서비스 시작일',
+      },
+      {
         key: 'serviceRecordUrl',
         label: '제공기록지 링크',
         type: 'string',
@@ -268,7 +366,7 @@ blog.naver.com/imirae-incheon`,
     defaultContent: `[사회서비스 제공자 품질평가 A등급]
 안녕하세요, 인천 아이미래로 입니다 :)
 
-{{employeeName}} 관리사님, {{clientName}} 산모님의 서비스 제공기록지 작성 링크입니다.
+{{employeeName}} 관리사님, {{clientName}} 산모님의 {{serviceStartDate}} 시작 서비스 제공기록지 작성 링크입니다.
 매일 서비스 제공 완료 직전에 서비스 세부사항 기록 후에, 산모님께 승인을 받으시면 됩니다.
 
 최초 접속 시에 관리사님의 전화번호 인증이 필요합니다. 링크 접속 후 휴대폰 번호로 본인확인하고, 방문일마다 기록을 남겨주세요.

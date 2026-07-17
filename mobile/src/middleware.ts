@@ -3,9 +3,14 @@ import type { NextRequest } from "next/server";
 import { jwtDecode } from "jwt-decode";
 
 import { getServerRuntimeConfig } from "@/lib/env";
+import {
+  ACCESS_TOKEN_MAX_AGE_SECONDS,
+  getRefreshSessionMaxAgeSeconds,
+} from "@/lib/auth/session-policy";
 
 interface TokenPayload {
   sub: string;
+  sid?: string;
   role: string | null;
   branchId?: string;
   branchRole?: string;
@@ -18,6 +23,16 @@ interface RefreshResponse {
   refreshToken?: string;
 }
 
+type RefreshAttempt =
+  | {
+    kind: "success";
+    accessToken: string;
+    refreshToken: string;
+    role: string;
+  }
+  | { kind: "concurrent" }
+  | null;
+
 const {
   backendBaseUrl: API_URL,
   isProductionLike,
@@ -25,10 +40,6 @@ const {
 
 function isAutoLoginEnabled(value: string | undefined): boolean {
   return value !== "0" && value !== "false";
-}
-
-function getAuthTokenMaxAge(role: string): number {
-  return role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60;
 }
 
 function decodeRole(token: string): string {
@@ -43,10 +54,10 @@ function decodeRole(token: string): string {
 function isTokenExpired(token: string): boolean {
   try {
     const decoded = jwtDecode<TokenPayload>(token);
-    if (!decoded.exp) {
-      return false;
-    }
-    return decoded.exp * 1000 <= Date.now();
+    return decoded.type !== "access"
+      || !decoded.sid
+      || !decoded.exp
+      || decoded.exp * 1000 <= Date.now();
   } catch {
     return true;
   }
@@ -56,6 +67,7 @@ function clearAuthCookies(response: NextResponse): void {
   response.cookies.delete("auth_token");
   response.cookies.delete("refresh_token");
   response.cookies.delete("auto_login");
+  response.cookies.delete("selected_branch_id");
 }
 
 function buildRequestCookieHeader(request: NextRequest, params: {
@@ -105,11 +117,11 @@ function setSessionCookies(
   if (params.autoLogin) {
     response.cookies.set("auth_token", params.accessToken, {
       ...baseCookieOptions,
-      maxAge: getAuthTokenMaxAge(params.role),
+      maxAge: ACCESS_TOKEN_MAX_AGE_SECONDS,
     });
     response.cookies.set("refresh_token", params.refreshToken, {
       ...baseCookieOptions,
-      maxAge: 7 * 24 * 60 * 60,
+      maxAge: getRefreshSessionMaxAgeSeconds(params.role),
     });
     response.cookies.set("auto_login", "1", {
       ...baseCookieOptions,
@@ -123,11 +135,7 @@ function setSessionCookies(
   response.cookies.set("auto_login", "0", baseCookieOptions);
 }
 
-async function tryRefreshAuthSession(refreshToken: string): Promise<{
-  accessToken: string;
-  refreshToken: string;
-  role: string;
-} | null> {
+async function tryRefreshAuthSession(refreshToken: string): Promise<RefreshAttempt> {
   try {
     const refreshResponse = await fetch(`${API_URL}/auth/refresh-token`, {
       method: "POST",
@@ -139,6 +147,14 @@ async function tryRefreshAuthSession(refreshToken: string): Promise<{
     });
 
     if (!refreshResponse.ok) {
+      if (refreshResponse.status === 401) {
+        const error = await refreshResponse.json().catch(() => null) as {
+          code?: string;
+        } | null;
+        if (error?.code === "AUTH_REFRESH_REPLAY_CONCURRENT") {
+          return { kind: "concurrent" };
+        }
+      }
       return null;
     }
 
@@ -148,6 +164,7 @@ async function tryRefreshAuthSession(refreshToken: string): Promise<{
     }
 
     return {
+      kind: "success",
       accessToken: data.accessToken,
       refreshToken: data.refreshToken || refreshToken,
       role: decodeRole(data.accessToken),
@@ -237,6 +254,37 @@ export async function middleware(request: NextRequest) {
   ) {
     return NextResponse.redirect(new URL("/", request.url));
   }
+  if (
+    isRouteMatch(pathname, LOGIN_ROUTE)
+    && authToken
+    && isTokenExpired(authToken)
+  ) {
+    const loginRefreshToken = request.cookies.get("refresh_token")?.value;
+    if (loginRefreshToken) {
+      const refreshAttempt = await tryRefreshAuthSession(loginRefreshToken);
+      if (refreshAttempt?.kind === "success") {
+        const response = NextResponse.redirect(new URL("/", request.url));
+        setSessionCookies(response, {
+          accessToken: refreshAttempt.accessToken,
+          refreshToken: refreshAttempt.refreshToken,
+          role: refreshAttempt.role,
+          autoLogin: isAutoLoginEnabled(
+            request.cookies.get("auto_login")?.value,
+          ),
+        });
+        return response;
+      }
+      if (refreshAttempt?.kind === "concurrent") {
+        const response = NextResponse.next();
+        response.cookies.delete("auth_token");
+        response.headers.set("Retry-After", "1");
+        return response;
+      }
+    }
+    const response = NextResponse.next();
+    clearAuthCookies(response);
+    return response;
+  }
 
   // Skip public routes
   if (PUBLIC_ROUTES.some((route) => isRouteMatch(pathname, route))) {
@@ -255,15 +303,23 @@ export async function middleware(request: NextRequest) {
   const needsRefresh = !authToken || isTokenExpired(authToken);
 
   if (needsRefresh && refreshToken) {
-    refreshedSession = await tryRefreshAuthSession(refreshToken);
-    if (refreshedSession) {
-      authToken = refreshedSession.accessToken;
+    const refreshAttempt = await tryRefreshAuthSession(refreshToken);
+    if (refreshAttempt?.kind === "concurrent") {
+      const response = isApiRoute(pathname)
+        ? apiJsonResponse("Authentication refresh already in progress", 409)
+        : NextResponse.redirect(request.nextUrl);
+      response.headers.set("Retry-After", "1");
+      return response;
+    }
+    if (refreshAttempt?.kind === "success") {
+      refreshedSession = refreshAttempt;
+      authToken = refreshAttempt.accessToken;
       if (request.method === "GET" || request.method === "HEAD") {
         const response = NextResponse.redirect(request.nextUrl);
         setSessionCookies(response, {
-          accessToken: refreshedSession.accessToken,
-          refreshToken: refreshedSession.refreshToken,
-          role: refreshedSession.role,
+          accessToken: refreshAttempt.accessToken,
+          refreshToken: refreshAttempt.refreshToken,
+          role: refreshAttempt.role,
           autoLogin,
         });
         return response;

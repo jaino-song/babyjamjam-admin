@@ -5,6 +5,7 @@ import { AppModule } from "./app.module";
 import cookieParser from "cookie-parser";
 import { PrismaExceptionFilter } from "./infrastructure/filters/prisma-exception.filter";
 import { GlobalValidationPipe } from "./infrastructure/pipes/global-validation.pipe";
+import { assertVendorStubsConfigured } from "./infrastructure/vendor-stubs/e2e-vendor-stubs";
 
 // Catch any unhandled errors
 process.on('uncaughtException', (error) => {
@@ -31,6 +32,15 @@ async function bootstrap() {
             }
         }
     }
+
+    // Must run before NestFactory.create(AppModule): module instantiation is
+    // what invokes createAligoPortClient / createEformsignClientRepository /
+    // createGeminiGateway (infrastructure/vendor-stubs/e2e-vendor-stubs.ts),
+    // and this throws first if a test-like boot is missing (or has typo'd)
+    // E2E_VENDOR_STUBS=1 — see assertVendorStubsConfigured for what counts as
+    // "test-like". No real ConfigService exists yet, so pass a process.env-backed
+    // adapter, same shape the vendor-stub factories already accept.
+    assertVendorStubsConfigured({ get: (key: string) => process.env[key] });
 
     const app = await NestFactory.create(AppModule);
     app.use(helmet());

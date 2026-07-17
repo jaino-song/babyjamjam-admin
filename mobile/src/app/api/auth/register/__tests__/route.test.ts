@@ -25,7 +25,7 @@ function createRequest(body: BodyInit): NextRequest {
 
 const validBody = {
     email: "user@example.com",
-    password: "password123",
+    password: "Password1!",
     name: "Hong Gildong",
     phone: "010-1234-5678",
     birthDate: "1990-01-01",

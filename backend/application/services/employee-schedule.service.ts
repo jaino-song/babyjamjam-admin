@@ -1,4 +1,4 @@
-import { Injectable, Optional } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import {
     CreateEmployeeScheduleUsecase,
     DeleteEmployeeScheduleUsecase,
@@ -15,6 +15,8 @@ import { ServiceRecordLifecycleService } from "./service-record-lifecycle.servic
 
 @Injectable()
 export class EmployeeScheduleService {
+    private readonly logger = new Logger(EmployeeScheduleService.name);
+
     constructor(
         private readonly createEmployeeScheduleUsecase: CreateEmployeeScheduleUsecase,
         private readonly findEmployeeScheduleByIdUsecase: FindEmployeeScheduleByIdUsecase,
@@ -98,7 +100,12 @@ export class EmployeeScheduleService {
         if (params.endDate) {
             this.serviceRecordLinkService
                 ?.extendExpiryForEndDate(schedule.id, schedule.endDate)
-                ?.catch(() => undefined);
+                ?.catch((error) => {
+                    this.logger.error(
+                        `[SERVICE_RECORD_LINK_EXTEND_FAILED] scheduleId=${schedule.id} — 수동 확인 필요`,
+                        error instanceof Error ? error.stack : String(error),
+                    );
+                });
         }
         return schedule;
     }

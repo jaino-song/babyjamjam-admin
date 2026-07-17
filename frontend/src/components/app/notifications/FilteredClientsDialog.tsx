@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/table";
 import { useFilteredClients, useClient, useDeleteClient } from "@/hooks/useClients";
 import { Client, DocumentStatus } from "@/lib/client/types";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { ClientDetailModal } from "../clients/ClientDetailModal";
 import { ClientFormDialog } from "../clients/ClientFormDialog";
 
@@ -59,8 +60,7 @@ const getDocumentStatusBadge = (status: DocumentStatus) => {
 };
 
 const formatDate = (dateStr: string | null): string => {
-    if (!dateStr) return "-";
-    return new Date(dateStr).toLocaleDateString("ko-KR");
+    return formatDateForDisplay(dateStr);
 };
 
 export function FilteredClientsDialog({

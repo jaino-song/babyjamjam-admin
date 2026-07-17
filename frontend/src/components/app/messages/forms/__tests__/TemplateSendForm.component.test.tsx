@@ -5,10 +5,13 @@
  * Pure-helper unit tests live in TemplateSendForm.test.ts — do NOT merge them here.
  */
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import type { MessageLogRecord } from "@/features/message-triggers/types";
+import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import { useMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
+import { useToast } from "@/hooks/use-toast";
 import { messageDeliveryApi } from "@/services/api";
 import { useFormStore } from "@/stores/form-store";
 
@@ -37,6 +40,14 @@ jest.mock("@/components/app/clients/ClientAutocomplete", () => ({
       data-testid={`autocomplete-${label}`}
     />
   ),
+}));
+
+jest.mock("@tanstack/react-query", () => ({
+  useQueryClient: jest.fn(),
+}));
+
+jest.mock("@/hooks/use-toast", () => ({
+  useToast: jest.fn(),
 }));
 
 // Mock ContactInput so phone fields that use the plain input stay easy to assert.
@@ -104,6 +115,8 @@ jest.mock("@/features/service-records/api/service-records.api", () => ({
 // Typed references to mocks
 // ---------------------------------------------------------------------------
 const mockedUseMessageHistory = jest.mocked(useMessageHistory);
+const mockedUseQueryClient = jest.mocked(useQueryClient);
+const mockedUseToast = jest.mocked(useToast);
 const mockedSendSms = jest.mocked(messageDeliveryApi.sendSms);
 const mockedGetClientOverview = jest.mocked(serviceRecordsApi.getClientOverview);
 const mockedSendServiceRecordLink = jest.mocked(serviceRecordsApi.sendLink);
@@ -234,6 +247,12 @@ async function queueRecipient(phone: string, name = "") {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockedUseQueryClient.mockReturnValue({
+    invalidateQueries: jest.fn().mockResolvedValue(undefined),
+  } as unknown as ReturnType<typeof useQueryClient>);
+  mockedUseToast.mockReturnValue({
+    toast: jest.fn(),
+  } as unknown as ReturnType<typeof useToast>);
   // Reset Zustand store to blank state between tests.
   useFormStore.setState({
     clientId: null,
@@ -301,6 +320,8 @@ describe("recipient phone input layout", () => {
     mockedSendServiceRecordLink.mockResolvedValue({
       data: {
         ok: true,
+        jobId: "job-11",
+        status: "sent",
         scheduledFor: "2026-07-10T00:00:00.000Z",
       },
     } as never);
@@ -318,6 +339,7 @@ describe("recipient phone input layout", () => {
           serviceRecordUrl: "https://mobile.test/service-record/efl_prepared",
           preparedLinkToken: "efl_prepared",
           expiresAt: "2026-07-20T00:00:00.000Z",
+          recipientPhone: "01011112222",
         }}
         onSubmitStateChange={onSubmitStateChange}
       >
@@ -339,13 +361,25 @@ describe("recipient phone input layout", () => {
     await waitFor(() => {
       expect(mockedSendServiceRecordLink).toHaveBeenCalledWith(11, {
         preparedLinkToken: "efl_prepared",
+        recipientPhone: "01011112222",
       });
     });
     expect(mockedGetClientOverview).not.toHaveBeenCalled();
     expect(mockedSendSms).not.toHaveBeenCalled();
     expect(
       document.querySelector('[data-component="messages-template-send-form-feedback"]'),
-    ).toHaveTextContent("제공기록지 링크 발송 요청이 접수되었습니다.");
+    ).toHaveTextContent("제공기록지 링크 즉시 발송이 완료되었습니다.");
+    const queryClient = mockedUseQueryClient.mock.results[0]?.value;
+    expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+      queryKey: messageTriggerKeys.upcoming(),
+    });
+    expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+      queryKey: messageTriggerKeys.history(),
+    });
+    const toast = mockedUseToast.mock.results[0]?.value.toast;
+    expect(toast).toHaveBeenCalledWith({
+      description: "제공기록지 링크 즉시 발송이 완료되었습니다.",
+    });
   });
 
   it("explains why a service-record link could not be sent without exposing error codes", async () => {
@@ -394,6 +428,7 @@ describe("recipient phone input layout", () => {
           serviceRecordUrl: "https://mobile.test/service-record/efl_prepared",
           preparedLinkToken: "efl_prepared",
           expiresAt: "2026-07-20T00:00:00.000Z",
+          recipientPhone: "01011112222",
         }}
       />,
     );
@@ -414,6 +449,11 @@ describe("recipient phone input layout", () => {
     );
     expect(feedback).not.toHaveTextContent("400");
     expect(feedback).not.toHaveTextContent("Bad Request");
+    const toast = mockedUseToast.mock.results[0]?.value.toast;
+    expect(toast).toHaveBeenCalledWith({
+      variant: "destructive",
+      description: "선택한 관리사님의 전화번호가 없어 제공기록지 링크를 발송하지 못했습니다.",
+    });
   });
 });
 

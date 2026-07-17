@@ -1,0 +1,25 @@
+name: Security Review
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main, dev, preview]
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  osv:
+    name: security-review · osv lockfile scan
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.3.8
+    with:
+      scan-args: |-
+        --lockfile=pnpm-lock.yaml
+      fail-on-vuln: true
+    permissions:
+      contents: read
+      security-events: write
+      actions: read

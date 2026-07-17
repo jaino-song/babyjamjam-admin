@@ -37,6 +37,15 @@ export interface UpdateEmployeeDto {
     birthday?: string;
 }
 
+export interface EmployeeActiveClient {
+    clientId: number;
+    clientName: string;
+    role: "primary" | "secondary";
+    startDate: string;
+    endDate: string;
+    serviceStatus: string;
+}
+
 // Query key factory pattern
 export const employeeQueryKeys = {
     all: ["employees"] as const,
@@ -44,6 +53,7 @@ export const employeeQueryKeys = {
     list: (filters: Record<string, unknown>) => [...employeeQueryKeys.lists(), filters] as const,
     details: () => [...employeeQueryKeys.all, "detail"] as const,
     detail: (id: number) => [...employeeQueryKeys.details(), id] as const,
+    activeClients: (id: number) => [...employeeQueryKeys.detail(id), "active-clients"] as const,
 };
 
 // Fetch all employees
@@ -55,6 +65,20 @@ export function useEmployees() {
             return data;
         },
         staleTime: 1000 * 60 * 10, // 10 minutes
+    });
+}
+
+export function useEmployeeActiveClients(employeeId: number) {
+    return useQuery<EmployeeActiveClient[]>({
+        queryKey: employeeQueryKeys.activeClients(employeeId),
+        queryFn: async () => {
+            const { data } = await api.get<EmployeeActiveClient[]>(
+                `/employees/${employeeId}/active-clients`,
+            );
+            return data;
+        },
+        enabled: employeeId > 0,
+        staleTime: 1000 * 60 * 5,
     });
 }
 

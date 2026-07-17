@@ -14,6 +14,7 @@ import {
   Repeat2,
   Send,
   ShieldCheck,
+  UserPlus,
 } from "lucide-react";
 import {
   AnimatedSlotList,
@@ -42,6 +43,8 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
   settingsApi,
+  type ClientRegistrationPolicy,
+  type ClientRegistrationPolicyPatch,
   type MessageAutomationPoliciesResponse,
   type MessageAutomationPastTriggerConfig,
   type MessageAutomationPolicy,
@@ -119,6 +122,7 @@ const ALIGO_POLICY_ITEMS = [
 ] as const;
 
 const CURRENT_TENANT_ITEM_ID = "current-tenant";
+const CLIENT_REGISTRATION_POLICY_ITEM_ID = "client-registration-policy";
 
 type TenantApplicationListItem = {
   id: string;
@@ -126,7 +130,7 @@ type TenantApplicationListItem = {
   subtitle: string;
   statusLabel: string;
   icon: typeof Building2;
-  kind: "tenant-application" | "automation-policy" | "duplicate-send-policy";
+  kind: "tenant-application" | "automation-policy" | "duplicate-send-policy" | "client-registration-policy";
   active: boolean;
   requiresApproval: boolean;
   rows?: MessageAutomationPolicy["rows"];
@@ -216,6 +220,10 @@ export function MessageTenantApplicationSettings() {
     queryKey: ["settings", "message-automation-policies"],
     queryFn: settingsApi.getMessageAutomationPolicies,
   });
+  const { data: clientRegistrationPolicy } = useQuery({
+    queryKey: ["settings", "client-registration-policy"],
+    queryFn: settingsApi.getClientRegistrationPolicy,
+  });
   const { data: triggerRulesData = [], isLoading: isTriggerRulesLoading } = useMessageTriggerRules();
   const [agreements, setAgreements] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(ALIGO_POLICY_ITEMS.map((item) => [item.id, false])),
@@ -266,7 +274,16 @@ export function MessageTenantApplicationSettings() {
         }),
       );
 
-      items.push(...automationPolicyItems, DUPLICATE_SEND_POLICY_ITEM);
+      items.push(...automationPolicyItems, {
+        id: CLIENT_REGISTRATION_POLICY_ITEM_ID,
+        title: "고객 자동 등록",
+        subtitle: "전자문서 고객 등록과 인사 문자 발송을 관리합니다.",
+        statusLabel: getPolicyStatusLabel(clientRegistrationPolicy?.clientAutoRegistration === true),
+        icon: UserPlus,
+        kind: "client-registration-policy",
+        active: clientRegistrationPolicy?.clientAutoRegistration === true,
+        requiresApproval: false,
+      }, DUPLICATE_SEND_POLICY_ITEM);
 
       return items;
     },
@@ -275,6 +292,7 @@ export function MessageTenantApplicationSettings() {
       isMessageSenderApprovalLoading,
       isMessageSenderApproved,
       messageAutomationPolicies?.policies,
+      clientRegistrationPolicy?.clientAutoRegistration,
       requestedAt,
     ],
   );
@@ -363,6 +381,35 @@ export function MessageTenantApplicationSettings() {
         variant: "destructive",
         description: "지난 자동 전송 설정 저장 중 오류가 발생했습니다.",
       });
+    },
+  });
+
+  const updateClientRegistrationPolicyMutation = useMutation({
+    mutationFn: settingsApi.updateClientRegistrationPolicy,
+    onMutate: async (patch: ClientRegistrationPolicyPatch) => {
+      await queryClient.cancelQueries({ queryKey: ["settings", "client-registration-policy"] });
+      const previous = queryClient.getQueryData<ClientRegistrationPolicy>([
+        "settings",
+        "client-registration-policy",
+      ]);
+      queryClient.setQueryData<ClientRegistrationPolicy>(
+        ["settings", "client-registration-policy"],
+        (current) => current ? { ...current, ...patch } : current,
+      );
+      return { previous };
+    },
+    onError: (_error, _patch, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["settings", "client-registration-policy"], context.previous);
+      }
+      toast({ variant: "destructive", description: "고객 자동 등록 설정 저장 중 오류가 발생했습니다." });
+    },
+    onSuccess: (savedPolicy) => {
+      queryClient.setQueryData(["settings", "client-registration-policy"], savedPolicy);
+      toast({ description: "고객 자동 등록 설정이 저장되었습니다." });
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["settings", "client-registration-policy"] });
     },
   });
 
@@ -624,6 +671,27 @@ export function MessageTenantApplicationSettings() {
               </InfoCard>
             ) : null}
           </div>
+        </DetailPanel>
+      ) : selectedItem?.kind === "client-registration-policy" ? (
+        <DetailPanel
+          avatar={<div className="flex h-12 w-12 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"><UserPlus className="h-5 w-5" /></div>}
+          title="고객 자동 등록"
+          subtitle="전자문서 고객 등록과 인사 문자 발송을 관리합니다."
+        >
+          <InfoCard data-component="messages-settings-client-registration-policy-card" title="고객 자동 등록">
+            <div className="-mt-1">
+              <InfoRow
+                data-component="messages-settings-client-auto-registration"
+                label="전자문서 생성 시 고객 자동 등록"
+                value={<Switch aria-label="전자문서 생성 시 고객 자동 등록" checked={clientRegistrationPolicy?.clientAutoRegistration === true} disabled={!clientRegistrationPolicy || updateClientRegistrationPolicyMutation.isPending} onCheckedChange={(checked) => updateClientRegistrationPolicyMutation.mutate({ clientAutoRegistration: checked })} />}
+              />
+              <InfoRow
+                data-component="messages-settings-greeting-on-auto-registration"
+                label="자동 등록 시 인사 문자 발송"
+                value={<Switch aria-label="자동 등록 시 인사 문자 발송" checked={clientRegistrationPolicy?.greetingOnAutoRegistration === true} disabled={!clientRegistrationPolicy?.clientAutoRegistration || updateClientRegistrationPolicyMutation.isPending} onCheckedChange={(checked) => updateClientRegistrationPolicyMutation.mutate({ greetingOnAutoRegistration: checked })} />}
+              />
+            </div>
+          </InfoCard>
         </DetailPanel>
       ) : selectedItem?.kind === "duplicate-send-policy" ? (
         <DetailPanel

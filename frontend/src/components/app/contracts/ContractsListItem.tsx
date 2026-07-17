@@ -7,6 +7,7 @@ import { AnimatedSlotListItemContent, StatusBadge, type StatusType } from "@/com
 import { cn } from "@/lib/utils";
 import { getStatusCategory, mapDocStatusLabel } from "@/lib/eformsign/status-codes";
 import type { EformsignDocument } from "@/lib/eformsign/types";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 
 interface ContractsListItemProps {
   document: EformsignDocument | null;
@@ -28,13 +29,7 @@ function mapCategoryToStatusType(
 }
 
 function formatDate(timestamp: number): string {
-  return new Date(timestamp)
-    .toLocaleDateString("ko-KR", {
-      year: "2-digit",
-      month: "2-digit",
-      day: "2-digit",
-    })
-    .replace(/\.$/, "");
+  return formatDateForDisplay(timestamp);
 }
 
 function ContractsListItemComponent({

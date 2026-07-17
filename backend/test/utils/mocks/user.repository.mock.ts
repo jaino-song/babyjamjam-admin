@@ -38,6 +38,10 @@ export class MockUserRepository implements IUserRepository {
         return this.users.get(id) ?? null;
     }
 
+    async findByIdInBranch(id: string, _branchId: string): Promise<UserEntity | null> {
+        return this.findById(id);
+    }
+
     async findByKakaoId(kakaoId: string): Promise<UserEntity | null> {
         return (
             Array.from(this.users.values()).find(
@@ -82,11 +86,23 @@ export class MockUserRepository implements IUserRepository {
         return user;
     }
 
+    async updateInBranch(
+        user: UserEntity,
+        _branchId: string,
+        _branchRole?: string,
+    ): Promise<UserEntity | null> {
+        return this.update(user);
+    }
+
     async delete(id: string): Promise<void> {
         if (!this.users.has(id)) {
             throw new Error(`User with id ${id} not found`);
         }
         this.users.delete(id);
+    }
+
+    async deleteMembership(id: string, _branchId: string): Promise<boolean> {
+        return this.users.has(id);
     }
 
     async findByRoles(roles: string[]): Promise<UserEntity[]> {

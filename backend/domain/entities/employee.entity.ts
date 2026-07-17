@@ -14,7 +14,12 @@ export class EmployeeEntity {
         public openToNextWork: boolean,
         public registeredDate: Date,
         public birthday?: string,
+        public readonly deletedAt?: Date,
     ) {}
+
+    get isDeleted(): boolean {
+        return this.deletedAt !== undefined;
+    }
 
     isOpenToNextWork(): boolean {
         return this.openToNextWork;
@@ -74,6 +79,7 @@ export class EmployeeEntity {
         openToNextWork: boolean,
         registeredDate: Date,
         birthday?: string,
+        deletedAt?: Date,
     ): EmployeeEntity {
         return new EmployeeEntity(
             id,
@@ -84,6 +90,7 @@ export class EmployeeEntity {
             openToNextWork,
             registeredDate,
             birthday,
+            deletedAt,
         );
     }
 }

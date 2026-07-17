@@ -7,7 +7,9 @@ export type UpdateUserParams = {
     email?: string | null;
     profileImage?: string | null;
     role?: string | null;
+    branchRole?: string;
     callerRole?: string;
+    branchId?: string;
 };
 
 @Injectable()
@@ -18,9 +20,15 @@ export class UpdateUserUsecase {
     ) {}
 
     async execute(id: string, updates: UpdateUserParams): Promise<UserEntity> {
-        const user = await this.userRepository.findById(id);
+        const user = updates.branchId
+            ? await this.userRepository.findByIdInBranch(id, updates.branchId)
+            : await this.userRepository.findById(id);
         if (!user) {
-            throw new NotFoundException(`User with id ${id} not found`);
+            throw new NotFoundException("User not found");
+        }
+
+        if (updates.branchId && user.role === "owner" && updates.callerRole !== "owner") {
+            throw new NotFoundException("User not found");
         }
 
         if (updates.name !== undefined) {
@@ -39,7 +47,18 @@ export class UpdateUserUsecase {
             user.role = updates.role;
         }
 
+        if (updates.branchId) {
+            const updated = await this.userRepository.updateInBranch(
+                user,
+                updates.branchId,
+                updates.branchRole,
+            );
+            if (!updated) {
+                throw new NotFoundException("User not found");
+            }
+            return updated;
+        }
+
         return this.userRepository.update(user);
     }
 }
-

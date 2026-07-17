@@ -56,7 +56,7 @@ export class ServiceRecordLinkService {
         return this.scheduleForServiceStart(scheduleId);
     }
 
-    /** Mint a fresh link and schedule the SMS for the assignment's service-start day 15:00 KST. */
+    /** Ensure the assignment link exists and schedule the SMS for service-start day 15:00 KST. */
     async scheduleForServiceStart(scheduleId: number): Promise<void> {
         try {
             const { scheduledFor, employeeId, jobEnqueued } = await this.issueServiceRecordLinkJob(scheduleId, {
@@ -77,10 +77,14 @@ export class ServiceRecordLinkService {
     }
 
     /**
-     * Mint a fresh link and enqueue immediate dispatch from an admin action.
+     * Reuse the assignment's active link when possible and enqueue immediate dispatch.
      * Unlike the assignment hook, errors are intentionally surfaced to the caller.
      */
-    async sendNow(scheduleId: number, preparedLinkToken?: string): Promise<{ scheduledFor: Date }> {
+    async sendNow(
+        scheduleId: number,
+        preparedLinkToken?: string,
+        recipientPhone?: string,
+    ): Promise<{ scheduledFor: Date; jobId: string }> {
         const scheduledFor = new Date();
         const result = await this.issueServiceRecordLinkJob(scheduleId, {
             scheduledFor,
@@ -88,19 +92,22 @@ export class ServiceRecordLinkService {
             allowLateReissue: true,
             preparedLinkToken,
             isManualSend: true,
+            recipientPhone,
         });
+        if (!result.jobId) {
+            throw new BadRequestException("제공기록지 링크 발송 작업을 생성하지 못했습니다");
+        }
         this.logger.log(
             `Service record link SMS manually scheduled for provider ${result.employeeId} schedule ${scheduleId} at ${result.scheduledFor.toISOString()}`
         );
-        return { scheduledFor: result.scheduledFor };
+        return { scheduledFor: result.scheduledFor, jobId: result.jobId };
     }
 
     /**
-     * Create the exact URL shown in the admin composer without enqueueing a job or
-     * revoking the currently active provider link. The returned token is inactive
-     * until sendNow receives and activates it.
+     * Return the active assignment URL when one exists. Otherwise prepare the exact
+     * inactive URL shown in the admin composer until sendNow activates the same row.
      */
-    async prepareLink(scheduleId: number): Promise<{
+    async prepareLink(scheduleId: number, recipientPhone?: string): Promise<{
         serviceRecordUrl: string;
         preparedLinkToken: string;
         expiresAt: Date;
@@ -109,23 +116,26 @@ export class ServiceRecordLinkService {
             where: { id: scheduleId },
             include: { primaryEmployee: true },
         });
-        if (!schedule || !schedule.branchId) {
+        if (!schedule || !schedule.branchId || schedule.replaced) {
             throw new NotFoundException("Assignment not found");
         }
 
         const employee = schedule.primaryEmployee;
-        if (!this.normalizePhone(employee.phone)) {
+        const resolvedRecipientPhone = this.resolveRecipientPhone(employee.phone, recipientPhone);
+        if (!resolvedRecipientPhone) {
             throw new BadRequestException("제공인력 전화번호가 없습니다");
         }
 
         const expiresAt = this.resolveExpiry(schedule.endDate, true);
-        const { linkToken } = await this.tokenService.prepareLink({
+        const tokenParams = {
             branchId: schedule.branchId,
             scheduleId,
             employeeId: employee.id,
-            expectedPhone: employee.phone,
+            expectedPhone: resolvedRecipientPhone,
             expiresAt,
-        });
+        };
+        const { linkToken } = await this.tokenService.reuseActiveLink(tokenParams)
+            ?? await this.tokenService.prepareLink(tokenParams);
 
         return {
             serviceRecordUrl: this.buildServiceRecordUrl(linkToken),
@@ -142,6 +152,7 @@ export class ServiceRecordLinkService {
             this.logger.log(`Service record access revoked for schedule ${scheduleId}`);
         } catch (error) {
             this.logger.error(`Failed to revoke feedback link for schedule ${scheduleId}: ${error}`);
+            throw error;
         }
     }
 
@@ -156,6 +167,7 @@ export class ServiceRecordLinkService {
             }
         } catch (error) {
             this.logger.error(`Failed to extend feedback token expiry for schedule ${scheduleId}: ${error}`);
+            throw error;
         }
     }
 
@@ -186,13 +198,19 @@ export class ServiceRecordLinkService {
             allowLateReissue?: boolean;
             preparedLinkToken?: string;
             isManualSend: boolean;
+            recipientPhone?: string;
         },
-    ): Promise<{ scheduledFor: Date; employeeId: number; jobEnqueued: boolean }> {
+    ): Promise<{
+        scheduledFor: Date;
+        employeeId: number;
+        jobEnqueued: boolean;
+        jobId: string | null;
+    }> {
         const schedule = await this.prisma.employee_schedule.findUnique({
             where: { id: scheduleId },
             include: { primaryEmployee: true, client: true },
         });
-        if (!schedule || !schedule.branchId) {
+        if (!schedule || !schedule.branchId || schedule.replaced) {
             throw new NotFoundException("Assignment not found");
         }
 
@@ -200,8 +218,12 @@ export class ServiceRecordLinkService {
         const serviceRecordCase = await this.lifecycleService?.ensureForClient(schedule.clientId);
 
         const employee = schedule.primaryEmployee;
+        const resolvedRecipientPhone = this.resolveRecipientPhone(
+            employee.phone,
+            options.recipientPhone,
+        );
         if (options.preparedLinkToken) {
-            if (!this.normalizePhone(employee.phone)) {
+            if (!resolvedRecipientPhone) {
                 throw new BadRequestException("제공인력 전화번호가 없습니다");
             }
 
@@ -210,7 +232,7 @@ export class ServiceRecordLinkService {
                 branchId: schedule.branchId,
                 scheduleId,
                 employeeId: employee.id,
-                expectedPhone: employee.phone,
+                expectedPhone: resolvedRecipientPhone,
                 expiresAt: this.resolveExpiry(
                     serviceRecordCase?.endDate ?? schedule.endDate,
                     options.allowLateReissue === true,
@@ -224,7 +246,7 @@ export class ServiceRecordLinkService {
         await this.cancelPendingServiceRecordJobs(scheduleId, "Service record link rescheduled");
         await this.supersedeRetryableServiceRecordSmsLogs(scheduleId, "Service record link rescheduled");
 
-        if (!this.normalizePhone(employee.phone)) {
+        if (!resolvedRecipientPhone) {
             if (!options.recordMissingPhoneFailure) {
                 throw new BadRequestException("제공인력 전화번호가 없습니다");
             }
@@ -239,13 +261,14 @@ export class ServiceRecordLinkService {
                 clientName: schedule.client?.name ?? "고객",
                 employeeId: employee.id,
                 employeeName: employee.name,
-                receiver: employee.phone,
+                receiver: options.recipientPhone ?? employee.phone,
                 reason: "제공인력 전화번호 누락",
             });
             return {
                 scheduledFor: options.scheduledFor ?? getServiceRecordLinkScheduledFor(schedule.startDate),
                 employeeId: employee.id,
                 jobEnqueued: false,
+                jobId: null,
             };
         }
 
@@ -257,14 +280,16 @@ export class ServiceRecordLinkService {
                 serviceRecordCase?.endDate ?? schedule.endDate,
                 options.allowLateReissue === true,
             );
-            ({ linkToken } = await this.tokenService.issueLink({
+            const tokenParams = {
                 branchId: schedule.branchId,
                 scheduleId,
                 employeeId: employee.id,
                 ...(serviceRecordCase ? { serviceRecordCaseId: serviceRecordCase.id } : {}),
-                expectedPhone: employee.phone,
+                expectedPhone: resolvedRecipientPhone,
                 expiresAt,
-            }));
+            };
+            ({ linkToken } = await this.tokenService.reuseActiveLink(tokenParams)
+                ?? await this.tokenService.issueLink(tokenParams));
         }
 
         const url = this.buildServiceRecordUrl(linkToken);
@@ -283,7 +308,7 @@ ${employee.name} 관리사님, ${clientName} 산모님의 서비스 제공기록
 ${url}`;
 
         const scheduledFor = options.scheduledFor ?? getServiceRecordLinkScheduledFor(schedule.startDate);
-        await this.jobRepository.upsertPending(
+        const persistedJob = await this.jobRepository.upsertPending(
             MessageTriggerJobEntity.create({
                 branchId: schedule.branchId,
                 ruleId: SERVICE_RECORD_LINK_RULE_ID,
@@ -291,7 +316,7 @@ ${url}`;
                 clientId: schedule.clientId,
                 employeeScheduleId: scheduleId,
                 recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
-                recipientPhone: employee.phone,
+                recipientPhone: resolvedRecipientPhone,
                 templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
                 dedupeKey: this.buildDedupeKey(scheduleId, options.isManualSend),
                 payload: {
@@ -301,7 +326,7 @@ ${url}`;
                     employeeName: employee.name,
                     memberId: `employee:${employee.id}`,
                     recipientName: employee.name,
-                    recipientPhone: employee.phone,
+                    recipientPhone: resolvedRecipientPhone,
                     buttonUrl: url,
                     messageBody: message,
                     templateVariables: {
@@ -315,7 +340,12 @@ ${url}`;
             }),
         );
 
-        return { scheduledFor, employeeId: employee.id, jobEnqueued: true };
+        return {
+            scheduledFor,
+            employeeId: employee.id,
+            jobEnqueued: true,
+            jobId: persistedJob.id,
+        };
     }
 
     private async ensureSystemRule(): Promise<void> {
@@ -397,6 +427,16 @@ ${url}`;
 
     private normalizePhone(phone: string): string {
         return phone.replace(/\D/g, "");
+    }
+
+    private resolveRecipientPhone(employeePhone: string, recipientPhone?: string): string | null {
+        const candidate = recipientPhone?.trim() || employeePhone;
+        const normalized = this.normalizePhone(candidate);
+        if (!/^01[016789]\d{7,8}$/.test(normalized)) {
+            return null;
+        }
+
+        return recipientPhone ? normalized : employeePhone;
     }
 
     private buildServiceRecordUrl(linkToken: string): string {

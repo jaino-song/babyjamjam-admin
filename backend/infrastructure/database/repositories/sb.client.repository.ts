@@ -10,6 +10,9 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { ClientMapper } from "infrastructure/database/mapper/client.mapper";
 import { hasColumn } from "infrastructure/database/schema-capabilities";
 import { normalizePhone } from "application/utils/normalize-phone";
+import { ClientHasCompletedServiceRecordError } from "domain/errors/client-has-completed-service-record.error";
+
+export { ClientHasCompletedServiceRecordError };
 
 @Injectable()
 export class SbClientRepository implements IClientRepository {
@@ -38,6 +41,7 @@ export class SbClientRepository implements IClientRepository {
             serviceStatus: true,
             breastPump: true,
             eDocId: true,
+            suppressGreetingSms: true,
             // Tenant key — every where-clause already relies on this column,
             // and reads must carry it so ClientEntity.branchId is populated.
             branchId: true,
@@ -210,12 +214,43 @@ export class SbClientRepository implements IClientRepository {
     }
 
     async delete(branchid: string, id: number): Promise<void> {
-        const result = await this.prismaService.client.deleteMany({
-            where: { id, branchId: branchid },
+        await this.prismaService.$transaction(async (tx) => {
+            // service_record_case.clientId is unique — a client owns at most one case.
+            const serviceRecordCase = await tx.service_record_case.findUnique({
+                where: { clientId: id },
+                select: { id: true, completedAt: true },
+            });
+
+            if (serviceRecordCase) {
+                if (serviceRecordCase.completedAt) {
+                    throw new ClientHasCompletedServiceRecordError();
+                }
+
+                const submittedDayCount = await tx.service_record_day.count({
+                    where: {
+                        serviceRecordCaseId: serviceRecordCase.id,
+                        submittedAt: { not: null },
+                    },
+                });
+                if (submittedDayCount > 0) {
+                    throw new ClientHasCompletedServiceRecordError();
+                }
+
+                // No submitted/completed history — safe to remove the case.
+                // service_record_day / service_record_assignment / snapshot chunks
+                // cascade via FK (onDelete: Cascade); service_record_token,
+                // service_record (legacy header), and eformsign_doc reference the
+                // case with onDelete: SetNull, so they survive as orphan-safe rows.
+                await tx.service_record_case.delete({ where: { id: serviceRecordCase.id } });
+            }
+
+            const result = await tx.client.deleteMany({
+                where: { id, branchId: branchid },
+            });
+            if (result.count === 0) {
+                throw new Error("Client not found for branch");
+            }
         });
-        if (result.count === 0) {
-            throw new Error("Client not found for branch");
-        }
     }
 
     async findByStartDate(branchid: string, date: Date): Promise<ClientEntity[]> {

@@ -26,8 +26,9 @@ export function useSendServiceRecordLink() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: ({ scheduleId }: { scheduleId: number; clientId?: number }) =>
-            serviceRecordsApi.sendLink(scheduleId).then((response) => response.data),
+        mutationFn: ({ scheduleId, preparedLinkToken }: { scheduleId: number; clientId?: number; preparedLinkToken?: string }) =>
+            serviceRecordsApi.sendLink(scheduleId, preparedLinkToken ? { preparedLinkToken } : {})
+                .then((response) => response.data),
         onSuccess: (_, variables) => {
             if (variables.clientId !== undefined) {
                 queryClient.invalidateQueries({

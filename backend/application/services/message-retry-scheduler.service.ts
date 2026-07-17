@@ -4,7 +4,6 @@ import {
     MESSAGE_LOG_REPOSITORY,
     IMessageLogRepository,
 } from "domain/repositories/message-log.repository.interface";
-import { AlimtalkRetryService } from "./alimtalk-retry.service";
 import { SchedulerExecutionGuard } from "./scheduler-execution.guard";
 import { SmsRetryService } from "./sms-retry.service";
 import {
@@ -31,7 +30,6 @@ export class MessageRetrySchedulerService {
         @Inject(MESSAGE_LOG_REPOSITORY)
         private readonly logRepository: IMessageLogRepository,
         private readonly smsRetryService: SmsRetryService,
-        private readonly alimtalkRetryService: AlimtalkRetryService,
     ) {}
 
     @Cron("*/5 * * * *", { timeZone: "Asia/Seoul" })
@@ -51,12 +49,9 @@ export class MessageRetrySchedulerService {
                 try {
                     if (log.provider === "aligo_sms") {
                         await this.smsRetryService.retry(log);
-                    } else if (log.provider === "aligo_alimtalk") {
-                        await this.alimtalkRetryService.retry(log);
                     } else {
-                        this.logger.warn(
-                            `[Retry] Unsupported message provider ${log.provider} for log ${log.id}; skipping retry`,
-                        );
+                        log.markRetrySuperseded("지원이 종료된 메시지 공급자라 재시도하지 않습니다.");
+                        await this.logRepository.update(log);
                     }
                 } catch (error) {
                     log.markFailed(error instanceof Error ? error.message : String(error));

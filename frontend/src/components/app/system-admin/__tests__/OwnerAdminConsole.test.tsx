@@ -29,6 +29,47 @@ beforeEach(() => {
     isPending: false,
   } as unknown as ReturnType<typeof useMutation>);
   mockedUseQuery.mockImplementation(({ queryKey }) => {
+    if (Array.isArray(queryKey) && queryKey[0] === "systemAdminUsers") {
+      return {
+        data: [
+          {
+            id: "approved-user",
+            kakaoId: null,
+            email: "approved@example.com",
+            name: "승인된 계정",
+            phone: "010-1111-1111",
+            birthDate: "19900101",
+            profileImage: null,
+            role: "manager",
+            createdAt: "2026-06-01T00:00:00.000Z",
+            emailVerified: true,
+            authProvider: "email",
+            branches: [{ id: "branch-real-gangnam", name: "강남점", role: "manager" }],
+            approvalStatus: "approved",
+            requestedRole: "manager",
+          },
+          {
+            id: "pending-user",
+            kakaoId: null,
+            email: "pending@example.com",
+            name: "가입 대기 계정",
+            phone: "010-2222-2222",
+            birthDate: "19920202",
+            profileImage: null,
+            role: null,
+            createdAt: "2026-06-04T00:00:00.000Z",
+            emailVerified: true,
+            authProvider: "email",
+            branches: [{ id: "branch-real-gangnam", name: "강남점", role: null }],
+            approvalStatus: "pending",
+            requestedRole: "manager",
+          },
+        ],
+        error: null,
+        isLoading: false,
+      } as unknown as ReturnType<typeof useQuery>;
+    }
+
     if (Array.isArray(queryKey) && queryKey[0] === "systemAdminBranchRequests") {
       return {
         data: [
@@ -137,6 +178,33 @@ describe("OwnerAdminConsole", () => {
     fireEvent.click(screen.getByRole("button", { name: "승인" }));
 
     expect(approveMutate).toHaveBeenCalledWith("branch-real-gangnam");
+  });
+
+  it("manages pending accounts inside the same split layout as branch management", () => {
+    const { container } = render(<OwnerAdminConsole />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "계정 관리" })[0]);
+
+    expect(container.querySelector('[data-component="split-layout"]')).toBeInTheDocument();
+    expect(
+      container.querySelector('[data-component="system-admin-pending-approvals"]'),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "가입 대기" }));
+    fireEvent.click(screen.getByRole("button", { name: /가입 대기 계정/ }));
+
+    const roleSelect = screen.getByRole("combobox", {
+      name: "가입 대기 계정 승인 권한 선택",
+    });
+    fireEvent.change(roleSelect, { target: { value: "admin" } });
+    fireEvent.click(screen.getByRole("button", { name: "승인" }));
+
+    expect(approveMutate).toHaveBeenCalledWith({
+      id: "pending-user",
+      role: "admin",
+      branchId: "branch-real-gangnam",
+    });
+    expect(screen.getByRole("button", { name: "거절" })).toBeInTheDocument();
   });
 
   it("shows the functional notification tool without placeholder approval actions", async () => {

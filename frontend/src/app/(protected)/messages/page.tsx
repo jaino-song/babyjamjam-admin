@@ -9,6 +9,17 @@ import {
   useState,
   type ReactElement,
 } from "react";
+import {
+  MESSAGE_EVENT_LABELS,
+  MESSAGE_HISTORY_STATUS_LABELS,
+  MESSAGE_JOB_STATUS_LABELS,
+  MESSAGE_RECIPIENT_LABELS,
+  MESSAGE_SECTION_DEFINITIONS,
+  formatMessageDateTimeCompact,
+  formatMessageDateTimeDetail,
+  getMessageTemplateLabel,
+  type MessageSectionId as SharedMessageSectionId,
+} from "@babyjamjam/shared";
 import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
@@ -62,7 +73,7 @@ import {
   SplitLayout,
   useSplitLayoutSelection,
 } from "@/components/app/v3";
-import { AlimtalkPhonePreview } from "@/components/app/alimtalk/AlimtalkPhonePreview";
+import { MessagePhonePreview } from "@/components/app/messages/MessagePhonePreview";
 import {
   AutoFillMsgCardSide,
   type AutoFillMsgCardVariableItem,
@@ -118,7 +129,7 @@ import {
 import type { TemplateMessageFormLayout } from "@/components/app/messages/forms/form-components/TemplateMessageFormLayout";
 import { MessageTenantApplicationSettings } from "@/components/app/messages/MessageTenantApplicationSettings";
 import { MessageApprovalGate } from "@/components/app/messages/MessageApprovalGate";
-import { TriggerRulesManager } from "@/components/app/alimtalk/TriggerRulesManager";
+import { TriggerRulesManager } from "@/components/app/messages/TriggerRulesManager";
 import { Button } from "@/components/ui/button";
 import {
   APP_CONTENT_BODY_CARD_CLASS_NAME,
@@ -165,14 +176,14 @@ interface PlaceholderPreviewItem {
 }
 
 const BUILTIN_TEMPLATES: TemplateListItem[] = [
-  { id: "builtin:greeting", label: "인사 메시지", icon: MessageCircle },
-  { id: "builtin:service-info", label: "서비스 안내", icon: Briefcase },
-  { id: "builtin:service-feedback-link", label: "제공기록지 작성 링크", icon: FileText },
-  { id: "builtin:price-info", label: "요금 안내", icon: CreditCard },
-  { id: "builtin:reminder", label: "리마인더", icon: Bell },
-  { id: "builtin:thanks", label: "감사 메시지", icon: Heart },
-  { id: "builtin:survey", label: "설문", icon: ClipboardList },
-  { id: "builtin:info", label: "안내 메시지", icon: Info },
+  { id: "builtin:greeting", label: getMessageTemplateLabel("GREETING"), icon: MessageCircle },
+  { id: "builtin:service-info", label: getMessageTemplateLabel("SERVICE_INFO"), icon: Briefcase },
+  { id: "builtin:service-feedback-link", label: getMessageTemplateLabel("SERVICE_RECORD_LINK"), icon: FileText },
+  { id: "builtin:price-info", label: getMessageTemplateLabel("PRICE_INFO"), icon: CreditCard },
+  { id: "builtin:reminder", label: getMessageTemplateLabel("REMINDER"), icon: Bell },
+  { id: "builtin:thanks", label: getMessageTemplateLabel("THANKS"), icon: Heart },
+  { id: "builtin:survey", label: getMessageTemplateLabel("SURVEY"), icon: ClipboardList },
+  { id: "builtin:info", label: getMessageTemplateLabel("INFO"), icon: Info },
 ];
 
 const TEMPLATE_FILTERS: Array<{ value: TemplateFilter; label: string }> = [
@@ -181,29 +192,53 @@ const TEMPLATE_FILTERS: Array<{ value: TemplateFilter; label: string }> = [
 ];
 
 const MESSAGE_SECTIONS = [
-  { id: "send", label: "전송하기", icon: Send },
-  { id: "scheduled", label: "발송 예정", icon: Clock3 },
-  { id: "history", label: "발송 기록", icon: History },
-  { id: "templates", label: "템플릿", icon: FileText, disabled: true },
-  { id: "triggers", label: "자동 전송", icon: Workflow },
-  { id: "settings", label: "설정", icon: Settings2 },
+  { ...MESSAGE_SECTION_DEFINITIONS[0], icon: Send },
+  { ...MESSAGE_SECTION_DEFINITIONS[1], icon: Clock3 },
+  { ...MESSAGE_SECTION_DEFINITIONS[2], icon: History },
+  { ...MESSAGE_SECTION_DEFINITIONS[3], icon: FileText, disabled: true },
+  { ...MESSAGE_SECTION_DEFINITIONS[4], icon: Workflow },
+  { ...MESSAGE_SECTION_DEFINITIONS[5], icon: Settings2 },
 ] as const;
 
-type MessageSectionId = (typeof MESSAGE_SECTIONS)[number]["id"];
+type MessageSectionId = SharedMessageSectionId;
 type PlaceholderSectionId = Exclude<MessageSectionId, "send" | "templates" | "triggers" | "history">;
 
 const TEMPLATE_SEND_FORM_ID = "messages-template-send-form-active";
 
 function getMessageHistoryListStatusMeta(status: MessageHistoryRecord["status"]) {
-  return status === "sent"
-    ? { label: "성공", variant: "success" as const }
-    : { label: "실패", variant: "danger" as const };
+  if (status === "sent") return { label: MESSAGE_HISTORY_STATUS_LABELS.sent, variant: "success" as const };
+  if (status === "pending") return { label: MESSAGE_HISTORY_STATUS_LABELS.pending, variant: "warning" as const };
+  if (status === "canceled") return { label: MESSAGE_HISTORY_STATUS_LABELS.canceled, variant: "neutral" as const };
+  return { label: MESSAGE_HISTORY_STATUS_LABELS.failed, variant: "danger" as const };
 }
 
 function getMessageHistoryAvatarClassName(status: MessageHistoryRecord["status"]): string {
-  return status === "sent"
-    ? "border border-[hsl(137,34%,84%)] bg-[hsl(137,60%,94%)] text-v3-green"
-    : "border border-[hsla(355,36%,45%,0.20)] bg-[hsl(355,40%,94%)] text-[hsl(355,36%,45%)]";
+  if (status === "sent") {
+    return "border border-[hsl(137,34%,84%)] bg-[hsl(137,60%,94%)] text-v3-green";
+  }
+  if (status === "pending") {
+    return "border border-amber-200 bg-amber-50 text-amber-700";
+  }
+  if (status === "canceled") {
+    return "border border-slate-200 bg-slate-100 text-slate-600";
+  }
+  return "border border-[hsla(355,36%,45%,0.20)] bg-[hsl(355,40%,94%)] text-[hsl(355,36%,45%)]";
+}
+
+function getScheduledJobStatusMeta(status: UpcomingMessageTriggerJob["status"]) {
+  return status === "processing"
+    ? {
+        label: MESSAGE_JOB_STATUS_LABELS[status],
+        className: "bg-sky-100 text-sky-700",
+      }
+    : {
+        label: MESSAGE_JOB_STATUS_LABELS[status],
+        className: status === "failed" || status === "canceled"
+          ? "bg-red-100 text-red-700"
+          : status === "sent"
+            ? "bg-emerald-100 text-emerald-700"
+            : "bg-amber-100 text-amber-700",
+      };
 }
 
 type MessageHistoryRelativeDateFilter = "all" | "1d" | "7d" | "30d";
@@ -410,14 +445,6 @@ const BUILTIN_TEMPLATE_PREVIEW_META: Record<
   },
 };
 
-
-const SCHEDULED_EVENT_LABELS: Record<TriggerEventType, string> = {
-  CLIENT_CREATED: "고객 등록",
-  SERVICE_START: "서비스 시작",
-  SERVICE_END: "서비스 종료",
-  EMPLOYEE_ASSIGNED: "직원 배정",
-};
-
 const SCHEDULED_VARIABLE_LABELS: Record<string, string> = {
   clientName: "고객명",
   employeeName: "직원명",
@@ -430,38 +457,24 @@ const SCHEDULED_VARIABLE_LABELS: Record<string, string> = {
 };
 
 function getScheduledRecipientBadge(recipientType: TriggerRecipientType) {
-  return recipientType === "CLIENT" ? "고객" : "직원";
+  return recipientType === "CLIENT" ? MESSAGE_RECIPIENT_LABELS.CLIENT : "직원";
 }
 
 function getScheduledRecipientLabel(recipientType: TriggerRecipientType) {
-  if (recipientType === "CLIENT") return "고객";
-  if (recipientType === "PRIMARY_EMPLOYEE") return "주 담당 직원";
-  return "보조 직원";
+  return MESSAGE_RECIPIENT_LABELS[recipientType];
 }
 
 function getScheduledEventLabel(eventType: TriggerEventType | null) {
   if (!eventType) return "기타 이벤트";
-  return SCHEDULED_EVENT_LABELS[eventType];
+  return MESSAGE_EVENT_LABELS[eventType];
 }
 
 function formatScheduledPreviewDate(dateString: string) {
-  return new Date(dateString).toLocaleString("ko-KR", {
-    month: "numeric",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatMessageDateTimeCompact(dateString);
 }
 
 function formatScheduledDetailDate(dateString: string) {
-  return new Date(dateString).toLocaleString("ko-KR", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatMessageDateTimeDetail(dateString);
 }
 
 function matchesScheduledJobQuery(job: UpcomingMessageTriggerJob, query: string) {
@@ -645,6 +658,7 @@ function MessageScheduledSection() {
                 }}
                 render={({ item }) => {
                   if (!item) return null;
+                  const statusMeta = getScheduledJobStatusMeta(item.status);
 
                   return (
                     <AnimatedSlotListItemContent
@@ -654,12 +668,29 @@ function MessageScheduledSection() {
                       title={item.payload.recipientName || "-"}
                       subtitle={`${getHistoryTemplateLabel(item.templateKey)} · ${formatScheduledPreviewDate(item.scheduledFor)}`}
                       status={
-                        <span
-                          data-component="messages-scheduled-list-item-badge"
-                          className="inline-flex shrink-0 items-center rounded-full bg-white/85 px-2 py-0.5 text-[0.66rem] font-semibold text-v3-primary"
+                        <div
+                          data-component="messages-scheduled-list-item-badges"
+                          className="flex shrink-0 flex-col items-end gap-1"
                         >
-                          {getScheduledRecipientBadge(item.recipientType)}
-                        </span>
+                          <span
+                            data-component="messages-scheduled-list-item-status"
+                            className={cn(
+                              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[0.66rem] font-semibold",
+                              statusMeta.className,
+                            )}
+                          >
+                            {item.status === "processing" ? (
+                              <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                            ) : null}
+                            {statusMeta.label}
+                          </span>
+                          <span
+                            data-component="messages-scheduled-list-item-recipient"
+                            className="text-[0.64rem] font-medium text-v3-text-muted"
+                          >
+                            {getScheduledRecipientBadge(item.recipientType)}
+                          </span>
+                        </div>
                       }
                     />
                   );
@@ -687,9 +718,15 @@ function MessageScheduledSection() {
             selectedJob ? (
               <span
                 data-component="messages-scheduled-detail-status"
-                className="rounded-full bg-emerald-500/10 px-3 py-1 text-[0.7rem] font-semibold text-emerald-600"
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full px-3 py-1 text-[0.7rem] font-semibold",
+                  getScheduledJobStatusMeta(selectedJob.status).className,
+                )}
               >
-                발송 예정
+                {selectedJob.status === "processing" ? (
+                  <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                ) : null}
+                {getScheduledJobStatusMeta(selectedJob.status).label}
               </span>
             ) : null
           }
@@ -1298,7 +1335,9 @@ function MessageHistorySection() {
     return filteredRecords.find((record) => record.id === selectedRecordId) ?? null;
   }, [filteredRecords, selectedRecordId]);
 
-  const canRetry = !!selectedRecord && selectedRecord.status !== "sent";
+  const canRetry = !!selectedRecord
+    && selectedRecord.status !== "sent"
+    && selectedRecord.status !== "canceled";
 
   const handleRetry = useCallback(async () => {
     if (!selectedRecord) return;
@@ -1761,11 +1800,9 @@ export default function MessagesPage() {
 
         <div data-component="messages-section-content" className="flex min-h-0 min-w-0 flex-1 flex-col">
           {activeSection === "scheduled" ? (
-            <MessageApprovalGate>
-              <section data-component="messages-scheduled-section" className="flex min-h-0 flex-1 flex-col">
-                <MessageScheduledSection />
-              </section>
-            </MessageApprovalGate>
+            <section data-component="messages-scheduled-section" className="flex min-h-0 flex-1 flex-col">
+              <MessageScheduledSection />
+            </section>
           ) : activeSection === "send" || activeSection === "templates" ? (
             <MessageApprovalGate>
             <section
@@ -1930,7 +1967,7 @@ export default function MessagesPage() {
                               data-component="messages-template-preview-layout"
                               className="flex min-h-0 w-full flex-wrap items-start justify-center gap-4"
                             >
-                              <AlimtalkPhonePreview
+                              <MessagePhonePreview
                                 className="h-full min-h-0 overflow-hidden py-0"
                                 content={templatePreviewMessage}
                                 templateName={selectedTemplateTitle}
@@ -1957,11 +1994,9 @@ export default function MessagesPage() {
             </section>
             </MessageApprovalGate>
           ) : activeSection === "history" ? (
-            <MessageApprovalGate>
-              <section data-component="messages-history-section" className="flex min-h-0 flex-1 flex-col">
-                <MessageHistorySection />
-              </section>
-            </MessageApprovalGate>
+            <section data-component="messages-history-section" className="flex min-h-0 flex-1 flex-col">
+              <MessageHistorySection />
+            </section>
           ) : activeSection === "triggers" ? (
             <MessageApprovalGate>
               <section data-component="messages-triggers-section" className="flex h-full min-h-0 flex-1 flex-col">

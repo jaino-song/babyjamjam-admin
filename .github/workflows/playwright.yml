@@ -1,53 +1,102 @@
-name: Frontend Playwright Tests
+name: Frontend Playwright Auth Lifecycle
 
-# Manual-only until Phase 6 stands up the real backend stack in CI
-# (Postgres container + migrate deploy + seed + NestJS boot). The suites
-# are backend-coupled and time out without it — verified 2026-06-06.
-# Blocking per-PR coverage for the frontend lives in frontend-ci.yml.
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main, dev, preview]
 
 jobs:
   test:
-    name: frontend
+    name: frontend auth lifecycle · real backend
     timeout-minutes: 60
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./frontend
-    
-    steps:
-    - uses: actions/checkout@v4
+    env:
+      CI: true
+      BASE_URL: http://localhost:3000
+      DATABASE_URL: postgresql://postgres@localhost:5432/postgres
+      DIRECT_URL: postgresql://postgres@localhost:5432/postgres
+      DEVELOPMENT_API_BASE_URL: http://localhost:3001
+      DEVELOPMENT_FRONTEND_URL: http://localhost:3000
+      DEVELOPMENT_MOBILE_FRONTEND_URL: http://localhost:3002
+      JWT_SECRET: frontend-e2e-jwt-secret-at-least-32-characters
+      AUTH_EMAIL_TOKEN_HMAC_SECRET: frontend-e2e-email-token-secret
+      EMAIL_TRANSPORT: smtp
+      SMTP_HOST: localhost
+      SMTP_PORT: 1025
+      VALKEY_URL: redis://localhost:6379
+      E2E_VENDOR_STUBS: '1'
+      NODE_ENV: development
+      STORAGE_BOOTSTRAP_DISABLED: '1'
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      valkey:
+        image: valkey/valkey:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      mailpit:
+        image: axllent/mailpit:v1.27
+        ports:
+          - 1025:1025
+          - 8025:8025
 
-    - name: Setup pnpm
-      uses: pnpm/action-setup@v4
-      with:
-        run_install: false
-    
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        cache: 'pnpm'
-        cache-dependency-path: pnpm-lock.yaml
-    
-    - name: Install dependencies
-      run: pnpm install --frozen-lockfile
-      working-directory: .
-    
-    - name: Install Playwright Browsers
-      run: pnpm exec playwright install --with-deps chromium
-    
-    - name: Run Playwright tests
-      run: pnpm exec playwright test
-      env:
-        CI: true
-        JWT_SECRET: ${{ secrets.JWT_SECRET }}
-    
-    - name: Upload Playwright Report
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: playwright-report
-        path: frontend/playwright-report/
-        retention-days: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Apply migrations
+        run: pnpm --filter ./backend run db:migrate:deploy
+      - name: Seed auth fixtures
+        run: pnpm --filter ./backend run db:seed:auth-e2e
+      - name: Start backend
+        run: |
+          pnpm --filter ./backend run start > /tmp/bjj-backend.log 2>&1 &
+          echo $! > /tmp/bjj-backend.pid
+      - name: Wait for backend
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3001/ >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat /tmp/bjj-backend.log
+          exit 1
+      - name: Install Playwright
+        run: pnpm --filter ./frontend exec playwright install --with-deps chromium
+      - name: Run Playwright
+        run: pnpm --filter ./frontend exec playwright test tests/auth-lifecycle.spec.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-playwright-report
+          path: frontend/playwright-report/
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-backend-log
+          path: /tmp/bjj-backend.log
+          retention-days: 30

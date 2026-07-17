@@ -34,4 +34,28 @@ describe("CreateAndSendContractUsecase", () => {
         expect(assignmentGuard.assertAssignedClient).toHaveBeenCalledWith("branch-1", 55);
         expect(eformsignClient.createDocument).not.toHaveBeenCalled();
     });
+
+    it("returns the remote document id when local persistence fails", async () => {
+        const usecase = new CreateAndSendContractUsecase(
+            { createDocument: jest.fn().mockResolvedValue({ documentId: "remote-1" }) } as never,
+            { findById: jest.fn().mockResolvedValue({
+                id: 7,
+                name: "김고객",
+                phone: "010-1111-2222",
+                startDate: null,
+                endDate: null,
+            }) } as never,
+            { execute: jest.fn().mockResolvedValue({ oauth_token: { access_token: "token" } }) } as never,
+            { execute: jest.fn().mockRejectedValue(new Error("local db unavailable")) } as never,
+            { assertAssignedClient: jest.fn() } as never,
+        );
+
+        await expect(usecase.execute("branch-1", {
+            clientId: 7,
+            templateId: "template-1",
+        })).resolves.toEqual(expect.objectContaining({
+            success: false,
+            remoteDocumentId: "remote-1",
+        }));
+    });
 });

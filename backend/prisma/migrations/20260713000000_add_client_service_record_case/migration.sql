@@ -207,7 +207,7 @@ CREATE INDEX IF NOT EXISTS "idx_eformsign_doc_service_record_case_id" ON "eforms
 
 INSERT INTO "service_record_case" (
     "branch_id", "client_id", "start_date", "end_date", "required_session_count",
-    "finalization_due_at", "status"
+    "finalization_due_at", "status", "created_at", "updated_at"
 )
 SELECT
     resolved."branch_id",
@@ -226,7 +226,9 @@ SELECT
             THEN 'WAITING_FOR_ASSIGNMENT'
         WHEN c."start_date" > CURRENT_DATE THEN 'SCHEDULED'
         ELSE 'IN_PROGRESS'
-    END
+    END,
+    CURRENT_TIMESTAMP,
+    CURRENT_TIMESTAMP
 FROM "client" c
 LEFT JOIN LATERAL (
     SELECT COALESCE(
@@ -265,7 +267,8 @@ ON CONFLICT ("client_id") DO UPDATE SET
 
 INSERT INTO "service_record_assignment" (
     "branch_id", "service_record_case_id", "schedule_id", "employee_id",
-    "employee_name_snapshot", "employee_phone_snapshot", "start_date", "end_date"
+    "employee_name_snapshot", "employee_phone_snapshot", "start_date", "end_date",
+    "created_at", "updated_at"
 )
 SELECT
     COALESCE(s."branch_id", rc."branch_id"),
@@ -275,7 +278,9 @@ SELECT
     e."name",
     e."phone",
     s."start_date",
-    s."end_date"
+    s."end_date",
+    CURRENT_TIMESTAMP,
+    CURRENT_TIMESTAMP
 FROM "employee_schedule" s
 JOIN "service_record_case" rc ON rc."client_id" = s."client_id"
 JOIN "employee" e ON e."id" = s."primary_employee_id"

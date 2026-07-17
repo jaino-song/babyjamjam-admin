@@ -27,6 +27,8 @@ jest.mock("@/services/api", () => ({
   settingsApi: {
     getMessageSenderApproval: jest.fn(),
     getMessageAutomationPolicies: jest.fn(),
+    getClientRegistrationPolicy: jest.fn(),
+    updateClientRegistrationPolicy: jest.fn(),
     updateMessageAutomationPastTriggerConfig: jest.fn(),
     requestMessageSenderApproval: jest.fn(),
   },
@@ -40,6 +42,8 @@ const mockedSettingsApi = jest.mocked(settingsApi);
 
 const mockInvalidateQueries = jest.fn();
 const mockSetQueryData = jest.fn();
+const mockCancelQueries = jest.fn();
+const mockGetQueryData = jest.fn();
 
 const DEFAULT_TRIGGER_RULES: MessageTriggerRule[] = [
   {
@@ -200,6 +204,10 @@ function mockSettingsQueries(
       } as unknown as ReturnType<typeof useQuery>;
     }
 
+    if (queryKey?.[0] === "settings" && queryKey[1] === "client-registration-policy") {
+      return { data: { clientAutoRegistration: true, greetingOnAutoRegistration: false }, isLoading: false } as unknown as ReturnType<typeof useQuery>;
+    }
+
     if (queryKey?.[0] === "message-triggers" && queryKey[1] === "list") {
       return {
         data: triggerRules,
@@ -226,9 +234,16 @@ beforeEach(() => {
   mockedUseQueryClient.mockReturnValue({
     invalidateQueries: mockInvalidateQueries,
     setQueryData: mockSetQueryData,
+    cancelQueries: mockCancelQueries,
+    getQueryData: mockGetQueryData,
   } as unknown as ReturnType<typeof useQueryClient>);
   mockedSettingsApi.getMessageAutomationPolicies.mockResolvedValue(DEFAULT_AUTOMATION_POLICIES);
   mockedSettingsApi.updateMessageAutomationPastTriggerConfig.mockImplementation(async (config) => config);
+  mockedSettingsApi.updateClientRegistrationPolicy.mockImplementation(async (patch) => ({
+    clientAutoRegistration: true,
+    greetingOnAutoRegistration: false,
+    ...patch,
+  }));
   mockedUseMutation.mockImplementation(((options: {
     mutationFn?: (variables?: unknown) => unknown;
     onSuccess?: (data: unknown, variables: unknown, context: unknown) => unknown;
@@ -236,9 +251,10 @@ beforeEach(() => {
   }) => {
     return {
       mutate: (variables?: unknown) => {
-        Promise.resolve(options.mutationFn?.(variables))
-          .then((data) => options.onSuccess?.(data, variables, undefined))
-          .catch((error) => options.onError?.(error, variables, undefined));
+        Promise.resolve((options as { onMutate?: (variables: unknown) => unknown }).onMutate?.(variables))
+          .then((context) => Promise.resolve(options.mutationFn?.(variables))
+            .then((data) => options.onSuccess?.(data, variables, context))
+            .catch((error) => options.onError?.(error, variables, context)));
       },
       isPending: false,
     };
@@ -246,6 +262,36 @@ beforeEach(() => {
 });
 
 describe("MessageTenantApplicationSettings", () => {
+  it("renders and updates the client registration policy switches", async () => {
+    mockSettingsQueries(true);
+    render(<MessageTenantApplicationSettings />);
+
+    fireEvent.click(screen.getByText("고객 자동 등록"));
+    const autoRegistration = screen.getByRole("switch", { name: "전자문서 생성 시 고객 자동 등록" });
+    const greeting = screen.getByRole("switch", { name: "자동 등록 시 인사 문자 발송" });
+    expect(autoRegistration).toBeChecked();
+    expect(greeting).not.toBeDisabled();
+
+    fireEvent.click(greeting);
+    await waitFor(() => expect(mockedSettingsApi.updateClientRegistrationPolicy).toHaveBeenCalledWith({ greetingOnAutoRegistration: true }));
+    expect(mockSetQueryData).toHaveBeenCalled();
+  });
+
+  it("rolls back the client registration policy when saving fails", async () => {
+    mockSettingsQueries(true);
+    const previous = { clientAutoRegistration: true, greetingOnAutoRegistration: false };
+    mockGetQueryData.mockReturnValue(previous);
+    mockedSettingsApi.updateClientRegistrationPolicy.mockRejectedValueOnce(new Error("failed"));
+    render(<MessageTenantApplicationSettings />);
+
+    fireEvent.click(screen.getByText("고객 자동 등록"));
+    fireEvent.click(screen.getByRole("switch", { name: "자동 등록 시 인사 문자 발송" }));
+
+    await waitFor(() => expect(mockSetQueryData).toHaveBeenCalledWith(
+      ["settings", "client-registration-policy"],
+      previous,
+    ));
+  });
   it("renders automation policy items from the API", async () => {
     mockSettingsQueries(true, {
       pastTriggerConfig: DEFAULT_AUTOMATION_POLICIES.pastTriggerConfig,

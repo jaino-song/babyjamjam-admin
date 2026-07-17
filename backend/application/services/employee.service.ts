@@ -1,9 +1,11 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { ConflictException, Inject, Injectable } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import {
     ChangeEmployeeOpenStatusUsecase,
     CreateEmployeeUsecase,
     DeleteEmployeeUsecase,
     FindEmployeeByIdUsecase,
+    ListActiveClientsByEmployeeUsecase,
     ListEmployeesByGradeUsecase,
     ListEmployeesByOpenStatusUsecase,
     ListEmployeesByRegisteredDateRangeUsecase,
@@ -15,7 +17,11 @@ import {
 } from "application/usecases/employee";
 import { normalizeEmployeeGrade } from "domain/constants/employee-grade.constants";
 import { EmployeeEntity } from "domain/entities/employee.entity";
-import { EMPLOYEE_REPOSITORY, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
+import {
+    ActiveClientByEmployee,
+    EMPLOYEE_REPOSITORY,
+    IEmployeeRepository,
+} from "domain/repositories/employee.repository.interface";
 import { normalizePhone } from "application/utils/normalize-phone";
 
 export type EmployeeUpdateParams = {
@@ -32,6 +38,7 @@ export class EmployeeService {
     constructor(
         private readonly createEmployeeUsecase: CreateEmployeeUsecase,
         private readonly findEmployeeByIdUsecase: FindEmployeeByIdUsecase,
+        private readonly listActiveClientsByEmployeeUsecase: ListActiveClientsByEmployeeUsecase,
         private readonly updateEmployeeUsecase: UpdateEmployeeUsecase,
         private readonly deleteEmployeeUsecase: DeleteEmployeeUsecase,
         private readonly listEmployeesUsecase: ListEmployeesUsecase,
@@ -46,31 +53,43 @@ export class EmployeeService {
         private readonly employeeRepository: IEmployeeRepository,
     ) {}
 
-    create(
+    async create(
         branchid: string,
         params: { name: string; workArea: string[]; phone: string; grade: string; openToNextWork: boolean; registeredDate?: string; birthday?: string }
     ): Promise<EmployeeEntity> {
-        return this.createEmployeeUsecase.execute(
-            branchid,
-            params.name,
-            params.workArea,
-            params.phone,
-            normalizeEmployeeGrade(params.grade),
-            params.openToNextWork,
-            params.registeredDate ? new Date(params.registeredDate) : undefined,
-            params.birthday,
-        );
+        try {
+            return await this.createEmployeeUsecase.execute(
+                branchid,
+                params.name,
+                params.workArea,
+                params.phone,
+                normalizeEmployeeGrade(params.grade),
+                params.openToNextWork,
+                params.registeredDate ? new Date(params.registeredDate) : undefined,
+                params.birthday,
+            );
+        } catch (error) {
+            this.rethrowPhoneConflict(error);
+        }
     }
 
     findById(branchid: string, id: number): Promise<EmployeeEntity | null> {
         return this.findEmployeeByIdUsecase.execute(branchid, id);
     }
 
-    update(branchid: string, id: number, params: EmployeeUpdateParams): Promise<EmployeeEntity> {
-        return this.updateEmployeeUsecase.execute(branchid, id, {
-            ...params,
-            grade: params.grade === undefined ? undefined : normalizeEmployeeGrade(params.grade),
-        });
+    listActiveClients(branchid: string, id: number): Promise<ActiveClientByEmployee[]> {
+        return this.listActiveClientsByEmployeeUsecase.execute(branchid, id);
+    }
+
+    async update(branchid: string, id: number, params: EmployeeUpdateParams): Promise<EmployeeEntity> {
+        try {
+            return await this.updateEmployeeUsecase.execute(branchid, id, {
+                ...params,
+                grade: params.grade === undefined ? undefined : normalizeEmployeeGrade(params.grade),
+            });
+        } catch (error) {
+            this.rethrowPhoneConflict(error);
+        }
     }
 
     delete(branchid: string, id: number): Promise<void> {
@@ -113,7 +132,21 @@ export class EmployeeService {
         const normalizedPhone = normalizePhone(phone);
         if (!normalizedPhone) return false;
 
+        // 소프트 삭제된 직원도 DB 유니크 제약 대상이므로 삭제 여부와 무관하게 조회한다.
         const existing = await this.employeeRepository.findByPhone(branchid, normalizedPhone);
         return existing !== null;
+    }
+
+    private rethrowPhoneConflict(error: unknown): never {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+            const metaTarget = error.meta?.["target"];
+            const target = Array.isArray(metaTarget) ? metaTarget.map(String) : [];
+            const hasPhone = target.includes("phone");
+            const hasBranch = target.includes("branch_id") || target.includes("branchId");
+            if (hasPhone && hasBranch) {
+                throw new ConflictException({ statusCode: 409, code: "P2002", error: "Conflict", field: "phone" });
+            }
+        }
+        throw error;
     }
 }

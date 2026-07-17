@@ -12,6 +12,7 @@ import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import {
     Table,
     TableBody,
@@ -45,8 +46,7 @@ const getDocumentStatusBadge = (status: DocumentStatus) => {
 };
 
 const formatDate = (dateStr: string | null): string => {
-    if (!dateStr) return "-";
-    return new Date(dateStr).toLocaleDateString("ko-KR");
+    return formatDateForDisplay(dateStr);
 };
 
 function FilteredClientsTableSkeleton() {

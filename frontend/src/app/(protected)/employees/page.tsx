@@ -1,6 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import {
+    EMPLOYEE_STATUS_LABELS,
+    OPEN_TO_NEXT_WORK_LABELS,
+} from "@babyjamjam/shared/constants/employee-status";
 import { cn } from "@/lib/utils";
 import {
     Users,
@@ -17,7 +21,6 @@ import {
 } from "lucide-react";
 import {
     Employee,
-    EmployeeStatus,
     useDeleteEmployee,
 } from "@/hooks/useEmployees";
 import { useInfiniteEmployees } from "@/hooks/useInfiniteEmployees";
@@ -50,18 +53,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { formatWorkAreaLabel } from "@/components/app/employees/employee-form.constants";
 import { getEmployeeGradeBadgeStyle, normalizeEmployeeGrade } from "@/features/employees/grade";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 
 const filterItems = [
     { label: "전체", value: "all" },
-    { label: "근무 가능", value: "active" },
-    { label: "근무 불가", value: "inactive" },
+    { label: EMPLOYEE_STATUS_LABELS.available, value: "active" },
+    { label: EMPLOYEE_STATUS_LABELS.unavailable, value: "inactive" },
 ];
-
-const EMPLOYEE_STATUS_LABEL: Record<EmployeeStatus, string> = {
-    available: "근무 가능",
-    working: "근무중",
-    unavailable: "근무 불가",
-};
 
 function getGradeBadge(grade: string) {
     const { label, variant } = getEmployeeGradeBadgeStyle(grade);
@@ -76,7 +74,7 @@ function getGradeBadge(grade: string) {
 function getOpenToNextWorkBadge(openToNextWork: boolean) {
     return (
         <StatusPill variant={openToNextWork ? "success" : "neutral"} size="sm" className="px-2.5 py-0.5 text-[0.6rem]">
-            {openToNextWork ? "근무 가능" : "근무 불가"}
+            {OPEN_TO_NEXT_WORK_LABELS[openToNextWork ? "true" : "false"]}
         </StatusPill>
     );
 }
@@ -89,7 +87,7 @@ function getEmployeeAvatarClassName(openToNextWork: boolean): string {
 
 function formatDate(dateStr: string | null | undefined): string {
     if (!dateStr) return "-";
-    return new Date(dateStr).toLocaleDateString("ko-KR");
+    return formatDateForDisplay(dateStr);
 }
 
 function formatPhoneNumber(phone: string | null | undefined): string {
@@ -190,8 +188,8 @@ export default function EmployeesPage() {
                 items={[
                     { icon: Users, value: stats.total, label: "전체 직원", counter: "명" },
                     { icon: Briefcase, value: stats.working, label: "근무 중", counter: "명", colorIndex: 2 },
-                    { icon: Clock, value: stats.available, label: "근무 가능", counter: "명", colorIndex: 1 },
-                    { icon: CircleOff, value: stats.unavailable, label: "근무 불가", counter: "명", colorIndex: 3 },
+                    { icon: Clock, value: stats.available, label: EMPLOYEE_STATUS_LABELS.available, counter: "명", colorIndex: 1 },
+                    { icon: CircleOff, value: stats.unavailable, label: EMPLOYEE_STATUS_LABELS.unavailable, counter: "명", colorIndex: 3 },
                 ]}
             />
 
@@ -401,7 +399,7 @@ function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
                 <InfoCard title="기본 정보">
                     <InfoRow label="이름" value={employee.name} />
                     <InfoRow label="연락처" value={formatPhoneNumber(employee.phone)} />
-                    <InfoRow label="근무 상태" value={EMPLOYEE_STATUS_LABEL[employee.status]} />
+                    <InfoRow label="근무 상태" value={EMPLOYEE_STATUS_LABELS[employee.status]} />
                 </InfoCard>
 
                 <InfoCard title="업무 정보">

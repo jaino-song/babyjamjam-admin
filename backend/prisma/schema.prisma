@@ -80,6 +80,7 @@ model client {
   name                   String
   address                String?
   phone                  String?
+  suppressGreetingSms    Boolean                   @default(false) @map("suppress_greeting_sms")
   type                   String?
   duration               Int?                      @db.SmallInt
   fullPrice              String?                   @map("full_price")
@@ -200,14 +201,15 @@ model eformsign_doc {
 }
 
 model employee {
-  id                         Int                         @id @db.SmallInt
+  id                         Int                         @id @default(autoincrement()) @db.SmallInt
   name                       String
   workArea                   String[]                    @map("work_area")
-  phone                      String                      @unique
+  phone                      String
   grade                      String
   openToNextWork             Boolean                     @default(true) @map("open_to_next_work")
   companyRegisteredDate      DateTime?                   @map("company_registered_date") @db.Date
   birthday                   String?                     @db.VarChar(6)
+  deletedAt                  DateTime?                   @map("deleted_at") @db.Timestamptz(6)
   branchId                   String?                     @map("branch_id") @db.Uuid
   branch                     branch?                     @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   primaryEmployeeSchedules   employee_schedule[]         @relation("employee_schedule_primary_employee_idToemployee")
@@ -216,6 +218,7 @@ model employee {
   serviceRecordAssignments   service_record_assignment[]
   serviceRecordDays          service_record_day[]
 
+  @@unique([branchId, phone], map: "employee_branch_id_phone_key")
   @@index([branchId], map: "idx_employee_branch")
 }
 
@@ -231,8 +234,8 @@ model employee_schedule {
   branchId                String?                    @map("branch_id") @db.Uuid
   client                  client                     @relation(fields: [clientId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   branch                  branch?                    @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  primaryEmployee         employee                   @relation("employee_schedule_primary_employee_idToemployee", fields: [primaryEmployeeId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  secondaryEmployee       employee?                  @relation("employee_schedule_secondary_employee_idToemployee", fields: [secondaryEmployeeId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  primaryEmployee         employee                   @relation("employee_schedule_primary_employee_idToemployee", fields: [primaryEmployeeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  secondaryEmployee       employee?                  @relation("employee_schedule_secondary_employee_idToemployee", fields: [secondaryEmployeeId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   serviceRecordTokens          service_record_token[]
   serviceRecord           service_record?
   serviceRecordDays       service_record_day[]
@@ -331,6 +334,7 @@ model branch {
   serviceRecordAssignments     service_record_assignment[]
   serviceRecordSnapshotChunks  service_record_snapshot_chunk[]
   scheduleChangeRequests       schedule_change_request[]
+  authSessions                 auth_session[]
   owner                        user                            @relation(fields: [ownerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   userBranches                 user_branch[]
 
@@ -409,6 +413,8 @@ model user {
   pushSubscriptions    push_subscription[]
   userBranches         user_branch[]
   authTokens           auth_token[]
+  authSessions         auth_session[]
+  authEmailOutbox      auth_email_outbox[]
   reviewedClientDrafts client_draft[]
 }
 
@@ -433,6 +439,65 @@ model user_branch {
   @@index([branchId], map: "idx_user_branch_branch")
   @@index([userId], map: "idx_user_branch_user")
   @@index([userId, branchId], map: "idx_user_branch_user_branch")
+  @@unique([userId, branchId], map: "user_branch_user_id_branch_id_key")
+}
+
+model auth_session {
+  id               String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String               @map("user_id") @db.Uuid
+  selectedBranchId String?              @map("selected_branch_id") @db.Uuid
+  expiresAt        DateTime             @map("expires_at") @db.Timestamptz(6)
+  lastUsedAt       DateTime?            @map("last_used_at") @db.Timestamptz(6)
+  revokedAt        DateTime?            @map("revoked_at") @db.Timestamptz(6)
+  revokedReason    String?              @map("revoked_reason") @db.VarChar
+  createdAt        DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user             user                 @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  selectedBranch   branch?              @relation(fields: [selectedBranchId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  refreshTokens    auth_refresh_token[]
+
+  @@index([userId, revokedAt], map: "idx_auth_session_user_revoked")
+  @@index([expiresAt], map: "idx_auth_session_expires")
+  @@index([selectedBranchId], map: "idx_auth_session_selected_branch")
+}
+
+model auth_refresh_token {
+  id                String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionId         String       @map("session_id") @db.Uuid
+  secretHash        String       @unique @map("secret_hash") @db.VarChar
+  expiresAt         DateTime     @map("expires_at") @db.Timestamptz(6)
+  usedAt            DateTime?    @map("used_at") @db.Timestamptz(6)
+  revokedAt         DateTime?    @map("revoked_at") @db.Timestamptz(6)
+  replacedByTokenId String?      @map("replaced_by_token_id") @db.Uuid
+  activeMarker      String?      @default("active") @map("active_marker") @db.VarChar
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  session           auth_session @relation(fields: [sessionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([sessionId, activeMarker], map: "auth_refresh_token_session_active_key")
+  @@index([sessionId, createdAt], map: "idx_auth_refresh_token_session_created")
+  @@index([expiresAt], map: "idx_auth_refresh_token_expires")
+}
+
+model auth_email_outbox {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String     @map("user_id") @db.Uuid
+  authTokenId String     @map("auth_token_id") @db.Uuid
+  kind        String     @db.VarChar
+  recipient   String     @db.VarChar
+  name        String?    @db.VarChar
+  status      String     @default("pending") @db.VarChar
+  attempts    Int        @default(0)
+  nextAttemptAt DateTime @default(now()) @map("next_attempt_at") @db.Timestamptz(6)
+  claimedAt   DateTime?  @map("claimed_at") @db.Timestamptz(6)
+  sentAt      DateTime?  @map("sent_at") @db.Timestamptz(6)
+  errorCode   String?    @map("error_code") @db.VarChar
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user        user       @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  authToken   auth_token @relation(fields: [authTokenId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([authTokenId, kind], map: "auth_email_outbox_token_kind_key")
+  @@index([status, nextAttemptAt], map: "idx_auth_email_outbox_delivery")
 }
 
 model consultation_inquiry {
@@ -498,6 +563,7 @@ model auth_token {
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   usedAt    DateTime? @map("used_at") @db.Timestamptz(6)
   user      user      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emailOutbox auth_email_outbox[]
 
   @@index([userId])
   @@index([token])
@@ -508,8 +574,7 @@ model auth_flow_state {
   kind                    String    @db.VarChar
   tokenHash               String    @unique @map("token_hash") @db.VarChar
   userId                  String?   @map("user_id") @db.Uuid
-  accessToken             String?   @map("access_token")
-  refreshToken            String?   @map("refresh_token")
+  sessionId               String?   @map("session_id") @db.Uuid
   requiresBranchSelection Boolean?  @default(false) @map("requires_branch_selection")
   kakaoId                 String?   @map("kakao_id") @db.VarChar
   email                   String?   @db.VarChar

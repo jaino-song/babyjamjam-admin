@@ -5,12 +5,14 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import dayjs from "dayjs";
+import { isAxiosError } from "axios";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { useFormStore } from "@/stores/form-store";
 import { useEformsign } from "@/hooks/useEformsign";
+import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { useVoucherYears, useVoucherPriceInfos, useAreaTemplates, useAllVoucherPrices } from "@/hooks";
-import { useAllClients, useCreateClient, useUpdateClient } from "@/hooks/useClients";
+import { useAllClients, useCreateClient, useDeleteClient, useUpdateClient } from "@/hooks/useClients";
 import { useEmployees, type Employee } from "@/hooks/useEmployees";
 import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
 import { eformsignApi } from "@/services/api";
@@ -164,10 +166,12 @@ const normalizeClientIdentityPhone = (value: string | null | undefined): string 
 
 export default function ContractCreationPage() {
   const router = useRouter();
+  const { isNavigationPending, startNavigation } = useNavigationPending();
   const queryClient = useQueryClient();
   const prefersReducedMotion = useReducedMotion();
 
   const createClientMutation = useCreateClient();
+  const deleteClientMutation = useDeleteClient();
   const updateClientMutation = useUpdateClient();
   const { isLoaded: isEformsignLoaded, openDocument } = useEformsign();
   const { data: allClients } = useAllClients();
@@ -203,6 +207,19 @@ export default function ContractCreationPage() {
   const [isEformsignModalOpen, setIsEformsignModalOpen] = useState(false);
   const [isProgressModalOpen, setIsProgressModalOpen] = useState(false);
   const [isExistingContractConfirmOpen, setIsExistingContractConfirmOpen] = useState(false);
+  const confirmationResolverRef = useRef<((approved: boolean) => void) | null>(null);
+  const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
+  const requestConfirmation = (message: string): Promise<boolean> => {
+    setConfirmationMessage(message);
+    return new Promise((resolve) => {
+      confirmationResolverRef.current = resolve;
+    });
+  };
+  const resolveConfirmation = (approved: boolean) => {
+    confirmationResolverRef.current?.(approved);
+    confirmationResolverRef.current = null;
+    setConfirmationMessage(null);
+  };
   const [creationProgress, setCreationProgress] = useState<HeadlessProgressState>(INITIAL_HEADLESS_PROGRESS);
   const [progressErrorHint, setProgressErrorHint] = useState<string | null>(null);
   const progressSourceRef = useRef<EventSource | null>(null);
@@ -645,6 +662,7 @@ export default function ContractCreationPage() {
             }
           }
           queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.allDocuments() });
+          startNavigation();
           setTimeout(() => {
             setIsEformsignModalOpen(false);
             router.push("/contracts");
@@ -668,6 +686,7 @@ export default function ContractCreationPage() {
     setIsSubmitting(true);
     setProgressErrorHint(null);
 
+    let autoRegisteredClientId: number | null = null;
     try {
       // 1. Manual-entry client creation
       let finalClientId = clientId ?? storedClientByIdentity?.id ?? storedClientByPhone?.id ?? null;
@@ -692,14 +711,28 @@ export default function ContractCreationPage() {
         areaId: area || null,
       };
       if (!finalClientId && isManualEntry) {
-        const newClient = await createClientMutation.mutateAsync({
+        const autoRegistrationPayload = {
           ...clientData,
           careCenter: false,
           voucherClient: true,
           breastPump: false,
-          suppressGreetingSms: true,
-        });
+          source: "contract_auto_registration" as const,
+        };
+        let newClient;
+        let reusedExistingClient = false;
+        try {
+          newClient = await createClientMutation.mutateAsync(autoRegistrationPayload);
+        } catch (error) {
+          if (!isAxiosError<{ message?: string; clientId?: number }>(error) || error.response?.status !== 409) throw error;
+          const conflict = error.response.data;
+          if (!conflict.clientId) throw new Error(conflict.message || "고객 자동 등록에 실패했습니다.");
+          const shouldReuse = await requestConfirmation("이미 같은 전화번호의 고객이 있습니다. 기존 고객으로 계약을 진행할까요?");
+          if (!shouldReuse) return;
+          reusedExistingClient = true;
+          newClient = await createClientMutation.mutateAsync({ ...autoRegistrationPayload, reuseExistingClient: true });
+        }
         finalClientId = newClient.id;
+        if (!reusedExistingClient) autoRegisteredClientId = newClient.id;
         setClientId(newClient.id);
       }
       if (!finalClientId) {
@@ -742,6 +775,7 @@ export default function ContractCreationPage() {
       let headlessOk = false;
       let headlessFailureReason: string | undefined;
       let headlessFailureStep: string | undefined;
+      let headlessFallbackHint: string | undefined;
       let progressSource: EventSource | null = null;
       setCreationProgress({ step: "client-started", completed: false, failed: false });
       setIsProgressModalOpen(true);
@@ -787,6 +821,7 @@ export default function ContractCreationPage() {
 
         if (headless.ok) {
           headlessOk = true;
+          startNavigation();
           setCreationProgress({ step: "sent", completed: true, failed: false });
           queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.allDocuments() });
           setTimeout(() => {
@@ -796,8 +831,39 @@ export default function ContractCreationPage() {
           return;
         }
 
+        if (headless.reason === "local_persist_failed" && headless.remoteDocumentId) {
+          try {
+            await eformsignApi.adoptDocument(headless.remoteDocumentId, finalClientId);
+            startNavigation();
+            setCreationProgress({ step: "sent", completed: true, failed: false });
+            queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.allDocuments() });
+            setTimeout(() => { setIsProgressModalOpen(false); router.push("/contracts"); }, SUCCESS_REDIRECT_DELAY_MS);
+          } catch {
+            setProgressErrorHint("문서는 생성되었으나 등록에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+          }
+          return;
+        }
+        if (headless.reason === "remote_unconfirmed" || headless.fallbackHint === "manual_check" || headless.fallbackHint === "adopt-or-manual") {
+          setProgressErrorHint("문서 생성 상태를 확인할 수 없습니다. 전자문서 목록에서 확인 후 다시 시도해 주세요.");
+          return;
+        }
+        if (headless.reason === "duplicate_pending_document") {
+          setProgressErrorHint("최근 생성된 진행 중 문서가 있습니다.");
+          if (await requestConfirmation("최근 생성된 진행 중 문서가 있습니다. 그래도 새로 생성하시겠습니까?")) {
+            const forced = await eformsignApi.dispatchHeadless(contractData as unknown as Parameters<typeof eformsignApi.dispatchHeadless>[0], finalClientId, progressId, true);
+            if (forced.ok) {
+              startNavigation();
+              setCreationProgress({ step: "sent", completed: true, failed: false });
+              queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.allDocuments() });
+              setTimeout(() => { setIsProgressModalOpen(false); router.push("/contracts"); }, SUCCESS_REDIRECT_DELAY_MS);
+            }
+          }
+          return;
+        }
+
         headlessFailureReason = headless.reason;
         headlessFailureStep = headless.failedStep;
+        headlessFallbackHint = headless.fallbackHint;
         console.warn("[contract-creation] headless dispatch returned ok=false", {
           reason: headless.reason,
           failedStep: headless.failedStep,
@@ -836,7 +902,7 @@ export default function ContractCreationPage() {
       }
 
       // 5. Fallback to iframe modal if headless failed
-      if (!headlessOk) {
+      if (!headlessOk && headlessFallbackHint === "iframe") {
         console.warn("[contract-creation] falling back to iframe", {
           reason: headlessFailureReason,
           failedStep: headlessFailureStep,
@@ -850,7 +916,17 @@ export default function ContractCreationPage() {
     } catch (err: unknown) {
       setIsProgressModalOpen(false);
       const msg = err instanceof Error ? err.message : "계약서 생성 중 오류가 발생했습니다.";
-      showFloatingError(msg);
+      showFloatingError(autoRegisteredClientId ? `${msg} 방금 자동 등록된 고객이 남아 있습니다.` : msg);
+      if (autoRegisteredClientId && window.confirm("방금 자동 등록된 고객이 남아 있습니다. 고객을 삭제할까요?")) {
+        try {
+          await deleteClientMutation.mutateAsync(autoRegisteredClientId);
+          setClientId(null);
+        } catch (deleteError) {
+          if (isAxiosError<{ message?: string }>(deleteError)) {
+            showFloatingError(deleteError.response?.data.message || "고객 삭제에 실패했습니다.");
+          }
+        }
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -861,7 +937,8 @@ export default function ContractCreationPage() {
   const activeStepMeta = WIZARD_STEPS[activeStep];
   const isFirstStep = activeStep === 0;
   const isLastStep = isContractInfoStep;
-  const isPrimaryDisabled = isSubmitting || !isCurrentStepValid;
+  const isBusy = isSubmitting || isNavigationPending;
+  const isPrimaryDisabled = isBusy || !isCurrentStepValid;
 
   return (
     <>
@@ -1237,7 +1314,7 @@ export default function ContractCreationPage() {
                         <span>기간</span>
                         <span className={styles.amount}>
                           {startDate && endDate
-                            ? `${dayjs(startDate).format("M/D")} → ${dayjs(endDate).format("M/D")}`
+                            ? `${dayjs(startDate).format("YYYY.MM.DD")} → ${dayjs(endDate).format("YYYY.MM.DD")}`
                             : "-"}
                         </span>
                       </div>
@@ -1267,7 +1344,7 @@ export default function ContractCreationPage() {
                 disabled={isPrimaryDisabled}
                 className={cn(styles.wizardButton, styles.primaryButton)}
               >
-                {isSubmitting ? "생성 중..." : isLastStep ? "계약서 생성" : "다음"}
+                {isBusy ? "생성 중..." : isLastStep ? "계약서 생성" : "다음"}
               </button>
             </div>
           </section>
@@ -1284,6 +1361,21 @@ export default function ContractCreationPage() {
       />
 
       <ConfirmActionModal
+        open={confirmationMessage !== null}
+        title="계약서 생성 확인"
+        description={confirmationMessage ?? ""}
+        cancelLabel="취소"
+        confirmLabel="확인"
+        confirmVariant="default"
+        actionOrder="cancel-confirm"
+        onOpenChange={(open) => {
+          if (!open) resolveConfirmation(false);
+        }}
+        onCancel={() => resolveConfirmation(false)}
+        onConfirm={() => resolveConfirmation(true)}
+      />
+
+      <ConfirmActionModal
         open={isExistingContractConfirmOpen}
         title="계약서 재생성 확인"
         description="이전에 전송된 계약서가 있습니다. 그래도 새로 생성하시겠어요?"
@@ -1291,9 +1383,9 @@ export default function ContractCreationPage() {
         confirmLabel="생성"
         confirmVariant="default"
         actionOrder="cancel-confirm"
-        loading={isSubmitting}
+        loading={isBusy}
         onOpenChange={(open) => {
-          if (!isSubmitting) setIsExistingContractConfirmOpen(open);
+          if (!isBusy) setIsExistingContractConfirmOpen(open);
         }}
         onCancel={() => setIsExistingContractConfirmOpen(false)}
         onConfirm={() => {

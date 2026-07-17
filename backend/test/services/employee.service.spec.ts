@@ -1,4 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
+import { Prisma } from "@prisma/client";
 import { EmployeeService } from "application/services/employee.service";
 import {
     ChangeEmployeeOpenStatusUsecase,
@@ -10,6 +11,7 @@ import {
     ListEmployeesByRegisteredDateRangeUsecase,
     ListEmployeesByRegisteredDateUsecase,
     ListEmployeesByWorkAreaUsecase,
+    ListActiveClientsByEmployeeUsecase,
     ListEmployeesOpenToNextWorkUsecase,
     ListEmployeesUsecase,
     UpdateEmployeeUsecase,
@@ -71,6 +73,7 @@ describe("EmployeeService", () => {
                 { provide: ListEmployeesByRegisteredDateRangeUsecase, useValue: mockListByRegisteredDateRangeUsecase },
                 { provide: ChangeEmployeeOpenStatusUsecase, useValue: mockChangeOpenStatusUsecase },
                 { provide: ListEmployeesOpenToNextWorkUsecase, useValue: mockListOpenToNextWorkUsecase },
+                { provide: ListActiveClientsByEmployeeUsecase, useValue: { execute: jest.fn() } },
                 { provide: EMPLOYEE_REPOSITORY, useValue: mockEmployeeRepository },
             ],
         }).compile();
@@ -117,6 +120,25 @@ describe("EmployeeService", () => {
     // create
     // ============================================
     describe("create", () => {
+        it("should map a branch phone unique conflict to 409", async () => {
+            const error = new Prisma.PrismaClientKnownRequestError("duplicate", {
+                code: "P2002",
+                clientVersion: "test",
+                meta: { target: ["branch_id", "phone"] },
+            });
+            createUsecase.execute.mockRejectedValue(error);
+
+            await expect(service.create(branchId, {
+                name: "중복 직원",
+                workArea: ["서울"],
+                phone: "010-1234-5678",
+                grade: "베스트",
+                openToNextWork: true,
+            })).rejects.toMatchObject({
+                status: 409,
+                response: { statusCode: 409, code: "P2002", error: "Conflict", field: "phone" },
+            });
+        });
         it("should delegate to CreateEmployeeUsecase with all parameters", async () => {
             // Arrange
             const params = {
@@ -237,6 +259,19 @@ describe("EmployeeService", () => {
     // update
     // ============================================
     describe("update", () => {
+        it("should map a branch phone unique conflict to 409", async () => {
+            const error = new Prisma.PrismaClientKnownRequestError("duplicate", {
+                code: "P2002",
+                clientVersion: "test",
+                meta: { target: ["branchId", "phone"] },
+            });
+            updateUsecase.execute.mockRejectedValue(error);
+
+            await expect(service.update(branchId, 3, { phone: "010-1234-5678" })).rejects.toMatchObject({
+                status: 409,
+                response: { statusCode: 409, code: "P2002", error: "Conflict", field: "phone" },
+            });
+        });
         it("should delegate to UpdateEmployeeUsecase with id and params", async () => {
             // Arrange
             const updateParams = {

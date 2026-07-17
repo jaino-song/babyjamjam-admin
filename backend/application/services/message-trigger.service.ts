@@ -15,7 +15,6 @@ import {
     EVENT_RECIPIENT_OPTIONS,
     getMessageTriggerTemplateCatalog,
     isCompatibleMessageTriggerTemplate,
-    type SupportedTriggerProvider,
     MessageTriggerEventType,
     MessageTriggerOffsetType,
     MessageTriggerRecipientType,
@@ -116,7 +115,7 @@ export interface UpcomingMessageTriggerJobView {
 }
 
 export interface MessageLogRecordView {
-    id: number;
+    id: number | string;
     provider: string;
     templateKey: string;
     triggerJobId: string | null;
@@ -125,7 +124,7 @@ export interface MessageLogRecordView {
     recipientPhone: string | null;
     messageBody: string;
     variables: Record<string, string>;
-    status: MessageLogEntity["status"];
+    status: MessageLogEntity["status"] | "canceled";
     aligoMid: string | null;
     errorMessage: string | null;
     attempts: number;
@@ -212,14 +211,15 @@ export class MessageTriggerService {
 
         await this.reconcileOrphanedClientJobs(branchId);
         const jobs = await this.jobRepository.findUpcomingPendingByBranch(branchId, limit);
-        if (jobs.length === 0) {
+        const manualScheduledLogs = await this.listManualScheduledSmsLogs(branchId, limit);
+        if (jobs.length === 0 && manualScheduledLogs.length === 0) {
             return [];
         }
 
-        const rules = await this.ruleRepository.findAll(branchId);
+        const rules = jobs.length > 0 ? await this.ruleRepository.findAll(branchId) : [];
         const rulesById = new Map(rules.map((rule) => [rule.id, rule]));
 
-        return jobs.map((job) => {
+        const triggerJobs = jobs.map((job): UpcomingMessageTriggerJobView => {
             const rule = rulesById.get(job.ruleId);
 
             return {
@@ -244,6 +244,10 @@ export class MessageTriggerService {
                 updatedAt: job.updatedAt,
             };
         });
+
+        return [...triggerJobs, ...manualScheduledLogs]
+            .sort((left, right) => left.scheduledFor.getTime() - right.scheduledFor.getTime())
+            .slice(0, limit);
     }
 
     async listHistory(
@@ -251,12 +255,16 @@ export class MessageTriggerService {
         limit = 200,
         skip = 0,
     ): Promise<MessageLogRecordView[]> {
-        if (!(await hasTable(this.prisma, "message_log"))) {
-            return [];
-        }
+        const candidateLimit = limit + skip;
+        const hasMessageLogTable = await hasTable(this.prisma, "message_log");
+        const logs = hasMessageLogTable
+            ? await this.messageLogRepository.findRecentByBranch(branchId, candidateLimit, 0)
+            : [];
+        const terminalJobs = await this.hasTriggerSchema()
+            ? await this.jobRepository.findTerminalByBranch(branchId, candidateLimit)
+            : [];
 
-        const logs = await this.messageLogRepository.findRecentByBranch(branchId, limit, skip);
-        if (logs.length === 0) {
+        if (logs.length === 0 && terminalJobs.length === 0) {
             return [];
         }
 
@@ -281,7 +289,7 @@ export class MessageTriggerService {
         const rules = await this.ruleRepository.findAll(branchId);
         const rulesById = new Map(rules.map((rule) => [rule.id, rule]));
 
-        return logs.map((log) => {
+        const logRecords = logs.map((log): MessageLogRecordView => {
             const job = log.triggerJobId ? jobsById.get(log.triggerJobId) : null;
             const payload = (job?.payload as MessageTriggerJobEntity["payload"] | undefined) ?? null;
             const rule = job ? rulesById.get(job.ruleId) ?? null : null;
@@ -316,6 +324,56 @@ export class MessageTriggerService {
                 employeeName: payload?.employeeName ?? null,
             };
         });
+
+        const loggedTriggerJobIds = new Set(
+            logs
+                .map((log) => log.triggerJobId)
+                .filter((id): id is string => Boolean(id)),
+        );
+        const terminalJobRecords = terminalJobs
+            .filter((job) => !loggedTriggerJobIds.has(job.id))
+            .map((job): MessageLogRecordView => {
+                const rule = rulesById.get(job.ruleId) ?? null;
+                const receiver = job.recipientPhone ?? job.payload.recipientPhone ?? "";
+
+                return {
+                    id: `job:${job.id}`,
+                    provider: "message_job",
+                    templateKey: job.templateKey,
+                    triggerJobId: job.id,
+                    receiver,
+                    clientId: job.clientId,
+                    recipientPhone: receiver || null,
+                    messageBody: job.payload.messageBody ?? "",
+                    variables: {
+                        ...job.payload.templateVariables,
+                        recipientName: job.payload.recipientName,
+                        historySource: "message_trigger_job",
+                    },
+                    status: job.status === "canceled" ? "canceled" : "failed",
+                    aligoMid: null,
+                    errorMessage: job.cancelReason,
+                    attempts: job.attempts,
+                    lastAttemptAt: job.updatedAt,
+                    nextRetryAt: null,
+                    createdAt: job.createdAt,
+                    updatedAt: job.updatedAt,
+                    ruleId: job.ruleId,
+                    ruleName: rule?.name ?? null,
+                    eventType: rule?.eventType ?? null,
+                    offsetType: rule?.offsetType ?? null,
+                    offsetDays: rule?.offsetDays ?? 0,
+                    scheduledFor: job.scheduledFor,
+                    recipientType: job.recipientType,
+                    recipientName: job.payload.recipientName,
+                    clientName: job.payload.clientName ?? null,
+                    employeeName: job.payload.employeeName ?? null,
+                };
+            });
+
+        return [...logRecords, ...terminalJobRecords]
+            .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
+            .slice(skip, skip + limit);
     }
 
     async getRule(branchId: string, id: string): Promise<MessageTriggerRuleEntity> {
@@ -328,11 +386,10 @@ export class MessageTriggerService {
     }
 
     listTemplates(params: {
-        provider: SupportedTriggerProvider;
         eventType?: MessageTriggerEventType;
         recipientType?: MessageTriggerRecipientType;
     }) {
-        return getMessageTriggerTemplateCatalog(params.provider).filter((item) => {
+        return getMessageTriggerTemplateCatalog("sms").filter((item) => {
             if (params.eventType && !item.allowedEventTypes.includes(params.eventType)) return false;
             if (
                 params.recipientType &&
@@ -429,6 +486,24 @@ export class MessageTriggerService {
 
         await this.recoverApprovedBranches();
         await this.processStaleRuleRebuilds();
+    }
+
+    async dispatchPendingJobNow(jobId: string): Promise<MessageTriggerJobEntity> {
+        const job = await this.jobRepository.findById(jobId);
+        if (!job) {
+            throw new NotFoundException("Message trigger job not found");
+        }
+        if (job.status !== "pending") {
+            return job;
+        }
+
+        const approvedBranchIds = await this.messageSenderApprovalService.getApprovedBranchIds(
+            job.branchId ? [job.branchId] : [],
+        );
+        const sentIds = await this.messageLogRepository.findSentTriggerJobIds([job.id]);
+        await this.dispatchClaimedJob(job, sentIds, approvedBranchIds);
+
+        return await this.jobRepository.findById(jobId) ?? job;
     }
 
     async syncClientRulesForClient(
@@ -551,7 +626,7 @@ export class MessageTriggerService {
 
         const clients = await this.prisma.client.findMany({
             where: { branchId, phone: { not: null } },
-            select: { id: true, phone: true, createdAt: true },
+            select: { id: true, phone: true, createdAt: true, suppressGreetingSms: true },
         });
         const clientsByPhone = new Map<string, typeof clients>();
         for (const client of clients) {
@@ -577,7 +652,13 @@ export class MessageTriggerService {
         }
 
         for (const [clientId, jobIds] of orphanIdsByReplacementClient) {
-            await this.syncClientRulesForClient(branchId, clientId, true);
+            const client = clients.find((candidate) => candidate.id === clientId);
+            await this.syncClientRulesForClient(
+                branchId,
+                clientId,
+                true,
+                client?.suppressGreetingSms ?? false,
+            );
             await this.jobRepository.markOrphanedJobsReconciled(jobIds, clientId);
         }
     }
@@ -1142,6 +1223,15 @@ export class MessageTriggerService {
     }
 
     private validateRule(params: UpsertRuleParams): void {
+        const template = MESSAGE_TRIGGER_TEMPLATE_CATALOG[params.templateKey];
+        if (!template) {
+            throw new BadRequestException("Unknown template key");
+        }
+
+        if (!template.providers.sms) {
+            throw new BadRequestException("SMS 발송 채널이 없는 템플릿입니다.");
+        }
+
         if (!EVENT_RECIPIENT_OPTIONS[params.eventType].includes(params.recipientType)) {
             throw new BadRequestException("Invalid recipient for selected event type");
         }
@@ -1169,13 +1259,107 @@ export class MessageTriggerService {
             throw new BadRequestException("Template is not compatible with the selected event and recipient");
         }
 
-        if (!MESSAGE_TRIGGER_TEMPLATE_CATALOG[params.templateKey]) {
-            throw new BadRequestException("Unknown template key");
-        }
     }
 
     private async cancelPendingJobsForRule(ruleId: string, reason: string): Promise<void> {
         await this.jobRepository.cancelPendingByRuleId(ruleId, reason);
+    }
+
+    private async listManualScheduledSmsLogs(
+        branchId: string,
+        limit: number,
+    ): Promise<UpcomingMessageTriggerJobView[]> {
+        if (!this.prisma.message_log) {
+            return [];
+        }
+        if (!(await hasTable(this.prisma, "message_log"))) {
+            return [];
+        }
+
+        const logs = await this.prisma.message_log.findMany({
+            where: {
+                branchId,
+                provider: "aligo_sms",
+                status: "pending",
+                variables: {
+                    path: ["triggerType"],
+                    equals: "scheduled",
+                },
+            },
+            orderBy: { createdAt: "desc" },
+            take: limit,
+        });
+
+        return logs.flatMap((log) => {
+            const variables = this.toStringRecord(log.variables);
+            const scheduledFor = this.parseManualScheduledAt(
+                variables["scheduledDate"],
+                variables["scheduledTime"],
+            );
+            if (!scheduledFor) {
+                return [];
+            }
+
+            const recipientName = log.recipientName?.trim() || "수신자";
+            const recipientPhone = log.recipientPhone?.trim() || log.receiver;
+
+            return [{
+                id: `log:${log.id}`,
+                ruleId: `manual-sms:${log.id}`,
+                ruleName: variables["title"]?.trim() || "수동 예약 발송",
+                eventType: null,
+                offsetType: null,
+                offsetDays: 0,
+                recipientType: MessageTriggerRecipientType.CLIENT,
+                recipientPhone,
+                templateKey: MessageTriggerTemplateKey.INFO,
+                status: "pending",
+                scheduledFor,
+                sentAt: null,
+                canceledAt: null,
+                cancelReason: null,
+                clientId: log.clientId,
+                employeeScheduleId: null,
+                payload: {
+                    clientId: log.clientId,
+                    clientName: recipientName,
+                    memberId: `message-log:${log.id}`,
+                    recipientName,
+                    recipientPhone,
+                    templateVariables: variables,
+                    messageBody: log.messageBody,
+                },
+                createdAt: log.createdAt,
+                updatedAt: log.updatedAt,
+            }];
+        });
+    }
+
+    private toStringRecord(value: Prisma.JsonValue): Record<string, string> {
+        if (!value || Array.isArray(value) || typeof value !== "object") {
+            return {};
+        }
+
+        return Object.fromEntries(
+            Object.entries(value)
+                .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+        );
+    }
+
+    private parseManualScheduledAt(
+        scheduledDate?: string,
+        scheduledTime?: string,
+    ): Date | null {
+        if (!scheduledDate || !scheduledTime) return null;
+
+        const date = scheduledDate.replace(/\D/g, "");
+        const time = scheduledTime.replace(/\D/g, "");
+        if (date.length !== 8 || time.length !== 4) return null;
+
+        const parsed = new Date(
+            `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}T${time.slice(0, 2)}:${time.slice(2, 4)}:00+09:00`,
+        );
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
     }
 
     private async cancelPendingJobsForClient(

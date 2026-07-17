@@ -3,7 +3,7 @@
 import { useState, useMemo } from "react";
 import { Plus } from "lucide-react";
 import { useLocale } from "@/providers/LocaleProvider";
-import { t, Locale } from "@/lib/i18n/translations";
+import { t } from "@/lib/i18n/translations";
 import { ContentPaper } from "../root/content-paper";
 import {
     Employee,
@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
+import { EMPLOYEE_STATUS_LABELS } from "@babyjamjam/shared/constants/employee-status";
 
 const formatPhoneNumber = (phone: string | null | undefined): string => {
     if (!phone) return "-";
@@ -28,25 +29,25 @@ const formatPhoneNumber = (phone: string | null | undefined): string => {
     return `${numbers.slice(0, 3)}-${numbers.slice(3, 7)}-${numbers.slice(7, 11)}`;
 };
 
-const getStatusBadge = (status: EmployeeStatus | undefined, locale: Locale) => {
+const getStatusBadge = (status: EmployeeStatus | undefined) => {
     switch (status) {
         case "available":
             return (
                 <Badge variant="success" className="min-w-[65px] justify-center">
-                    {t(locale, "employees.status.available")}
+                    {EMPLOYEE_STATUS_LABELS.available}
                 </Badge>
             );
         case "working":
             return (
                 <Badge variant="warning" className="min-w-[65px] justify-center">
-                    {t(locale, "employees.status.working")}
+                    {EMPLOYEE_STATUS_LABELS.working}
                 </Badge>
             );
         case "unavailable":
         default:
             return (
                 <Badge variant="secondary" className="min-w-[65px] justify-center">
-                    {t(locale, "employees.status.unavailable")}
+                    {EMPLOYEE_STATUS_LABELS.unavailable}
                 </Badge>
             );
     }
@@ -54,9 +55,9 @@ const getStatusBadge = (status: EmployeeStatus | undefined, locale: Locale) => {
 
 const statusFilterOptions: FilterOption[] = [
     { label: "전체", value: null, color: "default" },
-    { label: "근무 가능", value: "available", color: "success" },
-    { label: "근무중", value: "working", color: "warning" },
-    { label: "근무 불가", value: "unavailable", color: "default" },
+    { label: EMPLOYEE_STATUS_LABELS.available, value: "available", color: "success" },
+    { label: EMPLOYEE_STATUS_LABELS.working, value: "working", color: "warning" },
+    { label: EMPLOYEE_STATUS_LABELS.unavailable, value: "unavailable", color: "default" },
 ];
 
 export function EmployeesTable() {
@@ -135,7 +136,7 @@ export function EmployeesTable() {
             header: t(locale, "employees.table.open-status"),
             width: "30%",
             align: "center",
-            render: (employee) => getStatusBadge(employee.status as EmployeeStatus | undefined, locale),
+            render: (employee) => getStatusBadge(employee.status as EmployeeStatus | undefined),
         },
         {
             key: "phone",

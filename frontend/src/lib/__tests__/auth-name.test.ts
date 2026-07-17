@@ -9,12 +9,12 @@ describe("auth name handling", () => {
   it("rejects names containing numbers or symbols at validation time", () => {
     const result = registerSchema.safeParse({
       email: "user@example.com",
-      password: "password1!",
-      confirmPassword: "password1!",
+      password: "Password1!",
+      confirmPassword: "Password1!",
       name: "홍길동123",
       phone: "010-1234-5678",
       birthDate: "1990-01-01",
-      branchId: "org-1",
+      branchId: "550e8400-e29b-41d4-a716-446655440000",
       role: "user",
     });
 
@@ -29,12 +29,12 @@ describe("auth name handling", () => {
   it("trims valid names during validation", () => {
     const result = registerSchema.safeParse({
       email: "user@example.com",
-      password: "password1!",
-      confirmPassword: "password1!",
+      password: "Password1!",
+      confirmPassword: "Password1!",
       name: "  홍길동  ",
       phone: "010-1234-5678",
       birthDate: "1990-01-01",
-      branchId: "org-1",
+      branchId: "550e8400-e29b-41d4-a716-446655440000",
       role: "user",
     });
 

@@ -6,6 +6,10 @@ import { jwtDecode } from "jwt-decode";
 
 import { serverAPIClient } from "@/lib/api/server";
 import { getServerRuntimeConfig } from "@/lib/env";
+import {
+    ACCESS_TOKEN_MAX_AGE_SECONDS,
+    getRefreshSessionMaxAgeSeconds,
+} from "@/lib/auth/session-policy";
 
 interface TokenPayload {
     sub: string;
@@ -71,7 +75,7 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
         if (autoLogin) {
             cookieStore.set("auth_token", data.accessToken, {
                 ...authCookieBaseOptions,
-                maxAge: role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
+                maxAge: ACCESS_TOKEN_MAX_AGE_SECONDS,
             });
         } else {
             cookieStore.set("auth_token", data.accessToken, authCookieBaseOptions);
@@ -87,7 +91,7 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
         if (autoLogin) {
             cookieStore.set("refresh_token", data.refreshToken, {
                 ...refreshCookieBaseOptions,
-                maxAge: 7 * 24 * 60 * 60,
+                maxAge: getRefreshSessionMaxAgeSeconds(role),
             });
         } else {
             cookieStore.set("refresh_token", data.refreshToken, refreshCookieBaseOptions);

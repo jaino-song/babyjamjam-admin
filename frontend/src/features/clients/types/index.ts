@@ -89,6 +89,8 @@ export interface CreateClientDto {
     breastPump: boolean;
     serviceStatus?: ServiceStatus | null;
     areaId?: string | null;
+    source?: "contract_auto_registration";
+    reuseExistingClient?: boolean;
 }
 
 // Update client DTO - Frontend sends employeeId, backend converts to scheduleId

@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { AuthService, type KakaoData } from "application/services/auth.service";
+import { AuthSessionService } from "application/services/auth-session.service";
 import { AuthTokenEntity } from "domain/entities/auth-token.entity";
 import { EmailPort } from "domain/ports/email.port";
 import { IAuthTokenRepository } from "domain/repositories/auth-token.repository.interface";
@@ -29,6 +30,16 @@ describe("AuthService Kakao onboarding", () => {
             update: jest.fn(),
             updateMany: jest.fn(),
             deleteMany: jest.fn(),
+        },
+        auth_token: {
+            create: jest.fn(),
+            deleteMany: jest.fn(),
+        },
+        auth_email_outbox: {
+            create: jest.fn(),
+        },
+        auth_session: {
+            updateMany: jest.fn(),
         },
         $transaction: jest.fn(),
     });
@@ -59,6 +70,8 @@ describe("AuthService Kakao onboarding", () => {
     const kakaoData: KakaoData = {
         kakaoId: "kakao_12345",
         email: "kakao@example.com",
+        emailValid: true,
+        emailVerified: true,
         name: "Kakao User",
         profileImage: "https://example.com/profile.png",
     };
@@ -95,6 +108,12 @@ describe("AuthService Kakao onboarding", () => {
             jwt as unknown as JwtService,
             emailService,
             authTokenRepository,
+            {
+                issueSession: jest.fn().mockResolvedValue({
+                    accessToken: "mock-access-token",
+                    refreshToken: "mock-refresh-token",
+                }),
+            } as unknown as AuthSessionService,
         );
     });
 

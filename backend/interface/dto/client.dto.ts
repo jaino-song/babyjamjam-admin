@@ -1,4 +1,4 @@
-import { IsBoolean, IsDateString, IsIn, IsInt, IsOptional, IsString } from "class-validator";
+import { IsBoolean, IsDateString, IsIn, IsInt, IsOptional, IsString, Matches } from "class-validator";
 import { SERVICE_STATUS_VALUES } from "domain/value-objects/service-status.vo";
 
 export class CreateClientDto {
@@ -58,6 +58,7 @@ export class CreateClientDto {
 
     @IsOptional()
     @IsString()
+    @Matches(/^\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/, { message: "생년월일은 YYMMDD 6자리여야 합니다." })
     birthday?: string | null;
 
     @IsOptional()
@@ -82,6 +83,14 @@ export class CreateClientDto {
     @IsOptional()
     @IsBoolean()
     suppressGreetingSms?: boolean;
+
+    @IsOptional()
+    @IsBoolean()
+    reuseExistingClient?: boolean;
+
+    @IsOptional()
+    @IsIn(["contract_auto_registration"])
+    source?: string;
 }
 
 export class UpdateClientDto {
@@ -143,6 +152,7 @@ export class UpdateClientDto {
 
     @IsOptional()
     @IsString()
+    @Matches(/^\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/, { message: "생년월일은 YYMMDD 6자리여야 합니다." })
     birthday?: string | null;
 
     @IsOptional()

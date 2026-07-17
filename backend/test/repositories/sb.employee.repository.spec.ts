@@ -18,6 +18,11 @@ describe("SbEmployeeRepository", () => {
         deleteMany: jest.fn(),
     });
 
+    const createMockPrismaEmployeeSchedule = () => ({
+        count: jest.fn(),
+        findMany: jest.fn(),
+    });
+
     const createEmployeeRow = (overrides = {}) => ({
         id: 1,
         name: "Alice",
@@ -56,12 +61,17 @@ describe("SbEmployeeRepository", () => {
     const branchId = "org-1";
 
     let employeeModel: ReturnType<typeof createMockPrismaEmployee>;
+    let employeeScheduleModel: ReturnType<typeof createMockPrismaEmployeeSchedule>;
     let prisma: PrismaService;
     let repository: SbEmployeeRepository;
 
     beforeEach(() => {
         employeeModel = createMockPrismaEmployee();
-        prisma = { employee: employeeModel } as unknown as PrismaService;
+        employeeScheduleModel = createMockPrismaEmployeeSchedule();
+        prisma = {
+            employee: employeeModel,
+            employee_schedule: employeeScheduleModel,
+        } as unknown as PrismaService;
         repository = new SbEmployeeRepository(prisma);
     });
 
@@ -152,6 +162,85 @@ describe("SbEmployeeRepository", () => {
         });
     });
 
+    describe("findActiveClientsByEmployee", () => {
+        it("should query only current non-replaced assignments and map primary and secondary roles", async () => {
+            employeeScheduleModel.findMany.mockResolvedValue([
+                {
+                    primaryEmployeeId: 7,
+                    secondaryEmployeeId: null,
+                    startDate: new Date("2026-07-01T00:00:00.000Z"),
+                    endDate: new Date("2026-12-31T00:00:00.000Z"),
+                    client: {
+                        id: 11,
+                        name: "박서연",
+                        serviceStatus: "active",
+                        startDate: new Date("2026-07-01T00:00:00.000Z"),
+                        endDate: new Date("2026-12-31T00:00:00.000Z"),
+                    },
+                },
+                {
+                    primaryEmployeeId: 3,
+                    secondaryEmployeeId: 7,
+                    startDate: new Date("2026-08-01T00:00:00.000Z"),
+                    endDate: new Date("2027-01-31T00:00:00.000Z"),
+                    client: {
+                        id: 12,
+                        name: "김민지",
+                        serviceStatus: "waiting",
+                        startDate: new Date("2026-08-01T00:00:00.000Z"),
+                        endDate: null,
+                    },
+                },
+            ]);
+
+            const result = await repository.findActiveClientsByEmployee(branchId, 7);
+
+            expect(employeeScheduleModel.findMany).toHaveBeenCalledWith({
+                where: {
+                    branchId,
+                    replaced: false,
+                    endDate: { gte: expect.any(Date) },
+                    OR: [
+                        { primaryEmployeeId: 7 },
+                        { secondaryEmployeeId: 7 },
+                    ],
+                },
+                select: {
+                    primaryEmployeeId: true,
+                    secondaryEmployeeId: true,
+                    client: {
+                        select: {
+                            id: true,
+                            name: true,
+                            serviceStatus: true,
+                            startDate: true,
+                            endDate: true,
+                        },
+                    },
+                },
+                orderBy: { startDate: "asc" },
+            });
+            expect(result).toEqual([
+                {
+                    clientId: 11,
+                    clientName: "박서연",
+                    role: "primary",
+                    startDate: new Date("2026-07-01T00:00:00.000Z"),
+                    endDate: new Date("2026-12-31T00:00:00.000Z"),
+                    serviceStatus: "active",
+                },
+                {
+                    clientId: 12,
+                    clientName: "김민지",
+                    role: "secondary",
+                    startDate: new Date("2026-08-01T00:00:00.000Z"),
+                    endDate: null,
+                    serviceStatus: "waiting",
+                },
+            ]);
+        });
+    });
+
     // ============================================
     // findAll
     // ============================================
@@ -175,7 +264,7 @@ describe("SbEmployeeRepository", () => {
                             primaryEmployeeSchedules: expect.any(Object),
                             secondaryEmployeeSchedules: expect.any(Object),
                         }),
-                        where: { branchId: branchId },
+                        where: { branchId: branchId, deletedAt: null },
                     }),
                 );
                 expect(result).toHaveLength(2);
@@ -279,21 +368,15 @@ describe("SbEmployeeRepository", () => {
                     grade: "베스트",
                     openToNextWork: false,
                 });
-                // Mock findFirst for ID generation (returns last employee with id: 4)
-                employeeModel.findFirst.mockResolvedValue({ id: 4 });
                 employeeModel.create.mockResolvedValue(createdRow);
 
                 // Act
                 const result = await repository.create(branchId, entity);
 
                 // Assert
-                expect(employeeModel.findFirst).toHaveBeenCalledWith({
-                    orderBy: { id: "desc" },
-                    select: { id: true },
-                });
+                expect(employeeModel.findFirst).not.toHaveBeenCalled();
                 expect(employeeModel.create).toHaveBeenCalledWith({
                     data: {
-                        id: 5, // Next ID after 4
                         name: "Test Employee",
                         workArea: ["Seoul"],
                         phone: "010-0000-0000",
@@ -308,12 +391,11 @@ describe("SbEmployeeRepository", () => {
             });
         });
 
-        describe("given no employees exist yet", () => {
-            it("should start with id 1", async () => {
+        describe("given an employee id is assigned by the database", () => {
+            it("should return the generated id without inserting an explicit id", async () => {
                 // Arrange
                 const entity = createEmployeeEntity();
                 const createdRow = createEmployeeRow({ id: 1, name: "Test Employee" });
-                employeeModel.findFirst.mockResolvedValue(null); // No employees
                 employeeModel.create.mockResolvedValue(createdRow);
 
                 // Act
@@ -321,7 +403,7 @@ describe("SbEmployeeRepository", () => {
 
                 // Assert
                 expect(employeeModel.create).toHaveBeenCalledWith({
-                    data: expect.objectContaining({ id: 1 }),
+                    data: expect.not.objectContaining({ id: expect.anything() }),
                 });
                 expect(result.id).toBe(1);
             });
@@ -379,17 +461,40 @@ describe("SbEmployeeRepository", () => {
     // ============================================
     describe("delete", () => {
         describe("given a valid employee id", () => {
-            it("should delete the employee", async () => {
+            it("should set deletedAt without hard deleting the employee", async () => {
                 // Arrange
-                employeeModel.deleteMany.mockResolvedValue({ count: 1 });
+                employeeModel.updateMany.mockResolvedValue({ count: 1 });
 
                 // Act
                 await repository.delete(branchId, 3);
 
                 // Assert
-                expect(employeeModel.deleteMany).toHaveBeenCalledWith({
-                    where: { id: 3, branchId: branchId },
+                expect(employeeModel.updateMany).toHaveBeenCalledWith({
+                    where: { id: 3, branchId: branchId, deletedAt: null },
+                    data: { deletedAt: expect.any(Date) },
                 });
+                expect(employeeModel.deleteMany).not.toHaveBeenCalled();
+            });
+        });
+    });
+
+    describe("hasActiveAssignments", () => {
+        it("should count current unreplaced primary and secondary assignments", async () => {
+            employeeScheduleModel.count.mockResolvedValue(1);
+
+            const result = await repository.hasActiveAssignments(branchId, 3);
+
+            expect(result).toBe(true);
+            expect(employeeScheduleModel.count).toHaveBeenCalledWith({
+                where: {
+                    branchId,
+                    replaced: false,
+                    endDate: { gte: expect.any(Date) },
+                    OR: [
+                        { primaryEmployeeId: 3 },
+                        { secondaryEmployeeId: 3 },
+                    ],
+                },
             });
         });
     });
@@ -408,7 +513,7 @@ describe("SbEmployeeRepository", () => {
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
-                    where: { workArea: { has: "Incheon" }, branchId: branchId },
+                    where: { workArea: { has: "Incheon" }, branchId: branchId, deletedAt: null },
                 });
             });
         });
@@ -425,7 +530,7 @@ describe("SbEmployeeRepository", () => {
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
-                    where: { grade: "프리미엄", branchId: branchId },
+                    where: { grade: "프리미엄", branchId: branchId, deletedAt: null },
                 });
             });
 
@@ -441,7 +546,7 @@ describe("SbEmployeeRepository", () => {
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
-                    where: { grade, branchId: branchId },
+                    where: { grade, branchId: branchId, deletedAt: null },
                 });
             });
         });
@@ -458,7 +563,7 @@ describe("SbEmployeeRepository", () => {
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
-                    where: { openToNextWork: true, branchId: branchId },
+                    where: { openToNextWork: true, branchId: branchId, deletedAt: null },
                 });
             });
         });
@@ -473,7 +578,7 @@ describe("SbEmployeeRepository", () => {
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
-                    where: { openToNextWork: false, branchId: branchId },
+                    where: { openToNextWork: false, branchId: branchId, deletedAt: null },
                 });
             });
         });
@@ -518,6 +623,7 @@ describe("SbEmployeeRepository", () => {
                             lte: end,
                         },
                         branchId: branchId,
+                        deletedAt: null,
                     },
                 });
             });
@@ -576,7 +682,7 @@ describe("SbEmployeeRepository", () => {
 
                 // Assert
                 expect(employeeModel.findMany).toHaveBeenCalledWith({
-                    where: { openToNextWork: true, branchId: branchId },
+                    where: { openToNextWork: true, branchId: branchId, deletedAt: null },
                 });
                 expect(result).toHaveLength(2);
             });

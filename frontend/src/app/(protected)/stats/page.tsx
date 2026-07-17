@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { Block } from "@/components/app/v3/Block";
 import { getCurrentUser } from "@/lib/auth/cookies";
 import { ROLES } from "@/lib/constants/roles";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import {
   getSummary as getSentrySummary,
   formatSentryRelativeTime,
@@ -72,9 +73,7 @@ export default async function StatsPage() {
     d.setDate(d.getDate() - i);
     const key = d.toISOString().slice(0, 10);
     last7DayValues.push(trendMap.get(key) ?? 0);
-    last7DayLabels.push(
-      i === 0 ? "오늘" : `${d.getMonth() + 1}/${d.getDate()}`
-    );
+    last7DayLabels.push(formatDateForDisplay(d));
   }
 
   const inquiryDelta = formatDelta(inquiries.today, inquiries.yesterday);
@@ -92,12 +91,7 @@ export default async function StatsPage() {
         <StatsHero
           title="오늘 통계"
           subtitle="4개 패널 한눈에 — 오류, 상담, 페이지 이동, 트래픽"
-          rightLabel={today.toLocaleDateString("ko-KR", { weekday: "long" })}
-          rightValue={today.toLocaleDateString("ko-KR", {
-            year: "numeric",
-            month: "2-digit",
-            day: "2-digit",
-          })}
+          rightValue={formatDateForDisplay(today)}
           ariaLabel="통계 개요"
         />
       </Block>

@@ -1,5 +1,6 @@
 "use client";
 import dayjs from "dayjs";
+import { isAxiosError } from "axios";
 import "dayjs/locale/ko";
 import { useRouter } from "next/navigation";
 import { Check, X } from "lucide-react";
@@ -112,6 +113,21 @@ export const ContractCreationForm = () => {
   const [documentCreated, setDocumentCreated] = useState(false);
   const [isCreationSuccessOpen, setIsCreationSuccessOpen] = useState(false);
   const [isManualClientApprovalOpen, setIsManualClientApprovalOpen] = useState(false);
+  const [isPhoneConflictApprovalOpen, setIsPhoneConflictApprovalOpen] = useState(false);
+  const phoneConflictResolverRef = useRef<((approved: boolean) => void) | null>(null);
+
+  const requestPhoneConflictApproval = (): Promise<boolean> => {
+    setIsPhoneConflictApprovalOpen(true);
+    return new Promise((resolve) => {
+      phoneConflictResolverRef.current = resolve;
+    });
+  };
+
+  const resolvePhoneConflictApproval = (approved: boolean) => {
+    phoneConflictResolverRef.current?.(approved);
+    phoneConflictResolverRef.current = null;
+    setIsPhoneConflictApprovalOpen(false);
+  };
 
   // State for client creation dialog
   const [isClientDialogOpen, setIsClientDialogOpen] = useState(false);
@@ -411,13 +427,24 @@ export const ContractCreationForm = () => {
 
       if (isManualEntry && !clientId) {
         // Create new client from manual entry data
-        const newClient = await createClientMutation.mutateAsync({
+        const autoRegistrationPayload = {
           ...clientData,
           careCenter: false,
           voucherClient: true,
           breastPump: false,
-          suppressGreetingSms: true,
-        });
+          source: "contract_auto_registration" as const,
+        };
+        let newClient;
+        try {
+          newClient = await createClientMutation.mutateAsync(autoRegistrationPayload);
+        } catch (error) {
+          if (!isAxiosError<{ message?: string; clientId?: number }>(error) || error.response?.status !== 409) throw error;
+          const conflict = error.response.data;
+          if (!conflict.clientId) throw new Error(conflict.message || "고객 자동 등록에 실패했습니다.");
+          const shouldReuse = await requestPhoneConflictApproval();
+          if (!shouldReuse) return;
+          newClient = await createClientMutation.mutateAsync({ ...autoRegistrationPayload, reuseExistingClient: true });
+        }
         finalClientId = newClient.id;
         setClientId(newClient.id);
       }
@@ -1029,6 +1056,19 @@ export const ContractCreationForm = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      <ApprovalTwoButtonModal
+        open={isPhoneConflictApprovalOpen}
+        onOpenChange={(open) => {
+          if (!open) resolvePhoneConflictApproval(false);
+        }}
+        dataComponent="mobile-contract-phone-conflict-approval"
+        title="기존 고객으로 계약을 진행하시겠습니까?"
+        description="이미 같은 전화번호의 고객이 있습니다. 기존 고객으로 계약을 진행할까요?"
+        isDescriptionVisuallyHidden={false}
+        approvalLabel="확인"
+        onApprove={() => resolvePhoneConflictApproval(true)}
+      />
 
       <ApprovalTwoButtonModal
         open={isManualClientApprovalOpen}

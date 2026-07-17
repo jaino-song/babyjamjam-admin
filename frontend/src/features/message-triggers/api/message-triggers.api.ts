@@ -9,7 +9,6 @@ import type {
     UpcomingMessageTriggerJob,
     UpdateMessageTriggerRuleDto,
 } from "../types";
-import type { AlimtalkProvider } from "@/services/api";
 
 export const messageTriggersApi = {
     list: () => api.get<MessageTriggerRule[]>("/message-trigger-rules"),
@@ -20,7 +19,6 @@ export const messageTriggersApi = {
         api.patch<MessageTriggerRule>(`/message-trigger-rules/${id}`, dto),
     delete: (id: string) => api.delete(`/message-trigger-rules/${id}`),
     listTemplates: (params: {
-        provider: Exclude<AlimtalkProvider, "none">;
         eventType?: TriggerEventType;
         recipientType?: TriggerRecipientType;
     }) =>

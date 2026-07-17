@@ -1,4 +1,5 @@
 export type {
+    PrepareServiceRecordLinkRequest,
     PrepareServiceRecordLinkResponse,
     SendServiceRecordLinkRequest,
     SendServiceRecordLinkResponse,

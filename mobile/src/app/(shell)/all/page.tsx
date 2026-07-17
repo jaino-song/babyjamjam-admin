@@ -19,7 +19,6 @@ import { useEmployees } from "@/hooks/useEmployees";
 import { useMessageTemplates } from "@/hooks/use-message-templates";
 import { useUnreadCount, usePushNotification } from "@/hooks/usePushNotification";
 import { AllSettingsRedesign } from "@/components/app/mobile-redesign/AllSettingsRedesign";
-import { UI_ONLY_AUTOMATION_TRIGGER_COUNT } from "@/components/app/mobile-redesign/MessageTriggerList";
 import type { MenuGroup } from "@/components/app/mobile-redesign/mockup-data";
 import { useMessageTriggerRules } from "@/features/message-triggers/hooks/use-message-triggers";
 
@@ -35,7 +34,7 @@ export default function AllMenuPage() {
   const employees = employeesQuery.data ?? [];
   const messageTemplates = messageTemplatesQuery.data ?? [];
   const messageTriggerRules = messageTriggerRulesQuery.data ?? [];
-  const automationTriggerCount = messageTriggerRules.length + UI_ONLY_AUTOMATION_TRIGGER_COUNT;
+  const automationTriggerCount = messageTriggerRules.length;
   const unreadNotifCount = unreadCountQuery.data ?? 0;
   const isClientsInitialLoading = clientsQuery.isLoading && !clientsQuery.data;
   const isEmployeesInitialLoading = employeesQuery.isLoading && !employeesQuery.data;
@@ -114,7 +113,7 @@ export default function AllMenuPage() {
           },
           {
             label: "발송 자동화",
-            href: "/alimtalk",
+            href: "/messages/automation",
             icon: Send,
             tone: "gold",
             value: isMessageRulesInitialLoading ? undefined : `${automationTriggerCount}개`,

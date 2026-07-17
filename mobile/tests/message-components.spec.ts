@@ -1,196 +1,138 @@
-import { test, expect } from '@playwright/test';
+import { expect, test, type Page, type Route } from "@playwright/test";
 
-// Base URL for messages
-const MESSAGES_BASE = '/messages';
+async function enableE2EAuth(page: Page) {
+  const baseURL = process.env.BASE_URL ?? "http://localhost:3000";
+  await page.context().addCookies([{
+    name: "e2e_auth",
+    value: "1",
+    url: baseURL,
+    sameSite: "Lax",
+  }]);
+  await page.addInitScript(() => {
+    (window as Window & { __E2E_AUTH__?: boolean }).__E2E_AUTH__ = true;
+  });
+}
 
-// TODO: Re-enable tests when ready
-test.describe.skip('Message Components', () => {
+async function mockReadOnlyMessages(page: Page) {
+  await page.route("**/api/**", async (route: Route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname === "/api/auth/me") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ id: "e2e-user", name: "E2E", role: "admin" }),
+      });
+    }
+    if (pathname === "/api/settings/message-sender-approval") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          approvalStatus: "not_requested",
+          isApproved: false,
+          canRequest: true,
+        }),
+      });
+    }
+    if (pathname === "/api/message-trigger-jobs/upcoming") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          {
+            id: "job-waiting",
+            ruleId: "rule-1",
+            ruleName: "대기 메시지",
+            eventType: "SERVICE_START",
+            offsetType: "BEFORE_DAYS",
+            offsetDays: 7,
+            recipientType: "CLIENT",
+            recipientPhone: "01011112222",
+            templateKey: "SERVICE_INFO",
+            status: "pending",
+            scheduledFor: "2026-07-20T01:00:00.000Z",
+            sentAt: null,
+            canceledAt: null,
+            cancelReason: null,
+            clientId: 1,
+            employeeScheduleId: null,
+            payload: {
+              memberId: "1",
+              recipientName: "대기 고객",
+              recipientPhone: "01011112222",
+              templateVariables: {},
+            },
+            createdAt: "2026-07-16T01:00:00.000Z",
+            updatedAt: "2026-07-16T01:00:00.000Z",
+          },
+        ]),
+      });
+    }
+    if (pathname === "/api/message-logs") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          {
+            id: "job:canceled",
+            provider: "message_job",
+            templateKey: "CLIENT_GREETING",
+            triggerJobId: "canceled",
+            receiver: "01077778888",
+            clientId: 4,
+            recipientPhone: "01077778888",
+            messageBody: "",
+            variables: {},
+            status: "canceled",
+            aligoMid: null,
+            errorMessage: "메시지 발송 승인 필요",
+            attempts: 0,
+            lastAttemptAt: "2026-07-16T04:00:00.000Z",
+            nextRetryAt: null,
+            createdAt: "2026-07-16T04:00:00.000Z",
+            updatedAt: "2026-07-16T04:00:00.000Z",
+            ruleId: "rule-4",
+            ruleName: "취소 메시지",
+            eventType: "CLIENT_CREATED",
+            offsetType: "IMMEDIATE",
+            offsetDays: 0,
+            scheduledFor: "2026-07-16T04:00:00.000Z",
+            recipientType: "CLIENT",
+            recipientName: "취소 고객",
+            clientName: "취소 고객",
+            employeeName: null,
+          },
+        ]),
+      });
+    }
+    if (pathname === "/api/notifications/unread/count") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: '{"count":0}' });
+    }
+    return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+  });
+}
 
-    test.describe('PriceInfoMessageForm', () => {
-        test('should render the price info message form', async ({ page }) => {
-            await page.goto(`${MESSAGES_BASE}/price-info`);
+test.describe("Mobile message read-only status surfaces", () => {
+  test.beforeEach(async ({ page }) => {
+    await enableE2EAuth(page);
+    await mockReadOnlyMessages(page);
+  });
 
-            // Check if the title is visible
-            await expect(page.locator('h5').first()).toBeVisible();
+  test("shows scheduled jobs before sender approval", async ({ page }) => {
+    await page.goto("/messages/scheduled");
 
-            // Check if name input is visible
-            const nameInput = page.locator('input[type="text"]').first();
-            await expect(nameInput).toBeVisible();
+    await expect(page.getByRole("heading", { name: "발송 예정" })).toBeVisible();
+    await expect(page.getByText("대기 고객")).toBeVisible();
+    await expect(page.getByText("발송 대기")).toBeVisible();
+    await expect(page.getByText("메시지 전송 권한이 필요합니다.")).not.toBeVisible();
+  });
 
-            // Check if generate button exists and is disabled initially
-            const generateButton = page.locator('button:has-text("생성")').or(page.locator('button:has-text("Generate")'));
-            await expect(generateButton).toBeVisible();
-        });
+  test("shows canceled history before sender approval", async ({ page }) => {
+    await page.goto("/messages/history");
 
-        test('should enable generate button when name is entered', async ({ page }) => {
-            await page.goto(`${MESSAGES_BASE}/price-info`);
-
-            // Fill in the name
-            const nameInput = page.locator('input[type="text"]').first();
-            await nameInput.fill('홍길동');
-
-            // Note: Generate button might still be disabled if other required fields are not filled
-            await expect(nameInput).toHaveValue('홍길동');
-        });
-    });
-
-    test.describe('ThanksMessageForm', () => {
-        test('should render the thanks message form', async ({ page }) => {
-            await page.goto(`${MESSAGES_BASE}/thanks`);
-
-            // Check if the form is visible
-            await expect(page.locator('h5').first()).toBeVisible();
-
-            // Check if name input is visible
-            const nameInput = page.locator('input[type="text"]').first();
-            await expect(nameInput).toBeVisible();
-        });
-
-        test('should generate message when name is filled and button clicked', async ({ page }) => {
-            await page.goto(`${MESSAGES_BASE}/thanks`);
-
-            // Fill in the name
-            const nameInput = page.locator('input[type="text"]').first();
-            await nameInput.fill('홍길동');
-
-            // Click generate button
-            const generateButton = page.locator('button:has-text("생성")').or(page.locator('button:has-text("Generate")'));
-            await generateButton.click();
-
-            // Check if generated message appears (wait for it to render)
-            await page.waitForTimeout(500);
-
-            // The generated message should be displayed somewhere on the page
-            const messageContainer = page.locator('pre').or(page.locator('text=홍길동'));
-            await expect(messageContainer.first()).toBeVisible();
-        });
-    });
-
-    test.describe('ServiceInfoMessageForm', () => {
-        test('should render the service info message form', async ({ page }) => {
-            await page.goto(`${MESSAGES_BASE}/service-info`);
-
-            // Check if the form is visible
-            await expect(page.locator('h5').first()).toBeVisible();
-
-            // Check if name input is visible
-            const nameInput = page.locator('input[type="text"]').first();
-            await expect(nameInput).toBeVisible();
-        });
-
-        test('should generate message when form is submitted', async ({ page }) => {
-            await page.goto(`${MESSAGES_BASE}/service-info`);
-
-            // Fill in the name
-            const nameInput = page.locator('input[type="text"]').first();
-            await nameInput.fill('김철수');
-
-            // Click generate button
-            const generateButton = page.locator('button:has-text("생성")').or(page.locator('button:has-text("Generate")'));
-            await generateButton.click();
-
-            // Wait for message to be generated
-            await page.waitForTimeout(500);
-
-            // Check if copy button appears (indicates message was generated)
-            const copyButton = page.locator('button:has-text("복사")').or(page.locator('button:has-text("Copy")'));
-            await expect(copyButton).toBeVisible();
-        });
-    });
-
-    test.describe('GreetingMessageForm', () => {
-        test('should render the greeting message form', async ({ page }) => {
-            await page.goto(`${MESSAGES_BASE}/greeting`);
-
-            // Check if the form is visible
-            await expect(page.locator('h5').first()).toBeVisible();
-
-            // Check if name input is visible
-            const nameInput = page.locator('input[type="text"]').first();
-            await expect(nameInput).toBeVisible();
-        });
-
-        test('should generate greeting message', async ({ page }) => {
-            await page.goto(`${MESSAGES_BASE}/greeting`);
-
-            // Fill in the name
-            const nameInput = page.locator('input[type="text"]').first();
-            await nameInput.fill('이영희');
-
-            // Click generate button
-            const generateButton = page.locator('button:has-text("생성")').or(page.locator('button:has-text("Generate")'));
-            await generateButton.click();
-
-            // Wait for message generation
-            await page.waitForTimeout(500);
-
-            // Check for generated message
-            const messageContainer = page.locator('pre').or(page.locator('text=이영희'));
-            await expect(messageContainer.first()).toBeVisible();
-        });
-    });
-
-    test.describe('SurveyMessageForm', () => {
-        test('should render the survey message form', async ({ page }) => {
-            await page.goto(`${MESSAGES_BASE}/survey`);
-
-            // Check if the form is visible
-            await expect(page.locator('h5').first()).toBeVisible();
-
-            // Check if name input is visible
-            const nameInput = page.locator('input[type="text"]').first();
-            await expect(nameInput).toBeVisible();
-        });
-
-        test('should generate survey message', async ({ page }) => {
-            await page.goto(`${MESSAGES_BASE}/survey`);
-
-            // Fill in the name
-            const nameInput = page.locator('input[type="text"]').first();
-            await nameInput.fill('박민수');
-
-            // Click generate button
-            const generateButton = page.locator('button:has-text("생성")').or(page.locator('button:has-text("Generate")'));
-            await generateButton.click();
-
-            // Wait for message generation
-            await page.waitForTimeout(500);
-
-            // Verify message was generated
-            const copyButton = page.locator('button:has-text("복사")').or(page.locator('button:has-text("Copy")'));
-            await expect(copyButton).toBeVisible();
-        });
-    });
-
-    test.describe('ReminderMessageForm', () => {
-        test('should render the reminder message form', async ({ page }) => {
-            await page.goto(`${MESSAGES_BASE}/reminder`);
-
-            // Check if the form is visible
-            await expect(page.locator('h5').first()).toBeVisible();
-
-            // Check if name input is visible
-            const nameInput = page.locator('input[type="text"]').first();
-            await expect(nameInput).toBeVisible();
-        });
-
-        test('should generate reminder message', async ({ page }) => {
-            await page.goto(`${MESSAGES_BASE}/reminder`);
-
-            // Fill in the name
-            const nameInput = page.locator('input[type="text"]').first();
-            await nameInput.fill('최지민');
-
-            // Click generate button
-            const generateButton = page.locator('button:has-text("생성")').or(page.locator('button:has-text("Generate")'));
-            await generateButton.click();
-
-            // Wait for message generation
-            await page.waitForTimeout(500);
-
-            // Verify message was generated
-            const copyButton = page.locator('button:has-text("복사")').or(page.locator('button:has-text("Copy")'));
-            await expect(copyButton).toBeVisible();
-        });
-    });
+    await expect(page.getByRole("heading", { name: "발송 기록" })).toBeVisible();
+    await expect(page.getByText("취소 고객")).toBeVisible();
+    await expect(page.getByText("발송 취소")).toBeVisible();
+    await expect(page.getByText("메시지 전송 권한이 필요합니다.")).not.toBeVisible();
+  });
 });

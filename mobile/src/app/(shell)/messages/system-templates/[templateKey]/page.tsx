@@ -123,7 +123,7 @@ export default function EditSystemTemplatePage({ params }: { params: Promise<{ t
             </div>
 
             <Link
-              href="/alimtalk"
+              href="/messages/automation"
               data-component="messages-system-template-trigger-link"
               className="flex items-start gap-3 rounded-2xl border border-v3-border/60 bg-white px-4 py-3 hover:bg-v3-dim-white"
             >
@@ -131,7 +131,7 @@ export default function EditSystemTemplatePage({ params }: { params: Promise<{ t
               <div className="flex-1">
                 <p className="text-[0.85rem] font-semibold text-v3-dark">자동 발송 규칙 설정</p>
                 <p className="text-[0.72rem] text-v3-text-muted">
-                  이 템플릿의 자동 발송 ON/OFF·발송 시점은 알림톡 → 발송 트리거 설정에서 관리합니다.
+                  이 템플릿의 자동 발송 ON/OFF·발송 시점은 메시지 → 자동 전송에서 관리합니다.
                 </p>
               </div>
             </Link>

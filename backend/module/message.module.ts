@@ -4,10 +4,6 @@ import { ConfigModule } from "@nestjs/config";
 import { AligoModule } from "./aligo.module";
 import { SystemSettingModule } from "./system-setting.module";
 import { SystemTemplateModule } from "./system-template.module";
-import { AlimtalkRetryService } from "application/services/alimtalk-retry.service";
-import { AlimtalkService } from "application/services/alimtalk.service";
-import { AlimtalkTemplateService } from "application/services/alimtalk-template.service";
-import { AlimtalkTriggerDeliveryService } from "application/services/alimtalk-trigger-delivery.service";
 import {
     CreateMessageUsecase,
     DeleteMessageUsecase,
@@ -37,7 +33,6 @@ import { SbEmployeeScheduleRepository } from "infrastructure/database/repositori
 import { SbMessageRepository } from "infrastructure/database/repositories/sb.message.repository";
 import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 import { SbMessageTriggerRuleRepository } from "infrastructure/database/repositories/sb.message-trigger-rule.repository";
-import { AlimtalkTemplateController } from "interface/controllers/alimtalk-template.controller";
 import { MessageController } from "interface/controllers/message.controller";
 import { MessageTriggerController } from "interface/controllers/message-trigger.controller";
 
@@ -49,7 +44,7 @@ import { MessageTriggerController } from "interface/controllers/message-trigger.
         AligoModule,
         SystemTemplateModule,
     ],
-    controllers: [MessageController, MessageTriggerController, AlimtalkTemplateController],
+    controllers: [MessageController, MessageTriggerController],
     providers: [
         CreateMessageUsecase,
         ListMessagesUsecase,
@@ -67,20 +62,15 @@ import { MessageTriggerController } from "interface/controllers/message-trigger.
         { provide: EMPLOYEE_REPOSITORY, useClass: SbEmployeeRepository },
         { provide: MESSAGE_TRIGGER_RULE_REPOSITORY, useClass: SbMessageTriggerRuleRepository },
         { provide: MESSAGE_TRIGGER_JOB_REPOSITORY, useClass: SbMessageTriggerJobRepository },
-        AlimtalkService,
         SmsRetryService,
-        AlimtalkRetryService,
         MessageRetrySchedulerService,
         SmsTriggerDeliveryService,
-        AlimtalkTriggerDeliveryService,
         MessageTriggerDeliveryService,
         MessageTriggerService,
         MessageTriggerSchedulerService,
-        AlimtalkTemplateService,
     ],
     exports: [
         MessageService,
-        AlimtalkService,
         MessageTriggerService,
         MESSAGE_TRIGGER_JOB_REPOSITORY,
     ],
