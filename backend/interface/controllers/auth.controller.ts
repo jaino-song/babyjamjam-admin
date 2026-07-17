@@ -1,7 +1,12 @@
 import { BadRequestException, Body, Controller, ForbiddenException, Get, Headers, Ip, Logger, Post, Query, Req, Request, Res, UseGuards } from "@nestjs/common";
 import { Response, Request as ExpressRequest } from "express";
 import { AuthGuard } from "@nestjs/passport";
-import { AuthService, NO_ACCESSIBLE_BRANCH_MESSAGE, type KakaoUserValidationResult } from "../../application/services/auth.service";
+import {
+    AuthService,
+    NO_ACCESSIBLE_BRANCH_MESSAGE,
+    type KakaoLoginClient,
+    type KakaoUserValidationResult,
+} from "../../application/services/auth.service";
 import { JwtGuard } from "../../infrastructure/auth/jwt.guard";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
 import { TokenExchangeDto } from "interface/dto/token-exchange.dto";
@@ -27,6 +32,7 @@ export class AuthController {
     private static readonly PENDING_SIGNUP_TOKEN_HEADER = "x-pending-signup-token";
     private static readonly PENDING_ONBOARDING_TOKEN_HEADER = "x-pending-onboarding-token";
     private static readonly OAUTH_NONCE_COOKIE = "kakao_oauth_nonce";
+    private static readonly LEGACY_FRONTEND_URL = "https://imirae-incheon-back-office.vercel.app";
     private readonly logger = new Logger(AuthController.name);
 
     constructor(
@@ -38,13 +44,17 @@ export class AuthController {
     @Get("kakao")
     async kakaoLogin(@Query("client") client: string | undefined, @Res() res: Response) {
         // Initiate Kakao OAuth manually so we can both:
-        //  - carry the originating client (mobile vs desktop) in the OAuth `state`, so the
-        //    callback returns mobile users to m.staff.* instead of the desktop domain, and
+        //  - carry the allowlisted originating client in the OAuth `state`, so the callback
+        //    returns mobile and legacy users to their own frontend instead of the desktop domain, and
         //  - bind the round-trip to THIS browser with a single-use nonce cookie, so a forged
         //    callback from another browser is rejected (login-CSRF protection).
         // Both frontends navigate the browser directly to this backend host to start the flow,
         // so the nonce cookie set here is sent back on the callback (same host).
-        const target = client === "mobile" ? "mobile" : "desktop";
+        const target: KakaoLoginClient = client === "mobile"
+            ? "mobile"
+            : client === "legacy"
+                ? "legacy"
+                : "desktop";
         const { signedState, nonce } = await this.authService.createKakaoLoginState(target);
         this.setOAuthNonceCookie(res, nonce);
 
@@ -93,7 +103,7 @@ export class AuthController {
         } catch (error) {
             if (error instanceof ForbiddenException && error.message === NO_ACCESSIBLE_BRANCH_MESSAGE) {
                 const query = new URLSearchParams({ error: NO_ACCESSIBLE_BRANCH_MESSAGE });
-                return res.redirect(`${frontendURL}/callback?${query.toString()}`);
+                return res.redirect(`${frontendURL}${this.resolveCallbackPath(loginState.client)}?${query.toString()}`);
             }
 
             throw error;
@@ -105,9 +115,10 @@ export class AuthController {
                 : await this.authService.createPendingAccountOnboardingCode(result.userId)
             : await this.authService.createAuthCode(result as { accessToken: string; refreshToken: string; requiresBranchSelection?: boolean });
 
-        console.log(`[Auth] Redirecting to ${frontendURL}/callback (NODE_ENV: ${process.env['NODE_ENV']})`);
+        const callbackPath = this.resolveCallbackPath(loginState.client);
+        this.logger.log(`[Auth] Redirecting to ${frontendURL}${callbackPath} (NODE_ENV: ${process.env['NODE_ENV']})`);
 
-        res.redirect(`${frontendURL}/callback?code=${code}`);
+        res.redirect(`${frontendURL}${callbackPath}?code=${code}`);
     }
 
     @Get("me")
@@ -481,16 +492,20 @@ export class AuthController {
         }
     }
 
-    private resolveFrontendURL(client: "mobile" | "desktop"): string {
+    private resolveFrontendURL(client: KakaoLoginClient): string {
         const nodeEnv = process.env['NODE_ENV'];
         const fallback = "http://localhost:3000";
+
+        if (client === "legacy" && nodeEnv === "production") {
+            return AuthController.LEGACY_FRONTEND_URL;
+        }
 
         const desktopURL =
             nodeEnv === "production" ? process.env['PRODUCTION_FRONTEND_URL']
             : nodeEnv === "preview" ? process.env['PREVIEW_FRONTEND_URL']
             : process.env['DEVELOPMENT_FRONTEND_URL'];
 
-        if (client === "desktop") {
+        if (client !== "mobile") {
             return desktopURL ?? fallback;
         }
 
@@ -502,6 +517,10 @@ export class AuthController {
         // Fall back to the desktop URL until the mobile URL env var is configured, so a
         // missing var degrades gracefully (current behavior) instead of breaking login.
         return mobileURL ?? desktopURL ?? fallback;
+    }
+
+    private resolveCallbackPath(client: KakaoLoginClient): "/callback" | "/auth/callback" {
+        return client === "legacy" ? "/auth/callback" : "/callback";
     }
 
     private buildKakaoAuthorizeUrl(state: string): string {
