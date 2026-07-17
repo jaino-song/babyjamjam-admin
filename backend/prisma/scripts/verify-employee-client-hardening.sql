@@ -112,6 +112,7 @@ BEGIN
     IF EXISTS (
         SELECT 1
         FROM "public"."employee"
+        WHERE "branch_id" IS NOT NULL
         GROUP BY "branch_id", "phone"
         HAVING COUNT(*) > 1
     ) THEN

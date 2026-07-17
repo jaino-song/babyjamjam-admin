@@ -1,4 +1,4 @@
-import { ConflictException, Inject, Injectable } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { EMPLOYEE_REPOSITORY, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
 
 @Injectable()
@@ -9,6 +9,10 @@ export class DeleteEmployeeUsecase {
     ) {}
 
     async execute(branchid: string, id: number): Promise<void> {
+        const employee = await this.employeeRepository.findById(branchid, id);
+        if (!employee || employee.deletedAt) {
+            throw new NotFoundException(`Employee with id ${id} not found`);
+        }
         if (!this.employeeRepository.hasActiveAssignments) {
             throw new Error("Employee repository does not support active assignment checks");
         }

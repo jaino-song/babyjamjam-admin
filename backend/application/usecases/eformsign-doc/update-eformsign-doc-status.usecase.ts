@@ -24,7 +24,9 @@ export interface UpdateEformsignDocStatusParams {
  */
 const COMPLETED_STATUS_CODES = new Set(["003", "012", "022", "032", "050", "062", "072", "092"]);
 const REJECTED_STATUS_CODES = new Set(["011", "021", "031", "040", "042", "045", "047", "049", "061", "071", "080"]);
-const TERMINAL_STATUS_CODES = new Set([...COMPLETED_STATUS_CODES, ...REJECTED_STATUS_CODES]);
+// "090"(철회)·"099"(삭제됨)은 eformsign-webhook.service.ts mapStatus가 합성해
+// 영속화하는 종료 코드 — REJECTED 시리즈에는 없지만 다운그레이드 보호 대상이다.
+const TERMINAL_STATUS_CODES = new Set([...COMPLETED_STATUS_CODES, ...REJECTED_STATUS_CODES, "090", "099"]);
 
 @Injectable()
 export class UpdateEformsignDocStatusUsecase {

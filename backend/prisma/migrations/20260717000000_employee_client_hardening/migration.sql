@@ -19,9 +19,10 @@ BEGIN
             array_agg("id" ORDER BY "id") AS employee_ids,
             COUNT(*) AS duplicate_count
         FROM "public"."employee"
+        WHERE "branch_id" IS NOT NULL
         GROUP BY "branch_id", "phone"
         HAVING COUNT(*) > 1
-        ORDER BY "branch_id" NULLS FIRST, "phone"
+        ORDER BY "branch_id", "phone"
     ) AS duplicate_group;
 
     IF _offending_rows IS NOT NULL THEN
