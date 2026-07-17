@@ -33,7 +33,7 @@ const LoginPage = () => {
                 },
               }}
               onClick={() => {
-                window.location.href = `${API_BASE_URL}/auth/kakao`;
+                window.location.href = `${API_BASE_URL}/auth/kakao?client=legacy`;
               }}
             >
               {t(locale, "login.kakao-login")}
