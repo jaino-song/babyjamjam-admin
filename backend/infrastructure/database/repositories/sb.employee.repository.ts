@@ -1,6 +1,9 @@
 import { Injectable } from "@nestjs/common";
 import { EmployeeEntity } from "domain/entities/employee.entity";
-import { IEmployeeRepository } from "domain/repositories/employee.repository.interface";
+import {
+    ActiveClientByEmployee,
+    IEmployeeRepository,
+} from "domain/repositories/employee.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { EmployeeMapper } from "infrastructure/database/mapper/employee.mapper";
 import { normalizePhone } from "application/utils/normalize-phone";
@@ -8,14 +11,6 @@ import { normalizePhone } from "application/utils/normalize-phone";
 @Injectable()
 export class SbEmployeeRepository implements IEmployeeRepository {
     constructor(private readonly prismaService: PrismaService) {}
-
-    private async getNextEmployeeId(): Promise<number> {
-        const lastEmployee = await this.prismaService.employee.findFirst({
-            orderBy: { id: "desc" },
-            select: { id: true },
-        });
-        return lastEmployee ? lastEmployee.id + 1 : 1;
-    }
 
     async findById(branchid: string, id: number): Promise<EmployeeEntity | null> {
         const employee = await this.prismaService.employee.findFirst({
@@ -38,9 +33,8 @@ export class SbEmployeeRepository implements IEmployeeRepository {
 
     async create(branchid: string, employee: EmployeeEntity): Promise<EmployeeEntity> {
         const data = EmployeeMapper.toPrismaCreate(employee);
-        const id = data.id > 0 ? data.id : await this.getNextEmployeeId();
         const created = await this.prismaService.employee.create({
-            data: { ...data, id, branchId: branchid },
+            data: { ...data, branchId: branchid },
         });
         return EmployeeMapper.toDomain(created);
     }
@@ -63,12 +57,69 @@ export class SbEmployeeRepository implements IEmployeeRepository {
     }
 
     async delete(branchid: string, id: number): Promise<void> {
-        const result = await this.prismaService.employee.deleteMany({
-            where: { id, branchId: branchid },
+        const result = await this.prismaService.employee.updateMany({
+            where: { id, branchId: branchid, deletedAt: null },
+            data: { deletedAt: new Date() },
         });
         if (result.count === 0) {
             throw new Error("Employee not found for branch");
         }
+    }
+
+    async hasActiveAssignments(branchid: string, id: number): Promise<boolean> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const count = await this.prismaService.employee_schedule.count({
+            where: {
+                branchId: branchid,
+                replaced: false,
+                endDate: { gte: today },
+                OR: [
+                    { primaryEmployeeId: id },
+                    { secondaryEmployeeId: id },
+                ],
+            },
+        });
+        return count > 0;
+    }
+
+    async findActiveClientsByEmployee(branchid: string, id: number): Promise<ActiveClientByEmployee[]> {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const schedules = await this.prismaService.employee_schedule.findMany({
+            where: {
+                branchId: branchid,
+                replaced: false,
+                endDate: { gte: today },
+                OR: [
+                    { primaryEmployeeId: id },
+                    { secondaryEmployeeId: id },
+                ],
+            },
+            select: {
+                primaryEmployeeId: true,
+                secondaryEmployeeId: true,
+                client: {
+                    select: {
+                        id: true,
+                        name: true,
+                        serviceStatus: true,
+                        startDate: true,
+                        endDate: true,
+                    },
+                },
+            },
+            orderBy: { startDate: "asc" },
+        });
+
+        return schedules.map((schedule) => ({
+            clientId: schedule.client.id,
+            clientName: schedule.client.name,
+            role: schedule.primaryEmployeeId === id ? "primary" : "secondary",
+            startDate: schedule.client.startDate,
+            endDate: schedule.client.endDate,
+            serviceStatus: schedule.client.serviceStatus,
+        }));
     }
 
     async findAll(branchid: string): Promise<EmployeeEntity[]> {
@@ -76,7 +127,7 @@ export class SbEmployeeRepository implements IEmployeeRepository {
         today.setHours(0, 0, 0, 0);
 
         const employees = await this.prismaService.employee.findMany({
-            where: { branchId: branchid },
+            where: { branchId: branchid, deletedAt: null },
             include: {
                 primaryEmployeeSchedules: {
                     where: {
@@ -116,7 +167,7 @@ export class SbEmployeeRepository implements IEmployeeRepository {
 
     async findByWorkArea(branchid: string, workArea: string): Promise<EmployeeEntity[]> {
         const employees = await this.prismaService.employee.findMany({
-            where: { workArea: { has: workArea }, branchId: branchid },
+            where: { workArea: { has: workArea }, branchId: branchid, deletedAt: null },
         });
         return employees.map((employee) => EmployeeMapper.toDomain(employee));
     }
@@ -126,6 +177,7 @@ export class SbEmployeeRepository implements IEmployeeRepository {
             where: {
                 grade,
                 branchId: branchid,
+                deletedAt: null,
             },
         });
         return employees.map((employee) => EmployeeMapper.toDomain(employee));
@@ -133,7 +185,7 @@ export class SbEmployeeRepository implements IEmployeeRepository {
 
     async findByOpenToNextWork(branchid: string, openToNextWork: boolean): Promise<EmployeeEntity[]> {
         const employees = await this.prismaService.employee.findMany({
-            where: { openToNextWork: openToNextWork, branchId: branchid },
+            where: { openToNextWork: openToNextWork, branchId: branchid, deletedAt: null },
         });
         return employees.map((employee) => EmployeeMapper.toDomain(employee));
     }
@@ -147,6 +199,7 @@ export class SbEmployeeRepository implements IEmployeeRepository {
         const employees = await this.prismaService.employee.findMany({
             where: {
                 branchId: branchid,
+                deletedAt: null,
                 companyRegisteredDate: {
                     gte: start,
                     lte: end,
@@ -164,6 +217,7 @@ export class SbEmployeeRepository implements IEmployeeRepository {
         const employees = await this.prismaService.employee.findMany({
             where: {
                 branchId: branchid,
+                deletedAt: null,
                 companyRegisteredDate: {
                     gte: startDate,
                     lte: endDate,
@@ -189,7 +243,7 @@ export class SbEmployeeRepository implements IEmployeeRepository {
 
     async findAllOpenToNextWork(branchid: string): Promise<EmployeeEntity[]> {
         const employees = await this.prismaService.employee.findMany({
-            where: { openToNextWork: true, branchId: branchid },
+            where: { openToNextWork: true, branchId: branchid, deletedAt: null },
         });
         return employees.map((employee) => EmployeeMapper.toDomain(employee));
     }

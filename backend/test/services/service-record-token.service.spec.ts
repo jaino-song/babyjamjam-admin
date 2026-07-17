@@ -26,6 +26,16 @@ function makePrismaMock() {
                 if (where.id) return rows.find((r) => r.id === where.id) ?? null;
                 return null;
             }),
+            findFirst: jest.fn(async ({ where }: any) => {
+                return [...rows].reverse().find((r) => (
+                    (where.branchId === undefined || r.branchId === where.branchId)
+                    && (where.scheduleId === undefined || r.scheduleId === where.scheduleId)
+                    && (where.employeeId === undefined || r.employeeId === where.employeeId)
+                    && (where.expectedPhoneHash === undefined || r.expectedPhoneHash === where.expectedPhoneHash)
+                    && (where.active === undefined || r.active === where.active)
+                    && (where.revokedAt === undefined || r.revokedAt === where.revokedAt)
+                )) ?? null;
+            }),
             update: jest.fn(async ({ where, data }: any) => {
                 const row = rows.find((r) => r.id === where.id);
                 for (const k of Object.keys(data)) {
@@ -38,12 +48,26 @@ function makePrismaMock() {
             updateMany: jest.fn(async ({ where, data }: any) => {
                 let count = 0;
                 for (const r of rows) {
+                    const idMatches = where.id === undefined || r.id === where.id;
+                    const branchMatches = where.branchId === undefined || r.branchId === where.branchId;
                     const scheduleMatches = where.scheduleId === undefined || r.scheduleId === where.scheduleId;
+                    const employeeMatches = where.employeeId === undefined || r.employeeId === where.employeeId;
+                    const phoneMatches = where.expectedPhoneHash === undefined || r.expectedPhoneHash === where.expectedPhoneHash;
+                    const revokedMatches = where.revokedAt === undefined || r.revokedAt === where.revokedAt;
                     const orMatches = !where.OR || where.OR.some((clause: any) => (
                         (clause.scheduleId !== undefined && r.scheduleId === clause.scheduleId)
                         || (clause.serviceRecordCaseId !== undefined && r.serviceRecordCaseId === clause.serviceRecordCaseId)
                     ));
-                    if (scheduleMatches && orMatches && (where.active === undefined || r.active === where.active)) {
+                    if (
+                        idMatches
+                        && branchMatches
+                        && scheduleMatches
+                        && employeeMatches
+                        && phoneMatches
+                        && revokedMatches
+                        && orMatches
+                        && (where.active === undefined || r.active === where.active)
+                    ) {
                         Object.assign(r, data);
                         count++;
                     }
@@ -140,6 +164,97 @@ describe("ServiceRecordTokenService", () => {
 
         // the first (now-replaced) provider's link is dead
         expect(await svc.resolveLink(first.linkToken)).toBeNull();
+    });
+
+    it("reuses the active link for the same provider and extends its expiry without clearing verification", async () => {
+        const { prisma, svc } = setup();
+        const firstExpiry = future();
+        const { linkToken } = await svc.issueLink({
+            branchId: "b1",
+            scheduleId: 10,
+            employeeId: 7,
+            expectedPhone: "010-1111-2222",
+            expiresAt: firstExpiry,
+        });
+        await svc.verifyPhoneAndMintAccess(linkToken, "01011112222");
+        const verifiedAt = prisma.__rows[0].verifiedAt;
+        const accessTokenHash = prisma.__rows[0].accessTokenHash;
+        prisma.__rows[0].expiresAt = new Date(Date.now() - 1000);
+        const extendedExpiry = new Date(firstExpiry.getTime() + 24 * 60 * 60 * 1000);
+
+        await expect(svc.reuseActiveLink({
+            branchId: "b1",
+            scheduleId: 10,
+            employeeId: 7,
+            expectedPhone: "01011112222",
+            expiresAt: extendedExpiry,
+        })).resolves.toEqual({ linkToken });
+
+        expect(prisma.__rows).toHaveLength(1);
+        expect(prisma.__rows[0]).toMatchObject({
+            linkTokenHash: linkToken,
+            active: true,
+            revokedAt: null,
+            verifiedAt,
+            accessTokenHash,
+            expiresAt: extendedExpiry,
+        });
+    });
+
+    it("does not reuse a link after the provider identity changes or the token is revoked", async () => {
+        const { svc } = setup();
+        await svc.issueLink({
+            branchId: "b1",
+            scheduleId: 10,
+            employeeId: 7,
+            expectedPhone: "010-1111-2222",
+            expiresAt: future(),
+        });
+
+        await expect(svc.reuseActiveLink({
+            branchId: "b1",
+            scheduleId: 10,
+            employeeId: 8,
+            expectedPhone: "010-1111-2222",
+            expiresAt: future(),
+        })).resolves.toBeNull();
+        await expect(svc.reuseActiveLink({
+            branchId: "b1",
+            scheduleId: 10,
+            employeeId: 7,
+            expectedPhone: "010-9999-9999",
+            expiresAt: future(),
+        })).resolves.toBeNull();
+
+        await svc.revokeForSchedule(10);
+
+        await expect(svc.reuseActiveLink({
+            branchId: "b1",
+            scheduleId: 10,
+            employeeId: 7,
+            expectedPhone: "010-1111-2222",
+            expiresAt: future(),
+        })).resolves.toBeNull();
+    });
+
+    it("does not return a link when it is revoked between lookup and expiry extension", async () => {
+        const { prisma, svc } = setup();
+        await svc.issueLink({
+            branchId: "b1",
+            scheduleId: 10,
+            employeeId: 7,
+            expectedPhone: "010-1111-2222",
+            expiresAt: future(),
+        });
+        prisma.service_record_token.updateMany.mockResolvedValueOnce({ count: 0 });
+
+        await expect(svc.reuseActiveLink({
+            branchId: "b1",
+            scheduleId: 10,
+            employeeId: 7,
+            expectedPhone: "010-1111-2222",
+            expiresAt: future(),
+        })).resolves.toBeNull();
     });
 
     it("prepares an inactive link that cannot be used before an admin sends it", async () => {

@@ -5,13 +5,13 @@ import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
 import {
-  GET as getAlimtalkProvider,
-  PUT as updateAlimtalkProvider,
-} from "../alimtalk-provider/route";
-import {
   GET as getMessageSenderApproval,
   POST as requestMessageSenderApproval,
 } from "../message-sender-approval/route";
+import {
+  GET as getClientRegistrationPolicy,
+  PUT as updateClientRegistrationPolicy,
+} from "../client-registration-policy/route";
 
 jest.mock("@/lib/api/server", () => ({
   serverAPIClient: {
@@ -54,19 +54,6 @@ describe("settings API routes", () => {
     return new NextRequest(`http://localhost${path}`, { method });
   }
 
-  it("requires auth before fetching the Alimtalk provider", async () => {
-    const response = await getAlimtalkProvider(noCookieRequest("/api/settings/alimtalk-provider"));
-    expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
-    expect(mockGet).not.toHaveBeenCalled();
-  });
-
-  it("requires auth before updating the Alimtalk provider", async () => {
-    const response = await updateAlimtalkProvider(noCookieRequest("/api/settings/alimtalk-provider", "PUT"));
-    expect(response.status).toBe(401);
-    expect(mockPut).not.toHaveBeenCalled();
-  });
-
   it("requires auth before fetching message sender approval status", async () => {
     const response = await getMessageSenderApproval(noCookieRequest("/api/settings/message-sender-approval"));
     expect(response.status).toBe(401);
@@ -77,74 +64,6 @@ describe("settings API routes", () => {
     const response = await requestMessageSenderApproval(noCookieRequest("/api/settings/message-sender-approval", "POST"));
     expect(response.status).toBe(401);
     expect(mockPost).not.toHaveBeenCalled();
-  });
-
-  it("preserves backend error status and sanitizes payload for Alimtalk provider settings", async () => {
-    mockGet.mockRejectedValue({
-      response: {
-        status: 403,
-        data: { error: "settings access denied" },
-      },
-    });
-
-    const response = await getAlimtalkProvider(
-      createRequest("/api/settings/alimtalk-provider"),
-    );
-
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch alimtalk provider" });
-  });
-
-  it("forwards validated Alimtalk provider and preserves backend status", async () => {
-    mockPut.mockResolvedValue({
-      status: 202,
-      data: { queued: true },
-    });
-
-    const response = await updateAlimtalkProvider(
-      createRequest("/api/settings/alimtalk-provider", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: "aligo_alimtalk" }),
-      }),
-    );
-
-    expect(response.status).toBe(202);
-    await expect(response.json()).resolves.toEqual({ queued: true });
-    expect(mockPut).toHaveBeenCalledWith(
-      "/settings/alimtalk-provider",
-      { provider: "aligo_alimtalk" },
-      { headers: { Authorization: "Bearer auth-token" } },
-    );
-  });
-
-  it("rejects Alimtalk provider values outside the allowed enum before proxying", async () => {
-    const response = await updateAlimtalkProvider(
-      createRequest("/api/settings/alimtalk-provider", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: "kakao" }),
-      }),
-    );
-
-    expect(response.status).toBe(400);
-    expect(mockPut).not.toHaveBeenCalled();
-  });
-
-  it("rejects malformed Alimtalk provider JSON before proxying", async () => {
-    const response = await updateAlimtalkProvider(
-      createRequest("/api/settings/alimtalk-provider", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: "{bad-json",
-      }),
-    );
-
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Request body must be valid JSON",
-    });
-    expect(mockPut).not.toHaveBeenCalled();
   });
 
   it("rejects malformed message sender approval JSON before proxying", async () => {
@@ -200,6 +119,26 @@ describe("settings API routes", () => {
     expect(mockPost).toHaveBeenCalledWith(
       "/settings/message-sender-approval/request",
       approvalBody,
+      { headers: { Authorization: "Bearer auth-token" } },
+    );
+  });
+
+  it("proxies client registration policy reads and partial updates", async () => {
+    const policy = { clientAutoRegistration: true, greetingOnAutoRegistration: false };
+    mockGet.mockResolvedValue({ status: 200, data: policy });
+    mockPut.mockResolvedValue({ status: 200, data: { ...policy, greetingOnAutoRegistration: true } });
+
+    expect((await getClientRegistrationPolicy(createRequest("/api/settings/client-registration-policy"))).status).toBe(200);
+    const response = await updateClientRegistrationPolicy(createRequest("/api/settings/client-registration-policy", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ greetingOnAutoRegistration: true }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mockPut).toHaveBeenCalledWith(
+      "/settings/client-registration-policy",
+      { greetingOnAutoRegistration: true },
       { headers: { Authorization: "Bearer auth-token" } },
     );
   });

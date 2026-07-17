@@ -82,6 +82,9 @@ export const ServiceRecordLinkMessageForm = ({
     if (selectionKey === null || clientId === null || employeeId === null) {
       return;
     }
+    if (preparedFeedbackLink?.selectionKey === selectionKey) {
+      return;
+    }
 
     let cancelled = false;
 
@@ -97,10 +100,13 @@ export const ServiceRecordLinkMessageForm = ({
             throw new Error("Assignment not found");
           }
 
-          const preparedResponse = await serviceRecordsApi.prepareLink(assignment.scheduleId);
+          const preparedResponse = await serviceRecordsApi.prepareLink(assignment.scheduleId, {
+            recipientPhone: normalizedEmployeePhone,
+          });
           return {
             scheduleId: assignment.scheduleId,
             ...preparedResponse.data,
+            recipientPhone: normalizedEmployeePhone,
             selectionKey,
           };
         })();
@@ -126,7 +132,13 @@ export const ServiceRecordLinkMessageForm = ({
     return () => {
       cancelled = true;
     };
-  }, [clientId, employeeId, selectionKey]);
+  }, [
+    clientId,
+    employeeId,
+    normalizedEmployeePhone,
+    preparedFeedbackLink?.selectionKey,
+    selectionKey,
+  ]);
 
   const resolvedEmployeeName = employeeName.trim() || "{{employeeName}}";
   const resolvedClientName = clientName.trim() || "{{clientName}}";

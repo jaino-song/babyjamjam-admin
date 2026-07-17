@@ -2,8 +2,6 @@
 // values to the 설정 UI, so runtime code must import from here rather than
 // inlining numbers.
 export {
-    ALIMTALK_DELIVERY_MAX_ATTEMPTS,
-    ALIMTALK_DELIVERY_RETRY_DELAY_MS,
     SMS_DELIVERY_MAX_ATTEMPTS,
     SMS_DELIVERY_RETRY_DELAY_MS,
 } from "domain/entities/message-log.entity";

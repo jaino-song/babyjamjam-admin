@@ -45,7 +45,7 @@ describe("CreateEformsignDocUsecase", () => {
     });
 
     const eformsignDocRepository = {
-        create: jest.fn(async (_branchId: string, doc: EformsignDocEntity) => doc),
+        upsertByDocumentId: jest.fn(async (_branchId: string, doc: EformsignDocEntity) => doc),
     };
     const clientRepository = {
         findById: jest.fn(),
@@ -57,6 +57,7 @@ describe("CreateEformsignDocUsecase", () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        clientRepository.update.mockReset();
         usecase = new CreateEformsignDocUsecase(
             eformsignDocRepository as never,
             clientRepository as never,
@@ -72,7 +73,7 @@ describe("CreateEformsignDocUsecase", () => {
 
         expect(result.clientId).toBe(7);
         expect(result.documentKind).toBe(EFORMSIGN_DOCUMENT_KIND.CONTRACT);
-        expect(eformsignDocRepository.create).toHaveBeenCalledWith(
+        expect(eformsignDocRepository.upsertByDocumentId).toHaveBeenCalledWith(
             branchId,
             expect.objectContaining({ clientId: 7, documentId }),
         );
@@ -80,7 +81,7 @@ describe("CreateEformsignDocUsecase", () => {
         expect(clientRepository.update).toHaveBeenCalledWith(branchId, client);
     });
 
-    it("uses the client matched by recipient phone when the supplied client id is not the phone owner", async () => {
+    it("always prefers the supplied client id over a recipient phone match", async () => {
         const suppliedClient = createClient(7, "010-0000-0000");
         const phoneMatchedClient = createClient(12, "01012345678");
         clientRepository.findById.mockResolvedValue(suppliedClient);
@@ -88,13 +89,25 @@ describe("CreateEformsignDocUsecase", () => {
 
         const result = await usecase.execute(branchId, createParams());
 
-        expect(result.clientId).toBe(12);
-        expect(eformsignDocRepository.create).toHaveBeenCalledWith(
+        expect(result.clientId).toBe(7);
+        expect(eformsignDocRepository.upsertByDocumentId).toHaveBeenCalledWith(
             branchId,
-            expect.objectContaining({ clientId: 12, documentId }),
+            expect.objectContaining({ clientId: 7, documentId }),
         );
-        expect(phoneMatchedClient.eDocId).toBe(documentId);
-        expect(clientRepository.update).toHaveBeenCalledWith(branchId, phoneMatchedClient);
+        expect(suppliedClient.eDocId).toBe(documentId);
+        expect(clientRepository.findByPhone).not.toHaveBeenCalled();
+    });
+
+    it("returns a warning while keeping the document when client linking fails", async () => {
+        const client = createClient(7, "010-1234-5678");
+        clientRepository.findById.mockResolvedValue(client);
+        clientRepository.update.mockRejectedValue(new Error("link failed"));
+
+        const result = await usecase.execute(branchId, createParams());
+
+        expect(result.documentId).toBe(documentId);
+        expect(result.warnings).toEqual(["client_link_failed"]);
+        expect(eformsignDocRepository.upsertByDocumentId).toHaveBeenCalledTimes(1);
     });
 
     it("falls back to the supplied client when recipient phone has no client match", async () => {

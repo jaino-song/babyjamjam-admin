@@ -14,8 +14,6 @@ export const frontendScreenshotRoutes: ScreenshotRoute[] = [
   { slug: "verify-email", path: "/verify-email", auth: "public" },
 
   { slug: "admin", path: "/admin", auth: "authenticated" },
-  { slug: "alimtalk", path: "/alimtalk", auth: "authenticated" },
-  { slug: "alimtalk-templates", path: "/alimtalk/templates", auth: "authenticated" },
   { slug: "all", path: "/all", auth: "authenticated" },
   { slug: "chat", path: "/chat", auth: "authenticated" },
   { slug: "clients", path: "/clients", auth: "authenticated" },

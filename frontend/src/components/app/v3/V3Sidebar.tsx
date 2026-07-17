@@ -21,7 +21,6 @@ import {
 } from "lucide-react";
 import { useInitialUser } from "@/providers/UserProvider";
 import { isLayoutExcluded } from "@/lib/constants/v3-layout";
-import { KakaoTalkIcon } from "@/components/icons/KakaoTalkIcon";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { ROLES } from "@/lib/constants/roles";
@@ -65,7 +64,6 @@ const BASE_NAV_SECTIONS: NavSection[] = [
     items: [
       { label: "메시지", href: "/messages", icon: MessageCircle },
       { label: "가격표", href: "/prices", icon: Calculator },
-      { label: "알림톡", href: "/alimtalk", icon: KakaoTalkIcon, disabled: true },
     ],
   },
   {

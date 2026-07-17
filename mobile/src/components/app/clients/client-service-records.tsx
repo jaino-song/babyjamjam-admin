@@ -13,6 +13,13 @@ import type {
     ServiceRecordOverview,
     ServiceRecordSession,
 } from "@babyjamjam/shared/types/service-record";
+import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
+import { calcEndDateBusinessDays } from "@babyjamjam/shared/utils/business-days";
+import {
+    formatDateForDisplay,
+    formatDateTimeKo,
+    parseDateForDisplay,
+} from "@babyjamjam/shared/utils/date";
 
 import { InfoCard, InfoRow } from "@/components/app/mobile-redesign/detail-sheet";
 import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
@@ -39,7 +46,6 @@ interface SessionSlot {
 type LinkBadgeTone = "gray" | "blue" | "green" | "burgundy";
 type SessionTone = "green" | "orange" | "muted";
 
-const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"] as const;
 const LINK_STATUS_META: Record<ServiceRecordLinkStatus, { label: string; tone: LinkBadgeTone }> = {
     none: { label: "발송 전", tone: "gray" },
     scheduled: { label: "발송 예약", tone: "blue" },
@@ -246,20 +252,20 @@ function LinkCard({
                     disabled={sendLinkMutation.isPending}
                     onClick={handleSendClick}
                 >
-                    {sendLinkMutation.isPending ? "발송 중..." : isResend ? "링크 재전송" : "링크 수동 전송"}
+                    {sendLinkMutation.isPending ? "발송 중..." : isResend ? "메시지 재전송" : "링크 수동 전송"}
                 </button>
             </div>
             <div className="link-note">
                 {isResend
-                    ? <>재전송 시 <b>새 링크가 발급</b>되며 기존 링크는 즉시 사용할 수 없게 됩니다.</>
+                    ? <>메시지 재전송 시 <b>기존 링크가 그대로 전송</b>됩니다.</>
                     : "서비스 시작일 오후 3시에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요."}
             </div>
             <ConfirmActionModal
                 open={resendModalOpen}
-                title="링크를 재전송할까요?"
-                description="재전송 시 새 링크가 발급되며 기존 링크는 즉시 사용할 수 없게 됩니다."
+                title="메시지를 재전송할까요?"
+                description="기존 링크가 그대로 포함된 메시지를 다시 전송합니다."
                 cancelLabel="취소"
-                confirmLabel="재전송"
+                confirmLabel="메시지 재전송"
                 loading={sendLinkMutation.isPending}
                 onOpenChange={(open) => {
                     if (!sendLinkMutation.isPending) {
@@ -287,7 +293,10 @@ function ServiceHeaderCard({
             {header ? (
                 <>
                     <InfoRow label="산모 성명" value={header.momName ?? "-"} />
-                    <InfoRow label="산모 생년월일" value={header.momBirth ?? "-"} />
+                    <InfoRow
+                        label="산모 생년월일"
+                        value={header.momBirth ? formatBirthdayYYMMDD(header.momBirth) : "-"}
+                    />
                     <InfoRow label="신생아 성명" value={header.babyName ?? "-"} />
                     <InfoRow label="신생아 출생일자" value={header.babyBirth ?? "-"} />
                     <InfoRow label="분만형태" value={header.deliveryType ?? "-"} />
@@ -359,7 +368,7 @@ function SessionRow({
     const titleDate = record ? formatShortDateKo(record.serviceDate) : null;
     const meta = record
         ? record.locked
-            ? `제출 ${formatDateTimeKo(record.submittedAt ?? record.updatedAt)} · 잠금`
+            ? `제출 ${formatDateTimeKo(record.submittedAt ?? record.updatedAt)}`
             : `마지막 저장 ${formatDateTimeKo(record.updatedAt)} · 작성 중`
         : `예정일 ${formatDateKo(slot.expectedDate)}`;
     const interactive = Boolean(record);
@@ -583,15 +592,9 @@ function buildSessionSlots(assignment: ServiceRecordAssignment): SessionSlot[] {
 }
 
 function getExpectedSessionDate(startDate: string, sessionIndex: number): string | null {
-    const start = parseDateOnly(startDate);
-    if (!start) return null;
-
-    let cursor = toBusinessDay(start);
-    for (let index = 1; index < sessionIndex; index += 1) {
-        cursor = nextBusinessDay(cursor);
-    }
-
-    return toIsoDate(cursor);
+    const datePart = datePartOf(startDate);
+    if (!datePart) return null;
+    return calcEndDateBusinessDays(datePart, sessionIndex) || null;
 }
 
 function endDateExpiry(endDate: string): string | null {
@@ -605,56 +608,18 @@ function isPastDate(value: string | null): boolean {
     return !Number.isNaN(date.getTime()) && date.getTime() < Date.now();
 }
 
-function parseDateOnly(value: string | null): Date | null {
-    const datePart = datePartOf(value);
-    if (!datePart) return null;
-    const [year, month, day] = datePart.split("-").map(Number);
-    if (!year || !month || !day) return null;
-    return new Date(year, month - 1, day);
-}
-
 function datePartOf(value: string | null): string | null {
     if (!value) return null;
     const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
     return match?.[0] ?? null;
 }
 
-function toBusinessDay(date: Date): Date {
-    const cursor = new Date(date);
-    while (cursor.getDay() === 0 || cursor.getDay() === 6) {
-        cursor.setDate(cursor.getDate() + 1);
-    }
-    return cursor;
-}
-
-function nextBusinessDay(date: Date): Date {
-    const cursor = new Date(date);
-    do {
-        cursor.setDate(cursor.getDate() + 1);
-    } while (cursor.getDay() === 0 || cursor.getDay() === 6);
-    return cursor;
-}
-
-function toIsoDate(date: Date): string {
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-
 function formatDateKo(value: string | null): string {
-    const date = parseDateForDisplay(value);
-    if (!date) return "-";
-    return `${date.getFullYear()}년 ${String(date.getMonth() + 1).padStart(2, "0")}월 ${String(date.getDate()).padStart(2, "0")}일 (${WEEKDAYS[date.getDay()]})`;
+    return formatDateForDisplay(value);
 }
 
 function formatShortDateKo(value: string | null): string {
-    const date = parseDateForDisplay(value);
-    if (!date) return "-";
-    return `${String(date.getMonth() + 1).padStart(2, "0")}월 ${String(date.getDate()).padStart(2, "0")}일 (${WEEKDAYS[date.getDay()]})`;
-}
-
-function formatDateTimeKo(value: string | null): string {
-    const date = parseDateForDisplay(value);
-    if (!date) return "-";
-    return `${date.getFullYear()}년 ${String(date.getMonth() + 1).padStart(2, "0")}월 ${String(date.getDate()).padStart(2, "0")}일 ${formatTimeKo(value)}`;
+    return formatDateKo(value);
 }
 
 function formatTimeKo(value: string | null): string {
@@ -665,14 +630,6 @@ function formatTimeKo(value: string | null): string {
         minute: "2-digit",
         hour12: true,
     }).format(date);
-}
-
-function parseDateForDisplay(value: string | null): Date | null {
-    if (!value) return null;
-    const dateOnly = parseDateOnly(value);
-    if (dateOnly && value.length <= 10) return dateOnly;
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function formatPhone(phone: string): string {

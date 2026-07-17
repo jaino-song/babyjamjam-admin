@@ -48,7 +48,9 @@ BEGIN
     SELECT 1
     FROM "eformsign_doc" AS d
     WHERE d."document_kind" IS NOT NULL
-      AND d."document_kind" NOT IN ('contract', 'service_feedback_snapshot')
+      -- 'service_record_snapshot' allowed too: DBs that received post-rename app
+      -- writes before this patch ran (e.g. production) already contain the new value.
+      AND d."document_kind" NOT IN ('contract', 'service_feedback_snapshot', 'service_record_snapshot')
   ) THEN
     RAISE EXCEPTION 'eformsign_doc contains unsupported document_kind values';
   END IF;
@@ -195,7 +197,7 @@ BEGIN
   ) THEN
     ALTER TABLE "eformsign_doc"
       ADD CONSTRAINT "eformsign_doc_document_kind_check"
-      CHECK ("document_kind" IS NULL OR "document_kind" IN ('contract', 'service_feedback_snapshot'));
+      CHECK ("document_kind" IS NULL OR "document_kind" IN ('contract', 'service_feedback_snapshot', 'service_record_snapshot'));
   END IF;
 
   IF NOT EXISTS (

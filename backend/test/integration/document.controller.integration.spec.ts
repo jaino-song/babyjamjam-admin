@@ -47,6 +47,12 @@ describe("DocumentController (Integration)", () => {
                 role: "owner",
                 branchRole: "owner",
             };
+            requestContext.tenant = {
+                userId: "user-1",
+                branchId: "branch-1",
+                globalRole: "owner",
+                branchRole: "owner",
+            };
             return true;
         },
     };

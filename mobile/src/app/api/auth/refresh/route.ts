@@ -6,6 +6,10 @@ import { jwtDecode } from "jwt-decode";
 import { logUpstreamError, sanitizeUpstreamClientError } from "@/lib/api/route-utils";
 import { serverAPIClient } from "@/lib/api/server";
 import { getServerRuntimeConfig } from "@/lib/env";
+import {
+    ACCESS_TOKEN_MAX_AGE_SECONDS,
+    getRefreshSessionMaxAgeSeconds,
+} from "@/lib/auth/session-policy";
 
 interface TokenPayload {
     role: string | null;
@@ -18,16 +22,13 @@ interface RefreshResponse {
 
 interface APIErrorResponse {
     statusCode: number;
+    code?: string;
     message: string;
     error: string;
 }
 
 function isAutoLoginEnabled(value: string | undefined): boolean {
     return value !== "0" && value !== "false";
-}
-
-function getAuthTokenMaxAge(role: string): number {
-    return role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60;
 }
 
 function clearAuthCookies(response: NextResponse): void {
@@ -62,11 +63,11 @@ function setSessionCookies(response: NextResponse, params: {
     if (params.autoLogin) {
         response.cookies.set("auth_token", params.accessToken, {
             ...baseCookieOptions,
-            maxAge: getAuthTokenMaxAge(params.role),
+            maxAge: ACCESS_TOKEN_MAX_AGE_SECONDS,
         });
         response.cookies.set("refresh_token", params.refreshToken, {
             ...baseCookieOptions,
-            maxAge: 7 * 24 * 60 * 60,
+            maxAge: getRefreshSessionMaxAgeSeconds(params.role),
         });
         response.cookies.set("auto_login", "1", {
             ...baseCookieOptions,
@@ -119,6 +120,20 @@ export async function POST() {
             const axiosError = error as AxiosError<APIErrorResponse>;
             const status = axiosError.response?.status || 500;
             logUpstreamError("refresh authentication", error);
+            if (
+                status === 401
+                && axiosError.response?.data?.code === "AUTH_REFRESH_REPLAY_CONCURRENT"
+            ) {
+                const response = NextResponse.json(
+                    {
+                        code: "AUTH_REFRESH_REPLAY_CONCURRENT",
+                        error: "Authentication refresh already in progress",
+                    },
+                    { status: 409 },
+                );
+                response.headers.set("Retry-After", "1");
+                return response;
+            }
 
             const response = NextResponse.json(
                 sanitizeUpstreamClientError(

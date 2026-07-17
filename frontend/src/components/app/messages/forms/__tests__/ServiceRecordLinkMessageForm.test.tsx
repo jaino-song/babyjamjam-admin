@@ -248,12 +248,55 @@ describe("ServiceRecordLinkMessageForm", () => {
     });
 
     expect(serviceRecordsApi.getClientOverview).toHaveBeenCalledWith(20);
-    expect(serviceRecordsApi.prepareLink).toHaveBeenCalledWith(11);
+    expect(serviceRecordsApi.prepareLink).toHaveBeenCalledWith(11, {
+      recipientPhone: "01011112222",
+    });
 
     expect(document.querySelector('[data-delivery-mode="service-feedback-link"]')).toBeInTheDocument();
     expect(screen.getByText("{{employeeName}}")).toBeInTheDocument();
     expect(screen.getByText("{{clientName}}")).toBeInTheDocument();
     expect(screen.getByText("{{serviceRecordUrl}}")).toBeInTheDocument();
+  });
+
+  it("keeps a manually overridden phone and prepares the link for that exact number", async () => {
+    jest.mocked(serviceRecordsApi.getClientOverview).mockResolvedValue({
+      data: {
+        assignments: [{
+          scheduleId: 11,
+          replaced: false,
+          employee: {
+            id: 30,
+            name: "홍제공",
+            phone: "010-9999-8888",
+          },
+        }],
+      },
+    } as never);
+
+    render(<ServiceRecordLinkMessageForm />);
+
+    fireEvent.click(screen.getByRole("combobox", { name: "관리사님 성함" }));
+    fireEvent.click(screen.getByRole("combobox", { name: "산모님 성함" }));
+
+    const employeePhoneInput = screen.getByRole("textbox", { name: /관리사님 전화번호/ });
+    await waitFor(() => {
+      expect(serviceRecordsApi.prepareLink).toHaveBeenCalledWith(11, {
+        recipientPhone: "01011112222",
+      });
+    });
+
+    expect(employeePhoneInput).not.toBeDisabled();
+    fireEvent.change(employeePhoneInput, {
+      target: { value: "01066211878" },
+    });
+
+    await waitFor(() => {
+      expect(employeePhoneInput).toHaveValue("010-6621-1878");
+      expect(serviceRecordsApi.prepareLink).toHaveBeenLastCalledWith(11, {
+        recipientPhone: "01066211878",
+      });
+    });
+    expect(useFormStore.getState().employeePhone).toBe("010-6621-1878");
   });
 
   it("keeps manually entered employee and client names with a formatted phone", async () => {

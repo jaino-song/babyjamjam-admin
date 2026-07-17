@@ -9,6 +9,7 @@ const DASHBOARD_ROUTE_BODY_CLASS = "mobile-dashboard-route";
 
 import { useDashboardAnalytics } from "@/hooks/useDashboardAnalytics";
 import { useClients, useDeleteClient } from "@/hooks/useClients";
+import { useClientMessageHistory } from "@/hooks/useClientMessageHistory";
 import { useSyncStaleEformsignStatuses } from "@/hooks/useSyncStaleEformsignStatuses";
 import type { Client } from "@/lib/client/types";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -201,6 +202,12 @@ export default function DashboardPage() {
   const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [formDialogOpen, setFormDialogOpen] = useState(false);
   const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
+  const {
+    notificationLogs: detailNotificationLogs,
+    isLoading: isNotificationLogsLoading,
+    isError: isNotificationLogsError,
+    refetch: refetchNotificationLogs,
+  } = useClientMessageHistory(selectedClient);
 
   const openClient = useCallback((c: Client) => {
     setSelectedClient(c);
@@ -211,7 +218,7 @@ export default function DashboardPage() {
     setEditingClient(c);
     setFormDialogOpen(true);
   }, []);
-  const handleMessage = useCallback((c: Client) => router.push(`/messages?clientId=${c.id}`), [router]);
+  const handleMessage = useCallback((c: Client) => router.push(`/messages/new?clientId=${c.id}`), [router]);
   const handleIssueContract = useCallback(() => router.push("/contracts/new"), [router]);
   const handleDeleteRequest = useCallback((id: number) => setDeleteTargetClientId(id), []);
   const handleDeleteConfirm = async () => {
@@ -441,6 +448,12 @@ export default function DashboardPage() {
             <ClientDetailContent
               client={selectedClient}
               activeTab={detailTab}
+              notificationLogs={detailNotificationLogs}
+              isNotificationLogsLoading={isNotificationLogsLoading}
+              isNotificationLogsError={isNotificationLogsError}
+              onRetryNotificationLogs={() => {
+                void refetchNotificationLogs();
+              }}
               onTabChange={setDetailTab}
               onMessage={() => handleMessage(selectedClient)}
               onIssueContract={handleIssueContract}

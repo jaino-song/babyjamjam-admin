@@ -11,6 +11,7 @@ describe("status code aliases", () => {
     expect(getStatusCategory("doc_complete")).toBe("completed");
     expect(getStatusCategory("doc_request_participant")).toBe("in-progress");
     expect(getStatusCategory("doc_expired")).toBe("expired");
+    expect(getStatusCategory("090")).toBe("expired");
   });
 });
 

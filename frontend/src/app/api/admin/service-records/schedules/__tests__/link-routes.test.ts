@@ -33,7 +33,7 @@ describe("service-record feedback link proxy routes", () => {
         mockPost.mockReset();
     });
 
-    it("prepares an exact feedback URL through the authenticated backend route", async () => {
+    it("prepares an exact feedback URL for the manually entered recipient phone", async () => {
         mockPost.mockResolvedValue({
             status: 201,
             data: {
@@ -44,7 +44,9 @@ describe("service-record feedback link proxy routes", () => {
         });
 
         const response = await prepareLink(
-            createRequest("/api/admin/service-records/schedules/11/prepare-link"),
+            createRequest("/api/admin/service-records/schedules/11/prepare-link", {
+                recipientPhone: "01066211878",
+            }),
             { params: Promise.resolve({ scheduleId: "11" }) },
         );
 
@@ -52,7 +54,7 @@ describe("service-record feedback link proxy routes", () => {
         expect(response.headers.get("cache-control")).toBe("no-store");
         expect(mockPost).toHaveBeenCalledWith(
             "/admin/service-records/schedules/11/prepare-link",
-            {},
+            { recipientPhone: "01066211878" },
             { headers: { Authorization: "Bearer token-1" } },
         );
         await expect(response.json()).resolves.toEqual(expect.objectContaining({ preparedLinkToken }));
@@ -67,6 +69,7 @@ describe("service-record feedback link proxy routes", () => {
         const response = await sendLink(
             createRequest("/api/admin/service-records/schedules/11/send-link", {
                 preparedLinkToken,
+                recipientPhone: "01066211878",
                 ignored: "do-not-forward",
             }),
             { params: Promise.resolve({ scheduleId: "11" }) },
@@ -75,7 +78,7 @@ describe("service-record feedback link proxy routes", () => {
         expect(response.status).toBe(201);
         expect(mockPost).toHaveBeenCalledWith(
             "/admin/service-records/schedules/11/send-link",
-            { preparedLinkToken },
+            { preparedLinkToken, recipientPhone: "01066211878" },
             { headers: { Authorization: "Bearer token-1" } },
         );
     });
@@ -84,6 +87,19 @@ describe("service-record feedback link proxy routes", () => {
         const response = await sendLink(
             createRequest("/api/admin/service-records/schedules/11/send-link", {
                 preparedLinkToken: "efl_invalid",
+            }),
+            { params: Promise.resolve({ scheduleId: "11" }) },
+        );
+
+        expect(response.status).toBe(400);
+        expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it("rejects malformed recipient phones before they reach the backend", async () => {
+        const response = await sendLink(
+            createRequest("/api/admin/service-records/schedules/11/send-link", {
+                preparedLinkToken,
+                recipientPhone: "010-12",
             }),
             { params: Promise.resolve({ scheduleId: "11" }) },
         );

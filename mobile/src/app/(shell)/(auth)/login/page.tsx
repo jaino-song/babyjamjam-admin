@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { loginSchema, type LoginFormData } from "@/lib/validations/auth";
+import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { loginWithEmail } from "./actions";
 import { authApi } from "@/services/api";
 import { safeStorageGetItem, safeStorageRemoveItem, safeStorageSetItem } from "@/lib/safe-storage";
@@ -13,6 +14,7 @@ import "@/components/app/mobile-redesign/redesign.css";
 
 const LoginPage = () => {
   const router = useRouter();
+  const { isNavigationPending, startNavigation } = useNavigationPending();
 
   const [autoLogin, setAutoLogin] = useState(false);
   const [rememberId, setRememberId] = useState(false);
@@ -83,6 +85,7 @@ const LoginPage = () => {
       const response = await loginWithEmail(result.data.email, result.data.password, autoLogin);
 
       if (response.success) {
+        startNavigation();
         if (response.requiresBranchSelection) {
           router.replace("/select-branch");
         } else {
@@ -135,6 +138,8 @@ const LoginPage = () => {
     authApi.kakaoLogin();
   };
 
+  const isBusy = isLoading || isNavigationPending;
+
   return (
     <div className="auth-page" data-component="auth-login">
       <div className="auth-brand">
@@ -170,7 +175,7 @@ const LoginPage = () => {
           autoComplete="email"
           value={formData.email ?? ""}
           onChange={handleChange("email")}
-          disabled={isLoading}
+          disabled={isBusy}
           aria-invalid={!!errors.email}
         />
         {errors.email && <div className="auth-input-error">{errors.email}</div>}
@@ -181,7 +186,7 @@ const LoginPage = () => {
           autoComplete="current-password"
           value={formData.password ?? ""}
           onChange={handleChange("password")}
-          disabled={isLoading}
+          disabled={isBusy}
           aria-invalid={!!errors.password}
         />
         {errors.password && <div className="auth-input-error">{errors.password}</div>}
@@ -193,7 +198,7 @@ const LoginPage = () => {
               type="checkbox"
               checked={rememberId}
               onChange={(e) => setRememberId(e.target.checked)}
-              disabled={isLoading}
+              disabled={isBusy}
             />
             <span>아이디 저장</span>
           </label>
@@ -203,7 +208,7 @@ const LoginPage = () => {
               type="checkbox"
               checked={autoLogin}
               onChange={(e) => setAutoLogin(e.target.checked)}
-              disabled={isLoading}
+              disabled={isBusy}
             />
             <span>자동 로그인</span>
           </label>
@@ -212,10 +217,10 @@ const LoginPage = () => {
         <button
           type="submit"
           className="auth-btn"
-          disabled={isLoading}
+          disabled={isBusy}
           data-component="login-submit-button"
         >
-          {isLoading ? "로그인 중…" : "로그인"}
+          {isBusy ? "로그인 중…" : "로그인"}
         </button>
       </form>
 
@@ -225,7 +230,7 @@ const LoginPage = () => {
         type="button"
         className="auth-oauth"
         onClick={handleKakao}
-        disabled={isLoading}
+        disabled={isBusy}
         data-component="login-kakao"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="rgba(0,0,0,0.85)">

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
     Workflow,
     Users,
@@ -13,6 +14,7 @@ import {
     AlertTriangle,
     MoreVertical,
     Pencil,
+    RotateCcw,
     Trash2,
     FileSignature,
 } from "lucide-react";
@@ -27,6 +29,9 @@ import {
     useDeleteClient,
     useClient,
 } from "@/features/clients/hooks/use-clients";
+import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
+import { useSendServiceRecordLink } from "@/features/service-records/hooks/use-service-records";
+import { useToast } from "@/hooks/use-toast";
 import type { Client, ServiceStatus } from "@/lib/client/types";
 import {
     getClientBadgeAvatarClassName,
@@ -64,6 +69,7 @@ import {
 } from "@/components/app/v3";
 import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
+import { settingsApi, type ClientRegistrationPolicy } from "@/services/api";
 
 const FILTER_CHIPS = [
     { label: "전체", value: "all" },
@@ -85,7 +91,6 @@ type ClientAutomationItem = {
     id: "eformsign-auto-client-registration";
     title: string;
     subtitle: string;
-    defaultEnabled: boolean;
     icon: typeof FileSignature;
 };
 
@@ -94,7 +99,6 @@ const CLIENT_AUTOMATION_ITEMS: readonly ClientAutomationItem[] = [
         id: "eformsign-auto-client-registration",
         title: "전자문서 자동 고객 등록",
         subtitle: "전자문서 생성 시 고객 정보가 자동으로 등록됩니다.",
-        defaultEnabled: true,
         icon: FileSignature,
     },
 ];
@@ -123,21 +127,33 @@ const filterValueToStatus = (filter: string): ServiceStatus | null => {
 };
 
 function ClientAutomationSection() {
+    const { toast } = useToast();
+    const queryClient = useQueryClient();
+    const { data: policy, isLoading } = useQuery({
+        queryKey: ["settings", "client-registration-policy"],
+        queryFn: settingsApi.getClientRegistrationPolicy,
+    });
     const [selectedAutomationId, setSelectedAutomationId] = useState<ClientAutomationItem["id"] | null>(null);
-    const [automationEnabledById, setAutomationEnabledById] = useState<Record<ClientAutomationItem["id"], boolean>>(() =>
-        CLIENT_AUTOMATION_ITEMS.reduce(
-            (acc, item) => ({
-                ...acc,
-                [item.id]: item.defaultEnabled,
-            }),
-            {} as Record<ClientAutomationItem["id"], boolean>,
-        ),
-    );
+    const updatePolicy = useMutation({
+        mutationFn: settingsApi.updateClientRegistrationPolicy,
+        onMutate: async ({ clientAutoRegistration }: { clientAutoRegistration?: boolean }) => {
+            await queryClient.cancelQueries({ queryKey: ["settings", "client-registration-policy"] });
+            const previous = queryClient.getQueryData<ClientRegistrationPolicy>(["settings", "client-registration-policy"]);
+            queryClient.setQueryData<ClientRegistrationPolicy>(["settings", "client-registration-policy"], (current) =>
+                current && clientAutoRegistration !== undefined ? { ...current, clientAutoRegistration } : current,
+            );
+            return { previous };
+        },
+        onError: (_error, _variables, context) => {
+            if (context?.previous) queryClient.setQueryData(["settings", "client-registration-policy"], context.previous);
+            toast({ variant: "destructive", description: "고객 자동 등록 설정 저장 중 오류가 발생했습니다." });
+        },
+        onSuccess: (saved) => queryClient.setQueryData(["settings", "client-registration-policy"], saved),
+        onSettled: () => void queryClient.invalidateQueries({ queryKey: ["settings", "client-registration-policy"] }),
+    });
     const selectedAutomation =
         CLIENT_AUTOMATION_ITEMS.find((item) => item.id === selectedAutomationId) ?? null;
-    const selectedAutomationEnabled = selectedAutomation
-        ? automationEnabledById[selectedAutomation.id]
-        : false;
+    const selectedAutomationEnabled = selectedAutomation ? policy?.clientAutoRegistration === true : false;
 
     return (
         <section data-component="clients-automation-section" className="flex h-full min-h-0 flex-1 flex-col">
@@ -175,14 +191,10 @@ function ClientAutomationSection() {
                                             <Switch
                                                 data-component="clients-automation-item-toggle"
                                                 aria-label={`${item.title} 사용`}
-                                                checked={automationEnabledById[item.id]}
+                                                checked={policy?.clientAutoRegistration === true}
+                                                disabled={isLoading || updatePolicy.isPending}
                                                 onClick={(event) => event.stopPropagation()}
-                                                onCheckedChange={(checked) =>
-                                                    setAutomationEnabledById((current) => ({
-                                                        ...current,
-                                                        [item.id]: checked,
-                                                    }))
-                                                }
+                                                onCheckedChange={(checked) => updatePolicy.mutate({ clientAutoRegistration: checked })}
                                                 className="ml-auto shrink-0"
                                             />
                                         )}
@@ -238,6 +250,10 @@ export default function ClientsPage() {
     const [formDialogOpen, setFormDialogOpen] = useState(false);
     const [editingClient, setEditingClient] = useState<Client | null>(null);
     const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
+    const [resetLinkTargetClientId, setResetLinkTargetClientId] = useState<number | null>(null);
+    const [isResettingLink, setIsResettingLink] = useState(false);
+    const sendServiceRecordLink = useSendServiceRecordLink();
+    const { toast } = useToast();
     const [searchQuery, setSearchQuery] = useState("");
     const [activeFilter, setActiveFilter] = useState("all");
     const [activeSection, setActiveSection] = useState<ClientSectionId>("list");
@@ -373,6 +389,42 @@ export default function ClientsPage() {
 
     const handleDeleteRequest = (id: number) => {
         setDeleteTargetClientId(id);
+    };
+
+    const handleResetServiceRecordLinkConfirm = async () => {
+        if (resetLinkTargetClientId === null) return;
+
+        setIsResettingLink(true);
+        try {
+            const overview = await serviceRecordsApi.getClientOverview(resetLinkTargetClientId);
+            const assignments = overview.data.assignments ?? [];
+            const activeAssignment = assignments.find((assignment) => !assignment.replaced)
+                ?? assignments[0]
+                ?? null;
+            if (!activeAssignment) {
+                toast({
+                    description: "발송할 관리사 배정이 없어 링크를 재설정할 수 없습니다.",
+                    variant: "destructive",
+                });
+                return;
+            }
+
+            const prepared = await serviceRecordsApi.prepareLink(activeAssignment.scheduleId);
+            await sendServiceRecordLink.mutateAsync({
+                scheduleId: activeAssignment.scheduleId,
+                clientId: resetLinkTargetClientId,
+                preparedLinkToken: prepared.data.preparedLinkToken,
+            });
+            toast({ description: "제공기록지 링크를 재설정하고 메시지를 발송했습니다." });
+            setResetLinkTargetClientId(null);
+        } catch {
+            toast({
+                description: "제공기록지 링크 재설정에 실패했습니다. 잠시 후 다시 시도해 주세요.",
+                variant: "destructive",
+            });
+        } finally {
+            setIsResettingLink(false);
+        }
     };
 
     const handleDeleteConfirm = async () => {
@@ -632,6 +684,14 @@ export default function ClientsPage() {
                                             {t(locale, "common.edit")}
                                         </DropdownMenuItem>
                                         <DropdownMenuItem
+                                            data-component="clients-detail-menu-reset-service-record-link"
+                                            onClick={() => setResetLinkTargetClientId(activeSelectedClient.id)}
+                                            className="gap-2"
+                                        >
+                                            <RotateCcw className="w-4 h-4" />
+                                            제공기록지 링크 재설정
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
                                             data-component="clients-detail-menu-delete"
                                             onClick={() => handleDeleteRequest(activeSelectedClient.id)}
                                             className="gap-2 text-destructive focus:text-destructive"
@@ -668,6 +728,21 @@ export default function ClientsPage() {
                 onClose={handleFormDialogClose}
                 client={editingClient ?? null}
                 onSuccess={handleClientFormDialogSuccess}
+            />
+
+            <ApprovalTwoButtonModal
+                open={resetLinkTargetClientId !== null}
+                onOpenChange={(open) => {
+                    if (!open && !isResettingLink) setResetLinkTargetClientId(null);
+                }}
+                dataComponent="clients-detail-reset-service-record-link-approval"
+                title="제공기록지 링크를 재설정하시겠습니까?"
+                description="기존 링크는 만료되고, 새 링크가 담긴 메시지가 관리사에게 발송됩니다."
+                isDescriptionVisuallyHidden={false}
+                approvalLabel="링크 재설정"
+                pendingLabel="재설정 중..."
+                isPending={isResettingLink}
+                onApprove={() => void handleResetServiceRecordLinkConfirm()}
             />
 
             <ApprovalTwoButtonModal

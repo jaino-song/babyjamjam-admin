@@ -3,21 +3,15 @@
 import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { FileCheck, Send } from "lucide-react";
-import { format, parseISO } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ClientAutocomplete } from "../clients/ClientAutocomplete";
 import { useFormStore } from "@/stores/form-store";
 import type { Client } from "@/lib/client/types";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 
 function formatDueDate(dateStr: string | null): string {
-    if (!dateStr) return "";
-    try {
-        const date = parseISO(dateStr);
-        return format(date, "yyyy년 MM월 dd일");
-    } catch {
-        return dateStr;
-    }
+    return formatDateForDisplay(dateStr, "");
 }
 
 interface ContractSendWizardProps {

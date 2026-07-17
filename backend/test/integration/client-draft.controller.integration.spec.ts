@@ -17,6 +17,12 @@ describe("ClientDraftController (Integration)", () => {
         canActivate: (context: ExecutionContext) => {
             const req = context.switchToHttp().getRequest();
             req.user = { userId: "user-1", branchId: "branch-1", role: "admin", branchRole: "admin" };
+            req.tenant = {
+                userId: "user-1",
+                branchId: "branch-1",
+                globalRole: "admin",
+                branchRole: "admin",
+            };
             return true;
         },
     };

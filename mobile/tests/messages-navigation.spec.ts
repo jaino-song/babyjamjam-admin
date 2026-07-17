@@ -1,0 +1,143 @@
+import { expect, test, type Page, type Route } from "@playwright/test";
+
+async function mockMessagesApproval(page: Page) {
+  await page.route("**/api/settings/message-sender-approval", async (route: Route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        approvalStatus: "approved",
+        isApproved: true,
+        canRequest: true,
+        senderPhone: "01012345678",
+        senderPhoneFormatted: "010-1234-5678",
+      }),
+    });
+  });
+}
+
+test.describe("mobile messages navigation", () => {
+  test.beforeEach(async ({ page }) => {
+    await mockMessagesApproval(page);
+  });
+
+  test("exposes every frontend message section as a navigable mobile destination", async ({ page }) => {
+    await page.goto("/messages");
+
+    const expectedDestinations = [
+      ["전송하기", "/messages/new"],
+      ["발송 예정", "/messages/scheduled"],
+      ["발송 기록", "/messages/history"],
+      ["템플릿", "/messages/templates"],
+      ["자동 전송", "/messages/automation"],
+      ["설정", "/messages/sender-approval"],
+    ] as const;
+
+    await expect(page.locator('[data-component="mobile-messages-navigation"]')).toBeVisible();
+
+    for (const [label, href] of expectedDestinations) {
+      await expect(page.getByRole("link", { name: new RegExp(label) })).toHaveAttribute("href", href);
+    }
+  });
+
+  test("shows live SMS history data on the dedicated history route", async ({ page }) => {
+    await page.route("**/api/message-logs**", async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          {
+            id: 101,
+            provider: "aligo_sms",
+            templateKey: "CLIENT_GREETING",
+            triggerJobId: null,
+            receiver: "01012345678",
+            clientId: 1,
+            recipientPhone: "01012345678",
+            messageBody: "안녕하세요",
+            variables: {},
+            status: "sent",
+            aligoMid: null,
+            errorMessage: null,
+            attempts: 1,
+            lastAttemptAt: "2026-07-16T01:00:00.000Z",
+            nextRetryAt: null,
+            createdAt: "2026-07-16T01:00:00.000Z",
+            updatedAt: "2026-07-16T01:00:00.000Z",
+            ruleId: null,
+            ruleName: null,
+            eventType: "CLIENT_CREATED",
+            offsetType: "IMMEDIATE",
+            offsetDays: 0,
+            scheduledFor: null,
+            recipientType: "CLIENT",
+            recipientName: "문자 고객",
+            clientName: "문자 고객",
+            employeeName: null,
+          },
+        ]),
+      });
+    });
+
+    await page.goto("/messages/history");
+
+    await expect(page.getByRole("heading", { name: "발송 기록" })).toBeVisible();
+    await expect(page.getByText("문자 고객")).toBeVisible();
+    await expect(page.getByText("1건")).toBeVisible();
+
+    await page.getByRole("button", { name: /인사 메시지/ }).click();
+
+    await expect(page.locator('[data-component="mobile-messages-detail-page"]')).toBeVisible();
+    await expect(page.getByText("발송 정보")).toBeVisible();
+    await expect(page.getByText("01012345678")).toBeVisible();
+    await expect(page.getByText("안녕하세요")).toBeVisible();
+
+    await page.locator('[data-component="mobile-messages-detail-page"] .sheet-close').click();
+
+    await expect(page.getByRole("heading", { name: "발송 기록" })).toBeVisible();
+    await expect(page.getByText("01012345678")).not.toBeVisible();
+  });
+
+  test("shows upcoming SMS jobs on the dedicated scheduled route", async ({ page }) => {
+    await page.route("**/api/message-trigger-jobs/upcoming**", async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          {
+            id: "job-101",
+            ruleId: "rule-101",
+            ruleName: "서비스 안내",
+            eventType: "SERVICE_START",
+            offsetType: "BEFORE_DAYS",
+            offsetDays: 7,
+            recipientType: "CLIENT",
+            recipientPhone: "01098765432",
+            templateKey: "SERVICE_INFO",
+            status: "pending",
+            scheduledFor: "2026-07-17T01:00:00.000Z",
+            sentAt: null,
+            canceledAt: null,
+            cancelReason: null,
+            clientId: 2,
+            employeeScheduleId: null,
+            payload: {
+              memberId: "member-101",
+              recipientName: "예정 고객",
+              recipientPhone: "01098765432",
+              templateVariables: {},
+            },
+            createdAt: "2026-07-16T01:00:00.000Z",
+            updatedAt: "2026-07-16T01:00:00.000Z",
+          },
+        ]),
+      });
+    });
+
+    await page.goto("/messages/scheduled");
+
+    await expect(page.getByRole("heading", { name: "발송 예정" })).toBeVisible();
+    await expect(page.getByText("예정 고객")).toBeVisible();
+    await expect(page.getByText("1건")).toBeVisible();
+  });
+});

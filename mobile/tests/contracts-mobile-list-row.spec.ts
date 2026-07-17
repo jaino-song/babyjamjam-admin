@@ -1012,7 +1012,7 @@ test.describe("Mobile contracts list rows", () => {
 
     const notificationInfo = page.locator(".info-card", { hasText: "발송 내역" });
     await expect(notificationInfo.locator(".info-card-title")).toHaveText("발송 내역");
-    await expect(notificationInfo).toContainText("알림톡 · 계약서 발송 안내");
+    await expect(notificationInfo).toContainText("메시지 · 계약서 발송 안내");
     await expect(notificationInfo).toContainText("메시지 · 수동 메시지");
     await expect(notificationInfo).not.toContainText("마감 임박 알림");
     await expect(notificationInfo).not.toContainText("다른 고객");

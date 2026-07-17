@@ -7,6 +7,7 @@ import {
   type Employee,
   type EmployeeStatus,
   useDeleteEmployee,
+  useEmployeeActiveClients,
 } from "@/hooks/useEmployees";
 import { useInfiniteEmployees } from "@/hooks/useInfiniteEmployees";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
@@ -21,6 +22,7 @@ import {
 import { useLocale } from "@/providers/LocaleProvider";
 import { useToast } from "@/hooks/use-toast";
 import { t } from "@/lib/i18n/translations";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import {
   Badge,
   ListCard,
@@ -42,6 +44,11 @@ import {
   MobileDetailTabPanel,
 } from "@/components/app/mobile-redesign/detail-sheet";
 import "@/components/app/mobile-redesign/redesign.css";
+import {
+  EMPLOYEE_STATUS_LABELS,
+  getOpenToNextWorkLabel,
+} from "@babyjamjam/shared/constants/employee-status";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const ALL_FILTER = "전체";
 
@@ -94,9 +101,9 @@ interface UnknownEmployeeGroup extends EmployeeGroupBase {
 type EmployeeGroup = KnownEmployeeGroup | UnknownEmployeeGroup;
 
 const GROUPS: KnownEmployeeGroup[] = [
-  { key: "available", title: "근무 가능", badge: "근무 가능", badgeTone: "orange", badgeMini: "orange" },
-  { key: "working", title: "근무 중", badge: "근무 중", badgeTone: "green", badgeMini: "green" },
-  { key: "unavailable", title: "근무 불가", badge: "근무 불가", badgeTone: "muted", badgeMini: "muted" },
+  { key: "available", title: EMPLOYEE_STATUS_LABELS.available, badge: EMPLOYEE_STATUS_LABELS.available, badgeTone: "orange", badgeMini: "orange" },
+  { key: "working", title: EMPLOYEE_STATUS_LABELS.working, badge: EMPLOYEE_STATUS_LABELS.working, badgeTone: "green", badgeMini: "green" },
+  { key: "unavailable", title: EMPLOYEE_STATUS_LABELS.unavailable, badge: EMPLOYEE_STATUS_LABELS.unavailable, badgeTone: "muted", badgeMini: "muted" },
 ];
 
 const UNKNOWN_EMPLOYEE_GROUP: EmployeeGroup = {
@@ -118,22 +125,7 @@ export function buildAllEmployeeRowsForList(employees: Employee[]): Employee[] {
 }
 
 function formatRegisteredDate(value: string | null | undefined): string {
-  if (!value) return "-";
-
-  const isoDate = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (isoDate) {
-    const [, year, month, day] = isoDate;
-    return `${year}년 ${month}월 ${day}일`;
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-
-  const year = String(date.getFullYear());
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-
-  return `${year}년 ${month}월 ${day}일`;
+  return formatDateForDisplay(value);
 }
 
 export function groupForEmployee(e: Employee): EmployeeGroup {
@@ -156,9 +148,10 @@ function EmployeeDetailContent({
   onDelete: () => void;
 }) {
   const group = groupForEmployee(employee);
-  const availability = employee.openToNextWork ? "근무 가능" : "근무 불가";
+  const availability = getOpenToNextWorkLabel(employee.openToNextWork);
   const availabilityTone = employee.openToNextWork ? "green" : "muted";
-  const currentClientInitial = employee.status === "working" ? "박" : employeeInitial(employee.name);
+  const { data: activeClients = [], isLoading: isActiveClientsLoading } =
+    useEmployeeActiveClients(employee.id);
 
   return (
     <MobileDetailPage name="employees">
@@ -253,20 +246,28 @@ function EmployeeDetailContent({
         dataComponent="mobile-employees-detail-clients"
       >
         <InfoCard title="현재 담당">
-          {employee.status === "working" ? (
-            <DocRow
-              initial={currentClientInitial}
-              title={`${currentClientInitial}서연`}
-              meta="최근 배정된 산모 서비스"
-              badge="진행중"
-              tone="green"
-            />
+          {isActiveClientsLoading ? (
+            <div className="space-y-3" data-component="mobile-employees-clients-loading">
+              <Skeleton className="h-14 w-full rounded-xl" />
+              <Skeleton className="h-14 w-full rounded-xl" />
+            </div>
+          ) : activeClients.length > 0 ? (
+            activeClients.map((client) => (
+              <DocRow
+                key={`${client.clientId}:${client.role}`}
+                initial={employeeInitial(client.clientName)}
+                title={client.clientName}
+                meta={`${client.startDate} ~ ${client.endDate}`}
+                badge={client.role === "primary" ? "주담당" : "부담당"}
+                tone={client.role === "primary" ? "green" : "primary"}
+              />
+            ))
           ) : (
             <div
               className="detail-empty-state"
               data-component="mobile-employees-clients-empty"
             >
-              배정된 고객이 없습니다.
+              현재 담당 고객이 없습니다.
             </div>
           )}
         </InfoCard>

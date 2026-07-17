@@ -26,6 +26,12 @@ describe("CallIngestTokenController (Integration)", () => {
                 canActivate: (context: ExecutionContext) => {
                     const req = context.switchToHttp().getRequest();
                     req.user = { userId: "user-1", branchId: "branch-1", role };
+                    req.tenant = {
+                        userId: "user-1",
+                        branchId: "branch-1",
+                        globalRole: role,
+                        branchRole: role,
+                    };
                     return true;
                 },
             })

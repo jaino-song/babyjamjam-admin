@@ -1,4 +1,17 @@
+/**
+ * @jest-environment node
+ */
+import { jwtDecode } from "jwt-decode";
+import { NextRequest } from "next/server";
+
 import { getMobileGatewayRedirectUrl, isMobileUserAgent } from "@/lib/gateway/mobile-redirect";
+import { proxy } from "@/proxy";
+
+jest.mock("jwt-decode", () => ({
+  jwtDecode: jest.fn(),
+}));
+
+const mockJwtDecode = jwtDecode as jest.Mock;
 
 const IPHONE_USER_AGENT =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 " +
@@ -9,6 +22,10 @@ const DESKTOP_USER_AGENT =
   "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 describe("admin gateway proxy", () => {
+  beforeEach(() => {
+    mockJwtDecode.mockReset();
+  });
+
   it("detects mobile browser user agents", () => {
     expect(isMobileUserAgent(IPHONE_USER_AGENT)).toBe(true);
     expect(isMobileUserAgent(DESKTOP_USER_AGENT)).toBe(false);
@@ -49,5 +66,45 @@ describe("admin gateway proxy", () => {
     );
 
     expect(redirectUrl).toBeNull();
+  });
+
+  it("rotates an expired desktop auth session instead of forcing login", async () => {
+    mockJwtDecode.mockImplementation((token: string) => token === "new-access"
+      ? {
+        sub: "user-1",
+        sid: "session-1",
+        role: "admin",
+        branchId: "branch-1",
+        type: "access",
+        exp: Math.floor(Date.now() / 1000) + 60,
+      }
+      : {
+        sub: "user-1",
+        sid: "session-1",
+        role: "admin",
+        type: "access",
+        exp: Math.floor(Date.now() / 1000) - 60,
+      });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        accessToken: "new-access",
+        refreshToken: "next-refresh",
+      }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const response = await proxy(new NextRequest("http://localhost/dashboard", {
+      headers: {
+        cookie: "auth_token=expired; refresh_token=current; selected_branch_id=branch-1",
+      },
+    }));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost/dashboard");
+    expect(response.headers.get("set-cookie")).toContain("auth_token=new-access");
+    expect(response.headers.get("set-cookie")).toContain("refresh_token=next-refresh");
+    fetchMock.mockRestore();
   });
 });

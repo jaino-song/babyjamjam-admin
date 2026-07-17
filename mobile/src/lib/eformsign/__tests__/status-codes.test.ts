@@ -23,6 +23,8 @@ describe("eformsign status code helpers", () => {
   it("classifies completed and expired status codes by eformsign buckets", () => {
     expect(getStatusCategory("003")).toBe("completed");
     expect(getStatusCategory("080")).toBe("expired");
+    expect(getStatusCategory("090")).toBe("expired");
+    expect(mapStatusToLabel("090")).toBe("기간 만료");
   });
 
   it("keeps deleted document codes out of rejected expiration buckets", () => {

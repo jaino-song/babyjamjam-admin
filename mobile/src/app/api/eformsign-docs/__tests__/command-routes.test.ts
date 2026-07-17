@@ -6,6 +6,7 @@ import { NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import { POST as createEformsignDoc } from "../route";
 import { POST as dispatchHeadless } from "../dispatch-headless/route";
+import { POST as adoptDocument } from "../adopt/route";
 import { POST as finalizeHeadless } from "../finalize-headless/route";
 import { GET as getClientNames } from "../client-names/route";
 
@@ -128,6 +129,27 @@ describe("eformsign-docs command API routes", () => {
       "/eformsign-docs/dispatch-headless",
       dispatchBody,
       expect.objectContaining({ headers: { Authorization: "Bearer auth-token" } }),
+    );
+  });
+
+  it("forwards force dispatch and adopt compensation payloads", async () => {
+    mockPost.mockResolvedValue({ status: 200, data: { ok: true } });
+    const forcedBody = { contractData: { customerName: "홍길동" }, clientId: 7, force: true };
+
+    await dispatchHeadless(createRequest("/api/eformsign-docs/dispatch-headless", JSON.stringify(forcedBody)));
+    await adoptDocument(createRequest("/api/eformsign-docs/adopt", JSON.stringify({ documentId: "doc-1", clientId: 7 })));
+
+    expect(mockPost).toHaveBeenNthCalledWith(
+      1,
+      "/eformsign-docs/dispatch-headless",
+      forcedBody,
+      expect.objectContaining({ headers: { Authorization: "Bearer auth-token" } }),
+    );
+    expect(mockPost).toHaveBeenNthCalledWith(
+      2,
+      "/eformsign-docs/adopt",
+      { documentId: "doc-1", clientId: 7 },
+      { headers: { Authorization: "Bearer auth-token" } },
     );
   });
 

@@ -1,29 +1,18 @@
 import { z } from 'zod';
+import {
+    authEmailSchema,
+    authPasswordSchema,
+    registerFormSchema,
+    type RegisterFormData,
+} from '@babyjamjam/shared';
 
-const namePattern = /^[\p{L} ]+$/u;
 const EMAIL_FORMAT_MESSAGE = '이메일 주소를 확인해 주세요.';
 
 // Password validation with detailed requirements
-const passwordSchema = z
-    .string()
-    .min(8, '비밀번호는 최소 8자 이상이어야 합니다.')
-    .regex(/[A-Z]/, '비밀번호에 대문자가 포함되어야 합니다.')
-    .regex(/[a-z]/, '비밀번호에 소문자가 포함되어야 합니다.')
-    .regex(/[0-9]/, '비밀번호에 숫자가 포함되어야 합니다.')
-    .regex(/[^A-Za-z0-9]/, '비밀번호에 특수문자가 포함되어야 합니다.');
+const passwordSchema = authPasswordSchema;
 
-const nameSchema = z
-    .string()
-    .trim()
-    .min(1, '이름은 필수입니다.')
-    .regex(namePattern, '이름에는 숫자나 특수문자를 입력할 수 없습니다.');
-
-export const sanitizeNameInput = (value: string) => value.replace(/[^\p{L} ]+/gu, '');
-const emailSchema = z
-    .string()
-    .trim()
-    .min(1, '이메일은 필수입니다.')
-    .email(EMAIL_FORMAT_MESSAGE);
+export const sanitizeNameInput = (value: string) => value;
+const emailSchema = authEmailSchema;
 
 export const getEmailFormatError = (value: string) => {
     const trimmedValue = value.trim();
@@ -36,15 +25,7 @@ export const getEmailFormatError = (value: string) => {
 };
 
 // Registration schema
-export const registerSchema = z.object({
-    email: emailSchema,
-    password: passwordSchema,
-    confirmPassword: z.string().min(1, '비밀번호 확인은 필수입니다.'),
-    name: nameSchema,
-}).refine((data) => data.password === data.confirmPassword, {
-    message: '비밀번호가 일치하지 않습니다.',
-    path: ['confirmPassword'],
-});
+export const registerSchema = registerFormSchema;
 
 // Login schema
 export const loginSchema = z.object({
@@ -76,7 +57,7 @@ export const linkPasswordSchema = z.object({
 });
 
 // Type exports using Zod inference
-export type RegisterFormData = z.infer<typeof registerSchema>;
+export type { RegisterFormData };
 export type LoginFormData = z.infer<typeof loginSchema>;
 export type ForgotPasswordFormData = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordFormData = z.infer<typeof resetPasswordSchema>;

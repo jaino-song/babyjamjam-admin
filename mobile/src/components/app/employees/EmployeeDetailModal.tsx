@@ -5,6 +5,7 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { Employee } from "@/hooks/useEmployees";
 import { normalizeEmployeeGrade } from "@/features/employees/grade";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 
 import {
     Dialog,
@@ -28,8 +29,7 @@ interface EmployeeDetailModalProps {
 }
 
 const formatDate = (dateStr: string | null | undefined): string => {
-    if (!dateStr) return "-";
-    return new Date(dateStr).toLocaleDateString("ko-KR");
+    return formatDateForDisplay(dateStr);
 };
 
 const formatPhoneNumber = (phone: string | null | undefined): string => {

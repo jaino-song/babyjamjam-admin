@@ -1,11 +1,22 @@
 import { EmployeeEntity } from "domain/entities/employee.entity";
 
+export interface ActiveClientByEmployee {
+    clientId: number;
+    clientName: string;
+    role: "primary" | "secondary";
+    startDate: Date | null;
+    endDate: Date | null;
+    serviceStatus: string | null;
+}
+
 export interface IEmployeeRepository {
     findById(branchid: string, id: number): Promise<EmployeeEntity | null>;
     findByPhone(branchid: string, normalizedPhone: string): Promise<EmployeeEntity | null>;
     create(branchid: string, employee: EmployeeEntity): Promise<EmployeeEntity>;
     update(branchid: string, employee: EmployeeEntity): Promise<EmployeeEntity>;
     delete(branchid: string, id: number): Promise<void>;
+    hasActiveAssignments?(branchid: string, id: number): Promise<boolean>;
+    findActiveClientsByEmployee?(branchid: string, id: number): Promise<ActiveClientByEmployee[]>;
     findAll(branchid: string): Promise<EmployeeEntity[]>;
     findByWorkArea(branchid: string, workArea: string): Promise<EmployeeEntity[]>;
     findByGrade(branchid: string, grade: string): Promise<EmployeeEntity[]>;

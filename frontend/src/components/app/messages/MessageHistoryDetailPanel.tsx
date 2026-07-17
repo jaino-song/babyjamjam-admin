@@ -14,21 +14,30 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
+import {
+  MESSAGE_HISTORY_STATUS_LABELS,
+  formatMessageDateTimeCompact,
+  formatMessageFailureReason,
+  getMessageHistoryTimestamp as getSharedMessageHistoryTimestamp,
+  getMessageTemplateLabel,
+  normalizeMessageHistoryPresentation,
+} from "@babyjamjam/shared";
 
 import type {
   MessageLogRecord as ApiMessageLogRecord,
   TriggerEventType,
 } from "@/features/message-triggers/types";
+import { StatusBadge } from "@/components/app/ui/status-badge";
 import { DetailPanel, InfoCard, InfoRow, ListEmptyState } from "@/components/app/v3";
 import { Button } from "@/components/ui/button";
 import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { cn } from "@/lib/utils";
 
-export type MessageHistoryStatus = "sent" | "failed" | "pending";
+export type MessageHistoryStatus = "sent" | "failed" | "pending" | "canceled";
 export type MessageHistoryFilter = "all" | MessageHistoryStatus;
 
 export interface MessageHistoryRecord {
-  id: number;
+  id: number | string;
   title: string;
   templateLabel: string;
   recipientName: string;
@@ -66,22 +75,28 @@ export const MESSAGE_HISTORY_STATUS_META: Record<
   { label: string; icon: LucideIcon; tone: string; avatarClass: string }
 > = {
   sent: {
-    label: "발송 성공",
+    label: MESSAGE_HISTORY_STATUS_LABELS.sent,
     icon: CheckCircle2,
     tone: "bg-emerald-50 text-emerald-600",
     avatarClass: "border border-[hsl(137,34%,84%)] bg-[hsl(137,60%,94%)] text-v3-green",
   },
   failed: {
-    label: "발송 실패",
+    label: MESSAGE_HISTORY_STATUS_LABELS.failed,
     icon: AlertCircle,
     tone: "bg-red-50 text-red-600",
     avatarClass: "border border-[hsla(355,36%,45%,0.20)] bg-[hsl(355,40%,94%)] text-[hsl(355,36%,45%)]",
   },
   pending: {
-    label: "재시도 대기",
+    label: MESSAGE_HISTORY_STATUS_LABELS.pending,
     icon: Clock3,
     tone: "bg-amber-50 text-amber-600",
     avatarClass: "border border-[hsla(38,92%,35%,0.18)] bg-[hsl(47,100%,92%)] text-[hsl(38,92%,35%)]",
+  },
+  canceled: {
+    label: MESSAGE_HISTORY_STATUS_LABELS.canceled,
+    icon: AlertCircle,
+    tone: "bg-slate-100 text-slate-600",
+    avatarClass: "border border-slate-200 bg-slate-100 text-slate-600",
   },
 };
 
@@ -103,25 +118,32 @@ export const MESSAGE_HISTORY_FILTER_META: Record<
     indicatorClassName: "bg-v3-primary",
   },
   sent: {
-    label: "성공",
+    label: MESSAGE_HISTORY_STATUS_LABELS.sent,
     icon: CheckCircle2,
     badgeTone: "bg-emerald-50 text-emerald-600",
     activeClassName: "text-emerald-600",
     indicatorClassName: "bg-emerald-500",
   },
   pending: {
-    label: "대기",
+    label: MESSAGE_HISTORY_STATUS_LABELS.pending,
     icon: Clock3,
     badgeTone: "bg-amber-50 text-amber-600",
     activeClassName: "text-amber-600",
     indicatorClassName: "bg-amber-500",
   },
   failed: {
-    label: "실패",
+    label: MESSAGE_HISTORY_STATUS_LABELS.failed,
     icon: AlertCircle,
     badgeTone: "bg-red-50 text-red-600",
     activeClassName: "text-red-600",
     indicatorClassName: "bg-red-500",
+  },
+  canceled: {
+    label: MESSAGE_HISTORY_STATUS_LABELS.canceled,
+    icon: AlertCircle,
+    badgeTone: "bg-slate-100 text-slate-600",
+    activeClassName: "text-slate-600",
+    indicatorClassName: "bg-slate-500",
   },
 };
 
@@ -131,7 +153,7 @@ export const MESSAGE_HISTORY_TABS: {
   activeClassName: string;
   indicatorClassName: string;
 }[] = (
-  ["all", "sent", "pending", "failed"] as const
+  ["all", "sent", "pending", "failed", "canceled"] as const
 ).map((value) => {
   const meta = MESSAGE_HISTORY_FILTER_META[value];
 
@@ -148,19 +170,6 @@ const HISTORY_EVENT_ICON_BY_TYPE: Record<TriggerEventType, LucideIcon> = {
   SERVICE_START: CalendarClock,
   SERVICE_END: CalendarRange,
   EMPLOYEE_ASSIGNED: Users,
-};
-
-const HISTORY_TEMPLATE_LABELS: Record<string, string> = {
-  CLIENT_WELCOME: "고객 등록 안내",
-  SERVICE_START_REMINDER: "서비스 시작 리마인드",
-  SERVICE_INFO: "서비스 안내",
-  SERVICE_END_REMINDER: "서비스 종료 안내",
-  EMPLOYEE_ASSIGNED: "직원 배정 완료",
-  SERVICE_RECORD_LINK: "제공기록지 작성 링크",
-  service_record_link_sms: "제공기록지 작성 링크",
-  client_greeting_sms: "인사 메시지",
-  GREETING: "인사 메시지",
-  "인사(소개)": "인사 메시지",
 };
 
 export function getMessageHistoryEmptyStateCopy(filter: MessageHistoryFilter, hasSearchQuery: boolean) {
@@ -189,107 +198,32 @@ export function getMessageHistoryEmptyStateCopy(filter: MessageHistoryFilter, ha
         ? "검색어를 바꾸거나 다른 탭을 선택해 주세요."
         : "발송 실패로 남아 있는 메시지가 없습니다.",
     },
+    canceled: {
+      title: "취소된 발송 기록이 없습니다.",
+      description: hasSearchQuery
+        ? "검색어를 바꾸거나 다른 탭을 선택해 주세요."
+        : "취소된 메시지가 아직 없습니다.",
+    },
   };
 
   return copyByFilter[filter];
 }
 
-function getHistoryVariableLabel(variables: Record<string, string> | undefined, key: string) {
-  const value = variables?.[key]?.trim();
-  return value ? value : null;
-}
-
-function normalizeHistoryTemplateLabel(label: string) {
-  return HISTORY_TEMPLATE_LABELS[label] ?? label;
-}
-
-export function getMessageHistoryTemplateLabel(templateKey: string, variables?: Record<string, string>) {
-  const mappedTemplateLabel = HISTORY_TEMPLATE_LABELS[templateKey];
-  if (mappedTemplateLabel) return mappedTemplateLabel;
-
-  const systemTemplateKey = getHistoryVariableLabel(variables, "systemTemplateKey");
-  if (systemTemplateKey) {
-    const mappedSystemTemplateLabel = HISTORY_TEMPLATE_LABELS[systemTemplateKey];
-    if (mappedSystemTemplateLabel) return mappedSystemTemplateLabel;
-  }
-
-  const variableTitle = getHistoryVariableLabel(variables, "title");
-  return variableTitle ? normalizeHistoryTemplateLabel(variableTitle) : normalizeHistoryTemplateLabel(templateKey);
-}
-
-function getHistoryRecordTitle(record: ApiMessageLogRecord) {
-  const templateLabel = getMessageHistoryTemplateLabel(record.templateKey, record.variables);
-  const ruleName = record.ruleName?.trim();
-  if (ruleName && ruleName !== record.templateKey && templateLabel === normalizeHistoryTemplateLabel(record.templateKey)) {
-    return normalizeHistoryTemplateLabel(ruleName);
-  }
-
-  return templateLabel;
-}
-
-function getHistoryChannelLabel(provider: string) {
-  return provider === "aligo_sms" ? "메시지" : provider;
-}
-
-export function getMessageHistoryTimestamp(record: ApiMessageLogRecord) {
-  return record.lastAttemptAt ?? record.updatedAt ?? record.createdAt;
-}
+export const getMessageHistoryTemplateLabel = getMessageTemplateLabel;
+export const getMessageHistoryTimestamp = getSharedMessageHistoryTimestamp;
+export const formatMessageHistoryDate = formatMessageDateTimeCompact;
+export const formatMessageHistoryFailureReason = formatMessageFailureReason;
 
 export function normalizeMessageHistoryRecord(
   record: ApiMessageLogRecord,
   options: NormalizeMessageHistoryRecordOptions = {}
 ): MessageHistoryRecord {
-  const sentAt = getMessageHistoryTimestamp(record);
-  const status: MessageHistoryStatus =
-    record.status === "sent" || record.status === "pending" || record.status === "failed"
-      ? record.status
-      : "failed";
-  const fallbackRecipientName = options.recipientNameFallback?.trim() ?? "";
-  const fallbackListLabel = options.recipientListLabelFallback?.trim() ?? fallbackRecipientName;
-  const registeredClientName = record.clientName?.trim()
-    || (record.clientId !== null ? record.recipientName?.trim() : "")
-    || fallbackRecipientName
-    || "";
+  const normalized = normalizeMessageHistoryPresentation(record, options);
 
   return {
-    id: record.id,
-    title: getHistoryRecordTitle(record),
-    templateLabel: getMessageHistoryTemplateLabel(record.templateKey, record.variables),
-    recipientName: record.recipientName?.trim() || record.clientName?.trim() || record.employeeName?.trim() || fallbackRecipientName || "-",
-    recipientPhone: record.recipientPhone?.trim() || record.receiver,
-    recipientListLabel: registeredClientName || fallbackListLabel || record.receiver,
-    channelLabel: getHistoryChannelLabel(record.provider),
-    sentAt,
-    status,
-    messagePreview: record.messageBody,
-    failureReason: record.errorMessage ?? undefined,
+    ...normalized,
     icon: record.eventType ? HISTORY_EVENT_ICON_BY_TYPE[record.eventType] : MessageCircle,
   };
-}
-
-export function formatMessageHistoryDate(dateString: string | null) {
-  if (!dateString) return "-";
-
-  const date = new Date(dateString);
-  if (Number.isNaN(date.getTime())) return "-";
-
-  return date.toLocaleString("ko-KR", {
-    month: "numeric",
-    day: "numeric",
-    weekday: "short",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-export function formatMessageHistoryFailureReason(reason: string | null | undefined) {
-  if (!reason) return "";
-
-  return reason
-    .replace(/[^\uAC00-\uD7A3\u3131-\u318E\s.]/g, "")
-    .replace(/\s+/g, " ")
-    .replace(/\s+\./g, ".")
-    .trim();
 }
 
 export function matchesMessageHistoryQuery(record: MessageHistoryRecord, query: string) {
@@ -349,7 +283,15 @@ export function MessageHistoryDetailPanel({
           : "왼쪽 목록에서 발송 기록을 선택해 주세요."
       }
       badges={
-        selectedRecord ? (
+        selectedRecord?.status === "sent" ? (
+          <StatusBadge
+            data-component={`${dataComponentPrefix}-detail-status`}
+            variant="success"
+            size="sm"
+          >
+            완료
+          </StatusBadge>
+        ) : selectedRecord ? (
           <span
             data-component={`${dataComponentPrefix}-detail-status`}
             className={cn(

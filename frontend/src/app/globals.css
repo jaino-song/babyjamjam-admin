@@ -774,7 +774,7 @@
 [data-component="main-content"][data-mode="compact"] [data-component="contracts-sections"],
 [data-component="main-content"][data-mode="compact"] [data-component="clients-sections"],
 [data-component="main-content"][data-mode="compact"] [data-component="system-admin-sections"],
-[data-component="main-content"][data-mode="compact"] [data-component="alimtalk-sections"],
+[data-component="main-content"][data-mode="compact"] [data-component="messages-sections"],
 [data-component="main-content"][data-mode="compact"] [data-component="settings-sections"] {
   align-items: stretch;
   flex-direction: column;
@@ -786,7 +786,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   )) {
     padding-top: 16px;
@@ -797,7 +797,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   ) {
     align-items: stretch;
@@ -809,7 +809,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   ) [data-component="section-nav"] {
     width: 100%;
@@ -820,7 +820,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   ) [data-component="section-nav-desktop"] {
     display: none !important;
@@ -831,7 +831,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   ) [data-component="section-nav-mobile"] {
     display: block !important;
@@ -842,7 +842,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   ) [data-component="split-layout"] {
     display: block;
@@ -858,7 +858,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   ) [data-component="split-layout-track"] {
     display: flex;
@@ -871,7 +871,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   ) [data-component="split-layout"][data-columns="2"][data-has-selection="true"] [data-component="split-layout-track"] {
     transform: translateX(calc(-100% - var(--compact-panel-gap, 16px)));
@@ -882,7 +882,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   ) [data-component="split-layout-panel"] {
     flex-shrink: 0;
@@ -896,7 +896,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   ) [data-component="split-layout-panel"] > [data-component="list-panel"],
   :is(
@@ -904,7 +904,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   ) [data-component="split-layout-panel"] > [data-component="detail-panel"] {
     width: 100%;

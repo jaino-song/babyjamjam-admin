@@ -1,7 +1,5 @@
 export const SMS_DELIVERY_MAX_ATTEMPTS = 3;
 export const SMS_DELIVERY_RETRY_DELAY_MS = 5 * 60 * 1000;
-export const ALIMTALK_DELIVERY_MAX_ATTEMPTS = 3;
-export const ALIMTALK_DELIVERY_RETRY_DELAY_MS = 5 * 60 * 1000;
 
 export interface MessageDeliveryRetryPolicy {
     maxAttempts: number;
@@ -16,16 +14,9 @@ export function getMessageDeliveryRetryPolicy(provider: string): MessageDelivery
         };
     }
 
-    if (provider === "aligo_alimtalk") {
-        return {
-            maxAttempts: ALIMTALK_DELIVERY_MAX_ATTEMPTS,
-            retryDelayMs: ALIMTALK_DELIVERY_RETRY_DELAY_MS,
-        };
-    }
-
     return {
-        maxAttempts: ALIMTALK_DELIVERY_MAX_ATTEMPTS,
-        retryDelayMs: ALIMTALK_DELIVERY_RETRY_DELAY_MS,
+        maxAttempts: SMS_DELIVERY_MAX_ATTEMPTS,
+        retryDelayMs: SMS_DELIVERY_RETRY_DELAY_MS,
     };
 }
 

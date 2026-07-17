@@ -7,7 +7,6 @@ import { SystemSettingService } from "application/services/system-setting.servic
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerGuard } from "infrastructure/auth/owner.guard";
-import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { TenantGuard } from "infrastructure/tenant";
 import { SystemSettingEntity } from "domain/entities/system-setting.entity";
 import {
@@ -43,10 +42,6 @@ describe("SystemSettingController (Integration)", () => {
 
     beforeEach(async () => {
         const mockSystemSettingService = {
-            getAlimtalkProvider: jest.fn(),
-            getAlimtalkProviderSetting: jest.fn(),
-            setAlimtalkProvider: jest.fn(),
-            isAlimtalkEnabled: jest.fn(),
             getMessageAutomationPastTriggerConfig: jest.fn(),
             setMessageAutomationPastTriggerConfig: jest.fn(),
         };
@@ -83,8 +78,6 @@ describe("SystemSettingController (Integration)", () => {
             .useValue({ canActivate: () => true })
             .overrideGuard(OwnerGuard)
             .useValue({ canActivate: () => true })
-            .overrideGuard(OwnerOrAdminGuard)
-            .useValue({ canActivate: () => true })
             .compile();
 
         app = moduleFixture.createNestApplication();
@@ -102,59 +95,6 @@ describe("SystemSettingController (Integration)", () => {
 
     afterEach(async () => {
         await app?.close();
-    });
-
-    describe("GET /settings/alimtalk-provider", () => {
-        it("should return current provider setting", async () => {
-            const updatedAt = new Date("2026-05-28T12:00:00.000Z");
-            systemSettingService.getAlimtalkProviderSetting.mockResolvedValue(
-                new SystemSettingEntity("alimtalk_provider", "aligo_alimtalk", updatedAt)
-            );
-
-            const response = await request(app.getHttpServer())
-                .get("/settings/alimtalk-provider");
-
-            expect(response.status).toBe(200);
-            expect(response.body).toEqual({
-                provider: "aligo_alimtalk",
-                enabled: true,
-                updatedAt: updatedAt.toISOString(),
-            });
-        });
-
-        it("should return disabled state when provider is none", async () => {
-            systemSettingService.getAlimtalkProviderSetting.mockResolvedValue(
-                new SystemSettingEntity(
-                    "alimtalk_provider",
-                    "none",
-                    new Date("2026-05-28T12:00:00.000Z")
-                )
-            );
-
-            const response = await request(app.getHttpServer())
-                .get("/settings/alimtalk-provider");
-
-            expect(response.status).toBe(200);
-            expect(response.body).toEqual({
-                provider: "none",
-                enabled: false,
-                updatedAt: "2026-05-28T12:00:00.000Z",
-            });
-        });
-
-        it("should return default provider without updatedAt when setting is not stored", async () => {
-            systemSettingService.getAlimtalkProviderSetting.mockResolvedValue(null);
-            systemSettingService.getAlimtalkProvider.mockResolvedValue("aligo_alimtalk");
-
-            const response = await request(app.getHttpServer())
-                .get("/settings/alimtalk-provider");
-
-            expect(response.status).toBe(200);
-            expect(response.body).toEqual({
-                provider: "aligo_alimtalk",
-                enabled: true,
-            });
-        });
     });
 
     describe("GET /settings/message-automation-policies", () => {
@@ -287,75 +227,6 @@ describe("SystemSettingController (Integration)", () => {
                 sendIntervalMinutes: 3,
                 ruleOrder: ["rule-2", "rule-1"],
             });
-        });
-    });
-
-    describe("PUT /settings/alimtalk-provider", () => {
-        it("should require owner/admin privileges", () => {
-            const guards = Reflect.getMetadata(
-                GUARDS_METADATA,
-                SystemSettingController.prototype.updateAlimtalkProvider,
-            ) ?? [];
-
-            expect(guards).toContain(OwnerOrAdminGuard);
-        });
-
-        it("should update provider to aligo_alimtalk", async () => {
-            const entity = new SystemSettingEntity(
-                "alimtalk_provider",
-                "aligo_alimtalk",
-                new Date()
-            );
-            systemSettingService.setAlimtalkProvider.mockResolvedValue(entity);
-
-            const response = await request(app.getHttpServer())
-                .put("/settings/alimtalk-provider")
-                .send({ provider: "aligo_alimtalk" });
-
-            expect(response.status).toBe(200);
-            expect(response.body.provider).toBe("aligo_alimtalk");
-            expect(response.body.enabled).toBe(true);
-        });
-
-        it("should update provider to none (disabled)", async () => {
-            const entity = new SystemSettingEntity(
-                "alimtalk_provider",
-                "none",
-                new Date()
-            );
-            systemSettingService.setAlimtalkProvider.mockResolvedValue(entity);
-
-            const response = await request(app.getHttpServer())
-                .put("/settings/alimtalk-provider")
-                .send({ provider: "none" });
-
-            expect(response.status).toBe(200);
-            expect(response.body.provider).toBe("none");
-            expect(response.body.enabled).toBe(false);
-        });
-
-        it("should return 400 for invalid provider", async () => {
-            const response = await request(app.getHttpServer())
-                .put("/settings/alimtalk-provider")
-                .send({ provider: "invalid_provider" });
-
-            expect(response.status).toBe(400);
-        });
-
-        it("should return 400 for missing provider", async () => {
-            const response = await request(app.getHttpServer())
-                .put("/settings/alimtalk-provider")
-                .send({});
-
-            expect(response.status).toBe(400);
-        });
-
-        it("should return 400 for empty provider", async () => {
-            const response = await request(app.getHttpServer())
-                .put("/settings/alimtalk-provider")
-                .send({ provider: "" });
-
-            expect(response.status).toBe(400);
         });
     });
 

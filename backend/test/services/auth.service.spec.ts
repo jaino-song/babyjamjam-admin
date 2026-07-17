@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, UnauthorizedException } from "
 import { JwtService } from "@nestjs/jwt";
 import { createHash } from "crypto";
 import { AuthService } from "application/services/auth.service";
+import { AuthSessionService } from "application/services/auth-session.service";
 import { AuthTokenEntity } from "domain/entities/auth-token.entity";
 import { EmailPort } from "domain/ports/email.port";
 import { IAuthTokenRepository } from "domain/repositories/auth-token.repository.interface";
@@ -12,9 +13,16 @@ describe("AuthService approval and token hardening", () => {
         user: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
         user_branch: { findMany: jest.fn(), findFirst: jest.fn(), create: jest.fn() },
         branch: { findUnique: jest.fn() },
+        auth_token: { create: jest.fn(), deleteMany: jest.fn() },
+        auth_email_outbox: { create: jest.fn() },
+        auth_session: { updateMany: jest.fn() },
         $transaction: jest.fn(),
     };
     const jwt = { signAsync: jest.fn(), verifyAsync: jest.fn() };
+    const sessions = {
+        issueSession: jest.fn(),
+        rotateRefreshToken: jest.fn(),
+    };
     const email: EmailPort = {
         send: jest.fn(), sendVerificationEmail: jest.fn(), sendPasswordResetEmail: jest.fn(), sendNotificationEmail: jest.fn(),
     };
@@ -28,12 +36,23 @@ describe("AuthService approval and token hardening", () => {
     beforeEach(() => {
         jest.clearAllMocks();
         jwt.signAsync.mockResolvedValue("signed");
+        sessions.issueSession.mockImplementation(async (user, branch) => ({
+            accessToken: await jwt.signAsync({
+                sub: user.id,
+                role: user.role,
+                tokenVersion: user.tokenVersion,
+                ...branch,
+                type: "access",
+            }, {}),
+            refreshToken: "opaque-refresh",
+        }));
         prisma.$transaction.mockImplementation(async (callback: (tx: typeof prisma) => unknown) => callback(prisma));
         service = new AuthService(
             prisma as unknown as PrismaService,
             jwt as unknown as JwtService,
             email,
             tokens,
+            sessions as unknown as AuthSessionService,
         );
     });
 
@@ -79,11 +98,10 @@ describe("AuthService approval and token hardening", () => {
     });
 
     it("rejects refresh for pending or stale-version users", async () => {
-        jwt.verifyAsync.mockResolvedValue({ sub: "user-1", role: "user", type: "refresh", tokenVersion: 2 });
-        prisma.user.findUnique.mockResolvedValue({ id: "user-1", role: "user", approvalStatus: "pending", tokenVersion: 2 });
+        sessions.rotateRefreshToken.mockRejectedValueOnce(new ForbiddenException());
         await expect(service.refreshTokens("refresh")).rejects.toBeInstanceOf(ForbiddenException);
 
-        prisma.user.findUnique.mockResolvedValue({ id: "user-1", role: "user", approvalStatus: "approved", tokenVersion: 3 });
+        sessions.rotateRefreshToken.mockRejectedValueOnce(new UnauthorizedException());
         await expect(service.refreshTokens("refresh")).rejects.toBeInstanceOf(UnauthorizedException);
         expect(jwt.signAsync).not.toHaveBeenCalled();
     });

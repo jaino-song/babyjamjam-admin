@@ -5,13 +5,13 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CheckCircle, ChevronDown, ChevronLeft, ChevronRight, Link2 } from "lucide-react";
+import { REGISTERABLE_ROLE_OPTIONS } from "@babyjamjam/shared";
 
 import { authApi } from "@/services/api";
 import {
   registerSchema,
   checkPasswordStrength,
   getEmailFormatError,
-  sanitizeNameInput,
   type RegisterFormData,
 } from "@/lib/validations/auth";
 import "@/components/app/mobile-redesign/redesign.css";
@@ -26,8 +26,9 @@ interface AxiosLikeError {
 
 const EMAIL_DUPLICATE_ERROR = "이미 등록된 이메일입니다.";
 const REGISTER_TOTAL_STEPS = 3;
-const BRANCH_OPTIONS = ["인천점", "서울 강동점", "서울 강남점", "부천점", "인천 연수점", "안양점"];
-const ROLE_OPTIONS = ["지점장", "매니저", "상담원"];
+const ACCOUNT_FIELDS = ["email", "name", "password", "confirmPassword"] as const;
+const PROFILE_FIELDS = ["phone", "birthDate"] as const;
+const BRANCH_FIELDS = ["branchId", "role"] as const;
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -40,9 +41,11 @@ export default function RegisterPage() {
   const [profileData, setProfileData] = useState({
     phone: "",
     birthDate: "",
-    branch: "",
+    branchId: "",
     role: "",
   });
+  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
+  const [isLoadingBranches, setIsLoadingBranches] = useState(true);
   const [currentStep, setCurrentStep] = useState(1);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState<string | null>(null);
@@ -80,6 +83,28 @@ export default function RegisterPage() {
       : isEmailLinkable
         ? "카카오 연결 가능"
         : "이메일 확인됨";
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void authApi.getBranches()
+      .then((items) => {
+        if (!cancelled) setBranches(items);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setBranches([]);
+          setServerError("지점 목록을 불러오지 못했습니다. 다시 시도해 주세요.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingBranches(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!normalizedEmail || emailFormatError) {
@@ -136,7 +161,7 @@ export default function RegisterPage() {
   }, [normalizedEmail, emailFormatError]);
 
   const handleChange = (field: keyof RegisterFormData) => (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = field === "name" ? sanitizeNameInput(e.target.value) : e.target.value;
+    const value = e.target.value;
     const nextEmailError = field === "email" ? getEmailFormatError(value) : undefined;
     setFormData((prev) => ({ ...prev, [field]: value }));
     if (errors[field]) {
@@ -158,8 +183,36 @@ export default function RegisterPage() {
     (field: keyof typeof profileData) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
       setProfileData((prev) => ({ ...prev, [field]: e.target.value }));
+      setErrors((prev) => {
+        if (!prev[field]) return prev;
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      });
       setServerError(null);
     };
+
+  const getCombinedFormData = () => ({
+    ...formData,
+    ...profileData,
+  });
+
+  const collectFieldErrors = (
+    issues: { path: PropertyKey[]; message: string }[],
+    allowedFields: readonly string[],
+  ) => {
+    const allowed = new Set(allowedFields);
+    const fieldErrors: Record<string, string> = {};
+
+    issues.forEach((issue) => {
+      const field = issue.path[0];
+      if (typeof field === "string" && allowed.has(field) && !fieldErrors[field]) {
+        fieldErrors[field] = issue.message;
+      }
+    });
+
+    return fieldErrors;
+  };
 
   const handleEmailBlur = () => {
     setEmailTouched(true);
@@ -178,13 +231,9 @@ export default function RegisterPage() {
       return;
     }
 
-    const result = registerSchema.safeParse(formData);
+    const result = registerSchema.safeParse(getCombinedFormData());
     if (!result.success) {
-      const fieldErrors: Record<string, string> = {};
-      result.error.issues.forEach((issue) => {
-        const field = issue.path[0] as string;
-        if (!fieldErrors[field]) fieldErrors[field] = issue.message;
-      });
+      const fieldErrors = collectFieldErrors(result.error.issues, ACCOUNT_FIELDS);
       setErrors(fieldErrors);
       return;
     }
@@ -196,6 +245,19 @@ export default function RegisterPage() {
   const handleProfileStepNext = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setServerError(null);
+    const result = registerSchema.safeParse(getCombinedFormData());
+    if (!result.success) {
+      const fieldErrors = collectFieldErrors(result.error.issues, PROFILE_FIELDS);
+      if (Object.keys(fieldErrors).length > 0) {
+        setErrors((prev) => ({ ...prev, ...fieldErrors }));
+        return;
+      }
+    }
+    setErrors((prev) => {
+      const next = { ...prev };
+      PROFILE_FIELDS.forEach((field) => delete next[field]);
+      return next;
+    });
     setCurrentStep(3);
   };
 
@@ -221,21 +283,30 @@ export default function RegisterPage() {
       return next;
     });
 
-    const result = registerSchema.safeParse(formData);
+    const result = registerSchema.safeParse(getCombinedFormData());
     if (!result.success) {
-      const fieldErrors: Record<string, string> = {};
-      result.error.issues.forEach((issue) => {
-        const field = issue.path[0] as string;
-        if (!fieldErrors[field]) fieldErrors[field] = issue.message;
-      });
+      const fieldErrors = collectFieldErrors(result.error.issues, [
+        ...ACCOUNT_FIELDS,
+        ...PROFILE_FIELDS,
+        ...BRANCH_FIELDS,
+      ]);
       setErrors(fieldErrors);
-      setCurrentStep(1);
+      if (ACCOUNT_FIELDS.some((field) => fieldErrors[field])) setCurrentStep(1);
+      else if (PROFILE_FIELDS.some((field) => fieldErrors[field])) setCurrentStep(2);
       return;
     }
 
     setIsLoading(true);
     try {
-      const response = await authApi.register(result.data.email, result.data.password, result.data.name);
+      const response = await authApi.register({
+        email: result.data.email,
+        password: result.data.password,
+        name: result.data.name,
+        phone: result.data.phone,
+        birthDate: result.data.birthDate,
+        branchId: result.data.branchId,
+        role: result.data.role,
+      });
       if (response.success) {
         if (response.code === "ACCOUNTS_LINKED") setAccountsLinked(true);
         setIsSuccess(true);
@@ -459,8 +530,13 @@ export default function RegisterPage() {
               value={profileData.phone}
               onChange={handleProfileChange("phone")}
               disabled={isLoading}
+              aria-invalid={!!errors.phone}
             />
-            {profileData.phone && <div className="auth-helper ok" data-component="auth-register-phone-ok">✓ 등록 가능한 번호입니다.</div>}
+            {errors.phone ? (
+              <div className="auth-helper error" data-component="auth-register-phone-error">{errors.phone}</div>
+            ) : (
+              profileData.phone && <div className="auth-helper ok" data-component="auth-register-phone-ok">✓ 등록 가능한 번호입니다.</div>
+            )}
           </div>
 
           <div className="auth-input-group" data-component="auth-register-birth-field">
@@ -476,8 +552,13 @@ export default function RegisterPage() {
               value={profileData.birthDate}
               onChange={handleProfileChange("birthDate")}
               disabled={isLoading}
+              aria-invalid={!!errors.birthDate}
             />
-            <div className="auth-helper" data-component="auth-register-birth-helper">YYYY-MM-DD 형식으로 입력해 주세요.</div>
+            {errors.birthDate ? (
+              <div className="auth-helper error" data-component="auth-register-birth-error">{errors.birthDate}</div>
+            ) : (
+              <div className="auth-helper" data-component="auth-register-birth-helper">YYYY-MM-DD 형식으로 입력해 주세요.</div>
+            )}
           </div>
 
           <div className="auth-actions" data-component="auth-register-step-actions">
@@ -501,19 +582,21 @@ export default function RegisterPage() {
               <select
                 id="register-branch"
                 className="auth-select"
-                value={profileData.branch}
-                onChange={handleProfileChange("branch")}
-                disabled={isLoading}
+                value={profileData.branchId}
+                onChange={handleProfileChange("branchId")}
+                disabled={isLoading || isLoadingBranches}
+                aria-invalid={!!errors.branchId}
               >
-                <option value="">지점을 선택해주세요</option>
-                {BRANCH_OPTIONS.map((branch) => (
-                  <option key={branch} value={branch}>
-                    {branch}
+                <option value="">{isLoadingBranches ? "지점 목록 불러오는 중" : "지점을 선택해주세요"}</option>
+                {branches.map((branch) => (
+                  <option key={branch.id} value={branch.id}>
+                    {branch.name}
                   </option>
                 ))}
               </select>
               <ChevronDown className="auth-select-chev" size={16} strokeWidth={2.5} aria-hidden="true" />
             </div>
+            {errors.branchId && <div className="auth-helper error" data-component="auth-register-branch-error">{errors.branchId}</div>}
           </div>
 
           <div className="auth-input-group" data-component="auth-register-role-field">
@@ -525,16 +608,18 @@ export default function RegisterPage() {
                 value={profileData.role}
                 onChange={handleProfileChange("role")}
                 disabled={isLoading}
+                aria-invalid={!!errors.role}
               >
                 <option value="">역할을 선택해주세요</option>
-                {ROLE_OPTIONS.map((role) => (
-                  <option key={role} value={role}>
-                    {role}
+                {REGISTERABLE_ROLE_OPTIONS.map((role) => (
+                  <option key={role.value} value={role.value}>
+                    {role.label}
                   </option>
                 ))}
               </select>
               <ChevronDown className="auth-select-chev" size={16} strokeWidth={2.5} aria-hidden="true" />
             </div>
+            {errors.role && <div className="auth-helper error" data-component="auth-register-role-error">{errors.role}</div>}
             <div className="auth-helper" data-component="auth-register-role-helper">선택한 지점의 관리자가 가입을 승인해야 합니다.</div>
           </div>
 
@@ -547,6 +632,7 @@ export default function RegisterPage() {
               type="submit"
               className="auth-btn"
               disabled={isLoading || isCheckingEmailDuplicate}
+              aria-label={isLoading ? "회원가입 처리 중" : "회원가입"}
               data-component="auth-register-submit"
             >
               {isLoading ? "처리 중…" : "회원가입"}

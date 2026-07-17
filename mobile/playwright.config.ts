@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const baseURL = process.env.BASE_URL
+  || (process.env.CI ? (() => { throw new Error('BASE_URL is required in CI'); })() : 'http://localhost:3002');
+
 // Quarantined from CI until rewritten/unblocked — see tests/QUARANTINE.md
 const CI_QUARANTINE = [
   '**/nav-indicator-diagnose.spec.ts', // local-only diagnostic: real login with dev credentials, dev server timing capture
@@ -30,7 +33,7 @@ export default defineConfig({
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
     /* Base URL to use in actions like `await page.goto('/')`. */
-    baseURL: process.env.BASE_URL || 'http://localhost:3000',
+    baseURL,
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',
     /* Use saved authentication state */
@@ -48,9 +51,9 @@ export default defineConfig({
 
   /* Run your local dev server before starting the tests */
   webServer: {
-    command: 'pnpm run dev',
-    url: process.env.BASE_URL || 'http://localhost:3000',
-    reuseExistingServer: true,
+    command: 'pnpm run dev -- --port 3002',
+    url: baseURL,
+    reuseExistingServer: false,
     timeout: 180 * 1000,
     env: {
       NEXT_PUBLIC_E2E_TEST: 'true',

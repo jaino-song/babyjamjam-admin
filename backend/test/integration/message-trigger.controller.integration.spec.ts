@@ -99,8 +99,8 @@ describe("MessageTriggerController (Integration)", () => {
         overrides: Partial<MessageLogRecordView> = {},
     ): MessageLogRecordView => ({
         id: overrides.id ?? 1,
-        provider: overrides.provider ?? "aligo_alimtalk",
-        templateKey: overrides.templateKey ?? MessageTriggerTemplateKey.CLIENT_WELCOME,
+        provider: overrides.provider ?? "aligo_sms",
+        templateKey: overrides.templateKey ?? MessageTriggerTemplateKey.SERVICE_INFO,
         triggerJobId: overrides.triggerJobId ?? "job-1",
         receiver: overrides.receiver ?? "010-1234-5678",
         clientId: overrides.clientId ?? 101,
@@ -130,14 +130,14 @@ describe("MessageTriggerController (Integration)", () => {
     const createMockTemplate = (
         overrides: Partial<MessageTriggerTemplateCatalogItem> = {},
     ): MessageTriggerTemplateCatalogItem => ({
-        key: overrides.key ?? MessageTriggerTemplateKey.CLIENT_WELCOME,
-        name: overrides.name ?? "고객 등록 안내",
-        description: overrides.description ?? "고객 등록 직후 발송",
-        allowedEventTypes: overrides.allowedEventTypes ?? [MessageTriggerEventType.CLIENT_CREATED],
+        key: overrides.key ?? MessageTriggerTemplateKey.SERVICE_INFO,
+        name: overrides.name ?? "서비스 안내",
+        description: overrides.description ?? "서비스 시작 전 안내",
+        allowedEventTypes: overrides.allowedEventTypes ?? [MessageTriggerEventType.SERVICE_START],
         allowedRecipientTypes: overrides.allowedRecipientTypes ?? [MessageTriggerRecipientType.CLIENT],
         requiredVariables: overrides.requiredVariables ?? [{ key: "clientName", label: "고객명" }],
         providers: overrides.providers ?? {
-            aligo_alimtalk: { templateKey: "CLIENT_CREATED" },
+            sms: { templateKey: "SERVICE_INFO" },
         },
     });
 
@@ -160,6 +160,12 @@ describe("MessageTriggerController (Integration)", () => {
                     userId: "user-1",
                     branchId,
                     role: "admin",
+                    branchRole: "admin",
+                };
+                requestContext.tenant = {
+                    userId: "user-1",
+                    branchId,
+                    globalRole: "admin",
                     branchRole: "admin",
                 };
                 return true;
@@ -405,22 +411,20 @@ describe("MessageTriggerController (Integration)", () => {
     });
 
     describe("GET /message-trigger-templates", () => {
-        it("passes provider and filters through to the service", async () => {
+        it("passes SMS catalog filters through to the service", async () => {
             triggerService.listTemplates.mockResolvedValue([createMockTemplate()]);
 
             const response = await request(app.getHttpServer())
                 .get("/message-trigger-templates")
                 .query({
-                    provider: "aligo_alimtalk",
-                    eventType: "CLIENT_CREATED",
+                    eventType: "SERVICE_START",
                     recipientType: "CLIENT",
                 });
 
             expect(response.status).toBe(200);
             expect(response.body).toHaveLength(1);
             expect(triggerService.listTemplates).toHaveBeenCalledWith({
-                provider: "aligo_alimtalk",
-                eventType: "CLIENT_CREATED",
+                eventType: "SERVICE_START",
                 recipientType: "CLIENT",
             });
         });

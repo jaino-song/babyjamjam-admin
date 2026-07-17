@@ -3,7 +3,7 @@ import { PrismaService } from "../database/prisma.service";
 import { JwtStrategy } from "./jwt.strategy";
 
 describe("JwtStrategy", () => {
-    const prisma = { user: { findUnique: jest.fn() } };
+    const prisma = { auth_session: { findUnique: jest.fn() } };
     let strategy: JwtStrategy;
 
     beforeEach(() => {
@@ -12,20 +12,38 @@ describe("JwtStrategy", () => {
     });
 
     it("rejects a payload without tokenVersion", async () => {
-        prisma.user.findUnique.mockResolvedValue({ tokenVersion: 0, approvalStatus: "approved", role: "user" });
-        await expect(strategy.validate({ sub: "user-1", role: "user", type: "access" })).rejects.toBeInstanceOf(UnauthorizedException);
+        prisma.auth_session.findUnique.mockResolvedValue({
+            userId: "user-1",
+            selectedBranchId: null,
+            expiresAt: new Date(Date.now() + 60_000),
+            revokedAt: null,
+            user: { tokenVersion: 0, approvalStatus: "approved", role: "user" },
+        });
+        await expect(strategy.validate({ sub: "user-1", sid: "session-1", role: "user", type: "access" })).rejects.toBeInstanceOf(UnauthorizedException);
     });
 
     it("rejects a payload with a stale tokenVersion", async () => {
-        prisma.user.findUnique.mockResolvedValue({ tokenVersion: 2, approvalStatus: "approved", role: "user" });
-        await expect(strategy.validate({ sub: "user-1", role: "user", type: "access", tokenVersion: 1 })).rejects.toBeInstanceOf(UnauthorizedException);
+        prisma.auth_session.findUnique.mockResolvedValue({
+            userId: "user-1",
+            selectedBranchId: null,
+            expiresAt: new Date(Date.now() + 60_000),
+            revokedAt: null,
+            user: { tokenVersion: 2, approvalStatus: "approved", role: "user" },
+        });
+        await expect(strategy.validate({ sub: "user-1", sid: "session-1", role: "user", type: "access", tokenVersion: 1 })).rejects.toBeInstanceOf(UnauthorizedException);
     });
 
     it("returns the fresh DB role, ignoring a stale role baked into the token", async () => {
         // Token still claims "manager" but the account was demoted to "user" in the DB — authz must
         // reflect the DB, so a PATCH /users demotion takes effect on the next request (H1).
-        prisma.user.findUnique.mockResolvedValue({ tokenVersion: 2, approvalStatus: "approved", role: "user" });
-        await expect(strategy.validate({ sub: "user-1", role: "manager", type: "access", tokenVersion: 2, branchId: "branch-1" }))
-            .resolves.toEqual({ userId: "user-1", role: "user", branchId: "branch-1", branchRole: undefined });
+        prisma.auth_session.findUnique.mockResolvedValue({
+            userId: "user-1",
+            selectedBranchId: "branch-1",
+            expiresAt: new Date(Date.now() + 60_000),
+            revokedAt: null,
+            user: { tokenVersion: 2, approvalStatus: "approved", role: "user" },
+        });
+        await expect(strategy.validate({ sub: "user-1", sid: "session-1", role: "manager", type: "access", tokenVersion: 2, branchId: "branch-1" }))
+            .resolves.toEqual({ userId: "user-1", sessionId: "session-1", role: "user", branchId: "branch-1", branchRole: undefined });
     });
 });

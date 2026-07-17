@@ -33,12 +33,40 @@ interface SmsTemplateDeliveryConfig {
 }
 
 export const SMS_TEMPLATE_DELIVERY: Partial<Record<MessageTriggerTemplateKey, SmsTemplateDeliveryConfig>> = {
+    [MessageTriggerTemplateKey.CLIENT_WELCOME]: {
+        smsLogTemplateKey: "client_welcome_sms",
+        automationKey: "CLIENT_WELCOME_SMS",
+        triggerType: "client_created",
+        title: "고객 등록 안내",
+        systemTemplateKey: SystemTemplateKey.CLIENT_WELCOME,
+    },
+    [MessageTriggerTemplateKey.SERVICE_START_REMINDER]: {
+        smsLogTemplateKey: "service_start_reminder_sms",
+        automationKey: "SERVICE_START_REMINDER_SMS",
+        triggerType: "service_start_reminder",
+        title: "서비스 시작 알림",
+        systemTemplateKey: SystemTemplateKey.SERVICE_START_REMINDER,
+    },
     [MessageTriggerTemplateKey.SERVICE_INFO]: {
         smsLogTemplateKey: "service_info_sms",
         automationKey: "SERVICE_INFO_SMS",
         triggerType: "service_start_before_7_days",
         title: "서비스 안내",
         systemTemplateKey: SystemTemplateKey.SERVICE_INFO,
+    },
+    [MessageTriggerTemplateKey.SERVICE_END_REMINDER]: {
+        smsLogTemplateKey: "service_end_reminder_sms",
+        automationKey: "SERVICE_END_REMINDER_SMS",
+        triggerType: "service_end_reminder",
+        title: "서비스 종료 알림",
+        systemTemplateKey: SystemTemplateKey.SERVICE_END_REMINDER,
+    },
+    [MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED]: {
+        smsLogTemplateKey: "employee_assigned_sms",
+        automationKey: "EMPLOYEE_ASSIGNED_SMS",
+        triggerType: "employee_assigned",
+        title: "직원 배정 알림",
+        systemTemplateKey: SystemTemplateKey.EMPLOYEE_ASSIGNED,
     },
     [MessageTriggerTemplateKey.CLIENT_GREETING]: {
         smsLogTemplateKey: "client_greeting_sms",

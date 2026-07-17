@@ -5,6 +5,11 @@ import { AxiosError } from "axios";
 
 import { serverAPIClient } from "@/lib/api/server";
 import { getServerRuntimeConfig } from "@/lib/env";
+import {
+  ACCESS_TOKEN_MAX_AGE_SECONDS,
+  decodeAccessRole,
+  getRefreshSessionMaxAgeSeconds,
+} from "@/lib/auth/session-policy";
 
 interface Branch {
   id: string;
@@ -75,6 +80,7 @@ export async function setCurrentBranch(branchId: string): Promise<{
     }, {
       headers: getAuthHeaders(token),
     });
+    const role = decodeAccessRole(data.accessToken);
 
     // Update auth token with new branch context
     const authCookieBaseOptions = {
@@ -93,12 +99,12 @@ export async function setCurrentBranch(branchId: string): Promise<{
     if (autoLogin) {
       cookieStore.set("auth_token", data.accessToken, {
         ...authCookieBaseOptions,
-        maxAge: data.role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
+        maxAge: ACCESS_TOKEN_MAX_AGE_SECONDS,
       });
       if (data.refreshToken) {
         cookieStore.set("refresh_token", data.refreshToken, {
           ...refreshCookieBaseOptions,
-          maxAge: 7 * 24 * 60 * 60,
+          maxAge: getRefreshSessionMaxAgeSeconds(role),
         });
       }
     } else {

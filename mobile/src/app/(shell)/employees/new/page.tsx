@@ -6,6 +6,7 @@ import { Check, ChevronLeft, X } from "lucide-react";
 
 import { formatWorkAreaLabel, GRADES, WORK_AREAS } from "@/components/app/employees/employee-form.constants";
 import { useCreateEmployee } from "@/hooks/useEmployees";
+import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { api } from "@/lib/api/client";
 import { getErrorMessage } from "@/lib/errors/api-error-mapper";
 import { t } from "@/lib/i18n/translations";
@@ -80,6 +81,7 @@ function buildReturnUrl(basePath: string, params: Record<string, string | null>)
 
 export default function NewEmployeePage() {
   const router = useRouter();
+  const { isNavigationPending, startNavigation } = useNavigationPending();
   const searchParams = useSearchParams();
   const locale = useLocale();
   const createEmployee = useCreateEmployee();
@@ -266,6 +268,7 @@ export default function NewEmployeePage() {
   const selectedSummary = [store.name.trim(), store.grade].filter(Boolean);
   const isNextButtonDisabled =
     createEmployee.isPending ||
+    isNavigationPending ||
     (
       activeStep === 0 &&
       (
@@ -307,6 +310,7 @@ export default function NewEmployeePage() {
 
       if (returnTo) {
         const safeTarget = target === "primary" || target === "secondary" ? target : null;
+        startNavigation();
         router.push(
           buildReturnUrl(returnTo, {
             employeeCreatedId: String(newEmployee.id),
@@ -316,6 +320,7 @@ export default function NewEmployeePage() {
         return;
       }
 
+      startNavigation();
       router.push(`/employees?id=${newEmployee.id}`);
     } catch (err: unknown) {
       setError(getErrorMessage(err, locale, "employees.form.error-create-failed"));
@@ -588,7 +593,7 @@ export default function NewEmployeePage() {
             onClick={handleNext}
             disabled={isNextButtonDisabled}
           >
-            {createEmployee.isPending ? "등록 중..." : isLastStep ? "✓ 등록" : "다음 →"}
+            {createEmployee.isPending || isNavigationPending ? "등록 중..." : isLastStep ? "✓ 등록" : "다음 →"}
           </button>
         </div>
       </div>

@@ -18,6 +18,7 @@ import {
     SyncClientEndDateUsecase,
     DispatchDocumentHeadlessUsecase,
     FinalizeDocumentHeadlessUsecase,
+    AdoptEformsignDocUsecase,
 } from "application/usecases/eformsign-doc";
 import { EFORMSIGN_DOC_REPOSITORY } from "domain/repositories/eformsign-doc.repository.interface";
 import { EFORMSIGN_CLIENT_REPOSITORY } from "domain/repositories/eformsign.client.interface";
@@ -63,6 +64,7 @@ import { ContractClientAssignmentGuardService } from "application/services/contr
         // Use cases - Headless dispatch (BJJ-90)
         DispatchDocumentHeadlessUsecase,
         FinalizeDocumentHeadlessUsecase,
+        AdoptEformsignDocUsecase,
         // Services
         EformsignDocService,
         EformsignService,

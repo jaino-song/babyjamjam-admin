@@ -60,15 +60,23 @@ export class UserService {
         return this.createUserUsecase.execute(params.kakaoId, params.name, params.email, params.profileImage);
     }
 
-    findById(id: string): Promise<UserEntity | null> {
-        return this.findUserByIdUsecase.execute(id);
+    findById(id: string, branchId?: string): Promise<UserEntity | null> {
+        return this.findUserByIdUsecase.execute(id, branchId);
     }
 
     findByKakaoId(kakaoId: string): Promise<UserEntity | null> {
         return this.findUserByKakaoIdUsecase.execute(kakaoId);
     }
 
-    update(id: string, params: { name?: string, email?: string, profileImage?: string, role?: string | null, callerRole?: string }): Promise<UserEntity> {
+    update(id: string, params: {
+        name?: string;
+        email?: string;
+        profileImage?: string;
+        role?: string | null;
+        branchRole?: string;
+        callerRole?: string;
+        branchId?: string;
+    }): Promise<UserEntity> {
         return this.updateUserUsecase.execute(id, params);
     }
 
@@ -165,8 +173,8 @@ export class UserService {
         });
     }
 
-    delete(id: string) {
-        return this.deleteUserUsecase.execute(id);
+    delete(id: string, branchId?: string) {
+        return this.deleteUserUsecase.execute(id, branchId);
     }
 
     approve(
@@ -202,29 +210,46 @@ export class UserService {
                     : { userId: id },
                 data: { role: params.role },
             });
+            await tx.auth_session.updateMany({
+                where: { userId: id, revokedAt: null },
+                data: {
+                    revokedAt: new Date(),
+                    revokedReason: "approval_changed",
+                },
+            });
 
             return user;
         });
     }
 
     reject(id: string): Promise<UserApprovalSummary> {
-        return this.prismaService.user.update({
-            where: { id },
-            data: {
-                approvalStatus: "rejected",
-                tokenVersion: { increment: 1 },
-            },
-            select: {
-                id: true,
-                name: true,
-                email: true,
-                role: true,
-                approvalStatus: true,
-                approvedAt: true,
-                approvedBy: true,
-                requestedRole: true,
-                tokenVersion: true,
-            },
+        return this.prismaService.$transaction(async (tx) => {
+            const user = await tx.user.update({
+                where: { id },
+                data: {
+                    approvalStatus: "rejected",
+                    tokenVersion: { increment: 1 },
+                },
+                select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    role: true,
+                    approvalStatus: true,
+                    approvedAt: true,
+                    approvedBy: true,
+                    requestedRole: true,
+                    tokenVersion: true,
+                },
+            });
+            await tx.auth_session.updateMany({
+                where: { userId: id, revokedAt: null },
+                data: {
+                    revokedAt: new Date(),
+                    revokedReason: "approval_rejected",
+                },
+            });
+            return user;
         });
     }
 }

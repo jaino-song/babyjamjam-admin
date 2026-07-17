@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import {
+    MESSAGE_TRIGGER_TEMPLATE_CATALOG,
     MessageTriggerEventType,
     MessageTriggerOffsetType,
     MessageTriggerRecipientType,
@@ -143,7 +144,7 @@ describe("MessageTriggerService", () => {
         findSentTriggerJobIds: jest.fn<Promise<Set<string>>, [string[]]>().mockResolvedValue(
             new Set<string>(),
         ),
-        findRecentByBranch: jest.fn(),
+        findRecentByBranch: jest.fn().mockResolvedValue([]),
     });
 
     const createMessageSenderApprovalService = () => ({
@@ -179,9 +180,16 @@ describe("MessageTriggerService", () => {
             cancelPendingByRuleId: jest.fn().mockResolvedValue(0),
             cancelPendingOlderThan: jest.fn().mockResolvedValue(0),
             findUpcomingPendingByBranch: jest.fn().mockResolvedValue([]),
+            findTerminalByBranch: jest.fn().mockResolvedValue([]),
         };
         const prisma = {
             client: {
+                findMany: jest.fn().mockResolvedValue([]),
+            },
+            message_log: {
+                findMany: jest.fn().mockResolvedValue([]),
+            },
+            message_trigger_job: {
                 findMany: jest.fn().mockResolvedValue([]),
             },
         };
@@ -210,6 +218,7 @@ describe("MessageTriggerService", () => {
         const jobRepository = {
             cancelOrphanedPending: jest.fn().mockResolvedValue(0),
             findDuePending: jest.fn().mockResolvedValue([]),
+            findById: jest.fn().mockResolvedValue(null),
             findStaleProcessing: jest.fn().mockResolvedValue([]),
             claimPending: jest.fn().mockResolvedValue(true),
             update: jest.fn().mockResolvedValue(undefined),
@@ -264,6 +273,81 @@ describe("MessageTriggerService", () => {
         expect(jobRepository.findUpcomingPendingByBranch).toHaveBeenCalledWith(branchId, 200);
     });
 
+    it("includes manual scheduled SMS logs in the upcoming list", async () => {
+        const { service, prisma } = createService();
+        prisma.message_log.findMany.mockResolvedValue([{
+            id: 91,
+            branchId,
+            provider: "aligo_sms",
+            templateKey: "안내",
+            receiver: "01012345678",
+            clientId: 7,
+            recipientName: "김고객",
+            recipientPhone: "01012345678",
+            messageBody: "예약 안내",
+            variables: {
+                triggerType: "scheduled",
+                scheduledDate: "20260720",
+                scheduledTime: "1530",
+                title: "예약 안내",
+            },
+            status: "pending",
+            createdAt: new Date("2026-07-16T00:00:00.000Z"),
+            updatedAt: new Date("2026-07-16T00:00:00.000Z"),
+        }]);
+
+        const result = await service.listUpcomingJobs(branchId);
+
+        expect(result).toHaveLength(1);
+        expect(result[0]).toMatchObject({
+            id: "log:91",
+            ruleName: "예약 안내",
+            status: "pending",
+            recipientPhone: "01012345678",
+        });
+        expect(result[0]?.scheduledFor.toISOString()).toBe("2026-07-20T06:30:00.000Z");
+    });
+
+    it("exposes canceled and failed jobs in history when no message log exists", async () => {
+        const { service, jobRepository, ruleRepository } = createService();
+        const canceledJob = createJob({
+            id: "job-canceled",
+            status: "canceled",
+            cancelReason: "메시지 발송 승인 필요",
+            canceledAt: new Date("2026-07-16T01:00:00.000Z"),
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+        });
+        const failedJob = createJob({
+            id: "job-failed",
+            status: "failed",
+            cancelReason: "provider timeout",
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+        });
+        jobRepository.findTerminalByBranch.mockResolvedValue([canceledJob, failedJob]);
+        ruleRepository.findAll.mockResolvedValue([
+            createRule({ id: "rule-1", name: "서비스 안내 자동 발송" }),
+        ]);
+
+        const result = await service.listHistory(branchId);
+
+        expect(result.map((record) => record.id)).toEqual([
+            "job:job-canceled",
+            "job:job-failed",
+        ]);
+        expect(result).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                triggerJobId: "job-canceled",
+                status: "canceled",
+                errorMessage: "메시지 발송 승인 필요",
+            }),
+            expect.objectContaining({
+                triggerJobId: "job-failed",
+                status: "failed",
+                errorMessage: "provider timeout",
+            }),
+        ]));
+    });
+
     it("rebuilds jobs for a newer client with the same phone as a canceled orphan", async () => {
         const { service, prisma, jobRepository } = createService();
         const orphanedJob = createJob({
@@ -281,17 +365,40 @@ describe("MessageTriggerService", () => {
                 id: 42,
                 phone: "01012345678",
                 createdAt: new Date("2026-07-12T01:00:00.000Z"),
+                suppressGreetingSms: false,
             },
         ]);
         jest.spyOn(service, "syncClientRulesForClient").mockResolvedValue(undefined);
 
         await service.listUpcomingJobs(branchId);
 
-        expect(service.syncClientRulesForClient).toHaveBeenCalledWith(branchId, 42, true);
+        expect(service.syncClientRulesForClient).toHaveBeenCalledWith(branchId, 42, true, false);
         expect(jobRepository.markOrphanedJobsReconciled).toHaveBeenCalledWith(
             ["orphaned-job"],
             42,
         );
+    });
+
+    it("reconciles a replacement client without creating greeting jobs when SMS greeting is suppressed", async () => {
+        const { service, prisma, jobRepository } = createService();
+        const orphanedJob = createJob({
+            id: "orphaned-suppressed-greeting",
+            clientId: null,
+            recipientPhone: "010-1234-5678",
+            createdAt: new Date("2026-07-01T00:00:00.000Z"),
+        });
+        jobRepository.findRecoverableOrphanedClientJobs.mockResolvedValue([orphanedJob]);
+        prisma.client.findMany.mockResolvedValue([{
+            id: 42,
+            phone: "01012345678",
+            createdAt: new Date("2026-07-12T01:00:00.000Z"),
+            suppressGreetingSms: true,
+        }]);
+        jest.spyOn(service, "syncClientRulesForClient").mockResolvedValue(undefined);
+
+        await service.listUpcomingJobs(branchId);
+
+        expect(service.syncClientRulesForClient).toHaveBeenCalledWith(branchId, 42, true, true);
     });
 
     it("does not reuse an orphan for a client that predates the old job", async () => {
@@ -482,6 +589,34 @@ describe("MessageTriggerService", () => {
         expect(jobRepository.cancelPendingByRuleId).not.toHaveBeenCalled();
     });
 
+    it("rejects a fake template without an SMS provider when creating a rule", async () => {
+        const { service, ruleRepository } = createService();
+        const fakeTemplateKey = "FAKE_SMS_DISABLED" as MessageTriggerTemplateKey;
+        const catalog = MESSAGE_TRIGGER_TEMPLATE_CATALOG as Record<string, unknown>;
+        catalog[fakeTemplateKey] = {
+            key: fakeTemplateKey,
+            name: "가짜 템플릿",
+            description: "SMS provider 가드 테스트",
+            allowedEventTypes: [MessageTriggerEventType.CLIENT_CREATED],
+            allowedRecipientTypes: [MessageTriggerRecipientType.CLIENT],
+            requiredVariables: [],
+            providers: {},
+        };
+
+        try {
+            await expect(service.createRule(branchId, {
+                name: "가짜 규칙",
+                eventType: MessageTriggerEventType.CLIENT_CREATED,
+                offsetType: MessageTriggerOffsetType.IMMEDIATE,
+                recipientType: MessageTriggerRecipientType.CLIENT,
+                templateKey: fakeTemplateKey,
+            })).rejects.toThrow("SMS 발송 채널이 없는 템플릿입니다.");
+            expect(ruleRepository.create).not.toHaveBeenCalled();
+        } finally {
+            delete catalog[fakeTemplateKey];
+        }
+    });
+
     it("updateRule batch-cancels pending jobs and marks stale without rebuilding in-request", async () => {
         const { service, internals, ruleRepository, jobRepository } = createService();
         const existingRule = createRule({
@@ -664,6 +799,22 @@ describe("MessageTriggerService", () => {
         expect(deliveryService.sendJob).toHaveBeenCalledWith(job);
         expect(job.status).toBe("sent");
         expect(jobRepository.update).toHaveBeenCalledWith(job);
+    });
+
+    it("dispatchPendingJobNow claims and sends only the requested job", async () => {
+        const { service, deliveryService, jobRepository, messageSenderApprovalService } =
+            createDispatchService();
+        const job = createJob({ id: "manual-job" });
+        jobRepository.findById.mockResolvedValue(job);
+        messageSenderApprovalService.getApprovedBranchIds.mockResolvedValue(new Set([branchId]));
+
+        const result = await service.dispatchPendingJobNow(job.id);
+
+        expect(jobRepository.findDuePending).not.toHaveBeenCalled();
+        expect(jobRepository.claimPending).toHaveBeenCalledWith(job.id);
+        expect(deliveryService.sendJob).toHaveBeenCalledWith(job);
+        expect(job.status).toBe("sent");
+        expect(result.status).toBe("sent");
     });
 
     it("cancels an existing pending job once its scheduled time is at least 24 hours old", async () => {
@@ -1527,7 +1678,7 @@ describe("MessageTriggerService", () => {
             },
         );
 
-        await reSync.service.syncClientRulesForClient(branchId, 1, false);
+            await reSync.service.syncClientRulesForClient(branchId, 1, false);
 
         expect(reSync.jobRepository.findPendingByRuleIdsAndClientId).toHaveBeenNthCalledWith(
             1,

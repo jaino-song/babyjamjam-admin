@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { Block } from "@/components/app/v3/Block";
 import { getCurrentUser } from "@/lib/auth/cookies";
 import { ROLES } from "@/lib/constants/roles";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import {
   getInquiriesSummary,
   getInquiriesDailyTrend,
@@ -60,12 +61,7 @@ export default async function InquiriesDetailPage() {
               ? "PostHog · 일별/시간대별/지점별/소스별 분석"
               : "PostHog · 일별/시간대별/소스별 분석"
           }
-          rightLabel={today.toLocaleDateString("ko-KR", { weekday: "long" })}
-          rightValue={today.toLocaleDateString("ko-KR", {
-            year: "numeric",
-            month: "2-digit",
-            day: "2-digit",
-          })}
+          rightValue={formatDateForDisplay(today)}
           backHref={isOwner ? "/stats" : undefined}
           backLabel={isOwner ? "통계 overview로" : undefined}
           dataComponent="stats-inquiries-hero"
@@ -148,14 +144,14 @@ export default async function InquiriesDetailPage() {
                         isToday ? "bg-v3-primary" : "bg-blue-300/70"
                       }`}
                       style={{ height: `${Math.max(pct, 2)}%` }}
-                      title={`${p.date.toLocaleDateString("ko-KR")}: ${p.count}건`}
+                      title={`${formatDateForDisplay(p.date)}: ${p.count}건`}
                     />
                   );
                 })}
               </div>
               <div className="mt-2 flex justify-between text-[0.65rem] text-v3-text-muted">
-                <span>{last30[0].date.toLocaleDateString("ko-KR", { month: "2-digit", day: "2-digit" })}</span>
-                <span>{last30[14].date.toLocaleDateString("ko-KR", { month: "2-digit", day: "2-digit" })}</span>
+                <span>{formatDateForDisplay(last30[0].date)}</span>
+                <span>{formatDateForDisplay(last30[14].date)}</span>
                 <span className="text-v3-primary font-semibold">오늘 ({summary.today})</span>
               </div>
             </>

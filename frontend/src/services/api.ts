@@ -1,9 +1,6 @@
 import axios from "axios";
-import type {
-    AlimtalkProvider,
-    AlimtalkProviderResponse,
-} from "@babyjamjam/shared/types/message";
 import { api } from "@/lib/api/client";
+import type { RegisterRequest } from "@babyjamjam/shared";
 import { ContractDataDto } from '@/backend/application/dto/contract.dto';
 import {
     EformsignApiListResponse,
@@ -86,15 +83,7 @@ export const authApi = {
     },
 
     // Email authentication
-    register: async (params: {
-        email: string;
-        password: string;
-        name?: string;
-        phone: string;
-        birthDate: string;
-        branchId: string;
-        role: string;
-    }): Promise<AuthResponse> => {
+    register: async (params: RegisterRequest): Promise<AuthResponse> => {
         const { data } = await api.post('/auth/register', params);
         return data;
     },
@@ -259,12 +248,18 @@ export const eformsignApi = {
         contractData: ContractDataDto,
         clientId: number,
         progressId?: string,
-    ): Promise<HeadlessDispatchResponse> => {
+        force?: boolean,
+    ): Promise<Omit<HeadlessDispatchResponse, "fallbackHint"> & { remoteDocumentId?: string; existingDocumentId?: string; fallbackHint?: "iframe" | "adopt" | "manual_check" | "adopt-or-manual" }> => {
         const { data } = await api.post('/eformsign-docs/dispatch-headless', {
             contractData,
             clientId,
             progressId,
+            force,
         });
+        return data;
+    },
+    adoptDocument: async (documentId: string, clientId?: number): Promise<{ id?: number; documentId: string }> => {
+        const { data } = await api.post('/eformsign-docs/adopt', { documentId, clientId });
         return data;
     },
     /**
@@ -304,8 +299,6 @@ export const eformsignApi = {
     },
 }
 
-export type { AlimtalkProvider, AlimtalkProviderResponse };
-
 export type MessageSenderApprovalStatus = "not_requested" | "pending" | "approved";
 
 export interface MessageSenderApprovalResponse {
@@ -335,6 +328,13 @@ export interface MessageAutomationPastTriggerConfig {
     sendIntervalMinutes: number;
     ruleOrder: string[];
 }
+
+export interface ClientRegistrationPolicy {
+    clientAutoRegistration: boolean;
+    greetingOnAutoRegistration: boolean;
+}
+
+export type ClientRegistrationPolicyPatch = Partial<ClientRegistrationPolicy>;
 
 export interface MessageAutomationPoliciesResponse {
     policies: MessageAutomationPolicy[];
@@ -424,12 +424,14 @@ export interface ConsultationInquiryListParams {
 }
 
 export const settingsApi = {
-    getAlimtalkProvider: async (): Promise<AlimtalkProviderResponse> => {
-        const { data } = await api.get('/settings/alimtalk-provider');
+    getClientRegistrationPolicy: async (): Promise<ClientRegistrationPolicy> => {
+        const { data } = await api.get("/settings/client-registration-policy");
         return data;
     },
-    updateAlimtalkProvider: async (provider: AlimtalkProvider): Promise<AlimtalkProviderResponse> => {
-        const { data } = await api.put('/settings/alimtalk-provider', { provider });
+    updateClientRegistrationPolicy: async (
+        patch: ClientRegistrationPolicyPatch,
+    ): Promise<ClientRegistrationPolicy> => {
+        const { data } = await api.put("/settings/client-registration-policy", patch);
         return data;
     },
     getMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {

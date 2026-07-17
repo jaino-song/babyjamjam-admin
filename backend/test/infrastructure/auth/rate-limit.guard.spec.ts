@@ -6,18 +6,20 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 
 type MockRequest = {
     body: { email?: string };
+    method?: string;
     socket?: { remoteAddress?: string };
     ip?: string;
     query?: { email?: string | string[] };
 };
 
 const createExecutionContext = (request: MockRequest): ExecutionContext => ({
+    getHandler: () => ({ login() {} }).login,
     switchToHttp: () => ({
-        getRequest: () => request as Request,
+        getRequest: () => ({ method: "POST", ...request }) as Request,
         getResponse: () => undefined,
         getNext: () => undefined,
     }),
-}) as ExecutionContext;
+}) as unknown as ExecutionContext;
 
 const row = (count: number, windowStart = new Date()): Array<{ count: number; window_start: Date }> => [
     { count, window_start: windowStart },
@@ -105,6 +107,23 @@ describe("RateLimitGuard", () => {
         expect(query.strings.join(" ")).toContain("DELETE FROM auth_rate_limit");
         expect(query.values[0]).toMatch(/^[a-f0-9]{64}$/);
         expect(query.values.join(" ")).not.toContain("user@example.com");
+    });
+
+    it("uses the same endpoint namespace when incrementing and resetting login", async () => {
+        await guard.canActivate(createExecutionContext({
+            ip: "198.51.100.10",
+            body: { email: "user@example.com" },
+        }));
+        const incrementedKey = prisma.$queryRaw.mock.calls[0][0].values[0];
+
+        await guard.resetForKey(
+            "198.51.100.10",
+            "user@example.com",
+            "post:login",
+        );
+        const resetKey = prisma.$executeRaw.mock.calls[0][0].values[0];
+
+        expect(resetKey).toBe(incrementedKey);
     });
 
     it("should probabilistically clean up expired windows inline", async () => {
