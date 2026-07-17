@@ -10,6 +10,7 @@ import { useClientServiceRecords, useSendServiceRecordLink } from "@/hooks/useSe
 import { toast } from "@/hooks/use-toast";
 import { api } from "@/lib/api/client";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
+import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
 import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
 import type {
     PrepareServiceRecordLinkResponse,
@@ -225,6 +226,7 @@ function firstValue(...values: Array<string | number | null | undefined>): strin
 
 function formatDate(dateStr: string | null | undefined): string {
   if (!dateStr) return "-";
+  if (/^\d{6}$/.test(dateStr)) return formatBirthdayYYMMDD(dateStr);
   const normalized = compactDateToIsoDate(dateStr) ?? yymmddToIsoDate(dateStr) ?? dateStr;
   const formatted = formatIsoDateParts(normalized);
   if (formatted) return formatted;

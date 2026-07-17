@@ -5,18 +5,18 @@
  * 
  * These are 3-digit action codes from current_status.status_type
  */
+import {
+  COMPLETED_STATUS_CODES,
+  EXPIRED_STATUS_CODES,
+} from "@babyjamjam/shared/constants/eformsign-status-codes";
+
+export {
+  COMPLETED_STATUS_CODES,
+  EXPIRED_STATUS_CODES,
+} from "@babyjamjam/shared/constants/eformsign-status-codes";
 
 // 완료 (Completed) codes
-export const COMPLETED_CODES = [
-  "003", // doc_complete: 문서 완료
-  "012", // doc_accept_approval: 문서 결재 승인
-  "022", // doc_accept_reception: 문서 내부자 승인
-  "032", // doc_accept_outsider: 문서 외부자 승인
-  "050", // PDF 전송
-  "062", // doc_accept_participant: 참여자 승인
-  "072", // doc_accept_reviewer: 검토자 승인
-  "092", // 대면서명 완료
-] as const;
+export const COMPLETED_CODES = COMPLETED_STATUS_CODES;
 
 // 삭제됨 (Deleted) codes. Mobile keeps these hidden from the contracts UI.
 export const DELETED_CODES = [
@@ -25,17 +25,7 @@ export const DELETED_CODES = [
 ] as const;
 
 // 기간 만료/반려/취소 bucket codes
-export const EXPIRED_CODES = [
-  "011", // doc_reject_approval: 문서 결재 반려
-  "021", // doc_reject_reception: 문서 내부자 반려
-  "031", // doc_reject_outsider: 문서 외부자 반려
-  "040", // doc_request_revoke: 문서 취소 요청
-  "042", // doc_revoke: 문서 취소
-  "045", // doc_request_reject: 문서 반려 요청
-  "061", // doc_reject_participant: 참여자 반려
-  "071", // doc_reject_reviewer: 검토자 반려
-  "080", // doc_expired: 문서 만료
-] as const;
+export const EXPIRED_CODES = EXPIRED_STATUS_CODES;
 
 // 대기/진행 중 (In-progress) codes - for reference
 export const IN_PROGRESS_CODES = [
