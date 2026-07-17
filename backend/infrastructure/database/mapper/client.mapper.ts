@@ -12,7 +12,7 @@ type ClientRow = {
     actual_price: string | null;
     start_date: Date | null;
     end_date: Date | null;
-    care_center: boolean;
+    care_center: boolean | null;
     voucher_client: boolean;
     birthday: string | null;
     contract_status: string | null;
@@ -34,7 +34,7 @@ export class ClientMapper {
             row.actual_price,
             row.start_date,
             row.end_date,
-            row.care_center,
+            row.care_center ?? false,
             row.voucher_client,
             row.birthday,
             row.contract_status,

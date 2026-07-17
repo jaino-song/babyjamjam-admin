@@ -104,7 +104,7 @@ model client {
   actual_price       String?
   start_date         DateTime?           @db.Date
   end_date           DateTime?           @db.Date
-  care_center        Boolean
+  care_center        Boolean?
   voucher_client     Boolean
   birthday           String?             @db.VarChar(6)
   breast_pump        Boolean             @default(false)
