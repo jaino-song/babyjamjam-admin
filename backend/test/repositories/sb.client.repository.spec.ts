@@ -511,6 +511,7 @@ describe("SbClientRepository", () => {
                         birthday: "880520",
                         serviceStatus: "in_progress",
                         breastPump: true,
+                        suppressGreetingSms: false,
                         eDocId: null,
                         dueDate: null,
                         areaId: null,

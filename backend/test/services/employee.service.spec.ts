@@ -11,6 +11,7 @@ import {
     ListEmployeesByRegisteredDateRangeUsecase,
     ListEmployeesByRegisteredDateUsecase,
     ListEmployeesByWorkAreaUsecase,
+    ListActiveClientsByEmployeeUsecase,
     ListEmployeesOpenToNextWorkUsecase,
     ListEmployeesUsecase,
     UpdateEmployeeUsecase,
@@ -72,6 +73,7 @@ describe("EmployeeService", () => {
                 { provide: ListEmployeesByRegisteredDateRangeUsecase, useValue: mockListByRegisteredDateRangeUsecase },
                 { provide: ChangeEmployeeOpenStatusUsecase, useValue: mockChangeOpenStatusUsecase },
                 { provide: ListEmployeesOpenToNextWorkUsecase, useValue: mockListOpenToNextWorkUsecase },
+                { provide: ListActiveClientsByEmployeeUsecase, useValue: { execute: jest.fn() } },
                 { provide: EMPLOYEE_REPOSITORY, useValue: mockEmployeeRepository },
             ],
         }).compile();
