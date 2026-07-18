@@ -12,9 +12,9 @@ describe("EMPLOYEE_STATUS_LABELS", () => {
 
     it("has all three employee status labels", () => {
         expect(EMPLOYEE_STATUS_LABELS).toEqual({
-            available: "근무 가능",
+            available: "배정 가능",
             working: "근무 중",
-            unavailable: "근무 불가",
+            unavailable: "배정 불가",
         });
     });
 });

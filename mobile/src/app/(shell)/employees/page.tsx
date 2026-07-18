@@ -49,6 +49,7 @@ import {
   getOpenToNextWorkLabel,
 } from "@babyjamjam/shared/constants/employee-status";
 import { Skeleton } from "@/components/ui/skeleton";
+import { getApiErrorMessage } from "@babyjamjam/shared";
 
 const ALL_FILTER = "전체";
 
@@ -224,7 +225,7 @@ function EmployeeDetailContent({
           <InfoRow label="이름" value={employee.name} />
           <InfoRow label="연락처" value={formatPhoneNumber(employee.phone)} />
           <InfoRow
-            label="근무 가능 여부"
+            label="다음 배정 가능 여부"
             value={availability}
             tone={availabilityTone}
           />
@@ -344,10 +345,14 @@ export default function EmployeesPage() {
         title: t(locale, "employees.delete-success"),
         description: t(locale, "employees.delete-success-description"),
       });
-    } catch {
+    } catch (error) {
+      setDeleteTarget(null);
       toast({
         title: t(locale, "employees.delete-fail"),
-        description: t(locale, "employees.delete-fail-description"),
+        description: getApiErrorMessage(
+          error,
+          t(locale, "employees.delete-fail-description"),
+        ),
         variant: "destructive",
       });
     }

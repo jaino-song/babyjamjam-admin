@@ -27,6 +27,7 @@ import { runEformsignFinalizeGates } from "../../infrastructure/automation/eform
 
 describe("EformsignHeadlessService", () => {
     let service: EformsignHeadlessService;
+    const configGetMock = jest.fn();
     let pageMock: ReturnType<typeof buildPageMock>;
     let contextMock: ReturnType<typeof buildContextMock>;
     let browserMock: ReturnType<typeof buildBrowserMock>;
@@ -73,12 +74,35 @@ describe("EformsignHeadlessService", () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        configGetMock.mockReturnValue(undefined);
         delete process.env["EFORMSIGN_BROWSER_HEADLESS"];
         pageMock = buildPageMock();
         contextMock = buildContextMock();
         browserMock = buildBrowserMock();
         launchMock.mockResolvedValue(browserMock);
-        service = new EformsignHeadlessService();
+        service = new EformsignHeadlessService({ get: configGetMock } as never);
+    });
+
+    it("dispatchCreation short-circuits vendor stubs without launching Chromium", async () => {
+        configGetMock.mockImplementation((key: string) => key === "E2E_VENDOR_STUBS" ? "1" : undefined);
+        const onProgress = jest.fn();
+
+        const result = await service.dispatchCreation({
+            documentOption: { mode: { type: "01" } },
+            onProgress,
+        });
+
+        expect(result).toEqual(expect.objectContaining({
+            ok: true,
+            documentId: expect.stringMatching(/^doc-stub-headless-/),
+        }));
+        expect(onProgress.mock.calls.map(([step]) => step)).toEqual([
+            "client-started",
+            "info-inserted",
+            "creating",
+            "sent",
+        ]);
+        expect(launchMock).not.toHaveBeenCalled();
     });
 
     it("dispatchCreation runs the creation gates and returns the SDK document_id", async () => {

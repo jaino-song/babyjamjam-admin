@@ -20,6 +20,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import { EMPLOYEE_STATUS_LABELS } from "@babyjamjam/shared/constants/employee-status";
+import { getApiErrorMessage } from "@babyjamjam/shared";
 
 const formatPhoneNumber = (phone: string | null | undefined): string => {
     if (!phone) return "-";
@@ -107,7 +108,10 @@ export function EmployeesTable() {
         } catch (err) {
             console.error("Failed to delete employee:", err);
             setDeleteTargetEmployeeId(null);
-            setDeleteErrorMessage(t(locale, "employees.delete-confirm.error"));
+            setDeleteErrorMessage(getApiErrorMessage(
+                err,
+                t(locale, "employees.delete-confirm.error"),
+            ));
         }
     };
 

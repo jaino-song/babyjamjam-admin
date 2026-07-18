@@ -718,7 +718,7 @@ function EmployeeFormContent({
                     </FormField>
                 </FormGrid>
 
-                <FormField data-component="employees-form-dialog-field-open-status" label="근무 가능 여부">
+                <FormField data-component="employees-form-dialog-field-open-status" label="다음 배정 가능 여부">
                     <FormSwitchRow
                         data-component="employees-form-dialog-field-open-status-control"
                         title="다음 근무 배정 가능"

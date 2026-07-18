@@ -7,6 +7,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import dayjs from "dayjs";
 import { isAxiosError } from "axios";
 import { useQueryClient } from "@tanstack/react-query";
+import { getApiErrorMessage } from "@babyjamjam/shared";
 
 import { useFormStore } from "@/stores/form-store";
 import { useEformsign } from "@/hooks/useEformsign";
@@ -723,9 +724,9 @@ export default function ContractCreationPage() {
         try {
           newClient = await createClientMutation.mutateAsync(autoRegistrationPayload);
         } catch (error) {
-          if (!isAxiosError<{ message?: string; clientId?: number }>(error) || error.response?.status !== 409) throw error;
+          if (!isAxiosError<{ message?: string; error?: string; clientId?: number }>(error) || error.response?.status !== 409) throw error;
           const conflict = error.response.data;
-          if (!conflict.clientId) throw new Error(conflict.message || "고객 자동 등록에 실패했습니다.");
+          if (!conflict.clientId) throw new Error(getApiErrorMessage(error, "고객 자동 등록에 실패했습니다."));
           const shouldReuse = await requestConfirmation("이미 같은 전화번호의 고객이 있습니다. 기존 고객으로 계약을 진행할까요?");
           if (!shouldReuse) return;
           reusedExistingClient = true;

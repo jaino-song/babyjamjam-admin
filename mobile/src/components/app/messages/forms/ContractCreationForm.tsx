@@ -4,6 +4,7 @@ import { isAxiosError } from "axios";
 import "dayjs/locale/ko";
 import { useRouter } from "next/navigation";
 import { Check, X } from "lucide-react";
+import { getApiErrorMessage } from "@babyjamjam/shared";
 import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -438,9 +439,9 @@ export const ContractCreationForm = () => {
         try {
           newClient = await createClientMutation.mutateAsync(autoRegistrationPayload);
         } catch (error) {
-          if (!isAxiosError<{ message?: string; clientId?: number }>(error) || error.response?.status !== 409) throw error;
+          if (!isAxiosError<{ message?: string; error?: string; clientId?: number }>(error) || error.response?.status !== 409) throw error;
           const conflict = error.response.data;
-          if (!conflict.clientId) throw new Error(conflict.message || "고객 자동 등록에 실패했습니다.");
+          if (!conflict.clientId) throw new Error(getApiErrorMessage(error, "고객 자동 등록에 실패했습니다."));
           const shouldReuse = await requestPhoneConflictApproval();
           if (!shouldReuse) return;
           newClient = await createClientMutation.mutateAsync({ ...autoRegistrationPayload, reuseExistingClient: true });

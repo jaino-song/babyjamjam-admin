@@ -5,6 +5,7 @@ import {
     EMPLOYEE_STATUS_LABELS,
     OPEN_TO_NEXT_WORK_LABELS,
 } from "@babyjamjam/shared/constants/employee-status";
+import { getApiErrorMessage } from "@babyjamjam/shared";
 import { cn } from "@/lib/utils";
 import {
     Users,
@@ -29,6 +30,7 @@ import {
     EmployeeFormPanel,
 } from "@/components/app/employees/EmployeeFormDialog";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import {
     StatsBar,
     SplitLayout,
@@ -108,6 +110,7 @@ export default function EmployeesPage() {
     const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
     const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
     const [deleteTargetEmployeeId, setDeleteTargetEmployeeId] = useState<number | null>(null);
+    const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
 
     const {
         employees,
@@ -163,6 +166,11 @@ export default function EmployeesPage() {
             setDeleteTargetEmployeeId(null);
         } catch (err) {
             console.error("Failed to delete employee:", err);
+            setDeleteTargetEmployeeId(null);
+            setDeleteErrorMessage(getApiErrorMessage(
+                err,
+                "제공인력 삭제에 실패했습니다. 다시 시도해 주세요.",
+            ));
         }
     };
 
@@ -335,6 +343,17 @@ export default function EmployeesPage() {
                 approvalVariant="destructive"
                 isPending={deleteEmployee.isPending}
                 onApprove={() => void handleDeleteConfirm()}
+            />
+            <NotificationOneButtonModal
+                open={deleteErrorMessage !== null}
+                onOpenChange={(open) => {
+                    if (!open) setDeleteErrorMessage(null);
+                }}
+                dataComponent="employees-delete-error-notification"
+                title="직원을 삭제하지 못했습니다."
+                description={deleteErrorMessage ?? ""}
+                isDescriptionVisuallyHidden={false}
+                onAcknowledge={() => setDeleteErrorMessage(null)}
             />
         </PageSection>
     );
