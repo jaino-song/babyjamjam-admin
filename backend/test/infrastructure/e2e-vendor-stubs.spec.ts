@@ -162,18 +162,29 @@ describe("assertVendorStubsConfigured (boot-time guard)", () => {
         expect(() => assertVendorStubsConfigured(configService)).not.toThrow();
     });
 
-    it("throws when CI=true (the real e2e boot job runs NODE_ENV=development, not test) and the flag is unset", () => {
-        const configService = createBootEnvConfigService({ NODE_ENV: "development", CI: "true" });
+    it("throws in GitHub Actions when the e2e flag is unset", () => {
+        const configService = createBootEnvConfigService({
+            NODE_ENV: "development",
+            CI: "true",
+            GITHUB_ACTIONS: "true",
+        });
 
         expect(() => assertVendorStubsConfigured(configService)).toThrow(/E2E_VENDOR_STUBS=1/);
     });
 
-    it("passes when CI=true and E2E_VENDOR_STUBS=1 (the actual mobile-ci e2e job configuration)", () => {
+    it("passes in GitHub Actions when E2E_VENDOR_STUBS=1", () => {
         const configService = createBootEnvConfigService({
             NODE_ENV: "development",
             CI: "true",
+            GITHUB_ACTIONS: "true",
             E2E_VENDOR_STUBS: "1",
         });
+
+        expect(() => assertVendorStubsConfigured(configService)).not.toThrow();
+    });
+
+    it("passes in a Railway preview runtime even when the platform exposes CI=true", () => {
+        const configService = createBootEnvConfigService({ NODE_ENV: "preview", CI: "true" });
 
         expect(() => assertVendorStubsConfigured(configService)).not.toThrow();
     });
