@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { render, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 
 import { useCallbackPageController } from "../use-callback-page-controller";
 
@@ -26,8 +26,8 @@ jest.mock("@/app/(auth)/callback/actions", () => ({
 // effect under React 19 — only `render()` inside a <StrictMode> element does,
 // which is the condition this regression depends on.
 function CallbackProbe() {
-  useCallbackPageController();
-  return null;
+  const { error } = useCallbackPageController();
+  return <>{error}</>;
 }
 
 beforeEach(() => {
@@ -55,5 +55,15 @@ describe("useCallbackPageController", () => {
       expect(mockReplace).toHaveBeenCalledWith("/dashboard");
     });
     expect(exchangeTokenMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not expose arbitrary callback error text", async () => {
+    searchParamValues = { error: "provider stack trace", code: null };
+
+    render(<CallbackProbe />);
+
+    expect(await screen.findByText("로그인 중 오류가 발생했습니다.")).toBeInTheDocument();
+    expect(screen.queryByText("provider stack trace")).not.toBeInTheDocument();
+    expect(exchangeTokenMock).not.toHaveBeenCalled();
   });
 });

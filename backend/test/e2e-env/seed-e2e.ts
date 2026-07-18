@@ -405,6 +405,19 @@ async function main(): Promise<void> {
         await upsertSystemTemplateVersion(persistedTemplate.id, template.content);
     }
 
+    // Explicit-id inserts above leave the serial/identity sequences behind the
+    // seeded MAX(id); resync so app-level creates (sequence defaults) don't
+    // collide with seeded rows.
+    await prisma.$executeRawUnsafe(
+        `SELECT setval(pg_get_serial_sequence('client', 'id'), COALESCE((SELECT MAX(id) FROM client), 0) + 1, false)`,
+    );
+    await prisma.$executeRawUnsafe(
+        `SELECT setval(pg_get_serial_sequence('employee', 'id'), COALESCE((SELECT MAX(id) FROM employee), 0) + 1, false)`,
+    );
+    await prisma.$executeRawUnsafe(
+        `SELECT setval(pg_get_serial_sequence('employee_schedule', 'id'), COALESCE((SELECT MAX(id) FROM employee_schedule), 0) + 1, false)`,
+    );
+
     console.log(
         `Seeded e2e fixtures for branch ${BRANCH_ID} with ${eformsignDocs.length} documents and ${systemTemplates.length} system templates.`,
     );

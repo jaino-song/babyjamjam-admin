@@ -92,9 +92,9 @@ jobs:
       # Webhook guard inputs for the critical-flows spec — e2e-only literals,
       # not real secrets (the CI backend never talks to real eformsign).
       EFORMSIGN_COMPANY_ID: e2e-stub-company
-      EFORMSIGN_WEBHOOK_SECRET: e2e-webhook-secret
+      EFORMSIGN_WEBHOOK_SECRET: e2e-dummy-webhook-${{ github.run_id }}
       JWT_SECRET: ${{ secrets.JWT_SECRET }}
-      AUTH_EMAIL_TOKEN_HMAC_SECRET: mobile-e2e-email-token-secret
+      AUTH_EMAIL_TOKEN_HMAC_SECRET: e2e-dummy-email-hmac-${{ github.run_id }}
       EMAIL_TRANSPORT: smtp
       SMTP_HOST: localhost
       SMTP_PORT: 1025

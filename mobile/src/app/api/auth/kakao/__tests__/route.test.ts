@@ -12,6 +12,6 @@ describe("GET /api/auth/kakao", () => {
         const response = await GET();
 
         expect(response.status).toBe(307);
-        expect(response.headers.get("location")).toBe("https://api.example.com/auth/kakao");
+        expect(response.headers.get("location")).toBe("https://api.example.com/auth/kakao?client=mobile");
     });
 });

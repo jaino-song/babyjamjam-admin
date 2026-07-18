@@ -1,13 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
-import { request, type FullConfig } from "@playwright/test";
+import { chromium, type FullConfig } from "@playwright/test";
 
 export default async function globalSetup(config: FullConfig) {
   const baseURL = process.env.BASE_URL
     ?? config.projects[0]?.use.baseURL
     ?? "http://localhost:3000";
-  const context = await request.newContext({ baseURL });
-  const response = await context.post("/api/auth/login", {
+  const browser = await chromium.launch();
+  const context = await browser.newContext({ baseURL });
+  const response = await context.request.post("/api/auth/login", {
     data: {
       email: process.env.E2E_AUTH_EMAIL ?? "admin-a@auth-e2e.test",
       password: process.env.E2E_AUTH_PASSWORD ?? "Password1!",
@@ -32,7 +33,7 @@ export default async function globalSetup(config: FullConfig) {
   await context.storageState({
     path: path.resolve(process.cwd(), "auth.json"),
   });
-  await context.dispose();
+  await browser.close();
 
   if (!fs.existsSync(path.resolve(process.cwd(), "auth.json"))) {
     throw new Error("Playwright auth storage state was not created");

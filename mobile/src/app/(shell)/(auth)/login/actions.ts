@@ -21,6 +21,7 @@ interface APIErrorResponse {
     statusCode: number;
     message: string;
     error: string;
+    code?: string;
 }
 
 interface LoginResult {
@@ -28,6 +29,23 @@ interface LoginResult {
     error?: string;
     requiresBranchSelection?: boolean;
     emailVerificationRequired?: boolean;
+    onboardingRequired?: boolean;
+    onboardingRoute?: "/onboarding";
+    authErrorCode?: string;
+}
+
+interface LoginOnboardingResponse {
+    success: true;
+    onboardingRequired: true;
+    onboardingRoute: "/onboarding";
+    pendingAccountOnboardingToken: string;
+}
+
+function isLoginOnboardingResponse(data: unknown): data is LoginOnboardingResponse {
+    return typeof data === "object"
+        && data !== null
+        && "onboardingRequired" in data
+        && data.onboardingRequired === true;
 }
 
 function resolveAutoLoginCookieValue(autoLogin: boolean): "1" | "0" {
@@ -49,6 +67,7 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
             return {
                 success: false,
                 error: data.message || "이메일 또는 비밀번호가 올바르지 않습니다.",
+                authErrorCode: typeof data.code === "string" ? data.code : undefined,
                 emailVerificationRequired: data.message?.includes("이메일 인증")
             };
         }
@@ -56,6 +75,26 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
         // Store tokens in httpOnly cookies
         const cookieStore = await cookies();
         const isSecureCookie = getServerRuntimeConfig().isSecureCookieEnv;
+
+        if (isLoginOnboardingResponse(data)) {
+            cookieStore.set("pending_account_onboarding", data.pendingAccountOnboardingToken, {
+                httpOnly: true,
+                secure: isSecureCookie,
+                sameSite: "lax",
+                path: "/",
+                maxAge: 30 * 60,
+            });
+            cookieStore.delete("pending_kakao_signup");
+            cookieStore.delete("auth_token");
+            cookieStore.delete("refresh_token");
+            cookieStore.delete("auto_login");
+
+            return {
+                success: true,
+                onboardingRequired: true,
+                onboardingRoute: data.onboardingRoute,
+            };
+        }
 
         let role = "user";
         try {
@@ -130,7 +169,8 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
 
             return {
                 success: false,
-                error: axiosError.response?.data?.message || "로그인에 실패했습니다."
+                error: axiosError.response?.data?.message || "로그인에 실패했습니다.",
+                authErrorCode: axiosError.response?.data?.code,
             };
         }
 

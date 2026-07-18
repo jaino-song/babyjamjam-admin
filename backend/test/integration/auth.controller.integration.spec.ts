@@ -1,13 +1,16 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { ExecutionContext, INestApplication, ValidationPipe, UnauthorizedException } from "@nestjs/common";
+import { ExecutionContext, ForbiddenException, INestApplication, ValidationPipe, UnauthorizedException } from "@nestjs/common";
 import request from "supertest";
 import { AuthController } from "interface/controllers/auth.controller";
 import { AuthService } from "application/services/auth.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { AuthGuard } from "@nestjs/passport";
 import { RateLimitGuard } from "infrastructure/auth/rate-limit.guard";
 import { GUARDS_METADATA } from "@nestjs/common/constants";
+import {
+    KakaoAuthGuard,
+    KAKAO_OAUTH_ERROR_REQUEST_KEY,
+} from "infrastructure/auth/kakao-auth.guard";
 
 describe("AuthController (Integration)", () => {
     // ============================================
@@ -76,6 +79,12 @@ describe("AuthController (Integration)", () => {
     const mockKakaoGuard = {
         canActivate: jest.fn((context) => {
             const req = context.switchToHttp().getRequest();
+            if (typeof req.query?.error === "string") {
+                req[KAKAO_OAUTH_ERROR_REQUEST_KEY] = req.query.error === "access_denied"
+                    ? "OAUTH_CANCELLED"
+                    : "OAUTH_PROVIDER_ERROR";
+                return true;
+            }
             req.user = mockKakaoUser;
             return true;
         }),
@@ -95,6 +104,7 @@ describe("AuthController (Integration)", () => {
             completeKakaoOnboarding: jest.fn(),
             getPendingAccountOnboarding: jest.fn(),
             completeAccountOnboarding: jest.fn(),
+            linkKakaoToAccount: jest.fn(),
             // Kakao OAuth state binding (login-CSRF protection). The callback
             // rejects with invalid_oauth_state unless verifyKakaoLoginState
             // resolves truthy; /auth/kakao mints the signed state + nonce.
@@ -130,11 +140,12 @@ describe("AuthController (Integration)", () => {
                     provide: RateLimitGuard,
                     useValue: mockRateLimitGuard,
                 },
+                KakaoAuthGuard,
             ],
         })
             .overrideGuard(JwtGuard)
             .useValue(mockJwtGuard)
-            .overrideGuard(AuthGuard("kakao"))
+            .overrideGuard(KakaoAuthGuard)
             .useValue(mockKakaoGuard)
             .overrideGuard(RateLimitGuard)
             .useValue(mockRateLimitGuard)
@@ -315,6 +326,46 @@ describe("AuthController (Integration)", () => {
         });
 
         describe("given authService throws error", () => {
+            it("redirects pending accounts to the login approval modal", async () => {
+                authService.validateKakaoUser.mockRejectedValue(
+                    new ForbiddenException({
+                        code: "PENDING_APPROVAL",
+                        message: "관리자 승인 대기 중입니다.",
+                    }),
+                );
+                process.env['NODE_ENV'] = "development";
+                process.env['DEVELOPMENT_FRONTEND_URL'] = "http://localhost:3000";
+
+                const response = await request(app.getHttpServer())
+                    .get("/auth/kakao/callback?state=valid-login-state");
+
+                expect(response.status).toBe(302);
+                expect(response.headers['location']).toBe(
+                    "http://localhost:3000/login?authError=PENDING_APPROVAL",
+                );
+                expect(authService.createAuthCode).not.toHaveBeenCalled();
+            });
+
+            it("redirects rejected accounts to the login rejection modal", async () => {
+                authService.validateKakaoUser.mockRejectedValue(
+                    new ForbiddenException({
+                        code: "ACCOUNT_REJECTED",
+                        message: "가입이 거부되었습니다.",
+                    }),
+                );
+                process.env['NODE_ENV'] = "development";
+                process.env['DEVELOPMENT_FRONTEND_URL'] = "http://localhost:3000";
+
+                const response = await request(app.getHttpServer())
+                    .get("/auth/kakao/callback?state=valid-login-state");
+
+                expect(response.status).toBe(302);
+                expect(response.headers['location']).toBe(
+                    "http://localhost:3000/login?authError=ACCOUNT_REJECTED",
+                );
+                expect(authService.createAuthCode).not.toHaveBeenCalled();
+            });
+
             it("should propagate the error", async () => {
                 // Arrange
                 authService.validateKakaoUser.mockRejectedValue(
@@ -339,7 +390,7 @@ describe("AuthController (Integration)", () => {
                     .get("/auth/kakao/callback");
 
                 expect(response.status).toBe(302);
-                expect(response.headers['location']).toBe("http://localhost:3000/login?error=invalid_oauth_state");
+                expect(response.headers['location']).toBe("http://localhost:3000/login?authError=INVALID_OAUTH_STATE");
                 expect(authService.validateKakaoUser).not.toHaveBeenCalled();
             });
 
@@ -352,13 +403,94 @@ describe("AuthController (Integration)", () => {
                     .get("/auth/kakao/callback?state=forged-or-expired");
 
                 expect(response.status).toBe(302);
-                expect(response.headers['location']).toBe("http://localhost:3000/login?error=invalid_oauth_state");
+                expect(response.headers['location']).toBe("http://localhost:3000/login?authError=INVALID_OAUTH_STATE");
                 expect(authService.validateKakaoUser).not.toHaveBeenCalled();
+            });
+        });
+
+        describe("given Kakao returns an OAuth error", () => {
+            beforeEach(() => {
+                process.env['NODE_ENV'] = "development";
+                process.env['DEVELOPMENT_FRONTEND_URL'] = "http://localhost:3000";
+            });
+
+            it("redirects user cancellation to the login modal after state verification", async () => {
+                const response = await request(app.getHttpServer())
+                    .get("/auth/kakao/callback?state=valid-login-state&error=access_denied");
+
+                expect(response.status).toBe(302);
+                expect(response.headers['location']).toBe(
+                    "http://localhost:3000/login?authError=OAUTH_CANCELLED",
+                );
+                expect(authService.validateKakaoUser).not.toHaveBeenCalled();
+            });
+
+            it("redirects provider failures to a safe login error", async () => {
+                const response = await request(app.getHttpServer())
+                    .get("/auth/kakao/callback?state=valid-login-state&error=server_error");
+
+                expect(response.status).toBe(302);
+                expect(response.headers['location']).toBe(
+                    "http://localhost:3000/login?authError=OAUTH_PROVIDER_ERROR",
+                );
+                expect(authService.validateKakaoUser).not.toHaveBeenCalled();
+            });
+        });
+
+        describe("given the callback is for account linking", () => {
+            beforeEach(() => {
+                process.env['NODE_ENV'] = "development";
+                process.env['DEVELOPMENT_FRONTEND_URL'] = "http://localhost:3000";
+                authService.verifyLinkingState.mockResolvedValue({
+                    userId: mockUser.id,
+                    sessionId: "session-id",
+                    purpose: "kakao_link",
+                });
+            });
+
+            it("redirects successful links to the existing settings route", async () => {
+                const response = await request(app.getHttpServer())
+                    .get("/auth/kakao/callback?state=valid-linking-state");
+
+                expect(response.status).toBe(302);
+                expect(response.headers['location']).toBe(
+                    "http://localhost:3000/settings?kakaoLinked=true",
+                );
+            });
+
+            it("redirects cancelled links to a safe settings modal", async () => {
+                const response = await request(app.getHttpServer())
+                    .get("/auth/kakao/callback?state=valid-linking-state&error=access_denied");
+
+                expect(response.status).toBe(302);
+                expect(response.headers['location']).toBe(
+                    "http://localhost:3000/settings?authError=OAUTH_CANCELLED",
+                );
+                expect(authService.linkKakaoToAccount).not.toHaveBeenCalled();
             });
         });
     });
 
     describe("POST /auth/login", () => {
+        it("returns the stable approval error code for pending accounts", async () => {
+            authService.validateEmailPassword.mockRejectedValue(
+                new ForbiddenException({
+                    code: "PENDING_APPROVAL",
+                    message: "관리자 승인 대기 중입니다.",
+                }),
+            );
+
+            const response = await request(app.getHttpServer())
+                .post("/auth/login")
+                .send({ email: "test@example.com", password: "Password1!" });
+
+            expect(response.status).toBe(403);
+            expect(response.body).toEqual({
+                code: "PENDING_APPROVAL",
+                message: "관리자 승인 대기 중입니다.",
+            });
+        });
+
         it("should reset the injected rate limiter on successful login", async () => {
             const validationResult = {
                 user: mockUser.id,

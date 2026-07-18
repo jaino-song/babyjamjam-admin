@@ -57,13 +57,14 @@ async function proxyDownload(
             responseType: "arraybuffer",
         });
 
-        const contentLength =
-            response.headers["content-length"] ?? String(response.data.byteLength);
+        const contentLength = String(
+            response.headers["content-length"] ?? response.data.byteLength,
+        );
 
         return new NextResponse(includeBody ? response.data : null, {
             headers: {
-                "Content-Type": response.headers["content-type"] || "application/octet-stream",
-                "Content-Disposition": response.headers["content-disposition"] || "inline",
+                "Content-Type": String(response.headers["content-type"] ?? "application/octet-stream"),
+                "Content-Disposition": String(response.headers["content-disposition"] ?? "inline"),
                 "Content-Length": contentLength,
             },
         });
