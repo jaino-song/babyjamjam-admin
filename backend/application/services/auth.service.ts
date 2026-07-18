@@ -10,8 +10,14 @@ import { maskEmail } from "application/utils/mask";
 import { isVisibleStaffBranchSlug } from "domain/constants/branch-routing.constants";
 import { AuthSessionService } from "./auth-session.service";
 import { AuthEmailTokenService } from "./auth-email-token.service";
+import {
+    AUTH_ERROR_CODES,
+    AUTH_ERROR_MESSAGES,
+} from "../constants/auth-error.constants";
 
-export const NO_ACCESSIBLE_BRANCH_MESSAGE = "접근 가능한 지점이 없습니다. 관리자에게 문의해 주세요.";
+export const NO_ACCESSIBLE_BRANCH_MESSAGE = AUTH_ERROR_MESSAGES.NO_ACCESSIBLE_BRANCH;
+export const PENDING_APPROVAL_CODE = AUTH_ERROR_CODES.PENDING_APPROVAL;
+export const PENDING_APPROVAL_MESSAGE = AUTH_ERROR_MESSAGES.PENDING_APPROVAL;
 
 export interface KakaoData {
     kakaoId: string;
@@ -252,7 +258,10 @@ export class AuthService {
         }
 
         if (userOrgs.length === 0) {
-            throw new ForbiddenException(NO_ACCESSIBLE_BRANCH_MESSAGE);
+            throw new ForbiddenException({
+                code: AUTH_ERROR_CODES.NO_ACCESSIBLE_BRANCH,
+                message: NO_ACCESSIBLE_BRANCH_MESSAGE,
+            });
         }
 
         const pendingAccountOnboardingProfile = this.getPendingAccountOnboardingProfile(user, userOrgs);
@@ -298,9 +307,15 @@ export class AuthService {
     private assertUserApproved(user: { role: string | null; approvalStatus: string }): void {
         if (user.role === 'owner' || user.approvalStatus === 'approved') return;
         if (user.approvalStatus === 'rejected') {
-            throw new ForbiddenException({ code: 'ACCOUNT_REJECTED', message: '가입이 거부되었습니다.' });
+            throw new ForbiddenException({
+                code: AUTH_ERROR_CODES.ACCOUNT_REJECTED,
+                message: AUTH_ERROR_MESSAGES.ACCOUNT_REJECTED,
+            });
         }
-        throw new ForbiddenException({ code: 'PENDING_APPROVAL', message: '관리자 승인 대기 중입니다.' });
+        throw new ForbiddenException({
+            code: PENDING_APPROVAL_CODE,
+            message: PENDING_APPROVAL_MESSAGE,
+        });
     }
 
     async validateKakaoUser(kakaoData: KakaoData): Promise<KakaoUserValidationResult> {

@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import { AUTH_ROUTES } from "@/lib/auth/routes";
 import { exchangeToken } from "@/app/(auth)/callback/actions";
+import { getSafeCallbackError } from "@/lib/auth/auth-errors";
 
 type ExchangeTokenResult = Awaited<ReturnType<typeof exchangeToken>>;
 
@@ -38,7 +39,7 @@ export function useCallbackPageController() {
     const exchangeCodeForTokens = async () => {
       const callbackError = searchParams.get("error");
       if (callbackError) {
-        setError(callbackError);
+        setError(getSafeCallbackError(callbackError));
         return;
       }
 

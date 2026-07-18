@@ -17,6 +17,7 @@ import { AuthSessionService } from "../../application/services/auth-session.serv
 import { AuthEmailTokenService } from "../../application/services/auth-email-token.service";
 import { AuthEmailOutboxService } from "../../application/services/auth-email-outbox.service";
 import { SmtpEmailAdapter } from "../adapters/smtp-email.adapter";
+import { KakaoAuthGuard } from "./kakao-auth.guard";
 
 @Module({
     imports: [
@@ -34,6 +35,7 @@ import { SmtpEmailAdapter } from "../adapters/smtp-email.adapter";
         AuthEmailTokenService,
         AuthEmailOutboxService,
         KakaoStrategy,
+        KakaoAuthGuard,
         LocalStrategy,
         RateLimitGuard,
         JwtStrategy,

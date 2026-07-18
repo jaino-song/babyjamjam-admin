@@ -26,17 +26,28 @@ describe("AuthCallbackPage", () => {
     mockSearchParams = new URLSearchParams();
   });
 
-  it("shows the backend OAuth error instead of reporting a missing authorization code", async () => {
+  it("does not expose arbitrary backend OAuth error text", async () => {
     mockSearchParams = new URLSearchParams({
       error: "접근 가능한 지점이 없습니다. 관리자에게 문의해 주세요.",
     });
 
     render(<AuthCallbackPage />);
 
-    expect(
-      await screen.findByText("접근 가능한 지점이 없습니다. 관리자에게 문의해 주세요."),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("로그인 중 오류가 발생했습니다.")).toBeInTheDocument();
     await waitFor(() => expect(mockExchangeToken).not.toHaveBeenCalled());
+  });
+
+  it("routes Kakao onboarding responses to the mobile onboarding screen", async () => {
+    mockSearchParams = new URLSearchParams({ code: "pending-signup-code" });
+    mockExchangeToken.mockResolvedValue({
+      success: true,
+      onboardingRequired: true,
+      onboardingRoute: "/kakao/onboarding",
+    });
+
+    render(<AuthCallbackPage />);
+
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith("/kakao/onboarding"));
   });
 
   it("exchanges a valid authorization code and continues to the dashboard", async () => {

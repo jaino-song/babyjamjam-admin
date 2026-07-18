@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -11,6 +11,7 @@ import { loginWithEmail } from "./actions";
 import { authApi } from "@/services/api";
 import { safeStorageGetItem, safeStorageRemoveItem, safeStorageSetItem } from "@/lib/safe-storage";
 import "@/components/app/mobile-redesign/redesign.css";
+import { LoginAuthErrorModal } from "@/components/auth/login-auth-error-modal";
 
 const LoginPage = () => {
   const router = useRouter();
@@ -86,12 +87,20 @@ const LoginPage = () => {
 
       if (response.success) {
         startNavigation();
+        if (response.onboardingRequired) {
+          router.replace(response.onboardingRoute || "/onboarding");
+          return;
+        }
         if (response.requiresBranchSelection) {
           router.replace("/select-branch");
         } else {
           router.replace("/dashboard");
         }
       } else {
+        if (response.authErrorCode) {
+          router.replace(`/login?authError=${encodeURIComponent(response.authErrorCode)}`);
+          return;
+        }
         setServerError(response.error || "로그인에 실패했습니다.");
         if (response.emailVerificationRequired) {
           if (result.data.email) {
@@ -142,6 +151,9 @@ const LoginPage = () => {
 
   return (
     <div className="auth-page" data-component="auth-login">
+      <Suspense fallback={null}>
+        <LoginAuthErrorModal />
+      </Suspense>
       <div className="auth-brand">
         <div className="auth-logo">
           <Image src="/assets/logo.svg" alt="아가잼잼 로고" width={80} height={80} priority />
