@@ -9,6 +9,7 @@ interface APIErrorResponse {
     statusCode: number;
     message: string;
     error: string;
+    code?: string;
 }
 
 interface LoginResult {
@@ -18,6 +19,7 @@ interface LoginResult {
     emailVerificationRequired?: boolean;
     onboardingRequired?: boolean;
     onboardingRoute?: "/onboarding";
+    authErrorCode?: string;
 }
 
 interface LoginSuccessResponse {
@@ -38,6 +40,7 @@ interface LoginOnboardingResponse {
 type LoginResponsePayload = LoginSuccessResponse | LoginOnboardingResponse | {
     success?: false;
     message?: string;
+    code?: string;
 };
 
 const PENDING_ACCOUNT_ONBOARDING_COOKIE = "pending_account_onboarding";
@@ -76,6 +79,7 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
             return {
                 success: false,
                 error: message || "이메일 또는 비밀번호가 올바르지 않습니다.",
+                authErrorCode: "code" in data && typeof data.code === "string" ? data.code : undefined,
                 emailVerificationRequired: message?.includes("이메일 인증"),
             };
         }
@@ -139,6 +143,7 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
             return {
                 success: false,
                 error: apiMessage || "로그인에 실패했습니다.",
+                authErrorCode: axiosError.response?.data?.code,
                 emailVerificationRequired: apiMessage?.includes("이메일 인증"),
             };
         }

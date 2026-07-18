@@ -1,12 +1,15 @@
 import { BadRequestException, Body, Controller, ForbiddenException, Get, Headers, Ip, Logger, Post, Query, Req, Request, Res, UseGuards } from "@nestjs/common";
 import { Response, Request as ExpressRequest } from "express";
-import { AuthGuard } from "@nestjs/passport";
 import {
     AuthService,
-    NO_ACCESSIBLE_BRANCH_MESSAGE,
     type KakaoLoginClient,
     type KakaoUserValidationResult,
 } from "../../application/services/auth.service";
+import {
+    AUTH_ERROR_CODES,
+    isAuthErrorCode,
+    type AuthErrorCode,
+} from "../../application/constants/auth-error.constants";
 import { JwtGuard } from "../../infrastructure/auth/jwt.guard";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
 import { TokenExchangeDto } from "interface/dto/token-exchange.dto";
@@ -26,6 +29,11 @@ import { SelectBranchDto, SwitchBranchDto } from "interface/dto/branch-auth.dto"
 import { CompleteKakaoOnboardingDto } from "interface/dto/kakao-onboarding.dto";
 import { LogoutDto } from "interface/dto/logout.dto";
 import { getKakaoOAuthConfig } from "infrastructure/auth/kakao-config";
+import {
+    KakaoAuthGuard,
+    KAKAO_OAUTH_ERROR_REQUEST_KEY,
+    type KakaoCallbackRequest,
+} from "../../infrastructure/auth/kakao-auth.guard";
 
 @Controller("auth")
 export class AuthController {
@@ -62,19 +70,28 @@ export class AuthController {
     }
 
     @Get("kakao/callback")
-    @UseGuards(AuthGuard("kakao"))
-    async kakaoCallback(@Req() req: any, @Res() res: Response) {
+    @UseGuards(KakaoAuthGuard)
+    async kakaoCallback(@Req() req: KakaoCallbackRequest, @Res() res: Response) {
         // `state` is a signed JWT: { client, nonce } for login, or a userId payload for
         // linking. For login, the matching single-use nonce was stored in an httpOnly cookie
         // at initiation; reading + clearing it here and requiring it to match the signed nonce
         // binds this callback to the browser that started the flow (login-CSRF protection).
-        const state = req.query.state as string | undefined;
+        const state = req.query["state"] as string | undefined;
         const nonce = req.cookies?.[AuthController.OAUTH_NONCE_COOKIE] as string | undefined;
         this.clearOAuthNonceCookie(res);
 
         // Account-linking flow: state is a signed JWT bound to a userId (JwtGuard-gated).
         const linkingInfo = state ? await this.authService.verifyLinkingState(state) : null;
         if (linkingInfo) {
+            const oauthErrorCode = req[KAKAO_OAUTH_ERROR_REQUEST_KEY];
+            if (oauthErrorCode) {
+                return this.redirectWithAuthError(
+                    res,
+                    `${this.resolveFrontendURL("desktop")}/settings`,
+                    oauthErrorCode,
+                );
+            }
+
             console.log(`[Auth] Linking Kakao account to user ${linkingInfo.userId}`);
             return this.completeKakaoLink(
                 linkingInfo.userId,
@@ -91,19 +108,43 @@ export class AuthController {
         if (!loginState) {
             // Login-CSRF guard: state missing/forged/expired, or its nonce does not match the cookie.
             console.warn("[Auth] Rejected Kakao callback: invalid or unbound OAuth state");
-            return res.redirect(`${this.resolveFrontendURL("desktop")}/login?error=invalid_oauth_state`);
+            return this.redirectWithAuthError(
+                res,
+                `${this.resolveFrontendURL("desktop")}/login`,
+                AUTH_ERROR_CODES.INVALID_OAUTH_STATE,
+            );
         }
 
         const frontendURL = this.resolveFrontendURL(loginState.client);
+        const oauthErrorCode = req[KAKAO_OAUTH_ERROR_REQUEST_KEY];
+        if (oauthErrorCode) {
+            return this.redirectWithAuthError(
+                res,
+                `${frontendURL}/login`,
+                oauthErrorCode,
+            );
+        }
+
+        if (!req.user) {
+            return this.redirectWithAuthError(
+                res,
+                `${frontendURL}/login`,
+                AUTH_ERROR_CODES.OAUTH_PROVIDER_ERROR,
+            );
+        }
 
         // Normal login/registration flow
         let result: KakaoUserValidationResult;
         try {
             result = await this.authService.validateKakaoUser(req.user);
         } catch (error) {
-            if (error instanceof ForbiddenException && error.message === NO_ACCESSIBLE_BRANCH_MESSAGE) {
-                const query = new URLSearchParams({ error: NO_ACCESSIBLE_BRANCH_MESSAGE });
-                return res.redirect(`${frontendURL}${this.resolveCallbackPath(loginState.client)}?${query.toString()}`);
+            const authErrorCode = this.getAuthErrorCode(error);
+            if (authErrorCode) {
+                return this.redirectWithAuthError(
+                    res,
+                    `${frontendURL}/login`,
+                    authErrorCode,
+                );
             }
 
             throw error;
@@ -381,11 +422,14 @@ export class AuthController {
             );
 
             // Redirect to frontend with success
-            res.redirect(`${frontendURL}/dashboard/settings?kakao_linked=true`);
+            res.redirect(`${frontendURL}/settings?kakaoLinked=true`);
         } catch (error: any) {
-            // Redirect to frontend with error
-            const errorMessage = encodeURIComponent(error.message || '카카오 연결에 실패했습니다.');
-            res.redirect(`${frontendURL}/dashboard/settings?kakao_link_error=${errorMessage}`);
+            this.logger.warn(`Kakao account linking failed: ${error instanceof Error ? error.message : "unknown error"}`);
+            this.redirectWithAuthError(
+                res,
+                `${frontendURL}/settings`,
+                AUTH_ERROR_CODES.OAUTH_PROVIDER_ERROR,
+            );
         }
     }
 
@@ -479,6 +523,24 @@ export class AuthController {
     }
 
     // ==================== Private Helper Methods ====================
+
+    private getAuthErrorCode(error: unknown): AuthErrorCode | null {
+        if (!(error instanceof ForbiddenException)) return null;
+
+        const response = error.getResponse();
+        const code = typeof response === "object"
+            && response !== null
+            && "code" in response
+            ? response.code
+            : undefined;
+
+        return isAuthErrorCode(code) ? code : null;
+    }
+
+    private redirectWithAuthError(res: Response, pathname: string, code: AuthErrorCode) {
+        const query = new URLSearchParams({ authError: code });
+        return res.redirect(`${pathname}?${query.toString()}`);
+    }
 
     private getRoleFromToken(token: string): string | null {
         const [, payload] = token.split(".");

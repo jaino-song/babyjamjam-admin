@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Spinner } from "@/components/ui/spinner";
 import { exchangeToken } from "./actions";
+import { getSafeCallbackError } from "@/lib/auth/auth-errors";
 
 export default function AuthCallbackPage() {
     const router = useRouter();
@@ -20,7 +21,7 @@ export default function AuthCallbackPage() {
 
             if (oauthError) {
                 console.error("[Auth Callback] OAuth provider returned an error");
-                setError(oauthError);
+                setError(getSafeCallbackError(oauthError));
                 return;
             }
 
@@ -43,6 +44,11 @@ export default function AuthCallbackPage() {
                 }
 
                 console.log("[Auth Callback] Token exchange successful");
+
+                if (result.onboardingRequired) {
+                    router.replace(result.onboardingRoute || "/kakao/onboarding");
+                    return;
+                }
 
                 if (result.requiresBranchSelection) {
                     console.log("[Auth Callback] Multiple branches detected, redirecting to selection");

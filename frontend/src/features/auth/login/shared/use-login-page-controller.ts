@@ -100,6 +100,11 @@ export function useLoginPageController() {
         return;
       }
 
+      if (response.authErrorCode) {
+        router.replace(`/login?authError=${encodeURIComponent(response.authErrorCode)}`);
+        return;
+      }
+
       setServerError(response.error || "로그인에 실패했습니다.");
       if (response.emailVerificationRequired) {
         safeStorageSetItem("local", "auth:verificationEmail", result.data.email);

@@ -26,6 +26,7 @@ import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
 import { Toaster } from "@/components/ui/toaster";
+import { KakaoLinkResultModal } from "@/features/auth/settings/kakao-link-result-modal";
 
 const UserKeyIcon = forwardRef<SVGSVGElement, LucideProps>(function UserKeyIcon(
   { size = 20, className, ...props },
@@ -117,6 +118,7 @@ export default function SettingsPage() {
 
   return (
     <section data-component="settings" className="space-y-6">
+      <KakaoLinkResultModal />
       <div data-component="settings-sections" className="flex flex-col lg:flex-row gap-8">
         <SectionNav
           items={BASE_NAV_SECTIONS}
