@@ -43,8 +43,8 @@ export async function GET(
         return new NextResponse(response.data, {
             status: response.status,
             headers: {
-                "Content-Type": response.headers["content-type"] || "application/octet-stream",
-                "Content-Disposition": response.headers["content-disposition"] || "inline",
+                "Content-Type": String(response.headers["content-type"] ?? "application/octet-stream"),
+                "Content-Disposition": String(response.headers["content-disposition"] ?? "inline"),
                 "Content-Length": String(response.data.byteLength),
             },
         });

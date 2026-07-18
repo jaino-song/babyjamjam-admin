@@ -90,8 +90,8 @@ jobs:
       DATABASE_URL: postgresql://postgres@localhost:5432/postgres
       DIRECT_URL: postgresql://postgres@localhost:5432/postgres
       VALKEY_URL: redis://localhost:6379
-      JWT_SECRET: auth-e2e-ci-jwt-secret-at-least-32-characters
-      AUTH_EMAIL_TOKEN_HMAC_SECRET: auth-e2e-ci-email-hmac-secret
+      JWT_SECRET: e2e-dummy-jwt-signing-key-at-least-32-${{ github.run_id }}
+      AUTH_EMAIL_TOKEN_HMAC_SECRET: e2e-dummy-email-hmac-${{ github.run_id }}
       EMAIL_TRANSPORT: smtp
       SMTP_HOST: localhost
       SMTP_PORT: 1025
