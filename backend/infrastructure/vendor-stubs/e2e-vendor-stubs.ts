@@ -350,12 +350,14 @@ export function areE2EVendorStubsEnabled(configService: Pick<ConfigService, "get
  * "Test-like" is NOT just NODE_ENV==="test" — the one place this repo boots
  * main.ts under e2e conditions (.github/workflows/mobile-ci.yml `e2e` job)
  * deliberately sets NODE_ENV=development (only production is special-cased
- * elsewhere) alongside CI=true and E2E_VENDOR_STUBS=1. Jest unit specs never
+ * elsewhere) alongside CI=true, GITHUB_ACTIONS=true, and E2E_VENDOR_STUBS=1. Jest unit specs never
  * invoke bootstrap() at all (see test/e2e/call-inbox.e2e.spec.ts header — the
  * AppModule can't even be built under ts-jest), so NODE_ENV=test alone would
  * never actually cover the real failure mode this guards against. Hence:
- * NODE_ENV==="test" OR CI==="true" (and never for NODE_ENV==="production",
- * which already has its own dedicated guard and must not regress).
+ * NODE_ENV==="test" OR the GitHub Actions CI runtime (and never for
+ * NODE_ENV==="production", which already has its own dedicated guard and must
+ * not regress). CI alone is insufficient because deployment platforms such as
+ * Railway also expose CI=true to production-like preview runtimes.
  */
 export function assertVendorStubsConfigured(configService: Pick<ConfigService, "get">): void {
     const nodeEnv = configService.get<string>("NODE_ENV");
@@ -364,7 +366,8 @@ export function assertVendorStubsConfigured(configService: Pick<ConfigService, "
     }
 
     const isCi = configService.get<string>("CI") === "true";
-    const isTestLikeEnv = nodeEnv === "test" || isCi;
+    const isGitHubActions = configService.get<string>("GITHUB_ACTIONS") === "true";
+    const isTestLikeEnv = nodeEnv === "test" || (isCi && isGitHubActions);
     if (!isTestLikeEnv) {
         return;
     }
