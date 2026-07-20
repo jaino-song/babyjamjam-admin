@@ -21,5 +21,5 @@ export default async function KakaoOnboardingPage() {
     redirect("/login");
   }
 
-  return <OnboardingForm mode="kakao" email={profile.email} name={profile.name} />;
+  return <OnboardingForm email={profile.email} name={profile.name} />;
 }

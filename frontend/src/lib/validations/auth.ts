@@ -38,7 +38,6 @@ export const registerSchema = registerFormSchema;
 export const kakaoOnboardingSchema = z.object({
     phone: phoneSchema,
     birthDate: birthDateSchema,
-    branchId: z.string().min(1, '지점을 선택해주세요.'),
     role: z.enum(['admin', 'manager', 'user'], { message: '역할을 선택해주세요.' }),
 });
 

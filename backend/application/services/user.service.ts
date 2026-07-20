@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { BadRequestException, Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import {
     CreateUserUsecase,
@@ -179,9 +179,17 @@ export class UserService {
 
     approve(
         id: string,
-        params: { role: string, approvedBy: string, branchId?: string },
+        params: { role: string, approvedBy: string, branchId: string },
     ): Promise<UserApprovalSummary> {
         return this.prismaService.$transaction(async (tx) => {
+            const branch = await tx.branch.findUnique({
+                where: { id: params.branchId },
+                select: { id: true },
+            });
+            if (!branch) {
+                throw new BadRequestException("유효하지 않은 지점입니다.");
+            }
+
             const user = await tx.user.update({
                 where: { id },
                 data: {
@@ -204,11 +212,26 @@ export class UserService {
                 },
             });
 
-            await tx.user_branch.updateMany({
-                where: params.branchId
-                    ? { userId: id, branchId: params.branchId }
-                    : { userId: id },
-                data: { role: params.role },
+            await tx.user_branch.deleteMany({
+                where: {
+                    userId: id,
+                    role: null,
+                    branchId: { not: params.branchId },
+                },
+            });
+            await tx.user_branch.upsert({
+                where: {
+                    userId_branchId: {
+                        userId: id,
+                        branchId: params.branchId,
+                    },
+                },
+                create: {
+                    userId: id,
+                    branchId: params.branchId,
+                    role: params.role,
+                },
+                update: { role: params.role },
             });
             await tx.auth_session.updateMany({
                 where: { userId: id, revokedAt: null },

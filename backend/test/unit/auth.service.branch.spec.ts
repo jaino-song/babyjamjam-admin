@@ -501,8 +501,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
             expect(result.errors).toContain("비밀번호에 대문자가 포함되어야 합니다.");
         });
 
-        it("should preserve the submitted branch role on membership creation", async () => {
-            prismaService.branch.findUnique.mockResolvedValue(mockBranch);
+        it("should leave branch membership assignment to the owner", async () => {
             prismaService.user.findUnique
                 .mockResolvedValueOnce(null)
                 .mockResolvedValueOnce({ name: "Manager User" });
@@ -522,17 +521,11 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 "Manager User",
                 "010-1234-5678",
                 "1990-01-01",
-                mockBranch.id,
                 "manager",
             );
 
-            expect(prismaService.user_branch.create).toHaveBeenCalledWith({
-                data: {
-                    userId: "new-user-uuid-123",
-                    branchId: mockBranch.id,
-                    role: null,
-                },
-            });
+            expect(prismaService.branch.findUnique).not.toHaveBeenCalled();
+            expect(prismaService.user_branch.create).not.toHaveBeenCalled();
         });
     });
 

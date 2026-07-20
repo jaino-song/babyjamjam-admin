@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronRight } from "lucide-react";
 import { AuthPanel } from "@/components/auth/auth-panel";
@@ -10,10 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
 import { REGISTERABLE_ROLE_OPTIONS } from "@/lib/constants/roles";
-import { authApi } from "@/services/api";
 import { kakaoOnboardingSchema, type KakaoOnboardingFormData } from "@/lib/validations/auth";
 import { completeKakaoOnboarding } from "./actions";
-import { completeAccountOnboarding } from "../../onboarding/actions";
 
 const PANEL_CLASS_NAME = "gap-5 !p-5 sm:!p-6 [&_[data-component='auth-kakao-onboarding-title']]:!text-[1.72rem] md:[&_[data-component='auth-kakao-onboarding-title']]:!text-[1.5rem] [&_[data-component='auth-kakao-onboarding-subtitle']]:!max-w-[34ch] [&_[data-component='auth-kakao-onboarding-subtitle']]:!text-[0.82rem] md:[&_[data-component='auth-kakao-onboarding-subtitle']]:!text-[0.76rem]";
 const PRIMARY_BUTTON_CLASS_NAME = "h-10 px-5 gap-1.5 text-[0.72rem] md:text-[0.77rem] font-bold";
@@ -24,9 +22,7 @@ interface OnboardingFormProps {
     profileImage?: string;
     phone?: string;
     birthDate?: string;
-    branchId?: string;
     role?: KakaoOnboardingFormData["role"];
-    mode?: "kakao" | "account";
     title?: string;
     subtitle?: string;
 }
@@ -80,9 +76,7 @@ export function OnboardingForm({
     name,
     phone,
     birthDate,
-    branchId,
     role,
-    mode = "kakao",
     title = "카카오 가입 마무리",
     subtitle = "카카오에서 받은 계정 정보는 그대로 사용하고, 추가 정보만 입력해 주세요.",
 }: OnboardingFormProps) {
@@ -90,30 +84,16 @@ export function OnboardingForm({
     const [formData, setFormData] = useState<Partial<KakaoOnboardingFormData>>({
         phone: phone ?? "",
         birthDate: birthDate ?? "",
-        branchId: branchId ?? "",
         role: role ?? undefined,
     });
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [serverError, setServerError] = useState<string | null>(null);
-    const [branches, setBranches] = useState<{ value: string; label: string }[]>([]);
-    const [isLoadingOrgs, setIsLoadingOrgs] = useState(true);
     const [isPending, startTransition] = useTransition();
-
-    useEffect(() => {
-        authApi.getBranches()
-            .then((orgs) => {
-                setBranches(orgs.map((org) => ({ value: org.id, label: org.name })));
-            })
-            .catch(() => {
-                setBranches([]);
-            })
-            .finally(() => setIsLoadingOrgs(false));
-    }, []);
 
     const isDisabled = useMemo(() => {
         const result = kakaoOnboardingSchema.safeParse(formData);
-        return !result.success || isPending || isLoadingOrgs;
-    }, [formData, isLoadingOrgs, isPending]);
+        return !result.success || isPending;
+    }, [formData, isPending]);
 
     const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -133,20 +113,13 @@ export function OnboardingForm({
         }
 
         startTransition(async () => {
-            const response = mode === "kakao"
-                ? await completeKakaoOnboarding(result.data)
-                : await completeAccountOnboarding(result.data);
+            const response = await completeKakaoOnboarding(result.data);
             if (!response.success) {
                 setServerError(response.error || "계정 정보를 저장하지 못했습니다.");
                 return;
             }
 
-            if (response.requiresBranchSelection) {
-                router.replace("/select-branch");
-                return;
-            }
-
-            router.replace("/dashboard");
+            router.replace("/login?authError=PENDING_APPROVAL");
         });
     };
 
@@ -244,21 +217,11 @@ export function OnboardingForm({
                     data-component="auth-kakao-onboarding-birthdate-field"
                 />
                 <SelectField
-                    label="지점명"
-                    value={formData.branchId}
-                    onValueChange={handleSelectChange("branchId")}
-                    options={branches}
-                    placeholder={isLoadingOrgs ? "지점 목록 불러오는 중..." : "지점을 선택해주세요"}
-                    error={errors.branchId}
-                    disabled={isPending || isLoadingOrgs}
-                    data-component="auth-kakao-onboarding-branch-field"
-                />
-                <SelectField
-                    label="역할"
+                    label="요청 권한"
                     value={formData.role}
                     onValueChange={handleSelectChange("role")}
                     options={REGISTERABLE_ROLE_OPTIONS}
-                    placeholder="역할을 선택해주세요"
+                    placeholder="요청할 권한을 선택해주세요"
                     error={errors.role}
                     disabled={isPending}
                     data-component="auth-kakao-onboarding-role-field"
