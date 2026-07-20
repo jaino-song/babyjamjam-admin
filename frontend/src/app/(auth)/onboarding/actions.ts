@@ -38,10 +38,7 @@ export async function completeAccountOnboarding(
     try {
         const response = await serverAPIClient.post<CompleteAccountOnboardingSuccessResponse>(
             "/auth/onboarding/complete",
-            {
-                ...input,
-                organizationId: input.branchId,
-            },
+            input,
             {
                 headers: {
                     [PENDING_ONBOARDING_TOKEN_HEADER]: pendingOnboardingToken,
