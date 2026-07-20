@@ -151,7 +151,13 @@ export async function proxy(request: NextRequest) {
 
   // Skip public routes ("/" needs exact match — startsWith would match every path)
   if (pathname === "/" || PUBLIC_ROUTES.some((route) => pathname.startsWith(route))) {
-    if (pathname.startsWith("/login") && authToken && isAccessTokenExpiredOrInvalid(authToken)) {
+    const isNavigationRequest = request.method === "GET" || request.method === "HEAD";
+    if (
+      pathname.startsWith("/login") &&
+      isNavigationRequest &&
+      authToken &&
+      isAccessTokenExpiredOrInvalid(authToken)
+    ) {
       const loginRefreshToken = request.cookies.get("refresh_token")?.value;
       if (loginRefreshToken) {
         const refreshAttempt = await tryRefreshAuthSession(loginRefreshToken);
