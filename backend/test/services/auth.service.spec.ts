@@ -60,15 +60,15 @@ describe("AuthService approval and token hardening", () => {
         jest.spyOn(service, "hashPassword").mockResolvedValue("hash");
         jest.spyOn(service, "sendVerificationEmail").mockResolvedValue();
         prisma.user.findUnique.mockResolvedValue(null);
-        prisma.branch.findUnique.mockResolvedValue({ id: "branch-1" });
         prisma.user.create.mockResolvedValue({ id: "user-1", email: "new@example.com" });
 
-        await service.registerWithEmail("new@example.com", "Password1!", "New", "010", "1990-01-01", "branch-1", "admin");
+        await service.registerWithEmail("new@example.com", "Password1!", "New", "010", "1990-01-01", "admin");
 
         expect(prisma.user.create).toHaveBeenCalledWith({ data: expect.objectContaining({
             role: null, approvalStatus: "pending", requestedRole: "admin",
         }) });
-        expect(prisma.user_branch.create).toHaveBeenCalledWith({ data: expect.objectContaining({ role: null }) });
+        expect(prisma.branch.findUnique).not.toHaveBeenCalled();
+        expect(prisma.user_branch.create).not.toHaveBeenCalled();
     });
 
     it("rejects a pending user before issuing login tokens", async () => {
@@ -95,6 +95,20 @@ describe("AuthService approval and token hardening", () => {
         await service.validateEmailPassword("a@example.com", "Password1!");
 
         expect(jwt.signAsync).toHaveBeenCalledWith(expect.objectContaining({ tokenVersion: 4, type: "access" }), expect.any(Object));
+    });
+
+    it("rejects incomplete approved accounts instead of starting self-service onboarding", async () => {
+        jest.spyOn(service, "verifyPassword").mockResolvedValue(true);
+        prisma.user.findUnique.mockResolvedValue({
+            id: "user-1", email: "a@example.com", name: "A", profileImage: null, phone: null,
+            birthDate: "1990-01-01", passwordHash: "hash", emailVerified: true, role: "user",
+            approvalStatus: "approved", tokenVersion: 4,
+        });
+        prisma.user_branch.findMany.mockResolvedValue([{ branchId: "branch-1", role: "user" }]);
+
+        await expect(service.validateEmailPassword("a@example.com", "Password1!"))
+            .rejects.toMatchObject({ response: { code: "ACCOUNT_PROFILE_INCOMPLETE" } });
+        expect(sessions.issueSession).not.toHaveBeenCalled();
     });
 
     it("rejects refresh for pending or stale-version users", async () => {
@@ -141,7 +155,7 @@ describe("AuthService approval and token hardening", () => {
     it("does not mutate a Kakao-only account during unauthenticated registration", async () => {
         prisma.user.findUnique.mockResolvedValue({ id: "user-1", kakaoId: "kakao", passwordHash: null, emailVerified: true });
 
-        await service.registerWithEmail("existing@example.com", "Password1!", "Attacker", "010", "1990-01-01", "branch-1", "admin");
+        await service.registerWithEmail("existing@example.com", "Password1!", "Attacker", "010", "1990-01-01", "admin");
 
         expect(prisma.user.update).not.toHaveBeenCalled();
         expect(tokens.create).not.toHaveBeenCalled();

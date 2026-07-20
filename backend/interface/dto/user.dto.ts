@@ -45,6 +45,5 @@ export class ApproveUserDto {
     role!: "admin" | "manager" | "user";
 
     @IsUUID("4")
-    @IsOptional()
-    branchId?: string;
+    branchId!: string;
 }

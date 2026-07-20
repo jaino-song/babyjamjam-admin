@@ -1,5 +1,6 @@
 export const AUTH_ERROR_CODES = {
     ACCOUNT_REJECTED: "ACCOUNT_REJECTED",
+    ACCOUNT_PROFILE_INCOMPLETE: "ACCOUNT_PROFILE_INCOMPLETE",
     INVALID_OAUTH_STATE: "INVALID_OAUTH_STATE",
     NO_ACCESSIBLE_BRANCH: "NO_ACCESSIBLE_BRANCH",
     OAUTH_CANCELLED: "OAUTH_CANCELLED",
@@ -11,6 +12,7 @@ export type AuthErrorCode = typeof AUTH_ERROR_CODES[keyof typeof AUTH_ERROR_CODE
 
 export const AUTH_ERROR_MESSAGES: Record<AuthErrorCode, string> = {
     ACCOUNT_REJECTED: "가입이 거부되었습니다.",
+    ACCOUNT_PROFILE_INCOMPLETE: "가입 정보가 누락되었습니다. 오너에게 문의해 주세요.",
     INVALID_OAUTH_STATE: "로그인 요청이 만료되었거나 올바르지 않습니다.",
     NO_ACCESSIBLE_BRANCH: "접근 가능한 지점이 없습니다. 관리자에게 문의해 주세요.",
     OAUTH_CANCELLED: "카카오 로그인이 취소되었습니다.",

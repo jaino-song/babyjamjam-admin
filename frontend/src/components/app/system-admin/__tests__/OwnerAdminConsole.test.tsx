@@ -196,6 +196,10 @@ describe("OwnerAdminConsole", () => {
     const roleSelect = screen.getByRole("combobox", {
       name: "가입 대기 계정 승인 권한 선택",
     });
+    const branchSelect = screen.getByRole("combobox", {
+      name: "가입 대기 계정 승인 지점 선택",
+    });
+    fireEvent.change(branchSelect, { target: { value: "branch-real-gangnam" } });
     fireEvent.change(roleSelect, { target: { value: "admin" } });
     fireEvent.click(screen.getByRole("button", { name: "승인" }));
 
