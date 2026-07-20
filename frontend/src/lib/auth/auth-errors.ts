@@ -3,6 +3,10 @@ export const AUTH_ERROR_DIALOGS = {
     title: "가입이 거부되었습니다.",
     description: "계정 상태에 대한 자세한 내용은 관리자에게 문의해 주세요.",
   },
+  ACCOUNT_PROFILE_INCOMPLETE: {
+    title: "가입 정보가 누락되었습니다.",
+    description: "오너에게 계정 정보 확인을 요청해 주세요.",
+  },
   INVALID_OAUTH_STATE: {
     title: "로그인 요청이 만료되었습니다.",
     description: "카카오 로그인을 다시 시도해 주세요.",

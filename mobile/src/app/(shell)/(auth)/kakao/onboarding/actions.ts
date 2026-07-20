@@ -4,13 +4,10 @@ import { cookies } from "next/headers";
 import axios from "axios";
 
 import { serverAPIClient } from "@/lib/api/server";
-import { getServerRuntimeConfig } from "@/lib/env";
-import { ACCESS_TOKEN_MAX_AGE_SECONDS, decodeAccessRole, getRefreshSessionMaxAgeSeconds } from "@/lib/auth/session-policy";
 
 interface OnboardingInput {
   phone: string;
   birthDate: string;
-  branchId: string;
   role: string;
 }
 
@@ -23,16 +20,8 @@ export async function completeKakaoOnboarding(input: OnboardingInput) {
     const { data } = await serverAPIClient.post("/auth/kakao/complete-signup", input, {
       headers: { "x-pending-signup-token": pendingToken },
     });
-    const secure = getServerRuntimeConfig().isSecureCookieEnv;
-    const role = decodeAccessRole(data.accessToken);
-    cookieStore.set("auth_token", data.accessToken, {
-      httpOnly: true, secure, sameSite: "lax", path: "/", maxAge: ACCESS_TOKEN_MAX_AGE_SECONDS,
-    });
-    cookieStore.set("refresh_token", data.refreshToken, {
-      httpOnly: true, secure, sameSite: "lax", path: "/", maxAge: getRefreshSessionMaxAgeSeconds(role),
-    });
     cookieStore.delete("pending_kakao_signup");
-    return { success: true, requiresBranchSelection: Boolean(data.requiresBranchSelection || data.requiresOrgSelection) };
+    return { success: data.success === true };
   } catch (error) {
     if (axios.isAxiosError(error) && error.response?.status === 401) cookieStore.delete("pending_kakao_signup");
     return {

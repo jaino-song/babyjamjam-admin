@@ -173,9 +173,7 @@ function RegisterStepFields({
   errors,
   emailLinkableMessage,
   isLoading,
-  isLoadingOrgs,
   passwordStrength,
-  branches,
   roleOptions,
   handleChange,
   handleEmailBlur,
@@ -189,9 +187,7 @@ function RegisterStepFields({
   | "errors"
   | "emailLinkableMessage"
   | "isLoading"
-  | "isLoadingOrgs"
   | "passwordStrength"
-  | "branches"
   | "roleOptions"
   | "handleChange"
   | "handleEmailBlur"
@@ -307,18 +303,6 @@ function RegisterStepFields({
         </>
       ) : (
         <>
-          <SelectField
-            label="지점명"
-            value={formData.branchId}
-            onValueChange={handleSelectChange("branchId")}
-            options={branches}
-            placeholder={isLoadingOrgs ? "지점 목록 불러오는 중..." : "지점을 선택해주세요"}
-            error={errors.branchId}
-            errorDisplay="inline"
-            disabled={isLoading || isLoadingOrgs}
-            data-component="auth-register-branch-field"
-          />
-
           <SelectField
             label="요청 권한"
             value={formData.role}

@@ -22,7 +22,11 @@ describe("UserService", () => {
                 update: jest.fn(),
             },
             user_branch: {
-                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+                deleteMany: jest.fn(),
+                upsert: jest.fn(),
+            },
+            branch: {
+                findUnique: jest.fn().mockResolvedValue({ id: "branch-1" }),
             },
             auth_session: {
                 updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -184,33 +188,29 @@ describe("UserService", () => {
             expect(result.tokenVersion).toBe(1);
         });
 
-        it("should scope the user_branch role update to the given branchId when provided", async () => {
+        it("should assign the owner-selected branch and role when approving", async () => {
             prismaService.user.update.mockResolvedValue({
                 id: "u1",
                 approvalStatus: "approved",
                 tokenVersion: 1,
             });
+            prismaService.branch.findUnique.mockResolvedValue({ id: "branch-9" });
 
             await service.approve("u1", { role: "manager", approvedBy: "owner-1", branchId: "branch-9" });
 
-            expect(prismaService.user_branch.updateMany).toHaveBeenCalledWith({
-                where: { userId: "u1", branchId: "branch-9" },
-                data: { role: "manager" },
+            expect(prismaService.user_branch.deleteMany).toHaveBeenCalledWith({
+                where: {
+                    userId: "u1",
+                    role: null,
+                    branchId: { not: "branch-9" },
+                },
             });
-        });
-
-        it("should update all of the user's branch memberships when branchId is not provided", async () => {
-            prismaService.user.update.mockResolvedValue({
-                id: "u1",
-                approvalStatus: "approved",
-                tokenVersion: 1,
-            });
-
-            await service.approve("u1", { role: "manager", approvedBy: "owner-1" });
-
-            expect(prismaService.user_branch.updateMany).toHaveBeenCalledWith({
-                where: { userId: "u1" },
-                data: { role: "manager" },
+            expect(prismaService.user_branch.upsert).toHaveBeenCalledWith({
+                where: {
+                    userId_branchId: { userId: "u1", branchId: "branch-9" },
+                },
+                create: { userId: "u1", branchId: "branch-9", role: "manager" },
+                update: { role: "manager" },
             });
         });
     });

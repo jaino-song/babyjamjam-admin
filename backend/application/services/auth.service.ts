@@ -264,15 +264,18 @@ export class AuthService {
             });
         }
 
-        const pendingAccountOnboardingProfile = this.getPendingAccountOnboardingProfile(user, userOrgs);
+        if (!user.phone || !user.birthDate) {
+            throw new ForbiddenException({
+                code: AUTH_ERROR_CODES.ACCOUNT_PROFILE_INCOMPLETE,
+                message: AUTH_ERROR_MESSAGES.ACCOUNT_PROFILE_INCOMPLETE,
+            });
+        }
 
-        if (pendingAccountOnboardingProfile) {
-            return {
-                onboardingRequired: true,
-                onboardingKind: "account_completion",
-                userId: user.id,
-                prefill: pendingAccountOnboardingProfile,
-            };
+        if (!user.role || userOrgs.some((userOrg) => !userOrg.role)) {
+            throw new ForbiddenException({
+                code: AUTH_ERROR_CODES.NO_ACCESSIBLE_BRANCH,
+                message: NO_ACCESSIBLE_BRANCH_MESSAGE,
+            });
         }
 
         let branchId: string | undefined;
@@ -818,9 +821,8 @@ export class AuthService {
         token: string,
         phone: string,
         birthDate: string,
-        branchId: string,
         role: string,
-    ): Promise<UserValidationResult> {
+    ): Promise<RegistrationResult> {
         const hashedToken = this.hashToken(token);
 
         const onboardingResult = await this.prisma.$transaction(async (tx) => {
@@ -856,14 +858,6 @@ export class AuthService {
 
             if (consumeResult.count !== 1) {
                 throw new UnauthorizedException('Pending Kakao signup already used');
-            }
-
-            const branch = await tx.branch.findUnique({
-                where: { id: branchId },
-                select: { id: true },
-            });
-            if (!branch) {
-                throw new BadRequestException('유효하지 않은 지점입니다.');
             }
 
             const pendingSignupData: KakaoData = {
@@ -916,172 +910,14 @@ export class AuthService {
                 });
             }
 
-            const membership = await tx.user_branch.findFirst({
-                where: {
-                    userId: existingUser.id,
-                    branchId,
-                },
-            });
-
-            if (!membership) {
-                await tx.user_branch.create({
-                    data: {
-                        userId: existingUser.id,
-                        branchId,
-                        role: null,
-                    },
-                });
-            }
-
-            return {
-                kakaoData: {
-                    kakaoId: pendingSignupData.kakaoId,
-                    email: existingUser.email ?? pendingSignupData.email,
-                    name: existingUser.name ?? pendingSignupData.name,
-                    profileImage: existingUser.profileImage ?? pendingSignupData.profileImage,
-                },
-            };
+            return existingUser.id;
         });
 
-        const loginResult = await this.validateKakaoUser(onboardingResult.kakaoData);
-
-        if ('onboardingRequired' in loginResult && loginResult.onboardingRequired) {
-            throw new UnauthorizedException('Kakao onboarding completion failed');
-        }
-
-        return loginResult as UserValidationResult;
-    }
-
-    async completeAccountOnboarding(
-        token: string,
-        phone: string,
-        birthDate: string,
-        branchId: string,
-        role: string,
-    ): Promise<UserValidationResult> {
-        const hashedToken = this.hashToken(token);
-
-        const userId = await this.prisma.$transaction(async (tx) => {
-            const stored = await tx.auth_flow_state.findUnique({
-                where: { tokenHash: hashedToken },
-            });
-
-            if (!stored || stored.kind !== "pending_account_onboarding" || !stored.userId) {
-                throw new UnauthorizedException("Pending account onboarding not found");
-            }
-
-            if (stored.consumedAt) {
-                throw new UnauthorizedException("Pending account onboarding already used");
-            }
-
-            if (stored.expiresAt.getTime() < Date.now()) {
-                throw new UnauthorizedException("Pending account onboarding expired");
-            }
-
-            const consumeResult = await tx.auth_flow_state.updateMany({
-                where: {
-                    id: stored.id,
-                    consumedAt: null,
-                },
-                data: {
-                    consumedAt: new Date(),
-                },
-            });
-
-            if (consumeResult.count !== 1) {
-                throw new UnauthorizedException("Pending account onboarding already used");
-            }
-
-            const user = await tx.user.findUnique({
-                where: { id: stored.userId },
-                select: {
-                    id: true,
-                    passwordHash: true,
-                    approvalStatus: true,
-                    role: true,
-                },
-            });
-
-            if (!user) {
-                throw new UnauthorizedException("Pending account onboarding user not found");
-            }
-
-            const branch = await tx.branch.findUnique({
-                where: { id: branchId },
-                select: { id: true },
-            });
-            if (!branch) {
-                throw new BadRequestException("유효하지 않은 지점입니다.");
-            }
-
-            const phoneOwner = await tx.user.findFirst({
-                where: { phone },
-                select: { id: true },
-            });
-            if (phoneOwner && phoneOwner.id !== user.id) {
-                throw new BadRequestException("이미 존재하는 사용자 입니다.");
-            }
-
-            await tx.user.update({
-                where: { id: user.id },
-                data: {
-                    phone,
-                    birthDate,
-                    requestedRole: role,
-                    ...(user.role !== 'owner' && user.approvalStatus !== 'approved' && { approvalStatus: 'pending' }),
-                },
-            });
-
-            const membership = await tx.user_branch.findFirst({
-                where: {
-                    userId: user.id,
-                    branchId,
-                },
-                select: {
-                    id: true,
-                    role: true,
-                },
-            });
-
-            if (!membership) {
-                await tx.user_branch.create({
-                    data: {
-                        userId: user.id,
-                        branchId,
-                        role: null,
-                    },
-                });
-            }
-
-            return user.id;
-        });
-
-        const user = await this.prisma.user.findUnique({
-            where: { id: userId },
-            select: {
-                id: true,
-                email: true,
-                name: true,
-                profileImage: true,
-                phone: true,
-                birthDate: true,
-                role: true,
-                approvalStatus: true,
-                tokenVersion: true,
-            },
-        });
-
-        if (!user) {
-            throw new UnauthorizedException("User not found after completing onboarding");
-        }
-
-        const loginResult = await this.createLoginResultForUser(user);
-
-        if ("onboardingRequired" in loginResult && loginResult.onboardingRequired) {
-            throw new UnauthorizedException("Account onboarding completion failed");
-        }
-
-        return loginResult as UserValidationResult;
+        return {
+            success: true,
+            userId: onboardingResult,
+            message: PENDING_APPROVAL_MESSAGE,
+        };
     }
 
     async refreshTokens(refreshToken: string): Promise<{ accessToken: string; refreshToken: string }> {
@@ -1200,7 +1036,6 @@ export class AuthService {
         name: string,
         phone: string,
         birthDate: string,
-        branchId: string,
         role: string,
     ): Promise<RegistrationResult> {
         // Validate password strength
@@ -1228,14 +1063,6 @@ export class AuthService {
             };
         }
 
-        const org = await this.prisma.branch.findUnique({
-            where: { id: branchId },
-            select: { id: true },
-        });
-        if (!org) {
-            throw new BadRequestException('유효하지 않은 지점입니다.');
-        }
-
         const passwordHash = await this.hashPassword(password);
 
         const verificationToken = this.authEmailTokens.createToken();
@@ -1256,13 +1083,6 @@ export class AuthService {
                 },
             });
 
-            await tx.user_branch.create({
-                data: {
-                    userId: createdUser.id,
-                    branchId,
-                    role: null,
-                },
-            });
             await tx.auth_token.create({
                 data: {
                     id: verificationToken.tokenId,
