@@ -171,4 +171,36 @@ describe("admin gateway proxy", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     fetchMock.mockRestore();
   });
+
+  it("allows pending account onboarding navigation without an auth session", async () => {
+    const response = await proxy(new NextRequest("http://localhost/onboarding", {
+      method: "GET",
+      headers: {
+        cookie: "pending_account_onboarding=pending-token",
+      },
+    }));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("allows pending account onboarding Server Action posts", async () => {
+    const response = await proxy(new NextRequest("http://localhost/onboarding", {
+      method: "POST",
+      headers: {
+        cookie: "pending_account_onboarding=pending-token",
+        "next-action": "complete-onboarding-action",
+      },
+    }));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("keeps onboarding protected when the pending token is missing", async () => {
+    const response = await proxy(new NextRequest("http://localhost/onboarding"));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost/login");
+  });
 });
