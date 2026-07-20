@@ -28,7 +28,7 @@ const EMAIL_DUPLICATE_ERROR = "이미 등록된 이메일입니다.";
 const REGISTER_TOTAL_STEPS = 3;
 const ACCOUNT_FIELDS = ["email", "name", "password", "confirmPassword"] as const;
 const PROFILE_FIELDS = ["phone", "birthDate"] as const;
-const BRANCH_FIELDS = ["branchId", "role"] as const;
+const APPROVAL_FIELDS = ["role"] as const;
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -41,11 +41,8 @@ export default function RegisterPage() {
   const [profileData, setProfileData] = useState({
     phone: "",
     birthDate: "",
-    branchId: "",
     role: "",
   });
-  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
-  const [isLoadingBranches, setIsLoadingBranches] = useState(true);
   const [currentStep, setCurrentStep] = useState(1);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState<string | null>(null);
@@ -83,28 +80,6 @@ export default function RegisterPage() {
       : isEmailLinkable
         ? "카카오 연결 가능"
         : "이메일 확인됨";
-
-  useEffect(() => {
-    let cancelled = false;
-
-    void authApi.getBranches()
-      .then((items) => {
-        if (!cancelled) setBranches(items);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setBranches([]);
-          setServerError("지점 목록을 불러오지 못했습니다. 다시 시도해 주세요.");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoadingBranches(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (!normalizedEmail || emailFormatError) {
@@ -288,7 +263,7 @@ export default function RegisterPage() {
       const fieldErrors = collectFieldErrors(result.error.issues, [
         ...ACCOUNT_FIELDS,
         ...PROFILE_FIELDS,
-        ...BRANCH_FIELDS,
+        ...APPROVAL_FIELDS,
       ]);
       setErrors(fieldErrors);
       if (ACCOUNT_FIELDS.some((field) => fieldErrors[field])) setCurrentStep(1);
@@ -304,7 +279,6 @@ export default function RegisterPage() {
         name: result.data.name,
         phone: result.data.phone,
         birthDate: result.data.birthDate,
-        branchId: result.data.branchId,
         role: result.data.role,
       });
       if (response.success) {
@@ -576,31 +550,8 @@ export default function RegisterPage() {
 
       {currentStep === 3 && (
         <form className="auth-form auth-step-view active" onSubmit={handleSubmit} data-component="auth-register-submit-form">
-          <div className="auth-input-group" data-component="auth-register-branch-field">
-            <label className="auth-label" htmlFor="register-branch">지점명</label>
-            <div className="auth-select-wrap" data-component="auth-register-branch-select-wrap">
-              <select
-                id="register-branch"
-                className="auth-select"
-                value={profileData.branchId}
-                onChange={handleProfileChange("branchId")}
-                disabled={isLoading || isLoadingBranches}
-                aria-invalid={!!errors.branchId}
-              >
-                <option value="">{isLoadingBranches ? "지점 목록 불러오는 중" : "지점을 선택해주세요"}</option>
-                {branches.map((branch) => (
-                  <option key={branch.id} value={branch.id}>
-                    {branch.name}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="auth-select-chev" size={16} strokeWidth={2.5} aria-hidden="true" />
-            </div>
-            {errors.branchId && <div className="auth-helper error" data-component="auth-register-branch-error">{errors.branchId}</div>}
-          </div>
-
           <div className="auth-input-group" data-component="auth-register-role-field">
-            <label className="auth-label" htmlFor="register-role">역할</label>
+            <label className="auth-label" htmlFor="register-role">요청 권한</label>
             <div className="auth-select-wrap" data-component="auth-register-role-select-wrap">
               <select
                 id="register-role"
@@ -620,7 +571,7 @@ export default function RegisterPage() {
               <ChevronDown className="auth-select-chev" size={16} strokeWidth={2.5} aria-hidden="true" />
             </div>
             {errors.role && <div className="auth-helper error" data-component="auth-register-role-error">{errors.role}</div>}
-            <div className="auth-helper" data-component="auth-register-role-helper">선택한 지점의 관리자가 가입을 승인해야 합니다.</div>
+            <div className="auth-helper" data-component="auth-register-role-helper">오너가 지점과 최종 권한을 배정합니다.</div>
           </div>
 
           <div className="auth-actions" data-component="auth-register-step-actions">
