@@ -226,7 +226,6 @@ export class AuthController {
             token,
             body.phone,
             body.birthDate,
-            body.branchId,
             body.role,
         );
     }
@@ -246,23 +245,11 @@ export class AuthController {
 
     @Post("onboarding/complete")
     @UseGuards(RateLimitGuard)
-    async completeAccountOnboarding(
-        @Headers(AuthController.PENDING_ONBOARDING_TOKEN_HEADER) headerToken: string | undefined,
-        @Query("token") queryToken: string | undefined,
-        @Body() body: CompleteKakaoOnboardingDto,
-    ) {
-        const token = headerToken ?? queryToken;
-        if (!token) {
-            throw new BadRequestException("Pending onboarding token is required");
-        }
-
-        return this.authService.completeAccountOnboarding(
-            token,
-            body.phone,
-            body.birthDate,
-            body.branchId,
-            body.role,
-        );
+    completeAccountOnboarding(): never {
+        throw new ForbiddenException({
+            code: AUTH_ERROR_CODES.ACCOUNT_PROFILE_INCOMPLETE,
+            message: "가입 정보와 지점 배정은 오너가 확인해야 합니다.",
+        });
     }
 
     @Post("refresh-token")
@@ -283,7 +270,6 @@ export class AuthController {
             body.name,
             body.phone,
             body.birthDate,
-            body.branchId,
             body.role,
         );
 

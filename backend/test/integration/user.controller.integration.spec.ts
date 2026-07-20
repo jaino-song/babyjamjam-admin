@@ -616,33 +616,13 @@ describe("UserController (Integration)", () => {
     // ============================================
     describe("POST /users/:id/approve", () => {
         describe("given a valid approval by the owner", () => {
-            it("should approve the user and assign the requested role", async () => {
-                // Arrange
-                const summary = {
-                    id: "pending-user-1",
-                    name: "Pending User",
-                    email: "pending@example.com",
-                    role: "admin",
-                    approvalStatus: "approved",
-                    approvedAt: new Date("2026-07-13"),
-                    approvedBy: "owner-user-id",
-                    requestedRole: "admin",
-                    tokenVersion: 1,
-                };
-                userService.approve.mockResolvedValue(summary);
-
-                // Act
+            it("should require the owner to select a branch", async () => {
                 const response = await request(app.getHttpServer())
                     .post("/users/pending-user-1/approve")
                     .send({ role: "admin" });
 
-                // Assert
-                expect(response.status).toBe(201);
-                expect(userService.approve).toHaveBeenCalledWith("pending-user-1", {
-                    role: "admin",
-                    branchId: undefined,
-                    approvedBy: "owner-user-id",
-                });
+                expect(response.status).toBe(400);
+                expect(userService.approve).not.toHaveBeenCalled();
             });
 
             it("should pass branchId through when provided", async () => {

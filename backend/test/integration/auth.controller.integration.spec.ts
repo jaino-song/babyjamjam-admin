@@ -103,7 +103,6 @@ describe("AuthController (Integration)", () => {
             getPendingKakaoSignup: jest.fn(),
             completeKakaoOnboarding: jest.fn(),
             getPendingAccountOnboarding: jest.fn(),
-            completeAccountOnboarding: jest.fn(),
             linkKakaoToAccount: jest.fn(),
             // Kakao OAuth state binding (login-CSRF protection). The callback
             // rejects with invalid_oauth_state unless verifyKakaoLoginState
@@ -813,8 +812,9 @@ describe("AuthController (Integration)", () => {
     describe("POST /auth/kakao/complete-signup", () => {
         it("should complete kakao onboarding and return tokens", async () => {
             authService.completeKakaoOnboarding.mockResolvedValue({
-                user: mockUser.id,
-                ...mockTokens,
+                success: true,
+                userId: mockUser.id,
+                message: "관리자 승인 대기 중입니다.",
             });
 
             const response = await request(app.getHttpServer())
@@ -823,7 +823,6 @@ describe("AuthController (Integration)", () => {
                 .send({
                     phone: "010-1234-5678",
                     birthDate: "1990-01-01",
-                    branchId: "550e8400-e29b-41d4-a716-446655440000",
                     role: "user",
                 });
 
@@ -832,7 +831,6 @@ describe("AuthController (Integration)", () => {
                 "pending-token",
                 "010-1234-5678",
                 "1990-01-01",
-                "550e8400-e29b-41d4-a716-446655440000",
                 "user",
             );
         });
@@ -843,7 +841,6 @@ describe("AuthController (Integration)", () => {
                 .send({
                     phone: "010-1234-5678",
                     birthDate: "1990-01-01",
-                    branchId: "550e8400-e29b-41d4-a716-446655440000",
                     role: "user",
                 });
 
@@ -852,12 +849,7 @@ describe("AuthController (Integration)", () => {
     });
 
     describe("POST /auth/onboarding/complete", () => {
-        it("should complete account onboarding and return tokens", async () => {
-            authService.completeAccountOnboarding.mockResolvedValue({
-                user: mockUser.id,
-                ...mockTokens,
-            });
-
+        it("should reject post-approval self-service profile and branch assignment", async () => {
             const response = await request(app.getHttpServer())
                 .post("/auth/onboarding/complete")
                 .set("x-pending-onboarding-token", "pending-onboarding-token")
@@ -868,17 +860,11 @@ describe("AuthController (Integration)", () => {
                     role: "manager",
                 });
 
-            expect(response.status).toBe(201);
-            expect(authService.completeAccountOnboarding).toHaveBeenCalledWith(
-                "pending-onboarding-token",
-                "010-1234-5678",
-                "1990-01-01",
-                "550e8400-e29b-41d4-a716-446655440000",
-                "manager",
-            );
+            expect(response.status).toBe(403);
+            expect(response.body.code).toBe("ACCOUNT_PROFILE_INCOMPLETE");
         });
 
-        it("should return 400 when onboarding token is missing", async () => {
+        it("should reject the endpoint even when the onboarding token is missing", async () => {
             const response = await request(app.getHttpServer())
                 .post("/auth/onboarding/complete")
                 .send({
@@ -888,7 +874,7 @@ describe("AuthController (Integration)", () => {
                     role: "manager",
                 });
 
-            expect(response.status).toBe(400);
+            expect(response.status).toBe(403);
         });
     });
 
