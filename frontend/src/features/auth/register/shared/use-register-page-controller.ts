@@ -12,7 +12,7 @@ import { authApi } from "@/services/api";
 
 const ACCOUNT_FIELDS = ["email", "name", "password", "confirmPassword"] as const;
 const PERSONAL_FIELDS = ["phone", "birthDate"] as const;
-const BRANCH_FIELDS = ["branchId", "role"] as const;
+const APPROVAL_FIELDS = ["role"] as const;
 const PASSWORD_MISMATCH_ERROR = "비밀번호가 일치하지 않습니다.";
 const EMAIL_DUPLICATE_ERROR = "이미 등록된 이메일입니다.";
 const EMAIL_LINKABLE_MESSAGE = "카카오 계정 연결 가능";
@@ -24,7 +24,7 @@ export type RegisterStep = 0 | 1 | 2;
 const STEP_FIELDS: Record<RegisterStep, readonly RegisterField[]> = {
   0: ACCOUNT_FIELDS,
   1: PERSONAL_FIELDS,
-  2: BRANCH_FIELDS,
+  2: APPROVAL_FIELDS,
 };
 
 export const REGISTER_STEP_TOTAL = 3;
@@ -90,7 +90,6 @@ export function useRegisterPageController() {
     name: "",
     phone: "",
     birthDate: "",
-    branchId: "",
     role: undefined,
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -98,8 +97,6 @@ export function useRegisterPageController() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [accountsLinked, setAccountsLinked] = useState(false);
-  const [branches, setBranches] = useState<{ value: string; label: string }[]>([]);
-  const [isLoadingOrgs, setIsLoadingOrgs] = useState(true);
   const [currentStep, setCurrentStep] = useState<RegisterStep>(0);
   const [isCheckingEmailDuplicate, setIsCheckingEmailDuplicate] = useState(false);
   const [isEmailDuplicate, setIsEmailDuplicate] = useState(false);
@@ -111,17 +108,6 @@ export function useRegisterPageController() {
   const normalizedEmail = (formData.email ?? "").trim().toLowerCase();
   const phoneDigits = (formData.phone ?? "").replace(/\D/g, "");
   const emailFormatError = getEmailFormatError(formData.email ?? "");
-
-  useEffect(() => {
-    authApi.getBranches()
-      .then((orgs) => {
-        setBranches(orgs.map((org) => ({ value: org.id, label: org.name })));
-      })
-      .catch(() => {
-        setBranches([]);
-      })
-      .finally(() => setIsLoadingOrgs(false));
-  }, []);
 
   useEffect(() => {
     if (!normalizedEmail || emailFormatError) {
@@ -396,8 +382,13 @@ export function useRegisterPageController() {
     setServerError(null);
   };
 
-  const handleSelectChange = (field: "branchId" | "role") => (value: string) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
+  const handleSelectChange = (field: "role") => (value: string) => {
+    const role = REGISTERABLE_ROLE_OPTIONS.find((option) => option.value === value)?.value;
+    if (!role) {
+      return;
+    }
+
+    setFormData((prev) => ({ ...prev, [field]: role }));
     if (errors[field]) {
       setErrors((prev) => {
         const nextErrors = { ...prev };
@@ -445,7 +436,6 @@ export function useRegisterPageController() {
         name: result.data.name,
         phone: result.data.phone,
         birthDate: result.data.birthDate,
-        branchId: result.data.branchId,
         role: result.data.role,
       });
 
@@ -512,12 +502,7 @@ export function useRegisterPageController() {
     !showPhoneDuplicateWarning &&
     !isPhoneDuplicate &&
     !isCheckingPhoneDuplicate;
-  const hasStepThreeRequirements =
-    Boolean(formData.branchId) &&
-    Boolean(formData.role) &&
-    !isLoadingOrgs &&
-    !errors.branchId &&
-    !errors.role;
+  const hasStepThreeRequirements = Boolean(formData.role) && !errors.role;
 
   return {
     formData,
@@ -526,8 +511,6 @@ export function useRegisterPageController() {
     isLoading,
     isSuccess,
     accountsLinked,
-    branches,
-    isLoadingOrgs,
     currentStep,
     isCheckingEmailDuplicate,
     emailLinkableMessage,

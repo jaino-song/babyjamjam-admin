@@ -75,7 +75,6 @@ interface AdminRequest {
 
 interface PendingAccountApproval {
   userId: string;
-  branchId?: string;
   requestedRole: string;
 }
 
@@ -447,7 +446,6 @@ function buildAccountRecords(users: readonly SystemAdminUser[]): AdminRecord[] {
     const pendingAccountApproval = isPendingApproval
       ? {
           userId: user.id,
-          branchId: user.branches[0]?.id,
           requestedRole: getDefaultPendingApprovalRole(user),
         }
       : undefined;
@@ -728,8 +726,9 @@ export function OwnerAdminConsole() {
     },
   });
   const [pendingRoleSelections, setPendingRoleSelections] = useState<Record<string, string>>({});
+  const [pendingBranchSelections, setPendingBranchSelections] = useState<Record<string, string>>({});
   const approveUserMutation = useMutation({
-    mutationFn: ({ id, role, branchId }: { id: string; role: string; branchId?: string }) =>
+    mutationFn: ({ id, role, branchId }: { id: string; role: string; branchId: string }) =>
       approveUser(id, role, branchId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["systemAdminUsers"] });
@@ -1049,6 +1048,9 @@ export function OwnerAdminConsole() {
                         ? (pendingRoleSelections[pendingAccountApproval.userId] ??
                           pendingAccountApproval.requestedRole)
                         : null;
+                      const selectedPendingBranchId = pendingAccountApproval
+                        ? (pendingBranchSelections[pendingAccountApproval.userId] ?? "")
+                        : null;
                       const infoTitle =
                         activeSection.id === "accounts"
                           ? "계정 정보"
@@ -1081,6 +1083,27 @@ export function OwnerAdminConsole() {
                                 className="flex flex-wrap items-center gap-2"
                               >
                                 <select
+                                  aria-label={`${selectedRecord.listTitle} 승인 지점 선택`}
+                                  data-component="system-admin-pending-approval-branch-select"
+                                  value={selectedPendingBranchId ?? ""}
+                                  disabled={isPendingApprovalActionRunning}
+                                  onChange={(event) =>
+                                    setPendingBranchSelections((previousSelections) => ({
+                                      ...previousSelections,
+                                      [pendingAccountApproval.userId]: event.target.value,
+                                    }))
+                                  }
+                                  className="h-9 rounded-full border border-v3-border bg-white px-3 text-sm text-v3-dark disabled:opacity-50"
+                                >
+                                  <option value="">지점 선택</option>
+                                  {systemAdminBranchRequests.map((branch) => (
+                                    <option key={branch.id} value={branch.id}>
+                                      {branch.name}
+                                    </option>
+                                  ))}
+                                </select>
+
+                                <select
                                   aria-label={`${selectedRecord.listTitle} 승인 권한 선택`}
                                   data-component="system-admin-pending-approval-role-select"
                                   value={selectedPendingRole}
@@ -1104,13 +1127,15 @@ export function OwnerAdminConsole() {
                                   type="button"
                                   size="sm"
                                   variant="positive"
-                                  disabled={isPendingApprovalActionRunning}
+                                  disabled={isPendingApprovalActionRunning || !selectedPendingBranchId}
                                   onClick={() =>
-                                    approveUserMutation.mutate({
-                                      id: pendingAccountApproval.userId,
-                                      role: selectedPendingRole,
-                                      branchId: pendingAccountApproval.branchId,
-                                    })
+                                    selectedPendingBranchId
+                                      ? approveUserMutation.mutate({
+                                          id: pendingAccountApproval.userId,
+                                          role: selectedPendingRole,
+                                          branchId: selectedPendingBranchId,
+                                        })
+                                      : undefined
                                   }
                                 >
                                   {approveUserMutation.isPending &&

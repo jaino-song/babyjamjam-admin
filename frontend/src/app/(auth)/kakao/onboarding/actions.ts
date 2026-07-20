@@ -3,20 +3,16 @@
 import { cookies } from "next/headers";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
-import { setAuthSessionCookies } from "@/lib/auth/session-cookies";
 
 interface CompleteKakaoOnboardingInput {
     phone: string;
     birthDate: string;
-    branchId: string;
     role: string;
 }
 
 interface CompleteKakaoOnboardingSuccessResponse {
-    accessToken: string;
-    refreshToken: string;
-    requiresBranchSelection?: boolean;
-    requiresOrgSelection?: boolean;
+    success: boolean;
+    message?: string;
 }
 
 const PENDING_KAKAO_SIGNUP_COOKIE = "pending_kakao_signup";
@@ -24,7 +20,7 @@ const PENDING_KAKAO_SIGNUP_TOKEN_HEADER = "x-pending-signup-token";
 
 export async function completeKakaoOnboarding(
     input: CompleteKakaoOnboardingInput,
-): Promise<{ success: boolean; error?: string; requiresBranchSelection?: boolean }> {
+): Promise<{ success: boolean; error?: string }> {
     const cookieStore = await cookies();
     const pendingSignupToken = cookieStore.get(PENDING_KAKAO_SIGNUP_COOKIE)?.value;
 
@@ -38,10 +34,7 @@ export async function completeKakaoOnboarding(
     try {
         const response = await serverAPIClient.post<CompleteKakaoOnboardingSuccessResponse>(
             "/auth/kakao/complete-signup",
-            {
-                ...input,
-                organizationId: input.branchId,
-            },
+            input,
             {
                 headers: {
                     [PENDING_KAKAO_SIGNUP_TOKEN_HEADER]: pendingSignupToken,
@@ -64,16 +57,10 @@ export async function completeKakaoOnboarding(
             };
         }
 
-        setAuthSessionCookies(cookieStore, {
-            accessToken: response.data.accessToken,
-            refreshToken: response.data.refreshToken,
-        });
-
         cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
 
         return {
             success: true,
-            requiresBranchSelection: Boolean(response.data.requiresBranchSelection || response.data.requiresOrgSelection),
         };
     } catch (error) {
         if (error instanceof AxiosError) {
