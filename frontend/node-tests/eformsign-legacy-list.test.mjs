@@ -4,7 +4,6 @@ import test from "node:test";
 import {
   getLegacyDocumentCustomerName,
   getLegacyDocumentStatusCategory,
-  hydrateLegacyDocumentCustomerName,
   mapLegacyDocumentStatusToLabel,
   needsLegacyDocumentDetail,
 } from "../src/app/lib/eformsign/status-codes.ts";
@@ -125,19 +124,21 @@ test("legacy hydrates only unresolved contract documents", () => {
   );
 });
 
-test("legacy hydrates a completed document from the stored client mapping", () => {
-  const hydrated = hydrateLegacyDocumentCustomerName(
+test("legacy resolves a completed contract name from detailed document fields", () => {
+  assert.equal(
+    getLegacyDocumentCustomerName(
     {
       recipients: [],
+      fields: [
+        { id: "이용자 주소", value: "인천시 남동구" },
+        { id: "이용자 성명", value: "최유정" },
+      ],
       current_status: { step_recipients: [] },
       last_editor: { name: "인천 아이미래로" },
       creator: { name: "인천 아이미래로" },
     },
-    "최유정",
-  );
-
-  assert.equal(
-    getLegacyDocumentCustomerName(hydrated, ["송진호", "인천 아이미래로"]),
+      ["송진호", "인천 아이미래로"],
+    ),
     "최유정",
   );
 });

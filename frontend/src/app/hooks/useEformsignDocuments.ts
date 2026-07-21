@@ -6,7 +6,6 @@ import { EformsignDocumentsResponse, EformsignDocument } from "@/app/lib/eformsi
 import {
   DocumentFilterType,
   getLegacyDocumentStatusCategory,
-  hydrateLegacyDocumentCustomerName,
   LEGACY_EXCLUDED_CUSTOMER_NAMES,
   needsLegacyDocumentDetail,
 } from "@/app/lib/eformsign/status-codes";
@@ -34,19 +33,8 @@ export const eformsignQueryKeys = {
 // Fetch all documents using unified backend endpoint (single request instead of 3)
 async function fetchAllDocuments(): Promise<EformsignDocumentsResponse> {
   // Uses the unified /documents endpoint which fetches all types on the backend
-  const [response, clientSummaries] = await Promise.all([
-    eformsignApi.getAllDocuments(),
-    eformsignApi.getDocumentClientNames().catch((error) => {
-      debugLog("[fetchAllDocuments] Failed to fetch stored client names", error);
-      return [];
-    }),
-  ]);
-  const clientNameByDocumentId = new Map(
-    clientSummaries.map((summary) => [summary.documentId, summary.clientName]),
-  );
-  const documents = (response.documents || []).map((doc) =>
-    hydrateLegacyDocumentCustomerName(doc, clientNameByDocumentId.get(doc.id)),
-  );
+  const response = await eformsignApi.getAllDocuments();
+  const documents = response.documents || [];
   const unresolvedContracts = documents.filter((doc) =>
     needsLegacyDocumentDetail(doc, LEGACY_EXCLUDED_CUSTOMER_NAMES)
   );
@@ -67,10 +55,10 @@ async function fetchAllDocuments(): Promise<EformsignDocumentsResponse> {
 
     response.documents = documents.map((doc) => {
       const detail = detailsById.get(doc.id);
-      return detail ? { ...doc, recipients: detail.recipients } : doc;
+      return detail
+        ? { ...doc, fields: detail.fields, recipients: detail.recipients }
+        : doc;
     });
-  } else {
-    response.documents = documents;
   }
 
   debugLog(`[fetchAllDocuments] Received ${response.documents?.length || 0} docs`);

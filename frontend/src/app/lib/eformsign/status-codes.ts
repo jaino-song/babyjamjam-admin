@@ -57,6 +57,7 @@ type EformsignWorkflowStatus = {
 
 type LegacyListDocument = {
   template?: { name?: unknown } | null;
+  fields?: unknown;
   recipients?: unknown;
   current_status?: EformsignWorkflowStatus | null;
   last_editor?: { name?: unknown } | null;
@@ -67,6 +68,7 @@ const PROVIDER_REVIEW_STEP_TYPES = new Set(["06"]);
 const PROVIDER_OWNER_KEYWORDS = ["제공기관", "관리자", "담당자"];
 const REVIEW_ACTION_KEYWORDS = ["확인", "검토"];
 const CUSTOMER_STEP_KEYWORDS = ["이용자", "고객", "산모"];
+const CUSTOMER_NAME_FIELD_IDS = new Set(["이용자 성명", "고객명", "산모명", "산모 성명"]);
 export const LEGACY_EXCLUDED_CUSTOMER_NAMES = ["송진호", "인천 아이미래로"] as const;
 
 // Filter types for API calls
@@ -142,6 +144,18 @@ function collectNames(value: unknown, depth = 0): string[] {
   return ownName ? [ownName, ...nestedNames] : nestedNames;
 }
 
+function collectCustomerFieldNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const field = item as Record<string, unknown>;
+    const id = typeof field.id === "string" ? field.id.trim() : "";
+    const fieldValue = typeof field.value === "string" ? field.value.trim() : "";
+    return CUSTOMER_NAME_FIELD_IDS.has(id) && fieldValue ? [fieldValue] : [];
+  });
+}
+
 /**
  * Provider-owned review/completed steps make current_status and last_editor
  * point at the branch. The participant list still retains the customer.
@@ -152,6 +166,7 @@ export function getLegacyDocumentCustomerName(
 ): string | null {
   const candidates = [
     ...collectNames(document.recipients),
+    ...collectCustomerFieldNames(document.fields),
     ...collectNames(document.current_status?.step_recipients),
     typeof document.last_editor?.name === "string" ? document.last_editor.name.trim() : "",
     typeof document.creator?.name === "string" ? document.creator.name.trim() : "",
@@ -170,20 +185,6 @@ export function needsLegacyDocumentDetail(
 
   return templateName.includes("계약서")
     && getLegacyDocumentCustomerName(document, excludedNames) === null;
-}
-
-export function hydrateLegacyDocumentCustomerName<T extends LegacyListDocument>(
-  document: T,
-  customerName: string | null | undefined,
-): T {
-  const normalizedName = customerName?.trim();
-  if (!normalizedName) return document;
-
-  const recipients = Array.isArray(document.recipients) ? document.recipients : [];
-  return {
-    ...document,
-    recipients: [...recipients, { name: normalizedName }],
-  };
 }
 
 /**

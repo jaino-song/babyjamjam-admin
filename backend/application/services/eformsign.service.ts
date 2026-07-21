@@ -275,13 +275,16 @@ export class EformsignService {
      * GET /v2.0/api/documents/{documentId}
      */
     async getDocumentById(accessToken: string, documentId: string): Promise<any> {
-        const response = await fetch(`${this.EFORMSIGN_DOC_API_URL}/v2.0/api/documents/${documentId}`, {
-            method: "GET",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${accessToken}`,
-            },
-        });
+        const response = await fetch(
+            `${this.EFORMSIGN_DOC_API_URL}/v2.0/api/documents/${documentId}?include_fields=true`,
+            {
+                method: "GET",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${accessToken}`,
+                },
+            }
+        );
 
         if (!response.ok) {
             const errorData = await response.text();
