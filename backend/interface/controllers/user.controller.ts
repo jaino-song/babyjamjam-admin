@@ -131,6 +131,7 @@ export class UserController {
         return this.userService.approve(id, {
             role: approveUserDto.role,
             branchId: approveUserDto.branchId,
+            ownerBranchId: approveUserDto.ownerBranchId,
             approvedBy: req.user.userId,
         });
     }

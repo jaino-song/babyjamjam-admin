@@ -9,6 +9,8 @@ import {
   CheckCircle2,
   KeyRound,
   MessageCircle,
+  Pencil,
+  Plus,
   ShieldCheck,
   UserKey,
   Users,
@@ -16,6 +18,7 @@ import {
 } from "lucide-react";
 
 import { NotificationTestSection } from "@/components/app/settings/NotificationTestSection";
+import { SystemAdminBranchForm } from "@/components/app/system-admin/SystemAdminBranchForm";
 import { TagPill } from "@/components/app/ui/tag-pill";
 import {
   AnimatedSlotList,
@@ -23,6 +26,7 @@ import {
   DetailEmptyState,
   DetailPanel,
   DetailSkeleton,
+  HeaderActionButton,
   InfoCard,
   InfoRow,
   ListEmptyState,
@@ -38,13 +42,17 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   approveSystemAdminMessageSenderApproval,
+  createSystemAdminBranch,
   getSystemAdminBranchRequests,
+  updateSystemAdminBranch,
+  type SystemAdminBranchInput,
   type SystemAdminBranchRequest,
 } from "@/lib/api/system-admin";
 import {
   approveUser,
   getSystemAdminUsers,
   rejectUser,
+  updateUserRole,
   type SystemAdminUser,
 } from "@/lib/api/users";
 import { REGISTERABLE_ROLE_OPTIONS, ROLES } from "@/lib/constants/roles";
@@ -52,6 +60,7 @@ import { cn } from "@/lib/utils";
 import { matchesSearchQuery } from "@/lib/search/korean-search";
 
 type AdminSectionId = "branches" | "accounts" | "notifications";
+type BranchFormMode = "create" | "edit";
 type StatusVariant = "warning" | "info" | "success" | "destructive";
 type AdminTagPillVariant = "amber" | "emerald" | "sky" | "indigo" | "neutral";
 
@@ -96,6 +105,7 @@ interface AdminRecord {
   applicantRows?: readonly AdminDetailRow[];
   requests?: readonly AdminRequest[];
   pendingAccountApproval?: PendingAccountApproval;
+  accountRole?: string | null;
 }
 
 interface AdminSection {
@@ -103,7 +113,7 @@ interface AdminSection {
   label: string;
   icon: LucideIcon;
   listTitle: string;
-  listSubtitle: string;
+  listSubtitle?: string;
   searchPlaceholder?: string;
   tabs?: readonly {
     label: string;
@@ -141,7 +151,7 @@ const OWNER_ADMIN_SECTIONS = [
     label: "지점 관리",
     icon: Building2,
     listTitle: "지점 관리",
-    listSubtitle: "실제 지점과 메시지 권한 신청 상태를 관리할 수 있어요",
+    listSubtitle: undefined,
     searchPlaceholder: "지점명, 지역, 담당자 검색…",
     tabs: BRANCH_MANAGEMENT_TABS,
     stats: [],
@@ -488,6 +498,7 @@ function buildAccountRecords(users: readonly SystemAdminUser[]): AdminRecord[] {
         { label: "소속", value: getAccountBranchSummary(user) },
       ],
       pendingAccountApproval,
+      accountRole: user.role,
     };
   });
 }
@@ -563,7 +574,7 @@ function buildBranchRecords(branches: readonly SystemAdminBranchRequest[]): Admi
       { label: "대표 전화", value: branch.phone ?? "-" },
       { label: "이메일", value: branch.email ?? "-" },
       { label: "운영 상태", value: branch.isActive ? "운영 중" : "비활성" },
-      { label: "오너", value: branch.owner.name ?? branch.owner.email ?? "-" },
+      { label: "지점장", value: branch.owner?.name ?? branch.owner?.email ?? "-" },
       { label: "수정일", value: formatOptionalDate(branch.updatedAt) },
     ];
     const pendingRequest: AdminRequest | null =
@@ -589,7 +600,7 @@ function buildBranchRecords(branches: readonly SystemAdminBranchRequest[]): Admi
       category: messageStatus.category,
       statusLabel: messageStatus.statusLabel,
       statusVariant: messageStatus.statusVariant,
-      owner: branch.owner.name ?? branch.owner.email ?? "-",
+      owner: branch.owner?.name ?? branch.owner?.email ?? "-",
       summary:
         branch.messageSenderApproval.approvalStatus === "pending"
           ? "메시지 발신번호 승인 신청이 접수되었습니다."
@@ -706,6 +717,9 @@ export function OwnerAdminConsole() {
   const [activeSectionId, setActiveSectionId] = useState<AdminSectionId>("branches");
   const [splitLayoutMode, setSplitLayoutMode] = useState<SplitLayoutMode | null>(null);
   const [viewStateBySection, setViewStateBySection] = useState(createInitialViewState);
+  const [branchFormMode, setBranchFormMode] = useState<BranchFormMode | null>(null);
+  const [autoSelectionSuppressedSectionId, setAutoSelectionSuppressedSectionId] =
+    useState<AdminSectionId | null>(null);
   const queryClient = useQueryClient();
 
   const {
@@ -727,10 +741,50 @@ export function OwnerAdminConsole() {
       void queryClient.invalidateQueries({ queryKey: ["systemAdminBranchRequests"] });
     },
   });
+  const createBranchMutation = useMutation({
+    mutationFn: createSystemAdminBranch,
+    onSuccess: (branch) => {
+      queryClient.setQueryData<SystemAdminBranchRequest[]>(
+        ["systemAdminBranchRequests"],
+        (current = []) => [branch, ...current.filter((item) => item.id !== branch.id)],
+      );
+      setViewStateBySection((currentState) => ({
+        ...currentState,
+        branches: { ...currentState.branches, selectedRecordId: branch.id },
+      }));
+      setBranchFormMode(null);
+      void queryClient.invalidateQueries({ queryKey: ["systemAdminBranchRequests"] });
+    },
+  });
+  const updateBranchMutation = useMutation({
+    mutationFn: ({ branchId, input }: { branchId: string; input: SystemAdminBranchInput }) =>
+      updateSystemAdminBranch(branchId, input),
+    onSuccess: (branch) => {
+      queryClient.setQueryData<SystemAdminBranchRequest[]>(
+        ["systemAdminBranchRequests"],
+        (current = []) => current.map((item) => (item.id === branch.id ? branch : item)),
+      );
+      setBranchFormMode(null);
+      void queryClient.invalidateQueries({ queryKey: ["systemAdminBranchRequests"] });
+    },
+  });
   const [pendingRoleSelections, setPendingRoleSelections] = useState<Record<string, string>>({});
+  const [pendingBranchSelections, setPendingBranchSelections] = useState<Record<string, string>>({});
+  const [pendingOwnerBranchSelections, setPendingOwnerBranchSelections] = useState<
+    Record<string, string>
+  >({});
   const approveUserMutation = useMutation({
-    mutationFn: ({ id, role, branchId }: { id: string; role: string; branchId?: string }) =>
-      approveUser(id, role, branchId),
+    mutationFn: ({
+      id,
+      role,
+      branchId,
+      ownerBranchId,
+    }: {
+      id: string;
+      role: string;
+      branchId: string;
+      ownerBranchId?: string;
+    }) => approveUser(id, role, branchId, ownerBranchId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["systemAdminUsers"] });
     },
@@ -742,6 +796,17 @@ export function OwnerAdminConsole() {
     },
   });
   const isPendingApprovalActionRunning = approveUserMutation.isPending || rejectUserMutation.isPending;
+  const [accountEditUserId, setAccountEditUserId] = useState<string | null>(null);
+  const [accountRoleSelections, setAccountRoleSelections] = useState<Record<string, string>>({});
+  const updateUserRoleMutation = useMutation({
+    mutationFn: ({ id, role }: { id: string; role: "manager" | "user" }) =>
+      updateUserRole(id, role),
+    onSuccess: () => {
+      setAccountEditUserId(null);
+      void queryClient.invalidateQueries({ queryKey: ["systemAdminUsers"] });
+      void queryClient.invalidateQueries({ queryKey: ["systemAdminBranchRequests"] });
+    },
+  });
 
   const sections = useMemo(
     () =>
@@ -775,7 +840,8 @@ export function OwnerAdminConsole() {
     (activeSection.id === "branches" &&
       isSystemAdminBranchRequestsLoading &&
       !systemAdminBranchRequestsError);
-  const shouldAutoSelectFirstRecord = splitLayoutMode === "desktop";
+  const shouldAutoSelectFirstRecord =
+    splitLayoutMode === "desktop" && autoSelectionSuppressedSectionId !== activeSection.id;
   const resolvedSelectedRecordId = resolveSelectedRecordId(
     activeSection,
     activeViewState.tab,
@@ -785,6 +851,29 @@ export function OwnerAdminConsole() {
   );
   const selectedRecord =
     filteredRecords.find((record) => record.id === resolvedSelectedRecordId) ?? null;
+  const selectedBranch =
+    activeSection.id === "branches"
+      ? systemAdminBranchRequests.find((branch) => branch.id === selectedRecord?.id) ?? null
+      : null;
+  const branchManagerOptions = useMemo(
+    () =>
+      systemAdminUsers
+        .filter(
+          (user) =>
+            user.approvalStatus === "approved" &&
+            [ROLES.owner, ROLES.admin, ROLES.manager, ROLES.user].some(
+              (role) => user.role === role,
+            ),
+        )
+        .map((user) => ({
+          id: user.id,
+          label: `${user.name ?? user.email ?? "이름 미등록"}${user.email ? ` (${user.email})` : ""}`,
+        })),
+    [systemAdminUsers],
+  );
+  const isBranchMutationPending =
+    createBranchMutation.isPending || updateBranchMutation.isPending;
+  const branchMutationError = createBranchMutation.error ?? updateBranchMutation.error;
 
   const updateActiveSectionState = (updater: (current: SectionViewState) => SectionViewState) => {
     setViewStateBySection((currentState) => ({
@@ -818,14 +907,18 @@ export function OwnerAdminConsole() {
 
         <div className="min-h-0 flex-1">
           <SplitLayout
-            hasSelection={Boolean(selectedRecord)}
+            hasSelection={Boolean(selectedRecord || branchFormMode)}
             onModeChange={setSplitLayoutMode}
-            onBack={() =>
+            onBack={() => {
+              if (branchFormMode) {
+                setBranchFormMode(null);
+                return;
+              }
               updateActiveSectionState((current) => ({
                 ...current,
                 selectedRecordId: null,
-              }))
-            }
+              }));
+            }}
           >
             <ListPanel
               title={activeSection.listTitle}
@@ -835,18 +928,29 @@ export function OwnerAdminConsole() {
               tabsAriaLabel={activeSection.tabs ? `${activeSection.listTitle} 필터` : undefined}
               onTabChange={
                 activeSection.tabs
-                  ? (nextTab) =>
+                  ? (nextTab) => {
+                      const shouldClearBranchEdit =
+                        branchFormMode === "edit" && nextTab !== activeViewState.tab;
+
+                      if (shouldClearBranchEdit) {
+                        setBranchFormMode(null);
+                        setAutoSelectionSuppressedSectionId(activeSection.id);
+                      }
+
                       updateActiveSectionState((current) => ({
                         ...current,
                         tab: nextTab,
-                        selectedRecordId: resolveSelectedRecordId(
-                          activeSection,
-                          nextTab,
-                          current.search,
-                          current.selectedRecordId,
-                          shouldAutoSelectFirstRecord,
-                        ),
-                      }))
+                        selectedRecordId: shouldClearBranchEdit
+                          ? null
+                          : resolveSelectedRecordId(
+                              activeSection,
+                              nextTab,
+                              current.search,
+                              current.selectedRecordId,
+                              shouldAutoSelectFirstRecord,
+                            ),
+                      }));
+                    }
                   : undefined
               }
               searchValue={activeSection.searchPlaceholder ? activeViewState.search : undefined}
@@ -870,6 +974,19 @@ export function OwnerAdminConsole() {
               searchAriaLabel={
                 activeSection.searchPlaceholder ? `${activeSection.listTitle} 검색` : undefined
               }
+              headerActions={
+                activeSection.id === "branches" ? (
+                  <HeaderActionButton
+                    icon={Plus}
+                    label="지점 추가"
+                    onClick={() => {
+                      createBranchMutation.reset();
+                      updateBranchMutation.reset();
+                      setBranchFormMode("create");
+                    }}
+                  />
+                ) : undefined
+              }
             >
               {!isActiveSectionLoading && filteredRecords.length === 0 ? (
                 <ListEmptyState message={activeSection.emptyMessage} />
@@ -886,10 +1003,14 @@ export function OwnerAdminConsole() {
                     isInteractive: !slotLoading && Boolean(item),
                   })}
                   onSlotClick={(record) =>
-                    updateActiveSectionState((current) => ({
-                      ...current,
-                      selectedRecordId: record.id,
-                    }))
+                    {
+                      setBranchFormMode(null);
+                      setAutoSelectionSuppressedSectionId(null);
+                      updateActiveSectionState((current) => ({
+                        ...current,
+                        selectedRecordId: record.id,
+                      }));
+                    }
                   }
                   render={({ item: record, isLoading: slotLoading }) => {
                     if (slotLoading) {
@@ -972,7 +1093,44 @@ export function OwnerAdminConsole() {
               )}
             </ListPanel>
 
-            {isActiveSectionLoading ? (
+            {branchFormMode ? (
+              <DetailPanel
+                avatar={
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-green-light text-v3-green">
+                    <Building2 className="h-5 w-5" aria-hidden="true" />
+                  </div>
+                }
+                title={branchFormMode === "create" ? "지점 추가" : "지점 정보 수정"}
+                subtitle={
+                  branchFormMode === "create"
+                    ? "새 지점의 운영 정보를 등록합니다."
+                    : `${selectedBranch?.name ?? "선택한 지점"}의 정보를 수정합니다.`
+                }
+              >
+                <SystemAdminBranchForm
+                  key={`${branchFormMode}-${selectedBranch?.id ?? "new"}`}
+                  mode={branchFormMode}
+                  branch={branchFormMode === "edit" ? selectedBranch ?? undefined : undefined}
+                  managerOptions={branchManagerOptions}
+                  isSubmitting={isBranchMutationPending}
+                  submitError={
+                    branchMutationError
+                      ? "지점 정보를 저장하지 못했습니다. 입력값을 확인한 뒤 다시 시도해 주세요."
+                      : undefined
+                  }
+                  onCancel={() => setBranchFormMode(null)}
+                  onSubmit={(input) => {
+                    if (branchFormMode === "create") {
+                      createBranchMutation.mutate(input);
+                      return;
+                    }
+                    if (selectedBranch) {
+                      updateBranchMutation.mutate({ branchId: selectedBranch.id, input });
+                    }
+                  }}
+                />
+              </DetailPanel>
+            ) : isActiveSectionLoading ? (
               <DetailSkeleton
                 name="system-admin-detail-skeleton"
                 headerBadge
@@ -1031,6 +1189,29 @@ export function OwnerAdminConsole() {
                   </div>
                 ) : (
                   <div className="space-y-5">
+                    {activeSection.id === "branches" && selectedRecord.requests?.length ? (
+                      <section data-component="system-admin-detail-section" className="space-y-4">
+                        <InfoCard
+                          title="지점 정보"
+                          titleTrailing={
+                            <HeaderActionButton
+                              icon={Pencil}
+                              label="수정"
+                              className="ml-auto"
+                              onClick={() => {
+                                createBranchMutation.reset();
+                                updateBranchMutation.reset();
+                                setBranchFormMode("edit");
+                              }}
+                            />
+                          }
+                        >
+                          {selectedRecord.detailRows.map((row) => (
+                            <InfoRow key={row.label} label={row.label} value={row.value} />
+                          ))}
+                        </InfoCard>
+                      </section>
+                    ) : null}
                     {(selectedRecord.requests?.length
                       ? selectedRecord.requests
                       : [
@@ -1049,6 +1230,27 @@ export function OwnerAdminConsole() {
                         ? (pendingRoleSelections[pendingAccountApproval.userId] ??
                           pendingAccountApproval.requestedRole)
                         : null;
+                      const selectedPendingBranchId = pendingAccountApproval
+                        ? (pendingBranchSelections[pendingAccountApproval.userId] ??
+                          pendingAccountApproval.branchId ??
+                          "")
+                        : "";
+                      const selectedPendingOwnerBranchId = pendingAccountApproval
+                        ? (pendingOwnerBranchSelections[pendingAccountApproval.userId] ?? "")
+                        : "";
+                      const isPendingRoleAdmin = selectedPendingRole === ROLES.admin;
+                      const isApprovedAccount =
+                        activeSection.id === "accounts" && !pendingAccountApproval;
+                      const canEditAccountRole =
+                        isApprovedAccount && selectedRecord.accountRole !== ROLES.owner;
+                      const isEditingThisAccount =
+                        canEditAccountRole && accountEditUserId === selectedRecord.id;
+                      const isAccountCurrentlyAdmin = selectedRecord.accountRole === ROLES.admin;
+                      const defaultAccountRoleDraft = isAccountCurrentlyAdmin
+                        ? ""
+                        : (selectedRecord.accountRole ?? ROLES.user);
+                      const selectedAccountRoleDraft =
+                        accountRoleSelections[selectedRecord.id] ?? defaultAccountRoleDraft;
                       const infoTitle =
                         activeSection.id === "accounts"
                           ? "계정 정보"
@@ -1069,17 +1271,139 @@ export function OwnerAdminConsole() {
                               ))}
                             </InfoCard>
                           ) : null}
-                          <InfoCard title={infoTitle}>
+                          <InfoCard
+                            title={infoTitle}
+                            titleTrailing={
+                              activeSection.id === "branches" && infoTitle === "지점 정보" ? (
+                                <HeaderActionButton
+                                  icon={Pencil}
+                                  label="수정"
+                                  className="ml-auto"
+                                  onClick={() => {
+                                    createBranchMutation.reset();
+                                    updateBranchMutation.reset();
+                                    setBranchFormMode("edit");
+                                  }}
+                                />
+                              ) : canEditAccountRole ? (
+                                <HeaderActionButton
+                                  icon={Pencil}
+                                  label="수정"
+                                  className="ml-auto"
+                                  onClick={() => {
+                                    updateUserRoleMutation.reset();
+                                    setAccountEditUserId(selectedRecord.id);
+                                  }}
+                                />
+                              ) : undefined
+                            }
+                          >
                             {request.detailRows.map((row) => (
                               <InfoRow key={row.label} label={row.label} value={row.value} />
                             ))}
                           </InfoCard>
+                          {isEditingThisAccount ? (
+                            <div className="space-y-2">
+                              {isAccountCurrentlyAdmin ? (
+                                <p className="text-sm text-v3-text-muted">
+                                  지점장 권한은 지점 정보의 지점장 임명/해제로 관리되며, 권한을
+                                  변경하면 지점장에서 자동 해제됩니다.
+                                </p>
+                              ) : null}
+                              <div
+                                data-component="system-admin-account-edit-actions"
+                                className="flex flex-wrap items-center gap-2"
+                              >
+                                <select
+                                  aria-label={`${selectedRecord.listTitle} 권한 선택`}
+                                  data-component="system-admin-account-edit-role-select"
+                                  value={selectedAccountRoleDraft}
+                                  disabled={updateUserRoleMutation.isPending}
+                                  onChange={(event) =>
+                                    setAccountRoleSelections((previousSelections) => ({
+                                      ...previousSelections,
+                                      [selectedRecord.id]: event.target.value,
+                                    }))
+                                  }
+                                  className="h-9 rounded-full border border-v3-border bg-white px-3 text-sm text-v3-dark disabled:opacity-50"
+                                >
+                                  {isAccountCurrentlyAdmin ? (
+                                    <option value="" disabled>
+                                      권한 선택
+                                    </option>
+                                  ) : null}
+                                  <option value={ROLES.manager}>
+                                    {getAccountRoleLabel(ROLES.manager)}
+                                  </option>
+                                  <option value={ROLES.user}>
+                                    {getAccountRoleLabel(ROLES.user)}
+                                  </option>
+                                </select>
+
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="positive"
+                                  disabled={
+                                    updateUserRoleMutation.isPending || !selectedAccountRoleDraft
+                                  }
+                                  onClick={() =>
+                                    updateUserRoleMutation.mutate({
+                                      id: selectedRecord.id,
+                                      role: selectedAccountRoleDraft as "manager" | "user",
+                                    })
+                                  }
+                                >
+                                  {updateUserRoleMutation.isPending ? "저장 중…" : "저장"}
+                                </Button>
+
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="negative-outline"
+                                  disabled={updateUserRoleMutation.isPending}
+                                  onClick={() => setAccountEditUserId(null)}
+                                >
+                                  취소
+                                </Button>
+                              </div>
+
+                              {updateUserRoleMutation.isError ? (
+                                <p role="alert" className="text-sm text-destructive">
+                                  권한 변경에 실패했습니다. 잠시 후 다시 시도해 주세요.
+                                </p>
+                              ) : null}
+                            </div>
+                          ) : null}
                           {pendingAccountApproval && selectedPendingRole ? (
                             <div className="space-y-2">
                               <div
                                 data-component="system-admin-pending-approval-actions"
                                 className="flex flex-wrap items-center gap-2"
                               >
+                                <select
+                                  aria-label={`${selectedRecord.listTitle} 승인 지점 선택`}
+                                  data-component="system-admin-pending-approval-branch-select"
+                                  value={selectedPendingBranchId}
+                                  disabled={isPendingApprovalActionRunning}
+                                  onChange={(event) =>
+                                    setPendingBranchSelections((previousSelections) => ({
+                                      ...previousSelections,
+                                      [pendingAccountApproval.userId]: event.target.value,
+                                    }))
+                                  }
+                                  className="h-9 rounded-full border border-v3-border bg-white px-3 text-sm text-v3-dark disabled:opacity-50"
+                                >
+                                  <option value="">지점 선택</option>
+                                  {systemAdminBranchRequests
+                                    .filter((branch) => branch.isActive)
+                                    .map((branch) => (
+                                      <option key={branch.id} value={branch.id}>
+                                        {branch.name}
+                                      </option>
+                                    ))}
+                                </select>
+
                                 <select
                                   aria-label={`${selectedRecord.listTitle} 승인 권한 선택`}
                                   data-component="system-admin-pending-approval-role-select"
@@ -1100,16 +1424,48 @@ export function OwnerAdminConsole() {
                                   ))}
                                 </select>
 
+                                {isPendingRoleAdmin ? (
+                                  <select
+                                    aria-label={`${selectedRecord.listTitle} 임명 지점 선택`}
+                                    data-component="system-admin-pending-approval-owner-branch-select"
+                                    value={selectedPendingOwnerBranchId}
+                                    disabled={isPendingApprovalActionRunning}
+                                    onChange={(event) =>
+                                      setPendingOwnerBranchSelections((previousSelections) => ({
+                                        ...previousSelections,
+                                        [pendingAccountApproval.userId]: event.target.value,
+                                      }))
+                                    }
+                                    className="h-9 rounded-full border border-v3-border bg-white px-3 text-sm text-v3-dark disabled:opacity-50"
+                                  >
+                                    <option value="">임명 지점 선택</option>
+                                    {systemAdminBranchRequests
+                                      .filter((branch) => branch.isActive && !branch.owner)
+                                      .map((branch) => (
+                                        <option key={branch.id} value={branch.id}>
+                                          {branch.name}
+                                        </option>
+                                      ))}
+                                  </select>
+                                ) : null}
+
                                 <Button
                                   type="button"
                                   size="sm"
                                   variant="positive"
-                                  disabled={isPendingApprovalActionRunning}
+                                  disabled={
+                                    isPendingApprovalActionRunning ||
+                                    !selectedPendingBranchId ||
+                                    (isPendingRoleAdmin && !selectedPendingOwnerBranchId)
+                                  }
                                   onClick={() =>
                                     approveUserMutation.mutate({
                                       id: pendingAccountApproval.userId,
                                       role: selectedPendingRole,
-                                      branchId: pendingAccountApproval.branchId,
+                                      branchId: selectedPendingBranchId,
+                                      ...(isPendingRoleAdmin
+                                        ? { ownerBranchId: selectedPendingOwnerBranchId }
+                                        : {}),
                                     })
                                   }
                                 >

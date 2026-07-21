@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import {
     CreateUserUsecase,
@@ -179,9 +179,34 @@ export class UserService {
 
     approve(
         id: string,
-        params: { role: string, approvedBy: string, branchId?: string },
+        params: { role: string, approvedBy: string, branchId: string, ownerBranchId?: string },
     ): Promise<UserApprovalSummary> {
         return this.prismaService.$transaction(async (tx) => {
+            const branch = await tx.branch.findUnique({
+                where: { id: params.branchId },
+                select: { id: true },
+            });
+            if (!branch) {
+                throw new BadRequestException("유효하지 않은 지점입니다.");
+            }
+
+            if (params.role === "admin") {
+                if (!params.ownerBranchId) {
+                    throw new BadRequestException("지점장 승인은 임명할 지점이 필요합니다.");
+                }
+
+                const ownerBranch = await tx.branch.findUnique({
+                    where: { id: params.ownerBranchId },
+                    select: { id: true, ownerId: true },
+                });
+                if (!ownerBranch) {
+                    throw new BadRequestException("유효하지 않은 지점입니다.");
+                }
+                if (ownerBranch.ownerId) {
+                    throw new ConflictException("이미 지점장이 있는 지점입니다.");
+                }
+            }
+
             const user = await tx.user.update({
                 where: { id },
                 data: {
@@ -204,12 +229,42 @@ export class UserService {
                 },
             });
 
-            await tx.user_branch.updateMany({
-                where: params.branchId
-                    ? { userId: id, branchId: params.branchId }
-                    : { userId: id },
-                data: { role: params.role },
+            await tx.user_branch.deleteMany({
+                where: {
+                    userId: id,
+                    role: null,
+                    branchId: { not: params.branchId },
+                },
             });
+            await tx.user_branch.upsert({
+                where: {
+                    userId_branchId: { userId: id, branchId: params.branchId },
+                },
+                update: { role: params.role },
+                create: {
+                    userId: id,
+                    branchId: params.branchId,
+                    role: params.role,
+                },
+            });
+            if (params.role === "admin" && params.ownerBranchId) {
+                await tx.branch.update({
+                    where: { id: params.ownerBranchId },
+                    data: { ownerId: id },
+                });
+                await tx.user_branch.upsert({
+                    where: {
+                        userId_branchId: { userId: id, branchId: params.ownerBranchId },
+                    },
+                    update: { role: "admin" },
+                    create: {
+                        userId: id,
+                        branchId: params.ownerBranchId,
+                        role: "admin",
+                    },
+                });
+            }
+
             await tx.auth_session.updateMany({
                 where: { userId: id, revokedAt: null },
                 data: {

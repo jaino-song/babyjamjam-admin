@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString, IsUUID } from "class-validator";
+import { IsIn, IsOptional, IsString, IsUUID, ValidateIf } from "class-validator";
 
 export class CreateUserDto {
     @IsString()
@@ -30,7 +30,7 @@ export class UpdateUserDto {
     @IsOptional()
     profileImage?: string | null;
 
-    @IsIn(["admin", "manager", "user"])
+    @IsIn(["manager", "user"])
     @IsOptional()
     role?: string | null;
 }
@@ -45,6 +45,9 @@ export class ApproveUserDto {
     role!: "admin" | "manager" | "user";
 
     @IsUUID("4")
-    @IsOptional()
-    branchId?: string;
+    branchId!: string;
+
+    @ValidateIf((dto: ApproveUserDto) => dto.role === "admin")
+    @IsUUID("4")
+    ownerBranchId?: string;
 }
