@@ -64,7 +64,7 @@ import {
   type HeadlessProgressState,
 } from "@/lib/eformsign/headless-progress";
 import { HeadlessProgressModal } from "@/components/app/eformsign/HeadlessProgressModal";
-import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
+import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import type { EformsignDocClientSummary } from "@babyjamjam/shared/types/eformsign";
 import { eformsignApi } from "@/services/api";
 import {
@@ -2144,7 +2144,7 @@ export default function ContractsPage() {
     <>
       {mainSheet}
 
-      <ConfirmActionModal
+      <MobileTwoButtonModal
         open={deleteTargetDoc !== null}
         title="계약서 삭제"
         description="선택한 계약서를 삭제할까요?"

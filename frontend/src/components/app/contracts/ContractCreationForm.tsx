@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/select";
 import type { WizardStep } from "@/components/app/v3";
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
-import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import {
   Dialog,
   DialogContent,
@@ -972,7 +972,7 @@ export const ContractCreationForm = ({
       if (autoRegisteredClientId) {
         const baseMessage = error instanceof Error ? error.message : "계약서 생성 중 오류가 발생했습니다.";
         setSubmitError(`${baseMessage} 방금 자동 등록된 고객이 남아 있습니다.`);
-        if (window.confirm("방금 자동 등록된 고객이 남아 있습니다. 고객을 삭제할까요?")) {
+        if (await requestConfirmation("방금 자동 등록된 고객이 남아 있습니다. 고객을 삭제할까요?")) {
           try {
             await deleteClientMutation.mutateAsync(autoRegisteredClientId);
             setClientId(null);
@@ -1638,7 +1638,7 @@ export const ContractCreationForm = ({
         description="전자문서 생성과 전송이 완료되었습니다."
         onAcknowledge={handleCreationSuccessAcknowledged}
       />
-      <ApprovalTwoButtonModal
+      <TwoButtonModal
         open={confirmationMessage !== null}
         onOpenChange={(open) => {
           if (!open) resolveConfirmation(false);

@@ -21,7 +21,7 @@ import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { parsePositiveIntQueryParam } from "@/lib/query-params";
 import { toast } from "@/hooks/use-toast";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
-import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
+import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { useFormStore } from "@/stores/form-store";
 import {
@@ -643,7 +643,7 @@ export default function ClientsPage() {
         onDelete={handleDeleteRequest}
       />
 
-      <ConfirmActionModal
+      <MobileTwoButtonModal
         open={deleteTargetClientId != null}
         title={t(locale, "common.delete")}
         description={t(locale, "clients.delete-confirm")}

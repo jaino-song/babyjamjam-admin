@@ -1,0 +1,1154 @@
+<!-- @dsCard group="Docs" name="Component Docs — Storybook" viewport="1440x900" -->
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><title>아가잼잼 관리자 — Components</title>
+<link rel="stylesheet" href="../styles.css">
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<style>
+html,body,#root{height:100%;}body{margin:0;overflow:hidden;}
+.doc-side{width:280px;flex-shrink:0;height:100%;overflow-y:auto;background:var(--card);box-shadow:var(--shadow-card);padding:24px 16px 40px;box-sizing:border-box;scrollbar-width:thin;}
+.doc-main{flex:1;min-width:0;height:100%;overflow-y:auto;padding:48px 56px 96px;box-sizing:border-box;}
+.doc-navitem{display:block;width:100%;text-align:left;border:none;background:transparent;border-radius:var(--radius-md);padding:7px 12px;font-size:var(--text-md);font-weight:500;color:var(--text);cursor:pointer;font-family:var(--font-sans);transition:background 150ms var(--ease-standard);}
+.doc-navitem:hover{background:var(--surface);color:var(--dark);}
+.doc-navitem.active{background:var(--primary-light);color:var(--primary);font-weight:600;}
+.doc-group{font-size:var(--text-2xs);font-weight:600;letter-spacing:0.13em;text-transform:uppercase;color:var(--text-muted);margin:20px 0 6px;padding:0 12px;}
+table.props{width:100%;border-collapse:collapse;font-size:var(--text-sm);}
+table.props th{text-align:left;padding:8px 12px;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border);font-size:var(--text-xs);text-transform:uppercase;letter-spacing:0.08em;}
+table.props td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top;color:var(--text);}
+table.props tr:last-child td{border-bottom:none;}
+table.props code{font-family:var(--font-mono);font-size:var(--text-xs);background:var(--surface);border-radius:var(--radius-sm);padding:2px 6px;color:var(--dark);white-space:nowrap;}
+table.props td:first-child code{color:var(--primary);background:var(--primary-light);}
+</style>
+</head><body>
+<div id="root"></div>
+<script type="text/babel" src="../_ds_bundle.js"></script>
+<script type="text/babel">
+const B = window.BJJ;
+const Ic = (paths, size=16, sw=2) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round">{paths}</svg>;
+const P = {
+  users: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>,
+  plus: <><path d="M5 12h14"/><path d="M12 5v14"/></>,
+  more: <><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></>,
+  send: <><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></>,
+  cal: <><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></>,
+  file: <><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></>,
+  bell: <><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></>,
+  check: <path d="M20 6 9 17l-5-5"/>,
+  home: <><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></>,
+  msg: <><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></>,
+  refresh: <><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></>,
+  menu: <><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/></>,
+  spark: <path d="M9.94 14.34 8 22l6.06-4.34a2 2 0 0 1 1.16-.37L22 17l-2.29-6.71a2 2 0 0 1 0-1.3L22 2l-7.06 2.29a2 2 0 0 1-1.3 0L7 2l2.3 6.71a2 2 0 0 1 0 1.3L7 17z"/>,
+};
+
+const ViewCtx = React.createContext("desktop");
+function Preview({ column, children }){
+  const mode = React.useContext(ViewCtx);
+  if (mode === "mobile") {
+    return <div style={{background:"var(--card)", border:"1px solid var(--border)", borderRadius:"var(--radius-lg)", padding:24, display:"flex", justifyContent:"center", marginBottom:12}}>
+      <div style={{width:390, maxWidth:"100%", background:"var(--background)", borderRadius:28, border:"6px solid var(--dark)", boxSizing:"border-box", overflow:"hidden"}}>
+        <div style={{height:26, display:"flex", alignItems:"center", justifyContent:"center"}}><div style={{width:72, height:8, borderRadius:"var(--radius-pill)", background:"var(--dark)"}}/></div>
+        <div className="bjj-mobile" style={{padding:"8px 12px 16px", overflowX:"auto", display:"flex", flexDirection:column ? "column" : "row", flexWrap:"wrap", gap:14, alignItems:column ? "stretch" : "center"}}>{children}</div>
+      </div>
+    </div>;
+  }
+  return <div style={{background:"var(--card)", border:"1px solid var(--border)", borderRadius:"var(--radius-lg)", padding:24,
+    display:"flex", flexDirection:column ? "column" : "row", flexWrap:"wrap", gap:14,
+    alignItems:column ? "stretch" : "center", marginBottom:12}}>{children}</div>;
+}
+function Code({ children }){
+  return <pre style={{background:"var(--surface)", borderRadius:"var(--radius-md)", padding:"14px 18px", fontSize:"var(--text-sm)",
+    fontFamily:"var(--font-mono)", overflowX:"auto", color:"var(--dark)", lineHeight:1.8, margin:"0 0 28px"}}>{children}</pre>;
+}
+function Props({ rows }){
+  return <div style={{background:"var(--card)", border:"1px solid var(--border)", borderRadius:"var(--radius-lg)", overflow:"hidden", marginTop:8}}>
+    <table className="props"><thead><tr><th>Prop</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+    <tbody>{rows.map(r => <tr key={r[0]}><td><code>{r[0]}</code></td><td><code>{r[1]}</code></td><td>{r[2] ? <code>{r[2]}</code> : <span style={{color:"var(--text-muted)"}}>—</span>}</td><td>{r[3]}</td></tr>)}</tbody></table></div>;
+}
+function H2({ children }){ return <h2 style={{fontSize:"var(--text-base)", fontWeight:700, color:"var(--dark)", margin:"32px 0 12px"}}>{children}</h2>; }
+const F = (src, h) => <iframe src={src} style={{width:"100%", height:h, border:"1px solid var(--border)", borderRadius:"var(--radius-lg)", background:"#fff", marginBottom:16, display:"block"}}/>;
+
+/* ============ interactive demo wrappers ============ */
+function SelectDemo(){ const [v,setV]=React.useState("active"); return <div style={{width:220}}><B.Select value={v} onChange={setV} options={[{label:"진행중",value:"active"},{label:"대기",value:"pending"},{label:"완료",value:"done"}]}/></div>; }
+function CheckDemo(){ const [c,setC]=React.useState(true); return <B.Checkbox checked={c} onChange={setC} label="유축기 대여"/>; }
+function RadioDemo(){ const [r,setR]=React.useState("m"); return <B.RadioGroup row name="rd" value={r} onChange={setR} options={[{label:"산모",value:"m"},{label:"신생아",value:"n"}]}/>; }
+function SwitchDemo(){ const [on,setOn]=React.useState(true); return <B.Switch checked={on} onChange={setOn}/>; }
+function SearchDemo(){ const [q,setQ]=React.useState(""); return <div style={{flex:1,minWidth:280}}><B.SearchInput value={q} onChange={setQ} placeholder="고객 이름, 연락처 검색"/></div>; }
+function TabsDemo(){ const [t,setT]=React.useState("info"); return <div style={{width:"100%"}}><B.Tabs tabs={[{key:"info",label:"기본 정보"},{key:"contracts",label:"계약"},{key:"schedule",label:"일정"}]} activeTab={t} onTabChange={setT}/></div>; }
+function PillTabsDemo(){ const [t,setT]=React.useState("week"); return <B.Tabs variant="pill" tabs={[{key:"week",label:"주간"},{key:"month",label:"월간"}]} activeTab={t} onTabChange={setT}/>; }
+function ChipsDemo(){ const [f,setF]=React.useState("all"); return <B.FilterChips items={[{label:"전체",value:"all"},{label:"진행중",value:"active"},{label:"대기",value:"pending"},{label:"완료",value:"done"}]} activeValue={f} onChange={setF}/>; }
+function SectionNavDemo(){ const [s,setS]=React.useState("tpl"); return <B.SectionNav orientation="horizontal" activeId={s} onSelect={setS} items={[{id:"tpl",label:"템플릿",icon:Ic(P.file)},{id:"price",label:"요금"},{id:"noti",label:"알림",icon:Ic(P.bell)}]}/>; }
+function DialogDemo(){ const [o,setO]=React.useState(false); return <><B.Button onClick={()=>setO(true)}>고객 등록</B.Button>
+  <B.Dialog open={o} onClose={()=>setO(false)} title="고객 등록" description="새 산모 정보를 입력하세요"
+    footer={<><B.Button variant="neutral" size="sm" onClick={()=>setO(false)}>취소</B.Button><B.Button size="sm" onClick={()=>setO(false)}>저장</B.Button></>}>
+    <div style={{display:"grid",gap:12}}><B.InputField label="이름" required placeholder="이름을 입력하세요"/><B.InputField label="연락처" placeholder="010-0000-0000"/></div>
+  </B.Dialog></>; }
+function ConfirmDemo(){ const [o,setO]=React.useState(false); return <><B.Button variant="destructive" onClick={()=>setO(true)}>계약 삭제</B.Button>
+  <B.ConfirmActionModal open={o} title="계약을 삭제할까요?" description="이 작업은 되돌릴 수 없습니다." confirmLabel="삭제" onConfirm={()=>setO(false)} onCancel={()=>setO(false)}/></>; }
+function DropdownDemo(){ const [f,setF]=React.useState("all"); return <B.DropdownMenu align="left" trigger={<B.Button variant="neutral" size="sm">필터</B.Button>}
+  items={[{label:"전체",value:"all"},{label:"진행중",value:"active"},{label:"대기",value:"pending"},"-",{label:"필터 초기화",danger:true}]} activeValue={f} onSelect={setF}/>; }
+function PaginationDemo(){ const [p,setP]=React.useState(0); return <div style={{width:"100%"}}><B.Pagination count={45} page={p} onPageChange={setP}/></div>; }
+
+const tableRows = [
+  {name:"김서연", phone:"010-1234-5678", due:"2026-08-15", status:"active"},
+  {name:"박지호", phone:"010-9876-5432", due:"2026-07-28", status:"pending"},
+  {name:"이하은", phone:"010-5555-1234", due:"2026-09-02", status:"signed"},
+];
+const timelineItems = [
+  {icon:Ic(P.check,18), variant:"success", text:<span><b>김서연</b>님 계약 서명 완료</span>, time:"10분 전"},
+  {icon:Ic(P.send,18), variant:"info", text:"계약서 발송 — 박지호님", time:"1시간 전"},
+  {icon:Ic(P.cal,18), variant:"warning", text:"일정 변경 요청 — 최민준님", time:"어제"},
+];
+
+function AdminExample(){
+  const ref = React.useRef(null);
+  const [scale, setScale] = React.useState(0.6);
+  React.useEffect(()=>{
+    const ro = new ResizeObserver(()=>{ if(ref.current) setScale(ref.current.clientWidth/1440); });
+    if(ref.current) ro.observe(ref.current);
+    return ()=>ro.disconnect();
+  },[]);
+  return <div>
+    <p style={{margin:"0 0 12px"}}><a href="../ui_kits/admin/index.html" target="_blank" style={{fontSize:"var(--text-md)",fontWeight:600}}>새 탭에서 열기 ↗</a></p>
+    <div ref={ref} style={{width:"100%", height:900*scale, overflow:"hidden", borderRadius:"var(--radius-lg)", border:"1px solid var(--border)"}}>
+      <iframe src="../ui_kits/admin/index.html" style={{width:1440, height:900, border:"none", transform:"scale("+scale+")", transformOrigin:"top left"}}/>
+    </div>
+  </div>;
+}
+
+/* ============ anatomy helpers ============ */
+const LVL = {
+  organism:{color:"var(--primary)", label:"Organism — 화면 블록"},
+  molecule:{color:"var(--status-warning-fg)", label:"Molecule — 조립 단위"},
+  atom:{color:"var(--status-success-fg)", label:"Atom — 최소 단위"},
+};
+function Anno({level, name, block, right, children, style}){
+  const l = LVL[level];
+  return <div style={{position:"relative", display:block?"block":"inline-flex", outline:"1.5px dashed "+l.color, outlineOffset:5, borderRadius:"var(--radius-sm)", ...style}}>
+    <span style={{position:"absolute", top:-17, ...(right?{right:-6}:{left:-6}), zIndex:6, fontSize:"var(--text-2xs)", fontWeight:700, fontFamily:"var(--font-mono)", lineHeight:1, background:l.color, color:"#fff", padding:"3px 7px", borderRadius:"var(--radius-pill)", whiteSpace:"nowrap"}}>{name}</span>
+    {children}
+  </div>;
+}
+function AnatomyLegend(){
+  return <div style={{display:"flex", gap:10, flexWrap:"wrap", marginBottom:20}}>
+    {Object.entries(LVL).map(([k,l]) => <span key={k} style={{display:"inline-flex", alignItems:"center", gap:7, fontSize:"var(--text-xs)", fontWeight:600, color:"var(--text)", background:"var(--surface)", borderRadius:"var(--radius-pill)", padding:"6px 13px"}}><span style={{width:8, height:8, borderRadius:"50%", background:l.color, flexShrink:0}}/>{l.label}</span>)}
+  </div>;
+}
+function AnatomyCard(){
+  return <div style={{background:"var(--background)", border:"1px solid var(--border)", borderRadius:"var(--radius-lg)", padding:"36px 28px 28px", display:"flex", justifyContent:"center", marginBottom:12}}>
+    <Anno level="organism" name="Card (organism)" right block style={{maxWidth:430, width:"100%"}}>
+      <B.Card style={{display:"grid", gap:26, boxSizing:"border-box", padding:"28px 26px 26px"}}>
+        <div style={{display:"flex", alignItems:"center", gap:16}}>
+          <Anno level="atom" name="Avatar"><B.Avatar name="김서연" size="lg"/></Anno>
+          <div style={{flex:1, minWidth:0}}>
+            <div style={{fontSize:"var(--text-lg)", fontWeight:700, color:"var(--dark)"}}>김서연</div>
+            <div style={{fontSize:"var(--text-sm)", color:"var(--text-muted)"}}>010-1234-5678 · 인천시 연수구</div>
+          </div>
+          <Anno level="atom" name="StatusBadge" right><B.StatusBadge status="active"/></Anno>
+        </div>
+        <Anno level="molecule" name="DetailActions" block><B.DetailActions actions={[{label:"계약 발송",variant:"primary"},{label:"수정"},{label:"삭제",variant:"danger"}]}/></Anno>
+        <Anno level="molecule" name="InfoRow ×3" block><div>
+          <B.InfoRow label="출산 예정일" value="2026-08-15"/>
+          <B.InfoRow label="담당 관리사" value="박관리사"/>
+          <B.InfoRow label="서비스" value="산모·신생아 케어 2주"/>
+        </div></Anno>
+        <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:22}}>
+          <Anno level="molecule" name="StatMini" block><B.StatMini icon={Ic(P.cal,20)} value="12" counter="일" label="남은 서비스" colorIndex={0}/></Anno>
+          <Anno level="molecule" name="StatMini" block><B.StatMini icon={Ic(P.file,20)} value="2" counter="건" label="진행 계약" colorIndex={1}/></Anno>
+        </div>
+      </B.Card>
+    </Anno>
+  </div>;
+}
+function AnatomyTree(){
+  const C = (lv,t) => <span style={{color:LVL[lv].color, fontWeight:700}}>{t}</span>;
+  const M = (t) => <span style={{color:"var(--text-muted)"}}>{t}</span>;
+  return <pre style={{background:"var(--surface)", borderRadius:"var(--radius-md)", padding:"16px 20px", fontSize:"var(--text-sm)", fontFamily:"var(--font-mono)", color:"var(--dark)", lineHeight:2, margin:"0 0 28px", overflowX:"auto"}}>
+{C("organism","Card")}{M("  — 셸: radius·shadow·padding만 담당")}{"\n"}
+{"├─ header "}{M("(flex glue — raw markup은 레이아웃만)")}{"\n"}
+{"│   ├─ "}{C("atom","Avatar")}{"\n"}
+{"│   ├─ name / phone "}{M("(content)")}{"\n"}
+{"│   └─ "}{C("atom","StatusBadge")}{"\n"}
+{"├─ "}{C("molecule","DetailActions")}{M("  — 내부: pill button atoms")}{"\n"}
+{"├─ "}{C("molecule","InfoRow")}{" ×3"}{M("  — label + value + hairline")}{"\n"}
+{"└─ "}{C("molecule","StatMini")}{" ×2"}{M("  — icon chip + value + label")}
+  </pre>;
+}
+function OrganismTable(){
+  const rows = [
+    ["listpanel","ListPanel","Tabs · HeaderActionButton · rows (Avatar + StatusBadge) · ListSkeleton (loading)"],
+    ["detailpanel","DetailPanel","Avatar · StatusBadge · TagPill · DetailActions · Tabs · InfoRow/InfoCard · DetailSkeleton (loading)"],
+    ["splitlayout","SplitLayout","ListPanel + DetailPanel (또는 EmptyState)"],
+    ["sidebar","Sidebar","nav items · Badge · profile card (Avatar)"],
+    ["mobilestack","MobileStack","MobileHeader · MobileBottomNav · 리스트 → 디테일 push"],
+    ["datatable","DataTable","StatusBadge · TagPill · Pagination"],
+    ["dialog","Dialog","InputField (Label + Input) · Button footer"],
+    ["shortcutgrid","ShortcutGrid","QuickActionButton ×N"],
+    ["statsbar","StatsBar","StatMini ×N"],
+  ];
+  return <div style={{background:"var(--card)", border:"1px solid var(--border)", borderRadius:"var(--radius-lg)", overflow:"hidden", marginTop:8}}>
+    <table className="props"><thead><tr><th>Organism</th><th>Molecules / atoms inside</th></tr></thead>
+    <tbody>{rows.map(r => <tr key={r[0]}><td><a href={"#"+r[0]} style={{fontWeight:600}}>{r[1]}</a></td><td style={{color:"var(--text-muted)"}}>{r[2]}</td></tr>)}</tbody></table>
+  </div>;
+}
+
+function InfiniteDemo(){
+  const NAMES = ["김서연","박지호","이하은","최민준","정수아","강도윤","윤채원","임시우"];
+  const all = React.useMemo(()=>Array.from({length:32},(_,i)=>({id:i, name:NAMES[i%8], phone:"010-12"+String(3400+i).padStart(4,"0"), status:["active","pending","signed"][i%3]})),[]);
+  const [filter,setFilter]=React.useState("all");
+  const [loading,setLoading]=React.useState(false);
+  const rows = filter==="all" ? all : all.filter(r=>r.status==="active");
+  const inf = B.useListInfiniteScroll({ resetKey: filter, totalItems: rows.length });
+  return <div style={{height:420, width:380, maxWidth:"100%"}}>
+    <B.ListPanel title="고객" subtitle={rows.length+"명"}
+      tabs={[{key:"all",label:"전체"},{key:"active",label:"진행중"}]} activeTab={filter} onTabChange={setFilter}
+      isLoading={loading} contentSkeleton={<B.ListSkeleton rows={6}/>} contentRef={inf.scrollContainerRef}
+      headerActions={<B.HeaderActionButton variant="muted" label={loading?"로딩 끄기":"로딩 보기"} onClick={()=>setLoading(!loading)}/>}>
+      <div style={{display:"grid", gap:14}}>
+        {rows.slice(0, inf.visibleCount).map(c=>
+          <div key={c.id} data-list-row style={{display:"flex",alignItems:"center",gap:12}}>
+            <B.Avatar name={c.name} size="sm"/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:"var(--text-md)",fontWeight:600,color:"var(--dark)"}}>{c.name}</div>
+              <div style={{fontSize:"var(--text-xs)",color:"var(--text-muted)"}}>{c.phone}</div>
+            </div>
+            <B.StatusBadge status={c.status}/>
+          </div>)}
+        {inf.hasMore && (inf.isInitialLoad
+          ? <B.Button variant="subtle" size="sm" fullWidth onClick={inf.loadMore}>탭하여 더보기</B.Button>
+          : <div ref={inf.sentinelRef}><B.ListSkeleton rows={2}/></div>)}
+      </div>
+    </B.ListPanel>
+  </div>;
+}
+
+/* ============ spec helpers ============ */
+function Tbl({head, rows, mono}){
+  return <div style={{background:"var(--card)", border:"1px solid var(--border)", borderRadius:"var(--radius-lg)", overflow:"hidden", margin:"8px 0 20px"}}>
+    <table className="props"><thead><tr>{head.map(h=><th key={h}>{h}</th>)}</tr></thead>
+    <tbody>{rows.map((r,i)=><tr key={i}>{r.map((c,j)=><td key={j} style={j===0?{whiteSpace:"nowrap"}:null}>{mono&&j===0?<code>{c}</code>:c}</td>)}</tr>)}</tbody></table></div>;
+}
+function Mchip({children,style}){ return <span style={{position:"absolute",zIndex:5,fontSize:"var(--text-2xs)",fontWeight:700,fontFamily:"var(--font-mono)",background:"var(--dark)",color:"var(--card)",padding:"3px 7px",borderRadius:"var(--radius-pill)",whiteSpace:"nowrap",lineHeight:1,...style}}>{children}</span>; }
+const X_SVG = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>;
+function DialogSpec(){
+  return <div style={{background:"var(--background)",borderRadius:"var(--radius-lg)",padding:"52px 24px 44px",display:"flex",justifyContent:"center",marginBottom:12}}>
+    <div style={{width:"100%",maxWidth:480,position:"relative"}}>
+      <Mchip style={{top:-30,left:0}}>width: confirm 340 · md 480 · form 640</Mchip>
+      <Mchip style={{top:-30,right:0}}>radius 2xl(24) · --z-modal</Mchip>
+      <div style={{borderRadius:"var(--radius-2xl)",background:"var(--surface)",boxShadow:"var(--shadow-float)",position:"relative"}}>
+        <div style={{borderRadius:"var(--radius-2xl) var(--radius-2xl) 0 0",background:"var(--card)",borderBottom:"1px solid var(--border)",padding:16,display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:16}}>
+          <div>
+            <div style={{fontSize:"1rem",fontWeight:700,color:"var(--dark)"}}>고객 등록</div>
+            <div style={{fontSize:"var(--text-sm)",color:"var(--text-muted)",marginTop:6}}>새 산모 정보를 입력하세요</div>
+          </div>
+          <div style={{position:"relative",flexShrink:0}}>
+            <div style={{width:32,height:32,borderRadius:"50%",border:"1px solid var(--border)",background:"var(--card)",color:"var(--text-muted)",display:"flex",alignItems:"center",justifyContent:"center",outline:"1.5px dashed var(--primary)",outlineOffset:4}}>{X_SVG}</div>
+            <Mchip style={{top:-26,right:-8}}>X 32×32 · inset 16 · 우상단</Mchip>
+          </div>
+        </div>
+        <div style={{padding:16,display:"grid",gap:12,position:"relative"}}>
+          <B.InputField label="이름" required placeholder="이름을 입력하세요"/>
+          <Mchip style={{top:-11,left:16}}>body pad 16 · gap 12</Mchip>
+        </div>
+        <div style={{borderTop:"1px solid var(--border)",background:"var(--card)",padding:16,display:"flex",justifyContent:"flex-end",gap:8,borderRadius:"0 0 var(--radius-2xl) var(--radius-2xl)",position:"relative"}}>
+          <B.Button variant="neutral" size="sm">취소</B.Button><B.Button size="sm">저장</B.Button>
+          <Mchip style={{bottom:-16,right:0}}>footer 우측 정렬 · [취소] → [primary] · gap 8</Mchip>
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+function ScaffoldSpec(){
+  const box={background:"var(--card)",borderRadius:"var(--radius-md)",boxShadow:"var(--shadow-content)"};
+  return <div style={{background:"var(--background)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"40px 24px 28px",marginBottom:12}}>
+    <div style={{display:"flex",gap:12,height:300,position:"relative"}}>
+      <div style={{width:140,flexShrink:0,...box,position:"relative",padding:10,display:"grid",gap:6,alignContent:"start"}}>
+        <Mchip style={{top:-28,left:0}}>Sidebar 280 고정</Mchip>
+        {[0,1,2,3].map(i=><div key={i} style={{height:14,borderRadius:"var(--radius-sm)",background:i===0?"var(--primary-light)":"var(--surface)"}}/>)}
+      </div>
+      <div style={{flex:1,position:"relative",display:"flex",flexDirection:"column",gap:12,border:"1.5px dashed var(--primary)",borderRadius:"var(--radius-md)",padding:12}}>
+        <Mchip style={{top:-28,left:0}}>main — padding 24 · 스크롤은 여기서만</Mchip>
+        <div style={{height:36,...box,position:"relative"}}><Mchip style={{top:9,left:10}}>PageHeader — 아래 24 gap</Mchip></div>
+        <div style={{flex:1,display:"flex",gap:12,position:"relative"}}>
+          <Mchip style={{top:"46%",left:"33.5%"}}>gap 24</Mchip>
+          <div style={{width:"34%",...box,position:"relative"}}><Mchip style={{top:9,left:10}}>ListPanel 380 고정</Mchip></div>
+          <div style={{flex:1,...box,position:"relative"}}><Mchip style={{top:9,left:10}}>DetailPanel 1fr</Mchip></div>
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+function TabsSpec(){
+  const [t,setT]=React.useState("info");
+  return <div style={{background:"var(--background)",borderRadius:"var(--radius-lg)",padding:"36px 24px 40px",display:"flex",justifyContent:"center",marginBottom:12}}>
+    <div style={{width:"100%",maxWidth:520,background:"var(--card)",borderRadius:"var(--radius-lg)",boxShadow:"var(--shadow-card)",position:"relative"}}>
+      <div style={{padding:"24px 24px 0",position:"relative"}}>
+        <div style={{fontSize:"var(--text-lg)",fontWeight:700,color:"var(--dark)"}}>김서연</div>
+        <Mchip style={{top:20,right:16}}>header pad 24·24·0</Mchip>
+        <div style={{marginTop:12,position:"relative"}}>
+          <B.Tabs tabs={[{key:"info",label:"기본 정보"},{key:"contracts",label:"계약"},{key:"schedule",label:"일정"}]} activeTab={t} onTabChange={setT}/>
+          <Mchip style={{top:-13,left:150}}>제목↔탭 12 · underline full-width</Mchip>
+        </div>
+      </div>
+      <div style={{padding:24,position:"relative"}}>
+        <Mchip style={{bottom:-14,right:16}}>content pad 24 · 전환 시 scrollTop 0</Mchip>
+        <div>
+          <B.InfoRow label="연락처" value="010-1234-5678"/>
+          <B.InfoRow label="출산 예정일" value="2026-08-15"/>
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+function Responsive({desktop, mobile}){ return React.useContext(ViewCtx)==="mobile" ? mobile : desktop; }
+function PhoneShell({height=560, children}){
+  return <div className="bjj-mobile" style={{width:390, maxWidth:"100%", height, position:"relative", overflow:"hidden", borderRadius:24, border:"1px solid var(--border)", background:"var(--background)", margin:"0 auto"}}>{children}</div>;
+}
+const MNAV_ITEMS = [
+  {id:"home",label:"홈",icon:Ic(P.home,20,2.5)},
+  {id:"clients",label:"고객",icon:Ic(P.users,20,2.5)},
+  {id:"chat",label:"어시스턴트",icon:Ic(P.spark,20,2)},
+  {id:"contracts",label:"계약",icon:Ic(P.file,20,2.5)},
+  {id:"all",label:"전체",icon:Ic(P.menu,20,2.5)},
+];
+function MobileHeaderDemo(){
+  return <PhoneShell height={190}><B.MobileHeader fixed={false} logoSrc="../assets/logo.svg" actions={<B.Button height="icon" variant="neutral" icon={Ic(P.bell)}/>}/></PhoneShell>;
+}
+function MobileNavDemo(){
+  const [a,setA]=React.useState("home");
+  return <PhoneShell height={230}>
+    <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--text-muted)",fontSize:"var(--text-sm)",paddingBottom:60}}>탭을 눌러보세요</div>
+    <B.MobileBottomNav fixed={false} items={MNAV_ITEMS.map(i=>i.id==="chat"?{...i,accent:true}:i)} activeId={a} onNavigate={setA}/>
+  </PhoneShell>;
+}
+function MobileScreenDemo(){
+  const [tab,setTab]=React.useState("clients");
+  const [sel,setSel]=React.useState(null);
+  const [open,setOpen]=React.useState(false);
+  const list = <React.Fragment>
+    <B.MobileHeader fixed={false} logoSrc="../assets/logo.svg" actions={<B.Button height="icon" variant="neutral" icon={Ic(P.bell)}/>}/>
+    <div style={{position:"absolute",inset:0,overflowY:"auto",padding:"72px 16px 100px",boxSizing:"border-box",display:"grid",gap:12,alignContent:"start"}}>
+      {tableRows.map(c=>
+        <B.Card key={c.name} variant="content" padding={14} hover style={{cursor:"pointer"}} onClick={()=>{setSel(c);setOpen(true);}}>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <B.Avatar name={c.name} size="sm"/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:"var(--text-md)",fontWeight:600,color:"var(--dark)"}}>{c.name}</div>
+              <div style={{fontSize:"var(--text-xs)",color:"var(--text-muted)"}}>{c.phone}</div>
+            </div>
+            <B.StatusBadge status={c.status}/>
+          </div>
+        </B.Card>)}
+    </div>
+    <B.MobileBottomNav fixed={false} items={MNAV_ITEMS.map(i=>i.id==="chat"?{...i,accent:true}:i)} activeId={tab} onNavigate={setTab}/>
+  </React.Fragment>;
+  const detail = sel && <div style={{padding:"4px 16px 24px",display:"grid",gap:12}}>
+    <div style={{display:"flex",alignItems:"center",gap:12}}>
+      <B.Avatar name={sel.name} size="lg"/>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:"var(--text-lg)",fontWeight:700,color:"var(--dark)"}}>{sel.name}</div>
+        <div style={{fontSize:"var(--text-sm)",color:"var(--text-muted)"}}>{sel.phone}</div>
+      </div>
+      <B.StatusBadge status={sel.status}/>
+    </div>
+    <B.InfoCard title="기본 정보">
+      <B.InfoRow label="출산 예정일" value={sel.due}/>
+      <B.InfoRow label="담당 관리사" value="박관리사"/>
+      <B.InfoRow label="서비스" value="산모·신생아 케어 2주"/>
+    </B.InfoCard>
+  </div>;
+  return <PhoneShell>
+    <B.MobileStack open={open} onBack={()=>setOpen(false)} detailTitle={sel ? sel.name : ""} list={list} detail={detail}/>
+  </PhoneShell>;
+}
+function MobileScaffoldSpec(){
+  const box={background:"var(--card)",borderRadius:"var(--radius-sm)",boxShadow:"var(--shadow-content)"};
+  return <div style={{background:"var(--background)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"40px 24px 40px",display:"flex",justifyContent:"center",marginBottom:12}}>
+    <div style={{width:230,height:420,border:"1.5px dashed var(--primary)",borderRadius:24,position:"relative",display:"flex",flexDirection:"column",gap:8,padding:10,boxSizing:"border-box"}}>
+      <div style={{height:40,...box,position:"relative"}}><Mchip style={{top:-26,left:-4}}>MobileHeader 56 고정</Mchip></div>
+      <div style={{flex:1,...box,position:"relative"}}><Mchip style={{top:8,left:8}}>main — pad 16 · pt/pb 80</Mchip></div>
+      <div style={{height:44,...box,margin:"0 4px 4px",borderRadius:16,position:"relative",display:"flex",alignItems:"center",justifyContent:"space-around"}}>
+        {[0,1,2,3].map(i=><div key={i} style={{width:20,height:20,borderRadius:"var(--radius-xs)",background:i===0?"var(--primary-light)":"var(--surface)"}}/>)}
+        <Mchip style={{bottom:-30,left:-4}}>BottomNav 플로팅 필 — inset 16 + safe-area</Mchip>
+      </div>
+    </div>
+  </div>;
+}
+function Replay({children}){
+  const [k,setK]=React.useState(0);
+  return <div style={{width:"100%"}}>
+    <div key={k} style={{display:"flex",flexWrap:"wrap",gap:14,alignItems:"center"}}>{children}</div>
+    <div style={{marginTop:16}}><B.Button variant="subtle" height="sm" icon={Ic(P.refresh,14)} onClick={()=>setK(k+1)}>애니메이션 다시 재생</B.Button></div>
+  </div>;
+}
+function ProgressDemo(){
+  const [v,setV]=React.useState(64);
+  return <div style={{width:"100%",display:"grid",gap:14}}>
+    <B.Progress value={v}/>
+    <div style={{display:"flex",gap:8,alignItems:"center"}}>
+      <B.Button height="sm" variant="neutral" onClick={()=>setV(Math.max(0,v-20))}>-20</B.Button>
+      <B.Button height="sm" variant="neutral" onClick={()=>setV(Math.min(100,v+20))}>+20</B.Button>
+      <code style={{fontFamily:"var(--font-mono)",fontSize:"var(--text-sm)",color:"var(--text-muted)"}}>{v}%</code>
+    </div>
+  </div>;
+}
+function StepperDemo(){
+  const [s,setS]=React.useState(1);
+  const steps=[{label:"고객 정보"},{label:"서비스 선택"},{label:"계약서"},{label:"확인"}];
+  return <div style={{width:"100%",display:"grid",gap:18}}>
+    <B.Stepper steps={steps} activeStep={s} showCheckOnDone/>
+    <div style={{display:"flex",gap:8}}>
+      <B.Button height="sm" variant="neutral" disabled={s===0} onClick={()=>setS(s-1)}>이전</B.Button>
+      <B.Button height="sm" disabled={s===steps.length-1} onClick={()=>setS(s+1)}>다음</B.Button>
+    </div>
+  </div>;
+}
+function SidebarDemo(){
+  const [a,setA]=React.useState("dash");
+  return <div style={{height:520}}>
+    <B.Sidebar logoSrc="../assets/logo.svg" user={{name:"김관리", role:"매니저"}} onNavigate={setA}
+      sections={[{title:"메인",items:[{id:"dash",label:"대시보드",icon:Ic(P.home,20),active:a==="dash"},{id:"cal",label:"일정",icon:Ic(P.cal,20),badge:"12",active:a==="cal"}]},{title:"관리",items:[{id:"clients",label:"고객 관리",icon:Ic(P.users,20),active:a==="clients"},{id:"contracts",label:"계약 관리",icon:Ic(P.file,20),active:a==="contracts"}]}]}/>
+  </div>;
+}
+function ListPanelDemo(){
+  const [t,setT]=React.useState("all");
+  const rows = t==="all" ? tableRows : tableRows.filter(r=>r.status==="active");
+  return <div style={{height:340, width:360, maxWidth:"100%"}}>
+    <B.ListPanel title="고객" subtitle={rows.length+"명"} tabs={[{key:"all",label:"전체"},{key:"active",label:"진행중"}]} activeTab={t} onTabChange={setT} headerActions={<B.HeaderActionButton icon={Ic(P.plus,14)} label="추가"/>}>
+      <div style={{display:"grid",gap:8}}>{rows.map(c=><div key={c.name} style={{display:"flex",alignItems:"center",gap:12}}><B.Avatar name={c.name} size="sm"/><div style={{flex:1,minWidth:0}}><div style={{fontSize:"var(--text-md)",fontWeight:600,color:"var(--dark)"}}>{c.name}</div><div style={{fontSize:"var(--text-xs)",color:"var(--text-muted)"}}>{c.phone}</div></div><B.StatusBadge status={c.status}/></div>)}</div>
+    </B.ListPanel>
+  </div>;
+}
+function DetailPanelDemo(){
+  const [t,setT]=React.useState("info");
+  return <div style={{height:320, width:"100%"}}>
+    <B.DetailPanel avatar={<B.Avatar name="김서연" size="lg"/>} title="김서연" subtitle="010-1234-5678 · 인천시 연수구" badges={<B.StatusBadge status="active"/>} trailing={<B.TagPill variant="sky" size="lg">정부바우처</B.TagPill>} actions={<B.DetailActions actions={[{label:"계약 발송",variant:"primary"},{label:"수정"},{label:"삭제",variant:"danger"}]}/>} tabs={<B.Tabs hug tabs={[{key:"info",label:"기본 정보"},{key:"contracts",label:"계약"}]} activeTab={t} onTabChange={setT}/>}>
+      {t==="info"
+        ? <React.Fragment><B.InfoRow label="출산 예정일" value="2026-08-15"/><B.InfoRow label="담당 관리사" value="박관리사"/></React.Fragment>
+        : <React.Fragment><B.InfoRow label="정부바우처 3주" value={<B.StatusBadge status="signed"/>}/><B.InfoRow label="연장 1주" value={<B.StatusBadge status="pending"/>}/></React.Fragment>}
+    </B.DetailPanel>
+  </div>;
+}
+function DataTableDemo(){
+  const NAMES = ["김서연","박지호","이하은","최민준","정수아","강도윤","윤채원","임시우"];
+  const data = React.useMemo(()=>Array.from({length:12},(_,i)=>({id:i, name:NAMES[i%8], phone:"010-45"+String(1200+i).padStart(4,"0"), due:"2026-0"+(7+i%3)+"-"+String(5+i*2).padStart(2,"0"), status:["active","pending","signed"][i%3]})),[]);
+  const [sel,setSel]=React.useState(null);
+  return <div style={{width:"100%"}}>
+    <B.DataTable pageSize={5} columns={[{key:"name",header:"이름"},{key:"phone",header:"연락처"},{key:"due",header:"출산 예정일"},{key:"status",header:"상태",render:(r)=><B.StatusBadge status={r.status}/>}]} data={data} onRowClick={(r)=>setSel(r.name)}/>
+    <div style={{marginTop:10,fontSize:"var(--text-sm)",color:"var(--text-muted)"}}>{sel ? "선택된 행: "+sel : "행을 클릭해 보세요 · 하단 페이저로 이동"}</div>
+  </div>;
+}
+function ToastDemo(){
+  const {toasts,push,dismiss}=B.useToasts();
+  return <React.Fragment>
+    <B.Button size="sm" onClick={()=>push("저장되었어요")}>성공</B.Button>
+    <B.Button size="sm" variant="neutral" onClick={()=>push("계약서를 발송했어요",{variant:"info"})}>정보</B.Button>
+    <B.Button size="sm" variant="destructive" onClick={()=>push("목록을 불러오지 못했어요",{variant:"danger",actionLabel:"재시도",duration:6000})}>에러</B.Button>
+    <B.ToastHost toasts={toasts} onDismiss={dismiss}/>
+  </React.Fragment>;
+}
+
+function UiScaleDemo(){
+  const [w,setW]=React.useState(1920);
+  const scale = B.getUiScaleForViewport(w, 1080);
+  const px = (n) => "calc("+n+"px * var(--ui-scale, 1))";
+  return <div>
+    <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:14}}>
+      <input type="range" min="960" max="2560" step="32" value={w} onChange={e=>setW(+e.target.value)} style={{flex:1,accentColor:"var(--primary)"}}/>
+      <code style={{fontFamily:"var(--font-mono)",fontSize:"var(--text-xs)",color:"var(--text-muted)",whiteSpace:"nowrap"}}>{w}×1080 → --ui-scale {scale}</code>
+    </div>
+    <div style={{"--ui-scale":scale,background:"var(--background)",borderRadius:"var(--radius-lg)",padding:24,display:"flex",justifyContent:"center",minHeight:190,alignItems:"center"}}>
+      <div style={{width:px(340),background:"var(--card)",borderRadius:"var(--radius-lg)",boxShadow:"var(--shadow-card)",padding:px(24),display:"grid",gap:px(14)}}>
+        <div style={{display:"flex",alignItems:"center",gap:px(12)}}>
+          <div style={{width:px(40),height:px(40),borderRadius:"50%",background:"var(--primary-light)",color:"var(--primary)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:px(14),fontWeight:700,flexShrink:0}}>김</div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:px(14),fontWeight:700,color:"var(--dark)"}}>김서연</div>
+            <div style={{fontSize:px(11),color:"var(--text-muted)"}}>010-1234-5678</div>
+          </div>
+          <B.StatusBadge status="active"/>
+        </div>
+        <div style={{fontSize:px(12),color:"var(--text-muted)",lineHeight:1.6}}>1920×1080 기준으로 그린 카드가 뷰포트 비율 그대로 축소·확대됩니다</div>
+      </div>
+    </div>
+  </div>;
+}
+
+function BandDemo({band}){
+  const dash = {header:"var(--primary)", body:"var(--status-warning-fg)", footer:"var(--status-success-fg)"}[band];
+  return <div style={{marginBottom:12}}>
+    <Preview>
+      <div style={{width:340, maxWidth:"100%"}}>
+        <B.Card slotted variant="content">
+          <div style={{outline:"1.5px dashed "+dash, outlineOffset:-1}}>
+            {band==="header" && <B.CardHeader title="김서연" subtitle="010-1234-5678 · 인천시 연수구" trailing={<B.StatusBadge status="active"/>}/>}
+            {band==="body" && <B.CardBody>
+              <B.InfoRow label="출산 예정일" value="2026-08-15"/>
+              <B.InfoRow label="담당 관리사" value="박관리사"/>
+              <B.InfoRow label="서비스" value="산모·신생아 케어 2주"/>
+            </B.CardBody>}
+            {band==="footer" && <B.CardFooter>
+              <B.Button variant="neutral" height="sm">수정</B.Button>
+              <B.Button height="sm">계약 발송</B.Button>
+            </B.CardFooter>}
+          </div>
+        </B.Card>
+      </div>
+    </Preview>
+  </div>;
+}
+function CardAnatomyDemo(){
+  const band = (label, sub) => <div style={{position:"relative"}}><Mchip style={{top:6,right:6}}>{label}</Mchip>{sub}</div>;
+  return <div style={{marginBottom:12}}>
+    <Preview>
+      <div style={{width:340, maxWidth:"100%"}}>
+        <B.Card slotted variant="content">
+          <div style={{outline:"1.5px dashed var(--primary)",outlineOffset:-1}}>
+            <B.CardHeader title="김서연" subtitle="010-1234-5678 · 인천시 연수구" trailing={<B.StatusBadge status="active"/>}/>
+          </div>
+          <div style={{outline:"1.5px dashed var(--status-warning-fg)",outlineOffset:-1}}>
+            <B.CardBody>
+              <B.InfoRow label="출산 예정일" value="2026-08-15"/>
+              <B.InfoRow label="담당 관리사" value="박관리사"/>
+              <B.InfoRow label="서비스" value="산모·신생아 케어 2주"/>
+            </B.CardBody>
+          </div>
+          <div style={{outline:"1.5px dashed var(--status-success-fg)",outlineOffset:-1}}>
+            <B.CardFooter>
+              <B.Button variant="neutral" height="sm">수정</B.Button>
+              <B.Button height="sm">계약 발송</B.Button>
+            </B.CardFooter>
+          </div>
+        </B.Card>
+        <div style={{display:"flex",gap:14,marginTop:12,fontSize:"var(--text-xs)",flexWrap:"wrap"}}>
+          {[["Header","var(--primary)"],["Body","var(--status-warning-fg)"],["Footer","var(--status-success-fg)"]].map(([l,c])=>
+            <span key={l} style={{display:"inline-flex",alignItems:"center",gap:6,color:"var(--text-muted)"}}><span style={{width:14,height:0,borderTop:"2px dashed "+c}}/>{l}</span>)}
+        </div>
+      </div>
+    </Preview>
+  </div>;
+}
+
+/* ============ page registry ============ */
+const PAGES = [
+{group:"Getting Started", pages:[
+  {id:"intro", title:"Introduction", desc:"아가잼잼 관리자 design system — tokens, atomic components, and composition rules.", body:()=><div>
+    <H2>Rule zero</H2>
+    <B.Alert variant="info" title="Pages compose components; components consume tokens; nothing else.">
+      새 화면은 커스텀 색·radius·그림자·버튼을 만들지 않습니다. 페이지가 커스터마이즈하는 것은 내용(텍스트, 아이콘, 데이터)뿐이며 전부 props로 전달합니다. 유일하게 허용되는 raw markup은 flex/grid 레이아웃 글루입니다.</B.Alert>
+    <H2>Setup</H2>
+    <Code>{'<link rel="stylesheet" href="styles.css">\n<script type="text/babel" src="_ds_bundle.js"><\/script>\n\nconst B = window.BJJ;   // 63 exports\n// real repo: import { Button } from "components/primitives/Button.jsx"'}</Code>
+    <H2>Sources</H2>
+    <p style={{fontSize:"var(--text-base)",color:"var(--text)",lineHeight:1.8,maxWidth:"64ch"}}>Reverse-engineered from <code style={{fontFamily:"var(--font-mono)",fontSize:"var(--text-sm)"}}>jaino-song/babyjamjam-admin@dev</code> (V3 layer). 세 겹의 레거시 토큰(--v3-*, shadcn base, MUI)을 하나의 시맨틱 레이어로 통합했고, primary는 브랜드 블루 <b>#004AAD</b>로 통일. 각 컴포넌트는 <code style={{fontFamily:"var(--font-mono)",fontSize:"var(--text-sm)"}}>.jsx</code> + <code style={{fontFamily:"var(--font-mono)",fontSize:"var(--text-sm)"}}>.d.ts</code> + <code style={{fontFamily:"var(--font-mono)",fontSize:"var(--text-sm)"}}>.prompt.md</code>로 제공됩니다. 자세한 규칙은 <b>readme.md</b>와 <b>SKILL.md</b> 참고.</p>
+  </div>},
+  {id:"example-admin", title:"Example: Admin App", desc:"Dashboard + clients master-detail composed 100% from the component set.", body:()=><AdminExample/>},
+]},
+{group:"Composition", pages:[
+  {id:"anatomy", title:"Organism Anatomy", desc:"Atoms → molecules → organisms. 고객 카드 하나를 분해해 각 영역이 어떤 컴포넌트인지 색으로 표시합니다 — 페이지는 이 블록들을 조립할 뿐, 새 스타일을 만들지 않습니다.", body:()=><div>
+    <AnatomyLegend/>
+    <AnatomyCard/>
+    <H2>Hierarchy</H2>
+    <AnatomyTree/>
+    <H2>Code</H2>
+    <Code>{'<Card>                                    {/* organism 셸 */}\n  <div style={{display:"flex", gap:16}}>  {/* flex glue */}\n    <Avatar name="김서연" size="lg"/>       {/* atom */}\n    <div>…name / phone…</div>\n    <StatusBadge status="active"/>          {/* atom */}\n  </div>\n  <DetailActions actions={[…]}/>            {/* molecule */}\n  <InfoRow label="출산 예정일" value="2026-08-15"/>\n  <InfoRow label="담당 관리사" value="박관리사"/>\n  <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:22}}>\n    <StatMini value="12" counter="일" label="남은 서비스"/>\n    <StatMini value="2" counter="건" label="진행 계약"/>\n  </div>\n</Card>'}</Code>
+    <H2>Organisms in the system</H2>
+    <OrganismTable/>
+  </div>},
+  {id:"loading-skeletons", title:"Loading Skeletons", desc:"ListPanel·DetailPanel의 로딩 상태 — isLoading 동안 실제 레이아웃과 같은 뼈대의 skeleton을 렌더해 레이아웃 시프트 없이 교체합니다.", body:()=><div>
+    <H2>ListSkeleton</H2>
+    <Preview><div style={{width:340}}><B.ListSkeleton rows={4}/></div></Preview>
+    <Code>{'<ListPanel title="고객" isLoading={isLoading}\n  contentSkeleton={<ListSkeleton rows={6}/>}>\n  {rows}\n</ListPanel>'}</Code>
+    <Props rows={[["rows","number","4","스켈레톤 행 수"],["avatar","boolean","true","원형 아바타 자리"],["badge","boolean","true","우측 pill 자리"]]}/>
+    <H2>DetailSkeleton</H2>
+    <Preview><div style={{width:"100%",height:340}}><B.DetailSkeleton headerBadge headerActions={2} headerBanner/></div></Preview>
+    <Code>{'{isLoading\n  ? <DetailSkeleton headerBadge headerActions={2}\n      sections={[{titleWidth:90, rows:["100%","82%","64%"]},\n                 {titleWidth:120, rows:["100%","70%"]}]}/>\n  : <DetailPanel …/>}'}</Code>
+    <Props rows={[["sections","{titleWidth?, rows:(number|string)[]}[]","2 sections","InfoCard 뼈대"],["headerActions","number","0","우상단 버튼 자리 수"],["headerBadge","boolean","","StatusBadge 자리"],["headerBanner","boolean","","헤더 배너 자리"]]}/>
+  </div>},
+  {id:"infinite-scroll", title:"Infinite Scroll", desc:"repo의 리스트 패턴: 처음엔 화면에 맞는 행 + peek 1개와 '탭하여 더보기' 버튼 → 한 번 누르면 sentinel이 보일 때마다 6개씩 자동 로드. 필터/탭이 바뀌면 teaser로 리셋됩니다.", body:()=><div>
+    <Preview><InfiniteDemo/></Preview>
+    <Code>{'const inf = useListInfiniteScroll({ resetKey: filter, totalItems: rows.length });\n\n<ListPanel title="고객" contentRef={inf.scrollContainerRef}\n  isLoading={isLoading} contentSkeleton={<ListSkeleton rows={6}/>}>\n  <div style={{display:"grid", gap:14}}>\n    {rows.slice(0, inf.visibleCount).map(r => <Row data-list-row key={r.id} {...r}/>)}\n    {inf.hasMore && (inf.isInitialLoad\n      ? <Button variant="subtle" size="sm" fullWidth onClick={inf.loadMore}>탭하여 더보기</Button>\n      : <div ref={inf.sentinelRef}><ListSkeleton rows={2}/></div>)}\n  </div>\n</ListPanel>'}</Code>
+    <B.Alert variant="info" title="행에는 반드시 data-list-row">teaser 단계에서 행 높이를 측정해 '화면에 맞는 개수 + 1'을 계산합니다.</B.Alert>
+    <H2>Options</H2>
+    <Props rows={[["resetKey","unknown","","바뀌면 teaser로 리셋 (필터/탭/검색)"],["totalItems","number","","slice 전 전체 개수"],["fallbackInitialCount","number","6","측정 전 초기 행 수"],["pageSize","number","6","sentinel당 추가 로드 수"],["rowSelector","string",'"[data-list-row]"',"행 높이 측정 selector"]]}/>
+    <H2>Returns</H2>
+    <Props rows={[["visibleCount","number","","rows.slice(0, n)"],["isInitialLoad","boolean","","teaser 단계 — 더보기 버튼 노출"],["hasMore","boolean","",""],["loadMore","() => void","","더보기 버튼 핸들러"],["sentinelRef","Ref","","자동 로드 트리거 요소"],["scrollContainerRef","Ref","","ListPanel contentRef에 전달"]]}/>
+  </div>},
+  {id:"ui-scale", title:"UI Scale", desc:"1920×1080 기준으로 그린 UI를 뷰포트 비율에 맞춰 통째로 스케일 — scale = min(w/1920, h/1080) × 1.1. 슬라이더로 뷰포트 폭을 시뮬레이션해 보세요.", body:()=><div>
+    <Preview column><UiScaleDemo/></Preview>
+    <Code>{'const scaled = useUiScaleStyle();          // { "--ui-scale": "0.87" }\n\n<main style={scaled}>                       // 앱 루트에 1회 (main·Sidebar)\n  <div style={{ padding: "calc(24px * var(--ui-scale, 1))",\n                fontSize: "calc(14px * var(--ui-scale, 1))" }}>…</div>\n</main>'}</Code>
+    <H2>규칙</H2>
+    <Tbl head={["항목","규격"]} rows={[
+      ["적용 지점","앱 루트에 1회 — main·Sidebar. 컴포넌트 내부에서 재호출 금지"],
+      ["단위 표기","스케일 영역의 모든 px는 calc(Npx * var(--ui-scale, 1)) — fallback 1이라 미적용 페이지에서도 안전"],
+      ["portal 오버레이","Dialog·Select 팝오버는 루트 밖 — 같은 style을 다시 적용"],
+      ["브라우저 줌","devicePixelRatio만 바뀌면 무시 — 접근성 줌 유지"],
+      ["초기값","CSS calc 표현식 — SSR·첫 페인트에서 JS 없이 정확"],
+      ["제외 페이지","로그인 등은 useUiScaleStyle(false)"]]}/>
+    <H2>API</H2>
+    <Props rows={[["useUiScaleStyle","(enabled = true) => style","","{ \"--ui-scale\": string } — 루트 style에 spread"],["getUiScaleForViewport","(w, h) => number","","min(w/1920, h/1080) × 1.1 · 소수 4자리"],["UI_SCALE_CSS_VALUE","string","","순수 CSS calc 초기값"]]}/>
+  </div>},
+]},
+{group:"Specs", pages:[
+  {id:"spec-scaffold", title:"Page Scaffold", desc:"모든 관리자 화면이 따르는 단일 골격 — 구역별 고정 수치. 페이지는 이 골격 위에 organism만 배치합니다.", body:()=><div>
+    <ScaffoldSpec/>
+    <Tbl head={["구역","규격"]} rows={[
+      ["Sidebar","280px 고정 · 화이트 · full-height · 스크롤 독립"],
+      ["main","padding 24 · 세로 스크롤은 main에서만 (body 스크롤 금지)"],
+      ["PageHeader","main 최상단 고정 배치 · 아래 24 gap"],
+      ["SplitLayout","list 380px 고정 + detail 1fr · gap 24 · height 100%"],
+      ["섹션 gap","형제 카드·섹션 24 · 카드 내부 그룹 16 · 행 12 (4px 그리드)"],
+      ["패널 padding","ListPanel·DetailPanel·Card 24 · InfoCard·Dialog 밴드 16"],
+      ["대시보드 그리드","2fr / 1fr · gap 24"]]}/>
+  </div>},
+  {id:"spec-mobile", title:"Mobile 규격", desc:"1024px 미만(useIsMobile)에서의 골격 — 같은 컴포넌트, 다른 배치. 사이드바의 '모바일' 토글을 켜면 모든 컴포넌트 프리뷰를 390px 폰 프레임에서 확인할 수 있습니다.", body:()=><div>
+    <MobileScaffoldSpec/>
+    <Tbl head={["구역","규격"]} rows={[
+      ["분기","1024px 미만 = mobile — useIsMobile(1024) 하나만 사용 · 임의 breakpoint 금지"],
+      ["상단","Sidebar 숨김 → MobileHeader 56px · 하단만 radius 24 · --z-chrome"],
+      ["BottomNav","MobileBottomNav — 플로팅 필 · 좌우·하단 inset 16 + safe-area · blur(card 80%) · 4–5탭 · active = solid primary(accent 탭은 tint) · 아이콘 20/2.5 + 10px 라벨"],
+      ["main","padding 16 · pt 80(헤더 아래) · pb 96(BottomNav 위)"],
+      ["SplitLayout","→ MobileStack — 리스트 full-width · 선택 시 디테일이 300ms ease-entrance push(크롬 포함 전체 덮음) · 44px back 헤더로 복귀"],
+      ["Dialog","기본 480 유지 + 좌우 16 margin · 폼(640)은 full-screen 시트로 전환"],
+      ["히트타겟","최소 44px (BottomNav 탭 ≈ 52px)"],
+      ["Toast","BottomNav 위 — bottom 96 오프셋 · 나머지 규격 동일"]]}/>
+    <H2>Density — .bjj-mobile 레이어</H2>
+    <p style={{fontSize:"var(--text-base)",color:"var(--text)",margin:"0 0 10px"}}>같은 컴포넌트가 모바일 값으로 전환됩니다 — useIsMobile()일 때 앱 루트에 <code>class="bjj-mobile"</code> 1회. 사이드바의 '모바일' 토글이 프리뷰에 이 레이어를 적용합니다.</p>
+    <Code>{'const isMobile = useIsMobile();\n<div className={isMobile ? "bjj-mobile" : undefined}>…앱 전체…</div>'}</Code>
+    <Tbl head={["컨트롤","데스크톱","모바일(.bjj-mobile)"]} rows={[
+      ["Button sm / default / lg / icon","36 / 40 / 48 / 40","44 / 44 / 52 / 44"],
+      ["Input · Select trigger","38px · 13px 폰트","44px · 16px 폰트 (iOS 줌 방지)"],
+      ["Textarea","min 80 · 13px","min 96 · 16px"],
+      ["Checkbox · Radio","16px 박스","20px 박스 · 행 min-height 44"],
+      ["Switch","42×24 · thumb 18","52×30 · thumb 24"],
+      ["Tabs","underline 자동 / pill 40","탭 min-height 44 / pill 44"],
+      ["Select·Dropdown 항목","8px 패딩","12px 패딩 · base 폰트"],
+      ["Dialog","calc(100vw−24) · max 480","calc(100vw−32) · X 버튼 40"],
+      ["DataTable 행","td 16px 패딩","td 18px · th 52 (가능하면 카드 리스트로 전환)"]]}/>
+    <H2>실제 동작 — 컴포넌트 3종으로 구성</H2>
+    <p style={{fontSize:"var(--text-base)",color:"var(--text)",margin:"0 0 14px"}}><a href="#mobileheader">MobileHeader</a> · <a href="#mobilebottomnav">MobileBottomNav</a> · <a href="#mobilestack">MobileStack</a> — 아래는 세 컴포넌트를 조립한 화면입니다. 고객을 눌러 push, back으로 복귀.</p>
+    <MobileScreenDemo/>
+  </div>},
+  {id:"spec-dialog", title:"Dialog 규격", desc:"닫기 버튼 위치부터 footer 버튼 순서까지 — 모든 다이얼로그가 같은 해부 구조를 공유합니다.", body:()=><div>
+    <DialogSpec/>
+    <Tbl head={["항목","규격"]} rows={[
+      ["폭","confirm 340 · 기본 480 · 폼 640 — 이 3종 외 금지"],
+      ["X 버튼","32×32 원형 · 헤더 우상단 · inset 16 · onClose 있으면 항상 노출"],
+      ["닫기 수단","X · ESC · 스크림 클릭 3종 모두 동작 (파괴적 확인은 스크림 닫기 제외 가능)"],
+      ["footer","우측 정렬 · [neutral 취소] → [primary 확인] 순서 고정 · gap 8 · sm 버튼"],
+      ["파괴적 액션","항상 ConfirmActionModal · confirm 버튼 burgundy · 라벨은 동작 명사(삭제)"],
+      ["스택","Dialog 위엔 Confirm만 허용(--z-confirm) · Dialog 이중 스택 금지"],
+      ["구조","surface 바탕 + white 헤더/footer 밴드 + hairline · radius 2xl(24)"]]}/>
+  </div>},
+  {id:"spec-tabs", title:"Tabs 규격", desc:"탭바의 위치, 콘텐츠와의 관계, 전환 동작의 단일 기준.", body:()=><div>
+    <TabsSpec/>
+    <Tbl head={["항목","규격"]} rows={[
+      ["위치","패널 헤더 하단 고정 — 제목 아래 12 · 콘텐츠 위"],
+      ["variant","패널·디테일 헤더 = underline(full-width) · 독립 필터 = pill"],
+      ["개수·라벨","2–5개 · 2–4음절 명사 · 아이콘 없이 텍스트만"],
+      ["콘텐츠","padding 24 · 탭 전환 시 scrollTop 0 리셋"],
+      ["빈 탭","탭 안에서도 EmptyState — 탭 자체를 숨기지 않음"],
+      ["상태 유지","탭 전환이 폼 입력을 버리지 않음 (로컬 state 유지)"],
+      ["개수 초과","5개를 넘으면 탭이 아니라 SectionNav로 승격"]]}/>
+  </div>},
+  {id:"spec-states", title:"상태 매트릭스", desc:"모든 organism은 loading / empty / error 3가지 상태를 반드시 이 조합으로 정의합니다 — 임의 상태 UI 금지.", body:()=><div>
+    <Tbl head={["Organism","Loading","Empty","Error"]} rows={[
+      ["ListPanel",<span>isLoading + <code>{"<ListSkeleton/>"}</code></span>,<span>emptyState 오버레이 — 플레인 EmptyState</span>,<span>danger Alert + 재시도 Button</span>],
+      ["DetailPanel",<span><code>{"<DetailSkeleton/>"}</code>로 교체</span>,<span>미선택 — EmptyState "…을 선택해 주세요"</span>,<span>danger Alert + 재시도 Button</span>],
+      ["DataTable",<span>Skeleton 행 3개</span>,<span>EmptyState plain 1행</span>,<span>테이블 상단 danger Alert</span>],
+      ["StatsBar",<span>StatMini 자리 Skeleton</span>,<span>0 표기 ("0명") — empty 없음</span>,<span>값 자리 "—"</span>],
+      ["Form 제출",<span>Button loading + disabled</span>,<span>—</span>,<span>InputField error + danger 토스트</span>]]}/>
+    <H2>Error 상태 표준형</H2>
+    <Preview column>
+      <B.Alert variant="danger" title="목록을 불러오지 못했어요">잠시 후 다시 시도해 주세요.</B.Alert>
+      <div><B.Button size="sm" variant="neutral">재시도</B.Button></div>
+    </Preview>
+    <H2>폼 검증 규격</H2>
+    <Tbl head={["항목","규격"]} rows={[
+      ["시점","blur + submit (타이핑 중 검증 금지)"],
+      ["표시","InputField error — 필드 바로 아래 · danger fg · hint 대체"],
+      ["submit 실패","첫 에러 필드로 포커스 이동"],
+      ["서버 오류","danger 토스트 + 재시도 — 필드 에러와 구분"],
+      ["예시 문구","'이미 등록된 이메일입니다' — 명사형 종결, 원인+상태"]]}/>
+    <Preview column><B.InputField label="이메일" defaultValue="seoyeon@kim.kr" error="이미 등록된 이메일입니다"/></Preview>
+  </div>},
+  {id:"spec-interaction", title:"Z-index · Focus · Motion", desc:"레이어 순서, 키보드 포커스, 모션의 단일 기준 — 숫자를 새로 만들지 않습니다.", body:()=><div>
+    <H2>Z-index 사다리 (raw z-index 금지)</H2>
+    <Tbl mono head={["Token","값","용도"]} rows={[
+      ["--z-raised","1","카드 내부 레이어 (타임라인 아이콘)"],
+      ["--z-panel-overlay","10","패널 내부 오버레이 (ListPanel emptyState)"],
+      ["--z-chrome","40","MobileHeader · MobileBottomNav — 모바일 앱 크롬"],
+      ["--z-dropdown","50","Select · DropdownMenu"],
+      ["--z-tooltip","60","Tooltip"],
+      ["--z-scrim","100","Dialog 스크림"],
+      ["--z-modal","101","Dialog"],
+      ["--z-confirm-scrim","120","Confirm 스크림 (열린 Dialog 위)"],
+      ["--z-confirm","121","ConfirmActionModal"],
+      ["--z-toast","140","ToastHost — 항상 최상단"]]}/>
+    <H2>Focus</H2>
+    <Preview><B.Button>Tab으로 확인</B.Button><B.Button variant="neutral">키보드 포커스만</B.Button><div style={{width:220}}><B.Input placeholder="필드는 자체 inset 링"/></div></Preview>
+    <Tbl head={["대상","규격"]} rows={[
+      ["버튼·링크·행",":focus-visible — 2px primary outline · offset 2 · 마우스 클릭엔 없음"],
+      ["입력 필드","자체 inset 블루 링 유지 · outline 없음"],
+      ["히트타겟","버튼 sm 32 · 입력 38 · 아이콘 버튼 32 (터치 화면 44) — 미만 금지"]]}/>
+    <H2>Motion 표</H2>
+    <Tbl head={["대상","Duration","Easing","패턴"]} rows={[
+      ["hover·포커스 어포던스","150ms","--ease-standard","색·그림자만 · 이동 없음"],
+      ["토글·탭 전환","200ms","--ease-standard","배경·색"],
+      ["Dropdown·Dialog 등장","200–300ms","--ease-entrance","scale 0.95→1 + fade"],
+      ["카드 등장","450ms","--ease-overshoot",".animate-pop-up + 80ms stagger"],
+      ["섹션 등장","500ms","--ease-entrance",".animate-slide-up"],
+      ["Toast in/out","300ms","entrance / standard","in: Y 12→0+fade · out: Y 0→8+fade"],
+      ["루프 애니메이션","—","—","skeleton pulse 외 전면 금지"]]}/>
+  </div>},
+  {id:"spec-content", title:"콘텐츠 규격", desc:"카피 말투와 데이터 포맷의 단일 기준 — 모든 화면이 같은 말투로 말합니다.", body:()=><div>
+    <H2>말투</H2>
+    <Tbl head={["상황","규칙","예시"]} rows={[
+      ["버튼·레이블","2–4음절 명사 · 마침표 없음","저장 · 등록 · 취소 · 계약 발송"],
+      ["안내·빈 상태","해요체 · 마침표 없음","고객을 선택해 주세요"],
+      ["토스트 (완료)","'-었어요' 완료형","저장되었어요 · 계약서를 발송했어요"],
+      ["에러","'-지 못했어요' + 재시도","목록을 불러오지 못했어요"],
+      ["확인 다이얼로그","제목 '…할까요?' + 설명 한 문장","계약을 삭제할까요? / 이 작업은 되돌릴 수 없습니다."],
+      ["필드 에러","명사형 종결 · 원인+상태","이미 등록된 이메일입니다"],
+      ["호칭","이름+님 · 산모님","김서연님 · 산모님"]]}/>
+    <H2>데이터 포맷</H2>
+    <Tbl head={["데이터","포맷","예시"]} rows={[
+      ["날짜","YYYY-MM-DD","2026-08-15"],
+      ["시간","24시간 HH:MM","14:30"],
+      ["기간","시작 ~ 끝","2026-08-15 ~ 2026-08-29"],
+      ["전화","하이픈 3-4-4","010-1234-5678"],
+      ["수량","숫자 + muted 단위","128명 · 12건"],
+      ["금액","천단위 콤마 + 원","1,200,000원"]]}/>
+  </div>},
+]},
+{group:"Foundations", pages:[
+  {id:"colors", title:"Colors", desc:"One semantic layer: brand blue, categorical accents (always -light tint + strong fg), status triads, text ladder.", body:()=><div>{F("../guidelines/colors-brand.html",380)}{F("../guidelines/colors-accents.html",580)}{F("../guidelines/colors-status.html",350)}{F("../guidelines/colors-neutrals.html",460)}</div>},
+  {id:"dark", title:"Dark Mode", desc:"Toggle .dark on the root — every token re-maps; components never hard-code colors.", body:()=><div>{F("../guidelines/colors-dark.html",420)}</div>},
+  {id:"typography", title:"Typography", desc:"Pretendard Variable everywhere. Compact admin scale, weights 500–800, uppercase tracked eyebrows.", body:()=><div>{F("../guidelines/type-scale.html",580)}{F("../guidelines/type-weights.html",400)}</div>},
+  {id:"spacing", title:"Spacing & Radius", desc:"4px grid; radius ladder from 8px chips to 24px dialogs to full pills.", body:()=><div>{F("../guidelines/spacing.html",480)}{F("../guidelines/radius.html",360)}</div>},
+  {id:"elevation", title:"Elevation", desc:"Navy-tinted soft shadows. Cards are borderless — shadow does the work.", body:()=><div>{F("../guidelines/shadows.html",360)}</div>},
+  {id:"motion", title:"Motion", desc:"Entrance-only: pop-up cards with stagger, slide-up sections, slide-right sidebar, fade-in rows.", body:()=><div>{F("../guidelines/motion.html",450)}</div>},
+  {id:"brand", title:"Brand", desc:"아가잼잼 mark — the only illustration in the admin.", body:()=><div>{F("../guidelines/brand-logo.html",380)}</div>},
+]},
+{group:"Primitives", pages:[
+  {id:"button", title:"Button", desc:"Pill-shaped button — the only button in the system. 아래에 각 prop 값의 목업을 전부 나열합니다.", body:()=><div>
+    <H2>variant — 8종</H2>
+    <Preview>{[["primary","계약 발송"],["destructive","삭제"],["neutral","취소"],["subtle","고객 추가"],["outline","내보내기"],["ghost","더보기"],["link","자세히"],["kakao","카카오 로그인"]].map(([v,l])=>
+      <div key={v} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+        <B.Button variant={v} icon={v==="subtle"?Ic(P.plus):null}>{l}</B.Button>
+        <code style={{fontFamily:"var(--font-mono)",fontSize:"var(--text-2xs)",color:"var(--text-muted)"}}>{v}</code>
+      </div>)}</Preview>
+    <H2>height — 세로 크기 4종 (구 size)</H2>
+    <Preview>{[["sm","36px"],["default","40px"],["lg","48px"],["icon","40×40"]].map(([h,px])=>
+      <div key={h} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+        <B.Button height={h} icon={h==="icon"?Ic(P.bell):null}>{h==="icon"?null:"저장"}</B.Button>
+        <code style={{fontFamily:"var(--font-mono)",fontSize:"var(--text-2xs)",color:"var(--text-muted)"}}>{h} · {px}</code>
+      </div>)}</Preview>
+    <H2>width — 컨테이너 대비 가로 3종</H2>
+    <Preview column>{[["(생략)","내용 크기 hug"],["sm","25%"],["md","50%"],["lg","100%"]].map(([w,pct])=>
+      <div key={w} style={{position:"relative",border:"1.5px dashed var(--border)",borderRadius:"var(--radius-pill)",padding:4}}>
+        <B.Button width={w==="(생략)"?undefined:w}>계약 발송</B.Button>
+        <code style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",fontFamily:"var(--font-mono)",fontSize:"var(--text-2xs)",color:"var(--text-muted)"}}>width="{w}" · {pct}</code>
+      </div>)}</Preview>
+    <H2>기타 상태</H2>
+    <Preview>{[["icon 포함",<B.Button variant="subtle" icon={Ic(P.plus)}>고객 추가</B.Button>],["disabled",<B.Button disabled>저장</B.Button>]].map(([l,el])=>
+      <div key={l} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>{el}<code style={{fontFamily:"var(--font-mono)",fontSize:"var(--text-2xs)",color:"var(--text-muted)"}}>{l}</code></div>)}</Preview>
+    <Code>{'<Button>저장</Button>\n<Button variant="neutral" height="sm">취소</Button>\n<Button variant="destructive" height="sm">삭제</Button>\n<Button width="lg">계약 발송</Button>  // 컨테이너 100%'}</Code>
+    <Props rows={[["variant",'"primary" | "destructive" | "neutral" | "subtle" | "outline" | "ghost" | "link" | "kakao"','"primary"',"Visual role"],["height",'"sm" | "default" | "lg" | "icon"','"default"',"36 / 40 / 48 / 40×40 px (구 size — alias 유지)"],["width",'"sm" | "md" | "lg"',"","25% / 50% / 100% of container · 생략 = hug (구 fullWidth = lg)"],["icon","ReactNode","","Leading 16px Lucide icon"]]}/>
+  </div>},
+  {id:"badge", title:"Badge", desc:"Small generic pill label for counts and categories. For status words use StatusBadge.", body:()=><div>
+    <Preview><B.Badge>NEW</B.Badge><B.Badge variant="secondary">12건</B.Badge><B.Badge variant="outline">전체</B.Badge><B.Badge variant="destructive">긴급</B.Badge></Preview>
+    <Code>{'<Badge>NEW</Badge>\n<Badge variant="secondary">12건</Badge>'}</Code>
+    <Props rows={[["variant",'"default" | "secondary" | "outline" | "destructive"','"default"',"Fill style"]]}/>
+  </div>},
+  {id:"statusbadge", title:"StatusBadge", desc:"Status pill using the fixed --status-* triads (tinted bg + tinted border + strong fg). Pass a domain status key to get the canonical Korean label + color.", body:()=><div>
+    <Preview><B.StatusBadge status="active"/><B.StatusBadge status="signed"/><B.StatusBadge status="pending"/><B.StatusBadge status="review"/><B.StatusBadge status="scheduleChange"/><B.StatusBadge status="terminated"/><B.StatusBadge status="expired"/><B.StatusBadge status="completed"/><B.StatusBadge status="breastPump"/><B.StatusBadge status="careCenter"/></Preview>
+    <Preview><B.StatusBadge variant="danger">계약서 필요</B.StatusBadge><B.StatusBadge status="active" size="lg"/></Preview>
+    <Code>{'<StatusBadge status="active" />\n<StatusBadge status="pending" />\n<StatusBadge variant="danger">계약서 필요</StatusBadge>'}</Code>
+    <Props rows={[["status",'"active" | "signed" | "pending" | "review" | "scheduleChange" | "terminated" | "expired" | "completed" | "breastPump" | "careCenter"',"","Domain key → label + variant"],["variant",'"neutral" | "info" | "success" | "warning" | "danger"',"","Explicit color (overrides status)"],["size",'"default" | "lg"','"default"',""]]}/>
+  </div>},
+  {id:"tagpill", title:"TagPill", desc:"Soft borderless tag for categories (service types, template categories) — not statuses.", body:()=><div>
+    <Preview><B.TagPill variant="sky">정부바우처</B.TagPill><B.TagPill variant="amber">단축권</B.TagPill><B.TagPill variant="emerald">연장</B.TagPill><B.TagPill variant="cyan">특가</B.TagPill><B.TagPill variant="indigo">신규</B.TagPill><B.TagPill>일반</B.TagPill><B.TagPill variant="sky" size="lg">정부바우처</B.TagPill></Preview>
+    <Code>{'<TagPill variant="sky">정부바우처</TagPill>\n<TagPill variant="amber">단축권</TagPill>'}</Code>
+    <Props rows={[["variant",'"neutral" | "amber" | "emerald" | "sky" | "cyan" | "indigo"','"neutral"',""],["size",'"default" | "lg"','"default"',""]]}/>
+  </div>},
+  {id:"avatar", title:"Avatar", desc:"Round initials disc on the brand blue gradient — the ONLY gradient in the system.", body:()=><div>
+    <Preview><B.Avatar name="김서연" size="sm"/><B.Avatar name="박지호"/><B.Avatar name="이하은" size="lg"/></Preview>
+    <Code>{'<Avatar name="김서연" />\n<Avatar name="박지호" size="lg" />'}</Code>
+    <Props rows={[["name","string","","First two chars become initials"],["src","string","","Optional image URL"],["size",'"sm" | "default" | "lg"','"default"',"32 / 40 / 48 px"]]}/>
+  </div>},
+  {id:"skeleton", title:"Skeleton", desc:"Pulsing loading placeholder — size it to the content it replaces.", body:()=><div>
+    <Preview><B.Skeleton width={140} height={16}/><B.Skeleton width={80} height={28} round/><B.Skeleton width={40} height={40} round/></Preview>
+    <Code>{'<Skeleton width={120} height={20} />\n<Skeleton width={40} height={40} round />'}</Code>
+    <Props rows={[["width","number | string",'"100%"',""],["height","number | string","16",""],["round","boolean","","Fully rounded"]]}/>
+  </div>},
+  {id:"spinner", title:"Spinner", desc:"Rotating loader in primary blue (Lucide loader-2 glyph).", body:()=><div>
+    <Preview><B.Spinner size="sm"/><B.Spinner/><B.Spinner size="lg"/></Preview>
+    <Code>{'<Spinner />\n<Spinner size="sm" />'}</Code>
+    <Props rows={[["size",'"sm" | "default" | "lg"','"default"',"16 / 24 / 32 px"]]}/>
+  </div>},
+  {id:"separator", title:"Separator", desc:"1px hairline divider using --border.", body:()=><div>
+    <Preview column><span style={{fontSize:"var(--text-md)"}}>기본 정보</span><B.Separator/><span style={{fontSize:"var(--text-md)"}}>서비스 정보</span></Preview>
+    <Code>{'<Separator />\n<Separator orientation="vertical" />'}</Code>
+    <Props rows={[["orientation",'"horizontal" | "vertical"','"horizontal"',""]]}/>
+  </div>},
+  {id:"emptystate", title:"EmptyState", desc:"Centered empty message card. Message is a plain Korean statement; icon at 30% opacity.", body:()=><div>
+    <Preview column><B.EmptyState icon={Ic(P.users,48,1.5)} message="고객을 선택해 주세요"/></Preview>
+    <Code>{'<EmptyState icon={<Users size={48}/>} message="고객을 선택해 주세요" />\n<EmptyState plain message="데이터가 없습니다" />'}</Code>
+    <Props rows={[["icon","ReactNode","","48px muted Lucide icon"],["message","string",'"데이터가 없습니다"',""],["plain","boolean","","Without the white card shell"]]}/>
+  </div>},
+]},
+{group:"Forms", pages:[
+  {id:"input", title:"Input", desc:"38px text input, 12px radius, 1px border, inset blue focus ring. Prefer InputField when a label is needed.", body:()=><div>
+    <Preview column><B.Input placeholder="이름을 입력하세요"/><B.Input pill placeholder="검색..."/><B.Input error defaultValue="중복된 값" /><B.Input disabled placeholder="비활성"/></Preview>
+    <Code>{'<Input placeholder="이름을 입력하세요" />\n<Input pill placeholder="검색..." />'}</Code>
+    <Props rows={[["pill","boolean","","Fully rounded"],["error","boolean","","Burgundy border"],["bare","boolean","","Borderless, for shells"]]}/>
+  </div>},
+  {id:"inputfield", title:"InputField", desc:"Label + Input + hint/error stack — the standard form row. ALWAYS prefer this over hand-assembling Label+Input.", body:()=><div>
+    <Preview column><B.InputField label="연락처" required placeholder="010-0000-0000" hint="숫자만 입력"/><B.InputField label="이메일" defaultValue="seoyeon@kim.kr" error="이미 등록된 이메일입니다"/></Preview>
+    <Code>{'<InputField label="연락처" required placeholder="010-0000-0000" hint="숫자만 입력" />\n<InputField label="이메일" error="이미 등록된 이메일입니다" />'}</Code>
+    <Props rows={[["label","string","",""],["required","boolean","","Burgundy asterisk"],["hint","string","","Muted helper text"],["error","string","","Replaces hint, error styling"]]}/>
+  </div>},
+  {id:"textarea", title:"Textarea", desc:"Multiline input matching Input's border/focus treatment (templates, memos).", body:()=><div>
+    <Preview column><B.Textarea placeholder="메모를 입력하세요" rows={3}/></Preview>
+    <Code>{'<Textarea placeholder="메모를 입력하세요" rows={4} />'}</Code>
+    <Props rows={[["…","TextareaHTMLAttributes","","Standard textarea props"]]}/>
+  </div>},
+  {id:"label", title:"Label", desc:"Form field label, 0.8125rem medium.", body:()=><div>
+    <Preview><B.Label required>산모 이름</B.Label><B.Label>메모</B.Label></Preview>
+    <Code>{'<Label required>산모 이름</Label>'}</Code>
+    <Props rows={[["required","boolean","","Append burgundy asterisk"]]}/>
+  </div>},
+  {id:"searchinput", title:"SearchInput", desc:"Elevated white search bar with built-in icon; shadow lifts on focus. onChange receives the string value.", body:()=><div>
+    <Preview><SearchDemo/></Preview>
+    <Code>{'<SearchInput value={q} onChange={setQ} placeholder="고객 이름, 연락처 검색" />'}</Code>
+    <Props rows={[["value","string","",""],["onChange","(value: string) => void","",""],["placeholder","string",'"검색..."',""],["trailing","ReactNode","","Slot after the input (filter menu)"]]}/>
+  </div>},
+  {id:"select", title:"Select", desc:"Dropdown select — input-style trigger, rounded elevated option list, blue-tinted active option with check.", body:()=><div>
+    <Preview><SelectDemo/></Preview>
+    <Code>{'<Select options={[{label:"전체",value:"all"},{label:"진행중",value:"active"}]}\n  value={v} onChange={setV} />'}</Code>
+    <Props rows={[["options","{label, value}[]","",""],["value","string","",""],["onChange","(value: string) => void","",""],["placeholder","string",'"선택"',""]]}/>
+  </div>},
+  {id:"checkbox", title:"Checkbox", desc:"16px checkbox with primary fill when checked. onChange receives a boolean.", body:()=><div>
+    <Preview><CheckDemo/><B.Checkbox checked={false} onChange={()=>{}} label="조리원 이용"/><B.Checkbox disabled label="비활성"/></Preview>
+    <Code>{'<Checkbox checked={v} onChange={setV} label="유축기 대여" />'}</Code>
+    <Props rows={[["checked","boolean","",""],["onChange","(checked: boolean) => void","",""],["label","string","","Inline label"],["disabled","boolean","",""]]}/>
+  </div>},
+  {id:"radiogroup", title:"RadioGroup", desc:"Radio option list, vertical by default.", body:()=><div>
+    <Preview><RadioDemo/></Preview>
+    <Code>{'<RadioGroup row options={[{label:"산모",value:"m"},{label:"신생아",value:"n"}]}\n  value={v} onChange={setV} />'}</Code>
+    <Props rows={[["options","{label, value}[]","",""],["value","string","",""],["onChange","(value: string) => void","",""],["row","boolean","","Horizontal layout"]]}/>
+  </div>},
+  {id:"switch", title:"Switch", desc:"42×24 toggle; primary fill when on (settings rows).", body:()=><div>
+    <Preview><SwitchDemo/><B.Switch checked={false} onChange={()=>{}}/><B.Switch disabled checked/></Preview>
+    <Code>{'<Switch checked={on} onChange={setOn} />'}</Code>
+    <Props rows={[["checked","boolean","",""],["onChange","(checked: boolean) => void","",""],["disabled","boolean","",""]]}/>
+  </div>},
+  {id:"formsection", title:"FormSection", desc:"Titled group of form fields under a small blue heading.", body:()=><div>
+    <Preview column><B.FormSection title="기본 정보"><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}><B.InputField label="산모 이름" required placeholder="이름"/><B.InputField label="연락처" placeholder="010-0000-0000"/></div></B.FormSection><B.FormSection title="서비스 정보" showSeparator><CheckDemo/></B.FormSection></Preview>
+    <Code>{'<FormSection title="기본 정보">\n  <InputField label="이름" required />\n  <InputField label="연락처" />\n</FormSection>'}</Code>
+    <Props rows={[["title","string","",""],["badge","ReactNode","","Badge next to the title"],["showSeparator","boolean","","Separator above the section"]]}/>
+  </div>},
+  {id:"stepper", title:"Stepper", desc:"Wizard progress: numbered circles + dash connectors (계약 생성 등 다단계 폼).", body:()=><div>
+    <Preview column><StepperDemo/></Preview>
+    <Code>{'<Stepper steps={[{label:"고객 정보"},{label:"서비스"},{label:"계약서"},{label:"확인"}]}\n  activeStep={1} showCheckOnDone />'}</Code>
+    <Props rows={[["steps","{label}[]","",""],["activeStep","number","0","Earlier = done, later = pending"],["size",'"sm" | "md" | "lg"','"md"',""],["showCheckOnDone","boolean","","Check instead of number"]]}/>
+  </div>},
+]},
+{group:"Cards", pages:[
+  {id:"card", title:"Card", desc:"White borderless card — shadow does the work. Never add borders to elevated cards.", body:()=><div>
+    <Preview><B.Card style={{width:170}}><div style={{fontSize:"var(--text-md)",fontWeight:700,color:"var(--dark)"}}>elevated</div><div style={{fontSize:"var(--text-xs)",color:"var(--text-muted)"}}>20px radius</div></B.Card><B.Card variant="content" style={{width:170}}><div style={{fontSize:"var(--text-md)",fontWeight:700,color:"var(--dark)"}}>content</div><div style={{fontSize:"var(--text-xs)",color:"var(--text-muted)"}}>16px radius</div></B.Card><B.Card variant="muted" style={{width:170}}><div style={{fontSize:"var(--text-md)",fontWeight:700,color:"var(--dark)"}}>muted</div><div style={{fontSize:"var(--text-xs)",color:"var(--text-muted)"}}>surface fill</div></B.Card><B.Card hover style={{width:170}}><div style={{fontSize:"var(--text-md)",fontWeight:700,color:"var(--dark)"}}>hover</div><div style={{fontSize:"var(--text-xs)",color:"var(--text-muted)"}}>lifts -4px</div></B.Card></Preview>
+    <Code>{'<Card>…</Card>\n<Card variant="muted" padding={16}>…</Card>\n<Card hover>clickable card</Card>'}</Code>
+    <Props rows={[["variant",'"elevated" | "content" | "muted" | "outlined" | "surface"','"elevated"',""],["hover","boolean","","Lift + stronger shadow"],["padding","number | string","24",""]]}/>
+  </div>},
+  {id:"card-anatomy", title:"Card Layers", desc:"카드는 셸일 뿐 — 간격은 슬롯이 소유합니다. Header / Body / Footer 3밴드로 나뉘며, 각 밴드의 규격은 개별 페이지에 있습니다. 데스크톱↔모바일 토글로 밀도가 바뀝니다.", body:()=><div>
+    <CardAnatomyDemo/>
+    <B.Alert variant="info" title="slotted 규칙">Header/Body/Footer를 쓸 땐 반드시 <code>Card slotted</code> — 셸의 기본 padding을 끄고 overflow를 클립해 슬롯이 간격을 온전히 소유합니다. 단순 카드는 그대로 <code>padding</code>.</B.Alert>
+    <H2>3밴드 요약</H2>
+    <Tbl head={["밴드","padding (데스크톱 / 모바일)","페이지"]} rows={[
+      ["CardHeader","20·20·16 / 16·16·14",<a href="#cardheader">CardHeader →</a>],
+      ["CardBody","20 / 16",<a href="#cardbody">CardBody →</a>],
+      ["CardFooter","16·20 / 14·16",<a href="#cardfooter">CardFooter →</a>]]}/>
+    <H2>전체 조립</H2>
+    <Code>{'<Card slotted variant="content">\n  <CardHeader title="김서연" subtitle="010-1234-5678"\n    trailing={<StatusBadge status="active"/>}/>\n  <CardBody>\n    <InfoRow label="출산 예정일" value="2026-08-15"/>\n    <InfoRow label="담당 관리사" value="박관리사"/>\n  </CardBody>\n  <CardFooter>\n    <Button variant="neutral" height="sm">수정</Button>\n    <Button height="sm">계약 발송</Button>\n  </CardFooter>\n</Card>'}</Code>
+    <Props rows={[["Card.slotted","boolean","","슬롯 조립 모드 — 외곽 padding 제거"]]}/>
+  </div>},
+  {id:"cardheader", title:"CardHeader", desc:"카드 상단 밴드 — 완전 규격화. 크기·굵기·색·padding·divider가 전부 고정이고, props로는 글자 내용(title·subtitle)과 우측 trailing 슬롯만 받습니다.", body:()=><div>
+    <BandDemo band="header"/>
+    <B.Alert variant="info" title="하나의 헤더로 통일">repo에 흩어진 헤더(대시보드 CardTitle · content-paper · PageHeader · 인증 패널 · 위저드 h3)를 이 컴포넌트 하나로 흡수합니다. size·색·굵기 노브는 없습니다 — 어디서든 동일한 모습.</B.Alert>
+    <H2>고정 규격</H2>
+    <Tbl head={["항목","고정 값"]} rows={[
+      ["padding","20·20·16 (상·좌우·하) · 모바일 16·16·14"],
+      ["title","--text-lg / 700 / --dark · line-height 1.3"],
+      ["subtitle","--text-sm / 500 / --text-muted · title과 gap 4"],
+      ["divider","하단 hairline (1px --border) 항상"],
+      ["trailing","우측 정렬 · 내부 gap 8"]]}/>
+    <H2>가변 — props (내용만)</H2>
+    <Preview column>
+      <B.Card slotted variant="content"><B.CardHeader title="오늘의 일정"/></B.Card>
+      <B.Card slotted variant="content"><B.CardHeader title="김서연" subtitle="010-1234-5678 · 인천시 연수구"/></B.Card>
+      <B.Card slotted variant="content"><B.CardHeader title="최근 고객 목록" subtitle="진행중 34건" trailing={<B.HeaderActionButton variant="primary" label="전체보기"/>}/></B.Card>
+    </Preview>
+    <H2>trailing 슬롯 예시</H2>
+    <Preview column>
+      <B.Card slotted variant="content"><B.CardHeader title="김서연" subtitle="정부바우처 3주" trailing={<B.StatusBadge status="active"/>}/></B.Card>
+      <B.Card slotted variant="content"><B.CardHeader title="계약 관리" subtitle="이번 달 12건" trailing={<B.HeaderActionButton variant="primary" icon={Ic(P.plus,14)} label="새 계약"/>}/></B.Card>
+      <B.Card slotted variant="content"><B.CardHeader title="문서함" trailing={<B.Button variant="neutral" height="sm">내보내기</B.Button>}/></B.Card>
+      <B.Card slotted variant="content"><B.CardHeader title="알림 설정" subtitle="변경 사항이 있어요" trailing={<React.Fragment><B.Button variant="neutral" height="sm">취소</B.Button><B.Button height="sm">저장</B.Button></React.Fragment>}/></B.Card>
+      <B.Card slotted variant="content"><B.CardHeader title="서비스 현황" trailing={<React.Fragment><B.StatusBadge status="signed"/><B.DropdownMenu align="right" trigger={<B.Button variant="ghost" height="icon" icon={Ic(P.more,16)}/>} items={[{label:"수정",value:"edit"},{label:"복제",value:"dup"},"-",{label:"삭제",value:"del",danger:true}]}/></React.Fragment>}/></B.Card>
+    </Preview>
+    <Code>{'// 배지\n<CardHeader title="김서연" subtitle="정부바우처 3주" trailing={<StatusBadge status="active"/>}/>\n\n// 액션 버튼\n<CardHeader title="계약 관리" trailing={<HeaderActionButton icon={<Plus/>} label="새 계약"/>}/>\n<CardHeader title="문서함" trailing={<Button variant="neutral" height="sm">내보내기</Button>}/>\n\n// 다중 (gap 8 자동)\n<CardHeader title="알림 설정" trailing={<>\n  <Button variant="neutral" height="sm">취소</Button>\n  <Button height="sm">저장</Button>\n</>}/>\n\n// 배지 + 메뉴\n<CardHeader title="서비스 현황" trailing={<>\n  <StatusBadge status="signed"/>\n  <DropdownMenu trigger={<Button variant="ghost" height="icon" icon={<MoreHorizontal/>}/>} items={[…]}/>\n</>}/>'}</Code>
+    <Props rows={[["title","ReactNode","","제목 텍스트"],["subtitle","ReactNode","","보조 텍스트 (선택)"],["trailing","ReactNode","","우측 슬롯 — 배지·버튼·메뉴, 여러 개는 gap 8 자동 (선택)"]]}/>
+  </div>},
+  {id:"cardbody", title:"CardBody", desc:"카드 본문 밴드 — 실제 내용이 담깁니다. 세로 flex로 자식들을 일정 gap으로 쌓습니다.", body:()=><div>
+    <BandDemo band="body"/>
+    <Tbl head={["항목","규격"]} rows={[
+      ["padding","20 (모바일 16)"],
+      ["layout","display flex · column · gap 12 (모바일 14)"],
+      ["flex","flex 1 — 슬롯 카드에서 남는 높이를 채움"],
+      ["flush","padding 0 — 전면 미디어·리스트·테이블을 가장자리까지"]]}/>
+    <Code>{'<CardBody>\n  <InfoRow label="출산 예정일" value="2026-08-15"/>\n  <InfoRow label="담당 관리사" value="박관리사"/>\n</CardBody>'}</Code>
+    <Props rows={[["flush","boolean","","padding 0 (edge-to-edge)"]]}/>
+  </div>},
+  {id:"cardfooter", title:"CardFooter", desc:"카드 액션 밴드 — Dialog footer와 동일한 정렬·간격 규칙을 공유합니다.", body:()=><div>
+    <BandDemo band="footer"/>
+    <Tbl head={["항목","규격"]} rows={[
+      ["padding","16·20 · 모바일 14·16"],
+      ["top","상단 hairline (1px --border)"],
+      ["정렬","기본 우측 정렬 · [neutral 취소] → [primary 확인] (= Dialog footer)"],
+      ["gap","8"],
+      ["between","space-between — 좌측 보조 텍스트 + 우측 액션"]]}/>
+    <Code>{'<CardFooter>\n  <Button variant="neutral" height="sm">수정</Button>\n  <Button height="sm">계약 발송</Button>\n</CardFooter>\n\n<CardFooter between>\n  <span>3건 선택됨</span>\n  <Button height="sm">삭제</Button>\n</CardFooter>'}</Code>
+    <Props rows={[["between","boolean","","space-between 정렬"]]}/>
+  </div>},
+  {id:"contentcard", title:"ContentCard", desc:"Titled content card — small bold title + muted caption + body grid.", body:()=><div>
+    <Preview column><B.ContentCard title="계약 정보" description="최근 서명 완료된 계약" titleTrailing={<B.StatusBadge status="signed"/>}><B.InfoRow label="계약일" value="2026-07-01"/><B.InfoRow label="서비스" value="정부바우처 3주"/></B.ContentCard></Preview>
+    <Code>{'<ContentCard title="계약 정보" description="최근 서명 완료된 계약">\n  <InfoRow label="계약일" value="2026-07-01" />\n</ContentCard>'}</Code>
+    <Props rows={[["title","ReactNode","",""],["description","ReactNode","",""],["eyebrow","boolean","","Uppercase tracked title"],["titleTrailing","ReactNode","","Badge/action after title"],["variant","Card variant",'"content"',""]]}/>
+  </div>},
+  {id:"infocard", title:"InfoCard", desc:"Inset gray panel with an uppercase eyebrow title — holds InfoRows inside DetailPanel.", body:()=><div>
+    <Preview column><B.InfoCard title="기본 정보"><B.InfoRow label="연락처" value="010-1234-5678"/><B.InfoRow label="출산 예정일" value="2026-08-15"/><B.InfoRow label="주소" value="인천시 연수구"/></B.InfoCard></Preview>
+    <Code>{'<InfoCard title="기본 정보">\n  <InfoRow label="연락처" value="010-1234-5678" />\n</InfoCard>'}</Code>
+    <Props rows={[["title","string","","Uppercase eyebrow"]]}/>
+  </div>},
+]},
+{group:"Data", pages:[
+  {id:"statmini", title:"StatMini", desc:"Stat card: tinted icon chip + big value + muted label. Pops up on entrance, lifts on hover.", body:()=><div>
+    <Preview><Replay><div style={{width:230}}><B.StatMini icon={Ic(P.users,24)} value={128} counter="명" label="전체 고객" colorIndex={0}/></div><div style={{width:230}}><B.StatMini icon={Ic(P.file,24)} value={34} counter="건" label="진행중 계약" colorIndex={1}/></div></Replay></Preview>
+    <Code>{'<StatMini icon={<Users size={24}/>} value={128} counter="명" label="전체 고객" colorIndex={0} />'}</Code>
+    <Props rows={[["icon","ReactNode","","24px Lucide icon"],["value","string | number","",""],["label","string","",""],["counter","string","","Unit suffix (명, 건)"],["colorIndex","number","0","0 blue / 1 orange / 2 green / 3 burgundy"],["animationDelay","string","","Stagger, e.g. \"0.08s\""]]}/>
+  </div>},
+  {id:"statsbar", title:"StatsBar", desc:"Grid of StatMini cards with automatic color cycle + 80ms stagger.", body:()=><div>
+    <Preview column><Replay><div style={{width:"100%"}}><B.StatsBar columns={4} items={[{icon:Ic(P.users,24),value:128,counter:"명",label:"전체 고객"},{icon:Ic(P.file,24),value:34,counter:"건",label:"진행중 계약"},{icon:Ic(P.cal,24),value:12,counter:"건",label:"이번 주 일정"},{icon:Ic(P.send,24),value:5,counter:"건",label:"서명 대기"}]}/></div></Replay></Preview>
+    <Code>{'<StatsBar columns={4} items={[\n  {icon:<Users size={24}/>, value:128, counter:"명", label:"전체 고객"},\n  …\n]} />'}</Code>
+    <Props rows={[["items","{icon, value, label, counter, colorIndex}[]","",""],["columns","number","2","4 on wide dashboards"]]}/>
+  </div>},
+  {id:"inforow", title:"InfoRow", desc:"Label / value line with hairline divider (last row undivided). Missing value renders \"-\".", body:()=><div>
+    <Preview column><B.InfoRow label="출산 예정일" value="2026-08-15"/><B.InfoRow label="메모"/></Preview>
+    <Code>{'<InfoRow label="출산 예정일" value="2026-08-15" />'}</Code>
+    <Props rows={[["label","string","",""],["value","ReactNode",'"-"',""]]}/>
+  </div>},
+  {id:"datatable", title:"DataTable", desc:"Centered 48px header, hairline dividers, staggered fade-in rows, built-in pager. Render badges via column.render.", body:()=><div>
+    <Preview column><DataTableDemo/></Preview>
+    <Code>{'<DataTable\n  columns={[\n    {key:"name", header:"이름"},\n    {key:"status", header:"상태", render:(r)=><StatusBadge status={r.status}/>},\n  ]}\n  data={rows} onRowClick={(r)=>select(r)} />'}</Code>
+    <Props rows={[["columns","{key, header, width?, render?}[]","",""],["data","T[]","",""],["onRowClick","(row, index) => void","","Adds hover + pointer"],["pageSize","number","10",""],["paginate","boolean","true",""],["align",'"center" | "left"','"center"',""],["emptyMessage","string",'"데이터가 없습니다"',""]]}/>
+  </div>},
+  {id:"pagination", title:"Pagination", desc:"\"1-10 / 45\" range + chevron pager (0-indexed page).", body:()=><div>
+    <Preview><PaginationDemo/></Preview>
+    <Code>{'<Pagination count={45} page={p} onPageChange={setP} />'}</Code>
+    <Props rows={[["count","number","",""],["page","number","","0-indexed"],["pageSize","number","10",""],["onPageChange","(page: number) => void","",""]]}/>
+  </div>},
+  {id:"filterchips", title:"FilterChips", desc:"Elevated chip row for single-choice filtering; active chip is solid primary.", body:()=><div>
+    <Preview><ChipsDemo/></Preview>
+    <Code>{'<FilterChips items={[{label:"전체",value:"all"},{label:"진행중",value:"active"}]}\n  activeValue={f} onChange={setF} />'}</Code>
+    <Props rows={[["items","{label, value}[]","",""],["activeValue","string","",""],["onChange","(value: string) => void","",""]]}/>
+  </div>},
+  {id:"activitytimeline", title:"ActivityTimeline", desc:"Recent-activity feed: tinted icon circles joined by a hairline.", body:()=><div>
+    <Preview column><B.ActivityTimeline items={timelineItems}/></Preview>
+    <Code>{'<ActivityTimeline items={[\n  {icon:<FileCheck size={18}/>, variant:"success",\n   text:<><b>김서연</b>님 계약 서명 완료</>, time:"10분 전"},\n]} />'}</Code>
+    <Props rows={[["items",'{icon, variant: "success"|"warning"|"info"|"danger", text, time}[]',"",""],["maxHeight","string",'"400px"',""]]}/>
+  </div>},
+  {id:"progress", title:"Progress", desc:"8px primary progress bar (0–100).", body:()=><div>
+    <Preview column><ProgressDemo/></Preview>
+    <Code>{'<Progress value={64} />'}</Code>
+    <Props rows={[["value","number","","0–100"]]}/>
+  </div>},
+  {id:"alert", title:"Alert", desc:"Inline tinted message with built-in status icon — the one place a 10% tinted bg with matching border is allowed.", body:()=><div>
+    <Preview column><B.Alert variant="info" title="바우처 안내">정부바우처 계약은 서명 후 자동으로 등록됩니다.</B.Alert><B.Alert variant="success">계약이 저장되었습니다</B.Alert><B.Alert variant="warning">서명 대기 중인 계약이 5건 있습니다</B.Alert><B.Alert variant="destructive">데이터를 불러오는데 실패했습니다</B.Alert></Preview>
+    <Code>{'<Alert variant="destructive">데이터를 불러오는데 실패했습니다</Alert>'}</Code>
+    <Props rows={[["variant",'"default" | "destructive" | "success" | "warning" | "info"','"default"',""],["title","string","","Bold first line"]]}/>
+  </div>},
+]},
+{group:"Overlays", pages:[
+  {id:"toast", title:"Toast", desc:"우하단 고정 알림 — 완료·실패 피드백. 기본 4초 자동 소멸(repo use-toast 캐논), 300ms out 애니메이션, --z-toast로 항상 최상단.", body:()=><div>
+    <Preview><ToastDemo/></Preview>
+    <Code>{'const {toasts, push, dismiss} = useToasts();\n\npush("저장되었어요");                       // 4s\npush("목록을 불러오지 못했어요",\n  {variant:"danger", actionLabel:"재시도", onAction: retry, duration: 6000});\n\n<ToastHost toasts={toasts} onDismiss={dismiss}/>  // 앱 루트에 1개만'}</Code>
+    <H2>규격</H2>
+    <Tbl head={["항목","규격"]} rows={[
+      ["위치","우하단 고정 · inset 24px · 우측에 고정 레일(퀵액션 등)이 있으면 그 폭만큼 right 오프셋"],
+      ["스택","아래→위 · 최대 3개 · gap 8 · 초과 시 오래된 것부터 제거 · 새 토스트가 맨 아래"],
+      ["시간","성공·정보 4000ms(기본) · 에러+재시도 6000ms · 클릭 시 즉시 닫힘"],
+      ["In","300ms · --ease-entrance · translateY 12→0 + fade"],
+      ["Out","300ms · --ease-standard · translateY 0→8 + fade · 제거는 애니메이션 종료 후"],
+      ["접근성","aria-live polite · prefers-reduced-motion 시 애니메이션 생략"],
+      ["금지","확인·취소가 필요한 일(→ ConfirmActionModal) · 페이지 로드 시 인사 토스트 · 중앙/상단 배치"]]}/>
+    <H2>Toast</H2>
+    <Props rows={[["variant",'"success" | "danger" | "info"','"success"',""],["actionLabel","string","","우측 텍스트 버튼 (재시도) — 클릭 시 onAction 후 닫힘"],["onAction","() => void","",""],["leaving","boolean","","out 애니메이션 재생"],["onDismiss","() => void","","클릭 닫기 핸들러"]]}/>
+    <H2>useToasts(duration?)</H2>
+    <Props rows={[["push","(message, opts?) => number","","opts: variant · actionLabel · onAction · duration — id 반환"],["dismiss","(id) => void","","수동 닫기 — out 애니메이션 후 제거"],["toasts","ToastItem[]","","<ToastHost toasts onDismiss={dismiss}>에 전달"]]}/>
+    <B.Alert variant="info" title="카피 규격">완료 "저장되었어요" · 에러 "…지 못했어요" + 재시도(6s). 확인/취소가 필요한 일엔 토스트가 아니라 ConfirmActionModal.</B.Alert>
+  </div>},
+  {id:"dialog", title:"Dialog", desc:"Modal: 24px radius on --surface, white header/footer bands, floating round close. Footer holds neutral cancel + primary confirm (sm).", body:()=><div>
+    <Preview><DialogDemo/></Preview>
+    <Code>{'<Dialog open={open} onClose={close} title="고객 등록" description="새 산모 정보를 입력하세요"\n  footer={<><Button variant="neutral" size="sm">취소</Button><Button size="sm">저장</Button></>}>\n  <InputField label="이름" required />\n</Dialog>'}</Code>
+    <Props rows={[["open","boolean","",""],["onClose","() => void","","Esc + overlay + ✕"],["title","string","",""],["description","string","",""],["footer","ReactNode","","Right-aligned actions"],["width","number","480","Max width px"]]}/>
+  </div>},
+  {id:"confirmactionmodal", title:"ConfirmActionModal", desc:"Compact 340px confirm dialog; confirm button first, both full-width halves. Always used for destructive flows.", body:()=><div>
+    <Preview><ConfirmDemo/></Preview>
+    <Code>{'<ConfirmActionModal open={open} title="계약을 삭제할까요?"\n  description="이 작업은 되돌릴 수 없습니다."\n  confirmLabel="삭제" onConfirm={del} onCancel={close} />'}</Code>
+    <Props rows={[["open","boolean","",""],["title","string","",""],["description","string","",""],["confirmLabel","string",'"확인"',""],["cancelLabel","string",'"취소"',""],["confirmVariant",'"primary" | "destructive"','"destructive"',""],["onConfirm / onCancel","() => void","",""]]}/>
+  </div>},
+  {id:"tooltip", title:"Tooltip", desc:"Hover tooltip above the trigger.", body:()=><div>
+    <Preview><B.Tooltip content="알림톡 발송"><B.Button size="icon" variant="neutral" icon={Ic(P.bell)}/></B.Tooltip><span style={{fontSize:"var(--text-sm)",color:"var(--text-muted)"}}>← hover</span></Preview>
+    <Code>{'<Tooltip content="알림톡 발송">\n  <Button size="icon" variant="ghost" icon={<Bell size={16}/>} />\n</Tooltip>'}</Code>
+    <Props rows={[["content","ReactNode","",""]]}/>
+  </div>},
+  {id:"dropdownmenu", title:"DropdownMenu", desc:"Click-triggered menu; rounded elevated panel, blue-tint active row with check, burgundy danger rows, \"-\" separators.", body:()=><div>
+    <Preview><DropdownDemo/></Preview>
+    <Code>{'<DropdownMenu trigger={<Button variant="neutral" size="sm">필터</Button>}\n  items={[{label:"전체",value:"all"},{label:"진행중",value:"active"},"-",\n          {label:"삭제", danger:true, onClick:del}]}\n  activeValue={f} onSelect={setF} />'}</Code>
+    <Props rows={[["trigger","ReactNode","",""],["items",'({label, value?, icon?, onClick?, danger?} | "-")[]',"",""],["activeValue","string","","Highlights + checks"],["onSelect","(value: string) => void","",""],["align",'"left" | "right"','"right"',""]]}/>
+  </div>},
+]},
+{group:"Navigation", pages:[
+  {id:"sidebar", title:"Sidebar", desc:"White 280px app sidebar: brand row, eyebrow sections, pill nav items (active = solid primary), profile card pinned bottom. Canonical sections: 메인 · 관리 · 문서 · 시스템.", body:()=><div>
+    <Responsive desktop={<Preview><SidebarDemo/></Preview>} mobile={<div style={{marginBottom:12}}><MobileScreenDemo/></div>}/>
+    <Code>{'<Sidebar logoSrc="assets/logo.svg" user={{name:"김관리", role:"매니저"}}\n  sections={[{title:"메인", items:[{id:"dash", label:"대시보드",\n    icon:<LayoutDashboard size={20}/>, active:true}]}]}\n  onNavigate={go} />'}</Code>
+    <Props rows={[["logoSrc","string","",""],["brandName","string",'"아가잼잼 관리자"',""],["sections","{title, items: {id, label, icon, active, badge, onClick}[]}[]","",""],["user","{name, role}","","Profile card"],["onNavigate","(id: string) => void","",""]]}/>
+  </div>},
+  {id:"mobileheader", title:"MobileHeader", desc:"모바일(<1024) 상단 앱 크롬 — Sidebar 대체. 56px, 하단만 radius 24, 화이트 + shadow-card, --z-chrome.", body:()=><div>
+    <div style={{marginBottom:12}}><MobileHeaderDemo/></div>
+    <Code>{'{isMobile && <MobileHeader logoSrc="assets/logo.svg"\n  actions={<Button height="icon" variant="neutral" icon={<Bell size={16}/>}/>}/>}'}</Code>
+    <Props rows={[["logoSrc","string","",""],["title","string",'"아가잼잼"',"Primary 컬러 볼드"],["actions","ReactNode","","우측 슬롯 — 알림 벨 등"],["fixed","boolean","true","false = absolute (프레임 임베드용)"]]}/>
+    <B.Alert variant="info" title="main 여백">MobileHeader 아래 pt 80 — 헤더(56) + 여유(24).</B.Alert>
+  </div>},
+  {id:"mobilebottomnav", title:"MobileBottomNav", desc:"플로팅 필 하단 내비 — inset 16 + safe-area, blur 배경, active는 solid primary. repo MobileBottomNav를 토큰화한 캐논.", body:()=><div>
+    <div style={{marginBottom:12}}><MobileNavDemo/></div>
+    <Code>{'<MobileBottomNav activeId={tab} onNavigate={setTab} items={[\n  {id:"home", label:"홈", icon:<Home size={20} strokeWidth={2.5}/>},\n  {id:"clients", label:"고객", icon:<Users size={20} strokeWidth={2.5}/>},\n  {id:"chat", label:"어시스턴트", icon:<Sparkles size={20}/>, accent:true},\n  {id:"contracts", label:"계약", icon:<FileText size={20} strokeWidth={2.5}/>},\n  {id:"all", label:"전체", icon:<Menu size={20} strokeWidth={2.5}/>},\n]}/>'}</Code>
+    <Props rows={[["items","{id, label, icon, accent?, onClick?}[]","","4–5탭 · 아이콘 20px/2.5"],["activeId","string","","active = solid primary · accent 탭은 tint"],["onNavigate","(id) => void","",""],["fixed","boolean","true","false = absolute (프레임 임베드용)"]]}/>
+    <B.Alert variant="info" title="여백 규칙">main pb 96 · Toast bottom 96 — 플로팅 내비(inset 16 + 높이 ≈68)를 피합니다.</B.Alert>
+  </div>},
+  {id:"mobilestack", title:"MobileStack", desc:"모바일의 SplitLayout — 리스트 full-width, 선택 시 디테일이 300ms push로 화면 전체를 덮고 back 헤더로 복귀. 고객을 눌러보세요.", body:()=><div>
+    <div style={{marginBottom:12}}><MobileScreenDemo/></div>
+    <Code>{'const [sel, setSel] = useState(null);\nconst [open, setOpen] = useState(false);   // sel 유지 → slide-out 중 내용 보존\n\n<MobileStack open={open} onBack={()=>setOpen(false)} detailTitle={sel?.name}\n  list={<><MobileHeader …/> …rows… <MobileBottomNav …/></>}\n  detail={sel && <InfoCard …/>} />'}</Code>
+    <Props rows={[["list","ReactNode","","full-width 리스트 화면 (크롬 포함)"],["detail","ReactNode","","push되는 디테일 내용"],["detailTitle","ReactNode","","44px back 헤더 제목"],["open","boolean","","true = 디테일 표시"],["onBack","() => void","","back 헤더 클릭"]]}/>
+    <H2>useIsMobile</H2>
+    <Code>{'const isMobile = useIsMobile();   // viewport < 1024\nreturn isMobile ? <MobileStack …/> : <SplitLayout …/>;'}</Code>
+  </div>},
+  {id:"pageheader", title:"PageHeader", desc:"Page title block: 1.75rem bold + muted subtitle + right-aligned actions.", body:()=><div>
+    <Preview column><B.PageHeader title="고객 관리" icon={Ic(P.users,24)} subtitle="산모 고객 정보를 관리합니다" actions={<B.Button size="sm" icon={Ic(P.plus,14)}>고객 추가</B.Button>}/></Preview>
+    <Code>{'<PageHeader title="고객 관리" subtitle="산모 고객 정보를 관리합니다"\n  actions={<Button icon={<Plus size={16}/>}>고객 추가</Button>} />'}</Code>
+    <Props rows={[["title","ReactNode","",""],["subtitle","ReactNode","",""],["icon","ReactNode","","Renders primary blue"],["actions","ReactNode","",""],["align",'"left" | "center"','"left"',""]]}/>
+  </div>},
+  {id:"tabs", title:"Tabs", desc:"Underline variant (detail panels, blue indicator) or pill variant (muted track, white active).", body:()=><div>
+    <Preview column><TabsDemo/><div><PillTabsDemo/></div></Preview>
+    <Code>{'<Tabs tabs={[{key:"info",label:"기본 정보"},{key:"contracts",label:"계약"}]}\n  activeTab={t} onTabChange={setT} />\n<Tabs variant="pill" tabs={…} activeTab={t} onTabChange={setT} />'}</Code>
+    <Props rows={[["tabs","{key, label}[]","",""],["activeTab","string","",""],["onTabChange","(key: string) => void","",""],["variant",'"underline" | "pill"','"underline"',""],["hug","boolean","","Underline: size to content"]]}/>
+  </div>},
+  {id:"sectionnav", title:"SectionNav", desc:"Secondary in-page nav: 220px vertical list or horizontal chip strip; active = blue tint.", body:()=><div>
+    <Preview><SectionNavDemo/></Preview>
+    <Code>{'<SectionNav items={[{id:"tpl", label:"템플릿", icon:<FileText size={16}/>}]}\n  activeId={s} onSelect={setS} />'}</Code>
+    <Props rows={[["items","{id, label, icon?}[]","",""],["activeId","string","",""],["onSelect","(id: string) => void","",""],["orientation",'"vertical" | "horizontal"','"vertical"',""]]}/>
+  </div>},
+  {id:"listpanel", title:"ListPanel", desc:"Left panel of SplitLayout: title header, optional underline tabs, scrollable list body.", body:()=><div>
+    <Preview><ListPanelDemo/></Preview>
+    <Code>{'<ListPanel title="고객" subtitle="128명"\n  tabs={[{key:"all",label:"전체"},{key:"active",label:"진행중"}]}\n  activeTab={t} onTabChange={setT}\n  headerActions={<HeaderActionButton label="추가" icon={<Plus size={14}/>}/>}>\n  {rows}\n</ListPanel>'}</Code>
+    <Props rows={[["title / subtitle","ReactNode","",""],["tabs","{key, label}[]","",""],["activeTab / onTabChange","","",""],["headerActions","ReactNode","","HeaderActionButtons"],["tabsTrailing","ReactNode","","Slot right of tabs"],["isLoading","boolean","","true면 contentSkeleton 렌더"],["contentSkeleton","ReactNode","","보통 <ListSkeleton/>"],["emptyState","ReactNode","","중앙 오버레이"],["contentRef","Ref","","스크롤 영역 ref — useListInfiniteScroll.scrollContainerRef"]]}/>
+  </div>},
+  {id:"detailpanel", title:"DetailPanel", desc:"Right panel of SplitLayout: avatar + title + badges header, DetailActions row, tabs, scroll body.", body:()=><div>
+    <Preview><DetailPanelDemo/></Preview>
+    <Code>{'<DetailPanel avatar={<Avatar name="김서연" size="lg"/>} title="김서연"\n  badges={<StatusBadge status="active"/>}\n  actions={<DetailActions actions={[{label:"계약 발송", variant:"primary"}]}/>}\n  tabs={<Tabs tabs={tabs} activeTab={t} onTabChange={setT}/>}>\n  <InfoCard title="기본 정보">…</InfoCard>\n</DetailPanel>'}</Code>
+    <Props rows={[["avatar","ReactNode","",""],["title / subtitle","ReactNode","",""],["badges","ReactNode","","StatusBadges after title"],["trailing","ReactNode","","Far-right header slot"],["actions","ReactNode","","DetailActions row"],["tabs","ReactNode","",""]]}/>
+  </div>},
+  {id:"splitlayout", title:"SplitLayout", desc:"Master-detail grid: fixed-width ListPanel + fluid DetailPanel — THE core admin pattern. Unselected state → EmptyState.", body:()=><div>
+    <Code>{'<SplitLayout\n  list={<ListPanel …/>}\n  detail={selected ? <DetailPanel …/> : <EmptyState message="고객을 선택해 주세요"/>} />'}</Code>
+    <p style={{fontSize:"var(--text-base)",color:"var(--text)"}}>동작 예시는 <a href="#example-admin">Example: Admin App</a>의 고객 관리 화면 참고.</p>
+    <Props rows={[["list","ReactNode","",""],["detail","ReactNode","","Omit → list full-width"],["listWidth","number","380",""],["gap","number","24",""]]}/>
+  </div>},
+  {id:"quickactionbutton", title:"QuickActionButton", desc:"Shortcut tile: tinted 40px icon chip over a bold micro label; lifts on hover.", body:()=><div>
+    <Responsive desktop={<Preview><Replay><div style={{width:110}}><B.QuickActionButton icon={Ic(P.send,20,2.5)} label="계약 발송" colorIndex={0}/></div><div style={{width:110}}><B.QuickActionButton icon={Ic(P.plus,20,2.5)} label="고객 추가" colorIndex={1}/></div><div style={{width:110}}><B.QuickActionButton icon={Ic(P.cal,20,2.5)} label="일정 등록" colorIndex={2}/></div></Replay></Preview>} mobile={<div style={{marginBottom:12}}><MobileScreenDemo/></div>}/>
+    <Code>{'<QuickActionButton icon={<Send size={20} strokeWidth={2.5}/>} label="계약 발송" colorIndex={0} />'}</Code>
+    <Props rows={[["icon","ReactNode","","20px, strokeWidth 2.5"],["label","string","",""],["colorIndex","number","0","Accent cycle 0-3"],["animationDelay","string","","Pop-up stagger"]]}/>
+  </div>},
+  {id:"shortcutgrid", title:"ShortcutGrid", desc:"Titled grid of QuickActionButtons with automatic color cycle + pop-up stagger.", body:()=><div>
+    <Preview column><Replay><div style={{width:"100%"}}><B.ShortcutGrid shortcuts={[{label:"계약 발송",icon:Ic(P.send,20,2.5)},{label:"고객 추가",icon:Ic(P.plus,20,2.5)},{label:"일정 등록",icon:Ic(P.cal,20,2.5)},{label:"알림톡 발송",icon:Ic(P.msg,20,2.5)}]}/></div></Replay></Preview>
+    <Code>{'<ShortcutGrid shortcuts={[\n  {label:"계약 발송", icon:<Send size={20} strokeWidth={2.5}/>},\n  {label:"고객 추가", icon:<UserPlus size={20} strokeWidth={2.5}/>},\n]} />'}</Code>
+    <Props rows={[["shortcuts","{label, icon, onClick}[]","",""],["title","string | null",'"바로가기"',"null hides"],["columns","number","4",""]]}/>
+  </div>},
+  {id:"headeractionbutton", title:"HeaderActionButton", desc:"Small text action for panel headers (추가, 전체 보기).", body:()=><div>
+    <Preview><B.HeaderActionButton icon={Ic(P.plus,14)} label="추가"/><B.HeaderActionButton variant="muted" label="전체 보기"/></Preview>
+    <Code>{'<HeaderActionButton icon={<Plus size={14}/>} label="추가" />'}</Code>
+    <Props rows={[["icon","ReactNode","","14px icon"],["label","string","",""],["variant",'"primary" | "muted"','"primary"',""]]}/>
+  </div>},
+  {id:"detailactions", title:"DetailActions", desc:"Compact action row under a DetailPanel header.", body:()=><div>
+    <Preview><B.DetailActions actions={[{label:"계약 발송",variant:"primary"},{label:"알림톡"},{label:"수정"},{label:"삭제",variant:"danger"}]}/></Preview>
+    <Code>{'<DetailActions actions={[\n  {label:"계약 발송", variant:"primary"},\n  {label:"수정"},\n  {label:"삭제", variant:"danger"},\n]} />'}</Code>
+    <Props rows={[["actions",'{label, onClick?, variant?: "primary"|"default"|"danger", disabled?}[]',"",""]]}/>
+  </div>},
+]},
+];
+
+const FLAT = PAGES.flatMap(g => g.pages.map(p => ({...p, group:g.group})));
+
+function App(){
+  const initial = (location.hash || "#intro").slice(1);
+  const [pid, setPid] = React.useState(FLAT.some(p=>p.id===initial) ? initial : "intro");
+  const [q, setQ] = React.useState("");
+  const [mode, setMode] = React.useState("desktop");
+  const mainRef = React.useRef(null);
+  React.useEffect(()=>{
+    const onHash = () => { const id = location.hash.slice(1); if (FLAT.some(p=>p.id===id)) setPid(id); };
+    window.addEventListener("hashchange", onHash);
+    return ()=>window.removeEventListener("hashchange", onHash);
+  },[]);
+  const go = (id) => { location.hash = id; setPid(id); if(mainRef.current) mainRef.current.scrollTop = 0; };
+  const page = FLAT.find(p=>p.id===pid) || FLAT[0];
+  const ql = q.trim().toLowerCase();
+  return (
+    <ViewCtx.Provider value={mode}>
+    <div style={{display:"flex", height:"100%", background:"var(--background)"}}>
+      <aside className="doc-side">
+        <div style={{display:"flex", alignItems:"center", gap:10, padding:"0 8px 16px"}}>
+          <img src="../assets/logo.svg" style={{width:36, height:36, borderRadius:"var(--radius-md)"}} alt=""/>
+          <div>
+            <div style={{fontSize:"var(--text-base)", fontWeight:700, color:"var(--dark)"}}>아가잼잼 관리자</div>
+            <div style={{fontSize:"var(--text-2xs)", color:"var(--text-muted)", letterSpacing:"0.1em", textTransform:"uppercase"}}>Design System</div>
+          </div>
+        </div>
+        <B.Input pill placeholder="컴포넌트 검색..." value={q} onChange={(e)=>setQ(e.target.value)} style={{height:34, fontSize:"var(--text-sm)"}}/>
+        <div style={{display:"flex", gap:4, background:"var(--surface)", borderRadius:"var(--radius-pill)", padding:4, margin:"10px 0 2px"}}>
+          {[["desktop","데스크톱"],["mobile","모바일"]].map(([m,l]) =>
+            <button key={m} onClick={()=>setMode(m)} style={{flex:1, border:"none", cursor:"pointer", fontFamily:"var(--font-sans)", fontWeight:600, fontSize:"var(--text-xs)", padding:"6px 0", borderRadius:"var(--radius-pill)", background:mode===m?"var(--card)":"transparent", color:mode===m?"var(--primary)":"var(--text-muted)", boxShadow:mode===m?"var(--shadow-content)":"none", transition:"all 200ms var(--ease-standard)"}}>{l}</button>)}
+        </div>
+        {PAGES.map(g => {
+          const items = g.pages.filter(p => !ql || p.title.toLowerCase().includes(ql) || p.id.includes(ql));
+          if (!items.length) return null;
+          return <div key={g.group}>
+            <div className="doc-group">{g.group}</div>
+            {items.map(p => <button key={p.id} className={"doc-navitem" + (p.id===pid ? " active" : "")} onClick={()=>go(p.id)}>{p.title}</button>)}
+          </div>;
+        })}
+      </aside>
+      <main className="doc-main" ref={mainRef}>
+        <div style={{maxWidth:820}}>
+          <div style={{fontSize:"var(--text-2xs)", fontWeight:600, letterSpacing:"0.13em", textTransform:"uppercase", color:"var(--text-muted)", marginBottom:8}}>{page.group}</div>
+          <h1 style={{fontSize:"var(--text-3xl)", fontWeight:800, color:"var(--dark)", margin:"0 0 8px", letterSpacing:"-0.01em"}}>{page.title}</h1>
+          <p style={{fontSize:"var(--text-base)", color:"var(--text)", lineHeight:1.7, margin:"0 0 28px", maxWidth:"68ch"}}>{page.desc}</p>
+          {page.body()}
+        </div>
+      </main>
+    </div>
+    </ViewCtx.Provider>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body></html>

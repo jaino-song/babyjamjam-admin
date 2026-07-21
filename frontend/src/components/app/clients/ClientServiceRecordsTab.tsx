@@ -1,12 +1,11 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
-import { ChevronDown } from "lucide-react";
-import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
+import { ChevronDown, RefreshCw } from "lucide-react";
 import { formatDateTimeKo } from "@babyjamjam/shared/utils/date";
 
 import { DetailEmptyState, InfoCard, InfoRow } from "@/components/app/v3";
-import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { StatusPill } from "@/components/app/ui/status-badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -20,11 +19,11 @@ import {
     SERVICE_RECORD_LAYOUT_ANSWER_KEYS,
     type ServiceRecordFieldDescriptor,
 } from "@/features/service-records/constants/form-layout";
+import { ServiceRecordHeaderCard } from "@/features/service-records/components/ServiceRecordHeaderCard";
 import { useSendServiceRecordLink } from "@/features/service-records/hooks/use-service-records";
 import type {
     ServiceRecordAssignment,
     ServiceRecordCase,
-    ServiceRecordHeader,
     ServiceRecordLinkStatus,
     ServiceRecordOverview,
     ServiceRecordSession,
@@ -36,6 +35,8 @@ interface ClientServiceRecordsTabProps {
     clientId: number | null;
     isLoading: boolean;
     isError: boolean;
+    isRefreshing?: boolean;
+    onRefresh?: () => void;
 }
 
 interface SessionSlot {
@@ -60,6 +61,8 @@ export function ClientServiceRecordsTab({
     clientId,
     isLoading,
     isError,
+    isRefreshing = false,
+    onRefresh,
 }: ClientServiceRecordsTabProps) {
     const { toast } = useToast();
     const sendLinkMutation = useSendServiceRecordLink();
@@ -149,7 +152,7 @@ export function ClientServiceRecordsTab({
                             className="grid grid-cols-1 items-stretch gap-[calc(16px*var(--glint-ui-scale,1))] lg:grid-cols-3 [&>*]:content-start"
                         >
                             <RecordStatusCard record={record} />
-                            <ServiceHeaderCard header={record.header} showStatusBadge={false} />
+                            <ServiceRecordHeaderCard header={record.header} showStatusBadge={false} />
                             {activeAssignment ? (
                                 <LinkStatusCard
                                     assignment={activeAssignment}
@@ -173,6 +176,8 @@ export function ClientServiceRecordsTab({
                             startDate={record.startDate}
                             totalSessions={record.totalSessions}
                             sessions={record.sessions}
+                            isRefreshing={isRefreshing}
+                            onRefresh={onRefresh}
                         />
                         {record.signatureDocs.map((signatureDoc) => (
                             <SignatureDocCard key={signatureDoc.documentId} signatureDoc={signatureDoc} />
@@ -200,11 +205,13 @@ export function ClientServiceRecordsTab({
                                 && sendLinkMutation.variables?.scheduleId === assignment.scheduleId}
                             onSendLink={() => void handleSendLink(assignment)}
                         />
-                        <ServiceHeaderCard header={assignment.header} />
+                        <ServiceRecordHeaderCard header={assignment.header} />
                         <ServiceSessionsCard
                             startDate={assignment.startDate}
                             totalSessions={assignment.totalSessions}
                             sessions={assignment.sessions}
+                            isRefreshing={isRefreshing}
+                            onRefresh={onRefresh}
                         />
                         {assignment.signatureDoc && (
                             <SignatureDocCard signatureDoc={assignment.signatureDoc} />
@@ -214,7 +221,7 @@ export function ClientServiceRecordsTab({
                 ))}
             </div>
 
-            <ApprovalTwoButtonModal
+            <TwoButtonModal
                 open={pendingResendAssignment !== null}
                 onOpenChange={(open) => {
                     if (!open) setPendingResendAssignment(null);
@@ -466,62 +473,18 @@ function TokenVerificationValue({ assignment }: { assignment: ServiceRecordAssig
     return token?.verifiedAt ? "완료" : "미완료";
 }
 
-function ServiceHeaderCard({
-    header,
-    showStatusBadge = true,
-}: {
-    header: ServiceRecordHeader | null;
-    showStatusBadge?: boolean;
-}) {
-    return (
-        <InfoCard
-            data-component="clients-detail-service-records-header-card"
-            title="서비스 기본정보"
-            description={header ? undefined : "산모 및 신생아 정보"}
-            className={header ? "h-full grid-rows-[auto_minmax(0,1fr)]" : undefined}
-            contentClassName={header ? "block min-h-0" : undefined}
-            titleTrailing={showStatusBadge ? (
-                <div className="ml-auto flex shrink-0 items-center gap-[calc(8px*var(--glint-ui-scale,1))]">
-                    <StatusPill variant={header ? "success" : "neutral"}>{header ? "작성 완료" : "작성 전"}</StatusPill>
-                </div>
-            ) : undefined}
-        >
-            {header ? (
-                <div className="flex h-full flex-col">
-                    <div>
-                        <ServiceRecordInfoRow label="산모 성명" value={header.momName || "-"} />
-                        <ServiceRecordInfoRow label="산모 생년월일" value={formatBirthdayYYMMDD(header.momBirth ?? "") || "-"} />
-                        <ServiceRecordInfoRow label="신생아 성명" value={header.babyName || "-"} />
-                        <ServiceRecordInfoRow label="신생아 출생일자" value={header.babyBirth || "-"} />
-                        <ServiceRecordInfoRow label="분만형태" value={header.deliveryType || "-"} />
-                        <ServiceRecordInfoRow label="신생아 몸무게" value={formatBabyWeight(header.babyWeight)} />
-                    </div>
-                    <p
-                        data-component="clients-detail-service-records-header-card-caption"
-                        className="mt-auto text-right text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold leading-[1.4] text-v3-text-muted"
-                    >
-                        {formatDateTimeKo(header.createdAt)} 작성
-                    </p>
-                </div>
-            ) : (
-                <div className="mt-[calc(12px*var(--glint-ui-scale,1))] rounded-[14px] border-2 border-dashed border-v3-border px-[calc(22px*var(--glint-ui-scale,1))] py-[calc(22px*var(--glint-ui-scale,1))] text-center text-[calc(12.3px*var(--glint-ui-scale,1))] leading-6 text-v3-text-muted">
-                    아직 작성된 기본정보가 없습니다.
-                    <br />
-                    제공인력이 링크 접속 후 산모·신생아 정보를 입력하면 표시됩니다.
-                </div>
-            )}
-        </InfoCard>
-    );
-}
-
 function ServiceSessionsCard({
     startDate,
     totalSessions: configuredSessions,
     sessions,
+    isRefreshing,
+    onRefresh,
 }: {
     startDate: string | null;
     totalSessions: number;
     sessions: ServiceRecordSession[];
+    isRefreshing: boolean;
+    onRefresh?: () => void;
 }) {
     const slots = useMemo(
         () => buildSessionSlots(startDate, configuredSessions, sessions),
@@ -536,10 +499,31 @@ function ServiceSessionsCard({
             data-component="clients-detail-service-records-sessions"
             title="회차별 제공기록"
             titleTrailing={
-                <span className="ml-auto text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
-                    <b className="text-v3-primary">{lockedCount}</b>/{totalSessions} 제출완료
-                    {draftCount > 0 ? ` · 임시저장 ${draftCount}` : ""}
-                </span>
+                <div className="ml-auto flex shrink-0 items-center gap-[calc(4px*var(--glint-ui-scale,1))]">
+                    {onRefresh ? (
+                        <button
+                            type="button"
+                            data-component="clients-detail-service-records-refresh"
+                            className="inline-flex h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(24px*var(--glint-ui-scale,1))] cursor-pointer items-center justify-center rounded-full text-v3-text-muted transition-colors hover:bg-white/70 hover:text-v3-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary/30 disabled:cursor-wait disabled:opacity-70"
+                            aria-label={isRefreshing ? "제공기록 새로고침 중" : "제공기록 새로고침"}
+                            aria-busy={isRefreshing}
+                            disabled={isRefreshing}
+                            onClick={onRefresh}
+                        >
+                            <RefreshCw
+                                aria-hidden="true"
+                                className={cn(
+                                    "h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(14px*var(--glint-ui-scale,1))]",
+                                    isRefreshing && "service-record-refresh-icon--spinning",
+                                )}
+                            />
+                        </button>
+                    ) : null}
+                    <span className="text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
+                        <b className="text-v3-primary">{lockedCount}</b>/{totalSessions} 제출완료
+                        {draftCount > 0 ? ` · 임시저장 ${draftCount}` : ""}
+                    </span>
+                </div>
             }
         >
             <div data-component="clients-detail-service-records-session-list" className="mt-[calc(8px*var(--glint-ui-scale,1))]">
@@ -906,11 +890,6 @@ function formatPhone(phone: string): string {
         return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
     }
     return phone || "-";
-}
-
-function formatBabyWeight(value: string | null): string {
-    if (!value) return "-";
-    return value.endsWith("kg") ? value : `${value}kg`;
 }
 
 function getAnswerObject(value: Record<string, unknown>): Record<string, unknown> {

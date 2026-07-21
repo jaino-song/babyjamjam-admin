@@ -224,7 +224,7 @@ type FormNativeSelectEntry = FormNativeSelectOption | FormNativeSelectGroup;
 export interface FormNativeSelectProps
   extends Omit<React.SelectHTMLAttributes<HTMLSelectElement>, "onChange"> {
   options: readonly FormNativeSelectEntry[];
-  onValueChange: (value: string) => void;
+  onValueChange?: (value: string) => void;
   placeholder?: string;
   wrapDataComponent?: string;
   selectDataComponent?: string;
@@ -256,7 +256,7 @@ function FormNativeSelect({
           className,
         )}
         value={value}
-        onChange={(event) => onValueChange(event.target.value)}
+        onChange={(event) => onValueChange?.(event.target.value)}
         {...props}
       >
         {placeholder ? (
@@ -320,6 +320,7 @@ function FormChip({
 export interface FormSwitchRowProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "title"> {
   title: React.ReactNode;
   description?: React.ReactNode;
+  size?: "default" | "control";
   checked: boolean;
   onToggle: () => void;
   disabled?: boolean;
@@ -335,6 +336,7 @@ export interface FormSwitchRowProps extends Omit<React.HTMLAttributes<HTMLDivEle
 function FormSwitchRow({
   title,
   description,
+  size = "default",
   checked,
   onToggle,
   disabled = false,
@@ -353,6 +355,7 @@ function FormSwitchRow({
       data-component={dataComponent}
       className={cn(
         "flex min-h-[calc(54px*var(--glint-ui-scale,1))] items-center justify-between gap-[calc(14px*var(--glint-ui-scale,1))] rounded-[14px] border-[1.5px] border-v3-border bg-white px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))]",
+        size === "control" && "h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] border-[1.35px] py-0",
         className,
       )}
       {...props}

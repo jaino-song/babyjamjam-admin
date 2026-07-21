@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
-import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
+import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import { SignaturePad } from "@/components/app/service-record/SignaturePad";
 import { DEFAULT_PROVIDER_NAME, ProviderInfo } from "@/components/service-record/provider-info";
@@ -956,7 +956,7 @@ export default function ServiceRecordPage() {
                 isPending={busy}
                 onApprove={submitDay}
             />
-            <ConfirmActionModal
+            <MobileTwoButtonModal
                 open={scheduleChangeModalOpen && Boolean(scheduleChangePreview)}
                 title={scheduleChangePreview ? `${scheduleChangePreview.sessionIndex}회차 서비스 일정을 조정할까요?` : "서비스 일정을 조정할까요?"}
                 description={scheduleChangePreview

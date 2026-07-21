@@ -1,0 +1,24 @@
+/* Babyjamjam Admin — Typography */
+@font-face {
+  font-family: "Pretendard Variable";
+  src: url("../fonts/PretendardVariable.woff2") format("woff2-variations");
+  font-weight: 45 920;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, Roboto, "Helvetica Neue", "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Size scale — px-aligned canonical ladder */
+  --text-2xs: 0.625rem;  /* 10px — status badges, timestamps */
+  --text-xs: 0.6875rem;  /* 11px — stat labels, micro captions */
+  --text-sm: 0.75rem;    /* 12px — small buttons, header actions */
+  --text-md: 0.8125rem;  /* 13px — list body, tabs, info rows */
+  --text-base: 0.875rem; /* 14px — nav items, inputs, default body */
+  --text-lg: 1.125rem;   /* 18px  — list-panel titles */
+  --text-xl: 1.25rem;    /* 20px  — detail-panel titles */
+  --text-2xl: 1.5rem;    /* 24px  — stat values */
+  --text-3xl: 1.75rem;   /* 28px  — page titles (CardHeader h1) */
+}

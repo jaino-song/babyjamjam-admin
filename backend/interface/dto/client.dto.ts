@@ -86,6 +86,10 @@ export class CreateClientDto {
 
     @IsOptional()
     @IsBoolean()
+    applyMessageAutomation?: boolean;
+
+    @IsOptional()
+    @IsBoolean()
     reuseExistingClient?: boolean;
 
     @IsOptional()

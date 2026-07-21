@@ -40,7 +40,7 @@ import {
   type HeadlessProgressState,
 } from "@/lib/eformsign/headless-progress";
 import { HeadlessProgressModal } from "@/components/app/eformsign/HeadlessProgressModal";
-import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
+import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import styles from "./page.module.css";
@@ -918,7 +918,7 @@ export default function ContractCreationPage() {
       setIsProgressModalOpen(false);
       const msg = err instanceof Error ? err.message : "계약서 생성 중 오류가 발생했습니다.";
       showFloatingError(autoRegisteredClientId ? `${msg} 방금 자동 등록된 고객이 남아 있습니다.` : msg);
-      if (autoRegisteredClientId && window.confirm("방금 자동 등록된 고객이 남아 있습니다. 고객을 삭제할까요?")) {
+      if (autoRegisteredClientId && (await requestConfirmation("방금 자동 등록된 고객이 남아 있습니다. 고객을 삭제할까요?"))) {
         try {
           await deleteClientMutation.mutateAsync(autoRegisteredClientId);
           setClientId(null);
@@ -1361,7 +1361,7 @@ export default function ContractCreationPage() {
         dataComponentPrefix="contracts-creation-progress"
       />
 
-      <ConfirmActionModal
+      <MobileTwoButtonModal
         open={confirmationMessage !== null}
         title="계약서 생성 확인"
         description={confirmationMessage ?? ""}
@@ -1376,7 +1376,7 @@ export default function ContractCreationPage() {
         onConfirm={() => resolveConfirmation(true)}
       />
 
-      <ConfirmActionModal
+      <MobileTwoButtonModal
         open={isExistingContractConfirmOpen}
         title="계약서 재생성 확인"
         description="이전에 전송된 계약서가 있습니다. 그래도 새로 생성하시겠어요?"

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { FolderOpen, FileText, Image as ImageIcon, File, Upload, CloudUpload, Loader2, Tag, MoreVertical, Pencil, Trash2, Eye } from "lucide-react";
-import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton, AnimatedSlotList, AnimatedSlotListItemContent, EmptyState, PageSection, DetailSkeleton, ListEmptyState } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
 import { matchesSearchQuery } from "@/lib/search/korean-search";
@@ -322,7 +322,7 @@ export default function FilesPage() {
         isLoading={createCategoryMutation.isPending}
       />
 
-      <ApprovalTwoButtonModal
+      <TwoButtonModal
         open={deleteDoc !== null}
         onOpenChange={(open) => {
           if (!open) setDeleteDoc(null);

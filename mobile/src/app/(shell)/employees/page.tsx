@@ -12,7 +12,7 @@ import {
 import { useInfiniteEmployees } from "@/hooks/useInfiniteEmployees";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
-import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
+import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -565,7 +565,7 @@ export default function EmployeesPage() {
         }
       />
 
-      <ConfirmActionModal
+      <MobileTwoButtonModal
         open={deleteTarget != null}
         title={t(locale, "employees.delete-confirm.title")}
         description={t(locale, "employees.delete-confirm.message")}

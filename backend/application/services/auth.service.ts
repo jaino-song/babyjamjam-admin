@@ -1185,8 +1185,6 @@ export class AuthService {
         name: string,
         phone: string,
         birthDate: string,
-        branchId: string,
-        role: string,
     ): Promise<RegistrationResult> {
         // Validate password strength
         const passwordValidation = this.validatePasswordStrength(password);
@@ -1213,14 +1211,6 @@ export class AuthService {
             };
         }
 
-        const org = await this.prisma.branch.findUnique({
-            where: { id: branchId },
-            select: { id: true },
-        });
-        if (!org) {
-            throw new BadRequestException('유효하지 않은 지점입니다.');
-        }
-
         const passwordHash = await this.hashPassword(password);
 
         const verificationToken = this.authEmailTokens.createToken();
@@ -1234,20 +1224,13 @@ export class AuthService {
                     birthDate,
                     passwordHash,
                     role: null,
-                    requestedRole: role,
+                    requestedRole: 'user',
                     approvalStatus: 'pending',
                     authProvider: 'email',
                     emailVerified: false,
                 },
             });
 
-            await tx.user_branch.create({
-                data: {
-                    userId: createdUser.id,
-                    branchId,
-                    role: null,
-                },
-            });
             await tx.auth_token.create({
                 data: {
                     id: verificationToken.tokenId,

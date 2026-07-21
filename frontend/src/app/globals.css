@@ -1563,6 +1563,12 @@ body {
   }
 }
 
+@keyframes service-record-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .animate-pop-in {
   animation: popIn 0.3s ease-out;
 }
@@ -1585,4 +1591,15 @@ body {
 
 .contract-creation-processing-spinner {
   animation: contract-creation-processing-spin 0.8s linear infinite;
+}
+
+.service-record-refresh-icon--spinning {
+  animation: service-record-refresh-spin 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .service-record-refresh-icon--spinning {
+    animation: none;
+    opacity: 0.65;
+  }
 }

@@ -5,9 +5,7 @@ import NewMessagePage from "../page";
 import { api } from "@/lib/api/client";
 import type { Client } from "@/lib/client/types";
 
-const mockBack = jest.fn();
 const mockPush = jest.fn();
-const mockReplace = jest.fn();
 const mockUseAllClients = jest.fn();
 const mockUseSystemTemplate = jest.fn();
 const mockGetMessageSenderApproval = jest.fn();
@@ -65,7 +63,7 @@ const mockClients: Client[] = [
 ];
 
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ back: mockBack, push: mockPush, replace: mockReplace }),
+  useRouter: () => ({ push: mockPush }),
   useSearchParams: () => mockSearchParams,
 }));
 
@@ -115,7 +113,7 @@ function renderPage() {
 }
 
 async function addManualRecipient(value: string) {
-  const receiverInput = screen.getByLabelText(/수신자/);
+  const receiverInput = screen.getByLabelText(/휴대 전화번호/);
 
   fireEvent.focus(receiverInput);
   fireEvent.change(receiverInput, { target: { value } });
@@ -134,9 +132,7 @@ async function openTemplateSelect() {
 
 describe("NewMessagePage", () => {
   beforeEach(() => {
-    mockBack.mockClear();
     mockPush.mockClear();
-    mockReplace.mockClear();
     mockGetMessageSenderApproval.mockReset();
     mockGetMessageSenderApproval.mockResolvedValue({
       approvalStatus: "approved",
@@ -253,23 +249,59 @@ describe("NewMessagePage", () => {
     expect(screen.getByLabelText("메시지 본문")).toHaveValue("두 번째 템플릿 본문");
   });
 
-  it("falls back to /messages when there is no browser history to go back to", () => {
-    renderPage();
+  it("shows the message section navigation without a back button", () => {
+    const { container } = renderPage();
+    const listCard = container.querySelector('[data-component="mobile-redesign-list-card"]');
 
-    fireEvent.click(screen.getByRole("button", { name: "메시지 목록으로 돌아가기" }));
-
-    expect(mockBack).not.toHaveBeenCalled();
-    expect(mockReplace).toHaveBeenCalledWith("/messages");
+    expect(screen.getByRole("button", { name: "전송하기" }))
+      .toHaveAttribute("aria-pressed", "true");
+    expect(listCard).toContainElement(
+      container.querySelector('[data-component="mobile-redesign-list-title"]'),
+    );
+    expect(listCard).toContainElement(
+      container.querySelector('[data-component="mobile-redesign-list-scroll"]'),
+    );
+    expect(screen.getByText("새 메시지")).toHaveClass("list-title-text");
+    expect(container.querySelector('[data-component="mobile-redesign-list-title"]')).toContainElement(
+      screen.getByRole("button", { name: "즉시 발송" }),
+    );
+    expect(screen.queryByRole("button", { name: "메시지 목록으로 돌아가기" }))
+      .not.toBeInTheDocument();
   });
 
-  it("uses browser history when a previous page exists", () => {
-    window.history.pushState({}, "", "/messages");
-    renderPage();
+  it("groups the recipient, template, variables, and body sections in one form card", () => {
+    const { container } = renderPage();
+    const formCards = container.querySelectorAll('[data-component="messages-new-form-card"]');
+    const formCard = formCards[0];
 
-    fireEvent.click(screen.getByRole("button", { name: "메시지 목록으로 돌아가기" }));
+    expect(formCards).toHaveLength(1);
+    expect(formCard?.firstElementChild).not.toHaveClass("p-6", "pt-0");
+    expect(formCard).toContainElement(
+      container.querySelector('[data-component="messages-new-recipient-card"]'),
+    );
+    expect(formCard).toContainElement(
+      container.querySelector('[data-component="messages-new-template-card"]'),
+    );
+    expect(formCard).toContainElement(
+      container.querySelector('[data-component="messages-new-body-card"]'),
+    );
+  });
 
-    expect(mockBack).toHaveBeenCalled();
-    expect(mockReplace).not.toHaveBeenCalled();
+  it("orders the send fields like the frontend form with template selection first", () => {
+    const { container } = renderPage();
+    const orderedSections = Array.from(
+      container.querySelectorAll(
+        '[data-component="messages-new-template-card"], [data-component="messages-new-recipient-card"], [data-component="messages-new-body-card"]',
+      ),
+    ).map((element) => element.getAttribute("data-component"));
+
+    expect(orderedSections).toEqual([
+      "messages-new-template-card",
+      "messages-new-recipient-card",
+      "messages-new-body-card",
+    ]);
+    expect(screen.getByLabelText(/휴대 전화번호/)).toHaveAttribute("placeholder", "010-0000-0000");
+    expect(screen.queryByLabelText(/산모님 성함/)).not.toBeInTheDocument();
   });
 
   it("submits new messages through the SMS channel", async () => {
@@ -278,7 +310,7 @@ describe("NewMessagePage", () => {
     const bodyInput = screen.getByLabelText("메시지 본문");
     await addManualRecipient("010-1234-5678");
     fireEvent.change(bodyInput, { target: { value: "테스트 발송 본문" } });
-    fireEvent.click(screen.getByRole("button", { name: "1명에게 발송" }));
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
 
     await waitFor(() => {
       expect(api.post).toHaveBeenCalledWith(
@@ -298,7 +330,7 @@ describe("NewMessagePage", () => {
     const bodyInput = screen.getByLabelText("메시지 본문");
     await addManualRecipient("010-9999-0000");
     fireEvent.change(bodyInput, { target: { value: "본문" } });
-    fireEvent.click(screen.getByRole("button", { name: "1명에게 발송" }));
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
 
     await waitFor(() => {
       expect(api.post).toHaveBeenCalledWith(
@@ -317,7 +349,7 @@ describe("NewMessagePage", () => {
       `010-0000-${String(index + 1).padStart(4, "0")}`
     )).join(",");
 
-    const receiverInput = screen.getByLabelText(/수신자/);
+    const receiverInput = screen.getByLabelText(/휴대 전화번호/);
     fireEvent.focus(receiverInput);
     fireEvent.change(receiverInput, { target: { value: tooManyRecipients } });
     fireEvent.keyDown(receiverInput, { key: "Enter" });
@@ -329,14 +361,14 @@ describe("NewMessagePage", () => {
   it("adds an existing client recipient from autocomplete", async () => {
     renderPage();
 
-    const receiverInput = screen.getByLabelText(/수신자/);
+    const receiverInput = screen.getByLabelText(/휴대 전화번호/);
     const bodyInput = screen.getByLabelText("메시지 본문");
 
     fireEvent.focus(receiverInput);
     fireEvent.change(receiverInput, { target: { value: "박서연" } });
     fireEvent.click(await screen.findByText("박서연"));
     fireEvent.change(bodyInput, { target: { value: "고객 선택 발송" } });
-    fireEvent.click(screen.getByRole("button", { name: "1명에게 발송" }));
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
 
     await waitFor(() => {
       expect(api.post).toHaveBeenCalledWith(
@@ -353,7 +385,7 @@ describe("NewMessagePage", () => {
   it("opens the recipient dropdown when the receiver input is clicked", () => {
     renderPage();
 
-    fireEvent.click(screen.getByLabelText(/수신자/));
+    fireEvent.click(screen.getByLabelText(/휴대 전화번호/));
 
     expect(screen.getByTestId("clients-autocomplete-dropdown")).toBeInTheDocument();
     expect(screen.getByText("박서연")).toBeInTheDocument();
@@ -410,16 +442,26 @@ describe("NewMessagePage", () => {
   });
 
   it("includes the service information template in the template dropdown", async () => {
-    renderPage();
+    const { container } = renderPage();
 
     await openTemplateSelect();
     fireEvent.click(screen.getByRole("option", { name: "서비스 안내" }));
 
     expect(screen.getByRole("combobox", { name: /템플릿 선택/ })).toHaveTextContent("서비스 안내");
-    expect(screen.getByLabelText(/산모명/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/산모님 성함/)).toBeInTheDocument();
     expect(screen.getByLabelText(/서비스 시작일/)).toBeInTheDocument();
+    expect(
+      Array.from(
+        container.querySelectorAll(
+          '[data-component="messages-new-recipient-name-row"], [data-component="messages-new-recipient-row"]',
+        ),
+      ).map((element) => element.getAttribute("data-component")),
+    ).toEqual([
+      "messages-new-recipient-name-row",
+      "messages-new-recipient-row",
+    ]);
 
-    fireEvent.change(screen.getByLabelText(/산모명/), { target: { value: "김지니" } });
+    fireEvent.change(screen.getByLabelText(/산모님 성함/), { target: { value: "김지니" } });
     fireEvent.change(screen.getByLabelText(/서비스 시작일/), { target: { value: "2026. 06. 10." } });
 
     expect(screen.getByLabelText("메시지 본문")).toHaveValue(
@@ -446,15 +488,15 @@ describe("NewMessagePage", () => {
     fireEvent.click(screen.getByRole("option", { name: "예약 완료" }));
 
     expect(screen.getByRole("combobox", { name: /템플릿 선택/ })).toHaveTextContent("예약 완료");
-    expect(screen.getByLabelText(/산모명/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/산모님 성함/)).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText(/산모명/), { target: { value: "김지니" } });
+    fireEvent.change(screen.getByLabelText(/산모님 성함/), { target: { value: "김지니" } });
 
     expect((screen.getByLabelText("메시지 본문") as HTMLTextAreaElement).value).toContain("김지니 산모님");
   });
 
   it("auto-fills price information variables from select controls", async () => {
-    renderPage();
+    const { container } = renderPage();
 
     await openTemplateSelect();
     fireEvent.click(screen.getByRole("option", { name: "금액 및 계좌번호" }));
@@ -463,8 +505,15 @@ describe("NewMessagePage", () => {
     expect(screen.getByRole("combobox", { name: "서비스 기간 *" })).toBeDisabled();
     expect(screen.queryByLabelText("서비스 주수")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("총 서비스 금액")).not.toBeInTheDocument();
+    expect(
+      Array.from(
+        container.querySelectorAll(
+          '[data-component="messages-new-price-info-controls"] > [data-template-variable-key]',
+        ),
+      ).map((element) => element.getAttribute("data-template-variable-key")),
+    ).toEqual(["type", "duration", "bankAccount", "voucherYear"]);
 
-    fireEvent.change(screen.getByLabelText(/산모명/), { target: { value: "김지니" } });
+    fireEvent.change(screen.getByLabelText(/산모님 성함/), { target: { value: "김지니" } });
 
     fireEvent.keyDown(screen.getByRole("combobox", { name: "바우처 유형 *" }), { key: "ArrowDown" });
     fireEvent.click(await screen.findByRole("option", { name: "A통합-2형" }));
@@ -473,7 +522,7 @@ describe("NewMessagePage", () => {
     fireEvent.keyDown(screen.getByRole("combobox", { name: "서비스 기간 *" }), { key: "ArrowDown" });
     fireEvent.click(await screen.findByRole("option", { name: "10일" }));
 
-    fireEvent.keyDown(screen.getByRole("combobox", { name: "계좌번호 *" }), { key: "ArrowDown" });
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "지역 *" }), { key: "ArrowDown" });
     fireEvent.click(await screen.findByRole("option", { name: /서구/ }));
 
     expect(screen.getByText("2,196,000")).toBeInTheDocument();
@@ -495,7 +544,7 @@ describe("NewMessagePage", () => {
       expect(screen.getByRole("combobox", { name: "바우처 유형 *" })).toBeInTheDocument();
     });
 
-    const receiverInput = screen.getByLabelText(/수신자/);
+    const receiverInput = screen.getByLabelText(/휴대 전화번호/);
     fireEvent.focus(receiverInput);
     fireEvent.change(receiverInput, { target: { value: "박서연" } });
     fireEvent.click(await screen.findByText("박서연"));
@@ -505,7 +554,7 @@ describe("NewMessagePage", () => {
       expect((screen.getByLabelText("메시지 본문") as HTMLTextAreaElement).value).toContain("2,196,000원");
     });
 
-    expect(screen.getByRole("combobox", { name: "계좌번호 *" })).toHaveTextContent("서구");
+    expect(screen.getByRole("combobox", { name: "지역 *" })).toHaveTextContent("서구");
 
     const bodyValue = (screen.getByLabelText("메시지 본문") as HTMLTextAreaElement).value;
     expect(bodyValue).toContain("박서연 산모님");
@@ -523,12 +572,12 @@ describe("NewMessagePage", () => {
     await openTemplateSelect();
     fireEvent.click(screen.getByRole("option", { name: "서비스 안내" }));
 
-    const receiverInput = screen.getByLabelText(/수신자/);
+    const receiverInput = screen.getByLabelText(/휴대 전화번호/);
     fireEvent.focus(receiverInput);
     fireEvent.change(receiverInput, { target: { value: "박서연" } });
     fireEvent.click(await screen.findByText("박서연"));
 
-    expect(screen.getByLabelText(/산모명/)).toHaveValue("박서연");
+    expect(screen.getByLabelText(/산모님 성함/)).toHaveValue("박서연");
     expect(screen.getByLabelText(/서비스 시작일/)).toHaveValue("2026. 06. 10.");
     expect(screen.getByLabelText("메시지 본문")).toHaveValue(
       "박서연 산모님~♡\n서비스 시작일: 2026. 06. 10.\n산후관리서비스 관련 안내사항을 보내드립니다 :)",
@@ -561,7 +610,7 @@ describe("NewMessagePage", () => {
 
     renderPage();
     await addManualRecipient("010-1234-5678");
-    fireEvent.click(screen.getByRole("button", { name: "1명에게 발송" }));
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
 
     await waitFor(() => {
       expect(api.post).toHaveBeenCalledWith(

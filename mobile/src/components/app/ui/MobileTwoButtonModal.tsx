@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 
 import { Button, type ButtonProps } from "@/components/ui/button";
 
-interface ConfirmActionModalProps {
+interface MobileTwoButtonModalProps {
   open: boolean;
   title: string;
   description: string;
@@ -23,7 +23,7 @@ interface ConfirmActionModalProps {
 
 // 모바일 상세 시트(z-70, 내부 z-100) 위에 떠야 하므로 공유 Dialog(z-50) 대신 자체 z-[200] 오버레이로 구성한다.
 // 폭은 390px 모바일 프레임에 맞춰 캡 (공유 DialogContent의 데스크탑용 sm:max-w-lg/vw 기본값 회피).
-export function ConfirmActionModal({
+export function MobileTwoButtonModal({
   open,
   title,
   description,
@@ -37,7 +37,7 @@ export function ConfirmActionModal({
   onOpenChange,
   onCancel,
   onConfirm,
-}: ConfirmActionModalProps) {
+}: MobileTwoButtonModalProps) {
   const confirmButton = (
     <Button
       variant={confirmVariant}
@@ -63,33 +63,33 @@ export function ConfirmActionModal({
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
-          data-component="confirm-action-modal-overlay"
+          data-component="mobile-two-button-modal-overlay"
           className="fixed inset-0 z-[200] bg-black/50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0"
         />
         <DialogPrimitive.Content
-          data-component="confirm-action-modal"
+          data-component="mobile-two-button-modal"
           className="fixed top-1/2 left-1/2 z-[201] grid w-[calc(100vw-2.5rem)] max-w-[340px] -translate-x-1/2 -translate-y-1/2 gap-3 rounded-2xl border bg-background p-5 shadow-lg outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0 data-[state=open]:zoom-in-95 data-[state=closed]:zoom-out-95"
         >
           <div
             className="flex flex-col gap-1 text-left"
-            data-component="confirm-action-modal-header"
-            data-testid="confirm-action-modal-header"
+            data-component="mobile-two-button-modal-header"
+            data-testid="mobile-two-button-modal-header"
           >
             <DialogPrimitive.Title
-              data-component="confirm-action-modal-title"
+              data-component="mobile-two-button-modal-title"
               className="text-base font-bold text-v3-dark"
             >
               {title}
             </DialogPrimitive.Title>
             <DialogPrimitive.Description
-              data-component="confirm-action-modal-description"
+              data-component="mobile-two-button-modal-description"
               className="text-sm leading-5 text-v3-text-muted"
             >
               {description}
             </DialogPrimitive.Description>
           </div>
           {children}
-          <div className="mt-2 flex gap-2" data-component="confirm-action-modal-actions">
+          <div className="mt-2 flex gap-2" data-component="mobile-two-button-modal-actions">
             {actionOrder === "cancel-confirm" ? (
               <>
                 {cancelButton}

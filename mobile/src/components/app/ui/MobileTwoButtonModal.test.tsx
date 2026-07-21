@@ -1,11 +1,11 @@
 import { render, screen } from "@testing-library/react";
 
-import { ConfirmActionModal } from "./ConfirmActionModal";
+import { MobileTwoButtonModal } from "./MobileTwoButtonModal";
 
-describe("ConfirmActionModal", () => {
+describe("MobileTwoButtonModal", () => {
   it("uses the shared left-aligned 16px/14px header and renders form content", () => {
     render(
-      <ConfirmActionModal
+      <MobileTwoButtonModal
         open
         title="서비스 일정 변경"
         description="3회차 서비스 제공 날짜를 조정합니다."
@@ -18,10 +18,10 @@ describe("ConfirmActionModal", () => {
       >
         <label htmlFor="service-date">3회차 서비스 제공 날짜</label>
         <input id="service-date" type="date" />
-      </ConfirmActionModal>,
+      </MobileTwoButtonModal>,
     );
 
-    expect(screen.getByTestId("confirm-action-modal-header")).toHaveClass("gap-1", "text-left");
+    expect(screen.getByTestId("mobile-two-button-modal-header")).toHaveClass("gap-1", "text-left");
     expect(screen.getByText("서비스 일정 변경")).toHaveClass("text-base");
     expect(screen.getByText("3회차 서비스 제공 날짜를 조정합니다.")).toHaveClass("text-sm", "leading-5");
     expect(screen.getByLabelText("3회차 서비스 제공 날짜")).toBeInTheDocument();

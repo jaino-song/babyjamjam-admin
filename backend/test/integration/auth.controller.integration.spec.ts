@@ -429,12 +429,32 @@ describe("AuthController (Integration)", () => {
             });
         });
 
+        it("should find an existing phone using normalized digits", async () => {
+            (prismaService.user.findFirst as jest.Mock).mockResolvedValue({ id: mockUser.id });
+
+            const response = await authController.checkPhone("01066211878");
+
+            expect(response).toEqual({ exists: true });
+            expect(prismaService.user.findFirst).toHaveBeenCalledWith({
+                where: { phone: { in: ["01066211878", "010-6621-1878"] } },
+                select: { id: true },
+            });
+        });
+
+        it("should skip the user query for an invalid phone", async () => {
+            const response = await authController.checkPhone("010-1234");
+
+            expect(response).toEqual({ exists: false });
+            expect(prismaService.user.findFirst).not.toHaveBeenCalled();
+        });
+
         it.each([
             "completeKakaoOnboarding",
             "completeAccountOnboarding",
             "refreshToken",
             "resetPassword",
             "getAllActiveBranches",
+            "checkPhone",
         ] as const)("should apply RateLimitGuard to %s", (methodName) => {
             const guards = Reflect.getMetadata(
                 GUARDS_METADATA,

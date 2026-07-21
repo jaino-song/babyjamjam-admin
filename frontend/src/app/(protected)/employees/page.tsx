@@ -29,7 +29,7 @@ import {
     EmployeeFormDialog,
     EmployeeFormPanel,
 } from "@/components/app/employees/EmployeeFormDialog";
-import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import {
     StatsBar,
@@ -330,7 +330,7 @@ export default function EmployeesPage() {
                 employee={editingEmployee}
             />
 
-            <ApprovalTwoButtonModal
+            <TwoButtonModal
                 open={deleteTargetEmployeeId !== null}
                 onOpenChange={(open) => {
                     if (!open) setDeleteTargetEmployeeId(null);

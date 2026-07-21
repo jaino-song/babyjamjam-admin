@@ -1,0 +1,24 @@
+/* Babyjamjam Admin — base resets */
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  margin: 0;
+  word-break: keep-all;
+}
+a { color: var(--primary); text-decoration: none; }
+a:hover { color: var(--primary-hover); }
+* { border-color: var(--border); box-sizing: border-box; }
+
+/* Accent cycle for icon chips (StatMini, QuickActionButton, timeline icons) */
+.bjj-accent-0 { background: var(--primary-light); color: var(--primary); }
+.bjj-accent-1 { background: var(--orange-light); color: var(--orange); }
+.bjj-accent-2 { background: var(--green-light); color: var(--green); }
+.bjj-accent-3 { background: var(--burgundy-light); color: var(--burgundy); }
+
+/* Focus — keyboard only, one ring everywhere. Fields keep their own inset ring. */
+:where(button, a, [role="button"], [tabindex]):focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}

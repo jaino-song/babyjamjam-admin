@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { EformsignDocClientSummary } from "@babyjamjam/shared/types/eformsign";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { matchesSearchQuery } from "@/lib/search/korean-search";
@@ -30,6 +31,8 @@ import { useEformsignAuth } from "@/hooks/useEformsignAuth";
 import { useEformsignDocsLiveStream } from "@/hooks/useEformsignDocsLiveStream";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useInfiniteContracts } from "@/hooks/useInfiniteContracts";
+import { ServiceRecordHeaderCard } from "@/features/service-records/components/ServiceRecordHeaderCard";
+import { useClientServiceRecords } from "@/features/service-records/hooks/use-service-records";
 import type { EformsignDocument, EformsignDocumentOption } from "@/lib/eformsign/types";
 import {
   DocumentFilterType,
@@ -60,7 +63,7 @@ import {
   SectionNav,
 } from "@/components/app/v3";
 import type { StatusType } from "@/components/app/v3";
-import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -186,8 +189,12 @@ function displayCustomerName(doc: EformsignDocument | null): string | null {
   return name === UNKNOWN_CUSTOMER_NAME ? null : name;
 }
 
-function matchesDocumentSearch(doc: EformsignDocument, query: string): boolean {
-  return matchesSearchQuery(query, [displayCustomerName(doc), doc.document_name]);
+function matchesDocumentSearch(
+  doc: EformsignDocument,
+  query: string,
+  mappedCustomerName?: string | null,
+): boolean {
+  return matchesSearchQuery(query, [mappedCustomerName ?? displayCustomerName(doc), doc.document_name]);
 }
 
 function matchesDocumentStatusTab(doc: EformsignDocument, tab: string): boolean {
@@ -456,22 +463,47 @@ export default function ContractsPage() {
     enabled: isAuthenticated,
     staleTime: 1000 * 60 * 60,
   });
-  const feedbackTemplateId = feedbackTemplateConfig?.templateId ?? null;
+  const { data: documentClientSummaries = [] } = useQuery({
+    queryKey: ["eformsign-client-names"],
+    queryFn: () => eformsignApi.getDocumentClientNames(),
+    enabled: isAuthenticated,
+    staleTime: 1000 * 60 * 5,
+  });
+  const documentClientSummaryById = useMemo(
+    () => new Map(documentClientSummaries.map((summary) => [summary.documentId, summary])),
+    [documentClientSummaries],
+  );
+  const resolveCustomerName = useCallback(
+    (doc: EformsignDocument | null): string | null => {
+      if (!doc) return null;
+      const mappedName = documentClientSummaryById.get(doc.id)?.clientName.trim();
+      return mappedName || displayCustomerName(doc);
+    },
+    [documentClientSummaryById],
+  );
+  // BJJ-multi-tier: match documents created on ANY configured 제공기록지 tier's template, not
+  // just the base 5회 one. Falls back to the single base id for older backend responses.
+  // Memoized so the array identity is stable for the useMemo deps below.
+  const feedbackTemplateIds = useMemo(
+    () => feedbackTemplateConfig?.templateIds
+      ?? (feedbackTemplateConfig?.templateId ? [feedbackTemplateConfig.templateId] : []),
+    [feedbackTemplateConfig],
+  );
   const activeListTab = activeSection === "service-records" ? serviceRecordActiveTab : activeTab;
   const filterType: DocumentFilterType = activeListTab === "all" ? null : (activeListTab as DocumentFilterType);
   const templateFilter = useMemo(
-    () => feedbackTemplateId
+    () => feedbackTemplateIds.length > 0
       ? {
-          templateId: feedbackTemplateId,
+          templateId: feedbackTemplateIds.join(","),
           templateMatch: activeSection === "service-records" ? "include" as const : "exclude" as const,
         }
       : undefined,
-    [activeSection, feedbackTemplateId],
+    [activeSection, feedbackTemplateIds],
   );
   const canFetchDocuments =
     isAuthenticated &&
     !isFeedbackTemplateLoading &&
-    (activeSection !== "service-records" || Boolean(feedbackTemplateId));
+    (activeSection !== "service-records" || feedbackTemplateIds.length > 0);
 
   // Fetch filtered docs with infinite scroll for the current tab
   const {
@@ -508,20 +540,23 @@ export default function ContractsPage() {
 
   // Use infinite scroll documents, with optional local search filter
   const documents = useMemo(
-    () => infiniteDocuments.filter((doc) => matchesDocumentSearch(doc, searchQuery)),
-    [infiniteDocuments, searchQuery],
+    () => infiniteDocuments.filter(
+      (doc) => matchesDocumentSearch(doc, searchQuery, resolveCustomerName(doc)),
+    ),
+    [infiniteDocuments, resolveCustomerName, searchQuery],
   );
 
   const serviceRecordDocuments = useMemo(() => {
-    if (!feedbackTemplateId) return [];
+    if (feedbackTemplateIds.length === 0) return [];
     return infiniteDocuments.filter(
       (doc) =>
         matchesDocumentStatusTab(doc, serviceRecordActiveTab) &&
-        matchesDocumentSearch(doc, serviceRecordSearchQuery),
+        matchesDocumentSearch(doc, serviceRecordSearchQuery, resolveCustomerName(doc)),
     );
   }, [
-    feedbackTemplateId,
+    feedbackTemplateIds,
     infiniteDocuments,
+    resolveCustomerName,
     serviceRecordActiveTab,
     serviceRecordSearchQuery,
   ]);
@@ -716,7 +751,7 @@ export default function ContractsPage() {
                 onLoadMore={() => fetchNextPage()}
                 isFetchingMore={isFetchingNextPage}
                 render={({ item: doc, isLoading }) => {
-                  const customerName = displayCustomerName(doc);
+                  const customerName = resolveCustomerName(doc);
 
                   return (
                     <ContractsListItem
@@ -782,6 +817,7 @@ export default function ContractsPage() {
             <ContractDetail
               key={selectedDocument.id}
               document={selectedDocument}
+              documentClientSummary={documentClientSummaryById.get(selectedDocument.id) ?? null}
               onDeleteRequest={handleDeleteRequest}
             />
           ) : !isCreating && !hasContractCreationSession ? (
@@ -837,7 +873,8 @@ export default function ContractsPage() {
                     render={({ item: doc, isLoading }) => (
                       <ContractsListItem
                         document={doc}
-                        customerName={displayCustomerName(doc)}
+                        customerName={resolveCustomerName(doc)}
+                        subtitle="제공기록지"
                         isLoading={isLoading}
                       />
                     )}
@@ -858,6 +895,7 @@ export default function ContractsPage() {
                   <ContractDetail
                     key={selectedServiceRecordDocument.id}
                     document={selectedServiceRecordDocument}
+                    documentClientSummary={documentClientSummaryById.get(selectedServiceRecordDocument.id) ?? null}
                     onDeleteRequest={handleDeleteRequest}
                     reviewAction="preview"
                   />
@@ -960,7 +998,7 @@ export default function ContractsPage() {
         </div>
       </div>
 
-      <ApprovalTwoButtonModal
+      <TwoButtonModal
         open={deleteTargetDocumentId != null}
         onOpenChange={(open) => {
           if (!open && !deleteDocument.isPending) {
@@ -982,10 +1020,12 @@ export default function ContractsPage() {
 
 function ContractDetail({
   document: doc,
+  documentClientSummary,
   onDeleteRequest,
   reviewAction = "finalize",
 }: {
   document: EformsignDocument;
+  documentClientSummary?: EformsignDocClientSummary | null;
   onDeleteRequest?: (documentId: string) => void;
   reviewAction?: ContractReviewAction;
 }) {
@@ -1001,7 +1041,15 @@ function ContractDetail({
   });
   const detailedDocument = detailQuery.data ?? doc;
   const isBaseDetailLoading = detailQuery.isFetching || detailQuery.isPlaceholderData;
-  const customerName = displayCustomerName(detailedDocument) ?? "–";
+  const mappedCustomerName = documentClientSummary?.clientName.trim();
+  const customerName = mappedCustomerName || displayCustomerName(detailedDocument) || "–";
+  const isServiceRecordDocument = reviewAction === "preview";
+  const serviceRecordQuery = useClientServiceRecords(documentClientSummary?.clientId ?? null, {
+    enabled: isServiceRecordDocument,
+  });
+  const serviceRecordHeader = serviceRecordQuery.data?.record?.header
+    ?? serviceRecordQuery.data?.assignments.find((assignment) => assignment.header)?.header
+    ?? null;
   const category = getStatusCategory(detailedDocument.current_status?.status_type);
   const statusLabel = mapDocStatusLabel(detailedDocument.current_status);
   const statusType: StatusType =
@@ -1031,7 +1079,8 @@ function ContractDetail({
     !hasEditedRecipientPhone || (recipientPhoneDigits.length >= 10 && recipientPhoneDigits.length <= 11);
   const documentAddress = extractDocumentAddress(detailedDocument);
   const customerAddress = documentAddress ?? null;
-  const isCustomerInfoLoading = isBaseDetailLoading;
+  const isCustomerInfoLoading = isBaseDetailLoading
+    || (isServiceRecordDocument && serviceRecordQuery.isLoading);
   const customerBirthDate =
     extractDocumentFieldValue(detailedDocument, [
       "이용자 생년월일",
@@ -1502,12 +1551,21 @@ function ContractDetail({
   }
 
   const documentTabCards = [
-    <InfoRowsCard
-      key="document-profile"
-      title="고객 정보"
-      loading={isCustomerInfoLoading}
-      className="self-start"
-      rows={[
+    isServiceRecordDocument ? (
+      <ServiceRecordHeaderCard
+        key="document-profile"
+        header={serviceRecordHeader}
+        isLoading={isCustomerInfoLoading}
+        showStatusBadge={false}
+        dataComponent="contracts-service-records-header-card"
+      />
+    ) : (
+      <InfoRowsCard
+        key="document-profile"
+        title="고객 정보"
+        loading={isCustomerInfoLoading}
+        className="self-start"
+        rows={[
         {
           label: "고객명",
           value: (
@@ -1541,14 +1599,18 @@ function ContractDetail({
             "–"
           ),
         },
-      ]}
-    />,
+        ]}
+      />
+    ),
     <InfoRowsCard
       key="document-contract"
       title="전자문서 정보"
       loading={isBaseDetailLoading}
       rows={[
-        { label: "문서명", value: detailedDocument.document_name },
+        {
+          label: "문서명",
+          value: isServiceRecordDocument ? "제공기록지" : detailedDocument.document_name,
+        },
         { label: "템플릿", value: detailedDocument.template?.name ?? "–" },
         { label: "문서번호", value: detailedDocument.document_number ?? "–" },
         { label: "발송일", value: sentDate },
@@ -1678,7 +1740,7 @@ function ContractDetail({
 
   return (
     <DetailPanel
-      title={detailedDocument.document_name}
+      title={isServiceRecordDocument ? "제공기록지" : detailedDocument.document_name}
       badges={<StatusBadge status={statusType} label={statusLabel} />}
       subtitle={
         <span className="flex flex-nowrap items-center gap-[calc(16px*var(--glint-ui-scale,1))] whitespace-nowrap text-[calc(12px*var(--glint-ui-scale,1))]">

@@ -4,13 +4,14 @@ import { useState } from "react";
 import { isAxiosError } from "axios";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { Building2, ChevronLeft, Send } from "lucide-react";
+import { Building2, Send } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MessageSenderApprovalModal } from "@/components/app/messages/MessageSenderApprovalModal";
+import { MessageSectionNav } from "@/components/app/mobile-redesign/MessageSectionNav";
+import { ListCard } from "@/components/app/mobile-redesign/primitives";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { useToast } from "@/hooks/use-toast";
@@ -112,9 +113,8 @@ function SenderApprovalForm({
   const submitLabel = approval?.approvalStatus === "pending" ? "다시 신청하기" : "신청하기";
 
   return (
-    <>
-      <Card data-component="messages-settings-tenant-branch-card" className={styles.formCard}>
-        <CardContent className={styles.formCardContent}>
+    <div data-component="messages-settings-tenant-sections" className={styles.formSections}>
+      <section data-component="messages-settings-tenant-branch-card" className={styles.formCardSection}>
           <div data-component="messages-settings-tenant-branch-row" className={styles.formSection}>
             <div data-component="messages-settings-tenant-branch-label-row" className={styles.labelRow}>
               <span className={styles.formLabel}>지점</span>
@@ -129,11 +129,9 @@ function SenderApprovalForm({
               </span>
             </div>
           </div>
-        </CardContent>
-      </Card>
+      </section>
 
-      <Card data-component="messages-settings-tenant-phone-card" className={styles.formCard}>
-        <CardContent className={styles.formCardContent}>
+      <section data-component="messages-settings-tenant-phone-card" className={styles.formCardSection}>
           <div data-component="messages-settings-tenant-sender-info" className={styles.formSection}>
             <span className={styles.formLabel}>발신번호</span>
             <span data-component="messages-settings-tenant-sender-number" className={styles.branchName}>
@@ -143,11 +141,9 @@ function SenderApprovalForm({
               모든 메시지는 사전 등록된 대표 발신번호 {UNIFIED_SENDER_PHONE} 으로 발송됩니다. 별도의 발신번호 입력이 필요하지 않습니다.
             </p>
           </div>
-        </CardContent>
-      </Card>
+      </section>
 
-      <Card data-component="messages-settings-tenant-agreements-card" className={styles.formCard}>
-        <CardContent className={styles.formCardContent}>
+      <section data-component="messages-settings-tenant-agreements-card" className={styles.formCardSection}>
           <div data-component="messages-settings-tenant-agreements" className={styles.formSection}>
             <span className={styles.formLabel}>
               동의 항목 <span className={styles.required}>*</span>
@@ -186,8 +182,7 @@ function SenderApprovalForm({
               ))}
             </div>
           </div>
-        </CardContent>
-      </Card>
+      </section>
 
       {!isLoading && !canRequest ? (
         <Alert data-component="messages-settings-tenant-permission-alert" className={styles.feedbackAlert}>
@@ -220,7 +215,7 @@ function SenderApprovalForm({
           {isSubmitting ? "신청 중" : submitLabel}
         </Button>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -256,10 +251,6 @@ export default function MessageSenderApprovalPage() {
     },
   });
 
-  const handleBack = () => {
-    router.replace("/messages");
-  };
-
   const handlePendingModalConfirm = () => {
     router.replace("/all");
   };
@@ -268,33 +259,32 @@ export default function MessageSenderApprovalPage() {
     !hasSubmittedSuccessfully && approvalQuery.data?.approvalStatus === "pending";
 
   return (
-    <section data-component="messages-sender-approval-page" className={styles.pageRoot}>
+    <section
+      data-component="messages"
+      data-page="messages-sender-approval"
+      className={`messages-page ${styles.pageRoot}`}
+    >
       <div data-component="messages-sender-approval-screen" className={styles.phoneScreen}>
-        <div data-component="messages-sender-approval-form" className={styles.navPage}>
-          <header data-component="messages-sender-approval-header" className={styles.detailHeader}>
-            <button
-              type="button"
-              onClick={handleBack}
-              aria-label="메시지 목록으로 돌아가기"
-              className={styles.detailBack}
-            >
-              <ChevronLeft aria-hidden="true" size={22} strokeWidth={2.5} />
-              <span>메시지</span>
-            </button>
-            <div data-component="messages-sender-approval-title" className={styles.detailTitle}>
-              메시지 발송 신청
-            </div>
-          </header>
+        <div
+          data-component="messages-content"
+          data-form="messages-sender-approval-form"
+          className={`shell-content gap-[calc(8px*var(--glint-ui-scale,1))] ${styles.navPage}`}
+        >
+          <div data-component="messages-sender-approval-section-nav" className="shrink-0">
+            <MessageSectionNav activeId="settings" />
+          </div>
 
           <div data-component="messages-sender-approval-scroll" className={styles.formScroll}>
-            <SenderApprovalForm
-              approval={approvalQuery.data}
-              branchName={branchName}
-              isLoading={approvalQuery.isLoading}
-              isSubmitting={requestApprovalMutation.isPending || isNavigationPending}
-              errorMessage={errorMessage}
-              onSubmit={() => requestApprovalMutation.mutate()}
-            />
+            <ListCard title="메시지 설정" filters={[]}>
+              <SenderApprovalForm
+                approval={approvalQuery.data}
+                branchName={branchName}
+                isLoading={approvalQuery.isLoading}
+                isSubmitting={requestApprovalMutation.isPending || isNavigationPending}
+                errorMessage={errorMessage}
+                onSubmit={() => requestApprovalMutation.mutate()}
+              />
+            </ListCard>
           </div>
         </div>
       </div>

@@ -56,19 +56,19 @@ describe("AuthService approval and token hardening", () => {
         );
     });
 
-    it("stores a requested admin role without granting authority", async () => {
+    it("registers an unassigned pending employee without trusting client branch or role", async () => {
         jest.spyOn(service, "hashPassword").mockResolvedValue("hash");
         jest.spyOn(service, "sendVerificationEmail").mockResolvedValue();
         prisma.user.findUnique.mockResolvedValue(null);
-        prisma.branch.findUnique.mockResolvedValue({ id: "branch-1" });
         prisma.user.create.mockResolvedValue({ id: "user-1", email: "new@example.com" });
 
-        await service.registerWithEmail("new@example.com", "Password1!", "New", "010", "1990-01-01", "branch-1", "admin");
+        await service.registerWithEmail("new@example.com", "Password1!", "New", "010", "1990-01-01");
 
         expect(prisma.user.create).toHaveBeenCalledWith({ data: expect.objectContaining({
-            role: null, approvalStatus: "pending", requestedRole: "admin",
+            role: null, approvalStatus: "pending", requestedRole: "user",
         }) });
-        expect(prisma.user_branch.create).toHaveBeenCalledWith({ data: expect.objectContaining({ role: null }) });
+        expect(prisma.branch.findUnique).not.toHaveBeenCalled();
+        expect(prisma.user_branch.create).not.toHaveBeenCalled();
     });
 
     it("rejects a pending user before issuing login tokens", async () => {
@@ -141,7 +141,7 @@ describe("AuthService approval and token hardening", () => {
     it("does not mutate a Kakao-only account during unauthenticated registration", async () => {
         prisma.user.findUnique.mockResolvedValue({ id: "user-1", kakaoId: "kakao", passwordHash: null, emailVerified: true });
 
-        await service.registerWithEmail("existing@example.com", "Password1!", "Attacker", "010", "1990-01-01", "branch-1", "admin");
+        await service.registerWithEmail("existing@example.com", "Password1!", "Attacker", "010", "1990-01-01");
 
         expect(prisma.user.update).not.toHaveBeenCalled();
         expect(tokens.create).not.toHaveBeenCalled();

@@ -7,6 +7,7 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import type { Locale } from "@/app/actions/locale";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 
 import {
     Dialog,
@@ -183,7 +184,19 @@ export function ClientDetailModal({
                         </h4>
                         <div className="space-y-3">
                             <InfoRow label={t(locale, "clients.form.primary-employee")} value={client.primaryEmployee?.name ?? "-"} />
+                            <InfoRow
+                                label={t(locale, "clients.form.primary-employee-phone")}
+                                value={client.primaryEmployee?.phone
+                                    ? formatKoreanPhoneNumber(client.primaryEmployee.phone)
+                                    : "-"}
+                            />
                             <InfoRow label={t(locale, "clients.form.secondary-employee")} value={client.secondaryEmployee?.name ?? "-"} />
+                            <InfoRow
+                                label={t(locale, "clients.form.secondary-employee-phone")}
+                                value={client.secondaryEmployee?.phone
+                                    ? formatKoreanPhoneNumber(client.secondaryEmployee.phone)
+                                    : "-"}
+                            />
                         </div>
                     </div>
 

@@ -7,6 +7,7 @@ import type {
 export interface EmployeeSummary {
     id: number;
     name: string;
+    phone?: string | null;
 }
 
 // Document status type for eformsign documents

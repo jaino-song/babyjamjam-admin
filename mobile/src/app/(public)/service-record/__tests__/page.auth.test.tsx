@@ -13,8 +13,8 @@ jest.mock("@/components/app/ui/ApprovalTwoButtonModal", () => ({
     ApprovalTwoButtonModal: () => null,
 }));
 
-jest.mock("@/components/app/ui/ConfirmActionModal", () => ({
-    ConfirmActionModal: () => null,
+jest.mock("@/components/app/ui/MobileTwoButtonModal", () => ({
+    MobileTwoButtonModal: () => null,
 }));
 
 jest.mock("@/components/app/ui/NotificationOneButtonModal", () => ({

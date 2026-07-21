@@ -54,8 +54,6 @@ export const registerRequestSchema = z.object({
   name: authNameSchema,
   phone: authPhoneSchema,
   birthDate: authBirthDateSchema,
-  branchId: z.string().uuid("유효한 지점을 선택해주세요."),
-  role: z.enum(REGISTERABLE_ROLES, { message: "역할을 선택해주세요." }),
 });
 
 export const registerFormSchema = registerRequestSchema

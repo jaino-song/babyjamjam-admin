@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useEffect } from "react";
 import { Plus, Upload, CloudUpload, FileText, Image as ImageIcon, File, Loader2 } from "lucide-react";
-import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
@@ -435,7 +435,7 @@ export function DocumentsTable() {
                 isLoading={createCategoryMutation.isPending}
             />
 
-            <ApprovalTwoButtonModal
+            <TwoButtonModal
                 open={deleteDoc !== null}
                 onOpenChange={(open) => {
                     if (!open) setDeleteDoc(null);

@@ -1,5 +1,5 @@
-import { MessagesAutomationPage } from "@/components/app/mobile-redesign/MessagesAutomationPage";
+import { redirect } from "next/navigation";
 
 export default function MessagesPage() {
-  return <MessagesAutomationPage />;
+  redirect("/messages/new");
 }

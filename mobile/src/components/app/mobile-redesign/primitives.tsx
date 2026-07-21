@@ -3,10 +3,12 @@
 import { useState } from "react";
 import Link from "next/link";
 import type { ComponentProps, CSSProperties, ReactNode, RefObject } from "react";
-import { ChevronDown, ChevronRight, FileCheck2, Plus, type LucideIcon } from "lucide-react";
+import { ChevronDown, ChevronRight, FileCheck2, type LucideIcon } from "lucide-react";
 
 import { StatusPill } from "@/components/app/ui/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ListCardBody } from "./ListCardBody";
+import { ListCardHeader } from "./ListCardHeader";
 import type { ContractRow, ListRow, MenuGroup, SectionRows } from "./mockup-data";
 
 export function ListLoadMoreButton({
@@ -388,6 +390,8 @@ export function ListCard({
   actionLabel,
   actionHref,
   actionIcon,
+  actionType = "button",
+  actionDisabled = false,
   onActionClick,
   filters,
   activeFilter,
@@ -403,6 +407,8 @@ export function ListCard({
   actionLabel?: string;
   actionHref?: string;
   actionIcon?: ReactNode;
+  actionType?: "button" | "submit";
+  actionDisabled?: boolean;
   onActionClick?: () => void;
   filters: FilterPillItem[];
   activeFilter?: string;
@@ -413,40 +419,23 @@ export function ListCard({
   loadMoreFooter?: ReactNode;
   children: ReactNode;
 }) {
-  const resolvedActionIcon =
-    actionIcon ?? (actionLabel?.startsWith("+") ? null : <Plus size={12} strokeWidth={3} />);
   const [actionFeedback, setActionFeedback] = useState("");
-  const action = actionLabel ? (
-    actionHref ? (
-      <Link href={actionHref} className="list-action" data-component="mobile-redesign-list-action">
-        {resolvedActionIcon}
-        {actionLabel}
-      </Link>
-    ) : (
-      <button
-        type="button"
-        className="list-action"
-        data-component="mobile-redesign-list-action"
-        onClick={
-          onActionClick ??
-          (() => setActionFeedback(`${actionLabel.replace(/^\+\s*/, "")} 기능을 열었습니다.`))
-        }
-      >
-        {resolvedActionIcon}
-        {actionLabel}
-      </button>
-    )
-  ) : null;
+  const handleActionClick = onActionClick ?? (actionType === "button" && actionLabel
+    ? () => setActionFeedback(`${actionLabel.replace(/^\+\s*/, "")} 기능을 열었습니다.`)
+    : undefined);
 
   return (
-    <div className="list-card" data-component="mobile-redesign-list-card">
-      <div className="list-title" data-component="mobile-redesign-list-title">
-        <span className="list-title-text">
-          {title}
-          {count && <span className="list-count">{count}</span>}
-        </span>
-        {action}
-      </div>
+    <div className="list-card flex flex-col gap-4" data-component="mobile-redesign-list-card">
+      <ListCardHeader
+        title={title}
+        count={count}
+        actionLabel={actionLabel}
+        actionHref={actionHref}
+        actionIcon={actionIcon}
+        actionType={actionType}
+        actionDisabled={actionDisabled}
+        onActionClick={handleActionClick}
+      />
       {beforeFilters}
       {filters.length > 0 && (
         <FilterPills items={filters} activeLabel={activeFilter} onChange={onFilterChange} />
@@ -457,13 +446,9 @@ export function ListCard({
         </div>
       )}
       {beforeScroll}
-      <div
-        ref={scrollRef}
-        className="list-card-scroll"
-        data-component="mobile-redesign-list-scroll"
-      >
+      <ListCardBody scrollRef={scrollRef}>
         {children}
-      </div>
+      </ListCardBody>
       {loadMoreFooter && (
         <div className="list-card-footer" data-component="mobile-redesign-list-footer">
           {loadMoreFooter}

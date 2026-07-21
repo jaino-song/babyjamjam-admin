@@ -3,11 +3,13 @@
 import { useMemo, useRef, useState } from "react";
 import { isAxiosError } from "axios";
 import { useMutation } from "@tanstack/react-query";
-import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronLeft, X } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { X } from "lucide-react";
 
 import { useMessagesPermissionGuard } from "@/app/(shell)/messages/MessagesPermissionGuard";
 import { ClientAutocomplete } from "@/components/app/clients/ClientAutocomplete";
+import { MessageSectionNav } from "@/components/app/mobile-redesign/MessageSectionNav";
+import { ListCard } from "@/components/app/mobile-redesign/primitives";
 import { MsgField } from "@/components/app/messages/templates/MsgField";
 import bankAccountJSON from "@/components/app/messages/templates/json/bank-account.json";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
@@ -20,7 +22,6 @@ import { surveyMsgTemplate } from "@/components/app/messages/templates/messageTe
 import { thanksMsgTemplate } from "@/components/app/messages/templates/messageTemplate/thanksMsg";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -43,6 +44,7 @@ import type { Client } from "@/lib/client/types";
 import { api } from "@/lib/api/client";
 import { normalizeIsoDate, yymmddToIso } from "@/lib/contracts/date-input";
 import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
+import "@/components/app/mobile-redesign/redesign.css";
 import { parsePositiveIntQueryParam } from "@/lib/query-params";
 import { extractVariables, renderTemplate } from "@/lib/template-utils";
 import { cn } from "@/lib/utils";
@@ -501,7 +503,6 @@ export default function NewMessagePage() {
 }
 
 function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: NewMessageFormProps) {
-  const router = useRouter();
   const [receiver, setReceiver] = useState("");
   const [recipients, setRecipients] = useState<RecipientChip[]>([]);
   const [bodyOverride, setBodyOverride] = useState<string | null>(initialBody.trim() ? initialBody : null);
@@ -703,12 +704,15 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
     [selectedTemplateId, templateOptions],
   );
   const selectedTemplateVariables = selectedTemplate.variables;
+  const recipientNameVariable = selectedTemplateVariables.find((variable) => variable.key === "name");
   const renderedTemplateVariables = useMemo(() => {
     if (selectedTemplate.id !== PRICE_INFO_TEMPLATE_ID) {
-      return selectedTemplateVariables;
+      return selectedTemplateVariables.filter((variable) => variable.key !== "name");
     }
 
-    return selectedTemplateVariables.filter((variable) => !PRICE_INFO_SELECT_CONTROLLED_KEYS.has(variable.key));
+    return selectedTemplateVariables.filter(
+      (variable) => variable.key !== "name" && !PRICE_INFO_SELECT_CONTROLLED_KEYS.has(variable.key),
+    );
   }, [selectedTemplate.id, selectedTemplateVariables]);
   const body = bodyOverride ?? selectedTemplate.body;
   const payloadClientId = useMemo(() => {
@@ -1024,372 +1028,385 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
     sendMutation.mutate();
   };
 
-  const primaryActionLabel =
-    recipientCount > 0 ? `${recipientCount}명에게 발송` : "즉시 발송";
   const isSubmitDisabled =
     Boolean(validationError) || sendMutation.isPending || isSenderApprovalLoading || needsSenderApproval;
 
-  const handleBack = () => {
-    if (typeof window !== "undefined" && window.history.length > 1) {
-      router.back();
-      return;
-    }
-
-    router.replace("/messages");
-  };
-
   return (
-    <section data-component="messages-new-page" className={styles.pageRoot}>
+    <section
+      data-component="messages"
+      data-page="messages-new"
+      className={`messages-page ${styles.pageRoot}`}
+    >
       <div data-component="messages-new-screen" className={styles.phoneScreen}>
-        <form data-component="messages-new-form" onSubmit={handleSubmit} className={styles.navPage}>
-          <header data-component="messages-new-header" className={styles.detailHeader}>
-            <button
-              type="button"
-              onClick={handleBack}
-              aria-label="메시지 목록으로 돌아가기"
-              className={styles.detailBack}
-            >
-              <ChevronLeft aria-hidden="true" size={22} strokeWidth={2.5} />
-              <span>메시지</span>
-            </button>
-            <div data-component="messages-new-title" className={styles.detailTitle}>새 메시지</div>
-          </header>
+        <form
+          data-component="messages-content"
+          data-form="messages-new-form"
+          onSubmit={handleSubmit}
+          className={`shell-content gap-[calc(8px*var(--glint-ui-scale,1))] ${styles.navPage}`}
+        >
+          <div data-component="messages-new-section-nav" className="shrink-0">
+            <MessageSectionNav activeId="send" />
+          </div>
 
           <div data-component="messages-new-scroll" className={styles.msgScroll}>
-            <Card data-component="messages-new-recipient-card" className={cn(styles.formCard, styles.recipientCard)}>
-              <CardContent className={styles.formCardContent}>
-                <div data-component="messages-new-recipient-row" className={styles.formSection}>
-                  <label htmlFor="receiver" className={styles.formLabel}>
-                    수신자 <span className={styles.required}>*</span>
-                  </label>
-                  <ClientAutocomplete
-                    inputId="receiver"
-                    value={null}
-                    onChange={handleClientRecipientSelect}
-                    inputValue={receiver}
-                    onInputValueChange={setReceiver}
-                    placeholder="이름 또는 전화번호"
-                    label=""
-                    allowManualEntry
-                    manualEntryLabel="입력한 번호 추가"
-                    manualEntryDescription="검색 결과가 없으면 전화번호를 입력한 뒤 Enter로 수신자에 추가합니다"
-                    onManualEntry={addManualRecipient}
-                  />
-                  <div data-component="messages-new-recipient-chips" className={styles.recipientChips}>
-                    {recipients.map((recipient) => (
-                      <span key={recipient.id} className={styles.recipientChip}>
-                        <span className={cn(styles.recipientChipAvatar, styles[`recipient_${recipient.tone}`])}>
-                          {recipient.initial}
-                        </span>
-                        {recipient.name}
-                        <button
-                          type="button"
-                          aria-label={`${recipient.name} 수신자 제거`}
-                          className={styles.recipientChipX}
-                          onClick={() => setRecipients((current) => current.filter((item) => item.id !== recipient.id))}
-                        >
-                          <X aria-hidden="true" size={10} strokeWidth={3} />
-                        </button>
-                      </span>
-                    ))}
+            <ListCard
+              title="새 메시지"
+              actionLabel="즉시 발송"
+              actionIcon={null}
+              actionType="submit"
+              actionDisabled={isSubmitDisabled}
+              filters={[]}
+            >
+            <div data-component="messages-new-form-card" className={styles.recipientCard}>
+              <div
+                data-component="messages-new-form-card-content"
+                className={styles.unifiedFormCardContent}
+              >
+                <div data-component="messages-new-template-card" className={styles.formCardSection}>
+                  <div data-component="messages-new-template-row" className={styles.formSection}>
+                    <label id="template-select-label" htmlFor="template-select" className={styles.formLabel}>
+                      템플릿 선택 <span className={styles.required}>*</span>
+                    </label>
+                    <Select
+                      value={selectedTemplate.id}
+                      onValueChange={(value) => {
+                        const option = templateOptions.find((template) => template.id === value);
+                        if (option) handleTemplateSelect(option);
+                      }}
+                    >
+                      <SelectTrigger
+                        id="template-select"
+                        data-component="messages-new-template-select"
+                        aria-labelledby="template-select-label"
+                        className={styles.templateSelectTrigger}
+                      >
+                        <SelectValue placeholder="템플릿 선택" />
+                      </SelectTrigger>
+                      <SelectContent
+                        className={styles.templateSelectContent}
+                        avoidCollisions
+                      >
+                        {templateOptions.map((option) => (
+                          <SelectItem key={option.id} value={option.id}>
+                            {option.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
-              </CardContent>
-            </Card>
 
-            <Card data-component="messages-new-template-card" className={styles.formCard}>
-              <CardContent className={styles.formCardContent}>
-                <div data-component="messages-new-template-row" className={styles.formSection}>
-                  <label id="template-select-label" htmlFor="template-select" className={styles.formLabel}>
-                    템플릿 선택 <span className={styles.required}>*</span>
-                  </label>
-                  <Select
-                    value={selectedTemplate.id}
-                    onValueChange={(value) => {
-                      const option = templateOptions.find((template) => template.id === value);
-                      if (option) handleTemplateSelect(option);
-                    }}
-                  >
-                    <SelectTrigger
-                      id="template-select"
-                      data-component="messages-new-template-select"
-                      aria-labelledby="template-select-label"
-                      className={styles.templateSelectTrigger}
-                    >
-                      <SelectValue placeholder="템플릿 선택" />
-                    </SelectTrigger>
-                    <SelectContent
-                      className={styles.templateSelectContent}
-                      avoidCollisions
-                    >
-                      {templateOptions.map((option) => (
-                        <SelectItem key={option.id} value={option.id}>
-                          {option.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </CardContent>
-            </Card>
-
-            {selectedTemplateVariables.length > 0 ? (
-              <Card data-component="messages-new-template-variables-card" className={styles.formCard}>
-                <CardContent className={styles.formCardContent}>
-                  {renderedTemplateVariables.map((variable) => {
-                    const inputId = getVariableInputId(variable.key);
-                    return (
-                      <div
-                        key={variable.key}
-                        data-component="messages-new-template-variable-row"
-                        data-template-variable-key={variable.key}
-                        className={styles.formSection}
-                      >
-                        <label htmlFor={inputId} className={styles.formLabel}>
-                          {variable.label}
-                          {variable.required ? <span className={styles.required}>*</span> : null}
-                        </label>
-                        <input
-                          id={inputId}
-                          data-component="messages-new-template-variable-input"
-                          data-template-variable-key={variable.key}
-                          className={styles.variableInput}
-                          inputMode={getVariableInputMode(variable)}
-                          value={templateVariableValues[variable.key] ?? ""}
-                          placeholder={getVariablePlaceholder(variable)}
-                          onChange={(event) => handleTemplateVariableChange(variable.key, event.target.value)}
-                        />
-                      </div>
-                    );
-                  })}
-                  {isPriceInfoTemplateSelected ? (
-                    <div
-                      data-component="messages-new-price-info-controls"
-                      className={styles.priceInfoControls}
-                    >
-                      <div
-                        data-component="messages-new-template-variable-row"
-                        data-template-variable-key="voucherYear"
-                        className={styles.formSection}
-                      >
-                        <label id="price-info-year-label" className={styles.formLabel}>
-                          연도 <span className={styles.required}>*</span>
-                        </label>
-                        <Select
-                          value={String(priceInfoVoucherYear)}
-                          onValueChange={handlePriceInfoYearChange}
-                        >
-                          <SelectTrigger
-                            data-component="messages-new-price-info-year-select"
-                            aria-labelledby="price-info-year-label"
-                            className={styles.variableSelectTrigger}
-                          >
-                            <SelectValue placeholder="연도" />
-                          </SelectTrigger>
-                          <SelectContent className={styles.templateSelectContent}>
-                            {[priceInfoVoucherYear - 1, priceInfoVoucherYear, priceInfoVoucherYear + 1].map((year) => (
-                              <SelectItem key={year} value={String(year)}>
-                                {year}년
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div
-                        data-component="messages-new-template-variable-row"
-                        data-template-variable-key="type"
-                        className={styles.formSection}
-                      >
-                        <label id="price-info-type-label" className={styles.formLabel}>
-                          바우처 유형 <span className={styles.required}>*</span>
-                        </label>
-                        <Select
-                          value={templateVariableValues.type ?? ""}
-                          onValueChange={handlePriceInfoTypeChange}
-                        >
-                          <SelectTrigger
-                            data-component="messages-new-price-info-type-select"
-                            aria-labelledby="price-info-type-label"
-                            className={styles.variableSelectTrigger}
-                          >
-                            {templateVariableValues.type ? (
-                              <span data-slot="select-value">{getVoucherTypeLabel(templateVariableValues.type)}</span>
-                            ) : (
-                              <SelectValue placeholder="바우처 유형" />
-                            )}
-                          </SelectTrigger>
-                          <SelectContent className={styles.templateSelectContent}>
-                            {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
-                              <div key={groupName} data-component="messages-new-price-info-type-group">
-                                <div
-                                  data-component="messages-new-price-info-type-group-label"
-                                  className={styles.selectGroupLabel}
-                                >
-                                  {groupName}
-                                </div>
-                                {Object.entries(types).map(([typeValue, typeData]) => (
-                                  <SelectItem key={typeValue} value={typeValue}>
-                                    {typeData.label}
-                                  </SelectItem>
-                                ))}
-                              </div>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div
-                        data-component="messages-new-template-variable-row"
-                        data-template-variable-key="duration"
-                        className={styles.formSection}
-                      >
-                        <label id="price-info-duration-label" className={styles.formLabel}>
-                          서비스 기간 <span className={styles.required}>*</span>
-                        </label>
-                        <Select
-                          value={templateVariableValues.duration ?? ""}
-                          onValueChange={handlePriceInfoDurationChange}
-                          disabled={!templateVariableValues.type || voucherPriceInfos.length === 0}
-                        >
-                          <SelectTrigger
-                            data-component="messages-new-price-info-duration-select"
-                            aria-labelledby="price-info-duration-label"
-                            className={styles.variableSelectTrigger}
-                          >
-                            {templateVariableValues.duration ? (
-                              <span data-slot="select-value">{templateVariableValues.duration}일</span>
-                            ) : (
-                              <SelectValue
-                                placeholder={
-                                  isVoucherPriceInfosLoading
-                                    ? "불러오는 중"
-                                    : "서비스 기간"
-                                }
-                              />
-                            )}
-                          </SelectTrigger>
-                          <SelectContent className={styles.templateSelectContent}>
-                            {voucherPriceInfos.map((voucher) => (
-                              <SelectItem key={voucher.id} value={voucher.duration}>
-                                {voucher.duration}일
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div
-                        data-component="messages-new-template-variable-row"
-                        data-template-variable-key="bankAccount"
-                        className={styles.formSection}
-                      >
-                        <label id="price-info-bank-account-label" className={styles.formLabel}>
-                          계좌번호 <span className={styles.required}>*</span>
-                        </label>
-                        <Select
-                          value={priceInfoArea}
-                          onValueChange={handlePriceInfoAreaChange}
-                          disabled={isBankAccountInfosLoading || bankAccountInfos.length === 0}
-                        >
-                          <SelectTrigger
-                            data-component="messages-new-price-info-bank-account-select"
-                            aria-labelledby="price-info-bank-account-label"
-                            className={styles.variableSelectTrigger}
-                          >
-                            {priceInfoArea ? (
-                              <span data-slot="select-value">{getBankAccountDisplayLabel(priceInfoArea, bankAccountInfos)}</span>
-                            ) : (
-                              <SelectValue
-                                placeholder={
-                                  isBankAccountInfosLoading
-                                    ? "불러오는 중"
-                                    : "계좌번호"
-                                }
-                              />
-                            )}
-                          </SelectTrigger>
-                          <SelectContent className={styles.templateSelectContent}>
-                            {bankAccountInfos.map((bankAccount) => (
-                              <SelectItem key={bankAccount.area} value={bankAccount.area}>
-                                {getBankAccountDisplayLabel(bankAccount.area, bankAccountInfos)}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      {selectedPriceInfoSummary ? (
-                        <div
-                          data-component="messages-new-price-info-summary"
-                          className={styles.priceInfoSummary}
-                        >
-                          <div data-component="messages-new-price-info-summary-row" className={styles.priceInfoSummaryRow}>
-                            <span>바우처</span>
-                            <strong>{getVoucherTypeLabel(templateVariableValues.type ?? "")}</strong>
-                          </div>
-                          <div data-component="messages-new-price-info-summary-row" className={styles.priceInfoSummaryRow}>
-                            <span>총 서비스 금액</span>
-                            <strong>{selectedPriceInfoSummary.fullPrice || "-"}</strong>
-                          </div>
-                          <div data-component="messages-new-price-info-summary-row" className={styles.priceInfoSummaryRow}>
-                            <span>정부지원금</span>
-                            <strong>{selectedPriceInfoSummary.grant || "-"}</strong>
-                          </div>
-                          <div data-component="messages-new-price-info-summary-row" className={styles.priceInfoSummaryRow}>
-                            <span>본인부담금</span>
-                            <strong>{selectedPriceInfoSummary.actualPrice || "-"}</strong>
-                          </div>
-                          <div data-component="messages-new-price-info-summary-row" className={styles.priceInfoSummaryRow}>
-                            <span>계좌</span>
-                            <strong>
-                              {selectedPriceInfoSummary.bankName && selectedPriceInfoSummary.accNum
-                                ? `${selectedPriceInfoSummary.bankName} ${selectedPriceInfoSummary.accNum}`
-                                : "-"}
-                            </strong>
-                          </div>
-                        </div>
-                      ) : null}
+                <div data-component="messages-new-recipient-card" className={styles.formCardSection}>
+                  {recipientNameVariable ? (
+                    <div data-component="messages-new-recipient-name-row" className={styles.formSection}>
+                      <label htmlFor="recipient-name" className={styles.formLabel}>
+                        산모님 성함
+                        {recipientNameVariable.required ? <span className={styles.required}>*</span> : null}
+                      </label>
+                      <input
+                        id="recipient-name"
+                        data-component="messages-new-recipient-name-input"
+                        className={styles.variableInput}
+                        value={templateVariableValues.name ?? ""}
+                        placeholder="산모님 성함"
+                        onChange={(event) => handleTemplateVariableChange("name", event.target.value)}
+                      />
                     </div>
                   ) : null}
-                </CardContent>
-              </Card>
-            ) : null}
 
-            <Card data-component="messages-new-body-card" className={styles.formCard}>
-              <CardContent className={styles.formCardContent}>
-                <div data-component="messages-new-body-row" className={styles.formSection}>
-                  <div data-component="messages-new-body-header" className={styles.formSectionHeader}>
-                    <label htmlFor="body" className={styles.formLabel}>
-                      메시지 본문
+                  <div data-component="messages-new-recipient-row" className={styles.formSection}>
+                    <label htmlFor="receiver" className={styles.formLabel}>
+                      휴대 전화번호 <span className={styles.required}>*</span>
                     </label>
-                    <Button
-                      type="button"
-                      data-component="messages-new-preview-open"
-                      variant="ghost"
-                      className={styles.previewButton}
-                      onClick={() => setIsPreviewOpen(true)}
-                    >
-                      미리보기
-                    </Button>
+                    <ClientAutocomplete
+                      inputId="receiver"
+                      value={null}
+                      onChange={handleClientRecipientSelect}
+                      inputValue={receiver}
+                      onInputValueChange={setReceiver}
+                      placeholder="010-0000-0000"
+                      label=""
+                      allowManualEntry
+                      manualEntryLabel="입력한 번호 추가"
+                      manualEntryDescription="전화번호를 입력한 뒤 Enter로 수신자에 추가합니다"
+                      onManualEntry={addManualRecipient}
+                    />
+                    <div data-component="messages-new-recipient-chips" className={styles.recipientChips}>
+                      {recipients.map((recipient) => (
+                        <span key={recipient.id} className={styles.recipientChip}>
+                          <span className={cn(styles.recipientChipAvatar, styles[`recipient_${recipient.tone}`])}>
+                            {recipient.initial}
+                          </span>
+                          {recipient.name}
+                          <button
+                            type="button"
+                            aria-label={`${recipient.name} 수신자 제거`}
+                            className={styles.recipientChipX}
+                            onClick={() => setRecipients((current) => current.filter((item) => item.id !== recipient.id))}
+                          >
+                            <X aria-hidden="true" size={10} strokeWidth={3} />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                  <MsgField
-                    inputId="body"
-                    ariaLabel="메시지 본문"
-                    value={body}
-                    maxLength={MAX_BODY}
-                    onChange={setBodyOverride}
-                    className={styles.messageField}
-                    textareaClassName={styles.messageFieldTextarea}
-                  />
-                  {showVariableHint ? (
-                    <p data-component="messages-new-variable-hint" className={styles.screenReaderNote}>
-                      템플릿 변수가 포함되어 있습니다.
-                    </p>
-                  ) : null}
                 </div>
-              </CardContent>
-            </Card>
+
+                {renderedTemplateVariables.length > 0 || isPriceInfoTemplateSelected ? (
+                  <div data-component="messages-new-template-variables-card" className={styles.formCardSection}>
+                    {renderedTemplateVariables.map((variable) => {
+                      const inputId = getVariableInputId(variable.key);
+                      return (
+                        <div
+                          key={variable.key}
+                          data-component="messages-new-template-variable-row"
+                          data-template-variable-key={variable.key}
+                          className={styles.formSection}
+                        >
+                          <label htmlFor={inputId} className={styles.formLabel}>
+                            {variable.label}
+                            {variable.required ? <span className={styles.required}>*</span> : null}
+                          </label>
+                          <input
+                            id={inputId}
+                            data-component="messages-new-template-variable-input"
+                            data-template-variable-key={variable.key}
+                            className={styles.variableInput}
+                            inputMode={getVariableInputMode(variable)}
+                            value={templateVariableValues[variable.key] ?? ""}
+                            placeholder={getVariablePlaceholder(variable)}
+                            onChange={(event) => handleTemplateVariableChange(variable.key, event.target.value)}
+                          />
+                        </div>
+                      );
+                    })}
+                    {isPriceInfoTemplateSelected ? (
+                      <div
+                        data-component="messages-new-price-info-controls"
+                        className={styles.priceInfoControls}
+                      >
+                        <div
+                          data-component="messages-new-template-variable-row"
+                          data-template-variable-key="type"
+                          className={styles.formSection}
+                        >
+                          <label id="price-info-type-label" className={styles.formLabel}>
+                            바우처 유형 <span className={styles.required}>*</span>
+                          </label>
+                          <Select
+                            value={templateVariableValues.type ?? ""}
+                            onValueChange={handlePriceInfoTypeChange}
+                          >
+                            <SelectTrigger
+                              data-component="messages-new-price-info-type-select"
+                              aria-labelledby="price-info-type-label"
+                              className={styles.variableSelectTrigger}
+                            >
+                              {templateVariableValues.type ? (
+                                <span data-slot="select-value">{getVoucherTypeLabel(templateVariableValues.type)}</span>
+                              ) : (
+                                <SelectValue placeholder="바우처 유형" />
+                              )}
+                            </SelectTrigger>
+                            <SelectContent className={styles.templateSelectContent}>
+                              {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
+                                <div key={groupName} data-component="messages-new-price-info-type-group">
+                                  <div
+                                    data-component="messages-new-price-info-type-group-label"
+                                    className={styles.selectGroupLabel}
+                                  >
+                                    {groupName}
+                                  </div>
+                                  {Object.entries(types).map(([typeValue, typeData]) => (
+                                    <SelectItem key={typeValue} value={typeValue}>
+                                      {typeData.label}
+                                    </SelectItem>
+                                  ))}
+                                </div>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div
+                          data-component="messages-new-template-variable-row"
+                          data-template-variable-key="duration"
+                          className={styles.formSection}
+                        >
+                          <label id="price-info-duration-label" className={styles.formLabel}>
+                            서비스 기간 <span className={styles.required}>*</span>
+                          </label>
+                          <Select
+                            value={templateVariableValues.duration ?? ""}
+                            onValueChange={handlePriceInfoDurationChange}
+                            disabled={!templateVariableValues.type || voucherPriceInfos.length === 0}
+                          >
+                            <SelectTrigger
+                              data-component="messages-new-price-info-duration-select"
+                              aria-labelledby="price-info-duration-label"
+                              className={styles.variableSelectTrigger}
+                            >
+                              {templateVariableValues.duration ? (
+                                <span data-slot="select-value">{templateVariableValues.duration}일</span>
+                              ) : (
+                                <SelectValue
+                                  placeholder={
+                                    isVoucherPriceInfosLoading
+                                      ? "불러오는 중"
+                                      : "서비스 기간"
+                                  }
+                                />
+                              )}
+                            </SelectTrigger>
+                            <SelectContent className={styles.templateSelectContent}>
+                              {voucherPriceInfos.map((voucher) => (
+                                <SelectItem key={voucher.id} value={voucher.duration}>
+                                  {voucher.duration}일
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div
+                          data-component="messages-new-template-variable-row"
+                          data-template-variable-key="bankAccount"
+                          className={styles.formSection}
+                        >
+                          <label id="price-info-bank-account-label" className={styles.formLabel}>
+                            지역 <span className={styles.required}>*</span>
+                          </label>
+                          <Select
+                            value={priceInfoArea}
+                            onValueChange={handlePriceInfoAreaChange}
+                            disabled={isBankAccountInfosLoading || bankAccountInfos.length === 0}
+                          >
+                            <SelectTrigger
+                              data-component="messages-new-price-info-bank-account-select"
+                              aria-labelledby="price-info-bank-account-label"
+                              className={styles.variableSelectTrigger}
+                            >
+                              {priceInfoArea ? (
+                                <span data-slot="select-value">{getBankAccountDisplayLabel(priceInfoArea, bankAccountInfos)}</span>
+                              ) : (
+                                <SelectValue
+                                  placeholder={
+                                    isBankAccountInfosLoading
+                                      ? "불러오는 중"
+                                      : "지역"
+                                  }
+                                />
+                              )}
+                            </SelectTrigger>
+                            <SelectContent className={styles.templateSelectContent}>
+                              {bankAccountInfos.map((bankAccount) => (
+                                <SelectItem key={bankAccount.area} value={bankAccount.area}>
+                                  {getBankAccountDisplayLabel(bankAccount.area, bankAccountInfos)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div
+                          data-component="messages-new-template-variable-row"
+                          data-template-variable-key="voucherYear"
+                          className={styles.formSection}
+                        >
+                          <label id="price-info-year-label" className={styles.formLabel}>
+                            바우처 연도 <span className={styles.required}>*</span>
+                          </label>
+                          <Select
+                            value={String(priceInfoVoucherYear)}
+                            onValueChange={handlePriceInfoYearChange}
+                          >
+                            <SelectTrigger
+                              data-component="messages-new-price-info-year-select"
+                              aria-labelledby="price-info-year-label"
+                              className={styles.variableSelectTrigger}
+                            >
+                              <SelectValue placeholder="바우처 연도" />
+                            </SelectTrigger>
+                            <SelectContent className={styles.templateSelectContent}>
+                              {[priceInfoVoucherYear - 1, priceInfoVoucherYear, priceInfoVoucherYear + 1].map((year) => (
+                                <SelectItem key={year} value={String(year)}>
+                                  {year}년
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        {selectedPriceInfoSummary ? (
+                          <div
+                            data-component="messages-new-price-info-summary"
+                            className={styles.priceInfoSummary}
+                          >
+                            <div data-component="messages-new-price-info-summary-row" className={styles.priceInfoSummaryRow}>
+                              <span>바우처</span>
+                              <strong>{getVoucherTypeLabel(templateVariableValues.type ?? "")}</strong>
+                            </div>
+                            <div data-component="messages-new-price-info-summary-row" className={styles.priceInfoSummaryRow}>
+                              <span>총 서비스 금액</span>
+                              <strong>{selectedPriceInfoSummary.fullPrice || "-"}</strong>
+                            </div>
+                            <div data-component="messages-new-price-info-summary-row" className={styles.priceInfoSummaryRow}>
+                              <span>정부지원금</span>
+                              <strong>{selectedPriceInfoSummary.grant || "-"}</strong>
+                            </div>
+                            <div data-component="messages-new-price-info-summary-row" className={styles.priceInfoSummaryRow}>
+                              <span>본인부담금</span>
+                              <strong>{selectedPriceInfoSummary.actualPrice || "-"}</strong>
+                            </div>
+                            <div data-component="messages-new-price-info-summary-row" className={styles.priceInfoSummaryRow}>
+                              <span>계좌</span>
+                              <strong>
+                                {selectedPriceInfoSummary.bankName && selectedPriceInfoSummary.accNum
+                                  ? `${selectedPriceInfoSummary.bankName} ${selectedPriceInfoSummary.accNum}`
+                                  : "-"}
+                              </strong>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <div data-component="messages-new-body-card" className={styles.formCardSection}>
+                  <div data-component="messages-new-body-row" className={styles.formSection}>
+                    <div data-component="messages-new-body-header" className={styles.formSectionHeader}>
+                      <label htmlFor="body" className={styles.formLabel}>
+                        메시지 본문
+                      </label>
+                      <Button
+                        type="button"
+                        data-component="messages-new-preview-open"
+                        variant="ghost"
+                        className={styles.previewButton}
+                        onClick={() => setIsPreviewOpen(true)}
+                      >
+                        미리보기
+                      </Button>
+                    </div>
+                    <MsgField
+                      inputId="body"
+                      ariaLabel="메시지 본문"
+                      value={body}
+                      maxLength={MAX_BODY}
+                      onChange={setBodyOverride}
+                      className={styles.messageField}
+                      textareaClassName={styles.messageFieldTextarea}
+                    />
+                    {showVariableHint ? (
+                      <p data-component="messages-new-variable-hint" className={styles.screenReaderNote}>
+                        템플릿 변수가 포함되어 있습니다.
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            </div>
 
             {errorMessage ? (
               <Alert
@@ -1410,18 +1427,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
                 {successMessage}
               </Alert>
             ) : null}
-          </div>
-
-          <div data-component="messages-new-actions" className={styles.msgActions}>
-            <Button
-              type="submit"
-              data-component="messages-new-submit"
-              disabled={isSubmitDisabled}
-              variant="v3"
-              className={styles.submitButton}
-            >
-              {sendMutation.isPending ? "발송 중..." : primaryActionLabel}
-            </Button>
+            </ListCard>
           </div>
         </form>
         <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>

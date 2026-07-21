@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Calendar, Loader2, Send, X } from "lucide-react";
 
 import { ClientAutocomplete } from "@/components/app/clients/ClientAutocomplete";
-import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { StatusBadge } from "@/components/app/ui/status-badge";
 import { Button } from "@/components/ui/button";
 import { filterHistoryRecordsByChannel } from "@/features/message-triggers/channel";
@@ -766,7 +766,7 @@ export function TemplateSendForm({
         </div>
       ) : null}
 
-      <ApprovalTwoButtonModal
+      <TwoButtonModal
         open={Boolean(duplicateSendCandidates && duplicateSendCandidates.length > 0)}
         size="detail"
         onOpenChange={(open) => {
@@ -818,7 +818,7 @@ export function TemplateSendForm({
             ))}
           </div>
         ) : null}
-      </ApprovalTwoButtonModal>
+      </TwoButtonModal>
 
     </form>
   );

@@ -7,7 +7,7 @@ import { useFilteredClients, useDeleteClient } from "@/hooks/useClients";
 import { Client, DocumentStatus } from "@/lib/client/types";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
 import { ClientFormDialog } from "@/components/app/clients/ClientFormDialog";
-import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -203,7 +203,7 @@ export default function FilteredClientsPage() {
                 client={editingClient}
             />
 
-            <ApprovalTwoButtonModal
+            <TwoButtonModal
                 open={deleteTargetClientId !== null}
                 onOpenChange={(open) => {
                     if (!open) setDeleteTargetClientId(null);
