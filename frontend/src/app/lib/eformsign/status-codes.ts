@@ -172,6 +172,20 @@ export function needsLegacyDocumentDetail(
     && getLegacyDocumentCustomerName(document, excludedNames) === null;
 }
 
+export function hydrateLegacyDocumentCustomerName<T extends LegacyListDocument>(
+  document: T,
+  customerName: string | null | undefined,
+): T {
+  const normalizedName = customerName?.trim();
+  if (!normalizedName) return document;
+
+  const recipients = Array.isArray(document.recipients) ? document.recipients : [];
+  return {
+    ...document,
+    recipients: [...recipients, { name: normalizedName }],
+  };
+}
+
 /**
  * Map status code to Korean label
  */
