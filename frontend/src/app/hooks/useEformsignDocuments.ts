@@ -3,7 +3,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { eformsignApi } from "@/services/api";
 import { EformsignDocumentsResponse, EformsignDocument } from "@/app/lib/eformsign/types";
-import { getLegacyDocumentStatusCategory, DocumentFilterType } from "@/app/lib/eformsign/status-codes";
+import {
+  DocumentFilterType,
+  getLegacyDocumentStatusCategory,
+  LEGACY_EXCLUDED_CUSTOMER_NAMES,
+  needsLegacyDocumentDetail,
+} from "@/app/lib/eformsign/status-codes";
 
 // Re-export types for convenience
 export type { DocumentFilterType } from "@/app/lib/eformsign/status-codes";
@@ -29,6 +34,31 @@ export const eformsignQueryKeys = {
 async function fetchAllDocuments(): Promise<EformsignDocumentsResponse> {
   // Uses the unified /documents endpoint which fetches all types on the backend
   const response = await eformsignApi.getAllDocuments();
+  const documents = response.documents || [];
+  const unresolvedContracts = documents.filter((doc) =>
+    needsLegacyDocumentDetail(doc, LEGACY_EXCLUDED_CUSTOMER_NAMES)
+  );
+
+  if (unresolvedContracts.length > 0) {
+    const detailEntries = await Promise.all(
+      unresolvedContracts.map(async (doc) => {
+        try {
+          const detail = await eformsignApi.getDocument(doc.id);
+          return [doc.id, detail] as const;
+        } catch (error) {
+          debugLog(`[fetchAllDocuments] Failed to hydrate ${doc.id}`, error);
+          return [doc.id, null] as const;
+        }
+      })
+    );
+    const detailsById = new Map(detailEntries);
+
+    response.documents = documents.map((doc) => {
+      const detail = detailsById.get(doc.id);
+      return detail ? { ...doc, recipients: detail.recipients } : doc;
+    });
+  }
+
   debugLog(`[fetchAllDocuments] Received ${response.documents?.length || 0} docs`);
   return response;
 }

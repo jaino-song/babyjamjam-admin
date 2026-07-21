@@ -29,6 +29,7 @@ import {
   DocumentFilterType, 
   getLegacyDocumentCustomerName,
   getStatusColor,
+  LEGACY_EXCLUDED_CUSTOMER_NAMES,
   mapLegacyDocumentStatusToLabel,
 } from "@/app/lib/eformsign/status-codes";
 import { ComponentContainer } from "../root/ComponentContainer";
@@ -45,12 +46,9 @@ const STATUS_OPTIONS: FilterOption[] = [
   { label: "거부", value: "rejected" },
 ];
 
-// Customer names to filter out (internal/test accounts)
-const EXCLUDED_CUSTOMER_NAMES = ["송진호", "인천 아이미래로"];
-
 // Transform API document to view model
 const transformDocument = (doc: EformsignDocument): EformsignDocumentView | null => {
-  const customerName = getLegacyDocumentCustomerName(doc, EXCLUDED_CUSTOMER_NAMES);
+  const customerName = getLegacyDocumentCustomerName(doc, LEGACY_EXCLUDED_CUSTOMER_NAMES);
 
   // Skip documents without a customer name
   if (!customerName) {

@@ -56,6 +56,7 @@ type EformsignWorkflowStatus = {
 };
 
 type LegacyListDocument = {
+  template?: { name?: unknown } | null;
   recipients?: unknown;
   current_status?: EformsignWorkflowStatus | null;
   last_editor?: { name?: unknown } | null;
@@ -66,6 +67,7 @@ const PROVIDER_REVIEW_STEP_TYPES = new Set(["06"]);
 const PROVIDER_OWNER_KEYWORDS = ["제공기관", "관리자", "담당자"];
 const REVIEW_ACTION_KEYWORDS = ["확인", "검토"];
 const CUSTOMER_STEP_KEYWORDS = ["이용자", "고객", "산모"];
+export const LEGACY_EXCLUDED_CUSTOMER_NAMES = ["송진호", "인천 아이미래로"] as const;
 
 // Filter types for API calls
 export type DocumentFilterType = "in-progress" | "completed" | "rejected" | null;
@@ -156,6 +158,18 @@ export function getLegacyDocumentCustomerName(
   ];
 
   return candidates.find((name) => name && !excludedNames.includes(name)) ?? null;
+}
+
+export function needsLegacyDocumentDetail(
+  document: LegacyListDocument,
+  excludedNames: readonly string[],
+): boolean {
+  const templateName = typeof document.template?.name === "string"
+    ? document.template.name.trim()
+    : "";
+
+  return templateName.includes("계약서")
+    && getLegacyDocumentCustomerName(document, excludedNames) === null;
 }
 
 /**

@@ -1,6 +1,6 @@
 import { api } from "../app/lib/axios/client";
 import { ContractDataDto } from '@/backend/application/dto/contract.dto';
-import { EformsignDocumentsResponse } from '@/app/lib/eformsign/types';
+import { EformsignDocument, EformsignDocumentsResponse } from '@/app/lib/eformsign/types';
 
 // Auth API
 export const authApi = {
@@ -46,6 +46,10 @@ export const eformsignApi = {
     },
     getRejectedDocuments: async (): Promise<EformsignDocumentsResponse> => {
         const { data } = await api.get('/documents/rejected');
+        return data;
+    },
+    getDocument: async (documentId: string): Promise<EformsignDocument> => {
+        const { data } = await api.get(`/documents/${documentId}`);
         return data;
     },
     // Legacy alias

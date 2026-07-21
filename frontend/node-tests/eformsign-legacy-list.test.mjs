@@ -5,6 +5,7 @@ import {
   getLegacyDocumentCustomerName,
   getLegacyDocumentStatusCategory,
   mapLegacyDocumentStatusToLabel,
+  needsLegacyDocumentDetail,
 } from "../src/app/lib/eformsign/status-codes.ts";
 
 test("legacy treats provider confirmation and reviewer requests as completed", () => {
@@ -79,5 +80,46 @@ test("legacy omits a document when every actor is internal", () => {
       ["송진호", "인천 아이미래로"],
     ),
     null,
+  );
+});
+
+test("legacy hydrates only unresolved contract documents", () => {
+  const unresolvedActors = {
+    recipients: [],
+    current_status: { step_recipients: [] },
+    last_editor: { name: "인천 아이미래로" },
+    creator: { name: "인천 아이미래로" },
+  };
+
+  assert.equal(
+    needsLegacyDocumentDetail(
+      {
+        ...unresolvedActors,
+        template: { name: "인천 아이미래로 남동구 계약서" },
+      },
+      ["송진호", "인천 아이미래로"],
+    ),
+    true,
+  );
+  assert.equal(
+    needsLegacyDocumentDetail(
+      {
+        ...unresolvedActors,
+        template: { name: "서비스 제공기록지 단면" },
+      },
+      ["송진호", "인천 아이미래로"],
+    ),
+    false,
+  );
+  assert.equal(
+    needsLegacyDocumentDetail(
+      {
+        ...unresolvedActors,
+        template: { name: "인천 아이미래로 서구 계약서" },
+        recipients: [{ name: "최유정" }],
+      },
+      ["송진호", "인천 아이미래로"],
+    ),
+    false,
   );
 });
