@@ -49,7 +49,9 @@ export const eformsignApi = {
         return data;
     },
     getDocument: async (documentId: string): Promise<EformsignDocument> => {
-        const { data } = await api.get(`/documents/${documentId}`);
+        const { data } = await api.get('/document-detail', {
+            params: { documentId },
+        });
         return data;
     },
     // Legacy alias
