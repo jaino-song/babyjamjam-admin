@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { eformsignApi } from "@/services/api";
 import { EformsignDocumentsResponse, EformsignDocument } from "@/app/lib/eformsign/types";
-import { getStatusCategory, DocumentFilterType } from "@/app/lib/eformsign/status-codes";
+import { getLegacyDocumentStatusCategory, DocumentFilterType } from "@/app/lib/eformsign/status-codes";
 
 // Re-export types for convenience
 export type { DocumentFilterType } from "@/app/lib/eformsign/status-codes";
@@ -15,7 +15,7 @@ const debugLog = isDev ? console.log.bind(console) : () => {};
 // Filter documents by actual status code (not just inbox type)
 function filterByActualStatus(docs: EformsignDocument[], type: DocumentFilterType): EformsignDocument[] {
   if (type === null) return docs;
-  return docs.filter(doc => getStatusCategory(doc.current_status?.status_type) === type);
+  return docs.filter(doc => getLegacyDocumentStatusCategory(doc.current_status) === type);
 }
 
 // Query keys
@@ -50,7 +50,7 @@ export function useEformsignDocumentsByType(isAuthenticated: boolean, type: Docu
           response = await eformsignApi.getInProgressDocuments();
           break;
         case "completed":
-          response = await eformsignApi.getCompletedDocuments();
+          response = await fetchAllDocuments();
           break;
         case "rejected":
           response = await eformsignApi.getRejectedDocuments();

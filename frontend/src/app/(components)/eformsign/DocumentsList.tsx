@@ -27,8 +27,9 @@ import { useEformsignAuth } from "@/app/hooks/useEformsignAuth";
 import { EformsignDocument, EformsignDocumentView } from "@/app/lib/eformsign/types";
 import { 
   DocumentFilterType, 
-  mapStatusToLabel, 
-  getStatusColor 
+  getLegacyDocumentCustomerName,
+  getStatusColor,
+  mapLegacyDocumentStatusToLabel,
 } from "@/app/lib/eformsign/status-codes";
 import { ComponentContainer } from "../root/ComponentContainer";
 import { t } from "@/app/lib/i18n/translations";
@@ -49,29 +50,10 @@ const EXCLUDED_CUSTOMER_NAMES = ["송진호", "인천 아이미래로"];
 
 // Transform API document to view model
 const transformDocument = (doc: EformsignDocument): EformsignDocumentView | null => {
-  const stepRecipients = doc.current_status?.step_recipients;
-
-  // Get customer name from multiple possible sources:
-  // 1. step_recipients[0].name (when document is in-progress)
-  // 2. last_editor.name (when document is completed/rejected)
-  // 3. creator.name (fallback)
-  let customerName: string | null = null;
-  
-  if (stepRecipients && stepRecipients.length > 0 && stepRecipients[0]?.name) {
-    customerName = stepRecipients[0].name;
-  } else if (doc.last_editor?.name) {
-    customerName = doc.last_editor.name;
-  } else if (doc.creator?.name) {
-    customerName = doc.creator.name;
-  }
+  const customerName = getLegacyDocumentCustomerName(doc, EXCLUDED_CUSTOMER_NAMES);
 
   // Skip documents without a customer name
   if (!customerName) {
-    return null;
-  }
-
-  // Skip internal/test accounts
-  if (EXCLUDED_CUSTOMER_NAMES.includes(customerName)) {
     return null;
   }
 
@@ -79,7 +61,7 @@ const transformDocument = (doc: EformsignDocument): EformsignDocumentView | null
     doc_id: doc.id,
     customer_name: customerName,
     created_date: doc.created_date,
-    status: mapStatusToLabel(doc.current_status?.status_type),
+    status: mapLegacyDocumentStatusToLabel(doc.current_status),
   };
 };
 

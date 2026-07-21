@@ -46,6 +46,26 @@ export const IN_PROGRESS_CODES = [
 
 // Korean status labels
 export type DocumentStatusLabel = "대기" | "완료" | "거부";
+export type DocumentStatusCategory = "completed" | "rejected" | "in-progress";
+
+type EformsignWorkflowStatus = {
+  status_type?: string | null;
+  step_type?: string | null;
+  step_name?: string | null;
+  step_recipients?: unknown;
+};
+
+type LegacyListDocument = {
+  recipients?: unknown;
+  current_status?: EformsignWorkflowStatus | null;
+  last_editor?: { name?: unknown } | null;
+  creator?: { name?: unknown } | null;
+};
+
+const PROVIDER_REVIEW_STEP_TYPES = new Set(["06"]);
+const PROVIDER_OWNER_KEYWORDS = ["제공기관", "관리자", "담당자"];
+const REVIEW_ACTION_KEYWORDS = ["확인", "검토"];
+const CUSTOMER_STEP_KEYWORDS = ["이용자", "고객", "산모"];
 
 // Filter types for API calls
 export type DocumentFilterType = "in-progress" | "completed" | "rejected" | null;
@@ -60,7 +80,7 @@ export function normalizeStatusCode(code: string | undefined | null): string {
 /**
  * Get document status category from status code
  */
-export function getStatusCategory(statusCode: string | undefined | null): "completed" | "rejected" | "in-progress" {
+export function getStatusCategory(statusCode: string | undefined | null): DocumentStatusCategory {
   const normalized = normalizeStatusCode(statusCode);
   
   if (COMPLETED_CODES.includes(normalized as typeof COMPLETED_CODES[number])) {
@@ -70,6 +90,72 @@ export function getStatusCategory(statusCode: string | undefined | null): "compl
     return "rejected";
   }
   return "in-progress";
+}
+
+function isProviderReviewStep(currentStatus: EformsignWorkflowStatus | null | undefined): boolean {
+  const stepType = currentStatus?.step_type?.trim() ?? "";
+  const stepName = currentStatus?.step_name?.trim() ?? "";
+
+  if (PROVIDER_REVIEW_STEP_TYPES.has(stepType)) return true;
+  if (!stepName || CUSTOMER_STEP_KEYWORDS.some((keyword) => stepName.includes(keyword))) return false;
+
+  const hasProviderOwner = PROVIDER_OWNER_KEYWORDS.some((keyword) => stepName.includes(keyword));
+  const hasReviewAction = REVIEW_ACTION_KEYWORDS.some((keyword) => stepName.includes(keyword));
+  return hasProviderOwner && hasReviewAction;
+}
+
+/** Legacy only: reviewer/provider confirmation is shown as completed. */
+export function getLegacyDocumentStatusCategory(
+  currentStatus: EformsignWorkflowStatus | null | undefined,
+): DocumentStatusCategory {
+  const category = getStatusCategory(currentStatus?.status_type);
+  if (category !== "in-progress") return category;
+
+  return normalizeStatusCode(currentStatus?.status_type) === "070" || isProviderReviewStep(currentStatus)
+    ? "completed"
+    : "in-progress";
+}
+
+export function mapLegacyDocumentStatusToLabel(
+  currentStatus: EformsignWorkflowStatus | null | undefined,
+): DocumentStatusLabel {
+  switch (getLegacyDocumentStatusCategory(currentStatus)) {
+    case "completed":
+      return "완료";
+    case "rejected":
+      return "거부";
+    default:
+      return "대기";
+  }
+}
+
+function collectNames(value: unknown, depth = 0): string[] {
+  if (depth > 5 || value == null) return [];
+  if (Array.isArray(value)) return value.flatMap((item) => collectNames(item, depth + 1));
+  if (typeof value !== "object") return [];
+
+  const record = value as Record<string, unknown>;
+  const ownName = typeof record.name === "string" ? record.name.trim() : "";
+  const nestedNames = Object.values(record).flatMap((item) => collectNames(item, depth + 1));
+  return ownName ? [ownName, ...nestedNames] : nestedNames;
+}
+
+/**
+ * Provider-owned review/completed steps make current_status and last_editor
+ * point at the branch. The participant list still retains the customer.
+ */
+export function getLegacyDocumentCustomerName(
+  document: LegacyListDocument,
+  excludedNames: readonly string[],
+): string | null {
+  const candidates = [
+    ...collectNames(document.recipients),
+    ...collectNames(document.current_status?.step_recipients),
+    typeof document.last_editor?.name === "string" ? document.last_editor.name.trim() : "",
+    typeof document.creator?.name === "string" ? document.creator.name.trim() : "",
+  ];
+
+  return candidates.find((name) => name && !excludedNames.includes(name)) ?? null;
 }
 
 /**
@@ -108,4 +194,3 @@ export function getStatusColor(status: string): "success" | "warning" | "error" 
   }
   return "info";
 }
-
