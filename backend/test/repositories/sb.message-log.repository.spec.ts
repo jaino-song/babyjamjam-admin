@@ -1,8 +1,10 @@
 import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { MessageLogEntity } from "domain/entities/message-log.entity";
 
 describe("SbMessageLogRepository", () => {
     const createMockPrismaMessageLog = () => ({
+        create: jest.fn(),
         findFirst: jest.fn(),
         findMany: jest.fn(),
         updateMany: jest.fn(),
@@ -14,7 +16,10 @@ describe("SbMessageLogRepository", () => {
 
     beforeEach(() => {
         messageLogModel = createMockPrismaMessageLog();
-        prisma = { message_log: messageLogModel } as unknown as PrismaService;
+        prisma = {
+            message_log: messageLogModel,
+            $transaction: jest.fn(async (callback) => callback({ message_log: messageLogModel })),
+        } as unknown as PrismaService;
         repository = new SbMessageLogRepository(prisma);
     });
 
@@ -50,11 +55,106 @@ describe("SbMessageLogRepository", () => {
         });
     });
 
-    describe("scheduleFailedForRetry", () => {
-        it("atomically schedules only the branch-owned failed SMS log", async () => {
-            const retryAt = new Date("2026-07-23T02:25:00.000Z");
-            const nowSpy = jest.spyOn(Date, "now").mockReturnValue(retryAt.getTime());
+    describe("startRetryAttempt", () => {
+        const source = MessageLogEntity.reconstitute(
+            77,
+            "11111111-1111-1111-1111-111111111111",
+            "aligo_sms",
+            "service_record_link_sms",
+            "job-1",
+            "01012345678",
+            7,
+            "message",
+            {},
+            "failed",
+            null,
+            "등록되지 않은 발신번호입니다.",
+            1,
+            new Date("2026-07-22T17:13:11.000Z"),
+            new Date("2026-07-22T17:18:11.000Z"),
+            new Date("2026-07-22T17:13:11.000Z"),
+        );
+        const retryDraft = MessageLogEntity.reconstitute(
+            0,
+            source.branchId,
+            source.provider,
+            source.templateKey,
+            source.triggerJobId,
+            source.receiver,
+            source.clientId,
+            source.messageBody,
+            { retryOfLogId: "77", retryAttempt: "2" },
+            "pending",
+            null,
+            null,
+            1,
+            null,
+            null,
+            new Date("2026-07-22T17:18:11.000Z"),
+        );
+
+        it("should clear only the source retry schedule and create a separate attempt", async () => {
+            const claimedAt = new Date("2026-07-22T17:18:12.000Z");
+            const nowSpy = jest.spyOn(Date, "now").mockReturnValue(claimedAt.getTime());
             messageLogModel.updateMany.mockResolvedValue({ count: 1 });
+            messageLogModel.create.mockResolvedValue({
+                id: 78,
+                branchId: retryDraft.branchId,
+                provider: retryDraft.provider,
+                templateKey: retryDraft.templateKey,
+                triggerJobId: retryDraft.triggerJobId,
+                receiver: retryDraft.receiver,
+                clientId: retryDraft.clientId,
+                recipientName: null,
+                recipientPhone: retryDraft.receiver,
+                messageBody: retryDraft.messageBody,
+                variables: retryDraft.variables,
+                status: "pending",
+                aligoMid: null,
+                errorMessage: null,
+                attempts: 1,
+                lastAttemptAt: null,
+                nextRetryAt: null,
+                createdAt: retryDraft.createdAt,
+                updatedAt: retryDraft.createdAt,
+            });
+
+            const result = await repository.startRetryAttempt(source, retryDraft);
+
+            expect(messageLogModel.updateMany).toHaveBeenCalledWith({
+                where: {
+                    id: 77,
+                    branchId: source.branchId,
+                    status: "failed",
+                    nextRetryAt: source.nextRetryAt,
+                    updatedAt: source.updatedAt,
+                },
+                data: {
+                    nextRetryAt: null,
+                    updatedAt: claimedAt,
+                },
+            });
+            expect(messageLogModel.create).toHaveBeenCalled();
+            expect(result).toEqual(expect.objectContaining({ id: 78, status: "pending" }));
+            expect(source).toEqual(expect.objectContaining({
+                id: 77,
+                status: "failed",
+                errorMessage: "등록되지 않은 발신번호입니다.",
+            }));
+            nowSpy.mockRestore();
+        });
+
+        it("should not create a duplicate attempt when the source was already claimed", async () => {
+            messageLogModel.updateMany.mockResolvedValue({ count: 0 });
+
+            await expect(repository.startRetryAttempt(source, retryDraft)).resolves.toBeNull();
+
+            expect(messageLogModel.create).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("findByIdInBranch", () => {
+        it("returns only a log owned by the requested branch", async () => {
             messageLogModel.findFirst.mockResolvedValue({
                 id: 77,
                 branchId: "branch-1",
@@ -67,51 +167,26 @@ describe("SbMessageLogRepository", () => {
                 recipientPhone: "01012345678",
                 messageBody: "제공기록지 작성 링크",
                 variables: {},
-                status: "pending",
+                status: "failed",
                 aligoMid: null,
                 errorMessage: "발송 실패",
                 attempts: 1,
                 lastAttemptAt: new Date("2026-07-23T02:20:00.000Z"),
-                nextRetryAt: retryAt,
+                nextRetryAt: null,
                 createdAt: new Date("2026-07-23T02:20:00.000Z"),
-                updatedAt: retryAt,
+                updatedAt: new Date("2026-07-23T02:20:00.000Z"),
             });
 
-            const result = await repository.scheduleFailedForRetry("branch-1", 77);
+            const result = await repository.findByIdInBranch("branch-1", 77);
 
-            expect(messageLogModel.updateMany).toHaveBeenCalledWith({
-                where: {
-                    id: 77,
-                    branchId: "branch-1",
-                    provider: "aligo_sms",
-                    status: "failed",
-                },
-                data: {
-                    status: "pending",
-                    nextRetryAt: retryAt,
-                },
-            });
             expect(messageLogModel.findFirst).toHaveBeenCalledWith({
                 where: { id: 77, branchId: "branch-1" },
             });
             expect(result).toMatchObject({
                 id: 77,
                 branchId: "branch-1",
-                templateKey: "service_record_link_sms",
-                recipientName: "나세정",
-                status: "pending",
-                nextRetryAt: retryAt,
+                status: "failed",
             });
-            nowSpy.mockRestore();
-        });
-
-        it("does not fetch a log when the failed-state claim loses a race", async () => {
-            messageLogModel.updateMany.mockResolvedValue({ count: 0 });
-
-            const result = await repository.scheduleFailedForRetry("branch-1", 77);
-
-            expect(result).toBeNull();
-            expect(messageLogModel.findFirst).not.toHaveBeenCalled();
         });
     });
 });
