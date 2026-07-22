@@ -33,4 +33,6 @@ export const messageTriggersApi = {
         api.get<MessageLogRecord[]>("/message-logs", {
             params: { limit },
         }),
+    retryHistory: (id: number) =>
+        api.post<MessageLogRecord>(`/message-logs/${id}/retry`),
 };
