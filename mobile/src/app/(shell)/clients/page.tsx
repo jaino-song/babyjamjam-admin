@@ -529,7 +529,7 @@ export default function ClientsPage() {
               activeFilter={activeFilter}
               onFilterChange={setActiveFilter}
               scrollRef={scrollContainerRef}
-              loadMoreFooter={
+              loadMore={
                 isInitialLoad && hasMore ? (
                   <ListLoadMoreButton
                     onLoadMore={loadMore}

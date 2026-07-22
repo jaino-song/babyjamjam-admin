@@ -606,7 +606,7 @@ export default function FilesPage() {
             activeFilter={activeFilter}
             onFilterChange={setActiveFilter}
             scrollRef={scrollContainerRef}
-            loadMoreFooter={
+            loadMore={
               isInitialLoad && hasMore ? (
                 <ListLoadMoreButton
                   onLoadMore={loadMore}

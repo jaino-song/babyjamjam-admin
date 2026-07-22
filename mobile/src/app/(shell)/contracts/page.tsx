@@ -2049,7 +2049,7 @@ export default function ContractsPage() {
             activeFilter={activeFilter}
             onFilterChange={(label) => setActiveFilter(label as FilterKey)}
             scrollRef={scrollContainerRef}
-            loadMoreFooter={
+            loadMore={
               isContractsLoading ? (
                 <div
                   className="contracts-load-more-placeholder"
