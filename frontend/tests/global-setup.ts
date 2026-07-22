@@ -27,6 +27,7 @@ export default async function globalSetup(config: FullConfig) {
     value: branchId,
     domain: url.hostname,
     path: "/",
+    expires: -1,
     httpOnly: false,
     secure: url.protocol === "https:",
     sameSite: "Lax",
