@@ -11,6 +11,7 @@ import {
 import { ClientEntity } from "domain/entities/client.entity";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
+import { normalizeClientPricing } from "domain/services/client-pricing";
 import { diffBusinessDaysKr } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { computeServiceStatus, isServiceStatus, SERVICE_STATUS, SERVICE_STATUS_VALUES, ServiceStatusType } from "domain/value-objects/service-status.vo";
@@ -465,15 +466,23 @@ export class ClientService {
             }
         }
 
+        const normalizedPricing = normalizeClientPricing({
+            voucherClient: params.voucherClient,
+            type: params.type ?? null,
+            fullPrice: params.fullPrice ?? null,
+            grant: params.grant ?? null,
+            actualPrice: params.actualPrice ?? null,
+        });
+
         const createParams = {
             name: params.name,
             address: params.address ?? null,
             phone: params.phone ?? null,
-            type: params.type ?? null,
+            type: normalizedPricing.type,
             duration: params.duration ?? null,
-            fullPrice: params.fullPrice ?? null,
-            grant: params.grant ?? null,
-            actualPrice: params.actualPrice ?? null,
+            fullPrice: normalizedPricing.fullPrice,
+            grant: normalizedPricing.grant,
+            actualPrice: normalizedPricing.actualPrice,
             startDate: startDate,
             endDate: endDate,
             careCenter: params.careCenter,
@@ -825,6 +834,21 @@ export class ClientService {
         if (!existingClient) {
             throw new Error(`Client with id ${id} not found`);
         }
+        const hasPricingUpdate = params.voucherClient !== undefined
+            || params.type !== undefined
+            || params.duration !== undefined
+            || params.fullPrice !== undefined
+            || params.grant !== undefined
+            || params.actualPrice !== undefined;
+        const normalizedPricing = hasPricingUpdate
+            ? normalizeClientPricing({
+                voucherClient: params.voucherClient ?? existingClient.voucherClient,
+                type: params.type === undefined ? existingClient.type : params.type,
+                fullPrice: params.fullPrice === undefined ? existingClient.fullPrice : params.fullPrice,
+                grant: params.grant === undefined ? existingClient.grant : params.grant,
+                actualPrice: params.actualPrice === undefined ? existingClient.actualPrice : params.actualPrice,
+            })
+            : null;
         this.assertAllowedServiceStatus(params.serviceStatus);
         await this.assertAllowedClientArea(branchid, params.areaId);
         await this.serviceRecordLifecycleService?.validatePeriodChange({
@@ -912,11 +936,11 @@ export class ClientService {
                     name: params.name,
                     address: params.address ?? undefined,
                     phone: params.phone ?? undefined,
-                    type: params.type ?? undefined,
+                    type: normalizedPricing?.type,
                     duration: params.duration ?? undefined,
-                    fullPrice: params.fullPrice ?? undefined,
-                    grant: params.grant ?? undefined,
-                    actualPrice: params.actualPrice ?? undefined,
+                    fullPrice: normalizedPricing?.fullPrice,
+                    grant: normalizedPricing?.grant,
+                    actualPrice: normalizedPricing?.actualPrice,
                     startDate: params.startDate ? new Date(params.startDate) : undefined,
                     endDate: params.endDate ? new Date(params.endDate) : undefined,
                     careCenter: params.careCenter ?? undefined,

@@ -25,6 +25,9 @@ export const CONTRACT_FINALIZE_PROGRESS_STEPS: readonly HeadlessProgressStep[] =
     { key: "sent", label: "전자문서 처리 완료", errorLabel: "전자문서 처리 실패" },
 ];
 
+export const SERVICE_RECORD_FINALIZE_PROGRESS_STEPS: readonly HeadlessProgressStep[] =
+    CONTRACT_FINALIZE_PROGRESS_STEPS.filter((step) => step.key !== "info-inserted");
+
 export const INITIAL_HEADLESS_PROGRESS: HeadlessProgressState = {
     step: null,
     completed: false,

@@ -150,9 +150,7 @@ function setup() {
     };
     const usecase = new CreateAndSendServiceRecordSnapshotUsecase(
         eformsignClient as never,
-        {} as never,
         prismaWithTransaction as never,
-        {} as never,
         {} as never,
         {} as never,
     );
@@ -180,6 +178,18 @@ describe("client-owned service record snapshot", () => {
             ["제공A", 1],
             ["제공B", 1],
         ]);
+    });
+
+    it("throws the not-configured error when the base 5회 template env is missing", () => {
+        const usecase = new CreateAndSendServiceRecordSnapshotUsecase(
+            {} as never,
+            {} as never,
+            {} as never,
+            { get: jest.fn().mockReturnValue(undefined) } as never,
+        );
+        const reader = usecase as unknown as { getConfiguredTiers(): unknown };
+
+        expect(() => reader.getConfiguredTiers()).toThrow(/EFORMSIGN_FEEDBACK_TEMPLATE_ID/);
     });
 
     it("sizes each provider segment to the smallest fitting tier and carries that tier's templateId", () => {

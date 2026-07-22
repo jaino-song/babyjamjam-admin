@@ -195,14 +195,28 @@ body:has([data-component="messages"]) [data-component="messages-content"] {
   flex: 1;
 }
 
-.message-data-row-title {
+.message-data-row-copy-split {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
 }
 
-.message-data-row-title strong {
+.message-data-row-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.message-data-row-copy > .message-data-row-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.message-data-row-copy > .message-data-row-title > strong,
+.message-data-row-info > .message-data-row-title {
+  display: block;
   overflow: hidden;
   color: hsl(var(--v3-dark));
   font-size: 0.82rem;
@@ -619,7 +633,7 @@ main[data-component="main-content"]:has([data-component="dashboard"]) > [data-co
   cursor: pointer;
   font-family: inherit;
   min-height: 0;
-  padding: 0 4px;
+  padding: 0;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -654,7 +668,7 @@ main[data-component="main-content"]:has([data-component="dashboard"]) > [data-co
 .filter-row {
   display: flex;
   gap: 6px;
-  padding: 6px 12px;
+  padding: 6px 0;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -719,7 +733,7 @@ main[data-component="main-content"]:has([data-component="dashboard"]) > [data-co
   color: hsl(var(--v3-text-muted));
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  padding: 16px 12px 6px;
+  padding: 16px 0 6px;
   background: white;
   position: sticky;
   top: 0;
@@ -736,7 +750,7 @@ main[data-component="main-content"]:has([data-component="dashboard"]) > [data-co
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
+  padding: 8px 0;
   border-radius: 12px;
   cursor: pointer;
   transition: background 0.15s ease;
@@ -880,7 +894,7 @@ main[data-component="main-content"]:has([data-component="dashboard"]) > [data-co
   background: hsl(var(--v3-dim-white));
   border-radius: 12px;
   min-height: 44px;
-  padding: 0 12px;
+  padding: 0;
   margin: 0 12px 8px;
   color: hsl(var(--v3-text-muted));
   font-size: 0.8rem;
@@ -2315,13 +2329,6 @@ body.mobile-all-route .menu-row {
   overflow-y: auto;
 }
 
-[data-component="files"] .list-card {
-  max-width: 338px;
-  margin: 0 auto;
-  border-radius: 22px;
-  padding: 8px;
-}
-
 [data-component="files"] .list-title,
 [data-component="files"] .search-bar,
 [data-component="files"] .search-bar input,
@@ -2490,11 +2497,6 @@ body:has([data-component="files"] .nav-stack.show-detail) [data-component="mobil
   overflow-y: auto;
 }
 
-[data-component="clients"] .list-card {
-  border-radius: 22px;
-  padding: 8px;
-}
-
 [data-component="clients"] .list-title {
   line-height: normal;
 }
@@ -2635,14 +2637,6 @@ body:has([data-component="files"] .nav-stack.show-detail) [data-component="mobil
   padding: 0;
 }
 
-[data-component="mobile-clients-service-records"] .link-note {
-  margin-top: 8px;
-  color: hsl(var(--v3-text-muted));
-  font-size: 0.66rem;
-  line-height: 1.5;
-  text-align: center;
-}
-
 [data-component="mobile-clients-service-records"] .service-record-card-title-row {
   display: flex;
   align-items: center;
@@ -2656,8 +2650,35 @@ body:has([data-component="files"] .nav-stack.show-detail) [data-component="mobil
   margin-bottom: 0;
 }
 
+[data-component="mobile-clients-service-records-assignment"] > .info-card:first-child > .info-card-title {
+  font-size: 0.7rem;
+}
+
 [data-component="mobile-clients-service-records"] .service-record-card-title-row .service-record-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   margin-left: auto;
+}
+
+[data-component="mobile-clients-service-records"] .service-record-refresh-button {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: hsl(var(--v3-text-muted));
+  cursor: pointer;
+}
+
+[data-component="mobile-clients-service-records"] .service-record-refresh-button:disabled {
+  cursor: wait;
+  opacity: 0.5;
 }
 
 [data-component="mobile-clients-service-records"] .service-record-card-title-row .info-row {
@@ -2923,11 +2944,6 @@ body:has([data-component="consultations"]) [data-component="mobile-header"] {
   overflow-y: auto;
 }
 
-[data-component="consultations"] .list-card {
-  border-radius: 22px;
-  padding: 8px;
-}
-
 [data-component="consultations"] .list-title,
 [data-component="consultations"] .filter-pill,
 [data-component="consultations"] .section-header,
@@ -3166,11 +3182,6 @@ body:has([data-component="employees"]) [data-component="employees"].mobile-detai
 body:has([data-component="employees"]) [data-component="mobile-employees-content"] {
   padding: 12px 14px 76px;
   overflow-y: auto;
-}
-
-body:has([data-component="employees"]) .list-card {
-  border-radius: 22px;
-  padding: 8px;
 }
 
 body:has([data-component="employees"]) .list-title {
@@ -3560,19 +3571,6 @@ body:has([data-component="messages"]) [data-component="mobile-messages-detail-sc
   left: 12px;
   z-index: 50;
   border-radius: 38px;
-}
-
-body:has([data-component="messages"]) [data-component="mobile-messages-detail-page"] {
-  position: fixed;
-  top: 62px;
-  right: 12px;
-  bottom: 12px;
-  left: 12px;
-  z-index: var(--mobile-z-detail);
-  width: auto;
-  border-radius: 24px 24px 0 0;
-  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.22);
-  overflow: hidden;
 }
 
 body:has([data-component="messages"]):has([data-component="mobile-messages-stack"].show-detail) [data-component="mobile-bottom-nav"] {
@@ -5230,11 +5228,6 @@ body.mobile-contracts-route [data-component="mobile-contracts-row"] {
   text-align: left;
 }
 
-body.mobile-contracts-route .list-card {
-  border-radius: 22px;
-  padding: 8px;
-}
-
 body.mobile-contracts-route [data-component="mobile-contracts-search"] {
   margin: 4px 12px 8px;
   line-height: normal;
@@ -5244,25 +5237,25 @@ body.mobile-contracts-route [data-component="mobile-contracts-search"] input {
   line-height: normal;
 }
 
-/* 카드 하단에 핀되는 load-more 버튼 슬롯. isInitialLoad === true 인 동안만 mount.
-   .list-card-scroll 의 flex sibling 이라 scroll 영역의 clientHeight 가 자동으로 footer 를
+/* 카드 하단에 핀되는 load-more 컨트롤. isInitialLoad === true 인 동안만 mount.
+   .list-card-scroll 의 flex sibling 이라 scroll 영역의 clientHeight 가 자동으로 load-more 영역을
    제외한 값으로 잡혀, hook 의 fit 계산에서 별도 차감이 필요 없음.
    ::before 는 짧고 진한 fade 로 마지막 row 를 숨겨 "더 있다" 라는 teaser cue 만 남긴다. */
-.list-card-footer {
+.list-card-load-more {
   flex: 0 0 auto;
   display: flex;
   justify-content: center;
-  padding: 8px 0 6px;
+  margin-top: -1rem;
   position: relative;
-  background: transparent;
+  background: white;
 }
-.list-card-footer::before {
+.list-card-load-more::before {
   content: "";
   position: absolute;
   left: 0;
   right: 0;
-  bottom: calc(100% - 10px);
-  height: 58px;
+  bottom: 100%;
+  height: 72px;
   background: linear-gradient(
     to bottom,
     hsla(0, 0%, 100%, 0) 0%,
@@ -5272,11 +5265,11 @@ body.mobile-contracts-route [data-component="mobile-contracts-search"] input {
   );
   pointer-events: none;
 }
-.list-card-footer > button {
+.list-card-load-more > button {
   position: relative;
   z-index: 1;
 }
-.list-card:has(.list-card-footer) .list-card-scroll {
+.list-card:has(.list-card-load-more) .list-card-scroll {
   overflow-y: hidden;
   overscroll-behavior: none;
 }
@@ -6477,11 +6470,6 @@ body:has([data-component="contracts"]) [data-component="mobile-contracts-detail-
 
 body:has([data-component="contracts"]) [data-component="mobile-contracts-stack"].show-detail .nav-page.list {
   transform: translateX(0) !important;
-}
-
-body:has([data-component="contracts"]) .list-card {
-  border-radius: 22px;
-  padding: 8px;
 }
 
 body:has([data-component="contracts"]) .list-count {

@@ -35,8 +35,9 @@ describe("TemplatesPage", () => {
 
     expect(messagesShell).toHaveAttribute("data-page", "messages-templates");
     expect(content).toContainElement(card);
-    expect(screen.getByRole("button", { name: "템플릿" }))
-      .toHaveAttribute("aria-pressed", "true");
+    const templatesSectionButton = screen.getByRole("button", { name: "템플릿" });
+    expect(templatesSectionButton).toHaveAttribute("aria-pressed", "false");
+    expect(templatesSectionButton).toBeDisabled();
     expect(screen.getByText("템플릿 관리")).toHaveClass("list-title-text");
     expect(card).toContainElement(
       container.querySelector('[data-component="mobile-redesign-filter-row"]'),

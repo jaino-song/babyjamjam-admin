@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import NewMessagePage from "../page";
@@ -11,6 +11,7 @@ const mockUseSystemTemplate = jest.fn();
 const mockGetMessageSenderApproval = jest.fn();
 const mockUseBankAccountInfos = jest.fn();
 const mockUseVoucherPriceInfos = jest.fn();
+const mockClipboardWriteText = jest.fn();
 let mockSearchParams = new URLSearchParams();
 
 beforeAll(() => {
@@ -29,6 +30,10 @@ beforeAll(() => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
     configurable: true,
     value: () => undefined,
+  });
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText: mockClipboardWriteText },
   });
 });
 
@@ -224,6 +229,8 @@ describe("NewMessagePage", () => {
     });
     (api.post as jest.Mock).mockReset();
     (api.post as jest.Mock).mockResolvedValue({ data: { result: { resultCode: 1, errorCount: 0 } } });
+    mockClipboardWriteText.mockReset();
+    mockClipboardWriteText.mockResolvedValue(undefined);
     mockSearchParams = new URLSearchParams();
   });
 
@@ -323,6 +330,25 @@ describe("NewMessagePage", () => {
     });
   });
 
+  it("restores the selected template body with empty variables after sending", async () => {
+    renderPage();
+
+    await openTemplateSelect();
+    fireEvent.click(screen.getByRole("option", { name: "서비스 안내" }));
+
+    const receiverInput = screen.getByLabelText(/휴대 전화번호/);
+    fireEvent.focus(receiverInput);
+    fireEvent.change(receiverInput, { target: { value: "박서연" } });
+    fireEvent.click(await screen.findByText("박서연"));
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("메시지 본문")).toHaveValue(
+        "{{name}} 산모님~♡\n서비스 시작일: {{serviceDate}}\n산후관리서비스 관련 안내사항을 보내드립니다 :)",
+      );
+    });
+  });
+
   it("excludes decimal client ids from the delivery payload", async () => {
     mockSearchParams = new URLSearchParams({ clientId: "1.2" });
 
@@ -337,6 +363,27 @@ describe("NewMessagePage", () => {
         "/message-deliveries/sms",
         expect.not.objectContaining({
           clientId: expect.anything(),
+        }),
+      );
+    });
+  });
+
+  it("prefills the customer recipient from a valid client id", async () => {
+    mockSearchParams = new URLSearchParams({ clientId: "7" });
+
+    renderPage();
+
+    expect(await screen.findByRole("button", { name: "박서연 수신자 제거" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        "/message-deliveries/sms",
+        expect.objectContaining({
+          receiver: "010-7777-8888",
+          clientId: 7,
+          recipientName: "박서연",
         }),
       );
     });
@@ -398,18 +445,13 @@ describe("NewMessagePage", () => {
     expect(screen.getByLabelText("메시지 본문")).toHaveValue("안녕하세요, 인천 아이미래로 입니다 :)");
   });
 
-  it("opens the message preview in a dialog from the body header", () => {
+  it("copies the current message body from the body header", () => {
     renderPage();
 
-    expect(screen.queryByText("SMS 미리보기")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "복사" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "미리보기" }));
-
-    const dialog = screen.getByRole("dialog", { name: "미리보기" });
-    expect(dialog).toBeInTheDocument();
-    expect(dialog).toHaveClass("h-auto", "max-h-[calc(100dvh-2rem)]", "w-[calc(100vw-2rem)]");
-    expect(within(dialog).getByText("SMS 미리보기")).toBeInTheDocument();
-    expect(within(dialog).getByText("안녕하세요, 인천 아이미래로 입니다 :)")).toBeInTheDocument();
+    expect(mockClipboardWriteText).toHaveBeenCalledWith("안녕하세요, 인천 아이미래로 입니다 :)");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("disables immediate send until a recipient is selected", () => {
@@ -467,6 +509,29 @@ describe("NewMessagePage", () => {
     expect(screen.getByLabelText("메시지 본문")).toHaveValue(
       "김지니 산모님~♡\n서비스 시작일: 2026. 06. 10.\n산후관리서비스 관련 안내사항을 보내드립니다 :)",
     );
+  });
+
+  it("uses the shared mobile input specification for message text fields", async () => {
+    renderPage();
+
+    await openTemplateSelect();
+    fireEvent.click(screen.getByRole("option", { name: "서비스 안내" }));
+
+    for (const input of [
+      screen.getByLabelText(/휴대 전화번호/),
+      screen.getByLabelText(/산모님 성함/),
+      screen.getByLabelText(/서비스 시작일/),
+    ]) {
+      expect(input).toHaveAttribute("data-source-component", "Input");
+      expect(input).toHaveClass(
+        "h-[44px]",
+        "rounded-[12px]",
+        "border-[1.5px]",
+        "px-[14px]",
+        "py-0",
+        "text-[0.9rem]",
+      );
+    }
   });
 
   it("includes the remaining frontend fallback templates in the template dropdown", async () => {
@@ -544,10 +609,20 @@ describe("NewMessagePage", () => {
       expect(screen.getByRole("combobox", { name: "바우처 유형 *" })).toBeInTheDocument();
     });
 
+    const recipientNameInput = screen.getByLabelText(/산모님 성함/);
     const receiverInput = screen.getByLabelText(/휴대 전화번호/);
-    fireEvent.focus(receiverInput);
-    fireEvent.change(receiverInput, { target: { value: "박서연" } });
+
+    expect(recipientNameInput).toHaveAttribute("data-component", "clients-autocomplete-input");
+    expect(receiverInput).toHaveAttribute("data-component", "messages-new-recipient-input");
+
+    fireEvent.focus(recipientNameInput);
+    fireEvent.change(recipientNameInput, { target: { value: "박서연" } });
     fireEvent.click(await screen.findByText("박서연"));
+
+    expect(recipientNameInput).toHaveValue("");
+    expect(screen.queryByRole("button", { name: "선택 해제" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "목록 열기" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "박서연 수신자 제거" })).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.getByRole("combobox", { name: "바우처 유형 *" })).toHaveTextContent("A통합-2형");
@@ -564,6 +639,13 @@ describe("NewMessagePage", () => {
     expect(bodyValue).toContain("2,196,000원");
     expect(bodyValue).toContain("462,000원");
     expect(bodyValue).toContain("농협은행 351-1268-7728-43");
+
+    fireEvent.click(screen.getByRole("button", { name: "박서연 수신자 제거" }));
+
+    await waitFor(() => {
+      expect(recipientNameInput).toHaveValue("");
+      expect(screen.queryByRole("button", { name: "박서연 수신자 제거" })).not.toBeInTheDocument();
+    });
   });
 
   it("prefills service information variables from a selected client recipient", async () => {

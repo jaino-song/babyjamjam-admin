@@ -64,7 +64,9 @@ describe("shared message presentation contract", () => {
   });
 
   it("normalizes history display fields identically for frontend and mobile", () => {
-    expect(normalizeMessageHistoryPresentation(historyRecord())).toEqual({
+    expect(normalizeMessageHistoryPresentation(historyRecord({
+      errorMessage: "Aligo SMS API error (403): 등록인증되지 않은 발신번호입니다.",
+    }))).toEqual({
       id: 1,
       title: "제공기록지 작성 링크",
       templateLabel: "제공기록지 작성 링크",
@@ -77,6 +79,13 @@ describe("shared message presentation contract", () => {
       messagePreview: "제공기록지 링크",
       failureReason: undefined,
     });
+  });
+
+  it("keeps a failure reason for failed history records", () => {
+    expect(normalizeMessageHistoryPresentation(historyRecord({
+      status: "failed",
+      errorMessage: "Aligo SMS API error (403): 등록인증되지 않은 발신번호입니다.",
+    })).failureReason).toBe("등록인증되지 않은 발신번호입니다.");
   });
 
   it("shares channel, timestamp, failure, status, and navigation copy", () => {

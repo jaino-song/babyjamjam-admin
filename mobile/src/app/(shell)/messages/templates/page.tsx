@@ -183,7 +183,7 @@ export default function TemplatesPage() {
             </label>
           )}
           scrollRef={scrollContainerRef}
-          loadMoreFooter={isInitialLoad && hasMore ? (
+          loadMore={isInitialLoad && hasMore ? (
             <ListLoadMoreButton
               onLoadMore={loadMore}
               dataComponentPrefix="messages-templates"

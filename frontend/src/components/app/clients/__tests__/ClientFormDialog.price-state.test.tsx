@@ -15,6 +15,13 @@ let mockVoucherPriceInfos = [
   },
 ];
 
+const mockOutOfPocketPriceInfos = [
+  { id: 1, duration: 5, fullPrice: "815000" },
+  { id: 2, duration: 10, fullPrice: "1620000" },
+  { id: 3, duration: 15, fullPrice: "2425000" },
+  { id: 4, duration: 20, fullPrice: "3240000" },
+];
+
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ replace: jest.fn() }),
   useSearchParams: () => new URLSearchParams(),
@@ -31,6 +38,11 @@ jest.mock("@/hooks/useVoucherData", () => ({
     isLoading: false,
   }),
   useVoucherYears: () => ({ data: [2025, 2026], isLoading: false }),
+  useOutOfPocketPriceInfos: () => ({
+    data: mockOutOfPocketPriceInfos,
+    isLoading: false,
+    isError: false,
+  }),
 }));
 
 jest.mock("@/stores/client-dialog-store", () => {
@@ -79,6 +91,8 @@ describe("ClientFormPanel voucher pricing", () => {
     await act(async () => {
       await Promise.resolve();
     });
+
+    fireEvent.click(screen.getByRole("tab", { name: "바우처 고객" }));
 
     const voucherType = screen.getByLabelText("바우처 유형");
     const duration = screen.getByLabelText("서비스 기간");
@@ -171,5 +185,119 @@ describe("ClientFormPanel voucher pricing", () => {
     expect(screen.getByLabelText("정부지원금")).toHaveValue("1,000,000");
     expect(screen.getByLabelText("본인부담금")).toBeEnabled();
     expect(screen.getByLabelText("본인부담금")).toHaveValue("500,000");
+  });
+
+  it("shows only duration and editable total price for an out-of-pocket client", async () => {
+    render(<ClientFormPanel open activeStep={2} onClose={jest.fn()} />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("tab", { name: "자부담 고객" }));
+
+    expect(screen.queryByLabelText("바우처 연도")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("바우처 유형")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("정부지원금")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("본인부담금")).not.toBeInTheDocument();
+
+    const duration = screen.getByLabelText("서비스 기간");
+    expect(duration).toBeEnabled();
+    expect(screen.getByRole("option", { name: "1주 (5일)" })).toBeInTheDocument();
+
+    fireEvent.change(duration, { target: { value: "5" } });
+
+    const fullPrice = screen.getByLabelText("총 서비스 금액");
+    await waitFor(() => expect(fullPrice).toHaveValue("815,000"));
+    expect(fullPrice).toBeEnabled();
+
+    fireEvent.change(fullPrice, { target: { value: "820000" } });
+    expect(fullPrice).toHaveValue("820,000");
+  });
+
+  it("preserves a saved out-of-pocket override until the duration changes", async () => {
+    const client: Client = {
+      id: 2,
+      name: "자부담 고객",
+      createdAt: "2026-01-01",
+      birthday: "900101",
+      dueDate: "2026-08-01",
+      address: "인천시 서구",
+      phone: "010-1111-3333",
+      primaryEmployee: null,
+      secondaryEmployee: null,
+      type: null,
+      duration: 5,
+      fullPrice: "900000",
+      grant: "0",
+      actualPrice: "900000",
+      startDate: null,
+      endDate: null,
+      careCenter: false,
+      voucherClient: false,
+      breastPump: false,
+      serviceStatus: "waiting",
+      eDocId: null,
+      hasSigned: false,
+      documentStatus: null,
+    };
+
+    render(
+      <ClientFormPanel
+        open
+        activeStep={2}
+        client={client}
+        onClose={jest.fn()}
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const fullPrice = screen.getByLabelText("총 서비스 금액");
+    expect(fullPrice).toHaveValue("900,000");
+
+    fireEvent.change(screen.getByLabelText("서비스 기간"), { target: { value: "10" } });
+    await waitFor(() => expect(fullPrice).toHaveValue("1,620,000"));
+  });
+
+  it("hydrates existing ISO dates as YYMMDD exactly once", async () => {
+    const client: Client = {
+      id: 3,
+      name: "날짜 검수 고객",
+      createdAt: "2026-01-01",
+      birthday: "900101",
+      dueDate: "2026-09-01",
+      address: "인천시 남동구",
+      phone: "010-1111-4444",
+      primaryEmployee: null,
+      secondaryEmployee: null,
+      type: "A가1형",
+      duration: 5,
+      fullPrice: "732000",
+      grant: "659000",
+      actualPrice: "73000",
+      startDate: "2026-08-01",
+      endDate: "2026-08-05",
+      careCenter: false,
+      voucherClient: true,
+      breastPump: false,
+      serviceStatus: "waiting",
+      eDocId: null,
+      hasSigned: false,
+      documentStatus: null,
+    };
+
+    const { rerender } = render(
+      <ClientFormPanel open activeStep={0} client={client} onClose={jest.fn()} />,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("출산 예정일")).toHaveValue("260901"));
+
+    rerender(<ClientFormPanel open activeStep={3} client={client} onClose={jest.fn()} />);
+
+    expect(screen.getByLabelText("시작일")).toHaveValue("260801");
+    expect(screen.getByLabelText("종료일")).toHaveValue("260805");
   });
 });

@@ -122,30 +122,28 @@ function ScheduledRow({ job }: { job: UpcomingMessageTriggerJob }) {
   const meta = JOB_STATUS[job.status];
   const StatusIcon = meta.icon;
   const recipientName = job.payload.recipientName || job.payload.clientName || job.payload.employeeName || "수신자";
-  const recipientPhone = job.recipientPhone || job.payload.recipientPhone || "-";
 
   return (
     <article className="message-data-row" data-component="mobile-messages-scheduled-item">
       <span className="message-navigation-icon message-navigation-icon-orange">
         <Clock3 size={18} aria-hidden="true" />
       </span>
-      <div className="message-data-row-copy">
-        <div className="message-data-row-title">
-          <strong>{recipientName}</strong>
-          <div className="message-data-status-group">
-            <span className={`message-data-status message-data-status-${meta.tone}`}>
-              <StatusIcon
-                size={12}
-                className={job.status === "processing" ? "message-data-spinner" : undefined}
-                aria-hidden="true"
-              />
-              {meta.label}
-            </span>
-            <time className="message-data-schedule-time">{formatMessageDateTimeCompact(job.scheduledFor)}</time>
-          </div>
+      <div className="message-data-row-copy message-data-row-copy-split">
+        <div className="message-data-row-info">
+          <strong className="message-data-row-title">{recipientName}</strong>
+          <p className="message-data-row-subtitle">{getMessageTemplateLabel(job.templateKey)}</p>
         </div>
-        <p>{getMessageTemplateLabel(job.templateKey)}</p>
-        <small>{recipientPhone}</small>
+        <div className="message-data-status-group">
+          <span className={`message-data-status message-data-status-${meta.tone}`}>
+            <StatusIcon
+              size={12}
+              className={job.status === "processing" ? "message-data-spinner" : undefined}
+              aria-hidden="true"
+            />
+            {meta.label}
+          </span>
+          <time className="message-data-schedule-time">{formatMessageDateTimeCompact(job.scheduledFor)}</time>
+        </div>
       </div>
     </article>
   );

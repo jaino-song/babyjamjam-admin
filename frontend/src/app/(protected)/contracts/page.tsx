@@ -128,6 +128,9 @@ const FINALIZE_PROGRESS_STEPS: readonly HeadlessProgressStep[] = [
   { key: "sent", label: "전자문서 처리 완료", errorLabel: "전자문서 처리 실패" },
 ];
 
+const SERVICE_RECORD_FINALIZE_PROGRESS_STEPS: readonly HeadlessProgressStep[] =
+  FINALIZE_PROGRESS_STEPS.filter((step) => step.key !== "info-inserted");
+
 const INITIAL_FINALIZE_PROGRESS: HeadlessProgressState = {
   step: null,
   completed: false,
@@ -136,8 +139,11 @@ const INITIAL_FINALIZE_PROGRESS: HeadlessProgressState = {
 
 type FinalizeProgressEvent = HeadlessProgressEvent;
 
-function isFinalizeProgressStepKey(value: string): value is HeadlessProgressStepKey {
-  return FINALIZE_PROGRESS_STEPS.some((item) => item.key === value);
+function isFinalizeProgressStepKey(
+  value: string,
+  steps: readonly HeadlessProgressStep[] = FINALIZE_PROGRESS_STEPS,
+): value is HeadlessProgressStepKey {
+  return steps.some((item) => item.key === value);
 }
 
 function createFinalizeProgressId(): string {
@@ -1059,6 +1065,7 @@ function ContractDetail({
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isActivityOpen, setIsActivityOpen] = useState(false);
   const [isFinalizeOpen, setIsFinalizeOpen] = useState(false);
+  const [isServiceRecordFinalizeConfirmOpen, setIsServiceRecordFinalizeConfirmOpen] = useState(false);
   const [finalizeEndDate, setFinalizeEndDate] = useState<string>("");
   const [finalizeProgress, setFinalizeProgress] = useState<HeadlessProgressState>(INITIAL_FINALIZE_PROGRESS);
   const finalizeProgressIdRef = useRef<string | null>(null);
@@ -1066,6 +1073,9 @@ function ContractDetail({
   const [isStaffCompletionOpen, setIsStaffCompletionOpen] = useState(false);
   const [staffCompletionOption, setStaffCompletionOption] = useState<EformsignDocumentOption | null>(null);
   const reviewDocumentLabel = reviewAction === "preview" ? "제공기록지" : "계약서";
+  const finalizeProgressSteps = isServiceRecordDocument
+    ? SERVICE_RECORD_FINALIZE_PROGRESS_STEPS
+    : FINALIZE_PROGRESS_STEPS;
   const canReRequest = canReRequestDocument(detailedDocument);
   const reRequestStepType = detailedDocument.current_status?.step_type ?? "";
   const reRequestStepSeq = detailedDocument.current_status?.step_index ?? "";
@@ -1246,6 +1256,7 @@ function ContractDetail({
 
   const resetFinalizeState = () => {
     setIsFinalizeOpen(false);
+    setIsServiceRecordFinalizeConfirmOpen(false);
     setFinalizeEndDate("");
     setFinalizeProgress(INITIAL_FINALIZE_PROGRESS);
     closeFinalizeProgressStream();
@@ -1431,7 +1442,9 @@ function ContractDetail({
       }
       if (data.step === "failed") {
         const fallbackStep =
-          data.failedStep && isFinalizeProgressStepKey(data.failedStep) ? data.failedStep : null;
+          data.failedStep && isFinalizeProgressStepKey(data.failedStep, finalizeProgressSteps)
+            ? data.failedStep
+            : null;
         setFinalizeProgress((current) => ({
           step: fallbackStep ?? current.step ?? "client-started",
           completed: false,
@@ -1439,7 +1452,7 @@ function ContractDetail({
         }));
         return;
       }
-      if (!isFinalizeProgressStepKey(data.step)) return;
+      if (!isFinalizeProgressStepKey(data.step, finalizeProgressSteps)) return;
       const nextStep = data.step;
       setFinalizeProgress((current) =>
         current.failed
@@ -1460,6 +1473,13 @@ function ContractDetail({
   };
 
   const handleServiceRecordReviewConfirm = () => {
+    setIsPreviewOpen(false);
+    setIsServiceRecordFinalizeConfirmOpen(true);
+  };
+
+  const handleServiceRecordFinalizeApprove = () => {
+    setIsServiceRecordFinalizeConfirmOpen(false);
+    setIsFinalizeOpen(true);
     startFinalizeFlow();
   };
 
@@ -1769,7 +1789,7 @@ function ContractDetail({
           {isReviewNeeded ? (
             <ContractReviewActionButton
               action={reviewAction}
-              onPreview={() => setIsPreviewOpen(true)}
+              onPreview={handleServiceRecordReviewConfirm}
               onFinalize={() => {
                 setFinalizeEndDate((current) => current || formatIsoDateInput(contractEndDateIso));
                 setIsFinalizeOpen(true);
@@ -1876,12 +1896,26 @@ function ContractDetail({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <TwoButtonModal
+        open={isServiceRecordFinalizeConfirmOpen}
+        onOpenChange={setIsServiceRecordFinalizeConfirmOpen}
+        dataComponent="contracts-service-record-review-confirm"
+        title="완료할까요?"
+        description="제공기록지를 검토 완료 처리합니다."
+        cancelLabel="취소"
+        approvalLabel="완료"
+        pendingLabel="처리 중..."
+        isPending={isFinalizePending}
+        onApprove={handleServiceRecordFinalizeApprove}
+      />
       <Dialog open={isFinalizeOpen} onOpenChange={handleFinalizeDialogChange}>
         <DialogContent className="sm:max-w-[400px]">
           <DialogHeader>
-            <DialogTitle>최종 확인</DialogTitle>
+            <DialogTitle>{isServiceRecordDocument ? "제공기록지 검토" : "최종 확인"}</DialogTitle>
             <DialogDescription>
-              서비스 완료일을 수정한 뒤 확정해 주세요.
+              {isServiceRecordDocument
+                ? "제공기록지를 완료 처리하고 있습니다."
+                : "서비스 완료일을 수정한 뒤 확정해 주세요."}
             </DialogDescription>
           </DialogHeader>
           {isFinalizePending || finalizeProgress.step !== null ? (
@@ -1890,9 +1924,13 @@ function ContractDetail({
               className="flex justify-center py-[calc(8px*var(--glint-ui-scale,1))]"
             >
               <HeadlessProgressStepper
-                steps={FINALIZE_PROGRESS_STEPS}
+                steps={finalizeProgressSteps}
                 progress={finalizeProgress}
-                ariaLabel="전자계약서 최종 확인 진행 상태"
+                ariaLabel={
+                  isServiceRecordDocument
+                    ? "제공기록지 검토 진행 상태"
+                    : "전자계약서 최종 확인 진행 상태"
+                }
                 dataComponentPrefix="contracts-finalize-progress"
                 testIdPrefix="contracts-finalize-progress"
                 className="w-full max-w-[calc(320px*var(--glint-ui-scale,1))]"

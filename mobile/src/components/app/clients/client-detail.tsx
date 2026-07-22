@@ -16,6 +16,7 @@ import {
 import { approveScheduleChange, rejectScheduleChange } from "@/hooks/useClients";
 import { toast } from "@/hooks/use-toast";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import {
@@ -312,13 +313,6 @@ function documentServicePeriodRange(doc: EformsignDocument | null | undefined): 
   if (!start || !end) return null;
 
   return { start, end };
-}
-
-function formatDateRange(startDate: string | null | undefined, endDate: string | null | undefined): string {
-  if (!startDate && !endDate) return "-";
-  if (!startDate) return formatDate(endDate);
-  if (!endDate) return formatDate(startDate);
-  return `${formatDate(startDate)} ~ ${formatDate(endDate)}`;
 }
 
 function contractPrimaryEmployeeName(doc: EformsignDocument | null | undefined): string | null {
@@ -995,111 +989,6 @@ export function ClientDetailContent({
       ],
     },
   );
-  const paymentReceiptDate = contractDateValue(
-    contractDocument,
-    [
-      "본인부담금 수령 날짜",
-      "본인부담금수령날짜",
-      "본인부담금 수령일",
-      "본인부담금수령일",
-      "본인부담금 수령 일자",
-      "본인부담금수령일자",
-      "본인 부담금 수령 날짜",
-      "본인 부담금 수령일",
-      "본인 부담금 수령 일자",
-      "본인부담금 결제일",
-      "본인부담금 납부일",
-      "본인부담금 결제 날짜",
-      "본인부담금결제날짜",
-      "본인부담금 납부 날짜",
-      "본인부담금납부날짜",
-      "영수증 날짜",
-      "영수증날짜",
-      "영수증 일자",
-      "영수증일자",
-      "영수증 일",
-      "영수증일",
-      "영수증 발행일",
-      "영수증발행일",
-      "paymentDate",
-      "receiptDate",
-    ],
-    {
-      year: [
-        "본인부담금 수령 년도",
-        "본인부담금수령년도",
-        "본인부담금 수령 연도",
-        "본인부담금수령연도",
-        "본인부담금 수령 년",
-        "본인부담금수령년",
-        "본인 부담금 수령 년도",
-        "본인 부담금 수령 연도",
-        "본인 부담금 수령 년",
-        "본인부담금 결제 년도",
-        "본인부담금결제년도",
-        "본인부담금 납부 년도",
-        "본인부담금납부년도",
-        "영수증 년도",
-        "영수증년도",
-        "영수증 연도",
-        "영수증연도",
-        "영수증 년",
-        "영수증년",
-        "수령 년도",
-        "수령년도",
-        "납부 년도",
-        "납부년도",
-        "결제 년도",
-        "결제년도",
-        "paymentYear",
-        "receiptYear",
-        "selfPayReceiptYear",
-        "copayReceiptYear",
-      ],
-      month: [
-        "본인부담금 수령 월",
-        "본인부담금수령월",
-        "본인 부담금 수령 월",
-        "본인부담금 결제 월",
-        "본인부담금결제월",
-        "본인부담금 납부 월",
-        "본인부담금납부월",
-        "영수증 월",
-        "영수증월",
-        "수령 월",
-        "수령월",
-        "납부 월",
-        "납부월",
-        "결제 월",
-        "결제월",
-        "paymentMonth",
-        "receiptMonth",
-        "selfPayReceiptMonth",
-        "copayReceiptMonth",
-      ],
-      day: [
-        "본인부담금 수령 일",
-        "본인부담금수령일",
-        "본인 부담금 수령 일",
-        "본인부담금 결제 일",
-        "본인부담금결제일",
-        "본인부담금 납부 일",
-        "본인부담금납부일",
-        "영수증 일",
-        "영수증일",
-        "수령 일",
-        "수령일",
-        "납부 일",
-        "납부일",
-        "결제 일",
-        "결제일",
-        "paymentDay",
-        "receiptDay",
-        "selfPayReceiptDay",
-        "copayReceiptDay",
-      ],
-    },
-  );
   const isContractCompleted = client.documentStatus === "completed";
   const contractDocCompletedDate = firstValue(
     isoDateFromTimestamp(contractDocument?.updated_date),
@@ -1135,12 +1024,7 @@ export function ClientDetailContent({
     client.actualPrice,
     numericText(documentFieldValue(contractDocument, ["본인부담금", "실결제금액", "actualPrice"])),
   );
-  const servicePeriodLabel =
-    serviceStartDate || serviceEndDate
-      ? formatDateRange(serviceStartDate, serviceEndDate)
-      : serviceDuration
-        ? `${serviceDuration}일`
-        : "-";
+  const servicePeriodLabel = serviceDuration ? `${serviceDuration}일` : "-";
 
   return (
     <MobileDetailPage name="clients">
@@ -1325,22 +1209,26 @@ export function ClientDetailContent({
           <InfoRow label="이름" value={client.name} />
           <InfoRow label="생년월일" value={formatDate(birthDate)} />
           <InfoRow label="출산 예정일" value={formatDate(dueDate)} />
-          <InfoRow label="연락처" value={phone ?? "-"} />
+          <InfoRow label="연락처" value={phone ? formatKoreanPhoneNumber(phone) : "-"} />
           <InfoRow label="주소" value={address ?? "-"} />
         </InfoCard>
-        <InfoCard title="제공인력" delay={60}>
-          <InfoRow label="제공인력 1" value={primaryEmployeeName ?? "-"} />
-          <InfoRow label="제공인력 1 연락처" value={primaryEmployeePhone ?? "-"} />
-          <InfoRow label="제공인력 2" value={secondaryEmployeeName ?? "-"} />
-          <InfoRow label="제공인력 2 연락처" value={secondaryEmployeePhone ?? "-"} />
+        <InfoCard title="담당 관리사" delay={60}>
+          <InfoRow label="주 담당 인력" value={primaryEmployeeName ?? "-"} />
+          <InfoRow
+            label="주 담당 인력 연락처"
+            value={primaryEmployeePhone ? formatKoreanPhoneNumber(primaryEmployeePhone) : "-"}
+          />
+          <InfoRow label="보조 담당 인력" value={secondaryEmployeeName ?? "-"} />
+          <InfoRow
+            label="보조 담당 인력 연락처"
+            value={secondaryEmployeePhone ? formatKoreanPhoneNumber(secondaryEmployeePhone) : "-"}
+          />
         </InfoCard>
         <InfoCard title="서비스 정보" delay={120}>
           <InfoRow label="바우처 유형" value={serviceType ?? "-"} />
           <InfoRow label="서비스 기간" value={servicePeriodLabel} />
           <InfoRow label="시작일" value={formatDate(serviceStartDate)} />
           <InfoRow label="종료일" value={formatDate(serviceEndDate)} />
-          <InfoRow label="계약 서명일" value={formatDate(contractSignDate)} />
-          <InfoRow label="본인부담금 수령일" value={formatDate(paymentReceiptDate)} />
           <InfoRow label="총 서비스 금액" value={formatPrice(fullPrice)} />
           <InfoRow label="정부지원금" value={formatPrice(grant)} />
           <InfoRow label="본인부담금" value={formatPrice(actualPrice)} />
@@ -1462,6 +1350,8 @@ export function ClientDetailContent({
           overview={serviceRecordsQuery.data}
           isLoading={serviceRecordsQuery.isLoading}
           isError={serviceRecordsQuery.isError}
+          isRefreshing={serviceRecordsQuery.isFetching && !serviceRecordsQuery.isLoading}
+          onRefresh={() => void serviceRecordsQuery.refetch()}
         />
       </MobileDetailTabPanel>
     </MobileDetailPage>

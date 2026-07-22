@@ -3,8 +3,12 @@
 import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Check, ChevronLeft } from "lucide-react";
+import {
+  findOutOfPocketPriceInfo,
+  formatOutOfPocketDurationLabel,
+} from "@babyjamjam/shared";
 import { useCreateClient } from "@/hooks/useClients";
-import { useVoucherPriceInfos, useVoucherYears } from "@/hooks/useVoucherData";
+import { useOutOfPocketPriceInfos, useVoucherPriceInfos, useVoucherYears } from "@/hooks/useVoucherData";
 import { api } from "@/lib/api/client";
 import type { CreateClientDto, ServiceStatus } from "@/lib/client/types";
 import { SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
@@ -21,13 +25,15 @@ import { t } from "@/lib/i18n/translations";
 import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
 import { useNavigationPending } from "@/lib/hooks/use-navigation-pending";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
+import { FormNativeSelect } from "@/components/app/ui/form-section";
+import { TogglePill } from "@/components/app/ui/toggle-pill";
 import { cn } from "@/lib/utils";
 
 const INPUT_CLS =
-  "h-auto w-full rounded-[14px] border-[1.5px] border-v3-border bg-white px-4 py-3 text-[0.85rem] font-[Pretendard] text-v3-dark outline-none transition-all focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]";
+  "h-auto w-full rounded-[14px] border-[1.5px] border-input bg-white px-4 py-3 text-[0.85rem] font-[Pretendard] text-v3-dark outline-none transition-all focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]";
 
 const SELECT_CLS =
-  "w-full px-4 py-3 rounded-[14px] border-[1.5px] border-v3-border bg-white text-[0.85rem] font-[Pretendard] text-v3-dark outline-none transition-all focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)] appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2216%22%20height%3D%2216%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23888%22%20stroke-width%3D%222%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%2F%3E%3C%2Fsvg%3E')] bg-no-repeat bg-[right_12px_center]";
+  "h-auto min-h-0 w-full rounded-[14px] border-[1.5px] border-input bg-white pl-4 py-3 text-[0.85rem] font-normal leading-normal text-v3-dark outline-none transition-all focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)] focus:ring-0";
 
 const LABEL_CLS = "text-xs font-semibold text-v3-text-muted";
 
@@ -126,6 +132,11 @@ export default function NewClientPage() {
   );
 
   const { data: voucherPriceInfos, isLoading: isPriceLoading } = useVoucherPriceInfos(store.type || "", resolvedVoucherYear);
+  const {
+    data: outOfPocketPriceInfos,
+    isLoading: isOutOfPocketPriceLoading,
+    isError: isOutOfPocketPriceError,
+  } = useOutOfPocketPriceInfos();
 
   const availableDurations = useMemo(() => {
     if (!voucherPriceInfos) return [];
@@ -134,17 +145,40 @@ export default function NewClientPage() {
   }, [voucherPriceInfos]);
 
   const selectedPriceInfo = useMemo(() => {
+    if (!store.voucherClient) {
+      return findOutOfPocketPriceInfo(outOfPocketPriceInfos, store.duration);
+    }
     if (!voucherPriceInfos || !store.duration) return null;
     return voucherPriceInfos.find((i) => Number(i.duration) === store.duration);
-  }, [voucherPriceInfos, store.duration]);
+  }, [outOfPocketPriceInfos, store.duration, store.voucherClient, voucherPriceInfos]);
+
+  const durationOptions = useMemo(() => {
+    if (!store.voucherClient) {
+      return (outOfPocketPriceInfos ?? []).map((priceInfo) => ({
+        value: String(priceInfo.duration),
+        label: formatOutOfPocketDurationLabel(priceInfo.duration),
+      }));
+    }
+
+    return availableDurations.map((duration) => ({ value: String(duration), label: `${duration}일` }));
+  }, [availableDurations, outOfPocketPriceInfos, store.voucherClient]);
+
+  const arePriceInputsLocked = store.voucherClient
+    ? !store.type || !store.duration || isPriceLoading
+    : !store.duration || isOutOfPocketPriceLoading || isOutOfPocketPriceError;
 
   useEffect(() => {
     if (selectedPriceInfo && !pricesManuallyEdited) {
       setField("fullPrice", parsePrice(selectedPriceInfo.fullPrice));
-      setField("grant", parsePrice(selectedPriceInfo.grant));
-      setField("actualPrice", parsePrice(selectedPriceInfo.actualPrice));
+      if (store.voucherClient && "grant" in selectedPriceInfo && "actualPrice" in selectedPriceInfo) {
+        setField("grant", parsePrice(selectedPriceInfo.grant));
+        setField("actualPrice", parsePrice(selectedPriceInfo.actualPrice));
+      } else {
+        setField("grant", "0");
+        setField("actualPrice", parsePrice(selectedPriceInfo.fullPrice));
+      }
     }
-  }, [selectedPriceInfo, pricesManuallyEdited, setField]);
+  }, [selectedPriceInfo, pricesManuallyEdited, setField, store.voucherClient]);
 
   useEffect(() => {
     if (phoneDigits.length !== 11) {
@@ -252,6 +286,16 @@ export default function NewClientPage() {
     setError(null);
   };
 
+  const handleVoucherClientChange = (voucherClient: boolean) => {
+    setPricesManuallyEdited(false);
+    setField("voucherClient", voucherClient);
+    setField("type", "");
+    setField("duration", null);
+    setField("fullPrice", "");
+    setField("grant", "");
+    setField("actualPrice", "");
+  };
+
   const validateStep = (step: number): boolean => {
     switch (step) {
       case 0:
@@ -306,11 +350,11 @@ export default function NewClientPage() {
         phone: store.phone || null,
         primaryEmployeeId: store.primaryEmployeeId,
         secondaryEmployeeId: store.secondaryEmployeeId,
-        type: store.type || null,
+        type: store.voucherClient ? store.type || null : null,
         duration: store.duration || null,
         fullPrice: store.fullPrice || null,
-        grant: store.grant || null,
-        actualPrice: store.actualPrice || null,
+        grant: store.voucherClient ? store.grant || null : "0",
+        actualPrice: store.voucherClient ? store.actualPrice || null : store.fullPrice || null,
         startDate: store.startDate || null,
         endDate: store.endDate || null,
         careCenter: store.careCenter,
@@ -412,58 +456,64 @@ export default function NewClientPage() {
       label: "서비스 설정",
       content: (
         <div data-component="clients-new-service-step" className="space-y-6">
+          <div data-component="clients-new-voucher-toggle" className="flex justify-center">
+            <TogglePill
+              value={store.voucherClient}
+              onValueChange={handleVoucherClientChange}
+              leftLabel={t(locale, "clients.form.voucher-client")}
+              rightLabel={t(locale, "clients.form.self-pay-client")}
+              ariaLabel={t(locale, "clients.form.customer-type")}
+            />
+          </div>
+
           <div data-component="clients-new-service-grid" className={GRID_CLS}>
-            <div data-component="clients-new-service-year-field" className="flex flex-col gap-1.5">
+            {store.voucherClient && <div data-component="clients-new-service-year-field" className="flex flex-col gap-1.5">
               <label className={LABEL_CLS}>{t(locale, "clients.form.voucher-year")}</label>
-              <select
+              <FormNativeSelect
                 className={SELECT_CLS}
                 value={resolvedVoucherYear.toString()}
-                onChange={(e) => handleVoucherYearChange(e.target.value)}
-              >
-                {voucherYearOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div data-component="clients-new-service-type-field" className="flex flex-col gap-1.5">
+                onValueChange={handleVoucherYearChange}
+                options={voucherYearOptions}
+              />
+            </div>}
+            {store.voucherClient && <div data-component="clients-new-service-type-field" className="flex flex-col gap-1.5">
               <label className={LABEL_CLS}>{t(locale, "clients.form.voucher-type")}</label>
-              <select
+              <FormNativeSelect
                 className={SELECT_CLS}
                 value={store.type}
-                onChange={(e) => handleTypeChange(e.target.value)}
-              >
-                <option value="">선택하세요</option>
-                {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) =>
-                  Object.entries(types).map(([typeValue, typeData]) => (
-                    <option key={typeValue} value={typeValue}>
-                      {groupName} — {typeData.label}
-                    </option>
-                  ))
-                )}
-              </select>
-            </div>
+                onValueChange={handleTypeChange}
+                options={[
+                  { value: "", label: "선택하세요" },
+                  ...Object.entries(voucherOptions.voucherOptions).flatMap(([groupName, types]) =>
+                    Object.entries(types).map(([typeValue, typeData]) => ({
+                      value: typeValue,
+                      label: `${groupName} — ${typeData.label}`,
+                    })),
+                  ),
+                ]}
+              />
+            </div>}
             <div data-component="clients-new-service-duration-field" className="flex flex-col gap-1.5">
               <label className={LABEL_CLS}>{t(locale, "clients.form.duration")}</label>
               <div data-component="clients-new-service-duration-select-wrap" className="relative">
-                <select
-                  className={cn(SELECT_CLS, (!store.type || isPriceLoading) && "opacity-50")}
+                <FormNativeSelect
+                  className={cn(SELECT_CLS, (store.voucherClient
+                    ? !store.type || isPriceLoading
+                    : isOutOfPocketPriceLoading || isOutOfPocketPriceError) && "opacity-50")}
                   value={store.duration?.toString() || ""}
-                  onChange={(e) => {
-                    setField("duration", e.target.value ? Number(e.target.value) : null);
+                  onValueChange={(value) => {
+                    setField("duration", value ? Number(value) : null);
                     setPricesManuallyEdited(false);
                   }}
-                  disabled={!store.type || isPriceLoading}
-                >
-                  <option value="">선택하세요</option>
-                  {availableDurations.map((d) => (
-                    <option key={d} value={String(d)}>
-                      {d}일
-                    </option>
-                  ))}
-                </select>
-                {isPriceLoading && (
+                  disabled={store.voucherClient
+                    ? !store.type || isPriceLoading
+                    : isOutOfPocketPriceLoading || isOutOfPocketPriceError}
+                  options={[
+                    { value: "", label: "선택하세요" },
+                    ...durationOptions,
+                  ]}
+                />
+                {(store.voucherClient ? isPriceLoading : isOutOfPocketPriceLoading) && (
                   <div data-component="clients-new-service-duration-loading" className="absolute right-10 top-1/2 -translate-y-1/2">
                     <div data-component="clients-new-service-duration-spinner" className="w-4 h-4 border-2 border-v3-primary/30 border-t-v3-primary rounded-full animate-spin" />
                   </div>
@@ -471,6 +521,11 @@ export default function NewClientPage() {
               </div>
             </div>
           </div>
+          {!store.voucherClient && isOutOfPocketPriceError && (
+            <p data-component="clients-new-out-of-pocket-price-error" className="text-xs font-semibold text-v3-burgundy">
+              자부담 요금 정보를 불러오지 못했습니다.
+            </p>
+          )}
 
           <div data-component="clients-new-service-employee-grid" className={GRID_CLS}>
             <div data-component="clients-new-service-primary-employee-field" className="flex flex-col gap-1.5">
@@ -512,20 +567,21 @@ export default function NewClientPage() {
                 </span>
               )}
             </div>
-            <div data-component="clients-new-service-pricing-grid" className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div data-component="clients-new-service-pricing-grid" className={cn("grid grid-cols-1 gap-4", store.voucherClient && "md:grid-cols-3")}>
               <div data-component="clients-new-service-full-price-field" className="flex flex-col gap-1.5">
                 <label className={LABEL_CLS}>{t(locale, "clients.form.full-price")}</label>
                 <div data-component="clients-new-service-full-price-input-wrap" className="relative">
                   <input
                     className={cn(INPUT_CLS, "pr-8")}
-                    value={formatPrice(store.fullPrice)}
+                    value={arePriceInputsLocked ? "" : formatPrice(store.fullPrice)}
                     onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
+                    disabled={arePriceInputsLocked}
                     placeholder="0"
                   />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-v3-text-muted">원</span>
                 </div>
               </div>
-              <div data-component="clients-new-service-grant-field" className="flex flex-col gap-1.5">
+              {store.voucherClient && <div data-component="clients-new-service-grant-field" className="flex flex-col gap-1.5">
                 <label className={LABEL_CLS}>{t(locale, "clients.form.grant")}</label>
                 <div data-component="clients-new-service-grant-input-wrap" className="relative">
                   <input
@@ -536,8 +592,8 @@ export default function NewClientPage() {
                   />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-v3-text-muted">원</span>
                 </div>
-              </div>
-              <div data-component="clients-new-service-actual-price-field" className="flex flex-col gap-1.5">
+              </div>}
+              {store.voucherClient && <div data-component="clients-new-service-actual-price-field" className="flex flex-col gap-1.5">
                 <label className={LABEL_CLS}>{t(locale, "clients.form.actual-price")}</label>
                 <div data-component="clients-new-service-actual-price-input-wrap" className="relative">
                   <input
@@ -548,7 +604,7 @@ export default function NewClientPage() {
                   />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-v3-text-muted">원</span>
                 </div>
-              </div>
+              </div>}
             </div>
           </div>
 
@@ -556,7 +612,6 @@ export default function NewClientPage() {
             <span className={cn(LABEL_CLS, "mb-3 block")}>{t(locale, "clients.form.section-flags")}</span>
             <div data-component="clients-new-service-flags-options" className="flex flex-wrap gap-3">
               {([
-                { key: "voucherClient" as const, label: t(locale, "clients.form.voucher-client") },
                 { key: "careCenter" as const, label: t(locale, "clients.form.care-center") },
                 { key: "breastPump" as const, label: t(locale, "clients.form.breast-pump") },
                 { key: "applyMessageAutomation" as const, label: t(locale, "clients.form.message-automation") },
@@ -616,17 +671,12 @@ export default function NewClientPage() {
           <div data-component="clients-new-contract-grid" className={GRID_CLS}>
             <div data-component="clients-new-contract-status-field" className="flex flex-col gap-1.5">
               <label className={LABEL_CLS}>{t(locale, "clients.form.contract-status")}</label>
-              <select
+              <FormNativeSelect
                 className={SELECT_CLS}
                 value={store.serviceStatus}
-                onChange={(e) => setField("serviceStatus", e.target.value as ServiceStatus)}
-              >
-                {SERVICE_STATUS_OPTIONS.map((s) => (
-                  <option key={s.value} value={s.value}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
+                onValueChange={(value) => setField("serviceStatus", value as ServiceStatus)}
+                options={SERVICE_STATUS_OPTIONS}
+              />
             </div>
             <div data-component="clients-new-contract-spacer" />
             <div data-component="clients-new-contract-start-date-field" className="flex flex-col gap-1.5">

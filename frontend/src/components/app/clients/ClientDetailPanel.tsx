@@ -45,7 +45,7 @@ import {
 import { formatKoreanPhoneNumber, normalizeKoreanPhoneLookupKey } from "@/lib/phone";
 import { matchesMessageHistoryClient } from "@/lib/message-history/client-match";
 import { mapStatusToLabel, type DocumentStatusLabel } from "@/lib/eformsign/status-codes";
-import { eformsignApi, type LocalEformsignDocRecord } from "@/services/api";
+import { eformsignApi, withEformsignReauth, type LocalEformsignDocRecord } from "@/services/api";
 import { Users } from "lucide-react";
 
 const CLIENT_DETAIL_TABS = [
@@ -86,6 +86,18 @@ const DOCUMENT_STATUS_BADGE_STATUS = {
     "완료": "signed",
     "기간 만료": "expired",
 } satisfies Record<DocumentStatusLabel, Parameters<typeof StatusBadge>[0]["status"]>;
+
+function getClientDocumentStatusFallback(status: Client["documentStatus"]): Partial<LocalEformsignDocRecord> | null {
+    if (status === "completed") {
+        return { statusType: "003", statusDetail: "완료", stepName: "완료" };
+    }
+
+    if (status === "opened" || status === "requested") {
+        return { statusType: "070", statusDetail: "검토 필요", stepName: "검토 필요" };
+    }
+
+    return null;
+}
 
 const formatScheduleChangeMonthDay = (dateStr: string): string => {
     return formatDateForDisplay(dateStr, dateStr);
@@ -321,7 +333,9 @@ function ClientContractsList({
     return (
         <div data-component={`${dataComponentPrefix}-contracts-list`} className="space-y-3">
             {docs.map((doc) => {
-                const statusLabel = mapStatusToLabel(doc.statusType);
+                const statusLabel = doc.statusDetail === "검토 필요"
+                    ? "검토 필요"
+                    : mapStatusToLabel(doc.statusType);
                 return (
                     <InfoCard
                         key={doc.documentId}
@@ -523,7 +537,35 @@ function ClientDetailPanelBody({
         dataUpdatedAt: clientContractsUpdatedAt,
     } = useQuery({
         queryKey: ["eformsign-docs", "client", clientId],
-        queryFn: () => eformsignApi.getDocumentsByClientId(clientId),
+        queryFn: async () => {
+            const documents = await eformsignApi.getDocumentsByClientId(clientId);
+            const contractDocuments = documents.filter(
+                (document) => document.documentKind !== "service_record_snapshot" && document.documentId,
+            );
+            const syncResults = await Promise.allSettled(
+                contractDocuments.map((document) => withEformsignReauth(
+                    () => eformsignApi.syncDocumentStatus(document.documentId),
+                )),
+            );
+            const syncedByDocumentId = new Map(
+                syncResults.flatMap((result) => result.status === "fulfilled"
+                    ? [[result.value.documentId, result.value] as const]
+                    : []),
+            );
+
+            return documents.map((document) => {
+                const syncedDocument = syncedByDocumentId.get(document.documentId);
+                const fallbackDocument = document.documentId === client.eDocId
+                    ? getClientDocumentStatusFallback(client.documentStatus)
+                    : null;
+
+                return {
+                    ...document,
+                    ...fallbackDocument,
+                    ...syncedDocument,
+                };
+            });
+        },
         staleTime: 0,
         refetchOnMount: "always",
         refetchOnReconnect: true,

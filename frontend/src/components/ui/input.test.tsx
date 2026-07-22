@@ -17,6 +17,7 @@ describe("Input Component", () => {
     expect(input).toHaveClass("min-h-[calc(38px*var(--glint-ui-scale,1))]");
     expect(input).toHaveClass("rounded-[13px]");
     expect(input).toHaveClass("border-[1.35px]");
+    expect(input).toHaveClass("border-input");
     expect(input).toHaveClass("px-[calc(14px*var(--glint-ui-scale,1))]");
     expect(input).toHaveClass("py-[calc(8px*var(--glint-ui-scale,1))]");
     expect(input).toHaveClass("text-[calc(12px*var(--glint-ui-scale,1))]");
@@ -28,5 +29,6 @@ describe("Input Component", () => {
     const { container } = render(<Input variant="v3-pill" />);
     const input = container.querySelector("input");
     expect(input).toHaveClass("rounded-pill");
+    expect(input).toHaveClass("border-input");
   });
 });

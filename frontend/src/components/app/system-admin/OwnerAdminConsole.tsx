@@ -7,6 +7,7 @@ import {
   Bell,
   Building2,
   CheckCircle2,
+  ChevronDown,
   KeyRound,
   MessageCircle,
   Pencil,
@@ -1314,31 +1315,38 @@ export function OwnerAdminConsole() {
                                 data-component="system-admin-account-edit-actions"
                                 className="flex flex-wrap items-center gap-2"
                               >
-                                <select
-                                  aria-label={`${selectedRecord.listTitle} 권한 선택`}
-                                  data-component="system-admin-account-edit-role-select"
-                                  value={selectedAccountRoleDraft}
-                                  disabled={updateUserRoleMutation.isPending}
-                                  onChange={(event) =>
-                                    setAccountRoleSelections((previousSelections) => ({
-                                      ...previousSelections,
-                                      [selectedRecord.id]: event.target.value,
-                                    }))
-                                  }
-                                  className="h-9 rounded-full border border-v3-border bg-white px-3 text-sm text-v3-dark disabled:opacity-50"
-                                >
-                                  {isAccountCurrentlyAdmin ? (
-                                    <option value="" disabled>
-                                      권한 선택
+                                <div className="relative">
+                                  <select
+                                    aria-label={`${selectedRecord.listTitle} 권한 선택`}
+                                    data-component="system-admin-account-edit-role-select"
+                                    value={selectedAccountRoleDraft}
+                                    disabled={updateUserRoleMutation.isPending}
+                                    onChange={(event) =>
+                                      setAccountRoleSelections((previousSelections) => ({
+                                        ...previousSelections,
+                                        [selectedRecord.id]: event.target.value,
+                                      }))
+                                    }
+                                    className="h-9 appearance-none rounded-full border border-v3-border bg-white pl-3 pr-8 text-sm text-v3-dark disabled:opacity-50"
+                                  >
+                                    {isAccountCurrentlyAdmin ? (
+                                      <option value="" disabled>
+                                        권한 선택
+                                      </option>
+                                    ) : null}
+                                    <option value={ROLES.manager}>
+                                      {getAccountRoleLabel(ROLES.manager)}
                                     </option>
-                                  ) : null}
-                                  <option value={ROLES.manager}>
-                                    {getAccountRoleLabel(ROLES.manager)}
-                                  </option>
-                                  <option value={ROLES.user}>
-                                    {getAccountRoleLabel(ROLES.user)}
-                                  </option>
-                                </select>
+                                    <option value={ROLES.user}>
+                                      {getAccountRoleLabel(ROLES.user)}
+                                    </option>
+                                  </select>
+                                  <ChevronDown
+                                    className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-v3-text-muted"
+                                    aria-hidden="true"
+                                    strokeWidth={2.2}
+                                  />
+                                </div>
 
                                 <Button
                                   type="button"
@@ -1381,72 +1389,93 @@ export function OwnerAdminConsole() {
                                 data-component="system-admin-pending-approval-actions"
                                 className="flex flex-wrap items-center gap-2"
                               >
-                                <select
-                                  aria-label={`${selectedRecord.listTitle} 승인 지점 선택`}
-                                  data-component="system-admin-pending-approval-branch-select"
-                                  value={selectedPendingBranchId}
-                                  disabled={isPendingApprovalActionRunning}
-                                  onChange={(event) =>
-                                    setPendingBranchSelections((previousSelections) => ({
-                                      ...previousSelections,
-                                      [pendingAccountApproval.userId]: event.target.value,
-                                    }))
-                                  }
-                                  className="h-9 rounded-full border border-v3-border bg-white px-3 text-sm text-v3-dark disabled:opacity-50"
-                                >
-                                  <option value="">지점 선택</option>
-                                  {systemAdminBranchRequests
-                                    .filter((branch) => branch.isActive)
-                                    .map((branch) => (
-                                      <option key={branch.id} value={branch.id}>
-                                        {branch.name}
-                                      </option>
-                                    ))}
-                                </select>
-
-                                <select
-                                  aria-label={`${selectedRecord.listTitle} 승인 권한 선택`}
-                                  data-component="system-admin-pending-approval-role-select"
-                                  value={selectedPendingRole}
-                                  disabled={isPendingApprovalActionRunning}
-                                  onChange={(event) =>
-                                    setPendingRoleSelections((previousSelections) => ({
-                                      ...previousSelections,
-                                      [pendingAccountApproval.userId]: event.target.value,
-                                    }))
-                                  }
-                                  className="h-9 rounded-full border border-v3-border bg-white px-3 text-sm text-v3-dark disabled:opacity-50"
-                                >
-                                  {REGISTERABLE_ROLE_OPTIONS.map((option) => (
-                                    <option key={option.value} value={option.value}>
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </select>
-
-                                {isPendingRoleAdmin ? (
+                                <div className="relative">
                                   <select
-                                    aria-label={`${selectedRecord.listTitle} 임명 지점 선택`}
-                                    data-component="system-admin-pending-approval-owner-branch-select"
-                                    value={selectedPendingOwnerBranchId}
+                                    aria-label={`${selectedRecord.listTitle} 승인 지점 선택`}
+                                    data-component="system-admin-pending-approval-branch-select"
+                                    value={selectedPendingBranchId}
                                     disabled={isPendingApprovalActionRunning}
                                     onChange={(event) =>
-                                      setPendingOwnerBranchSelections((previousSelections) => ({
+                                      setPendingBranchSelections((previousSelections) => ({
                                         ...previousSelections,
                                         [pendingAccountApproval.userId]: event.target.value,
                                       }))
                                     }
-                                    className="h-9 rounded-full border border-v3-border bg-white px-3 text-sm text-v3-dark disabled:opacity-50"
+                                    className="h-9 appearance-none rounded-full border border-v3-border bg-white pl-3 pr-8 text-sm text-v3-dark disabled:opacity-50"
                                   >
-                                    <option value="">임명 지점 선택</option>
+                                    <option value="">지점 선택</option>
                                     {systemAdminBranchRequests
-                                      .filter((branch) => branch.isActive && !branch.owner)
+                                      .filter((branch) => branch.isActive)
                                       .map((branch) => (
                                         <option key={branch.id} value={branch.id}>
                                           {branch.name}
                                         </option>
                                       ))}
                                   </select>
+                                  <ChevronDown
+                                    className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-v3-text-muted"
+                                    aria-hidden="true"
+                                    strokeWidth={2.2}
+                                  />
+                                </div>
+
+                                <div className="relative">
+                                  <select
+                                    aria-label={`${selectedRecord.listTitle} 승인 권한 선택`}
+                                    data-component="system-admin-pending-approval-role-select"
+                                    value={selectedPendingRole}
+                                    disabled={isPendingApprovalActionRunning}
+                                    onChange={(event) =>
+                                      setPendingRoleSelections((previousSelections) => ({
+                                        ...previousSelections,
+                                        [pendingAccountApproval.userId]: event.target.value,
+                                      }))
+                                    }
+                                    className="h-9 appearance-none rounded-full border border-v3-border bg-white pl-3 pr-8 text-sm text-v3-dark disabled:opacity-50"
+                                  >
+                                    {REGISTERABLE_ROLE_OPTIONS.map((option) => (
+                                      <option key={option.value} value={option.value}>
+                                        {option.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <ChevronDown
+                                    className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-v3-text-muted"
+                                    aria-hidden="true"
+                                    strokeWidth={2.2}
+                                  />
+                                </div>
+
+                                {isPendingRoleAdmin ? (
+                                  <div className="relative">
+                                    <select
+                                      aria-label={`${selectedRecord.listTitle} 임명 지점 선택`}
+                                      data-component="system-admin-pending-approval-owner-branch-select"
+                                      value={selectedPendingOwnerBranchId}
+                                      disabled={isPendingApprovalActionRunning}
+                                      onChange={(event) =>
+                                        setPendingOwnerBranchSelections((previousSelections) => ({
+                                          ...previousSelections,
+                                          [pendingAccountApproval.userId]: event.target.value,
+                                        }))
+                                      }
+                                      className="h-9 appearance-none rounded-full border border-v3-border bg-white pl-3 pr-8 text-sm text-v3-dark disabled:opacity-50"
+                                    >
+                                      <option value="">임명 지점 선택</option>
+                                      {systemAdminBranchRequests
+                                        .filter((branch) => branch.isActive && !branch.owner)
+                                        .map((branch) => (
+                                          <option key={branch.id} value={branch.id}>
+                                            {branch.name}
+                                          </option>
+                                        ))}
+                                    </select>
+                                    <ChevronDown
+                                      className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-v3-text-muted"
+                                      aria-hidden="true"
+                                      strokeWidth={2.2}
+                                    />
+                                  </div>
                                 ) : null}
 
                                 <Button

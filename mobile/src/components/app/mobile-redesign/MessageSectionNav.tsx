@@ -45,6 +45,7 @@ const MESSAGE_SECTION_NAV_ITEMS = MESSAGE_NAVIGATION_ITEMS.map((item) => ({
   id: item.id,
   label: item.title,
   icon: item.icon,
+  disabled: item.id === "templates",
 }));
 
 export function MessageSectionNav({ activeId }: { activeId: MessageSectionId }) {

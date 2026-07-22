@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import type { OutOfPocketPriceInfo } from "@babyjamjam/shared";
 import { api } from "@/lib/api/client";
 
 // Types
@@ -32,6 +33,7 @@ export const voucherQueryKeys = {
   voucherPriceInfos: (type: string, year?: number) => ["voucher-price-infos", type, year] as const,
   allVoucherPriceInfos: (year: number) => ["all-voucher-price-infos", year] as const,
   voucherYears: ["voucher-years"] as const,
+  outOfPocketPriceInfos: ["out-of-pocket-price-infos"] as const,
   areaTemplates: ["area-templates"] as const,
 };
 
@@ -89,6 +91,18 @@ export function useVoucherYears() {
   });
 }
 
+export function useOutOfPocketPriceInfos() {
+  return useQuery<OutOfPocketPriceInfo[]>({
+    queryKey: voucherQueryKeys.outOfPocketPriceInfos,
+    queryFn: async () => {
+      const { data } = await api.get("/out-of-pocket-price-infos");
+      return data as OutOfPocketPriceInfo[];
+    },
+    staleTime: Infinity,
+    gcTime: 1000 * 60 * 60 * 24,
+  });
+}
+
 export function useAreaTemplates() {
   return useQuery<AreaTemplate[]>({
     queryKey: voucherQueryKeys.areaTemplates,
@@ -100,4 +114,3 @@ export function useAreaTemplates() {
     gcTime: 1000 * 60 * 60 * 24, // 24 hours
   });
 }
-

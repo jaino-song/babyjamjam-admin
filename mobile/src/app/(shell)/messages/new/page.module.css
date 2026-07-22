@@ -35,7 +35,7 @@
   flex: 1;
   flex-direction: column;
   gap: 10px;
-  overflow-y: hidden;
+  overflow: visible;
   padding: 0;
   scrollbar-width: none;
 }
@@ -96,40 +96,6 @@
   color: hsl(var(--v3-burgundy));
 }
 
-:global([data-component="messages-new-recipient-row"] [data-component="clients-autocomplete-input"]) {
-  box-sizing: border-box;
-  width: 100%;
-  height: 44px !important;
-  min-height: 44px !important;
-  padding: 10px 96px 10px 12px !important;
-  border: 1px solid hsl(var(--v3-border)) !important;
-  border-radius: 10px !important;
-  background: hsl(var(--v3-dim-white)) !important;
-  color: hsl(var(--v3-dark)) !important;
-  font-family: inherit !important;
-  font-size: 0.85rem !important;
-  box-shadow: none !important;
-  transition: border-color 0.15s ease, background 0.15s ease;
-}
-
-:global([data-component="messages-new-recipient-row"] [data-component="clients-autocomplete-input"]:focus),
-:global([data-component="messages-new-recipient-row"] [data-component="clients-autocomplete-input"]:focus-visible) {
-  border-color: hsl(var(--v3-primary)) !important;
-  background: white !important;
-  box-shadow: none !important;
-}
-
-:global([data-component="messages-new-recipient-row"] [data-component="clients-autocomplete-input"][data-state="open"]) {
-  border-color: hsl(var(--v3-border)) !important;
-  border-bottom-right-radius: 0 !important;
-  border-bottom-left-radius: 0 !important;
-}
-
-:global([data-component="messages-new-recipient-row"] [data-component="clients-autocomplete-input"]::placeholder) {
-  color: hsl(var(--v3-text-muted)) !important;
-  opacity: 0.75;
-}
-
 :global([data-component="messages-new-recipient-row"] [data-component="clients-autocomplete-toggle"]) {
   width: 44px;
   height: 44px;
@@ -143,7 +109,7 @@
 }
 
 :global([data-component="messages-new-recipient-row"] [data-component="clients-autocomplete-dropdown"]) {
-  border-radius: 10px;
+  border-radius: 12px;
 }
 
 :global([data-component="messages-new-recipient-row"] [data-component="clients-autocomplete-dropdown"][data-state="open"]) {
@@ -254,33 +220,6 @@
   color: white !important;
 }
 
-.variableInput {
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 42px;
-  padding: 10px 12px;
-  border: 1px solid hsl(var(--v3-border));
-  border-radius: 10px;
-  outline: none;
-  background: hsl(var(--v3-dim-white));
-  color: hsl(var(--v3-dark));
-  font-family: inherit;
-  font-size: 0.85rem;
-  font-weight: 600;
-  transition: border-color 0.15s ease, background 0.15s ease;
-}
-
-.variableInput:focus,
-.variableInput:focus-visible {
-  border-color: hsl(var(--v3-primary));
-  background: white;
-}
-
-.variableInput::placeholder {
-  color: hsl(var(--v3-text-muted));
-  opacity: 0.75;
-}
-
 .priceInfoControls {
   display: flex;
   flex-direction: column;
@@ -357,74 +296,6 @@
   color: hsl(var(--v3-dark));
   font-size: 0.84rem;
   line-height: 1.55;
-}
-
-.previewButton {
-  height: 44px;
-  min-height: 44px;
-  padding: 0 8px;
-  border-radius: 8px;
-  color: hsl(var(--v3-primary));
-  font-size: 0.72rem;
-  font-weight: 700;
-  box-shadow: none;
-}
-
-.previewButton:hover,
-.previewButton:focus-visible {
-  background: hsl(var(--v3-primary-light));
-  color: hsl(var(--v3-primary));
-  box-shadow: none;
-}
-
-.previewDialogContent {
-  display: flex;
-  width: min(100vw, 390px) !important;
-  max-width: min(100vw, 390px) !important;
-  height: auto !important;
-  max-height: calc(100vh - 96px);
-  flex-direction: column;
-  gap: 12px;
-  padding: 18px;
-  border-radius: 16px;
-}
-
-.previewDialogHeader {
-  padding-right: 28px;
-  text-align: left;
-}
-
-.previewDialogTitle {
-  color: hsl(var(--v3-dark));
-  font-size: 1rem;
-  line-height: 1.2;
-}
-
-.previewDialogContent .previewCard {
-  max-height: min(58vh, 520px);
-  margin-top: 0;
-  overflow-y: auto;
-}
-
-.previewCard {
-  margin-top: 8px;
-  padding: 12px 14px;
-  border: 1px solid hsl(50 70% 80%);
-  border-radius: 12px;
-  background: hsl(50 100% 96%);
-  color: hsl(var(--v3-dark));
-  font-size: 0.78rem;
-  line-height: 1.55;
-  white-space: pre-wrap;
-}
-
-.previewCardLabel {
-  margin-bottom: 6px;
-  color: hsl(45 70% 30%);
-  font-size: 0.58rem;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
 .feedbackAlert {
