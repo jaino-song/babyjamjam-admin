@@ -71,6 +71,7 @@ export function MobileTwoButtonModal({
         <DialogPrimitive.Content
           data-component="mobile-two-button-modal"
           data-source-component={SOURCE_COMPONENT}
+          aria-busy={loading}
           className="fixed top-1/2 left-1/2 z-[201] grid w-[calc(100vw-2.5rem)] max-w-[340px] -translate-x-1/2 -translate-y-1/2 gap-3 rounded-2xl border bg-background p-5 shadow-lg outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0 data-[state=open]:zoom-in-95 data-[state=closed]:zoom-out-95"
         >
           <div
