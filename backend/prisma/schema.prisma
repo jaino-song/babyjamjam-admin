@@ -177,7 +177,7 @@ model eformsign_doc {
   stepRecipientSms           String                         @map("step_recipient_sms")
   expiredDate                DateTime                       @map("expired_date") @db.Timestamptz(6)
   expired                    Boolean                        @default(false)
-  clientId                   Int                            @map("client_id")
+  clientId                   Int?                           @map("client_id")
   branchId                   String?                        @map("branch_id") @db.Uuid
   documentKind               String?                        @map("document_kind")
   employeeScheduleId         Int?                           @map("employee_schedule_id")
@@ -186,7 +186,7 @@ model eformsign_doc {
   snapshotVersion            Int?                           @map("snapshot_version")
   snapshotChunkIndex         Int?                           @map("snapshot_chunk_index")
   clientByEDocId             client?                        @relation("client_e_doc_idToeformsign_doc")
-  client                     client                         @relation("eformsign_doc_client_idToclient", fields: [clientId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  client                     client?                        @relation("eformsign_doc_client_idToclient", fields: [clientId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   employeeSchedule           employee_schedule?             @relation(fields: [employeeScheduleId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   serviceRecordCase          service_record_case?           @relation(fields: [serviceRecordCaseId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   serviceRecordSnapshotChunk service_record_snapshot_chunk?
@@ -788,7 +788,7 @@ model service_record_day {
 model service_record_case {
   id                    String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   branchId              String                          @map("branch_id") @db.Uuid
-  clientId              Int                             @unique @map("client_id")
+  clientId              Int?                            @unique @map("client_id")
   status                String                          @default("WAITING_FOR_DETAILS")
   startDate             DateTime?                       @map("start_date") @db.Date
   endDate               DateTime?                       @map("end_date") @db.Date
@@ -812,7 +812,7 @@ model service_record_case {
   createdAt             DateTime                        @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime                        @updatedAt @map("updated_at") @db.Timestamptz(6)
   branch                branch                          @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  client                client                          @relation(fields: [clientId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  client                client?                         @relation(fields: [clientId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   assignments           service_record_assignment[]
   days                  service_record_day[]
   serviceRecordTokens        service_record_token[]

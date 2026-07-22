@@ -302,7 +302,7 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
             const firstSessionIndex = chunk.days[0]!.sessionIndex;
             const lastSessionIndex = chunk.days.at(-1)!.sessionIndex;
             const documentName = this.caseDocumentName(
-                record.client.name,
+                record.client?.name || record.momName?.trim() || "삭제된 고객",
                 record.id,
                 record.formVersion,
                 chunkIndex,

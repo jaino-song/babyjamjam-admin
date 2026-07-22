@@ -135,6 +135,14 @@ jobs:
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260721090000_make_branch_owner_nullable/migration.sql
 
+      - name: Preserve electronic documents on client deletion
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260723090000_preserve_electronic_documents_on_client_delete/migration.sql
+
+      - name: Verify client deletion document preservation
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-client-delete-document-preservation.sql
+
   apply-preview:
     name: apply preview database patches
     if: >-
@@ -371,13 +379,20 @@ jobs:
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260721090000_make_branch_owner_nullable/migration.sql
 
+      - name: Preserve electronic documents on client deletion
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260723090000_preserve_electronic_documents_on_client_delete/migration.sql
+
+      - name: Verify client deletion document preservation
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-client-delete-document-preservation.sql
+
   apply-production:
     name: apply production database patches
     needs: [apply-preview]
     if: >-
       always() &&
       (
-        (github.event_name == 'push' && github.ref_name == 'preview' && needs['apply-preview'].result == 'success') ||
         (github.event_name == 'push' && github.ref_name == 'main') ||
         (github.event_name == 'workflow_dispatch' && inputs.target == 'production')
       )
@@ -611,3 +626,11 @@ jobs:
       - name: Apply branch owner nullable patch
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260721090000_make_branch_owner_nullable/migration.sql
+
+      - name: Preserve electronic documents on client deletion
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260723090000_preserve_electronic_documents_on_client_delete/migration.sql
+
+      - name: Verify client deletion document preservation
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-client-delete-document-preservation.sql
