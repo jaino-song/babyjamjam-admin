@@ -9,7 +9,6 @@ import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneB
 import { SignaturePad } from "@/components/app/service-record/SignaturePad";
 import { DEFAULT_PROVIDER_NAME, ProviderInfo } from "@/components/service-record/provider-info";
 import { isBusinessDayKr, isoDateInKorea, nextBusinessDayKr } from "@/lib/date/business-days";
-import { IS_DEV_DEPLOYMENT } from "@/lib/env";
 
 /* ───────────────────────── form definition (mirrors the 제공기록지) ───────────────────────── */
 
@@ -160,13 +159,11 @@ const hasDisplayValue = (value: unknown): boolean => {
     return true;
 };
 
-export function canEditDailyRecord(
-    editing: boolean,
+export function isServiceDateMismatch(
     serviceDate: string,
     today = isoDateInKorea(),
-    allowDateMismatch = IS_DEV_DEPLOYMENT,
 ): boolean {
-    return allowDateMismatch || editing || serviceDate === today;
+    return serviceDate !== today;
 }
 
 interface DayButtonState {
@@ -555,10 +552,6 @@ export default function ServiceRecordPage() {
 
     async function submitDay() {
         const serviceDate = (draft["_date"] as string) ?? defaultDate(day);
-        if (!canEditDailyRecord(editing, serviceDate)) {
-            setErrorNotificationMessage("제공일자가 오늘과 달라 제출할 수 없습니다. 서비스 제공 당일에 기록해 주세요.");
-            return;
-        }
         setBusy(true);
         try {
             const currentSession = ctx?.sessions.find((session) => session.sessionIndex === day);
@@ -652,7 +645,7 @@ export default function ServiceRecordPage() {
             return (
                 <div data-component="service-record-options" className="opts">
                     {it.opts!.map((o) => (
-                        <button type="button" key={o} aria-pressed={Array.isArray(v) && (v as string[]).includes(o)} disabled={!canEditCurrentRecord} className={`opt ${Array.isArray(v) && (v as string[]).includes(o) ? "sel" : ""}`} onClick={() => toggleMulti(it.key, o)}>
+                        <button type="button" key={o} aria-pressed={Array.isArray(v) && (v as string[]).includes(o)} className={`opt ${Array.isArray(v) && (v as string[]).includes(o) ? "sel" : ""}`} onClick={() => toggleMulti(it.key, o)}>
                             <span className="box">✓</span>{o}
                         </button>
                     ))}
@@ -664,13 +657,13 @@ export default function ServiceRecordPage() {
                 <>
                     <div data-component="service-record-radio-options" className="opts">
                         {it.opts!.map((o) => (
-                            <button type="button" key={o} aria-pressed={v === o} disabled={!canEditCurrentRecord} className={`opt radio ${v === o ? "sel" : ""}`} onClick={() => setField(it.key, o)}>
+                            <button type="button" key={o} aria-pressed={v === o} className={`opt radio ${v === o ? "sel" : ""}`} onClick={() => setField(it.key, o)}>
                                 <span className="box">●</span>{o}
                             </button>
                         ))}
                     </div>
                     {it.type === "stool" && v === "이상변" && (
-                        <input className="in" style={{ marginTop: 8 }} placeholder="색깔 등 (이상변 시)" disabled={!canEditCurrentRecord}
+                        <input className="in" style={{ marginTop: 8 }} placeholder="색깔 등 (이상변 시)"
                             value={(draft[`${it.key}_color`] as string) ?? ""} onChange={(e) => setField(`${it.key}_color`, e.target.value)} />
                     )}
                 </>
@@ -682,7 +675,7 @@ export default function ServiceRecordPage() {
                     {it.counts!.map((c) => (
                         <div data-component="service-record-count-row" className="segnum" key={c.k}>
                             <span>{c.label}</span>
-                            <input type="number" aria-label={c.label} inputMode={c.k === "temp" ? "decimal" : "numeric"} min="0" step={c.k === "temp" ? "0.1" : "1"} disabled={!canEditCurrentRecord} value={((draft[`${it.key}_${c.k}`] as string) ?? "")} onChange={(e) => setField(`${it.key}_${c.k}`, e.target.value)} />
+                            <input type="number" aria-label={c.label} inputMode={c.k === "temp" ? "decimal" : "numeric"} min="0" step={c.k === "temp" ? "0.1" : "1"} value={((draft[`${it.key}_${c.k}`] as string) ?? "")} onChange={(e) => setField(`${it.key}_${c.k}`, e.target.value)} />
                             <span>{c.unit}</span>
                         </div>
                     ))}
@@ -693,12 +686,12 @@ export default function ServiceRecordPage() {
             const placeholder = it.key === "etcService"
                 ? "추가사항에 대한 기록 필요 시 기재"
                 : "서비스 제공 관련 특이사항 기록 필요 시 기재";
-            return <textarea className="ta" disabled={!canEditCurrentRecord} value={(v as string) ?? ""} onChange={(e) => setField(it.key, e.target.value)} placeholder={placeholder} />;
+            return <textarea className="ta" value={(v as string) ?? ""} onChange={(e) => setField(it.key, e.target.value)} placeholder={placeholder} />;
         }
         if (it.type === "confirm") {
             return (
                 <div data-component="service-record-confirm-options" className="opts">
-                    <button type="button" aria-pressed={Boolean(v)} disabled={!canEditCurrentRecord} className={`opt ${v ? "sel" : ""}`} onClick={() => setField(it.key, !v)}>
+                    <button type="button" aria-pressed={Boolean(v)} className={`opt ${v ? "sel" : ""}`} onClick={() => setField(it.key, !v)}>
                         <span className="box">✓</span>결제 확인 완료
                     </button>
                 </div>
@@ -710,7 +703,7 @@ export default function ServiceRecordPage() {
     const currentDayPage = DAY_PAGES[pageIdx] ?? DAY_PAGES[0];
     const isMomConfirmationPage = Boolean(currentDayPage.confirmation);
     const currentServiceDate = ((draft["_date"] as string | undefined) || defaultDate(day));
-    const canEditCurrentRecord = canEditDailyRecord(editing, currentServiceDate);
+    const hasServiceDateMismatch = isServiceDateMismatch(currentServiceDate);
     const currentSession = ctx?.sessions.find((session) => session.sessionIndex === day);
     const existingMomSignature = currentSession?.clientSignature ?? null;
     const signatureValue = existingMomSignature ?? clientSignature;
@@ -817,7 +810,7 @@ export default function ServiceRecordPage() {
                 {screen === "overview" && ctx && (
                     <>
                         <div data-component="service-record-overview-title" className="step-title">제공기록표</div>
-                        <p className="muted">서비스 제공 기록은 해당 날짜에만 기록이 가능합니다. 제출된 기록은 눌러서 수정할 수 있습니다.</p>
+                        <p data-component="mobile_service-record_overview_help" className="muted">제출된 기록은 눌러서 수정할 수 있습니다.</p>
                         <div data-component="service-record-day-grid" className="days">
                             {Array.from({ length: ctx.totalSessions }, (_, i) => i + 1).map((d) => {
                                 const done = lockedDays.has(d);
@@ -872,9 +865,9 @@ export default function ServiceRecordPage() {
                                 <input type="date" className="in dateinput" value={currentServiceDate} min={day <= 1 ? (ctx?.startDate?.slice(0, 10) ?? undefined) : defaultDate(day)} onChange={(e) => setField("_date", e.target.value)} />
                             </div>
                         )}
-                        {!editing && !canEditCurrentRecord && (
+                        {!editing && hasServiceDateMismatch && (
                             <div data-component="service-record-date-mismatch-notice" className="notice">
-                                <span>서비스 제공일자({monthDayKo(currentServiceDate)})가 오늘과 달라 입력할 수 없습니다. 서비스 제공 당일에 기록해 주세요.</span>
+                                <span>서비스 제공일자({monthDayKo(currentServiceDate)})가 오늘과 달라요. 한번 더 확인해 주세요.</span>
                             </div>
                         )}
                         <div data-component="service-record-day-title" className="step-title">{currentDayPage.title}</div>
@@ -920,13 +913,13 @@ export default function ServiceRecordPage() {
                         )}
                         {isMomConfirmationPage ? (
                             <div data-component="service-record-confirmation-action" className="nav confirmation-nav">
-                                <button className="btn submit" disabled={busy || !canEditCurrentRecord || !signatureValue} onClick={() => setSubmitModalOpen(true)}>확인</button>
+                                <button className="btn submit" disabled={busy || !signatureValue} onClick={() => setSubmitModalOpen(true)}>확인</button>
                             </div>
                         ) : (
                             <div data-component="service-record-nav" className="nav">
                                 <button
                                     className="btn primary"
-                                    disabled={!canEditCurrentRecord || !isCurrentPageComplete}
+                                    disabled={!isCurrentPageComplete}
                                     onClick={() => navigateTo("day", {
                                         mode: "push",
                                         day,
