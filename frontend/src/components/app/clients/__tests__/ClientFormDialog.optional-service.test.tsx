@@ -17,6 +17,7 @@ jest.mock("@/hooks/useClients", () => ({
 }));
 
 jest.mock("@/hooks/useVoucherData", () => ({
+  useOutOfPocketPriceInfos: () => ({ data: [], isError: false, isLoading: false }),
   useVoucherPriceInfos: () => ({ data: [], isLoading: false }),
   useVoucherYears: () => ({ data: [], isLoading: false }),
 }));
@@ -78,7 +79,7 @@ describe("ClientFormPanel optional service information", () => {
     fireEvent.click(screen.getByRole("button", { name: "다음" }));
     fireEvent.click(screen.getByRole("button", { name: "다음" }));
 
-    expect(screen.getByLabelText("바우처 유형")).toHaveValue("");
+    expect(screen.queryByLabelText("바우처 유형")).not.toBeInTheDocument();
     const voucherCustomerTab = screen.getByRole("tab", { name: "바우처 고객" });
     const selfPayCustomerTab = screen.getByRole("tab", { name: "자부담 고객" });
     expect(voucherCustomerTab).toHaveAttribute("aria-selected", "false");
@@ -117,7 +118,7 @@ describe("ClientFormPanel optional service information", () => {
         type: null,
         duration: null,
         fullPrice: null,
-        grant: null,
+        grant: "0",
         actualPrice: null,
         startDate: null,
         endDate: null,

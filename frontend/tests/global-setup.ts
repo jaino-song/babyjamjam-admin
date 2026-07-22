@@ -35,7 +35,8 @@ export default async function globalSetup(config: FullConfig) {
     path.resolve(process.cwd(), "auth.json"),
     JSON.stringify(storageState),
   );
-  await context.dispose();
+  await context.close();
+  await browser.close();
 
   if (!fs.existsSync(path.resolve(process.cwd(), "auth.json"))) {
     throw new Error("Playwright auth storage state was not created");

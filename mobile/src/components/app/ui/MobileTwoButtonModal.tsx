@@ -80,7 +80,7 @@ export function MobileTwoButtonModal({
           >
             <DialogPrimitive.Title
               data-component="mobile-two-button-modal-title"
-              className="text-center font-bold text-v3-dark"
+              className="text-center text-base font-bold text-v3-dark"
             >
               {title}
             </DialogPrimitive.Title>
