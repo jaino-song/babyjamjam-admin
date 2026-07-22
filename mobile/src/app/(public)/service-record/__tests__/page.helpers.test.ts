@@ -1,21 +1,12 @@
-import { canEditDailyRecord, isDayButtonDisabled } from "../[token]/page";
+import { isDayButtonDisabled, isServiceDateMismatch } from "../[token]/page";
 
-describe("canEditDailyRecord", () => {
-    it("allows an existing record to be edited outside the service date", () => {
-        expect(canEditDailyRecord(true, "2026-07-14", "2026-07-15")).toBe(true);
+describe("isServiceDateMismatch", () => {
+    it("detects when the service date differs from today", () => {
+        expect(isServiceDateMismatch("2026-07-14", "2026-07-15")).toBe(true);
     });
 
-    it("keeps the same-day gate for a new record", () => {
-        expect(canEditDailyRecord(false, "2026-07-14", "2026-07-15")).toBe(false);
-        expect(canEditDailyRecord(false, "2026-07-15", "2026-07-15")).toBe(true);
-    });
-
-    it("allows a new record outside the service date when the dev override is enabled", () => {
-        expect(canEditDailyRecord(false, "2026-07-14", "2026-07-15", true)).toBe(true);
-    });
-
-    it("keeps the same-day gate when the dev override is disabled", () => {
-        expect(canEditDailyRecord(false, "2026-07-14", "2026-07-15", false)).toBe(false);
+    it("does not flag today's service date", () => {
+        expect(isServiceDateMismatch("2026-07-15", "2026-07-15")).toBe(false);
     });
 });
 

@@ -115,6 +115,41 @@ describe("ServiceRecordPage authentication restoration", () => {
         expect(screen.getByDisplayValue("작성 중인 기록")).toBeInTheDocument();
     });
 
+    it("allows entry for a different service date while showing a warning", async () => {
+        const user = userEvent.setup();
+        window.sessionStorage.setItem("daily-service-record-draft:link-token", JSON.stringify({
+            header: { momName: "홍길동" },
+            day: 1,
+            pageIdx: 0,
+            draft: {
+                _date: "2026-07-20",
+                perineum: ["이상없음"],
+                breast: ["이상없음"],
+                excretion: ["이상없음"],
+                sitzBath: "실시",
+                meals_meal: "1",
+                meals_snack: "1",
+            },
+        }));
+        fetchMock
+            .mockResolvedValueOnce(jsonResponse({ valid: true }))
+            .mockResolvedValueOnce(jsonResponse({
+                ...serviceRecordContext,
+                totalSessions: 2,
+                header: { momName: "홍길동" },
+            }));
+
+        render(<ServiceRecordPage />);
+
+        expect(await screen.findByText("제공기록표")).toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: "기록 시작" }));
+
+        expect(document.querySelector('[data-component="service-record-date-mismatch-notice"]'))
+            .toHaveTextContent("서비스 제공일자(2026.07.20)가 오늘과 달라요. 한번 더 확인해 주세요.");
+        expect(screen.getAllByRole("button", { name: /이상없음/ })[0]).toBeEnabled();
+        expect(screen.getByRole("button", { name: "다음" })).toBeEnabled();
+    });
+
     it("does not allow navigation back to submitted service information from the overview", async () => {
         fetchMock
             .mockResolvedValueOnce(jsonResponse({ valid: true }))
