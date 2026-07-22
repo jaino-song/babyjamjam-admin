@@ -5,10 +5,12 @@ import type { ReactNode } from "react";
 
 import { Button, type ButtonProps } from "@/components/ui/button";
 
+const SOURCE_COMPONENT = "MobileTwoButtonModal";
+
 interface MobileTwoButtonModalProps {
   open: boolean;
   title: string;
-  description: string;
+  description?: string;
   cancelLabel: string;
   confirmLabel: string;
   confirmVariant?: ButtonProps["variant"];
@@ -68,6 +70,7 @@ export function MobileTwoButtonModal({
         />
         <DialogPrimitive.Content
           data-component="mobile-two-button-modal"
+          data-source-component={SOURCE_COMPONENT}
           className="fixed top-1/2 left-1/2 z-[201] grid w-[calc(100vw-2.5rem)] max-w-[340px] -translate-x-1/2 -translate-y-1/2 gap-3 rounded-2xl border bg-background p-5 shadow-lg outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0 data-[state=open]:zoom-in-95 data-[state=closed]:zoom-out-95"
         >
           <div
@@ -77,7 +80,7 @@ export function MobileTwoButtonModal({
           >
             <DialogPrimitive.Title
               data-component="mobile-two-button-modal-title"
-              className="text-base font-bold text-v3-dark"
+              className="text-center font-bold text-v3-dark"
             >
               {title}
             </DialogPrimitive.Title>

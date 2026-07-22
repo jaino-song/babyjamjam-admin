@@ -2,9 +2,13 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import {
+    findOutOfPocketPriceInfo,
+    formatOutOfPocketDurationLabel,
+} from "@babyjamjam/shared";
 import { useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useClientPhoneDuplicateCheck } from "@/hooks/useClientPhoneDuplicateCheck";
-import { useVoucherPriceInfos, useVoucherYears } from "@/hooks/useVoucherData";
+import { useOutOfPocketPriceInfos, useVoucherPriceInfos, useVoucherYears } from "@/hooks/useVoucherData";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
@@ -171,6 +175,7 @@ const normalizeCompactDateForSubmit = (value: string): string => {
 };
 
 const normalizeDateForCompactState = (value: string | null | undefined): string => {
+    if (value && /^\d{6}$/.test(value)) return value;
     const compactDate = formatDateForCompactInput(value);
     if (compactDate) return compactDate;
     return parseCompactDateInput(value ?? "");
@@ -322,6 +327,7 @@ function ClientFormContent({
 
     // Track if prices were manually edited
     const [pricesManuallyEdited, setPricesManuallyEdited] = useState(false);
+    const skipNextEndDateRecalculationRef = useRef(false);
 
     // Voucher year selection - defaults to the year the service belongs to: the
     // form's service end date (initialized from the stored record when editing).
@@ -344,6 +350,11 @@ function ClientFormContent({
 
     // Fetch voucher price info based on selected type and year
     const { data: voucherPriceInfos, isLoading: isPriceLoading } = useVoucherPriceInfos(formData.type || "", resolvedVoucherYear);
+    const {
+        data: outOfPocketPriceInfos,
+        isLoading: isOutOfPocketPriceLoading,
+        isError: isOutOfPocketPriceError,
+    } = useOutOfPocketPriceInfos();
 
     // Get available durations for the selected voucher type
     const availableDurations = useMemo(() => {
@@ -373,13 +384,19 @@ function ClientFormContent({
         []
     );
 
-    const durationOptions = useMemo(
-        () => availableDurations.map((duration) => ({
+    const durationOptions = useMemo(() => {
+        if (!formData.voucherClient) {
+            return (outOfPocketPriceInfos ?? []).map((priceInfo) => ({
+                value: String(priceInfo.duration),
+                label: formatOutOfPocketDurationLabel(priceInfo.duration),
+            }));
+        }
+
+        return availableDurations.map((duration) => ({
             value: String(duration),
             label: `${duration}일`,
-        })),
-        [availableDurations]
-    );
+        }));
+    }, [availableDurations, formData.voucherClient, outOfPocketPriceInfos]);
 
     const serviceStatusOptions = useMemo(
         () => SERVICE_STATUS_OPTIONS.map((status) => ({
@@ -391,28 +408,45 @@ function ClientFormContent({
 
     // Get price info for selected type and duration
     const selectedPriceInfo = useMemo(() => {
+        if (!formData.voucherClient) {
+            return findOutOfPocketPriceInfo(outOfPocketPriceInfos, formData.duration);
+        }
         if (!voucherPriceInfos || !formData.duration) return null;
         return voucherPriceInfos.find(
             info => Number(info.duration) === formData.duration
         );
-    }, [voucherPriceInfos, formData.duration]);
-    const arePriceInputsLocked = !formData.type || !formData.duration || isPriceLoading;
+    }, [formData.duration, formData.voucherClient, outOfPocketPriceInfos, voucherPriceInfos]);
+    const arePriceInputsLocked = formData.voucherClient
+        ? !formData.type || !formData.duration || isPriceLoading
+        : !formData.duration || isOutOfPocketPriceLoading || isOutOfPocketPriceError;
 
     // Auto-fill prices when type and duration are selected (only if not manually edited)
     useEffect(() => {
         if (selectedPriceInfo && !pricesManuallyEdited) {
             queueMicrotask(() => {
-                setFormData(prev => ({
-                    ...prev,
-                    fullPrice: parsePrice(selectedPriceInfo.fullPrice),
-                    grant: parsePrice(selectedPriceInfo.grant),
-                    actualPrice: parsePrice(selectedPriceInfo.actualPrice),
-                }));
+                setFormData(prev => prev.voucherClient
+                    ? {
+                        ...prev,
+                        fullPrice: parsePrice(selectedPriceInfo.fullPrice),
+                        grant: "grant" in selectedPriceInfo ? parsePrice(selectedPriceInfo.grant) : prev.grant,
+                        actualPrice: "actualPrice" in selectedPriceInfo ? parsePrice(selectedPriceInfo.actualPrice) : prev.actualPrice,
+                    }
+                    : {
+                        ...prev,
+                        fullPrice: parsePrice(selectedPriceInfo.fullPrice),
+                        grant: "0",
+                        actualPrice: parsePrice(selectedPriceInfo.fullPrice),
+                    });
             });
         }
     }, [selectedPriceInfo, pricesManuallyEdited]);
 
     useEffect(() => {
+        if (skipNextEndDateRecalculationRef.current) {
+            skipNextEndDateRecalculationRef.current = false;
+            return;
+        }
+
         queueMicrotask(() => {
             setFormData(prev => {
                 const duration = prev.duration;
@@ -465,9 +499,23 @@ function ClientFormContent({
         }));
     };
 
+    const handleVoucherClientChange = (voucherClient: boolean) => {
+        setPricesManuallyEdited(false);
+        setFormData(prev => ({
+            ...prev,
+            voucherClient,
+            type: "",
+            duration: null,
+            fullPrice: "",
+            grant: "",
+            actualPrice: "",
+        }));
+    };
+
     // Reset form when dialog opens/closes or client changes
     useEffect(() => {
         if (open) {
+            skipNextEndDateRecalculationRef.current = true;
             let nextFormData: ClientFormData | null = null;
             let nextPricesManuallyEdited = false;
 
@@ -649,11 +697,11 @@ function ClientFormContent({
                     // Only include employee IDs if explicitly selected (not null)
                     ...(formData.primaryEmployeeId !== null && { primaryEmployeeId: formData.primaryEmployeeId }),
                     ...(formData.secondaryEmployeeId !== null && { secondaryEmployeeId: formData.secondaryEmployeeId }),
-                    type: formData.type,
+                    type: formData.voucherClient ? formData.type : null,
                     duration: formData.duration || null,
                     fullPrice: formData.fullPrice,
-                    grant: formData.grant,
-                    actualPrice: formData.actualPrice,
+                    grant: formData.voucherClient ? formData.grant : "0",
+                    actualPrice: formData.voucherClient ? formData.actualPrice : formData.fullPrice,
                     startDate: normalizedStartDate || null,
                     endDate: normalizedEndDate || null,
                     careCenter: formData.careCenter,
@@ -672,11 +720,11 @@ function ClientFormContent({
                     phone: formData.phone || null,
                     primaryEmployeeId: formData.primaryEmployeeId,
                     secondaryEmployeeId: formData.secondaryEmployeeId,
-                    type: formData.type || null,
+                    type: formData.voucherClient ? formData.type || null : null,
                     duration: formData.duration || null,
                     fullPrice: formData.fullPrice || null,
-                    grant: formData.grant || null,
-                    actualPrice: formData.actualPrice || null,
+                    grant: formData.voucherClient ? formData.grant || null : "0",
+                    actualPrice: formData.voucherClient ? formData.actualPrice || null : formData.fullPrice || null,
                     startDate: normalizedStartDate || null,
                     endDate: normalizedEndDate || null,
                     careCenter: formData.careCenter,
@@ -968,40 +1016,53 @@ function ClientFormContent({
                 title={t(locale, "clients.form.section-service")}
                 description="선택 항목입니다. 상담 단계에서는 입력하지 않아도 됩니다."
             >
-                <FormGrid data-component="clients-form-dialog-service-grid">
-                    <FormField
-                        data-component="clients-form-dialog-field-voucher-year"
-                        htmlFor="clients-form-voucher-year"
-                        label={t(locale, "clients.form.voucher-year")}
-                    >
-                        <FormNativeSelect
-                            id="clients-form-voucher-year"
-                            value={resolvedVoucherYear.toString()}
-                            options={voucherYearOptions}
-                            placeholder={t(locale, "clients.form.voucher-year")}
-                            onValueChange={handleVoucherYearChange}
-                            wrapDataComponent="clients-form-dialog-field-voucher-year-select-wrap"
-                            selectDataComponent="clients-form-dialog-field-voucher-year-select"
-                            iconDataComponent="clients-form-dialog-field-voucher-year-select-icon"
-                        />
-                    </FormField>
+                <TogglePill
+                    data-component="clients-form-dialog-field-voucher-client"
+                    value={formData.voucherClient}
+                    onValueChange={handleVoucherClientChange}
+                    leftLabel={t(locale, "clients.form.voucher-client")}
+                    rightLabel={t(locale, "clients.form.self-pay-client")}
+                    ariaLabel={t(locale, "clients.form.customer-type")}
+                />
 
-                    <FormField
-                        data-component="clients-form-dialog-field-voucher-type"
-                        htmlFor="clients-form-voucher-type"
-                        label={t(locale, "clients.form.voucher-type")}
-                    >
-                        <FormNativeSelect
-                            id="clients-form-voucher-type"
-                            value={formData.type || ""}
-                            options={voucherTypeOptions}
-                            placeholder={t(locale, "clients.form.voucher-type")}
-                            onValueChange={handleTypeChange}
-                            wrapDataComponent="clients-form-dialog-field-voucher-type-select-wrap"
-                            selectDataComponent="clients-form-dialog-field-voucher-type-select"
-                            iconDataComponent="clients-form-dialog-field-voucher-type-select-icon"
-                        />
-                    </FormField>
+                <FormGrid data-component="clients-form-dialog-service-grid">
+                    {formData.voucherClient && (
+                        <>
+                            <FormField
+                                data-component="clients-form-dialog-field-voucher-year"
+                                htmlFor="clients-form-voucher-year"
+                                label={t(locale, "clients.form.voucher-year")}
+                            >
+                                <FormNativeSelect
+                                    id="clients-form-voucher-year"
+                                    value={resolvedVoucherYear.toString()}
+                                    options={voucherYearOptions}
+                                    placeholder={t(locale, "clients.form.voucher-year")}
+                                    onValueChange={handleVoucherYearChange}
+                                    wrapDataComponent="clients-form-dialog-field-voucher-year-select-wrap"
+                                    selectDataComponent="clients-form-dialog-field-voucher-year-select"
+                                    iconDataComponent="clients-form-dialog-field-voucher-year-select-icon"
+                                />
+                            </FormField>
+
+                            <FormField
+                                data-component="clients-form-dialog-field-voucher-type"
+                                htmlFor="clients-form-voucher-type"
+                                label={t(locale, "clients.form.voucher-type")}
+                            >
+                                <FormNativeSelect
+                                    id="clients-form-voucher-type"
+                                    value={formData.type || ""}
+                                    options={voucherTypeOptions}
+                                    placeholder={t(locale, "clients.form.voucher-type")}
+                                    onValueChange={handleTypeChange}
+                                    wrapDataComponent="clients-form-dialog-field-voucher-type-select-wrap"
+                                    selectDataComponent="clients-form-dialog-field-voucher-type-select"
+                                    iconDataComponent="clients-form-dialog-field-voucher-type-select-icon"
+                                />
+                            </FormField>
+                        </>
+                    )}
 
                     <FormField
                         data-component="clients-form-dialog-field-duration"
@@ -1018,12 +1079,14 @@ function ClientFormContent({
                                     handleChange("duration", value ? Number(value) : null);
                                     setPricesManuallyEdited(false);
                                 }}
-                                disabled={!formData.type || isPriceLoading}
+                                disabled={formData.voucherClient
+                                    ? !formData.type || isPriceLoading
+                                    : isOutOfPocketPriceLoading || isOutOfPocketPriceError}
                                 wrapDataComponent="clients-form-dialog-field-duration-select-wrap"
                                 selectDataComponent="clients-form-dialog-field-duration-select"
                                 iconDataComponent="clients-form-dialog-field-duration-select-icon"
                             />
-                            {isPriceLoading && (
+                            {(formData.voucherClient ? isPriceLoading : isOutOfPocketPriceLoading) && (
                                 <div className="absolute right-10 top-1/2 -translate-y-1/2">
                                     <Spinner className="h-4 w-4" />
                                 </div>
@@ -1031,23 +1094,24 @@ function ClientFormContent({
                         </div>
                     </FormField>
                 </FormGrid>
-
-                <TogglePill
-                    data-component="clients-form-dialog-field-voucher-client"
-                    value={formData.voucherClient}
-                    onValueChange={(value) => handleChange("voucherClient", value)}
-                    leftLabel={t(locale, "clients.form.voucher-client")}
-                    rightLabel={t(locale, "clients.form.self-pay-client")}
-                    ariaLabel={t(locale, "clients.form.customer-type")}
-                />
+                {!formData.voucherClient && isOutOfPocketPriceError && (
+                    <FormHelperText tone="error" data-component="clients-form-dialog-out-of-pocket-price-error">
+                        자부담 요금 정보를 불러오지 못했습니다.
+                    </FormHelperText>
+                )}
             </ClientDialogSection>
 
             <ClientDialogSection
                 dataComponent="clients-form-dialog-section-pricing"
                 title={t(locale, "clients.form.section-pricing")}
-                description="서비스 금액과 지원 금액을 확인하고 조정해 주세요."
+                description={formData.voucherClient
+                    ? "서비스 금액과 지원 금액을 확인하고 조정해 주세요."
+                    : "기간별 총 서비스 금액을 확인하고 조정해 주세요."}
             >
-                <FormGrid data-component="clients-form-dialog-pricing-grid" className="lg:grid-cols-3">
+                <FormGrid
+                    data-component="clients-form-dialog-pricing-grid"
+                    className={formData.voucherClient ? "lg:grid-cols-3" : undefined}
+                >
                     <FormField
                         data-component="clients-form-dialog-field-full-price"
                         htmlFor="fullPrice"
@@ -1067,7 +1131,7 @@ function ClientFormContent({
                         </div>
                     </FormField>
 
-                    <FormField
+                    {formData.voucherClient && <FormField
                         data-component="clients-form-dialog-field-grant"
                         htmlFor="grant"
                         label={t(locale, "clients.form.grant")}
@@ -1084,9 +1148,9 @@ function ClientFormContent({
                                 원
                             </span>
                         </div>
-                    </FormField>
+                    </FormField>}
 
-                    <FormField
+                    {formData.voucherClient && <FormField
                         data-component="clients-form-dialog-field-actual-price"
                         htmlFor="actualPrice"
                         label={t(locale, "clients.form.actual-price")}
@@ -1103,7 +1167,7 @@ function ClientFormContent({
                                 원
                             </span>
                         </div>
-                    </FormField>
+                    </FormField>}
                 </FormGrid>
             </ClientDialogSection>
         </>
@@ -1330,46 +1394,50 @@ function ClientFormContent({
                 <TogglePill
                     data-component="clients-form-panel-voucher-client-field"
                     value={formData.voucherClient}
-                    onValueChange={(value) => handleChange("voucherClient", value)}
+                    onValueChange={handleVoucherClientChange}
                     leftLabel={t(locale, "clients.form.voucher-client")}
                     rightLabel={t(locale, "clients.form.self-pay-client")}
                     ariaLabel={t(locale, "clients.form.customer-type")}
                 />
             </div>
 
-            <FormField
-                data-component="clients-form-panel-voucher-year-field"
-                htmlFor="clients-form-panel-voucher-year"
-                label={t(locale, "clients.form.voucher-year")}
-            >
-                <FormNativeSelect
-                    id="clients-form-panel-voucher-year"
-                    value={resolvedVoucherYear.toString()}
-                    options={voucherYearOptions}
-                    placeholder={t(locale, "clients.form.voucher-year")}
-                    onValueChange={handleVoucherYearChange}
-                    wrapDataComponent="clients-form-panel-voucher-year-select-wrap"
-                    selectDataComponent="clients-form-panel-voucher-year-select"
-                    iconDataComponent="clients-form-panel-voucher-year-select-icon"
-                />
-            </FormField>
+            {formData.voucherClient && (
+                <>
+                    <FormField
+                        data-component="clients-form-panel-voucher-year-field"
+                        htmlFor="clients-form-panel-voucher-year"
+                        label={t(locale, "clients.form.voucher-year")}
+                    >
+                        <FormNativeSelect
+                            id="clients-form-panel-voucher-year"
+                            value={resolvedVoucherYear.toString()}
+                            options={voucherYearOptions}
+                            placeholder={t(locale, "clients.form.voucher-year")}
+                            onValueChange={handleVoucherYearChange}
+                            wrapDataComponent="clients-form-panel-voucher-year-select-wrap"
+                            selectDataComponent="clients-form-panel-voucher-year-select"
+                            iconDataComponent="clients-form-panel-voucher-year-select-icon"
+                        />
+                    </FormField>
 
-            <FormField
-                data-component="clients-form-panel-voucher-type-field"
-                htmlFor="clients-form-panel-voucher-type"
-                label={t(locale, "clients.form.voucher-type")}
-            >
-                <FormNativeSelect
-                    id="clients-form-panel-voucher-type"
-                    value={formData.type || ""}
-                    options={voucherTypeOptions}
-                    placeholder={t(locale, "clients.form.voucher-type")}
-                    onValueChange={handleTypeChange}
-                    wrapDataComponent="clients-form-panel-voucher-type-select-wrap"
-                    selectDataComponent="clients-form-panel-voucher-type-select"
-                    iconDataComponent="clients-form-panel-voucher-type-select-icon"
-                />
-            </FormField>
+                    <FormField
+                        data-component="clients-form-panel-voucher-type-field"
+                        htmlFor="clients-form-panel-voucher-type"
+                        label={t(locale, "clients.form.voucher-type")}
+                    >
+                        <FormNativeSelect
+                            id="clients-form-panel-voucher-type"
+                            value={formData.type || ""}
+                            options={voucherTypeOptions}
+                            placeholder={t(locale, "clients.form.voucher-type")}
+                            onValueChange={handleTypeChange}
+                            wrapDataComponent="clients-form-panel-voucher-type-select-wrap"
+                            selectDataComponent="clients-form-panel-voucher-type-select"
+                            iconDataComponent="clients-form-panel-voucher-type-select-icon"
+                        />
+                    </FormField>
+                </>
+            )}
 
             <FormField
                 data-component="clients-form-panel-duration-field"
@@ -1386,18 +1454,30 @@ function ClientFormContent({
                             handleChange("duration", value ? Number(value) : null);
                             setPricesManuallyEdited(false);
                         }}
-                        disabled={!formData.type || isPriceLoading}
+                        disabled={formData.voucherClient
+                            ? !formData.type || isPriceLoading
+                            : isOutOfPocketPriceLoading || isOutOfPocketPriceError}
                         wrapDataComponent="clients-form-panel-duration-select-wrap"
                         selectDataComponent="clients-form-panel-duration-select"
                         iconDataComponent="clients-form-panel-duration-select-icon"
                     />
-                    {isPriceLoading && (
+                    {(formData.voucherClient ? isPriceLoading : isOutOfPocketPriceLoading) && (
                         <div className="absolute right-10 top-1/2 -translate-y-1/2">
                             <Spinner className="h-4 w-4" />
                         </div>
                     )}
                 </div>
             </FormField>
+
+            {!formData.voucherClient && isOutOfPocketPriceError && (
+                <FormHelperText
+                    tone="error"
+                    className={PANEL_FULL_FIELD_CLASS_NAME}
+                    data-component="clients-form-panel-out-of-pocket-price-error"
+                >
+                    자부담 요금 정보를 불러오지 못했습니다.
+                </FormHelperText>
+            )}
 
             <FormField
                 data-component="clients-form-panel-full-price-input"
@@ -1412,7 +1492,7 @@ function ClientFormContent({
                 />
             </FormField>
 
-            <FormField
+            {formData.voucherClient && <FormField
                 data-component="clients-form-panel-grant-input"
                 htmlFor="grant"
                 label={t(locale, "clients.form.grant")}
@@ -1423,9 +1503,9 @@ function ClientFormContent({
                     onChange={(event) => handlePriceChange("grant", event.target.value.replace(/,/g, ""))}
                     disabled={arePriceInputsLocked}
                 />
-            </FormField>
+            </FormField>}
 
-            <FormField
+            {formData.voucherClient && <FormField
                 data-component="clients-form-panel-actual-price-input"
                 htmlFor="actualPrice"
                 label={t(locale, "clients.form.actual-price")}
@@ -1436,7 +1516,7 @@ function ClientFormContent({
                     onChange={(event) => handlePriceChange("actualPrice", event.target.value.replace(/,/g, ""))}
                     disabled={arePriceInputsLocked}
                 />
-            </FormField>
+            </FormField>}
         </>
     );
 

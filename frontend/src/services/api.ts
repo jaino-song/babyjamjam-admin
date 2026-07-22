@@ -1,5 +1,6 @@
 import axios from "axios";
 import { api } from "@/lib/api/client";
+import { safeStorageSetItem } from "@/lib/safe-storage";
 import type { RegisterRequest } from "@babyjamjam/shared";
 import { ContractDataDto } from '@/backend/application/dto/contract.dto';
 import {
@@ -48,6 +49,17 @@ export interface LocalEformsignDocRecord {
     documentKind: "contract" | "service_record_snapshot" | null;
     employeeScheduleId: number | null;
     templateId: string | null;
+}
+
+export interface SyncedEformsignDocResponse {
+    id?: number;
+    documentId: string;
+    statusType: string;
+    statusDetail: string;
+    stepType: string;
+    stepIndex: string;
+    stepName: string;
+    expired?: boolean;
 }
 
 export function normalizeDocumentListResponse(
@@ -293,11 +305,35 @@ export const eformsignApi = {
         });
         return data;
     },
+    syncDocumentStatus: async (documentId: string): Promise<SyncedEformsignDocResponse> => {
+        const { data } = await api.post('/eformsign-docs/sync-status', { documentId });
+        return data;
+    },
     // 전체 탭 StatsBar 카운터용 원시 신호. 토큰은 프록시가 서버에서 주입.
     getDocumentStatusCounts: async (): Promise<EformsignStatusCountsResponse> => {
         const { data } = await api.get('/eformsign/documents/status-counts');
         return data;
     },
+}
+
+export async function withEformsignReauth<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+        return await fn();
+    } catch (error) {
+        if (!axios.isAxiosError(error)) throw error;
+
+        const status = error.response?.status;
+        if (status !== 401 && status !== 403) throw error;
+
+        try {
+            const executionTime = Date.now();
+            await eformsignApi.authenticate(executionTime);
+            safeStorageSetItem("session", "eformsign_auth_time", executionTime.toString());
+            return await fn();
+        } catch {
+            throw error;
+        }
+    }
 }
 
 export type MessageSenderApprovalStatus = "not_requested" | "pending" | "approved";

@@ -16,6 +16,8 @@ import { cn } from "@/lib/utils";
 type ApprovalModalSize = "compact" | "detail";
 type ApprovalButtonVariant = "positive" | "destructive";
 
+const SOURCE_COMPONENT = "TwoButtonModal";
+
 export interface TwoButtonModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -76,6 +78,7 @@ export function TwoButtonModal({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
         data-component={dataComponent}
+        data-source-component={SOURCE_COMPONENT}
         className={cn(
           "flex flex-col",
           size === "compact" && "aspect-[5/3] sm:max-w-[300px]",

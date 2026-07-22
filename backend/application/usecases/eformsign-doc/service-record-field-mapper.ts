@@ -122,12 +122,11 @@ function asText(value: unknown): string {
  */
 export function buildServiceRecordDocumentFields(input: {
     header: ServiceRecordHeaderInput | null;
-    orgName: string;
     employeeName: string;
     days: ServiceRecordDayInput[];
     slotCount?: number;
 }): EformsignField[] {
-    const { header, orgName, employeeName, days, slotCount = FEEDBACK_TEMPLATE_SESSIONS_PER_DOCUMENT } = input;
+    const { header, employeeName, days, slotCount = FEEDBACK_TEMPLATE_SESSIONS_PER_DOCUMENT } = input;
     if (days.length > slotCount) {
         throw new Error(`buildServiceRecordDocumentFields: ${days.length} days exceed slotCount ${slotCount}`);
     }
@@ -147,7 +146,6 @@ export function buildServiceRecordDocumentFields(input: {
     };
 
     // ── Header (once per document) — every header field is required at creation ──
-    pushRequired(FEEDBACK_HEADER_FIELD_IDS.orgName, orgName);
     pushRequired(FEEDBACK_HEADER_FIELD_IDS.employeeName, employeeName);
     pushRequired(FEEDBACK_HEADER_FIELD_IDS.momName, header?.momName);
     pushRequired(FEEDBACK_HEADER_FIELD_IDS.momBirth, yymmddToIso(header?.momBirth));

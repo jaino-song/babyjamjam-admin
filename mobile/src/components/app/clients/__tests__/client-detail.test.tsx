@@ -28,7 +28,12 @@ jest.mock("@/hooks/use-toast", () => ({
 
 jest.mock("@/components/app/mobile-redesign/detail-sheet", () => ({
   DetailTabPills: () => null,
-  InfoCard: ({ children }: { children: ReactNode }) => <section>{children}</section>,
+  InfoCard: ({ children, title }: { children: ReactNode; title?: string }) => (
+    <section>
+      {title ? <h2>{title}</h2> : null}
+      {children}
+    </section>
+  ),
   InfoRow: ({ label, value }: { label?: string; value: ReactNode }) => (
     <div>
       {label ? <span>{label}</span> : null}
@@ -117,8 +122,8 @@ describe("ClientDetailContent", () => {
   it("should show the currently assigned employee phone when the contract has no phone", () => {
     renderDetail();
 
-    expect(screen.getByText("제공인력 1 연락처")).toBeInTheDocument();
-    expect(screen.getByText("01011112222")).toBeInTheDocument();
+    expect(screen.getByText("주 담당 인력 연락처")).toBeInTheDocument();
+    expect(screen.getByText("010-1111-2222")).toBeInTheDocument();
   });
 
   it("should prefer the currently assigned employee phone over a stale contract phone", () => {
@@ -133,8 +138,17 @@ describe("ClientDetailContent", () => {
 
     renderDetail(contractDocument);
 
-    expect(screen.getByText("01011112222")).toBeInTheDocument();
+    expect(screen.getByText("010-1111-2222")).toBeInTheDocument();
     expect(screen.queryByText("01099998888")).not.toBeInTheDocument();
+  });
+
+  it("formats the customer phone like desktop", () => {
+    renderDetail(null, {
+      ...client,
+      phone: "01027700718",
+    });
+
+    expect(screen.getByText("010-2770-0718")).toBeInTheDocument();
   });
 
   it("should show employee phone rows with a dash when phone numbers are missing", () => {
@@ -146,7 +160,18 @@ describe("ClientDetailContent", () => {
       },
     });
 
-    expect(screen.getByText("제공인력 1 연락처").closest("div")).toHaveTextContent("-");
-    expect(screen.getByText("제공인력 2 연락처").closest("div")).toHaveTextContent("-");
+    expect(screen.getByText("주 담당 인력 연락처").closest("div")).toHaveTextContent("-");
+    expect(screen.getByText("보조 담당 인력 연락처").closest("div")).toHaveTextContent("-");
+  });
+
+  it("should match desktop labels and service duration rows", () => {
+    renderDetail(null, { ...client, duration: 10 });
+
+    expect(screen.getByText("담당 관리사")).toBeInTheDocument();
+    expect(screen.getByText("주 담당 인력")).toBeInTheDocument();
+    expect(screen.getByText("보조 담당 인력")).toBeInTheDocument();
+    expect(screen.getByText("서비스 기간").closest("div")).toHaveTextContent("10일");
+    expect(screen.queryByText("계약 서명일")).not.toBeInTheDocument();
+    expect(screen.queryByText("본인부담금 수령일")).not.toBeInTheDocument();
   });
 });

@@ -24,6 +24,7 @@ describe("MobileSectionNav", () => {
     const activeButton = screen.getByRole("button", { name: "고객 목록" });
     const inactiveButton = screen.getByRole("button", { name: "자동화" });
     expect(activeButton).toHaveAttribute("aria-pressed", "true");
+    expect(activeButton).toBeEnabled();
     expect(activeButton).toHaveClass(
       "border",
       "border-[hsl(var(--v3-primary))]",
@@ -35,12 +36,41 @@ describe("MobileSectionNav", () => {
     );
     expect(activeButton).not.toHaveClass("min-h-[44px]");
     expect(inactiveButton).toHaveAttribute("aria-pressed", "false");
+    expect(inactiveButton).toBeEnabled();
     expect(inactiveButton).toHaveClass("border", "border-[hsl(var(--v3-border))]");
     expect(inactiveButton).not.toHaveClass("min-h-[44px]");
     expect(container.querySelector('[data-component="mobile-redesign-list-card"]')).not.toBeInTheDocument();
 
     fireEvent.click(inactiveButton);
-
     expect(onSelect).toHaveBeenCalledWith("automation");
+  });
+
+  it("keeps a disabled active item unpressed and non-interactive", () => {
+    const onSelect = jest.fn();
+    render(
+      <MobileSectionNav
+        ariaLabel="메시지 섹션"
+        items={[
+          { id: "list", label: "발송 기록", icon: Users },
+          { id: "templates", label: "템플릿", icon: Workflow, disabled: true },
+        ]}
+        activeId="templates"
+        onSelect={onSelect}
+      />,
+    );
+
+    const disabledButton = screen.getByRole("button", { name: "템플릿" });
+    expect(disabledButton).toHaveAttribute("aria-pressed", "false");
+    expect(disabledButton).toBeDisabled();
+    expect(disabledButton).toHaveClass(
+      "disabled:pointer-events-none",
+      "border-[hsl(var(--v3-border))]",
+      "bg-[hsl(var(--v3-dim-white))]",
+      "text-[hsl(var(--v3-text-muted))]",
+      "opacity-40",
+    );
+
+    fireEvent.click(disabledButton);
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });

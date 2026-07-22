@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, useMemo, useRef, useState } from "react";
 import { isAxiosError } from "axios";
 import { useMutation } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
@@ -11,6 +11,7 @@ import { ClientAutocomplete } from "@/components/app/clients/ClientAutocomplete"
 import { MessageSectionNav } from "@/components/app/mobile-redesign/MessageSectionNav";
 import { ListCard } from "@/components/app/mobile-redesign/primitives";
 import { MsgField } from "@/components/app/messages/templates/MsgField";
+import { Input } from "@/components/app/v3/Input";
 import bankAccountJSON from "@/components/app/messages/templates/json/bank-account.json";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { greetingMsgTemplate } from "@/components/app/messages/templates/messageTemplate/greetingMsg";
@@ -21,14 +22,6 @@ import { serviceInfoMsgTemplate } from "@/components/app/messages/templates/mess
 import { surveyMsgTemplate } from "@/components/app/messages/templates/messageTemplate/surveyMsg";
 import { thanksMsgTemplate } from "@/components/app/messages/templates/messageTemplate/thanksMsg";
 import { Alert } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -39,6 +32,7 @@ import {
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import type { CustomVariable, TemplateVariable } from "@/features/system-templates/types";
 import { useBankAccountInfos, useVoucherPriceInfos, type BankAccountInfo } from "@/hooks";
+import { useAllClients } from "@/hooks/useClients";
 import { useMessageTemplates } from "@/hooks/use-message-templates";
 import type { Client } from "@/lib/client/types";
 import { api } from "@/lib/api/client";
@@ -81,6 +75,7 @@ interface NewMessageFormProps {
   initialBody: string;
   initialTemplateId: string;
   initialClientId: number | null;
+  initialClient: Client | null;
 }
 
 const PHONE_REGEX = /^[0-9,\-\s]+$/;
@@ -487,10 +482,14 @@ function renderTemplateWithValues(
 
 export default function NewMessagePage() {
   const searchParams = useSearchParams();
+  const { data: allClients = [] } = useAllClients();
   const initialBody = searchParams.get("body") ?? "";
   const initialTemplateId = searchParams.get("template") ?? GREETING_TEMPLATE_ID;
   const initialClientId = parsePositiveIntQueryParam(searchParams.get("clientId"));
-  const routeSeedKey = `${initialBody}\u0000${initialTemplateId}`;
+  const initialClient = initialClientId === null
+    ? null
+    : allClients.find((candidate) => candidate.id === initialClientId) ?? null;
+  const routeSeedKey = `${initialBody}\u0000${initialTemplateId}\u0000${initialClientId ?? ""}\u0000${initialClient?.phone ?? "pending"}`;
 
   return (
     <NewMessageForm
@@ -498,22 +497,41 @@ export default function NewMessagePage() {
       initialBody={initialBody}
       initialTemplateId={initialTemplateId}
       initialClientId={initialClientId}
+      initialClient={initialClient}
     />
   );
 }
 
-function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: NewMessageFormProps) {
+function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initialClient }: NewMessageFormProps) {
+  const initialClientPhone = normalizeKoreanPhoneDigits(initialClient?.phone);
+  const initialRecipient: RecipientChip | null = initialClient && initialClientPhone
+    ? {
+        id: `client-${initialClient.id}`,
+        clientId: initialClient.id,
+        name: initialClient.name,
+        phone: formatRecipientPhone(initialClientPhone),
+        initial: getRecipientInitial(initialClient.name),
+        tone: "primary",
+      }
+    : null;
   const [receiver, setReceiver] = useState("");
-  const [recipients, setRecipients] = useState<RecipientChip[]>([]);
+  const [recipientNameInputValue, setRecipientNameInputValue] = useState("");
+  const [recipients, setRecipients] = useState<RecipientChip[]>(() => initialRecipient ? [initialRecipient] : []);
   const [bodyOverride, setBodyOverride] = useState<string | null>(initialBody.trim() ? initialBody : null);
-  const [templateVariableValues, setTemplateVariableValues] = useState<Record<string, string>>({});
+  const [templateVariableValues, setTemplateVariableValues] = useState<Record<string, string>>(() => {
+    const values: Record<string, string> = {};
+    if (initialClient) values.name = initialClient.name;
+    return values;
+  });
   const [priceInfoVoucherYear, setPriceInfoVoucherYear] = useState(DEFAULT_PRICE_INFO_YEAR);
   const [priceInfoArea, setPriceInfoArea] = useState("");
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(
+    initialClient && !initialClientPhone ? CLIENT_WITHOUT_PHONE_MESSAGE : null,
+  );
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(initialTemplateId);
   const ignoreNextPriceInfoSelectChangeRef = useRef(false);
+
   const {
     isLoading: isSenderApprovalLoading,
     needsSenderApproval,
@@ -740,7 +758,6 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
   const recipientCount = recipients.length;
 
   const showVariableHint = useMemo(() => hasUnreplacedVariables(body), [body]);
-  const previewBody = useMemo(() => body.trim(), [body]);
   const isPriceInfoTemplateSelected = selectedTemplate.id === PRICE_INFO_TEMPLATE_ID;
   const selectedPriceInfoSummary = useMemo(() => {
     if (!isPriceInfoTemplateSelected) {
@@ -802,9 +819,10 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
       setErrorMessage(null);
       setSuccessMessage("메시지 발송 요청이 접수되었습니다.");
       setReceiver("");
+      setRecipientNameInputValue("");
       setRecipients([]);
       setTemplateVariableValues({});
-      setBodyOverride("");
+      setBodyOverride(null);
     },
     onError: (err) => {
       setSuccessMessage(null);
@@ -836,12 +854,13 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
 
     if (filteredRecipients.length === 0) {
       setErrorMessage(DUPLICATE_RECIPIENT_MESSAGE);
-      return;
+      return false;
     }
 
     setRecipients((current) => [...current, ...filteredRecipients]);
     setReceiver("");
     setErrorMessage(null);
+    return true;
   };
 
   const handleClientRecipientSelect = (_clientId: number | null, client: Client | null) => {
@@ -860,7 +879,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
       return;
     }
 
-    addRecipientChips([
+    const wasAdded = addRecipientChips([
       {
         id: `client-${client.id}`,
         clientId: client.id,
@@ -870,6 +889,11 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
         tone: "primary",
       },
     ]);
+    if (!wasAdded) {
+      return;
+    }
+
+    setRecipientNameInputValue("");
     if (selectedTemplate.id === PRICE_INFO_TEMPLATE_ID) {
       ignoreNextPriceInfoSelectChangeRef.current = true;
       window.setTimeout(() => {
@@ -943,6 +967,15 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
       [key]: value,
     }));
     setBodyOverride(null);
+  };
+
+  const handleReceiverKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter") {
+      return;
+    }
+
+    event.preventDefault();
+    addManualRecipient(receiver);
   };
 
   const updateTemplateVariables = (updates: Record<string, string>) => {
@@ -1103,14 +1136,28 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
                         산모님 성함
                         {recipientNameVariable.required ? <span className={styles.required}>*</span> : null}
                       </label>
-                      <input
-                        id="recipient-name"
-                        data-component="messages-new-recipient-name-input"
-                        className={styles.variableInput}
-                        value={templateVariableValues.name ?? ""}
-                        placeholder="산모님 성함"
-                        onChange={(event) => handleTemplateVariableChange("name", event.target.value)}
-                      />
+                      {isPriceInfoTemplateSelected ? (
+                        <ClientAutocomplete
+                          inputId="recipient-name"
+                          value={null}
+                          onChange={handleClientRecipientSelect}
+                          inputValue={recipientNameInputValue}
+                          onInputValueChange={(value) => {
+                            setRecipientNameInputValue(value);
+                            handleTemplateVariableChange("name", value);
+                          }}
+                          placeholder="산모님 성함"
+                          label=""
+                        />
+                      ) : (
+                        <Input
+                          id="recipient-name"
+                          data-component="messages-new-recipient-name-input"
+                          value={templateVariableValues.name ?? ""}
+                          placeholder="산모님 성함"
+                          onChange={(event) => handleTemplateVariableChange("name", event.target.value)}
+                        />
+                      )}
                     </div>
                   ) : null}
 
@@ -1118,19 +1165,32 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
                     <label htmlFor="receiver" className={styles.formLabel}>
                       휴대 전화번호 <span className={styles.required}>*</span>
                     </label>
-                    <ClientAutocomplete
-                      inputId="receiver"
-                      value={null}
-                      onChange={handleClientRecipientSelect}
-                      inputValue={receiver}
-                      onInputValueChange={setReceiver}
-                      placeholder="010-0000-0000"
-                      label=""
-                      allowManualEntry
-                      manualEntryLabel="입력한 번호 추가"
-                      manualEntryDescription="전화번호를 입력한 뒤 Enter로 수신자에 추가합니다"
-                      onManualEntry={addManualRecipient}
-                    />
+                    {isPriceInfoTemplateSelected ? (
+                      <Input
+                        id="receiver"
+                        type="tel"
+                        inputMode="numeric"
+                        value={receiver}
+                        onChange={(event) => setReceiver(event.target.value)}
+                        onKeyDown={handleReceiverKeyDown}
+                        placeholder="010-0000-0000"
+                        data-component="messages-new-recipient-input"
+                      />
+                    ) : (
+                      <ClientAutocomplete
+                        inputId="receiver"
+                        value={null}
+                        onChange={handleClientRecipientSelect}
+                        inputValue={receiver}
+                        onInputValueChange={setReceiver}
+                        placeholder="010-0000-0000"
+                        label=""
+                        allowManualEntry
+                        manualEntryLabel="입력한 번호 추가"
+                        manualEntryDescription="전화번호를 입력한 뒤 Enter로 수신자에 추가합니다"
+                        onManualEntry={addManualRecipient}
+                      />
+                    )}
                     <div data-component="messages-new-recipient-chips" className={styles.recipientChips}>
                       {recipients.map((recipient) => (
                         <span key={recipient.id} className={styles.recipientChip}>
@@ -1167,11 +1227,10 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
                             {variable.label}
                             {variable.required ? <span className={styles.required}>*</span> : null}
                           </label>
-                          <input
+                          <Input
                             id={inputId}
                             data-component="messages-new-template-variable-input"
                             data-template-variable-key={variable.key}
-                            className={styles.variableInput}
                             inputMode={getVariableInputMode(variable)}
                             value={templateVariableValues[variable.key] ?? ""}
                             placeholder={getVariablePlaceholder(variable)}
@@ -1379,15 +1438,14 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
                       <label htmlFor="body" className={styles.formLabel}>
                         메시지 본문
                       </label>
-                      <Button
+                      <button
                         type="button"
-                        data-component="messages-new-preview-open"
-                        variant="ghost"
-                        className={styles.previewButton}
-                        onClick={() => setIsPreviewOpen(true)}
+                        data-component="messages-new-body-copy"
+                        className="list-action ml-auto justify-end"
+                        onClick={() => void navigator.clipboard.writeText(body)}
                       >
-                        미리보기
-                      </Button>
+                        복사
+                      </button>
                     </div>
                     <MsgField
                       inputId="body"
@@ -1430,25 +1488,6 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId }: New
             </ListCard>
           </div>
         </form>
-        <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
-          <DialogContent
-            data-component="messages-new-preview-dialog"
-            className={styles.previewDialogContent}
-          >
-            <DialogHeader className={styles.previewDialogHeader}>
-              <DialogTitle className={styles.previewDialogTitle}>미리보기</DialogTitle>
-              <DialogDescription className={styles.screenReaderNote}>
-                현재 메시지 본문을 SMS 형태로 미리 봅니다.
-              </DialogDescription>
-            </DialogHeader>
-            <div data-component="messages-new-preview-body" className={styles.previewCard}>
-              <div data-component="messages-new-preview-label" className={styles.previewCardLabel}>
-                SMS 미리보기
-              </div>
-              {previewBody || "본문을 입력하면 여기에 표시됩니다."}
-            </div>
-          </DialogContent>
-        </Dialog>
       </div>
     </section>
   );

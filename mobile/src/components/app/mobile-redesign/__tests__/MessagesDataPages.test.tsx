@@ -59,8 +59,14 @@ describe("mobile message data pages", () => {
 
     const { container } = render(<MessagesScheduledPage />);
 
+    const scheduledItem = container.querySelector('[data-component="mobile-messages-scheduled-item"]');
+    const rowInfo = scheduledItem?.querySelector(".message-data-row-info");
+
     expect(screen.getByText("김고객")).toBeInTheDocument();
     expect(screen.getByText(/서비스 안내/)).toBeInTheDocument();
+    expect(rowInfo?.querySelector(".message-data-row-title")).toHaveTextContent("김고객");
+    expect(rowInfo?.querySelector(".message-data-row-subtitle")).toHaveTextContent("서비스 안내");
+    expect(scheduledItem).not.toHaveTextContent("01012345678");
     expect(screen.getByRole("button", { name: "발송 예정" }))
       .toHaveAttribute("aria-pressed", "true");
     expect(container.querySelector('[data-component="mobile-redesign-list-title"] .list-title-text'))

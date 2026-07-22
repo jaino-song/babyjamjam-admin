@@ -261,35 +261,6 @@
   color: hsl(var(--v3-burgundy));
 }
 
-.formInput {
-  box-sizing: border-box;
-  width: 100%;
-  padding: 13px 14px;
-  border: 1.5px solid hsl(var(--v3-border));
-  border-radius: 12px;
-  outline: none;
-  background: white;
-  color: hsl(var(--v3-dark));
-  font-family: inherit;
-  font-size: 0.9rem;
-  line-height: normal;
-}
-
-.formInput:focus {
-  border-color: hsl(var(--v3-primary));
-}
-
-.formInput::placeholder {
-  color: hsl(var(--v3-text-muted));
-  opacity: 0.6;
-}
-
-.formInput:disabled {
-  cursor: not-allowed;
-  background: hsl(220 20% 97%);
-  opacity: 0.55;
-}
-
 .formHelper {
   margin-top: 5px;
   color: hsl(var(--v3-text-muted));
@@ -320,28 +291,10 @@
   color: hsl(var(--v3-text-muted));
 }
 
-.selectWrap {
-  position: relative;
-}
-
-.selectWrap .formInput {
-  padding-right: 38px;
-  cursor: pointer;
-  appearance: none;
-  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2216%22%20height%3D%2216%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23888%22%20stroke-width%3D%222.5%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%2F%3E%3C%2Fsvg%3E");
-  background-repeat: no-repeat;
-  background-position: right 14px center;
-}
-
-.disabledSelect::after {
-  opacity: 0.4;
-}
-
-.loadingSelect .formInput:disabled {
+.loadingSelect select:disabled {
   cursor: progress;
   background: transparent;
   opacity: 1;
-  background-image: none;
 }
 
 .loadingSelect::after {
@@ -367,7 +320,7 @@
   position: relative;
 }
 
-.priceInput .formInput {
+.priceInput input {
   padding-right: 32px;
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -490,7 +443,7 @@
   width: 100%;
   padding: 13px 14px;
   padding-right: 44px;
-  border: 1.5px solid hsl(var(--v3-border));
+  border: 1.5px solid hsl(var(--input));
   border-radius: 12px;
   background: white;
   color: hsl(var(--v3-dark));

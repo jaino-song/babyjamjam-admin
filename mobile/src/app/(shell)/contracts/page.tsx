@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   AlertTriangle,
+  Calendar,
   CheckCircle2,
   CircleAlert,
   ClipboardList,
@@ -44,6 +45,7 @@ import {
   getStatusCategory,
   isProviderReviewWorkflowStep,
   isDeletedStatusCode,
+  mapDocStatusLabel,
   normalizeStatusCode,
 } from "@/lib/eformsign/status-codes";
 import {
@@ -54,6 +56,7 @@ import {
 } from "@/lib/eformsign/display-name";
 import {
   CONTRACT_FINALIZE_PROGRESS_STEPS,
+  SERVICE_RECORD_FINALIZE_PROGRESS_STEPS,
   INITIAL_HEADLESS_PROGRESS,
   createHeadlessProgressId,
   getSafeHeadlessFailureMessage,
@@ -1095,6 +1098,7 @@ function ContractDocRow({
 function ContractDetailContent({
   doc,
   metadata,
+  isServiceRecord,
   notificationLogs,
   activeTab,
   onTabChange,
@@ -1105,6 +1109,7 @@ function ContractDetailContent({
 }: {
   doc: EformsignDocument;
   metadata?: EformsignDocClientSummary;
+  isServiceRecord: boolean;
   notificationLogs: NotificationLogRecord[];
   activeTab: DetailTabId;
   onTabChange: (id: DetailTabId) => void;
@@ -1126,10 +1131,13 @@ function ContractDetailContent({
   const shouldShareReceipt = category === "completed";
   const contractNum = contractNumber(doc);
   const name = contractDisplayName(doc, undefined, true);
+  const resolvedCustomerName = metadata?.clientName.trim() || customerName(doc);
   const customerPhone =
+    metadata?.clientPhone?.trim() ||
     contractRecipientPhone(doc) ||
     documentFieldValue(doc, ["연락처", "휴대폰", "전화번호", "customerContact", "customerPhone"]) ||
     null;
+  const resolvedProviderName = metadata?.providerName?.trim() || providerName(doc);
   const downloadUrl = eformsignApi.getDocumentDownloadUrl(doc.id);
   const receiptDownloadUrl = eformsignApi.getDocumentReceiptDownloadUrl(doc.id);
   const previewUrl = eformsignApi.getDocumentPreviewUrl(doc.id);
@@ -1234,7 +1242,7 @@ function ContractDetailContent({
         name="contracts"
         avatar={<FileCheck2 size={24} strokeWidth={2.5} />}
         avatarTone="primary"
-        title={name}
+        title={isServiceRecord ? "제공기록지" : name}
         badges={[{ label: tones.badge, tone: tones.badgeMini as BadgeTone }]}
         menu={
           <DropdownMenu key={detailMenuKey} modal={false}>
@@ -1322,7 +1330,7 @@ function ContractDetailContent({
             ...(reviewNeeded && onFinalize
               ? [
                   {
-                    label: "지금 서명",
+                    label: "검토하기",
                     variant: "primary" as const,
                     onClick: () => onFinalize(doc, metadata),
                     dataComponent: "mobile-contracts-sign",
@@ -1391,11 +1399,11 @@ function ContractDetailContent({
 
           <MobileDetailTabPanel name="contracts" tabId="basic" activeTab={activeTab}>
             <InfoCard title="이용자 정보">
-              <InfoRow label="이용자" value={customerName(doc)} />
+              <InfoRow label="이용자" value={resolvedCustomerName} />
               {customerPhone ? (
                 <InfoRow label="연락처" value={formatClientPhone(customerPhone) ?? customerPhone} />
               ) : null}
-              <InfoRow label="제공인력" value={providerName(doc)} />
+              <InfoRow label="제공인력" value={resolvedProviderName} />
             </InfoCard>
             <InfoCard title="계약 정보" delay={60}>
               <InfoRow
@@ -1482,6 +1490,7 @@ export default function ContractsPage() {
   const [finalizeDoc, setFinalizeDoc] = useState<EformsignDocument | null>(null);
   const [finalizeEndDateInput, setFinalizeEndDateInput] = useState("");
   const [isFinalizeDialogOpen, setIsFinalizeDialogOpen] = useState(false);
+  const [isServiceRecordFinalizeConfirmOpen, setIsServiceRecordFinalizeConfirmOpen] = useState(false);
   const [isFinalizeSubmitting, setIsFinalizeSubmitting] = useState(false);
   const [finalizeProgress, setFinalizeProgress] = useState<HeadlessProgressState>(INITIAL_HEADLESS_PROGRESS);
   const [isFinalizeProgressOpen, setIsFinalizeProgressOpen] = useState(false);
@@ -1534,9 +1543,18 @@ export default function ContractsPage() {
     doc: EformsignDocument,
   ) => {
     setFinalizeDoc(doc);
-    setFinalizeEndDateInput(contractEndDateInputValue(doc));
     setFinalizeErrorHint(null);
     setFinalizeProgress(INITIAL_HEADLESS_PROGRESS);
+
+    if (isServiceRecordDocument(doc, feedbackTemplateData?.templateId)) {
+      setFinalizeEndDateInput("");
+      setIsFinalizeDialogOpen(false);
+      setIsServiceRecordFinalizeConfirmOpen(true);
+      return;
+    }
+
+    setFinalizeEndDateInput(contractEndDateInputValue(doc));
+    setIsServiceRecordFinalizeConfirmOpen(false);
     setIsFinalizeDialogOpen(true);
   };
 
@@ -1591,8 +1609,17 @@ export default function ContractsPage() {
 
   const handleFinalizeSubmit = async () => {
     if (!finalizeDoc) return;
-    const endDateIso = yymmddToIsoDate(finalizeEndDateInput);
-    if (!endDateIso) {
+    const isServiceRecordFinalize = isServiceRecordDocument(
+      finalizeDoc,
+      feedbackTemplateData?.templateId,
+    );
+    const endDateIso = isServiceRecordFinalize
+      ? undefined
+      : yymmddToIsoDate(finalizeEndDateInput);
+    const progressSteps = isServiceRecordFinalize
+      ? SERVICE_RECORD_FINALIZE_PROGRESS_STEPS
+      : CONTRACT_FINALIZE_PROGRESS_STEPS;
+    if (!isServiceRecordFinalize && !endDateIso) {
       setFinalizeErrorHint("서비스 종료일을 6자리(YYMMDD)로 입력해주세요.");
       return;
     }
@@ -1600,6 +1627,7 @@ export default function ContractsPage() {
     setIsFinalizeSubmitting(true);
     setFinalizeErrorHint(null);
     setIsFinalizeDialogOpen(false);
+    setIsServiceRecordFinalizeConfirmOpen(false);
     setFinalizeProgress({ step: "client-started", completed: false, failed: false });
     setIsFinalizeProgressOpen(true);
 
@@ -1623,7 +1651,7 @@ export default function ContractsPage() {
             const next = resolveFailedHeadlessProgress(
               current,
               data.failedStep,
-              CONTRACT_FINALIZE_PROGRESS_STEPS,
+              progressSteps,
             );
             if (next !== current) {
               setFinalizeErrorHint(errorHint);
@@ -1632,10 +1660,10 @@ export default function ContractsPage() {
           });
           return;
         }
-        if (!isHeadlessProgressStepKey(data.step, CONTRACT_FINALIZE_PROGRESS_STEPS)) return;
+        if (!isHeadlessProgressStepKey(data.step, progressSteps)) return;
         const nextStep = data.step;
         setFinalizeProgress((current) =>
-          resolveNextHeadlessProgress(current, nextStep, CONTRACT_FINALIZE_PROGRESS_STEPS),
+          resolveNextHeadlessProgress(current, nextStep, progressSteps),
         );
       });
 
@@ -1652,7 +1680,9 @@ export default function ContractsPage() {
         });
         setTimeout(() => {
           setIsFinalizeProgressOpen(false);
-          setFinalizeFeedback("계약서가 완료 처리되었습니다.");
+          setFinalizeFeedback(
+            `${isServiceRecordFinalize ? "제공기록지" : "계약서"}가 완료 처리되었습니다.`,
+          );
           setFinalizeDoc(null);
           setFinalizeEndDateInput("");
         }, 800);
@@ -1665,7 +1695,7 @@ export default function ContractsPage() {
         const next = resolveFailedHeadlessProgress(
           current,
           undefined,
-          CONTRACT_FINALIZE_PROGRESS_STEPS,
+          progressSteps,
         );
         if (next !== current) {
           setFinalizeErrorHint(errorHint);
@@ -1679,7 +1709,7 @@ export default function ContractsPage() {
         const next = resolveFailedHeadlessProgress(
           current,
           undefined,
-          CONTRACT_FINALIZE_PROGRESS_STEPS,
+          progressSteps,
         );
         if (next !== current) {
           setFinalizeErrorHint(errorHint);
@@ -1836,8 +1866,8 @@ export default function ContractsPage() {
     if (!selectedDoc) return null;
     return {
       ...selectedDoc,
-      ...(selectedDocDetail?.id === selectedDoc.id ? selectedDocDetail : null),
       ...(selectedListDoc?.id === selectedDoc.id ? selectedListDoc : null),
+      ...(selectedDocDetail?.id === selectedDoc.id ? selectedDocDetail : null),
     };
   }, [selectedDoc, selectedDocDetail, selectedListDoc]);
 
@@ -2066,7 +2096,17 @@ export default function ContractsPage() {
                     const cat = categorize(doc);
                     const tones = categoryTones(cat);
                     const meta = progressLabel(doc);
-                    const name = contractDisplayName(doc);
+                    const isServiceRecordRow = activeSection === "service-records";
+                    const mappedCustomerName = documentClientSummaryById.get(doc.id)?.clientName.trim();
+                    const documentCustomerName = customerName(doc).trim();
+                    const serviceRecordCustomerName = mappedCustomerName
+                      || (documentCustomerName !== UNKNOWN_CUSTOMER_NAME ? documentCustomerName : "이름 없음");
+                    const name = isServiceRecordRow
+                      ? serviceRecordCustomerName === "-" ? "이름 없음" : serviceRecordCustomerName
+                      : contractDisplayName(doc);
+                    const badgeLabel = isServiceRecordRow
+                      ? mapDocStatusLabel(doc.current_status)
+                      : tones.badge;
 
                     return (
                       <ListItemRow
@@ -2089,17 +2129,45 @@ export default function ContractsPage() {
                         name={name}
                         style={{ animationDelay: `${Math.min(idx, 4) * 40}ms` }}
                         meta={
-                          <span
-                            className={
-                              tones.badgeMini === "muted" || cat === "completed"
-                                ? "step-label muted"
-                                : "step-label"
-                            }
-                          >
-                            {meta}
-                          </span>
+                          isServiceRecordRow ? (
+                            <>
+                              <span data-component="mobile-contracts-row-subtitle">제공기록지</span>
+                              <span
+                                className="flex flex-wrap items-center gap-x-2 gap-y-0.5"
+                                data-component="mobile-contracts-row-dates"
+                              >
+                                <span
+                                  className="inline-flex items-center gap-1 whitespace-nowrap"
+                                  data-component="mobile-contracts-row-sent-date"
+                                >
+                                  <Calendar className="size-3 shrink-0" />
+                                  발송 {formatDate(doc.created_date)}
+                                </span>
+                                {cat === "completed" ? (
+                                  <span
+                                    className="inline-flex items-center gap-1 whitespace-nowrap"
+                                    data-component="mobile-contracts-row-completed-date"
+                                  >
+                                    <CheckCircle2 className="size-3 shrink-0" />
+                                    완료 {formatDate(doc.updated_date)}
+                                  </span>
+                                ) : null}
+                              </span>
+                            </>
+                          ) : (
+                            <span
+                              className={
+                                tones.badgeMini === "muted" || cat === "completed"
+                                  ? "step-label muted"
+                                  : "step-label"
+                              }
+                            >
+                              {meta}
+                            </span>
+                          )
                         }
-                        right={<Badge label={tones.badge} tone={tones.badgeTone} />}
+                        metaClassName={isServiceRecordRow ? "list-meta flex flex-col items-start gap-0.5" : undefined}
+                        right={<Badge label={badgeLabel} tone={tones.badgeTone} />}
                         onClick={() => {
                           setSelectedDoc(doc);
                           setActiveTab("basic");
@@ -2125,6 +2193,10 @@ export default function ContractsPage() {
           <ContractDetailContent
             doc={selectedDetailDoc}
             metadata={selectedDocMetadata}
+            isServiceRecord={isServiceRecordDocument(
+              selectedDetailDoc,
+              feedbackTemplateData?.templateId,
+            )}
             notificationLogs={notificationLogs}
             activeTab={activeTab}
             onTabChange={setActiveTab}
@@ -2158,6 +2230,27 @@ export default function ContractsPage() {
         }}
         onCancel={() => setDeleteTargetDoc(null)}
         onConfirm={handleDeleteDocumentConfirm}
+      />
+
+      <MobileTwoButtonModal
+        open={isServiceRecordFinalizeConfirmOpen}
+        title="완료할까요?"
+        cancelLabel="취소"
+        confirmLabel="완료"
+        confirmVariant="default"
+        actionOrder="cancel-confirm"
+        loading={isFinalizeSubmitting}
+        onOpenChange={(open) => {
+          if (!open && !isFinalizeSubmitting) {
+            setIsServiceRecordFinalizeConfirmOpen(false);
+            setFinalizeDoc(null);
+          }
+        }}
+        onCancel={() => {
+          setIsServiceRecordFinalizeConfirmOpen(false);
+          setFinalizeDoc(null);
+        }}
+        onConfirm={handleFinalizeSubmit}
       />
 
       {isFinalizeDialogOpen && finalizeDoc ? (
@@ -2196,7 +2289,7 @@ export default function ContractsPage() {
               <button
                 type="button"
                 className="flex-[2] rounded-xl bg-v3-primary py-3 text-[0.88rem] font-bold text-white shadow-[0_4px_14px_rgba(20,50,100,0.18)] disabled:opacity-45"
-                onClick={handleFinalizeSubmit}
+                onClick={() => void handleFinalizeSubmit()}
                 disabled={isFinalizeSubmitting}
               >
                 {isFinalizeSubmitting ? "처리 중..." : "완료"}
@@ -2209,7 +2302,11 @@ export default function ContractsPage() {
       <HeadlessProgressModal
         open={isFinalizeProgressOpen}
         title="최종 확인 처리 중"
-        steps={CONTRACT_FINALIZE_PROGRESS_STEPS}
+        steps={
+          finalizeDoc && isServiceRecordDocument(finalizeDoc, feedbackTemplateData?.templateId)
+            ? SERVICE_RECORD_FINALIZE_PROGRESS_STEPS
+            : CONTRACT_FINALIZE_PROGRESS_STEPS
+        }
         progress={finalizeProgress}
         errorHint={finalizeErrorHint}
         dataComponentPrefix="mobile-contracts-finalize-progress"

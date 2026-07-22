@@ -33,7 +33,7 @@ export function ContractReviewActionButton({
       ) : (
         <CheckCircle2 className="h-4 w-4" />
       )}
-      확인하기
+      검토하기
     </Button>
   );
 }

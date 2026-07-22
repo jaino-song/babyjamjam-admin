@@ -102,6 +102,7 @@ describe("SmsRetryService", () => {
                 id: 77,
                 status: "sent",
                 aligoMid: "123",
+                errorMessage: null,
                 nextRetryAt: null,
             }),
         );

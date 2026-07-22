@@ -10,10 +10,8 @@ import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { createHash } from "crypto";
 import { EFORMSIGN_CLIENT_REPOSITORY, IEformsignClientRepository } from "domain/repositories/eformsign.client.interface";
-import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { CreateEformsignDocUsecase } from "./create-eformsign-doc.usecase";
 import { GetEformsignAccessTokenUsecase } from "./get-eformsign-access-token.usecase";
 import {
     buildServiceRecordDocumentFields,
@@ -26,7 +24,6 @@ import {
 } from "./service-record-field-ids";
 
 const CASE_SNAPSHOT_INCLUDE = {
-    branch: { select: { name: true } },
     client: { select: { name: true } },
     assignments: {
         select: {
@@ -88,13 +85,15 @@ const MAX_RECONCILIATION_ATTEMPTS = 12;
  * the app — nobody fills anything in eformsign — so the document goes straight to the org's
  * pre-specified reviewer for confirmation.
  *
- * The template is a fixed 5-session grid, so a service of N sessions is split into ceil(N/5)
- * documents. Each document's fields are prefilled from `service_record` + `service_record_day`
+ * Templates come in fixed session-grid tiers (5/10/15/20 — BJJ-multi-tier): each provider
+ * segment is packed into the smallest configured tier that holds it in one document, and
+ * segments longer than the max tier are cut at max-tier size with the remainder re-tiered.
+ * Each document's fields are prefilled from `service_record` + `service_record_day`
  * by the pure mapper. Persisted with linkToClient:false — the client's eDocId is NEVER touched —
- * and the webhook template_id gate (EFORMSIGN_FEEDBACK_TEMPLATE_ID) keeps completion from
- * marking the contract done.
+ * and the webhook template_id gate (all EFORMSIGN_FEEDBACK_TEMPLATE_ID* tiers) keeps completion
+ * from marking the contract done.
  *
- * Retry-safe: a chunk marker in `stepName` lets a re-run skip documents already created.
+ * Retry-safe: durable `service_record_snapshot_chunk` rows let a re-run skip documents already created.
  */
 @Injectable()
 export class CreateAndSendServiceRecordSnapshotUsecase {
@@ -103,11 +102,8 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
     constructor(
         @Inject(EFORMSIGN_CLIENT_REPOSITORY)
         private readonly eformsignClient: IEformsignClientRepository,
-        @Inject(EFORMSIGN_DOC_REPOSITORY)
-        private readonly eformsignDocRepository: IEformsignDocRepository,
         private readonly prisma: PrismaService,
         private readonly getAccessTokenUsecase: GetEformsignAccessTokenUsecase,
-        private readonly createEformsignDocUsecase: CreateEformsignDocUsecase,
         private readonly configService: ConfigService,
     ) {}
 
@@ -126,137 +122,6 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
             throw new BadRequestException("EFORMSIGN_FEEDBACK_TEMPLATE_ID is not configured.");
         }
         return tiers;
-    }
-
-    async execute(
-        branchid: string,
-        scheduleId: number,
-    ): Promise<{ documentIds: string[]; documentId: string; chunkCount: number }> {
-        const tiers = this.getConfiguredTiers();
-        const tierNumbers = tiers.map((t) => t.tier);
-        const templateIdByTier = new Map(tiers.map((t) => [t.tier, t.templateId]));
-
-        const schedule = await this.prisma.employee_schedule.findUnique({
-            where: { id: scheduleId },
-            include: {
-                client: true,
-                primaryEmployee: true,
-                serviceRecord: true,
-                serviceRecordDays: { orderBy: { sessionIndex: "asc" } },
-            },
-        });
-        if (!schedule) throw new NotFoundException(`Assignment ${scheduleId} not found`);
-
-        // 제공기관 이름 is required at the template's creation step — fail loudly if the branch is unnamed.
-        const branch = await this.prisma.branch.findUnique({ where: { id: branchid } });
-        const orgName = branch?.name;
-        if (!orgName) throw new BadRequestException("제공기관 정보가 없습니다.");
-
-        const clientName = schedule.client?.name ?? "";
-        const employeeName = schedule.primaryEmployee.name;
-
-        const days: ServiceRecordDayInput[] = schedule.serviceRecordDays.map((d) => ({
-            sessionIndex: d.sessionIndex,
-            serviceDate: d.serviceDate,
-            answers: (d.answers ?? {}) as Record<string, unknown>,
-            etcService: d.etcService,
-            notes: d.notes,
-            paymentConfirmed: d.paymentConfirmed,
-            momApproval: d.momApproval,
-            clientSignature: d.clientSignature,
-        }));
-
-        // Tier-sized chunks; an empty record still yields one (header-only) document on the base tier.
-        const chunked: Array<{ days: ServiceRecordDayInput[]; tier: number }> = days.length > 0
-            ? chunkSessionsByTier(days, tierNumbers)
-            : [{ days: [], tier: FEEDBACK_TEMPLATE_SESSIONS_PER_DOCUMENT }];
-        const chunkCount = chunked.length;
-
-        // Idempotency: skip chunks already created for this schedule (marker lives in stepName).
-        const existingDocs = await this.eformsignDocRepository.findByClientId(branchid, schedule.clientId);
-        const markerOf = (i: number) => `제공기록지 S${scheduleId} ${i + 1}/${chunkCount}`;
-
-        const tokenResponse = await this.getAccessTokenUsecase.execute(Date.now());
-        const accessToken = tokenResponse.oauth_token.access_token;
-
-        // The reviewer recipient must mirror the template's pre-specified 제공업체 확인 step
-        // exactly (eformsign rejects mismatches), so it is read per-templateId from the live
-        // template config — only for templateIds actually used by chunks not yet created.
-        const missingTemplateIds = new Set<string>();
-        for (let i = 0; i < chunkCount; i++) {
-            if (existingDocs.some((doc) => doc.stepName === markerOf(i))) continue;
-            const tier = chunked[i]!.tier;
-            const templateId = templateIdByTier.get(tier);
-            if (!templateId) throw new Error(`No 제공기록지 template configured for tier ${tier}`);
-            missingTemplateIds.add(templateId);
-        }
-        const reviewerByTemplateId = new Map<
-            string,
-            NonNullable<Awaited<ReturnType<IEformsignClientRepository["getTemplateReviewer"]>>>
-        >();
-        for (const templateId of missingTemplateIds) {
-            const reviewer = await this.eformsignClient.getTemplateReviewer(accessToken, templateId);
-            if (!reviewer) {
-                throw new BadRequestException("제공기록지 템플릿에 검토자(제공업체 확인) 지정이 없습니다.");
-            }
-            reviewerByTemplateId.set(templateId, reviewer);
-        }
-
-        const documentIds: string[] = [];
-        for (let i = 0; i < chunkCount; i++) {
-            const marker = markerOf(i);
-            const already = existingDocs.find((doc) => doc.stepName === marker);
-            if (already) {
-                this.logger.log(`Service record chunk ${marker} already exists (doc ${already.documentId}); skipping.`);
-                documentIds.push(already.documentId);
-                continue;
-            }
-
-            const chunk = chunked[i]!;
-            const templateId = templateIdByTier.get(chunk.tier)!;
-            const reviewer = reviewerByTemplateId.get(templateId)!;
-
-            const prefillFields = buildServiceRecordDocumentFields({
-                header: schedule.serviceRecord,
-                orgName,
-                employeeName,
-                days: chunk.days,
-                slotCount: chunk.tier,
-            });
-
-            const result = await this.eformsignClient.createDocument(accessToken, {
-                templateId,
-                documentName: `서비스 제공기록지 - ${clientName} (${i + 1}/${chunkCount})`,
-                prefillFields,
-                reviewer,
-            });
-
-            // Log the remote id BEFORE persisting, so a persistence failure never loses the reference.
-            this.logger.log(`Service record chunk ${marker} created: documentId=${result.documentId}`);
-
-            await this.createEformsignDocUsecase.execute(branchid, {
-                documentId: result.documentId,
-                clientId: schedule.clientId,
-                linkToClient: false,
-                statusType: "070",
-                statusDetail: "검토 요청",
-                stepType: "06",
-                stepIndex: "2",
-                stepName: marker,
-                stepRecipientType: "reviewer",
-                stepRecipientName: reviewer.name,
-                stepRecipientSms: reviewer.phoneNumber ?? "-",
-                expiredDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-                documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT,
-                employeeScheduleId: scheduleId,
-                templateId,
-            });
-
-            documentIds.push(result.documentId);
-        }
-
-        this.logger.log(`Service record snapshot finalized: schedule=${scheduleId}, chunks=${chunkCount}, docs=[${documentIds.join(", ")}]`);
-        return { documentIds, documentId: documentIds[0] ?? "", chunkCount };
     }
 
     /**
@@ -454,7 +319,6 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
                         deliveryType: record.deliveryType,
                         babyWeight: record.babyWeight,
                     },
-                    orgName: record.branch.name,
                     employeeName: chunk.employeeName,
                     days: chunk.days,
                 }))
@@ -619,7 +483,6 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
         try {
             const prefillFields = buildServiceRecordDocumentFields({
                 header: params.record,
-                orgName: params.record.branch.name,
                 employeeName: params.chunk.employeeName,
                 days: params.chunk.days,
                 slotCount: params.chunk.tier,

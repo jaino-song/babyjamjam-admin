@@ -53,7 +53,6 @@ const d = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
     let eformsignClient: IEformsignClientRepository;
 
     let branchId: string;
-    let branchName: string;
     let clientId: number;
     let employeeId: number;
     let scheduleId: number;
@@ -80,7 +79,6 @@ const d = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
         const branch = await prisma.branch.findFirst();
         if (!branch) throw new Error("no branch row in dev DB");
         branchId = branch.id;
-        branchName = branch.name;
 
         // employee.id is a manually-assigned smallint — grab a free id near the top of the range.
         const maxEmployee = await prisma.employee.aggregate({ _max: { id: true } });
@@ -258,7 +256,7 @@ const d = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
         expect(m1.get("산모 이름")).toBe("김산모");
         expect(m1.get("산모 생년월일")).toBe("1990-01-01");
         expect(m1.get("신생아 출생일자")).toBe("2026-06-15");
-        expect(m1.get("제공기관 이름")).toBe(branchName);
+        expect(m1.has("제공기관 이름")).toBe(false);
         expect(m1.get("자연분만")).toBe("체크1");
         expect(m1.get("월 1")).toBe("06");
         expect(m1.get("일 1")).toBe("01");

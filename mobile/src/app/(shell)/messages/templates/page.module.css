@@ -16,6 +16,10 @@
   line-height: normal;
 }
 
+:global(body:has([data-page="messages-templates"]) [data-component="messages-templates-section-header"]) {
+  padding-block: 6px;
+}
+
 :global(body:has([data-page="messages-templates"]) .search-bar input::placeholder) {
   color: rgb(117, 117, 117);
   opacity: 1;
@@ -32,7 +36,8 @@
 }
 
 .searchBar {
-  margin: 12px 12px 8px;
+  margin: 0;
+  padding: 0 12px;
 }
 
 .templateIcon {
@@ -56,7 +61,7 @@
 }
 
 .channel {
-  padding: 1px 5px;
+  padding: 1px 0;
   border-radius: 4px;
   font-size: 0.55rem;
   font-weight: 800;

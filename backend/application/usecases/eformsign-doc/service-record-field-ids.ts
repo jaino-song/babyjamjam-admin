@@ -66,7 +66,6 @@ export const FEEDBACK_HEADER_FIELD_IDS = {
     babyName: "신생아 이름",
     babyBirth: "신생아 출생일자", // date_yyyy-MM-dd
     babyWeight: "신생아 몸무게",
-    orgName: "제공기관 이름", // required at creation
     employeeName: "제공인력 이름",
 } as const;
 

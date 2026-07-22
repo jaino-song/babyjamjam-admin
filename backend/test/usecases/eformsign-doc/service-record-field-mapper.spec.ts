@@ -160,9 +160,8 @@ describe("buildServiceRecordDocumentFields", () => {
         babyWeight: "3.2",
     };
 
-    it("emits header fields once, with 제공기관/제공인력 always present", () => {
-        const map = toMap(buildServiceRecordDocumentFields({ header, orgName: "인천 아이미래로", employeeName: "박제공", days: [day()] }));
-        expect(map.get("제공기관 이름")).toBe("인천 아이미래로");
+    it("emits the remaining header fields once", () => {
+        const map = toMap(buildServiceRecordDocumentFields({ header, employeeName: "박제공", days: [day()] }));
         expect(map.get("제공인력 이름")).toBe("박제공");
         expect(map.get("산모 이름")).toBe("김산모");
         expect(map.get("산모 생년월일")).toBe("1990-01-01");
@@ -173,10 +172,20 @@ describe("buildServiceRecordDocumentFields", () => {
         expect(map.get("제왕절개")).toBe(UNCHECKED);
     });
 
+    it.each([5, 10, 15, 20])("omits the removed 제공기관 field from the %i-session template payload", (slotCount) => {
+        const map = toMap(buildServiceRecordDocumentFields({
+            header,
+            employeeName: "박제공",
+            days: [day()],
+            slotCount,
+        }));
+
+        expect(map.has("제공기관 이름")).toBe(false);
+    });
+
     it("maps 제왕절개 and sends empty header fields (required at creation)", () => {
         const map = toMap(buildServiceRecordDocumentFields({
             header: { momName: null, momBirth: null, babyName: null, babyBirth: null, deliveryType: "제왕절개", babyWeight: null },
-            orgName: "기관",
             employeeName: "인력",
             days: [day()],
         }));
@@ -187,8 +196,7 @@ describe("buildServiceRecordDocumentFields", () => {
     });
 
     it("works with a null header — required header fields sent blank, delivery marks unchecked", () => {
-        const map = toMap(buildServiceRecordDocumentFields({ header: null, orgName: "기관", employeeName: "인력", days: [day()] }));
-        expect(map.get("제공기관 이름")).toBe("기관");
+        const map = toMap(buildServiceRecordDocumentFields({ header: null, employeeName: "인력", days: [day()] }));
         expect(map.get("산모 이름")).toBe("");
         expect(map.get("자연분만")).toBe(UNCHECKED);
         expect(map.get("제왕절개")).toBe(UNCHECKED);
@@ -197,7 +205,6 @@ describe("buildServiceRecordDocumentFields", () => {
     it("maps a fully-answered session onto slot-1 fields", () => {
         const map = toMap(buildServiceRecordDocumentFields({
             header,
-            orgName: "기관",
             employeeName: "인력",
             days: [day({
                 serviceDate: utc("2026-07-09"),
@@ -262,7 +269,6 @@ describe("buildServiceRecordDocumentFields", () => {
     it("omits color when 정상변, and ignores unknown radio/absent answers", () => {
         const map = toMap(buildServiceRecordDocumentFields({
             header: null,
-            orgName: "기관",
             employeeName: "인력",
             days: [day({
                 answers: {
@@ -284,7 +290,6 @@ describe("buildServiceRecordDocumentFields", () => {
     it("encodes paymentConfirmed as checked/unchecked, independent of clientSignature", () => {
         const map = toMap(buildServiceRecordDocumentFields({
             header: null,
-            orgName: "기관",
             employeeName: "인력",
             days: [day({ paymentConfirmed: false, clientSignature: null })],
         }));
@@ -296,7 +301,6 @@ describe("buildServiceRecordDocumentFields", () => {
         const dataUri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB";
         const map = toMap(buildServiceRecordDocumentFields({
             header: null,
-            orgName: "기관",
             employeeName: "인력",
             days: [day({ clientSignature: dataUri })],
         }));
@@ -306,7 +310,6 @@ describe("buildServiceRecordDocumentFields", () => {
     it("sends empty string for 산모확인서명 when clientSignature is null", () => {
         const map = toMap(buildServiceRecordDocumentFields({
             header: null,
-            orgName: "기관",
             employeeName: "인력",
             days: [day({ clientSignature: null })],
         }));
@@ -316,7 +319,6 @@ describe("buildServiceRecordDocumentFields", () => {
     it("emits required marks (unchecked) for every unused slot in a short chunk", () => {
         const fields = buildServiceRecordDocumentFields({
             header,
-            orgName: "기관",
             employeeName: "인력",
             days: [day({ sessionIndex: 6 }), day({ sessionIndex: 7 })], // chunk of 2 → slots 1,2 used; 3,4,5 unused
         });
@@ -338,7 +340,6 @@ describe("buildServiceRecordDocumentFields", () => {
     it("reads serviceDate with UTC accessors (no local-timezone drift)", () => {
         const map = toMap(buildServiceRecordDocumentFields({
             header: null,
-            orgName: "기관",
             employeeName: "인력",
             days: [day({ serviceDate: utc("2026-07-01") })],
         }));
@@ -350,7 +351,6 @@ describe("buildServiceRecordDocumentFields", () => {
         it("emits required marks for all 10 slots when slotCount=10, and nothing beyond", () => {
             const map = toMap(buildServiceRecordDocumentFields({
                 header,
-                orgName: "기관",
                 employeeName: "인력",
                 days: [day({ sessionIndex: 1 }), day({ sessionIndex: 2 }), day({ sessionIndex: 3 })],
                 slotCount: 10,
@@ -372,7 +372,6 @@ describe("buildServiceRecordDocumentFields", () => {
         it("throws when days.length exceeds slotCount", () => {
             expect(() => buildServiceRecordDocumentFields({
                 header: null,
-                orgName: "기관",
                 employeeName: "인력",
                 days: [day(), day(), day()],
                 slotCount: 2,

@@ -9,6 +9,7 @@ import { StatusPill } from "@/components/app/ui/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ListCardBody } from "./ListCardBody";
 import { ListCardHeader } from "./ListCardHeader";
+import { ListCardLoadMore } from "./ListCardLoadMore";
 import type { ContractRow, ListRow, MenuGroup, SectionRows } from "./mockup-data";
 
 export function ListLoadMoreButton({
@@ -334,6 +335,7 @@ export interface MobileSectionNavItem<TId extends string = string> {
   id: TId;
   label: string;
   icon: LucideIcon;
+  disabled?: boolean;
 }
 
 export function MobileSectionNav<TId extends string>({
@@ -357,16 +359,20 @@ export function MobileSectionNav<TId extends string>({
       <div className="flex gap-[calc(8px*var(--glint-ui-scale,1))] pb-[calc(8px*var(--glint-ui-scale,1))]">
         {items.map((item) => {
           const Icon = item.icon;
-          const isActive = item.id === activeId;
+          const isDisabled = item.disabled === true;
+          const isActive = !isDisabled && item.id === activeId;
 
           return (
             <button
               key={item.id}
               type="button"
               aria-pressed={isActive}
-              onClick={() => onSelect(item.id)}
-              className={`flex h-[calc(28px*var(--glint-ui-scale,1))] items-center gap-[calc(6px*var(--glint-ui-scale,1))] whitespace-nowrap rounded-full border px-[calc(12px*var(--glint-ui-scale,1))] py-0 text-[calc(0.72rem*var(--glint-ui-scale,1))] font-semibold transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2 ${
-                isActive
+              disabled={isDisabled}
+              onClick={isDisabled ? undefined : () => onSelect(item.id)}
+              className={`flex h-[calc(28px*var(--glint-ui-scale,1))] items-center gap-[calc(6px*var(--glint-ui-scale,1))] whitespace-nowrap rounded-full border px-[calc(12px*var(--glint-ui-scale,1))] py-0 text-[calc(0.72rem*var(--glint-ui-scale,1))] font-semibold transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2 disabled:pointer-events-none disabled:cursor-default ${
+                isDisabled
+                  ? "border-[hsl(var(--v3-border))] bg-[hsl(var(--v3-dim-white))] text-[hsl(var(--v3-text-muted))] opacity-40"
+                  : isActive
                   ? "border-[hsl(var(--v3-primary))] bg-[hsl(var(--v3-primary))] text-white"
                   : "border-[hsl(var(--v3-border))] bg-[hsl(var(--v3-bg))] text-[hsl(var(--v3-text-muted))]"
               }`}
@@ -399,7 +405,7 @@ export function ListCard({
   beforeFilters,
   beforeScroll,
   scrollRef,
-  loadMoreFooter,
+  loadMore,
   children,
 }: {
   title: string;
@@ -416,7 +422,7 @@ export function ListCard({
   beforeFilters?: ReactNode;
   beforeScroll?: ReactNode;
   scrollRef?: RefObject<HTMLDivElement | null>;
-  loadMoreFooter?: ReactNode;
+  loadMore?: ReactNode;
   children: ReactNode;
 }) {
   const [actionFeedback, setActionFeedback] = useState("");
@@ -449,11 +455,7 @@ export function ListCard({
       <ListCardBody scrollRef={scrollRef}>
         {children}
       </ListCardBody>
-      {loadMoreFooter && (
-        <div className="list-card-footer" data-component="mobile-redesign-list-footer">
-          {loadMoreFooter}
-        </div>
-      )}
+      {loadMore && <ListCardLoadMore>{loadMore}</ListCardLoadMore>}
     </div>
   );
 }

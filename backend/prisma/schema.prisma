@@ -543,6 +543,14 @@ model voucher_price_info {
   @@index([type, duration, year])
 }
 
+model out_of_pocket_price_info {
+  id        Int      @id @default(autoincrement()) @db.SmallInt
+  duration  Int      @unique @db.SmallInt
+  fullPrice BigInt   @map("full_price")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+}
+
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model voucher_price_info_2025 {

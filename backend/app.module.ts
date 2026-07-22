@@ -13,6 +13,7 @@ import { UserModule } from "module/user.module";
 import { MessageModule } from "module/message.module";
 import { MessageTemplateModule } from "module/message-template.module";
 import { VoucherPriceInfoModule } from "module/voucher-price-info.module";
+import { OutOfPocketPriceInfoModule } from "module/out-of-pocket-price-info.module";
 import { EmployeeModule } from "module/employee.module";
 import { ClientModule } from "module/client.module";
 import { EmployeeScheduleModule } from "module/employee-schedule.module";
@@ -62,6 +63,7 @@ const ENV_FILE_PATHS = [
         MessageModule,
         MessageTemplateModule,
         VoucherPriceInfoModule,
+        OutOfPocketPriceInfoModule,
         EmployeeModule,
         ClientModule,
         EmployeeScheduleModule,
