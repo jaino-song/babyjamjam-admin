@@ -676,6 +676,7 @@ export class ClientService {
         });
         const latestContractStatusMap = new Map<number, string>();
         for (const doc of contractDocs) {
+            if (doc.clientId === null) continue;
             if (!latestContractStatusMap.has(doc.clientId)) {
                 latestContractStatusMap.set(doc.clientId, doc.statusType);
             }

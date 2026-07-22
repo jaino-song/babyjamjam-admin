@@ -185,6 +185,27 @@ describe("SyncClientEndDateUsecase", () => {
         expect(warnSpy).toHaveBeenCalled();
     });
 
+    it("should skip client sync when the document belongs to a deleted client", async () => {
+        eformsignClient.getDocument.mockResolvedValue(
+            createDocumentResponse([
+                { id: "계약 종료 년도", value: "2026", type: "text" },
+                { id: "계약 종료 월", value: "05", type: "text" },
+                { id: "계약 종료 일", value: "17", type: "text" },
+            ]),
+        );
+        eformsignDocRepository.findByDocumentId.mockResolvedValue(
+            EformsignDocEntity.reconstitute({
+                ...createDocEntity().toJSON(),
+                clientId: null,
+            }),
+        );
+
+        await expect(usecase.execute(branchId, documentId, accessToken)).resolves.toBeUndefined();
+
+        expect(clientRepository.findById).not.toHaveBeenCalled();
+        expect(clientRepository.update).not.toHaveBeenCalled();
+    });
+
     it("should swallow getDocument errors and log them", async () => {
         eformsignClient.getDocument.mockRejectedValue(new Error("fetch failed"));
 

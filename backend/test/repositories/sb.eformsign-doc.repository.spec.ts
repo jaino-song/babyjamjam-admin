@@ -109,6 +109,21 @@ describe("SbEformsignDocRepository", () => {
         expect(result?.documentKind).toBeNull();
     });
 
+    it("reconstitutes an orphaned document with a null clientId", async () => {
+        eformsignDocModel.findFirst.mockResolvedValue({
+            ...legacyRow,
+            clientId: null,
+            documentKind: "service_record_snapshot",
+            employeeScheduleId: null,
+            templateId: "template-1",
+        });
+
+        const result = await repository.findByDocumentId("branch-1", "doc-1");
+
+        expect(result?.clientId).toBeNull();
+        expect(result?.documentKind).toBe("service_record_snapshot");
+    });
+
     it("retries status updates without pending classification columns", async () => {
         eformsignDocModel.updateMany
             .mockRejectedValueOnce(pendingColumnError)
@@ -179,5 +194,38 @@ describe("SbEformsignDocRepository", () => {
                 providerName: null,
             },
         ]);
+    });
+
+    it("keeps orphaned completed documents visible after their client is deleted", async () => {
+        const clientFindMany = jest.fn().mockResolvedValue([]);
+        const scheduleFindMany = jest.fn().mockResolvedValue([]);
+        eformsignDocModel.findMany.mockResolvedValue([
+            {
+                documentId: "service-record-doc-orphan",
+                clientId: null,
+                stepRecipientName: "전자문서 수신자",
+                documentKind: "service_record_snapshot",
+                serviceRecordCase: { momName: "보존된 산모명" },
+            },
+        ]);
+        repository = new SbEformsignDocRepository({
+            eformsign_doc: eformsignDocModel,
+            client: { findMany: clientFindMany },
+            employee_schedule: { findMany: scheduleFindMany },
+        } as unknown as PrismaService);
+
+        const result = await repository.findClientNamesByBranch("branch-1");
+
+        expect(result).toEqual([
+            {
+                documentId: "service-record-doc-orphan",
+                clientId: null,
+                clientName: "보존된 산모명",
+                clientPhone: null,
+                providerName: null,
+            },
+        ]);
+        expect(clientFindMany).not.toHaveBeenCalled();
+        expect(scheduleFindMany).not.toHaveBeenCalled();
     });
 });

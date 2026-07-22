@@ -208,7 +208,7 @@ export interface EformsignAuthStatusResponse {
 
 export interface EformsignDocClientSummary {
   documentId: string;
-  clientId: number;
+  clientId: number | null;
   clientName: string;
   clientPhone: string | null;
   providerName: string | null;
