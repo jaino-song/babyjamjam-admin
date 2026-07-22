@@ -15,7 +15,7 @@ export const api = axios.create({
     withCredentials: true,
 });
 
-// Token refresh state management
+// Keep eformsign token refresh and application-session refresh single-flight independently.
 let isRefreshing = false;
 let isRedirectingToLogin = false;
 let appAuthRefreshPromise: Promise<void> | null = null;
