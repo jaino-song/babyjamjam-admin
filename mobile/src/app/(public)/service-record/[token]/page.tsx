@@ -585,16 +585,21 @@ export default function ServiceRecordPage() {
     }
 
     async function openScheduleChangePreview() {
+        setScheduleChangePreview(null);
+        setScheduleChangeModalOpen(true);
         setScheduleChangeBusy(true);
         try {
             const res = await api("/schedule-change/preview");
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
+                setScheduleChangeModalOpen(false);
                 setErrorNotificationMessage(data?.error ?? data?.message ?? "일정 변경 정보를 불러오지 못했습니다.");
                 return;
             }
             setScheduleChangePreview(data as ScheduleChangePreview);
-            setScheduleChangeModalOpen(true);
+        } catch {
+            setScheduleChangeModalOpen(false);
+            setErrorNotificationMessage("일정 변경 정보를 불러오지 못했습니다.");
         } finally {
             setScheduleChangeBusy(false);
         }
@@ -950,14 +955,17 @@ export default function ServiceRecordPage() {
                 onApprove={submitDay}
             />
             <MobileTwoButtonModal
-                open={scheduleChangeModalOpen && Boolean(scheduleChangePreview)}
-                title={scheduleChangePreview ? `${scheduleChangePreview.sessionIndex}회차 서비스 일정을 조정할까요?` : "서비스 일정을 조정할까요?"}
+                open={scheduleChangeModalOpen}
+                title={scheduleChangePreview ? `${scheduleChangePreview.sessionIndex}회차 서비스 일정을 조정할까요?` : "서비스 일정 변경"}
                 description={scheduleChangePreview
                     ? `${scheduleChangePreview.sessionIndex}회차 서비스를 ${monthDayKo(scheduleChangePreview.fromDate)}에서 ${monthDayKo(scheduleChangePreview.toDate)}로 변경을 요청할까요? 관리자 승인 후 일정이 조정됩니다.`
-                    : ""}
+                    : "변경 가능한 일정을 확인하고 있어요."}
                 cancelLabel="취소"
-                confirmLabel={scheduleChangeBusy ? "요청 중…" : "승인 요청"}
+                confirmLabel={scheduleChangeBusy
+                    ? scheduleChangePreview ? "요청 중…" : "불러오는 중…"
+                    : "승인 요청"}
                 loading={scheduleChangeBusy}
+                confirmDisabled={!scheduleChangePreview}
                 onOpenChange={(open) => {
                     if (!open) closeScheduleChangeModal();
                 }}
