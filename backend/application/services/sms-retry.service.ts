@@ -20,43 +20,52 @@ export class SmsRetryService {
     ) {}
 
     async retryById(branchId: string, logId: number): Promise<MessageLogEntity> {
-        const log = await this.logRepository.findByIdInBranch(branchId, logId);
-        if (!log || log.provider !== "aligo_sms") {
+        const sourceLog = await this.logRepository.findByIdInBranch(branchId, logId);
+        if (!sourceLog || sourceLog.provider !== "aligo_sms") {
             throw new NotFoundException("재발송할 메시지 기록을 찾을 수 없습니다.");
         }
 
-        if (log.status !== "failed") {
+        if (sourceLog.status !== "failed") {
             throw new ConflictException("실패한 메시지만 재발송할 수 있습니다.");
         }
 
-        const scheduledLog = await this.logRepository.scheduleFailedForRetry(branchId, logId);
-        if (!scheduledLog) {
+        const retryLog = await this.retry(sourceLog);
+        if (!retryLog) {
             throw new ConflictException("이미 재발송이 진행 중입니다.");
         }
 
-        return scheduledLog;
+        return retryLog;
     }
 
-    async retry(log: MessageLogEntity): Promise<void> {
-        if (log.branchId) {
+    async retry(sourceLog: MessageLogEntity): Promise<MessageLogEntity | null> {
+        const retryLog = await this.logRepository.startRetryAttempt(
+            sourceLog,
+            this.createRetryAttempt(sourceLog),
+        );
+        if (!retryLog) {
+            this.logger.warn(`[Retry] SMS log ${sourceLog.id} was already claimed`);
+            return null;
+        }
+
+        if (retryLog.branchId) {
             try {
-                await this.messageSenderApprovalService.ensureApproved(log.branchId);
+                await this.messageSenderApprovalService.ensureApproved(retryLog.branchId);
             } catch (approvalError) {
                 const reason = approvalError instanceof Error ? approvalError.message : String(approvalError);
-                this.logger.warn(`[Retry] SMS blocked by approval gate for log ${log.id} (branchId=${log.branchId}): ${reason}`);
-                log.status = "failed";
-                log.errorMessage = reason;
-                log.attempts += 1;
-                log.lastAttemptAt = new Date(Date.now());
-                log.nextRetryAt = null;
-                await this.logRepository.update(log);
-                return;
+                this.logger.warn(`[Retry] SMS blocked by approval gate for log ${retryLog.id} (branchId=${retryLog.branchId}): ${reason}`);
+                retryLog.status = "failed";
+                retryLog.errorMessage = reason;
+                retryLog.attempts += 1;
+                retryLog.lastAttemptAt = new Date(Date.now());
+                retryLog.nextRetryAt = null;
+                await this.logRepository.update(retryLog);
+                return retryLog;
             }
         }
 
         try {
-            const rawScheduledDate = this.stringVariable(log, "scheduledDate");
-            const rawScheduledTime = this.stringVariable(log, "scheduledTime");
+            const rawScheduledDate = this.stringVariable(retryLog, "scheduledDate");
+            const rawScheduledTime = this.stringVariable(retryLog, "scheduledTime");
             const scheduleInstantMs = rawScheduledDate && rawScheduledTime
                 ? this.parseKstScheduleMs(rawScheduledDate, rawScheduledTime)
                 : null;
@@ -66,40 +75,71 @@ export class SmsRetryService {
             const scheduledTime = isScheduledInFuture ? rawScheduledTime : undefined;
 
             const result = await this.aligoService.sendSms({
-                senderPhone: this.stringVariable(log, "senderPhone"),
-                receiver: log.receiver,
-                message: log.messageBody,
-                recipientName: log.recipientName ?? this.stringVariable(log, "recipientName") ?? undefined,
-                title: this.stringVariable(log, "title") ?? undefined,
-                msgType: this.smsMessageTypeVariable(log, "msgType"),
+                senderPhone: this.stringVariable(retryLog, "senderPhone"),
+                receiver: retryLog.receiver,
+                message: retryLog.messageBody,
+                recipientName: retryLog.recipientName ?? this.stringVariable(retryLog, "recipientName") ?? undefined,
+                title: this.stringVariable(retryLog, "title") ?? undefined,
+                msgType: this.smsMessageTypeVariable(retryLog, "msgType"),
                 ...(scheduledDate ? { scheduledDate } : {}),
                 ...(scheduledTime ? { scheduledTime } : {}),
-                ...(this.booleanVariable(log, "testMode") ? { testMode: true } : {}),
+                ...(this.booleanVariable(retryLog, "testMode") ? { testMode: true } : {}),
             });
 
             if (!this.isAcceptedSmsResult(result)) {
-                this.markSmsRetryFailed(log, result.response.message || "문자 발송 요청이 실패했습니다.");
-                await this.logRepository.update(log);
-                this.logger.warn(`[Retry] SMS retry rejected for log ${log.id}: ${result.response.message}`);
-                return;
+                this.markSmsRetryFailed(retryLog, result.response.message || "문자 발송 요청이 실패했습니다.");
+                await this.logRepository.update(retryLog);
+                this.logger.warn(`[Retry] SMS retry rejected for log ${retryLog.id}: ${result.response.message}`);
+                return retryLog;
             }
 
             if (isScheduledInFuture) {
-                log.status = "pending";
-                log.aligoMid = result.response.msg_id ? String(result.response.msg_id) : null;
-                log.lastAttemptAt = new Date(Date.now());
-                log.nextRetryAt = null;
-                log.attempts += 1;
+                retryLog.status = "pending";
+                retryLog.aligoMid = result.response.msg_id ? String(result.response.msg_id) : null;
+                retryLog.lastAttemptAt = new Date(Date.now());
+                retryLog.nextRetryAt = null;
+                retryLog.attempts += 1;
             } else {
-                log.markSent(result.response.msg_id ? String(result.response.msg_id) : undefined);
+                retryLog.markSent(result.response.msg_id ? String(result.response.msg_id) : undefined);
             }
-            await this.logRepository.update(log);
-            this.logger.log(`[Retry] Successfully resent SMS ${log.templateKey} to ${maskPhone(log.receiver)}`);
+            await this.logRepository.update(retryLog);
+            this.logger.log(`[Retry] Successfully resent SMS ${retryLog.templateKey} to ${maskPhone(retryLog.receiver)}`);
+            return retryLog;
         } catch (error) {
-            this.markSmsRetryFailed(log, error instanceof Error ? error.message : String(error));
-            await this.logRepository.update(log);
-            this.logger.warn(`[Retry] Failed SMS attempt ${log.attempts} for log ${log.id}: ${error}`);
+            this.markSmsRetryFailed(retryLog, error instanceof Error ? error.message : String(error));
+            await this.logRepository.update(retryLog);
+            this.logger.warn(`[Retry] Failed SMS attempt ${retryLog.attempts} for log ${retryLog.id}: ${error}`);
+            return retryLog;
         }
+    }
+
+    private createRetryAttempt(sourceLog: MessageLogEntity): MessageLogEntity {
+        const now = new Date(Date.now());
+        return MessageLogEntity.reconstitute(
+            0,
+            sourceLog.branchId,
+            sourceLog.provider,
+            sourceLog.templateKey,
+            sourceLog.triggerJobId,
+            sourceLog.receiver,
+            sourceLog.clientId,
+            sourceLog.messageBody,
+            {
+                ...sourceLog.variables,
+                retryOfLogId: String(sourceLog.id),
+                retryAttempt: String(sourceLog.attempts + 1),
+            },
+            "pending",
+            null,
+            null,
+            sourceLog.attempts,
+            null,
+            null,
+            now,
+            now,
+            sourceLog.recipientName,
+            sourceLog.recipientPhone,
+        );
     }
 
     private parseKstScheduleMs(date: string, time: string): number | null {

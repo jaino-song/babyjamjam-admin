@@ -28,33 +28,42 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         return MessageLogMapper.toDomain(row);
     }
 
+    async startRetryAttempt(
+        sourceLog: MessageLogEntity,
+        retryLog: MessageLogEntity,
+    ): Promise<MessageLogEntity | null> {
+        return this.prisma.$transaction(async (transaction) => {
+            const claimedAt = new Date(Date.now());
+            const claimed = await transaction.message_log.updateMany({
+                where: {
+                    id: sourceLog.id,
+                    branchId: sourceLog.branchId,
+                    status: sourceLog.status,
+                    nextRetryAt: sourceLog.nextRetryAt,
+                    updatedAt: sourceLog.updatedAt,
+                },
+                data: {
+                    nextRetryAt: null,
+                    updatedAt: claimedAt,
+                },
+            });
+
+            if (claimed.count !== 1) {
+                return null;
+            }
+
+            const row = await transaction.message_log.create({
+                data: MessageLogMapper.toPrismaCreate(retryLog),
+            });
+            return MessageLogMapper.toDomain(row);
+        });
+    }
+
     async findByIdInBranch(branchId: string, id: number): Promise<MessageLogEntity | null> {
         const row = await this.prisma.message_log.findFirst({
             where: { id, branchId },
         });
         return row ? MessageLogMapper.toDomain(row) : null;
-    }
-
-    async scheduleFailedForRetry(branchId: string, id: number): Promise<MessageLogEntity | null> {
-        const retryAt = new Date(Date.now());
-        const result = await this.prisma.message_log.updateMany({
-            where: {
-                id,
-                branchId,
-                provider: "aligo_sms",
-                status: "failed",
-            },
-            data: {
-                status: "pending",
-                nextRetryAt: retryAt,
-            },
-        });
-
-        if (result.count !== 1) {
-            return null;
-        }
-
-        return this.findByIdInBranch(branchId, id);
     }
 
     async findSentTriggerJobIds(jobIds: string[]): Promise<Set<string>> {

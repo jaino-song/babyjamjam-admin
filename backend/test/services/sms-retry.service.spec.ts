@@ -7,7 +7,7 @@ import { IMessageLogRepository } from "domain/repositories/message-log.repositor
 
 describe("SmsRetryService", () => {
     const createMockLogRepository = () => ({
-        scheduleFailedForRetry: jest.fn(),
+        startRetryAttempt: jest.fn(),
         findByIdInBranch: jest.fn(),
         update: jest.fn(),
     });
@@ -45,6 +45,28 @@ describe("SmsRetryService", () => {
             new Date("2026-06-05T09:20:00.000Z"),
             new Date("2026-06-05T09:20:00.000Z"),
         );
+    const persistRetryAttempt = (_source: MessageLogEntity, draft: MessageLogEntity) =>
+        MessageLogEntity.reconstitute(
+            78,
+            draft.branchId,
+            draft.provider,
+            draft.templateKey,
+            draft.triggerJobId,
+            draft.receiver,
+            draft.clientId,
+            draft.messageBody,
+            draft.variables,
+            draft.status,
+            draft.aligoMid,
+            draft.errorMessage,
+            draft.attempts,
+            draft.lastAttemptAt,
+            draft.nextRetryAt,
+            draft.createdAt,
+            draft.updatedAt,
+            draft.recipientName,
+            draft.recipientPhone,
+        );
 
     let service: SmsRetryService;
     let logRepository: ReturnType<typeof createMockLogRepository>;
@@ -56,6 +78,7 @@ describe("SmsRetryService", () => {
         logRepository = createMockLogRepository();
         aligoService = createMockAligoService();
         messageSenderApprovalService = createMockMessageSenderApprovalService();
+        logRepository.startRetryAttempt.mockImplementation(persistRetryAttempt);
         service = new SmsRetryService(
             logRepository as unknown as IMessageLogRepository,
             aligoService as unknown as AligoService,
@@ -70,7 +93,7 @@ describe("SmsRetryService", () => {
         jest.clearAllMocks();
     });
 
-    it("retries failed automatic SMS logs with the original sender and message", async () => {
+    it("creates a new sent history item without overwriting the original failed item", async () => {
         const log = createSmsRetryLog();
         aligoService.sendSms.mockResolvedValue({
             request: {
@@ -99,24 +122,53 @@ describe("SmsRetryService", () => {
             title: "인사 메시지",
             msgType: "AUTO",
         });
+        expect(logRepository.startRetryAttempt).toHaveBeenCalledWith(
+            log,
+            expect.objectContaining({
+                id: 0,
+                status: "pending",
+                attempts: 1,
+                variables: expect.objectContaining({
+                    retryOfLogId: "77",
+                    retryAttempt: "2",
+                }),
+            }),
+        );
         expect(logRepository.update).toHaveBeenCalledWith(
             expect.objectContaining({
-                id: 77,
+                id: 78,
                 status: "sent",
                 aligoMid: "123",
                 errorMessage: null,
                 nextRetryAt: null,
             }),
         );
+        expect(log).toEqual(expect.objectContaining({
+            id: 77,
+            status: "failed",
+            attempts: 1,
+            errorMessage: "등록되지 않은 IP 입니다.",
+        }));
     });
 
-    it("schedules the original branch-owned log without sending concurrently with the retry worker", async () => {
-        const log = createSmsRetryLog();
-        logRepository.findByIdInBranch.mockResolvedValue(log);
-        logRepository.scheduleFailedForRetry.mockImplementation(async () => {
-            log.status = "pending";
-            log.nextRetryAt = new Date(0);
-            return log;
+    it("manually retries a branch-owned failure as a separate history item", async () => {
+        const sourceLog = createSmsRetryLog();
+        logRepository.findByIdInBranch.mockResolvedValue(sourceLog);
+        aligoService.sendSms.mockResolvedValue({
+            request: {
+                senderPhone: "0212345678",
+                receiver: "01012345678",
+                msgType: "LMS",
+                testModeYn: "N",
+            },
+            response: {
+                result_code: 1,
+                message: "성공적으로 전송요청 하였습니다.",
+                msg_id: 123,
+                success_cnt: 1,
+                error_cnt: 0,
+                msg_type: "LMS",
+            },
         });
 
         const result = await service.retryById(
@@ -128,15 +180,12 @@ describe("SmsRetryService", () => {
             "11111111-1111-1111-1111-111111111111",
             77,
         );
-        expect(logRepository.scheduleFailedForRetry).toHaveBeenCalledWith(
-            "11111111-1111-1111-1111-111111111111",
-            77,
-        );
-        expect(aligoService.sendSms).not.toHaveBeenCalled();
-        expect(result).toBe(log);
-        expect(result.templateKey).toBe("client_greeting_sms");
-        expect(result.status).toBe("pending");
-        expect(result.nextRetryAt).toEqual(new Date(0));
+        expect(result).toEqual(expect.objectContaining({ id: 78, status: "sent" }));
+        expect(sourceLog).toEqual(expect.objectContaining({
+            id: 77,
+            status: "failed",
+            errorMessage: "등록되지 않은 IP 입니다.",
+        }));
     });
 
     it("does not reveal or retry a log owned by another branch", async () => {
@@ -144,14 +193,14 @@ describe("SmsRetryService", () => {
 
         await expect(service.retryById("branch-2", 77)).rejects.toThrow(NotFoundException);
 
-        expect(logRepository.scheduleFailedForRetry).not.toHaveBeenCalled();
+        expect(logRepository.startRetryAttempt).not.toHaveBeenCalled();
         expect(aligoService.sendSms).not.toHaveBeenCalled();
     });
 
     it("rejects a duplicate manual retry when another request already claimed the log", async () => {
-        const log = createSmsRetryLog();
-        logRepository.findByIdInBranch.mockResolvedValue(log);
-        logRepository.scheduleFailedForRetry.mockResolvedValue(null);
+        const sourceLog = createSmsRetryLog();
+        logRepository.findByIdInBranch.mockResolvedValue(sourceLog);
+        logRepository.startRetryAttempt.mockResolvedValue(null);
 
         await expect(
             service.retryById("11111111-1111-1111-1111-111111111111", 77),
@@ -171,7 +220,7 @@ describe("SmsRetryService", () => {
 
         expect(logRepository.update).toHaveBeenCalledWith(
             expect.objectContaining({
-                id: 77,
+                id: 78,
                 status: "failed",
                 attempts: 2,
                 errorMessage: "Aligo SMS API error (403): 등록되지 않은 IP 입니다.",
@@ -218,7 +267,7 @@ describe("SmsRetryService", () => {
         );
         expect(logRepository.update).toHaveBeenCalledWith(
             expect.objectContaining({
-                id: 77,
+                id: 78,
                 status: "pending",
                 aligoMid: "124",
                 nextRetryAt: null,
@@ -241,7 +290,7 @@ describe("SmsRetryService", () => {
         await service.retry(log);
 
         expect(logRepository.update).toHaveBeenCalledWith(
-            expect.objectContaining({ id: 77, status: "pending", nextRetryAt: null }),
+            expect.objectContaining({ id: 78, status: "pending", nextRetryAt: null }),
         );
     });
 
@@ -266,7 +315,7 @@ describe("SmsRetryService", () => {
         expect(sendSmsCall).not.toHaveProperty("scheduledDate");
         expect(sendSmsCall).not.toHaveProperty("scheduledTime");
         expect(logRepository.update).toHaveBeenCalledWith(
-            expect.objectContaining({ id: 77, status: "sent", nextRetryAt: null }),
+            expect.objectContaining({ id: 78, status: "sent", nextRetryAt: null }),
         );
     });
 
@@ -281,7 +330,7 @@ describe("SmsRetryService", () => {
         expect(aligoService.sendSms).not.toHaveBeenCalled();
         expect(logRepository.update).toHaveBeenCalledWith(
             expect.objectContaining({
-                id: 77,
+                id: 78,
                 status: "failed",
                 nextRetryAt: null,
             }),
