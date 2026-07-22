@@ -28,6 +28,31 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         return MessageLogMapper.toDomain(row);
     }
 
+    async startRetryAttempt(
+        sourceLog: MessageLogEntity,
+        retryLog: MessageLogEntity,
+    ): Promise<MessageLogEntity | null> {
+        return this.prisma.$transaction(async (transaction) => {
+            const claimed = await transaction.message_log.updateMany({
+                where: {
+                    id: sourceLog.id,
+                    status: sourceLog.status,
+                    nextRetryAt: sourceLog.nextRetryAt,
+                },
+                data: { nextRetryAt: null },
+            });
+
+            if (claimed.count !== 1) {
+                return null;
+            }
+
+            const row = await transaction.message_log.create({
+                data: MessageLogMapper.toPrismaCreate(retryLog),
+            });
+            return MessageLogMapper.toDomain(row);
+        });
+    }
+
     async findSentTriggerJobIds(jobIds: string[]): Promise<Set<string>> {
         if (jobIds.length === 0) {
             return new Set<string>();
