@@ -14,11 +14,48 @@ jest.mock("@/components/app/ui/ApprovalTwoButtonModal", () => ({
 }));
 
 jest.mock("@/components/app/ui/MobileTwoButtonModal", () => ({
-    MobileTwoButtonModal: () => null,
+    MobileTwoButtonModal: ({
+        open,
+        title,
+        description,
+        loading,
+        confirmLabel,
+        confirmDisabled,
+    }: {
+        open: boolean;
+        title: string;
+        description?: string;
+        loading?: boolean;
+        confirmLabel: string;
+        confirmDisabled?: boolean;
+    }) => open ? (
+        <div
+            role="dialog"
+            aria-busy={loading}
+            data-component="mobile-two-button-modal"
+        >
+            <h2>{title}</h2>
+            <p>{description}</p>
+            <button disabled={loading || confirmDisabled}>{confirmLabel}</button>
+        </div>
+    ) : null,
 }));
 
 jest.mock("@/components/app/ui/NotificationOneButtonModal", () => ({
-    NotificationOneButtonModal: () => null,
+    NotificationOneButtonModal: ({
+        open,
+        title,
+        description,
+    }: {
+        open: boolean;
+        title: string;
+        description: string;
+    }) => open ? (
+        <div role="alertdialog" data-component="service-record-error-notification">
+            <h2>{title}</h2>
+            <p>{description}</p>
+        </div>
+    ) : null,
 }));
 
 jest.mock("@/components/app/service-record/SignaturePad", () => ({
@@ -27,6 +64,16 @@ jest.mock("@/components/app/service-record/SignaturePad", () => ({
 
 const mockUseParams = useParams as jest.Mock;
 const fetchMock = jest.fn();
+
+function deferredResponse() {
+    let resolve!: (response: Response) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<Response>((resolver, rejecter) => {
+        resolve = resolver;
+        reject = rejecter;
+    });
+    return { promise, resolve, reject };
+}
 
 function jsonResponse(data: unknown, status = 200): Response {
     return {
@@ -127,6 +174,60 @@ describe("ServiceRecordPage authentication restoration", () => {
 
         expect(await screen.findByText("제공기록표")).toBeInTheDocument();
         expect(document.querySelector('[data-component="service-record-overview-back"]')).not.toBeInTheDocument();
+    });
+
+    it("opens a loading schedule-change modal before the preview request resolves", async () => {
+        const user = userEvent.setup();
+        const previewResponse = deferredResponse();
+        fetchMock
+            .mockResolvedValueOnce(jsonResponse({ valid: true }))
+            .mockResolvedValueOnce(jsonResponse({
+                ...serviceRecordContext,
+                header: { momName: "홍길동" },
+            }))
+            .mockReturnValueOnce(previewResponse.promise);
+
+        render(<ServiceRecordPage />);
+
+        await user.click(await screen.findByRole("button", { name: "서비스 일정 변경" }));
+
+        expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
+        expect(screen.getByRole("heading", { name: "서비스 일정 변경" })).toBeInTheDocument();
+        expect(screen.getByText("변경 가능한 일정을 확인하고 있어요.")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "불러오는 중…" })).toBeDisabled();
+
+        previewResponse.resolve(jsonResponse({
+            sessionIndex: 1,
+            fromDate: "2026-07-20",
+            toDate: "2026-07-21",
+        }));
+
+        expect(await screen.findByRole("heading", { name: "1회차 서비스 일정을 조정할까요?" }))
+            .toBeInTheDocument();
+        expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "false");
+        expect(screen.getByRole("button", { name: "승인 요청" })).toBeEnabled();
+    });
+
+    it("closes the loading modal and shows the existing error notice when preview loading fails", async () => {
+        const user = userEvent.setup();
+        const previewResponse = deferredResponse();
+        fetchMock
+            .mockResolvedValueOnce(jsonResponse({ valid: true }))
+            .mockResolvedValueOnce(jsonResponse({
+                ...serviceRecordContext,
+                header: { momName: "홍길동" },
+            }))
+            .mockReturnValueOnce(previewResponse.promise);
+
+        render(<ServiceRecordPage />);
+
+        await user.click(await screen.findByRole("button", { name: "서비스 일정 변경" }));
+        expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
+
+        previewResponse.reject(new Error("network unavailable"));
+
+        expect(await screen.findByRole("alertdialog")).toHaveTextContent("일정 변경 정보를 불러오지 못했습니다.");
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
     it("maps daily pages to browser history so Back restores the previous wizard page", async () => {

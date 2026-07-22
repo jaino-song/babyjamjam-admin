@@ -11,6 +11,7 @@ describe("MobileTwoButtonModal", () => {
         description="3회차 서비스 제공 날짜를 조정합니다."
         cancelLabel="취소"
         confirmLabel="일정 변경"
+        loading
         confirmDisabled
         onOpenChange={jest.fn()}
         onCancel={jest.fn()}
@@ -25,6 +26,7 @@ describe("MobileTwoButtonModal", () => {
     expect(screen.getByText("서비스 일정 변경")).toHaveClass("text-base");
     expect(screen.getByText("3회차 서비스 제공 날짜를 조정합니다.")).toHaveClass("text-sm", "leading-5");
     expect(screen.getByLabelText("3회차 서비스 제공 날짜")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("button", { name: "일정 변경" })).toBeDisabled();
   });
 });
