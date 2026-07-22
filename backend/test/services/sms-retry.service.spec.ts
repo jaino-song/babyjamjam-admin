@@ -1,4 +1,4 @@
-import { ForbiddenException } from "@nestjs/common";
+import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SmsRetryService } from "application/services/sms-retry.service";
@@ -7,6 +7,8 @@ import { IMessageLogRepository } from "domain/repositories/message-log.repositor
 
 describe("SmsRetryService", () => {
     const createMockLogRepository = () => ({
+        scheduleFailedForRetry: jest.fn(),
+        findByIdInBranch: jest.fn(),
         update: jest.fn(),
     });
     const createMockAligoService = () => ({
@@ -106,6 +108,56 @@ describe("SmsRetryService", () => {
                 nextRetryAt: null,
             }),
         );
+    });
+
+    it("schedules the original branch-owned log without sending concurrently with the retry worker", async () => {
+        const log = createSmsRetryLog();
+        logRepository.findByIdInBranch.mockResolvedValue(log);
+        logRepository.scheduleFailedForRetry.mockImplementation(async () => {
+            log.status = "pending";
+            log.nextRetryAt = new Date(0);
+            return log;
+        });
+
+        const result = await service.retryById(
+            "11111111-1111-1111-1111-111111111111",
+            77,
+        );
+
+        expect(logRepository.findByIdInBranch).toHaveBeenCalledWith(
+            "11111111-1111-1111-1111-111111111111",
+            77,
+        );
+        expect(logRepository.scheduleFailedForRetry).toHaveBeenCalledWith(
+            "11111111-1111-1111-1111-111111111111",
+            77,
+        );
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+        expect(result).toBe(log);
+        expect(result.templateKey).toBe("client_greeting_sms");
+        expect(result.status).toBe("pending");
+        expect(result.nextRetryAt).toEqual(new Date(0));
+    });
+
+    it("does not reveal or retry a log owned by another branch", async () => {
+        logRepository.findByIdInBranch.mockResolvedValue(null);
+
+        await expect(service.retryById("branch-2", 77)).rejects.toThrow(NotFoundException);
+
+        expect(logRepository.scheduleFailedForRetry).not.toHaveBeenCalled();
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+    });
+
+    it("rejects a duplicate manual retry when another request already claimed the log", async () => {
+        const log = createSmsRetryLog();
+        logRepository.findByIdInBranch.mockResolvedValue(log);
+        logRepository.scheduleFailedForRetry.mockResolvedValue(null);
+
+        await expect(
+            service.retryById("11111111-1111-1111-1111-111111111111", 77),
+        ).rejects.toThrow(ConflictException);
+
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
     });
 
     it("schedules another five-minute retry when an automatic SMS retry is still rejected", async () => {
