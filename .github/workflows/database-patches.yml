@@ -393,7 +393,6 @@ jobs:
     if: >-
       always() &&
       (
-        (github.event_name == 'push' && github.ref_name == 'preview' && needs['apply-preview'].result == 'success') ||
         (github.event_name == 'push' && github.ref_name == 'main') ||
         (github.event_name == 'workflow_dispatch' && inputs.target == 'production')
       )
