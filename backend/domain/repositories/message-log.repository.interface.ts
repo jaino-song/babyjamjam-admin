@@ -3,6 +3,8 @@ import { MessageLogEntity } from "domain/entities/message-log.entity";
 export interface IMessageLogRepository {
     save(log: MessageLogEntity): Promise<MessageLogEntity>;
     update(log: MessageLogEntity): Promise<MessageLogEntity>;
+    findByIdInBranch(branchId: string, id: number): Promise<MessageLogEntity | null>;
+    scheduleFailedForRetry(branchId: string, id: number): Promise<MessageLogEntity | null>;
     findSentTriggerJobIds(jobIds: string[]): Promise<Set<string>>;
     findPendingRetries(): Promise<MessageLogEntity[]>;
     findRetryableServiceRecordSmsByScheduleId(scheduleId: number): Promise<MessageLogEntity[]>;
