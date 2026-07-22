@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } f
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { MessageTriggerService } from "application/services/message-trigger.service";
+import { SmsRetryService } from "application/services/sms-retry.service";
 import {
     MessageTriggerEventType,
     MessageTriggerRecipientType,
@@ -15,7 +16,10 @@ import { parseInteger } from "interface/parse-integer";
 @Controller()
 @UseGuards(JwtGuard, TenantGuard)
 export class MessageTriggerController {
-    constructor(private readonly triggerService: MessageTriggerService) {}
+    constructor(
+        private readonly triggerService: MessageTriggerService,
+        private readonly smsRetryService: SmsRetryService,
+    ) {}
 
     @Get("message-trigger-rules")
     listRules(@CurrentTenant() tenant: { branchId?: string }) {
@@ -43,6 +47,17 @@ export class MessageTriggerController {
             tenant.branchId ?? "",
             parseInteger(limit, "limit", { defaultValue: 200, min: 1, max: 500 }),
             parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
+        );
+    }
+
+    @Post("message-logs/:id/retry")
+    retryHistory(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Param("id") id: string,
+    ) {
+        return this.smsRetryService.retryById(
+            tenant.branchId ?? "",
+            parseInteger(id, "id", { min: 1 }),
         );
     }
 
