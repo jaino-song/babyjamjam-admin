@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { maskPhone } from "application/utils/mask";
@@ -18,6 +18,24 @@ export class SmsRetryService {
         private readonly aligoService: AligoService,
         private readonly messageSenderApprovalService: MessageSenderApprovalService,
     ) {}
+
+    async retryById(branchId: string, logId: number): Promise<MessageLogEntity> {
+        const log = await this.logRepository.findByIdInBranch(branchId, logId);
+        if (!log || log.provider !== "aligo_sms") {
+            throw new NotFoundException("재발송할 메시지 기록을 찾을 수 없습니다.");
+        }
+
+        if (log.status !== "failed") {
+            throw new ConflictException("실패한 메시지만 재발송할 수 있습니다.");
+        }
+
+        const scheduledLog = await this.logRepository.scheduleFailedForRetry(branchId, logId);
+        if (!scheduledLog) {
+            throw new ConflictException("이미 재발송이 진행 중입니다.");
+        }
+
+        return scheduledLog;
+    }
 
     async retry(log: MessageLogEntity): Promise<void> {
         if (log.branchId) {
