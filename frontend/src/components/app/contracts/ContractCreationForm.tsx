@@ -4,6 +4,7 @@ import { isAxiosError } from "axios";
 import "dayjs/locale/ko";
 import { useRouter } from "next/navigation";
 import { Check, X } from "lucide-react";
+import { getApiErrorMessage } from "@babyjamjam/shared";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
@@ -26,7 +27,7 @@ import {
 } from "@/components/ui/select";
 import type { WizardStep } from "@/components/app/v3";
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
-import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import {
   Dialog,
   DialogContent,
@@ -709,9 +710,9 @@ export const ContractCreationForm = ({
         try {
           newClient = await createClientMutation.mutateAsync(autoRegistrationPayload);
         } catch (error) {
-          if (!isAxiosError<{ message?: string; clientId?: number }>(error) || error.response?.status !== 409) throw error;
+          if (!isAxiosError<{ message?: string; error?: string; clientId?: number }>(error) || error.response?.status !== 409) throw error;
           const conflict = error.response.data;
-          if (!conflict.clientId) throw new Error(conflict.message || "고객 자동 등록에 실패했습니다.");
+          if (!conflict.clientId) throw new Error(getApiErrorMessage(error, "고객 자동 등록에 실패했습니다."));
           const shouldReuse = await requestConfirmation("이미 같은 전화번호의 고객이 있습니다. 기존 고객으로 계약을 진행할까요?");
           if (!shouldReuse) return;
           reusedExistingClient = true;
@@ -971,7 +972,7 @@ export const ContractCreationForm = ({
       if (autoRegisteredClientId) {
         const baseMessage = error instanceof Error ? error.message : "계약서 생성 중 오류가 발생했습니다.";
         setSubmitError(`${baseMessage} 방금 자동 등록된 고객이 남아 있습니다.`);
-        if (window.confirm("방금 자동 등록된 고객이 남아 있습니다. 고객을 삭제할까요?")) {
+        if (await requestConfirmation("방금 자동 등록된 고객이 남아 있습니다. 고객을 삭제할까요?")) {
           try {
             await deleteClientMutation.mutateAsync(autoRegisteredClientId);
             setClientId(null);
@@ -1637,7 +1638,7 @@ export const ContractCreationForm = ({
         description="전자문서 생성과 전송이 완료되었습니다."
         onAcknowledge={handleCreationSuccessAcknowledged}
       />
-      <ApprovalTwoButtonModal
+      <TwoButtonModal
         open={confirmationMessage !== null}
         onOpenChange={(open) => {
           if (!open) resolveConfirmation(false);

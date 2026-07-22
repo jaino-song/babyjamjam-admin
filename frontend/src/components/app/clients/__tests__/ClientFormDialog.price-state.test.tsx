@@ -30,6 +30,7 @@ jest.mock("@/hooks/useVoucherData", () => ({
     data: type ? mockVoucherPriceInfos : [],
     isLoading: false,
   }),
+  useVoucherYears: () => ({ data: [2025, 2026], isLoading: false }),
 }));
 
 jest.mock("@/stores/client-dialog-store", () => {

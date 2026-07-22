@@ -279,7 +279,6 @@ export default function RegisterPage() {
         name: result.data.name,
         phone: result.data.phone,
         birthDate: result.data.birthDate,
-        role: result.data.role,
       });
       if (response.success) {
         if (response.code === "ACCOUNTS_LINKED") setAccountsLinked(true);

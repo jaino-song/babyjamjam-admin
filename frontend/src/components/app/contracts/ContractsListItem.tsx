@@ -12,6 +12,7 @@ import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 interface ContractsListItemProps {
   document: EformsignDocument | null;
   customerName: string | null;
+  subtitle?: string;
   isLoading: boolean;
 }
 
@@ -35,6 +36,7 @@ function formatDate(timestamp: number): string {
 function ContractsListItemComponent({
   document,
   customerName,
+  subtitle,
   isLoading,
 }: ContractsListItemProps) {
   if (isLoading || !document) {
@@ -95,7 +97,7 @@ function ContractsListItemComponent({
               : "text-v3-orange"
       )}
       title={recipientName}
-      subtitle={document.document_name}
+      subtitle={subtitle ?? document.document_name}
       meta={
         <>
           <span className="flex min-w-0 shrink-0 items-center gap-[calc(4px*var(--glint-ui-scale,1))]">
@@ -120,5 +122,6 @@ export const ContractsListItem = memo(
   (previousProps, nextProps) =>
     previousProps.document === nextProps.document &&
     previousProps.customerName === nextProps.customerName &&
+    previousProps.subtitle === nextProps.subtitle &&
     previousProps.isLoading === nextProps.isLoading
 );

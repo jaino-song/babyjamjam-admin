@@ -29,7 +29,6 @@ const validBody = {
     name: "Hong Gildong",
     phone: "010-1234-5678",
     birthDate: "1990-01-01",
-    role: "user",
 };
 
 describe("POST /api/auth/register", () => {

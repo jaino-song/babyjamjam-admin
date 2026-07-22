@@ -26,6 +26,7 @@ const DEFAULT_EFORMSIGN_SKIP = 0;
 
 export interface FeedbackTemplateIdResponse {
     templateId: string | null;
+    templateIds?: string[];
 }
 
 export interface LocalEformsignDocRecord {

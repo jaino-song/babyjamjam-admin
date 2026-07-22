@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import type { KeyboardEvent } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { formatMessageDateTimeCompact } from "@babyjamjam/shared";
 
@@ -10,7 +9,12 @@ import "@/components/app/mobile-redesign/redesign.css";
 import { useSystemTemplates } from "@/features/system-templates/hooks";
 import { useMessageTemplates } from "@/hooks/use-message-templates";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
-import { ListLoadMoreButton, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
+import {
+  ListCard,
+  ListLoadMoreButton,
+  ListLoadMoreSentinel,
+} from "@/components/app/mobile-redesign/primitives";
+import { MessageSectionNav } from "@/components/app/mobile-redesign/MessageSectionNav";
 
 import styles from "./page.module.css";
 
@@ -150,50 +154,42 @@ export default function TemplatesPage() {
   };
 
   return (
-    <div data-component="messages-templates" className={styles.page}>
-      <div className={styles.header} data-component="messages-templates-header">
-        <Link href="/messages" className={styles.backLink}>
-          <MockupIcon name="chevronLeft" size={22} />
-          <span>메시지</span>
-        </Link>
-        <div className={styles.headerTitle} data-component="messages-templates-header-title">
-          템플릿 관리
-        </div>
-        <div className={styles.headerRight} data-component="messages-templates-header-right">
-          <Link href="/messages/templates/new" className={styles.headerAction}>
-            + 새 템플릿
-          </Link>
-        </div>
-      </div>
-
-      <div className="shell-content" data-component="messages-templates-content">
-        <div className="list-card pop-up" data-component="messages-templates-card">
-          <label className={`search-bar ${styles.searchBar}`} data-component="messages-templates-search">
-            <MockupIcon name="search" size={14} />
-            <input
-              type="text"
-              value={searchQuery}
-              placeholder="템플릿명, 이벤트 검색"
-              aria-label="템플릿명, 이벤트 검색"
-              onChange={(event) => setSearchQuery(event.target.value)}
+    <section data-component="messages" data-page="messages-templates" className="messages-page">
+      <div
+        className="shell-content flex-col gap-[calc(8px*var(--glint-ui-scale,1))]"
+        data-component="messages-content"
+      >
+        <MessageSectionNav activeId="templates" />
+        <ListCard
+          title="템플릿 관리"
+          actionLabel="+ 새 템플릿"
+          actionHref="/messages/templates/new"
+          filters={TEMPLATE_FILTERS.map((filter) => ({
+            label: filter,
+            count: getFilterCount(rows, filter),
+          }))}
+          activeFilter={activeFilter}
+          onFilterChange={(filter) => setActiveFilter(filter as TemplateFilter)}
+          beforeFilters={(
+            <label className={`search-bar ${styles.searchBar}`} data-component="messages-templates-search">
+              <MockupIcon name="search" size={14} />
+              <input
+                type="text"
+                value={searchQuery}
+                placeholder="템플릿명, 이벤트 검색"
+                aria-label="템플릿명, 이벤트 검색"
+                onChange={(event) => setSearchQuery(event.target.value)}
+              />
+            </label>
+          )}
+          scrollRef={scrollContainerRef}
+          loadMoreFooter={isInitialLoad && hasMore ? (
+            <ListLoadMoreButton
+              onLoadMore={loadMore}
+              dataComponentPrefix="messages-templates"
             />
-          </label>
-
-          <div className="filter-row" data-component="messages-templates-filters">
-            {TEMPLATE_FILTERS.map((filter) => (
-              <button
-                key={filter}
-                type="button"
-                className={`filter-pill ${activeFilter === filter ? "active" : ""}`}
-                aria-pressed={activeFilter === filter}
-                onClick={() => setActiveFilter(filter)}
-              >
-                {filter} <span className="count">{getFilterCount(rows, filter)}</span>
-              </button>
-            ))}
-          </div>
-
-          <div ref={scrollContainerRef} className="list-card-scroll" data-component="messages-templates-scroll">
+          ) : null}
+        >
             {isLoading ? (
               <div className="detail-empty-state" data-component="messages-templates-loading">
                 템플릿을 불러오고 있습니다.
@@ -226,18 +222,9 @@ export default function TemplatesPage() {
                 dataComponentPrefix="messages-templates"
               />
             )}
-          </div>
-          {isInitialLoad && hasMore && (
-            <div className="list-card-footer" data-component="messages-templates-footer">
-              <ListLoadMoreButton
-                onLoadMore={loadMore}
-                dataComponentPrefix="messages-templates"
-              />
-            </div>
-          )}
-        </div>
+        </ListCard>
       </div>
-    </div>
+    </section>
   );
 }
 

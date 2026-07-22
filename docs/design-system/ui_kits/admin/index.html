@@ -1,0 +1,203 @@
+<!-- @dsCard group="Admin" name="Admin App — Dashboard & Clients" viewport="1440x900" -->
+<!-- @startingPoint -->
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><title>아가잼잼 관리자</title>
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<style>html,body,#root{height:100%;}body{margin:0;overflow:hidden;}</style>
+</head><body>
+<div id="root"></div>
+<script type="text/babel" src="../../_ds_bundle.js"></script>
+<script type="text/babel">
+const B = window.BJJ;
+const Ic = (paths, size=20, sw=2) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round">{paths}</svg>;
+const P = {
+  home: <><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></>,
+  users: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>,
+  file: <><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></>,
+  cal: <><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></>,
+  bell: <><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></>,
+  set: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></>,
+  send: <><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></>,
+  plus: <><path d="M5 12h14"/><path d="M12 5v14"/></>,
+  msg: <><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></>,
+  check: <path d="M20 6 9 17l-5-5"/>,
+  won: <><path d="M3 6h18"/><path d="m5 6 3 12 4-10 4 10 3-12"/><path d="M4 13h16"/></>,
+};
+const clients = [
+  {id:1, name:"김서연", phone:"010-1234-5678", region:"인천시 연수구", due:"2026-08-15", status:"active", service:"정부바우처", weeks:"3주", manager:"박관리사", start:"2026-08-20", memo:"쌍둥이 출산 예정"},
+  {id:2, name:"박지호", phone:"010-9876-5432", region:"서울시 송파구", due:"2026-07-28", status:"pending", service:"일반", weeks:"2주", manager:"미배정", start:"2026-08-01", memo:"오후 상담 선호"},
+  {id:3, name:"이하은", phone:"010-5555-1234", region:"인천시 남동구", due:"2026-09-02", status:"signed", service:"정부바우처", weeks:"4주", manager:"최관리사", start:"2026-09-08", memo:"-"},
+  {id:4, name:"최민준", phone:"010-2222-8888", region:"경기도 부천시", due:"2026-07-20", status:"scheduleChange", service:"연장", weeks:"3주", manager:"박관리사", start:"2026-07-25", memo:"일정 변경 요청 확인 필요"},
+  {id:5, name:"정수아", phone:"010-7777-3333", region:"서울시 강동구", due:"2026-10-11", status:"review", service:"일반", weeks:"2주", manager:"미배정", start:"2026-10-15", memo:"유축기 대여 문의"},
+  {id:6, name:"한지민", phone:"010-4444-9999", region:"인천시 서구", due:"2026-06-30", status:"completed", service:"정부바우처", weeks:"3주", manager:"김관리사", start:"2026-07-05", memo:"서비스 완료"},
+];
+const contracts = [
+  {no:"CT-2607-014", client:"김서연", type:"정부바우처", date:"2026-07-10", status:"active"},
+  {no:"CT-2607-013", client:"이하은", type:"정부바우처", date:"2026-07-08", status:"signed"},
+  {no:"CT-2607-012", client:"박지호", type:"일반", date:"2026-07-07", status:"pending"},
+  {no:"CT-2606-011", client:"최민준", type:"연장", date:"2026-06-28", status:"scheduleChange"},
+  {no:"CT-2606-010", client:"한지민", type:"정부바우처", date:"2026-06-15", status:"completed"},
+];
+
+function ClientRow({ c, selected, onClick }) {
+  return (
+    <div onClick={onClick} role="button" style={{display:"flex", alignItems:"center", gap:12, padding:"12px 14px", borderRadius:"var(--radius-lg)", cursor:"pointer",
+      background:selected ? "var(--primary-light)" : "transparent", transition:"background 200ms var(--ease-standard)"}}>
+      <B.Avatar name={c.name}/>
+      <div style={{minWidth:0, flex:1}}>
+        <div style={{fontSize:"var(--text-base)", fontWeight:600, color:"var(--dark)"}}>{c.name}</div>
+        <div style={{fontSize:"var(--text-xs)", color:"var(--text-muted)", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{c.phone} · {c.region}</div>
+      </div>
+      <B.StatusBadge status={c.status}/>
+    </div>
+  );
+}
+
+function Dashboard({ goClients }) {
+  return (
+    <div style={{display:"grid", gap:24}}>
+      <B.PageHeader title="대시보드" subtitle="오늘의 계약과 일정을 한눈에 확인하세요"
+        actions={<B.Button size="sm" icon={Ic(P.send,14)}>계약 발송</B.Button>}/>
+      <B.StatsBar columns={4} items={[
+        {icon:Ic(P.users,24), value:128, counter:"명", label:"전체 고객"},
+        {icon:Ic(P.file,24), value:34, counter:"건", label:"진행중 계약"},
+        {icon:Ic(P.cal,24), value:12, counter:"건", label:"이번 주 일정"},
+        {icon:Ic(P.send,24), value:5, counter:"건", label:"서명 대기"},
+      ]}/>
+      <div style={{display:"grid", gridTemplateColumns:"2fr 1fr", gap:24, alignItems:"start"}}>
+        <div style={{display:"grid", gap:24}}>
+          <B.Card variant="content" padding={20}>
+            <B.ShortcutGrid shortcuts={[
+              {label:"계약 발송", icon:Ic(P.send,20,2.5)},
+              {label:"고객 추가", icon:Ic(P.plus,20,2.5), onClick:goClients},
+              {label:"일정 등록", icon:Ic(P.cal,20,2.5)},
+              {label:"알림톡 발송", icon:Ic(P.msg,20,2.5)},
+            ]}/>
+          </B.Card>
+          <B.ContentCard title="최근 계약" description="최근 발송·서명된 계약"
+            titleTrailing={<B.HeaderActionButton label="전체 보기" variant="muted"/>}>
+            <B.DataTable paginate={false} columns={[
+              {key:"no", header:"계약번호", width:130},
+              {key:"client", header:"고객"},
+              {key:"type", header:"유형", render:(r)=><B.TagPill variant={r.type==="정부바우처" ? "sky" : r.type==="연장" ? "amber" : "neutral"}>{r.type}</B.TagPill>},
+              {key:"date", header:"발송일"},
+              {key:"status", header:"상태", render:(r)=><B.StatusBadge status={r.status}/>},
+            ]} data={contracts} onRowClick={()=>{}}/>
+          </B.ContentCard>
+        </div>
+        <B.ContentCard title="최근 활동">
+          <B.ActivityTimeline items={[
+            {icon:Ic(P.check,18), variant:"success", text:<span><b>김서연</b>님 계약 서명 완료</span>, time:"10분 전"},
+            {icon:Ic(P.send,18), variant:"info", text:<span>계약서 발송 — <b>박지호</b>님</span>, time:"1시간 전"},
+            {icon:Ic(P.cal,18), variant:"warning", text:<span>일정 변경 요청 — <b>최민준</b>님</span>, time:"3시간 전"},
+            {icon:Ic(P.users,18), variant:"info", text:<span>신규 고객 등록 — <b>정수아</b>님</span>, time:"어제"},
+            {icon:Ic(P.won,18), variant:"success", text:"6월 정산 완료", time:"2일 전"},
+          ]}/>
+        </B.ContentCard>
+      </div>
+    </div>
+  );
+}
+
+function Clients() {
+  const [sel, setSel] = React.useState(clients[0]);
+  const [tab, setTab] = React.useState("all");
+  const [dtab, setDtab] = React.useState("info");
+  const [q, setQ] = React.useState("");
+  const filtered = clients.filter(c =>
+    (tab === "all" || (tab === "active" ? ["active","signed"].includes(c.status) : ["pending","review"].includes(c.status))) &&
+    (q === "" || c.name.includes(q) || c.phone.includes(q)));
+  return (
+    <div style={{display:"flex", flexDirection:"column", gap:24, height:"100%", minHeight:0}}>
+      <B.PageHeader title="고객 관리" subtitle="산모 고객 정보를 관리합니다"
+        actions={<B.Button size="sm" icon={Ic(P.plus,14)}>고객 추가</B.Button>}/>
+      <div style={{flex:1, minHeight:0}}>
+        <B.SplitLayout
+          list={
+            <B.ListPanel title="고객" subtitle={filtered.length + "명"}
+              tabs={[{key:"all", label:"전체"},{key:"active", label:"진행중"},{key:"pending", label:"대기"}]}
+              activeTab={tab} onTabChange={setTab}
+              headerActions={<B.HeaderActionButton icon={Ic(P.plus,14)} label="추가"/>}>
+              <div style={{display:"grid", gap:4, margin:"-12px -10px 12px"}}>
+                <div style={{padding:"0 10px 8px"}}><B.SearchInput value={q} onChange={setQ} placeholder="이름, 연락처 검색"/></div>
+                {filtered.map(c => <ClientRow key={c.id} c={c} selected={sel && sel.id===c.id} onClick={()=>setSel(c)}/>)}
+                {filtered.length===0 && <B.EmptyState plain message="검색 결과가 없습니다"/>}
+              </div>
+            </B.ListPanel>
+          }
+          detail={sel ? (
+            <B.DetailPanel avatar={<B.Avatar name={sel.name} size="lg"/>} title={sel.name}
+              subtitle={sel.phone + " · " + sel.region}
+              badges={<B.StatusBadge status={sel.status}/>}
+              trailing={<B.TagPill variant={sel.service==="정부바우처" ? "sky" : sel.service==="연장" ? "amber" : "neutral"} size="lg">{sel.service}</B.TagPill>}
+              actions={<B.DetailActions actions={[{label:"계약 발송", variant:"primary"},{label:"알림톡"},{label:"수정"},{label:"삭제", variant:"danger"}]}/>}
+              tabs={<B.Tabs hug tabs={[{key:"info", label:"기본 정보"},{key:"contract", label:"계약"},{key:"schedule", label:"일정"}]} activeTab={dtab} onTabChange={setDtab}/>}>
+              {dtab === "info" && (
+                <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, alignItems:"start"}}>
+                  <B.InfoCard title="기본 정보">
+                    <B.InfoRow label="연락처" value={sel.phone}/>
+                    <B.InfoRow label="주소" value={sel.region}/>
+                    <B.InfoRow label="출산 예정일" value={sel.due}/>
+                    <B.InfoRow label="메모" value={sel.memo}/>
+                  </B.InfoCard>
+                  <B.InfoCard title="서비스 정보">
+                    <B.InfoRow label="서비스 유형" value={sel.service}/>
+                    <B.InfoRow label="이용 기간" value={sel.weeks}/>
+                    <B.InfoRow label="시작일" value={sel.start}/>
+                    <B.InfoRow label="담당 관리사" value={sel.manager}/>
+                  </B.InfoCard>
+                </div>
+              )}
+              {dtab === "contract" && (
+                <B.DataTable paginate={false} columns={[
+                  {key:"no", header:"계약번호", width:130},
+                  {key:"type", header:"유형", render:(r)=><B.TagPill variant="sky">{r.type}</B.TagPill>},
+                  {key:"date", header:"발송일"},
+                  {key:"status", header:"상태", render:(r)=><B.StatusBadge status={r.status}/>},
+                ]} data={contracts.filter(c=>c.client===sel.name).length ? contracts.filter(c=>c.client===sel.name) : contracts.slice(0,2)}/>
+              )}
+              {dtab === "schedule" && (
+                <B.ActivityTimeline items={[
+                  {icon:Ic(P.cal,18), variant:"info", text:"서비스 시작 — " + sel.start, time:"예정"},
+                  {icon:Ic(P.check,18), variant:"success", text:"계약 서명 완료", time:"2026-07-10"},
+                  {icon:Ic(P.send,18), variant:"info", text:"계약서 발송", time:"2026-07-08"},
+                ]}/>
+              )}
+            </B.DetailPanel>
+          ) : <B.EmptyState icon={Ic(P.users,48,1.5)} message="고객을 선택해 주세요"/>}
+        />
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [screen, setScreen] = React.useState("dash");
+  const nav = (id) => { if (id === "dash" || id === "clients") setScreen(id); };
+  const sections = [
+    {title:"메인", items:[
+      {id:"dash", label:"대시보드", icon:Ic(P.home), active:screen==="dash"},
+      {id:"cal", label:"일정", icon:Ic(P.cal), badge:"12"}]},
+    {title:"관리", items:[
+      {id:"clients", label:"고객 관리", icon:Ic(P.users), active:screen==="clients"},
+      {id:"contracts", label:"계약 관리", icon:Ic(P.file)},
+      {id:"msg", label:"알림톡", icon:Ic(P.msg)}]},
+    {title:"시스템", items:[
+      {id:"noti", label:"알림", icon:Ic(P.bell)},
+      {id:"set", label:"설정", icon:Ic(P.set)}]},
+  ];
+  return (
+    <div style={{display:"flex", height:"100%", background:"var(--background)"}}>
+      <B.Sidebar logoSrc="../../assets/logo.svg" sections={sections} user={{name:"김관리", role:"매니저"}} onNavigate={nav}/>
+      <main style={{flex:1, minWidth:0, padding:24, overflowY:"auto", height:"100%", boxSizing:"border-box"}}>
+        {screen === "dash" ? <Dashboard goClients={()=>setScreen("clients")}/> : <Clients/>}
+      </main>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body></html>

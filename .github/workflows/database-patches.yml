@@ -131,6 +131,10 @@ jobs:
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-client-pre-booking-status.sql
 
+      - name: Apply branch owner nullable patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260721090000_make_branch_owner_nullable/migration.sql
+
   apply-preview:
     name: apply preview database patches
     if: >-
@@ -362,6 +366,10 @@ jobs:
       - name: Verify client pre-booking status patch
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-client-pre-booking-status.sql
+
+      - name: Apply branch owner nullable patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260721090000_make_branch_owner_nullable/migration.sql
 
   apply-production:
     name: apply production database patches
@@ -599,3 +607,7 @@ jobs:
       - name: Verify client pre-booking status patch
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-client-pre-booking-status.sql
+
+      - name: Apply branch owner nullable patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260721090000_make_branch_owner_nullable/migration.sql

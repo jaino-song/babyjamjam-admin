@@ -1,7 +1,7 @@
 "use client";
 
 import { Input } from "@/components/ui/input";
-import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 
 interface ServiceRecordLinkResetResultModalProps {
     open: boolean;
@@ -17,7 +17,7 @@ export function ServiceRecordLinkResetResultModal({
     onCopy,
 }: ServiceRecordLinkResetResultModalProps) {
     return (
-        <ApprovalTwoButtonModal
+        <TwoButtonModal
             open={open}
             onOpenChange={(nextOpen) => {
                 if (!nextOpen) onClose();
@@ -45,6 +45,6 @@ export function ServiceRecordLinkResetResultModal({
                     readOnly
                 />
             </div>
-        </ApprovalTwoButtonModal>
+        </TwoButtonModal>
     );
 }

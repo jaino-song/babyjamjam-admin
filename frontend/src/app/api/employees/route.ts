@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getConflictPayload } from "@babyjamjam/shared";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
 import { errorResponse, getAuthHeaders, getAuthToken } from "@/lib/api/route-utils";
@@ -145,6 +146,10 @@ export async function DELETE(request: NextRequest) {
 
         return NextResponse.json({ success: true });
     } catch (error) {
+        const conflict = getConflictPayload(error);
+        if (conflict) {
+            return NextResponse.json(conflict, { status: 409 });
+        }
         return errorResponse(error, "delete employee");
     }
 }

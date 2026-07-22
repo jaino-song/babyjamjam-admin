@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsEmail, IsIn, IsNotEmpty, IsString, Matches, MinLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, Matches, MinLength } from 'class-validator';
 
 const NAME_PATTERN = /^[\p{L} ]+$/u;
 
@@ -33,10 +33,6 @@ export class RegisterDto {
     @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '유효한 생년월일을 입력해주세요. (예: 1990-01-01)' })
     birthDate!: string;
 
-    @IsString()
-    @IsNotEmpty({ message: '역할을 선택해주세요.' })
-    @IsIn(['admin', 'manager', 'user'], { message: '유효한 역할을 선택해주세요.' })
-    role!: string;
 }
 
 export class LoginDto {

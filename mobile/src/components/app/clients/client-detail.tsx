@@ -828,17 +828,20 @@ export function ClientDetailContent({
     documentFieldValue(contractDocument, ["이용자 주소", "주소", "customerAddress", "address"]),
   );
   const primaryEmployeeName = firstValue(client.primaryEmployee?.name, contractPrimaryEmployeeName(contractDocument));
-  const primaryEmployeePhone = documentFieldValue(contractDocument, [
-    "제공인력 1 연락처",
-    "제공인력1연락처",
-    "제공인력 연락처",
-    "관리사 연락처",
-    "산후관리사 연락처",
-    "caretaker1Contact",
-    "caretakerContact",
-    "employeePhone",
-    "providerPhone",
-  ]);
+  const primaryEmployeePhone = firstValue(
+    client.primaryEmployee?.phone,
+    documentFieldValue(contractDocument, [
+      "제공인력 1 연락처",
+      "제공인력1연락처",
+      "제공인력 연락처",
+      "관리사 연락처",
+      "산후관리사 연락처",
+      "caretaker1Contact",
+      "caretakerContact",
+      "employeePhone",
+      "providerPhone",
+    ]),
+  );
   const secondaryEmployeeName = firstValue(
     client.secondaryEmployee?.name,
     documentFieldValue(contractDocument, [
@@ -850,14 +853,17 @@ export function ClientDetailContent({
       "secondaryEmployeeName",
     ]),
   );
-  const secondaryEmployeePhone = documentFieldValue(contractDocument, [
-    "제공인력 2 연락처",
-    "제공인력2연락처",
-    "보조 제공인력 연락처",
-    "보조관리사 연락처",
-    "caretaker2Contact",
-    "secondaryEmployeePhone",
-  ]);
+  const secondaryEmployeePhone = firstValue(
+    client.secondaryEmployee?.phone,
+    documentFieldValue(contractDocument, [
+      "제공인력 2 연락처",
+      "제공인력2연락처",
+      "보조 제공인력 연락처",
+      "보조관리사 연락처",
+      "caretaker2Contact",
+      "secondaryEmployeePhone",
+    ]),
+  );
   const serviceType = firstValue(
     client.type,
     documentFieldValue(contractDocument, [
@@ -1149,7 +1155,7 @@ export function ClientDetailContent({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-v3-text-muted transition-colors hover:bg-v3-dim-white"
+                className="flex h-[44px] w-[44px] flex-shrink-0 items-center justify-center rounded-xl text-v3-text-muted transition-colors hover:bg-v3-dim-white"
                 aria-label="고객 옵션"
                 data-component="mobile-clients-detail-menu-trigger"
               >
@@ -1324,9 +1330,9 @@ export function ClientDetailContent({
         </InfoCard>
         <InfoCard title="제공인력" delay={60}>
           <InfoRow label="제공인력 1" value={primaryEmployeeName ?? "-"} />
-          {primaryEmployeePhone && <InfoRow label="제공인력 1 연락처" value={primaryEmployeePhone} />}
+          <InfoRow label="제공인력 1 연락처" value={primaryEmployeePhone ?? "-"} />
           <InfoRow label="제공인력 2" value={secondaryEmployeeName ?? "-"} />
-          {secondaryEmployeePhone && <InfoRow label="제공인력 2 연락처" value={secondaryEmployeePhone} />}
+          <InfoRow label="제공인력 2 연락처" value={secondaryEmployeePhone ?? "-"} />
         </InfoCard>
         <InfoCard title="서비스 정보" delay={120}>
           <InfoRow label="바우처 유형" value={serviceType ?? "-"} />

@@ -380,6 +380,44 @@ describe("ClientService", () => {
             );
         });
 
+        it("does not apply automatic message routines when applyMessageAutomation is false", async () => {
+            const mockClient = createClientEntity();
+            createClientUsecase.execute.mockResolvedValue(mockClient);
+
+            await service.create(branchId, {
+                name: "New Client",
+                phone: "010-1234-5678",
+                careCenter: false,
+                voucherClient: true,
+                breastPump: false,
+                applyMessageAutomation: false,
+            });
+
+            expect(triggerService.ensureDefaultRulesForBranch).not.toHaveBeenCalled();
+            expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+        });
+
+        it("does not schedule assignment or service-record messages when message automation is false", async () => {
+            const mockClient = createClientEntity();
+            createClientUsecase.executeWithInitialSchedule.mockResolvedValue({
+                client: mockClient,
+                scheduleId: 42,
+            });
+
+            await service.create(branchId, {
+                name: "New Client",
+                phone: "010-1234-5678",
+                primaryEmployeeId: 7,
+                careCenter: false,
+                voucherClient: true,
+                breastPump: false,
+                applyMessageAutomation: false,
+            });
+
+            expect(triggerService.syncEmployeeAssignmentRulesForSchedule).not.toHaveBeenCalled();
+            expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+        });
+
         it("rejects a duplicate phone unless reuseExistingClient is explicitly enabled", async () => {
             clientRepository.findByPhone.mockResolvedValue(createClientEntity());
 
@@ -994,6 +1032,44 @@ describe("ClientService", () => {
             });
         });
 
+        it("should include employee phone numbers from active schedule", async () => {
+            // Arrange
+            const mockClients = [createClientEntity()];
+            listClientsUsecase.execute.mockResolvedValue(mockClients);
+            prismaService.employee_schedule.findMany.mockResolvedValue([
+                {
+                    clientId: 1,
+                    primaryEmployee: {
+                        id: 55,
+                        name: "지원자 1",
+                        phone: "010-0000-1111",
+                    },
+                    secondaryEmployee: {
+                        id: 66,
+                        name: "지원자 2",
+                        phone: "010-0000-2222",
+                    },
+                },
+            ]);
+
+            // Act
+            const result = await service.findAll(branchId);
+
+            // Assert
+            expect(result[0]).toMatchObject({
+                primaryEmployee: {
+                    id: 55,
+                    name: "지원자 1",
+                    phone: "010-0000-1111",
+                },
+                secondaryEmployee: {
+                    id: 66,
+                    name: "지원자 2",
+                    phone: "010-0000-2222",
+                },
+            });
+        });
+
         describe("contract required badge", () => {
             const createWaitingClient = (startDate: string, eDocId: string | null = null) =>
                 new ClientEntity(
@@ -1142,6 +1218,44 @@ describe("ClientService", () => {
                 primaryEmployee: null,
                 secondaryEmployee: null,
                 hasSigned: false,
+            });
+        });
+
+        it("should include employee phone numbers from active schedule", async () => {
+            // Arrange
+            const mockClient = createClientEntity();
+            findClientByIdUsecase.execute.mockResolvedValue(mockClient);
+            prismaService.employee_schedule.findMany.mockResolvedValue([
+                {
+                    clientId: 1,
+                    primaryEmployee: {
+                        id: 55,
+                        name: "지원자 1",
+                        phone: "010-0000-1111",
+                    },
+                    secondaryEmployee: {
+                        id: 66,
+                        name: "지원자 2",
+                        phone: "010-0000-2222",
+                    },
+                },
+            ]);
+
+            // Act
+            const result = await service.findById(branchId, 1);
+
+            // Assert
+            expect(result).toMatchObject({
+                primaryEmployee: {
+                    id: 55,
+                    name: "지원자 1",
+                    phone: "010-0000-1111",
+                },
+                secondaryEmployee: {
+                    id: 66,
+                    name: "지원자 2",
+                    phone: "010-0000-2222",
+                },
             });
         });
     });

@@ -1,58 +1,4 @@
-:global(body:has([data-component="messages-templates"])) {
-  background: hsl(var(--v3-dim-white));
-  color: hsl(var(--v3-text));
-  font-family: "NanumSquare Neo", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, sans-serif;
-  line-height: normal;
-}
-
-:global(body:has([data-component="messages-templates"]) [data-component="app-root"]) {
-  position: relative;
-  padding: 0;
-  overflow: hidden;
-  background: hsl(var(--v3-dim-white));
-  border-radius: 0;
-  box-shadow: none;
-}
-
-:global(body:has([data-component="messages-templates"]) [data-component="app-root"]::before) {
-  display: none;
-  content: none;
-}
-
-:global(body:has([data-component="messages-templates"]) [data-component="app-providers"]) {
-  position: relative;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-  color: hsl(var(--v3-text));
-  background: hsl(var(--v3-dim-white));
-  border-radius: 0;
-  -webkit-font-smoothing: antialiased;
-}
-
-:global(body:has([data-component="messages-templates"]) [data-component="main-content"]) {
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-  padding: 0 !important;
-  background: hsl(var(--v3-dim-white));
-  color: hsl(var(--v3-text));
-  line-height: normal;
-}
-
-:global(body:has([data-component="messages-templates"]) [data-component="mobile-header"]),
-:global(body:has([data-component="messages-templates"]) [data-component="mobile-bottom-nav"]),
-:global(body:has([data-component="messages-templates"]) [data-component="floating-quick-actions"]),
-:global(body:has([data-component="messages-templates"]) nextjs-portal) {
-  display: none !important;
-}
-
-:global(body:has([data-component="messages-templates"]) [data-component="messages-templates-content"]) {
-  padding: 12px 14px 16px;
-  overflow-y: auto;
-}
-
-:global(body:has([data-component="messages-templates"]) [data-component="messages-templates-card"]) {
+:global(body:has([data-page="messages-templates"]) [data-component="messages-templates-card"]) {
   display: flex;
   flex: 1;
   min-height: 0;
@@ -60,26 +6,22 @@
   overflow: hidden;
 }
 
-:global(body:has([data-component="messages-templates"]) .list-info) {
+:global(body:has([data-page="messages-templates"]) .list-info) {
   display: block;
 }
 
-:global(body:has([data-component="messages-templates"]) .list-name),
-:global(body:has([data-component="messages-templates"]) .section-header),
-:global(body:has([data-component="messages-templates"]) .filter-pill) {
+:global(body:has([data-page="messages-templates"]) .list-name),
+:global(body:has([data-page="messages-templates"]) .section-header),
+:global(body:has([data-page="messages-templates"]) .filter-pill) {
   line-height: normal;
 }
 
-:global(body:has([data-component="messages-templates"]) .filter-pill) {
-  min-height: 28px;
-}
-
-:global(body:has([data-component="messages-templates"]) .search-bar input::placeholder) {
+:global(body:has([data-page="messages-templates"]) .search-bar input::placeholder) {
   color: rgb(117, 117, 117);
   opacity: 1;
 }
 
-:global(body:has([data-component="messages-templates"]) [data-component="messages-templates-row"]) {
+:global(body:has([data-page="messages-templates"]) [data-component="messages-templates-row"]) {
   width: 100%;
   border: 0;
   background: transparent;
@@ -87,69 +29,6 @@
   font: inherit;
   line-height: normal;
   text-align: left;
-}
-
-.page {
-  display: flex;
-  height: 100%;
-  min-height: 0;
-  flex-direction: column;
-  background: hsl(var(--v3-dim-white));
-  color: hsl(var(--v3-text));
-  font-family: "NanumSquare Neo", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, sans-serif;
-}
-
-.header {
-  position: relative;
-  z-index: 10;
-  display: flex;
-  height: 52px;
-  flex-shrink: 0;
-  align-items: center;
-  padding: 0 4px;
-  border-bottom: 1px solid hsl(var(--v3-border));
-  background: #fff;
-}
-
-.backLink {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 8px 10px;
-  color: hsl(var(--v3-primary));
-  font-family: inherit;
-  font-size: 0.95rem;
-  font-weight: 500;
-  line-height: normal;
-  text-decoration: none;
-}
-
-.headerTitle {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  color: hsl(var(--v3-dark));
-  font-size: 0.95rem;
-  font-weight: 700;
-  line-height: normal;
-  transform: translate(-50%, -50%);
-}
-
-.headerRight {
-  margin-left: auto;
-  padding-right: 12px;
-}
-
-.headerAction {
-  display: inline-flex;
-  align-items: center;
-  padding: 8px 4px;
-  color: hsl(var(--v3-primary));
-  font-family: inherit;
-  font-size: 0.85rem;
-  font-weight: 700;
-  line-height: normal;
-  text-decoration: none;
 }
 
 .searchBar {

@@ -1,6 +1,8 @@
 import {
     buildServiceRecordDocumentFields,
     chunkSessions,
+    chunkSessionsByTier,
+    selectTemplateTier,
     yymmddToIso,
     type ServiceRecordDayInput,
     type ServiceRecordHeaderInput,
@@ -79,6 +81,72 @@ describe("chunkSessions", () => {
     it("returns [] for no sessions and rejects size < 1", () => {
         expect(chunkSessions([])).toEqual([]);
         expect(() => chunkSessions([1], 0)).toThrow();
+    });
+});
+
+describe("selectTemplateTier", () => {
+    const tiers = [5, 10, 15, 20];
+
+    it("picks the smallest configured tier that fits dayCount", () => {
+        expect(selectTemplateTier(5, tiers)).toBe(5);
+        expect(selectTemplateTier(6, tiers)).toBe(10);
+        expect(selectTemplateTier(7, tiers)).toBe(10);
+        expect(selectTemplateTier(10, tiers)).toBe(10);
+        expect(selectTemplateTier(11, tiers)).toBe(15);
+        expect(selectTemplateTier(16, tiers)).toBe(20);
+        expect(selectTemplateTier(20, tiers)).toBe(20);
+    });
+
+    it("falls back to the max configured tier when dayCount exceeds every tier", () => {
+        expect(selectTemplateTier(25, tiers)).toBe(20);
+    });
+
+    it("uses the single configured tier when only one is set (base-only env)", () => {
+        expect(selectTemplateTier(7, [5])).toBe(5);
+    });
+
+    it("throws for an empty tier list", () => {
+        expect(() => selectTemplateTier(5, [])).toThrow();
+    });
+});
+
+describe("chunkSessionsByTier", () => {
+    const tiers = [5, 10, 15, 20];
+    const days = (n: number) => Array.from({ length: n }, (_, i) => i);
+
+    it("packs a segment into the smallest tier that fits it", () => {
+        const chunks = chunkSessionsByTier(days(7), tiers);
+        expect(chunks).toHaveLength(1);
+        expect(chunks[0]!.tier).toBe(10);
+        expect(chunks[0]!.days).toHaveLength(7);
+    });
+
+    it("splits a segment longer than the max tier: max-tier chunks then a remainder", () => {
+        const chunks = chunkSessionsByTier(days(23), tiers);
+        expect(chunks).toHaveLength(2);
+        expect(chunks[0]).toEqual({ days: days(23).slice(0, 20), tier: 20 });
+        expect(chunks[1]).toEqual({ days: days(23).slice(20), tier: 5 });
+    });
+
+    it("returns a single chunk when the segment exactly matches a tier", () => {
+        const chunks = chunkSessionsByTier(days(15), tiers);
+        expect(chunks).toEqual([{ days: days(15), tier: 15 }]);
+    });
+
+    it("reproduces the pre-multi-tier 5-only chunking when only the base tier is configured", () => {
+        const chunks = chunkSessionsByTier(days(7), [5]);
+        expect(chunks).toEqual([
+            { days: days(7).slice(0, 5), tier: 5 },
+            { days: days(7).slice(5), tier: 5 },
+        ]);
+    });
+
+    it("returns [] for an empty segment", () => {
+        expect(chunkSessionsByTier([], tiers)).toEqual([]);
+    });
+
+    it("throws for an empty tier list on a non-empty segment", () => {
+        expect(() => chunkSessionsByTier(days(3), [])).toThrow();
     });
 });
 
@@ -276,5 +344,39 @@ describe("buildServiceRecordDocumentFields", () => {
         }));
         expect(map.get("월 1")).toBe("07");
         expect(map.get("일 1")).toBe("01");
+    });
+
+    describe("slotCount (BJJ-multi-tier)", () => {
+        it("emits required marks for all 10 slots when slotCount=10, and nothing beyond", () => {
+            const map = toMap(buildServiceRecordDocumentFields({
+                header,
+                orgName: "기관",
+                employeeName: "인력",
+                days: [day({ sessionIndex: 1 }), day({ sessionIndex: 2 }), day({ sessionIndex: 3 })],
+                slotCount: 10,
+            }));
+            for (let n = 1; n <= 10; n++) {
+                expect(map.has(`결제 확인 ${n}`)).toBe(true);
+                expect(map.has(`산모확인서명 ${n}`)).toBe(true);
+            }
+            expect(map.has("결제 확인 11")).toBe(false);
+            expect(map.has("산모확인서명 11")).toBe(false);
+            // days 3개면 슬롯 4..10은 빈 슬롯 처리
+            for (let n = 4; n <= 10; n++) {
+                expect(map.get(`결제 확인 ${n}`)).toBe(UNCHECKED);
+                expect(map.get(`산모확인서명 ${n}`)).toBe("");
+                expect(map.get(`월 ${n}`)).toBe("");
+            }
+        });
+
+        it("throws when days.length exceeds slotCount", () => {
+            expect(() => buildServiceRecordDocumentFields({
+                header: null,
+                orgName: "기관",
+                employeeName: "인력",
+                days: [day(), day(), day()],
+                slotCount: 2,
+            })).toThrow();
+        });
     });
 });

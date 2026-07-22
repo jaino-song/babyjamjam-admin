@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { User } from "lucide-react";
+import { User, Users, Workflow } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { clientQueryKeys, fetchClient, useClient, useDeleteClient } from "@/hooks/useClients";
@@ -21,7 +21,7 @@ import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { parsePositiveIntQueryParam } from "@/lib/query-params";
 import { toast } from "@/hooks/use-toast";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
-import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
+import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { useFormStore } from "@/stores/form-store";
 import {
@@ -32,7 +32,9 @@ import {
   ListLoadMoreSentinel,
   ListRowBadges,
   ListRowsSkeleton,
+  MobileSectionNav,
 } from "@/components/app/mobile-redesign/primitives";
+import { ClientRegistrationPolicySettings } from "@/components/app/mobile-redesign/ClientRegistrationPolicySettings";
 import {
   MobileDetailSheet,
   MobileSearchBar,
@@ -43,6 +45,12 @@ import "@/components/app/mobile-redesign/redesign.css";
 const CLIENTS_ROUTE_BODY_CLASS = "mobile-clients-route";
 const ALL_FILTER = "전체";
 const CONTRACT_REQUIRED_FILTER = "계약서 필요";
+const CLIENT_SECTIONS = [
+  { id: "list", label: "고객 목록", icon: Users },
+  { id: "automation", label: "자동화", icon: Workflow },
+] as const;
+
+type ClientSectionId = (typeof CLIENT_SECTIONS)[number]["id"];
 
 function defaultClientMeta(c: Client) {
   const type = c.type ?? "유형 미정";
@@ -181,6 +189,7 @@ export default function ClientsPage() {
   const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<string>(ALL_FILTER);
+  const [activeSection, setActiveSection] = useState<ClientSectionId>("list");
   const selectClientRequestRef = useRef(0);
   const prefillContractCreation = useFormStore((state) => state.prefillFromContract);
 
@@ -496,8 +505,18 @@ export default function ClientsPage() {
         isOpen={Boolean(detailClient)}
         onClose={handleCloseDetailSheet}
         list={
-          <div className="shell-content" data-component="mobile-clients-content">
-            <ListCard
+          <div
+            className="shell-content flex-col gap-[calc(8px*var(--glint-ui-scale,1))]"
+            data-component="mobile-clients-content"
+          >
+            <MobileSectionNav
+              ariaLabel="고객 섹션"
+              items={CLIENT_SECTIONS}
+              activeId={activeSection}
+              onSelect={setActiveSection}
+            />
+            {activeSection === "list" ? (
+              <ListCard
               title="고객"
               count={
                 isClientsFetching
@@ -582,7 +601,12 @@ export default function ClientsPage() {
                 )}
                 </>
               )}
-            </ListCard>
+              </ListCard>
+            ) : (
+              <ListCard title="고객 자동화" filters={[]}>
+                <ClientRegistrationPolicySettings />
+              </ListCard>
+            )}
           </div>
         }
         detail={
@@ -619,7 +643,7 @@ export default function ClientsPage() {
         onDelete={handleDeleteRequest}
       />
 
-      <ConfirmActionModal
+      <MobileTwoButtonModal
         open={deleteTargetClientId != null}
         title={t(locale, "common.delete")}
         description={t(locale, "clients.delete-confirm")}

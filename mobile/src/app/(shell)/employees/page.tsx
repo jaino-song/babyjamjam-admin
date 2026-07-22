@@ -12,7 +12,7 @@ import {
 import { useInfiniteEmployees } from "@/hooks/useInfiniteEmployees";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
-import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
+import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -49,6 +49,7 @@ import {
   getOpenToNextWorkLabel,
 } from "@babyjamjam/shared/constants/employee-status";
 import { Skeleton } from "@/components/ui/skeleton";
+import { getApiErrorMessage } from "@babyjamjam/shared";
 
 const ALL_FILTER = "전체";
 
@@ -169,7 +170,7 @@ function EmployeeDetailContent({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-v3-text-muted transition-colors hover:bg-v3-dim-white"
+                className="flex h-[44px] w-[44px] flex-shrink-0 items-center justify-center rounded-xl text-v3-text-muted transition-colors hover:bg-v3-dim-white"
                 aria-label="제공인력 옵션"
                 data-component="mobile-employees-detail-menu-trigger"
               >
@@ -224,7 +225,7 @@ function EmployeeDetailContent({
           <InfoRow label="이름" value={employee.name} />
           <InfoRow label="연락처" value={formatPhoneNumber(employee.phone)} />
           <InfoRow
-            label="근무 가능 여부"
+            label="다음 배정 가능 여부"
             value={availability}
             tone={availabilityTone}
           />
@@ -344,10 +345,14 @@ export default function EmployeesPage() {
         title: t(locale, "employees.delete-success"),
         description: t(locale, "employees.delete-success-description"),
       });
-    } catch {
+    } catch (error) {
+      setDeleteTarget(null);
       toast({
         title: t(locale, "employees.delete-fail"),
-        description: t(locale, "employees.delete-fail-description"),
+        description: getApiErrorMessage(
+          error,
+          t(locale, "employees.delete-fail-description"),
+        ),
         variant: "destructive",
       });
     }
@@ -560,7 +565,7 @@ export default function EmployeesPage() {
         }
       />
 
-      <ConfirmActionModal
+      <MobileTwoButtonModal
         open={deleteTarget != null}
         title={t(locale, "employees.delete-confirm.title")}
         description={t(locale, "employees.delete-confirm.message")}

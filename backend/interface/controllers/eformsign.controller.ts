@@ -92,6 +92,11 @@ function getDocumentTemplateId(document: EformsignListDoc): string | null {
     return templateId ?? null;
 }
 
+/**
+ * `templateId` may be a single id or a comma-separated list (BJJ-multi-tier: the UI passes every
+ * configured 제공기록지 tier so documents created on any tier's template are matched). A single id
+ * is naturally backward-compatible since it round-trips through the same split/trim/Set path.
+ */
 function filterDocumentsByTemplate(
     documents: EformsignListDoc[],
     templateId: string | undefined,
@@ -100,9 +105,16 @@ function filterDocumentsByTemplate(
     if (!templateId) {
         return documents;
     }
+    const templateIds = new Set(
+        templateId.split(",").map((id) => id.trim()).filter((id) => id.length > 0),
+    );
+    if (templateIds.size === 0) {
+        return documents;
+    }
 
     return documents.filter((document) => {
-        const matches = getDocumentTemplateId(document) === templateId;
+        const documentTemplateId = getDocumentTemplateId(document);
+        const matches = documentTemplateId !== null && templateIds.has(documentTemplateId);
         return templateMatch === "include" ? matches : !matches;
     });
 }

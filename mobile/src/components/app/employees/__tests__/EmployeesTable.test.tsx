@@ -178,9 +178,9 @@ describe('EmployeesTable', () => {
     it('displays correct status badges', () => {
       render(<EmployeesTable />);
 
-      expect(screen.getByText('근무 가능')).toBeInTheDocument();
+      expect(screen.getByText('배정 가능')).toBeInTheDocument();
       expect(screen.getByText('근무 중')).toBeInTheDocument();
-      expect(screen.getByText('근무 불가')).toBeInTheDocument();
+      expect(screen.getByText('배정 불가')).toBeInTheDocument();
     });
 
     it('renders title and subtitle', () => {
@@ -208,7 +208,7 @@ describe('EmployeesTable', () => {
       expect(screen.getByText('전체')).toBeInTheDocument();
 
       await user.click(screen.getByRole('combobox'));
-      expect(await screen.findByRole('option', { name: '근무 가능' })).toBeInTheDocument();
+      expect(await screen.findByRole('option', { name: '배정 가능' })).toBeInTheDocument();
     });
 
     it('filters employees by status when filter is selected', async () => {
@@ -216,7 +216,7 @@ describe('EmployeesTable', () => {
       render(<EmployeesTable />);
 
       await user.click(screen.getByRole('combobox'));
-      await user.click(await screen.findByRole('option', { name: '근무 가능' }));
+      await user.click(await screen.findByRole('option', { name: '배정 가능' }));
 
       expect(screen.getByText('김철수')).toBeInTheDocument();
       expect(screen.queryByText('이영희')).not.toBeInTheDocument();
@@ -355,9 +355,9 @@ describe('EmployeesTable', () => {
     it('displays English status badges', () => {
       render(<EmployeesTable />);
 
-      expect(screen.getByText('근무 가능')).toBeInTheDocument();
+      expect(screen.getByText('배정 가능')).toBeInTheDocument();
       expect(screen.getByText('근무 중')).toBeInTheDocument();
-      expect(screen.getByText('근무 불가')).toBeInTheDocument();
+      expect(screen.getByText('배정 불가')).toBeInTheDocument();
     });
   });
 });

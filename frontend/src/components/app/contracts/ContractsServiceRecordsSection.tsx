@@ -100,6 +100,8 @@ export function ContractsServiceRecordsSection() {
               clientId={selectedClientId}
               isLoading={serviceRecordsQuery.isLoading}
               isError={serviceRecordsQuery.isError}
+              isRefreshing={serviceRecordsQuery.isFetching && !serviceRecordsQuery.isLoading}
+              onRefresh={() => void serviceRecordsQuery.refetch()}
             />
           </DetailPanel>
         ) : (

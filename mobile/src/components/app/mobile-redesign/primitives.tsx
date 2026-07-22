@@ -3,10 +3,12 @@
 import { useState } from "react";
 import Link from "next/link";
 import type { ComponentProps, CSSProperties, ReactNode, RefObject } from "react";
-import { ChevronDown, ChevronRight, FileCheck2, Plus } from "lucide-react";
+import { ChevronDown, ChevronRight, FileCheck2, type LucideIcon } from "lucide-react";
 
 import { StatusPill } from "@/components/app/ui/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ListCardBody } from "./ListCardBody";
+import { ListCardHeader } from "./ListCardHeader";
 import type { ContractRow, ListRow, MenuGroup, SectionRows } from "./mockup-data";
 
 export function ListLoadMoreButton({
@@ -20,7 +22,7 @@ export function ListLoadMoreButton({
     <button
       type="button"
       onClick={onLoadMore}
-      className="peek-bounce flex flex-col items-center gap-0.5 text-v3-primary"
+      className="peek-bounce flex min-h-[44px] min-w-[44px] flex-col items-center justify-center gap-0.5 text-v3-primary"
       data-component={`${dataComponentPrefix}-load-more-button`}
       aria-label="더 많은 항목 불러오기"
     >
@@ -328,12 +330,68 @@ export function FilterPills({
   );
 }
 
+export interface MobileSectionNavItem<TId extends string = string> {
+  id: TId;
+  label: string;
+  icon: LucideIcon;
+}
+
+export function MobileSectionNav<TId extends string>({
+  items,
+  activeId,
+  onSelect,
+  ariaLabel = "페이지 섹션",
+}: {
+  items: readonly MobileSectionNavItem<TId>[];
+  activeId: TId;
+  onSelect: (id: TId) => void;
+  ariaLabel?: string;
+}) {
+  return (
+    <nav
+      aria-label={ariaLabel}
+      data-component="section-nav-mobile"
+      data-mode="compact"
+      className="-mx-[calc(14px*var(--glint-ui-scale,1))] shrink-0 overflow-x-auto px-[calc(14px*var(--glint-ui-scale,1))] scrollbar-hide"
+    >
+      <div className="flex gap-[calc(8px*var(--glint-ui-scale,1))] pb-[calc(8px*var(--glint-ui-scale,1))]">
+        {items.map((item) => {
+          const Icon = item.icon;
+          const isActive = item.id === activeId;
+
+          return (
+            <button
+              key={item.id}
+              type="button"
+              aria-pressed={isActive}
+              onClick={() => onSelect(item.id)}
+              className={`flex h-[calc(28px*var(--glint-ui-scale,1))] items-center gap-[calc(6px*var(--glint-ui-scale,1))] whitespace-nowrap rounded-full border px-[calc(12px*var(--glint-ui-scale,1))] py-0 text-[calc(0.72rem*var(--glint-ui-scale,1))] font-semibold transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2 ${
+                isActive
+                  ? "border-[hsl(var(--v3-primary))] bg-[hsl(var(--v3-primary))] text-white"
+                  : "border-[hsl(var(--v3-border))] bg-[hsl(var(--v3-bg))] text-[hsl(var(--v3-text-muted))]"
+              }`}
+            >
+              <Icon
+                aria-hidden="true"
+                className="h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(14px*var(--glint-ui-scale,1))]"
+              />
+              {item.label}
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
 export function ListCard({
   title,
   count,
   actionLabel,
   actionHref,
   actionIcon,
+  actionType = "button",
+  actionDisabled = false,
   onActionClick,
   filters,
   activeFilter,
@@ -349,6 +407,8 @@ export function ListCard({
   actionLabel?: string;
   actionHref?: string;
   actionIcon?: ReactNode;
+  actionType?: "button" | "submit";
+  actionDisabled?: boolean;
   onActionClick?: () => void;
   filters: FilterPillItem[];
   activeFilter?: string;
@@ -359,40 +419,23 @@ export function ListCard({
   loadMoreFooter?: ReactNode;
   children: ReactNode;
 }) {
-  const resolvedActionIcon =
-    actionIcon ?? (actionLabel?.startsWith("+") ? null : <Plus size={12} strokeWidth={3} />);
   const [actionFeedback, setActionFeedback] = useState("");
-  const action = actionLabel ? (
-    actionHref ? (
-      <Link href={actionHref} className="list-action" data-component="mobile-redesign-list-action">
-        {resolvedActionIcon}
-        {actionLabel}
-      </Link>
-    ) : (
-      <button
-        type="button"
-        className="list-action"
-        data-component="mobile-redesign-list-action"
-        onClick={
-          onActionClick ??
-          (() => setActionFeedback(`${actionLabel.replace(/^\+\s*/, "")} 기능을 열었습니다.`))
-        }
-      >
-        {resolvedActionIcon}
-        {actionLabel}
-      </button>
-    )
-  ) : null;
+  const handleActionClick = onActionClick ?? (actionType === "button" && actionLabel
+    ? () => setActionFeedback(`${actionLabel.replace(/^\+\s*/, "")} 기능을 열었습니다.`)
+    : undefined);
 
   return (
-    <div className="list-card" data-component="mobile-redesign-list-card">
-      <div className="list-title" data-component="mobile-redesign-list-title">
-        <span className="list-title-text">
-          {title}
-          {count && <span className="list-count">{count}</span>}
-        </span>
-        {action}
-      </div>
+    <div className="list-card flex flex-col gap-4" data-component="mobile-redesign-list-card">
+      <ListCardHeader
+        title={title}
+        count={count}
+        actionLabel={actionLabel}
+        actionHref={actionHref}
+        actionIcon={actionIcon}
+        actionType={actionType}
+        actionDisabled={actionDisabled}
+        onActionClick={handleActionClick}
+      />
       {beforeFilters}
       {filters.length > 0 && (
         <FilterPills items={filters} activeLabel={activeFilter} onChange={onFilterChange} />
@@ -403,13 +446,9 @@ export function ListCard({
         </div>
       )}
       {beforeScroll}
-      <div
-        ref={scrollRef}
-        className="list-card-scroll"
-        data-component="mobile-redesign-list-scroll"
-      >
+      <ListCardBody scrollRef={scrollRef}>
         {children}
-      </div>
+      </ListCardBody>
       {loadMoreFooter && (
         <div className="list-card-footer" data-component="mobile-redesign-list-footer">
           {loadMoreFooter}

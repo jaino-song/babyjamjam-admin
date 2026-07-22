@@ -16,6 +16,7 @@ export interface IUserRepository {
     ): Promise<UserEntity | null>;
     delete(id: string): Promise<void>;
     deleteMembership(id: string, branchId: string): Promise<boolean>;
+    clearBranchOwnerships(userId: string): Promise<void>;
 }
 
 export const USER_REPOSITORY = 'USER_REPOSITORY';

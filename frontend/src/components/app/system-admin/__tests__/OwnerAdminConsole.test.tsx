@@ -17,6 +17,7 @@ const mockedUseQuery = jest.mocked(useQuery);
 const mockedUseMutation = jest.mocked(useMutation);
 const mockedUseQueryClient = jest.mocked(useQueryClient);
 const approveMutate = jest.fn();
+const resetMutation = jest.fn();
 const invalidateQueries = jest.fn();
 
 beforeEach(() => {
@@ -27,11 +28,28 @@ beforeEach(() => {
   mockedUseMutation.mockReturnValue({
     mutate: approveMutate,
     isPending: false,
+    reset: resetMutation,
   } as unknown as ReturnType<typeof useMutation>);
   mockedUseQuery.mockImplementation(({ queryKey }) => {
     if (Array.isArray(queryKey) && queryKey[0] === "systemAdminUsers") {
       return {
         data: [
+          {
+            id: "owner-1",
+            kakaoId: null,
+            email: "owner@example.com",
+            name: "김지점장",
+            phone: "010-1111-2222",
+            birthDate: "19800101",
+            profileImage: null,
+            role: "owner",
+            createdAt: "2026-05-01T00:00:00.000Z",
+            emailVerified: true,
+            authProvider: "email",
+            branches: [{ id: "branch-real-gangnam", name: "강남점", role: "owner" }],
+            approvalStatus: "approved",
+            requestedRole: "owner",
+          },
           {
             id: "approved-user",
             kakaoId: null,
@@ -60,9 +78,9 @@ beforeEach(() => {
             createdAt: "2026-06-04T00:00:00.000Z",
             emailVerified: true,
             authProvider: "email",
-            branches: [{ id: "branch-real-gangnam", name: "강남점", role: null }],
+            branches: [],
             approvalStatus: "pending",
-            requestedRole: "manager",
+            requestedRole: "user",
           },
         ],
         error: null,
@@ -103,6 +121,26 @@ beforeEach(() => {
                 phone: "010-3333-4444",
                 role: "manager",
               },
+            },
+          },
+          {
+            id: "branch-songdo-ownerless",
+            name: "송도점",
+            slug: "songdo",
+            region: "인천",
+            district: "연수구",
+            address: "인천 연수구",
+            phone: "032-000-0000",
+            email: "songdo@example.com",
+            isActive: true,
+            createdAt: "2026-06-01T00:00:00.000Z",
+            updatedAt: "2026-06-04T00:00:00.000Z",
+            owner: null,
+            messageSenderApproval: {
+              approvalStatus: "not_requested",
+              requestedAt: null,
+              approvedAt: null,
+              requestedBy: null,
             },
           },
         ],
@@ -180,6 +218,38 @@ describe("OwnerAdminConsole", () => {
     expect(approveMutate).toHaveBeenCalledWith("branch-real-gangnam");
   });
 
+  it("opens branch forms and clears the edit detail when changing list tabs", async () => {
+    render(<OwnerAdminConsole />);
+
+    fireEvent.click(screen.getByRole("button", { name: "지점 추가" }));
+
+    expect(screen.getByRole("heading", { name: "지점 추가" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/지점명/)).toHaveValue("");
+    expect(screen.getByLabelText(/지점장/)).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /승인된 계정/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "취소" }));
+    fireEvent.click(screen.getByRole("button", { name: /강남점/ }));
+
+    expect(screen.getByText("지점장")).toBeInTheDocument();
+    expect(screen.queryByText("오너")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "수정" }));
+
+    expect(screen.getByRole("heading", { name: "지점 정보 수정" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/지점명/)).toHaveValue("강남점");
+    expect(screen.getByLabelText(/영문 지점 코드/)).toHaveValue("gangnam");
+    expect(screen.queryByLabelText("구·군")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("사무실 주소")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "메시지 신청" }));
+
+    expect(screen.queryByRole("heading", { name: "지점 정보 수정" })).not.toBeInTheDocument();
+    expect(
+      screen.getAllByText("지점을 선택하면 운영 정보와 승인 신청이 표시됩니다.").length,
+    ).toBeGreaterThan(0);
+  });
+
   it("manages pending accounts inside the same split layout as branch management", () => {
     const { container } = render(<OwnerAdminConsole />);
 
@@ -196,19 +266,78 @@ describe("OwnerAdminConsole", () => {
     const roleSelect = screen.getByRole("combobox", {
       name: "가입 대기 계정 승인 권한 선택",
     });
-    const branchSelect = screen.getByRole("combobox", {
+    expect(roleSelect).toHaveValue("user");
+    expect(screen.getByRole("button", { name: "승인" })).toBeDisabled();
+    fireEvent.change(screen.getByRole("combobox", {
       name: "가입 대기 계정 승인 지점 선택",
-    });
-    fireEvent.change(branchSelect, { target: { value: "branch-real-gangnam" } });
+    }), { target: { value: "branch-real-gangnam" } });
     fireEvent.change(roleSelect, { target: { value: "admin" } });
+
+    // Choosing 지점장 requires an additional 임명 지점 selection before 승인 unlocks.
+    expect(screen.getByRole("button", { name: "승인" })).toBeDisabled();
+    fireEvent.change(
+      screen.getByRole("combobox", { name: "가입 대기 계정 임명 지점 선택" }),
+      { target: { value: "branch-songdo-ownerless" } },
+    );
     fireEvent.click(screen.getByRole("button", { name: "승인" }));
 
     expect(approveMutate).toHaveBeenCalledWith({
       id: "pending-user",
       role: "admin",
       branchId: "branch-real-gangnam",
+      ownerBranchId: "branch-songdo-ownerless",
     });
     expect(screen.getByRole("button", { name: "거절" })).toBeInTheDocument();
+  });
+
+  it("limits the 임명 지점 select to ownerless active branches when 지점장 is selected", () => {
+    render(<OwnerAdminConsole />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "계정 관리" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "가입 대기" }));
+    fireEvent.click(screen.getByRole("button", { name: /가입 대기 계정/ }));
+
+    fireEvent.change(
+      screen.getByRole("combobox", { name: "가입 대기 계정 승인 권한 선택" }),
+      { target: { value: "admin" } },
+    );
+
+    const ownerBranchSelect = screen.getByRole("combobox", {
+      name: "가입 대기 계정 임명 지점 선택",
+    });
+    const optionLabels = within(ownerBranchSelect)
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+
+    expect(optionLabels).toEqual(["임명 지점 선택", "송도점"]);
+    expect(screen.getByRole("button", { name: "승인" })).toBeDisabled();
+  });
+
+  it("edits an approved account's role with exactly 매니저/직원 options and saves via updateUserRole", () => {
+    render(<OwnerAdminConsole />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "계정 관리" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: /승인된 계정/ }));
+
+    fireEvent.click(screen.getByRole("button", { name: "수정" }));
+
+    const roleSelect = screen.getByRole("combobox", {
+      name: "승인된 계정 권한 선택",
+    });
+    const optionLabels = within(roleSelect)
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+
+    expect(optionLabels).toEqual(["매니저", "직원"]);
+    expect(roleSelect).toHaveValue("manager");
+
+    fireEvent.change(roleSelect, { target: { value: "user" } });
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+
+    expect(approveMutate).toHaveBeenCalledWith({
+      id: "approved-user",
+      role: "user",
+    });
   });
 
   it("shows the functional notification tool without placeholder approval actions", async () => {

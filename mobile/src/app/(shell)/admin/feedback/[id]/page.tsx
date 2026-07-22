@@ -29,7 +29,7 @@ export default function FeedbackDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-muted/50 p-8">
+      <div className="min-h-[100dvh] bg-muted/50 p-4 sm:p-6">
         <div className="max-w-4xl mx-auto">
           <div className="animate-pulse">
             <div className="h-8 bg-muted rounded-2xl w-32 mb-8"></div>
@@ -49,7 +49,7 @@ export default function FeedbackDetailPage() {
 
   if (error || !feedback) {
     return (
-      <div className="min-h-screen bg-muted/50 p-8">
+      <div className="min-h-[100dvh] bg-muted/50 p-4 sm:p-6">
         <div className="max-w-4xl mx-auto">
           <button
             onClick={() => router.push('/admin/feedback')}
@@ -57,7 +57,7 @@ export default function FeedbackDetailPage() {
           >
             ←
           </button>
-          <div className="bg-card rounded-2xl shadow p-12 text-center">
+          <div className="bg-card rounded-2xl p-6 text-center shadow sm:p-8">
             <p className="text-destructive text-lg font-medium mb-2">피드백을 찾을 수 없습니다</p>
             <p className="text-muted-foreground">요청하신 피드백이 존재하지 않거나 삭제되었습니다.</p>
           </div>
@@ -67,7 +67,7 @@ export default function FeedbackDetailPage() {
   }
 
   return (
-    <div data-component="admin-feedback-detail" className="min-h-screen bg-muted/50 p-8">
+    <div data-component="admin-feedback-detail" className="min-h-[100dvh] bg-muted/50 p-4 sm:p-6">
       <div data-component="admin-feedback-detail-content" className="max-w-4xl mx-auto">
         <button
           onClick={() => router.push('/admin/feedback')}
@@ -77,7 +77,7 @@ export default function FeedbackDetailPage() {
           ←
         </button>
 
-        <div data-component="admin-feedback-detail-info" className="bg-card rounded-2xl shadow p-6 mb-6">
+        <div data-component="admin-feedback-detail-info" className="mb-6 rounded-2xl bg-card p-4 shadow sm:p-6">
           <h2 className="text-xl font-bold text-foreground mb-4">피드백 정보</h2>
           <div className="space-y-3">
             <div className="flex items-center gap-3">
@@ -113,7 +113,7 @@ export default function FeedbackDetailPage() {
           </div>
         </div>
 
-        <div data-component="admin-feedback-detail-chat" className="bg-card rounded-2xl shadow p-6">
+        <div data-component="admin-feedback-detail-chat" className="rounded-2xl bg-card p-4 shadow sm:p-6">
           <h2 className="text-xl font-bold text-foreground mb-6">대화 내역</h2>
           <div className="space-y-4">
             {feedback.session.messages.map((message: SessionMessage) => {
@@ -133,7 +133,7 @@ export default function FeedbackDetailPage() {
                           : 'bg-muted text-foreground'
                       }`}
                   >
-                    <div className="flex items-center gap-2 mb-2">
+                    <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
                       <span className={`text-xs font-medium ${isHighlighted
                           ? 'text-warning'
                           : isUser

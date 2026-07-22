@@ -319,9 +319,7 @@ export class ServiceRecordLifecycleService {
         } else if (!hasActiveAssignment) {
             status = SERVICE_RECORD_CASE_STATUS.WAITING_FOR_ASSIGNMENT;
         } else if (complete) {
-            status = record.finalizationDueAt && record.finalizationDueAt <= now
-                ? SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE
-                : SERVICE_RECORD_CASE_STATUS.WAITING_FOR_END;
+            status = SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE;
         } else if (record.finalizationDueAt && record.finalizationDueAt <= now) {
             status = SERVICE_RECORD_CASE_STATUS.AWAITING_COMPLETION;
         } else if (isoDate(record.startDate)! > todayKst(now)) {

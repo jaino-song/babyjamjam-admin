@@ -28,7 +28,9 @@ export default function PrivacyPage() {
         </div>
       </div>
       <div className="px-4 pt-4 text-center text-[0.78rem] text-v3-primary">
-        <Link href="/login">로그인으로 돌아가기</Link>
+        <Link className="-mx-3 inline-flex min-h-[44px] items-center px-3" href="/login">
+          로그인으로 돌아가기
+        </Link>
       </div>
     </section>
   );

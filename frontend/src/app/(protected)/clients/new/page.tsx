@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Check, ChevronLeft } from "lucide-react";
 import { useCreateClient } from "@/hooks/useClients";
-import { useVoucherPriceInfos } from "@/hooks/useVoucherData";
+import { useVoucherPriceInfos, useVoucherYears } from "@/hooks/useVoucherData";
 import { api } from "@/lib/api/client";
 import type { CreateClientDto, ServiceStatus } from "@/lib/client/types";
 import { SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
@@ -78,7 +78,7 @@ export default function NewClientPage() {
   const clearPrefillName = useClientDialogStore((s) => s.clearPrefillName);
 
   const store = useClientWizardStore();
-  const { currentStep, pricesManuallyEdited, setField, setCurrentStep, setPricesManuallyEdited, reset } = store;
+  const { currentStep, pricesManuallyEdited, voucherYear, setField, setCurrentStep, setPricesManuallyEdited, setVoucherYear, reset } = store;
 
   const [error, setError] = useState<string | null>(null);
   const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
@@ -104,7 +104,28 @@ export default function NewClientPage() {
     }
   }, [prefillName, clearPrefillName, setField]);
 
-  const { data: voucherPriceInfos, isLoading: isPriceLoading } = useVoucherPriceInfos(store.type || "");
+  // Voucher year selection - defaults to the year the service belongs to (the
+  // form's service end date), then the current year when no end date is set.
+  // Either case falls back to the latest server-provided year when the year
+  // isn't in the list.
+  const { data: voucherYears = [] } = useVoucherYears();
+  const resolvedVoucherYear = useMemo(() => {
+    if (voucherYear !== null) return voucherYear;
+    const endDateYear = Number.parseInt(store.endDate.slice(0, 4), 10);
+    if (Number.isFinite(endDateYear) && (voucherYears.length === 0 || voucherYears.includes(endDateYear))) {
+      return endDateYear;
+    }
+    const currentYear = new Date().getFullYear();
+    if (voucherYears.length === 0 || voucherYears.includes(currentYear)) return currentYear;
+    return Math.max(...voucherYears);
+  }, [voucherYear, voucherYears, store.endDate]);
+
+  const voucherYearOptions = useMemo(
+    () => voucherYears.map((year) => ({ value: String(year), label: `${year}년` })),
+    [voucherYears]
+  );
+
+  const { data: voucherPriceInfos, isLoading: isPriceLoading } = useVoucherPriceInfos(store.type || "", resolvedVoucherYear);
 
   const availableDurations = useMemo(() => {
     if (!voucherPriceInfos) return [];
@@ -214,6 +235,17 @@ export default function NewClientPage() {
     }
   };
 
+  const handleVoucherYearChange = (newYear: string) => {
+    const parsedYear = Number(newYear);
+    setVoucherYear(Number.isNaN(parsedYear) ? null : parsedYear);
+    setField("duration", null);
+    if (!pricesManuallyEdited) {
+      setField("fullPrice", "");
+      setField("grant", "");
+      setField("actualPrice", "");
+    }
+  };
+
   const handlePriceChange = (field: "fullPrice" | "grant" | "actualPrice", value: string) => {
     setPricesManuallyEdited(true);
     setField(field, value);
@@ -285,6 +317,7 @@ export default function NewClientPage() {
         voucherClient: store.voucherClient,
         breastPump: store.breastPump,
         serviceStatus: store.serviceStatus || null,
+        applyMessageAutomation: store.applyMessageAutomation,
       };
       const newClient = await createClient.mutateAsync(dto);
       reset();
@@ -380,6 +413,20 @@ export default function NewClientPage() {
       content: (
         <div data-component="clients-new-service-step" className="space-y-6">
           <div data-component="clients-new-service-grid" className={GRID_CLS}>
+            <div data-component="clients-new-service-year-field" className="flex flex-col gap-1.5">
+              <label className={LABEL_CLS}>{t(locale, "clients.form.voucher-year")}</label>
+              <select
+                className={SELECT_CLS}
+                value={resolvedVoucherYear.toString()}
+                onChange={(e) => handleVoucherYearChange(e.target.value)}
+              >
+                {voucherYearOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div data-component="clients-new-service-type-field" className="flex flex-col gap-1.5">
               <label className={LABEL_CLS}>{t(locale, "clients.form.voucher-type")}</label>
               <select
@@ -512,6 +559,7 @@ export default function NewClientPage() {
                 { key: "voucherClient" as const, label: t(locale, "clients.form.voucher-client") },
                 { key: "careCenter" as const, label: t(locale, "clients.form.care-center") },
                 { key: "breastPump" as const, label: t(locale, "clients.form.breast-pump") },
+                { key: "applyMessageAutomation" as const, label: t(locale, "clients.form.message-automation") },
               ]).map(({ key, label }) => (
                 <button
                   key={key}

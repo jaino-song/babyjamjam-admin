@@ -63,7 +63,15 @@ function setup(opts: {
     const eformsignDocRepository = { findByClientId: jest.fn().mockResolvedValue(opts.existingDocs ?? []) };
     const getAccessTokenUsecase = { execute: jest.fn().mockResolvedValue({ oauth_token: { access_token: "at", refresh_token: "rt" } }) };
     const createEformsignDocUsecase = { execute: jest.fn().mockResolvedValue(undefined) };
-    const configService = { get: jest.fn().mockReturnValue("templateId" in opts ? opts.templateId : TEMPLATE_ID) };
+    // Key-aware: only the base 5회 env key resolves — the 10/15/20회 tier keys stay unset so
+    // these legacy tests keep exercising the base-only (5-per-document) chunking behavior.
+    const configService = {
+        get: jest.fn((key: string) => (
+            key === "EFORMSIGN_FEEDBACK_TEMPLATE_ID"
+                ? ("templateId" in opts ? opts.templateId : TEMPLATE_ID)
+                : undefined
+        )),
+    };
 
     const usecase = new CreateAndSendServiceRecordSnapshotUsecase(
         eformsignClient as never,

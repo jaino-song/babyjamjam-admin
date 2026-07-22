@@ -3,7 +3,7 @@
 import { useState, type ComponentProps } from "react";
 
 import { ClientAutocomplete } from "@/components/app/clients/ClientAutocomplete";
-import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import type { Client } from "@/lib/client/types";
 
 type ContractClientSelectorProps = Omit<
@@ -50,7 +50,7 @@ export function ContractClientSelector({
     <>
       <ClientAutocomplete {...autocompleteProps} onChange={handleChange} />
 
-      <ApprovalTwoButtonModal
+      <TwoButtonModal
         open={pendingSelection !== null}
         onOpenChange={(open) => {
           if (!open) setPendingSelection(null);

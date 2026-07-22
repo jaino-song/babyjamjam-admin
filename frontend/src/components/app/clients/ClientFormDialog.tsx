@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef, useCallback, type ReactNode } fro
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useClientPhoneDuplicateCheck } from "@/hooks/useClientPhoneDuplicateCheck";
-import { useVoucherPriceInfos } from "@/hooks/useVoucherData";
+import { useVoucherPriceInfos, useVoucherYears } from "@/hooks/useVoucherData";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
@@ -38,6 +38,7 @@ import {
     FormSwitchRow,
     FormTextInput,
 } from "@/components/app/ui/form-section";
+import { TogglePill } from "@/components/app/ui/toggle-pill";
 import {
     SteppedWizardPanelContent,
 } from "@/components/app/v3/SteppedWizardPanelLayout";
@@ -266,6 +267,7 @@ function ClientFormContent({
         voucherClient: false,
         breastPump: false,
         serviceStatus: "pre_booking",
+        applyMessageAutomation: true,
     });
 
     const {
@@ -321,8 +323,27 @@ function ClientFormContent({
     // Track if prices were manually edited
     const [pricesManuallyEdited, setPricesManuallyEdited] = useState(false);
 
-    // Fetch voucher price info based on selected type
-    const { data: voucherPriceInfos, isLoading: isPriceLoading } = useVoucherPriceInfos(formData.type || "");
+    // Voucher year selection - defaults to the year the service belongs to: the
+    // form's service end date (initialized from the stored record when editing).
+    // Without an end date it defaults to the current year, and either case falls
+    // back to the latest server-provided year when the year isn't in the list.
+    const { data: voucherYears = [] } = useVoucherYears();
+    const [voucherYear, setVoucherYear] = useState<number | null>(null);
+    const resolvedVoucherYear = useMemo(() => {
+        if (voucherYear !== null) return voucherYear;
+        const endDateYear = isValidCompactDateInput(formData.endDate ?? "")
+            ? Number.parseInt(normalizeCompactDateForSubmit(formData.endDate ?? "").slice(0, 4), 10)
+            : NaN;
+        if (Number.isFinite(endDateYear) && (voucherYears.length === 0 || voucherYears.includes(endDateYear))) {
+            return endDateYear;
+        }
+        const currentYear = new Date().getFullYear();
+        if (voucherYears.length === 0 || voucherYears.includes(currentYear)) return currentYear;
+        return Math.max(...voucherYears);
+    }, [voucherYear, voucherYears, formData.endDate]);
+
+    // Fetch voucher price info based on selected type and year
+    const { data: voucherPriceInfos, isLoading: isPriceLoading } = useVoucherPriceInfos(formData.type || "", resolvedVoucherYear);
 
     // Get available durations for the selected voucher type
     const availableDurations = useMemo(() => {
@@ -331,6 +352,14 @@ function ClientFormContent({
         const durations = [...new Set(voucherPriceInfos.map(info => Number(info.duration)))];
         return durations.sort((a, b) => a - b);
     }, [voucherPriceInfos]);
+
+    const voucherYearOptions = useMemo(
+        () => voucherYears.map((year) => ({
+            value: String(year),
+            label: `${year}년`,
+        })),
+        [voucherYears]
+    );
 
     const voucherTypeOptions = useMemo(
         () =>
@@ -405,6 +434,22 @@ function ClientFormContent({
         });
     }, [formData.duration, formData.startDate]);
 
+    // Reset duration/prices when the voucher year changes (same semantics as handleTypeChange)
+    const handleVoucherYearChange = (newYear: string) => {
+        const parsedYear = Number(newYear);
+        setVoucherYear(Number.isNaN(parsedYear) ? null : parsedYear);
+        setFormData(prev => ({
+            ...prev,
+            duration: null, // Reset duration when year changes
+            // Only reset prices if not manually edited
+            ...(pricesManuallyEdited ? {} : {
+                fullPrice: "",
+                grant: "",
+                actualPrice: "",
+            }),
+        }));
+    };
+
     // Reset duration when type changes
     const handleTypeChange = (newType: string) => {
         setFormData(prev => ({
@@ -446,6 +491,7 @@ function ClientFormContent({
                     voucherClient: client.voucherClient,
                     breastPump: client.breastPump,
                     serviceStatus: client.serviceStatus || "pre_booking",
+                    applyMessageAutomation: true,
                 };
                 nextPricesManuallyEdited = Boolean(client.fullPrice || client.grant || client.actualPrice);
             }
@@ -470,6 +516,7 @@ function ClientFormContent({
                     voucherClient: false,
                     breastPump: false,
                     serviceStatus: "pre_booking",
+                    applyMessageAutomation: true,
                 };
                 clearPrefillName();
             }
@@ -484,6 +531,7 @@ function ClientFormContent({
             queueMicrotask(() => {
                 setFormData(nextFormData);
                 setPricesManuallyEdited(nextPricesManuallyEdited);
+                setVoucherYear(null); // Reset to default (current year, falling back to latest available)
                 setError(null);
             });
         }
@@ -635,6 +683,7 @@ function ClientFormContent({
                     voucherClient: formData.voucherClient,
                     breastPump: formData.breastPump,
                     serviceStatus: formData.serviceStatus,
+                    applyMessageAutomation: formData.applyMessageAutomation,
                 };
                 const newClient = await createClient.mutateAsync(createDto);
                 onSuccess?.(newClient);
@@ -921,6 +970,23 @@ function ClientFormContent({
             >
                 <FormGrid data-component="clients-form-dialog-service-grid">
                     <FormField
+                        data-component="clients-form-dialog-field-voucher-year"
+                        htmlFor="clients-form-voucher-year"
+                        label={t(locale, "clients.form.voucher-year")}
+                    >
+                        <FormNativeSelect
+                            id="clients-form-voucher-year"
+                            value={resolvedVoucherYear.toString()}
+                            options={voucherYearOptions}
+                            placeholder={t(locale, "clients.form.voucher-year")}
+                            onValueChange={handleVoucherYearChange}
+                            wrapDataComponent="clients-form-dialog-field-voucher-year-select-wrap"
+                            selectDataComponent="clients-form-dialog-field-voucher-year-select"
+                            iconDataComponent="clients-form-dialog-field-voucher-year-select-icon"
+                        />
+                    </FormField>
+
+                    <FormField
                         data-component="clients-form-dialog-field-voucher-type"
                         htmlFor="clients-form-voucher-type"
                         label={t(locale, "clients.form.voucher-type")}
@@ -965,6 +1031,15 @@ function ClientFormContent({
                         </div>
                     </FormField>
                 </FormGrid>
+
+                <TogglePill
+                    data-component="clients-form-dialog-field-voucher-client"
+                    value={formData.voucherClient}
+                    onValueChange={(value) => handleChange("voucherClient", value)}
+                    leftLabel={t(locale, "clients.form.voucher-client")}
+                    rightLabel={t(locale, "clients.form.self-pay-client")}
+                    ariaLabel={t(locale, "clients.form.customer-type")}
+                />
             </ClientDialogSection>
 
             <ClientDialogSection
@@ -1099,14 +1174,10 @@ function ClientFormContent({
                 title={t(locale, "clients.form.section-flags")}
                 description="추가 서비스 옵션을 설정해 주세요."
             >
-                <div className="grid gap-[calc(12px*var(--glint-ui-scale,1))] lg:grid-cols-3">
-                    <FormSwitchRow
-                        data-component="clients-form-dialog-field-voucher-client"
-                        title={t(locale, "clients.form.voucher-client")}
-                        checked={formData.voucherClient}
-                        onToggle={() => handleChange("voucherClient", !formData.voucherClient)}
-                        buttonAriaLabel={t(locale, "clients.form.voucher-client")}
-                    />
+                <div className={cn(
+                    "grid gap-[calc(12px*var(--glint-ui-scale,1))]",
+                    isEditMode ? "lg:grid-cols-2" : "lg:grid-cols-3",
+                )}>
                     <FormSwitchRow
                         data-component="clients-form-dialog-field-care-center"
                         title={t(locale, "clients.form.care-center")}
@@ -1121,6 +1192,15 @@ function ClientFormContent({
                         onToggle={() => handleChange("breastPump", !formData.breastPump)}
                         buttonAriaLabel={t(locale, "clients.form.breast-pump")}
                     />
+                    {!isEditMode ? (
+                        <FormSwitchRow
+                            data-component="clients-form-dialog-field-message-automation"
+                            title={t(locale, "clients.form.message-automation")}
+                            checked={formData.applyMessageAutomation !== false}
+                            onToggle={() => handleChange("applyMessageAutomation", formData.applyMessageAutomation === false)}
+                            buttonAriaLabel={t(locale, "clients.form.message-automation")}
+                        />
+                    ) : null}
                 </div>
             </ClientDialogSection>
         </>
@@ -1246,6 +1326,34 @@ function ClientFormContent({
 
     const panelVoucherInfoStep = (
         <>
+            <div className={cn(PANEL_FULL_FIELD_CLASS_NAME, "flex justify-center")}>
+                <TogglePill
+                    data-component="clients-form-panel-voucher-client-field"
+                    value={formData.voucherClient}
+                    onValueChange={(value) => handleChange("voucherClient", value)}
+                    leftLabel={t(locale, "clients.form.voucher-client")}
+                    rightLabel={t(locale, "clients.form.self-pay-client")}
+                    ariaLabel={t(locale, "clients.form.customer-type")}
+                />
+            </div>
+
+            <FormField
+                data-component="clients-form-panel-voucher-year-field"
+                htmlFor="clients-form-panel-voucher-year"
+                label={t(locale, "clients.form.voucher-year")}
+            >
+                <FormNativeSelect
+                    id="clients-form-panel-voucher-year"
+                    value={resolvedVoucherYear.toString()}
+                    options={voucherYearOptions}
+                    placeholder={t(locale, "clients.form.voucher-year")}
+                    onValueChange={handleVoucherYearChange}
+                    wrapDataComponent="clients-form-panel-voucher-year-select-wrap"
+                    selectDataComponent="clients-form-panel-voucher-year-select"
+                    iconDataComponent="clients-form-panel-voucher-year-select-icon"
+                />
+            </FormField>
+
             <FormField
                 data-component="clients-form-panel-voucher-type-field"
                 htmlFor="clients-form-panel-voucher-type"
@@ -1382,16 +1490,14 @@ function ClientFormContent({
                 />
             </FormField>
 
-            <div className={cn(PANEL_FULL_FIELD_CLASS_NAME, "grid gap-[calc(12px*var(--glint-ui-scale,1))] lg:grid-cols-3")}>
-                <FormSwitchRow
-                    data-component="clients-form-panel-voucher-client-field"
-                    title={t(locale, "clients.form.voucher-client")}
-                    checked={formData.voucherClient}
-                    onToggle={() => handleChange("voucherClient", !formData.voucherClient)}
-                    buttonAriaLabel={t(locale, "clients.form.voucher-client")}
-                />
+            <div className={cn(
+                PANEL_FULL_FIELD_CLASS_NAME,
+                "grid gap-[calc(12px*var(--glint-ui-scale,1))]",
+                isEditMode ? "lg:grid-cols-2" : "lg:grid-cols-3",
+            )}>
                 <FormSwitchRow
                     data-component="clients-form-panel-care-center-field"
+                    size="control"
                     title={t(locale, "clients.form.care-center")}
                     checked={formData.careCenter === true}
                     onToggle={() => handleChange("careCenter", !formData.careCenter)}
@@ -1399,11 +1505,22 @@ function ClientFormContent({
                 />
                 <FormSwitchRow
                     data-component="clients-form-panel-breast-pump-field"
+                    size="control"
                     title={t(locale, "clients.form.breast-pump")}
                     checked={formData.breastPump}
                     onToggle={() => handleChange("breastPump", !formData.breastPump)}
                     buttonAriaLabel={t(locale, "clients.form.breast-pump")}
                 />
+                {!isEditMode ? (
+                    <FormSwitchRow
+                        data-component="clients-form-panel-message-automation-field"
+                        size="control"
+                        title={t(locale, "clients.form.message-automation")}
+                        checked={formData.applyMessageAutomation !== false}
+                        onToggle={() => handleChange("applyMessageAutomation", formData.applyMessageAutomation === false)}
+                        buttonAriaLabel={t(locale, "clients.form.message-automation")}
+                    />
+                ) : null}
             </div>
         </>
     );

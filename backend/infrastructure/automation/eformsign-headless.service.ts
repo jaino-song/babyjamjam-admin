@@ -1,4 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { randomUUID } from "node:crypto";
 import {
     chromium,
     type Browser,
@@ -12,6 +14,7 @@ import {
     formatEformsignCallbackPayload,
     readEformsignCallbackState,
 } from "./eformsign-gate-utils";
+import { areE2EVendorStubsEnabled } from "infrastructure/vendor-stubs/e2e-vendor-stubs";
 
 /**
  * Result envelope returned by the headless service. The frontend uses
@@ -63,6 +66,8 @@ export class EformsignHeadlessService implements OnModuleDestroy {
     private readonly inflight = new Set<Promise<unknown>>();
     private readonly waitQueue: Array<() => void> = [];
 
+    constructor(private readonly configService: ConfigService) {}
+
     async onModuleDestroy(): Promise<void> {
         if (this.browser) {
             try {
@@ -80,6 +85,18 @@ export class EformsignHeadlessService implements OnModuleDestroy {
      * surfacing the iframe to the user.
      */
     async dispatchCreation(params: DispatchCreationParams): Promise<HeadlessDispatchResult> {
+        if (areE2EVendorStubsEnabled(this.configService)) {
+            params.onProgress?.("client-started");
+            params.onProgress?.("info-inserted");
+            params.onProgress?.("creating");
+            params.onProgress?.("sent");
+            return {
+                ok: true,
+                durationMs: 0,
+                documentId: `doc-stub-headless-${randomUUID()}`,
+            };
+        }
+
         return this.runWithSlot(async () => {
             const start = Date.now();
             try {
@@ -109,6 +126,18 @@ export class EformsignHeadlessService implements OnModuleDestroy {
      * creation (no 회사 도장, no 다음). Falls back to ok=false on errors.
      */
     async dispatchFinalize(params: DispatchFinalizeParams): Promise<HeadlessDispatchResult> {
+        if (areE2EVendorStubsEnabled(this.configService)) {
+            params.onProgress?.("client-started");
+            params.onProgress?.("info-inserted");
+            params.onProgress?.("creating");
+            params.onProgress?.("sent");
+            return {
+                ok: true,
+                durationMs: 0,
+                documentId: params.documentId,
+            };
+        }
+
         return this.runWithSlot(async () => {
             const start = Date.now();
             try {

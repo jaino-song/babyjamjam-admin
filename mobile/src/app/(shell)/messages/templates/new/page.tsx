@@ -13,7 +13,7 @@ export default function NewTemplatePage() {
         className="mx-auto px-4 py-6 sm:px-6 md:px-12 sm:py-8"
       >
         <div data-component="messages-templates-new-nav" className="mb-4">
-          <Button variant="ghost" size="icon" asChild>
+          <Button variant="ghost" size="icon" className="h-[44px] w-[44px]" asChild>
             <Link href="/messages/templates">
               <ArrowLeft className="h-6 w-6" />
             </Link>

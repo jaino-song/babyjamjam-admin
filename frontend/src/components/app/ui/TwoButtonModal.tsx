@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 type ApprovalModalSize = "compact" | "detail";
 type ApprovalButtonVariant = "positive" | "destructive";
 
-export interface ApprovalTwoButtonModalProps {
+export interface TwoButtonModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: ReactNode;
@@ -42,7 +42,7 @@ export interface ApprovalTwoButtonModalProps {
   approvalButtonDataComponent?: string;
 }
 
-export function ApprovalTwoButtonModal({
+export function TwoButtonModal({
   open,
   onOpenChange,
   title,
@@ -58,7 +58,7 @@ export function ApprovalTwoButtonModal({
   approvalVariant = "positive",
   isDescriptionVisuallyHidden = true,
   size = "compact",
-  dataComponent = "approval-two-button-modal",
+  dataComponent = "two-button-modal",
   headerDataComponent,
   titleDataComponent,
   descriptionDataComponent,
@@ -66,7 +66,7 @@ export function ApprovalTwoButtonModal({
   footerDataComponent,
   cancelButtonDataComponent,
   approvalButtonDataComponent,
-}: ApprovalTwoButtonModalProps) {
+}: TwoButtonModalProps) {
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen && isPending) return;
     onOpenChange(nextOpen);
@@ -92,7 +92,7 @@ export function ApprovalTwoButtonModal({
           <DialogTitle
             data-component={titleDataComponent ?? `${dataComponent}-title`}
             aria-label={titleAriaLabel}
-            className="text-left text-[calc(16px*var(--v3-ui-scale,1))] leading-[calc(24px*var(--v3-ui-scale,1))]"
+            className="text-center text-[calc(16px*var(--v3-ui-scale,1))] leading-[calc(24px*var(--v3-ui-scale,1))]"
           >
             {title}
           </DialogTitle>

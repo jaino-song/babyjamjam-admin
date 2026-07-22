@@ -45,7 +45,7 @@ import {
     ClientFormPanel,
 } from "@/components/app/clients/ClientFormDialog";
 import { ClientDetailPanel } from "@/components/app/clients/ClientDetailPanel";
-import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
 import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/ServiceRecordLinkResetResultModal";
 import { ServiceScheduleChangeModal } from "@/components/app/clients/ServiceScheduleChangeModal";
@@ -841,7 +841,7 @@ export default function ClientsPage() {
                 onSuccess={handleClientFormDialogSuccess}
             />
 
-            <ApprovalTwoButtonModal
+            <TwoButtonModal
                 open={resetLinkTargetClientId !== null}
                 onOpenChange={(open) => {
                     if (!open && !isResettingLink) setResetLinkTargetClientId(null);
@@ -880,7 +880,7 @@ export default function ClientsPage() {
                 />
             ) : null}
 
-            <ApprovalTwoButtonModal
+            <TwoButtonModal
                 open={deleteTargetClientId !== null}
                 onOpenChange={(open) => {
                     if (!open) setDeleteTargetClientId(null);

@@ -99,8 +99,8 @@ export interface ClientWithEmployees {
     hasSigned: boolean;
     documentStatus: DocumentStatusType;
     badges: ClientBadge[];
-    primaryEmployee: { id: number; name: string } | null;
-    secondaryEmployee: { id: number; name: string } | null;
+    primaryEmployee: { id: number; name: string; phone: string | null } | null;
+    secondaryEmployee: { id: number; name: string; phone: string | null } | null;
     pendingScheduleChange?: PendingScheduleChange | null;
 }
 
@@ -395,6 +395,7 @@ export class ClientService {
         eDocId?: string | null;
         areaId?: string | null;
         suppressGreetingSms?: boolean;
+        applyMessageAutomation?: boolean;
         reuseExistingClient?: boolean;
         source?: string;
     }): Promise<ClientEntity> {
@@ -406,6 +407,7 @@ export class ClientService {
         await this.assertAllowedClientArea(branchid, params.areaId);
 
         let suppressGreetingSms = params.suppressGreetingSms ?? false;
+        const applyMessageAutomation = params.applyMessageAutomation ?? true;
         if (params.source === CONTRACT_AUTO_REGISTRATION_SOURCE) {
             const autoRegistrationEnabled = await this.systemSettingService
                 .getClientAutoRegistrationEnabled(branchid);
@@ -507,7 +509,7 @@ export class ClientService {
 
         await this.serviceRecordLifecycleService?.ensureForClient(client.id);
 
-        if (this.triggerService) {
+        if (this.triggerService && applyMessageAutomation) {
             await this.triggerService
                 .ensureDefaultRulesForBranch(branchid)
                 .then(() => this.triggerService!.syncClientRulesForClient(branchid, client.id, true, suppressGreetingSms))
@@ -515,7 +517,7 @@ export class ClientService {
                     this.logger.error(`Failed to sync client trigger rules: ${error}`);
                 });
         }
-        if (createdScheduleId !== null) {
+        if (createdScheduleId !== null && applyMessageAutomation) {
             await this.triggerService
                 ?.syncEmployeeAssignmentRulesForSchedule(branchid, createdScheduleId, true)
                 ?.catch((error) => {
@@ -722,10 +724,18 @@ export class ClientService {
                     documentStatus,
                     badges,
                     primaryEmployee: schedule?.primaryEmployee
-                        ? { id: schedule.primaryEmployee.id, name: schedule.primaryEmployee.name }
+                        ? {
+                            id: schedule.primaryEmployee.id,
+                            name: schedule.primaryEmployee.name,
+                            phone: schedule.primaryEmployee.phone ?? null,
+                        }
                         : null,
                     secondaryEmployee: schedule?.secondaryEmployee
-                        ? { id: schedule.secondaryEmployee.id, name: schedule.secondaryEmployee.name }
+                        ? {
+                            id: schedule.secondaryEmployee.id,
+                            name: schedule.secondaryEmployee.name,
+                            phone: schedule.secondaryEmployee.phone ?? null,
+                        }
                         : null,
                     pendingScheduleChange: pendingScheduleChange
                         ? {

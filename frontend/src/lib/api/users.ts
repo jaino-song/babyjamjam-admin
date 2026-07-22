@@ -33,10 +33,23 @@ export async function getPendingUsers(): Promise<SystemAdminUser[]> {
   return Array.isArray(data) ? data : [];
 }
 
-export async function approveUser(id: string, role: string, branchId: string): Promise<void> {
-  await api.post(`/users/${id}/approve`, { role, branchId });
+export async function approveUser(
+  id: string,
+  role: string,
+  branchId: string,
+  ownerBranchId?: string,
+): Promise<void> {
+  await api.post(`/users/${id}/approve`, {
+    role,
+    branchId,
+    ...(ownerBranchId ? { ownerBranchId } : {}),
+  });
 }
 
 export async function rejectUser(id: string): Promise<void> {
   await api.post(`/users/${id}/reject`, {});
+}
+
+export async function updateUserRole(id: string, role: "manager" | "user"): Promise<void> {
+  await api.patch(`/users/${id}`, { role });
 }

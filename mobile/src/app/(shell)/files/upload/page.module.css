@@ -52,6 +52,8 @@
 
 .detailBack {
   display: flex;
+  min-width: 44px;
+  min-height: 44px;
   align-items: center;
   gap: 2px;
   padding: 8px 10px;
@@ -312,6 +314,10 @@
   line-height: 1.35;
 }
 
+.formInput {
+  min-height: 44px;
+}
+
 .filled {
   background: white;
   border-color: hsl(var(--v3-border));
@@ -459,6 +465,7 @@
 
 .uploadBtn {
   flex: 1;
+  min-height: 44px;
   padding: 13px;
   border: 0;
   border-radius: 14px;

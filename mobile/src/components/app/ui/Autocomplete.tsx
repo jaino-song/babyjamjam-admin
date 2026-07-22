@@ -234,7 +234,7 @@ export function Autocomplete<T>({
                     data-component={inputDc}
                     data-state={showDropdown ? "open" : "closed"}
                     className={cn(
-                        "h-[42px] pr-16 data-[state=open]:!rounded-b-none data-[state=open]:!shadow-none",
+                        "h-[44px] pr-24 data-[state=open]:!rounded-b-none data-[state=open]:!shadow-none",
                         !error &&
                             "data-[state=open]:!border-v3-border data-[state=open]:focus:!border-v3-border data-[state=open]:focus-visible:!border-v3-border",
                         error && "border-destructive"
@@ -245,7 +245,7 @@ export function Autocomplete<T>({
                         <button
                             type="button"
                             onClick={handleClear}
-                            className="p-0.5 rounded-2xl"
+                            className="flex h-[44px] w-[44px] items-center justify-center rounded-2xl"
                             aria-label="선택 해제"
                         >
                             <X className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
@@ -268,7 +268,7 @@ export function Autocomplete<T>({
                                 inputRef.current?.focus();
                             }
                         }}
-                        className="p-1 rounded-2xl"
+                        className="flex h-[44px] w-[44px] items-center justify-center rounded-2xl"
                         aria-label="목록 열기"
                         data-component={toggleDc}
                     >

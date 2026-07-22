@@ -137,4 +137,47 @@ describe("SbEformsignDocRepository", () => {
         expect(retryData).not.toHaveProperty("templateId");
         expect(result.statusType).toBe("050");
     });
+
+    it("uses the service record mom name for snapshot document client summaries", async () => {
+        const clientFindMany = jest.fn().mockResolvedValue([
+            { id: 55, name: "고객 원본명", phone: "01066211878" },
+        ]);
+        const scheduleFindMany = jest.fn().mockResolvedValue([]);
+        eformsignDocModel.findMany.mockResolvedValue([
+            {
+                documentId: "service-record-doc-1",
+                clientId: 55,
+                stepRecipientName: "인천 아이미래로",
+                documentKind: "service_record_snapshot",
+                serviceRecordCase: { momName: "송진호" },
+            },
+        ]);
+        repository = new SbEformsignDocRepository({
+            eformsign_doc: eformsignDocModel,
+            client: { findMany: clientFindMany },
+            employee_schedule: { findMany: scheduleFindMany },
+        } as unknown as PrismaService);
+
+        const result = await repository.findClientNamesByBranch("branch-1");
+
+        expect(eformsignDocModel.findMany).toHaveBeenCalledWith({
+            where: { branchId: "branch-1" },
+            select: {
+                documentId: true,
+                clientId: true,
+                stepRecipientName: true,
+                documentKind: true,
+                serviceRecordCase: { select: { momName: true } },
+            },
+        });
+        expect(result).toEqual([
+            {
+                documentId: "service-record-doc-1",
+                clientId: 55,
+                clientName: "송진호",
+                clientPhone: "01066211878",
+                providerName: null,
+            },
+        ]);
+    });
 });

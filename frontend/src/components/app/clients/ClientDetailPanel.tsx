@@ -838,11 +838,23 @@ function ClientDetailPanelBody({
                                             }
                                         />
                                         <InfoRow
+                                            label={t(locale, "clients.form.primary-employee-phone")}
+                                            value={client.primaryEmployee?.phone
+                                                ? formatKoreanPhoneNumber(client.primaryEmployee.phone)
+                                                : "-"}
+                                        />
+                                        <InfoRow
                                             label={t(locale, "clients.form.secondary-employee")}
                                             value={
                                                 client.secondaryEmployee
                                                     ?.name ?? "-"
                                             }
+                                        />
+                                        <InfoRow
+                                            label={t(locale, "clients.form.secondary-employee-phone")}
+                                            value={client.secondaryEmployee?.phone
+                                                ? formatKoreanPhoneNumber(client.secondaryEmployee.phone)
+                                                : "-"}
                                         />
                                     </InfoCard>
 
@@ -921,6 +933,11 @@ function ClientDetailPanelBody({
                                     clientId={clientId}
                                     isLoading={serviceRecordsQuery.isLoading}
                                     isError={serviceRecordsQuery.isError}
+                                    isRefreshing={
+                                        serviceRecordsQuery.isFetching
+                                        && !serviceRecordsQuery.isLoading
+                                    }
+                                    onRefresh={() => void serviceRecordsQuery.refetch()}
                                 />
                             ),
                         },

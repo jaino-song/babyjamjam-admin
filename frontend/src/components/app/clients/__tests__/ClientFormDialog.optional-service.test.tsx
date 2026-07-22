@@ -18,6 +18,7 @@ jest.mock("@/hooks/useClients", () => ({
 
 jest.mock("@/hooks/useVoucherData", () => ({
   useVoucherPriceInfos: () => ({ data: [], isLoading: false }),
+  useVoucherYears: () => ({ data: [], isLoading: false }),
 }));
 
 jest.mock("@/stores/client-dialog-store", () => {
@@ -59,7 +60,7 @@ describe("ClientFormPanel optional service information", () => {
 
   it("creates a pre-booking client without voucher or contract information", async () => {
     const onClose = jest.fn();
-    render(<ClientFormPanel open onClose={onClose} />);
+    const { container } = render(<ClientFormPanel open onClose={onClose} />);
 
     await act(async () => {
       await Promise.resolve();
@@ -78,11 +79,36 @@ describe("ClientFormPanel optional service information", () => {
     fireEvent.click(screen.getByRole("button", { name: "다음" }));
 
     expect(screen.getByLabelText("바우처 유형")).toHaveValue("");
+    const voucherCustomerTab = screen.getByRole("tab", { name: "바우처 고객" });
+    const selfPayCustomerTab = screen.getByRole("tab", { name: "자부담 고객" });
+    expect(voucherCustomerTab).toHaveAttribute("aria-selected", "false");
+    expect(voucherCustomerTab).toHaveClass("text-v3-text-muted");
+    expect(selfPayCustomerTab).toHaveAttribute("aria-selected", "true");
+    const voucherCustomerToggle = container.querySelector('[data-component="clients-form-panel-voucher-client-field"]');
+    const voucherCustomerTogglePositioner = voucherCustomerToggle?.parentElement;
+    expect(voucherCustomerToggle)
+      .toHaveClass(
+        "h-[calc(38px*var(--glint-ui-scale,1))]",
+        "w-fit",
+      );
+    expect(voucherCustomerToggle).not.toHaveClass("w-full");
+    expect(voucherCustomerTogglePositioner).toHaveClass("flex", "justify-center", "md:col-span-2");
+    expect(voucherCustomerTogglePositioner?.parentElement?.firstElementChild)
+      .toBe(voucherCustomerTogglePositioner);
+    fireEvent.click(voucherCustomerTab);
+    expect(voucherCustomerTab).toHaveAttribute("aria-selected", "true");
+    expect(selfPayCustomerTab).toHaveAttribute("aria-selected", "false");
+    expect(selfPayCustomerTab).toHaveClass("text-v3-text-muted");
+    fireEvent.click(selfPayCustomerTab);
     expect(screen.getByRole("button", { name: "다음" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "다음" }));
 
     expect(screen.getByLabelText("계약 상태")).toHaveValue("pre_booking");
     expect(screen.getByLabelText("시작일")).toHaveValue("");
+    expect(screen.queryByRole("tab", { name: "바우처 고객" })).not.toBeInTheDocument();
+    const automationSwitch = screen.getByRole("switch", { name: "메시지 자동 전송" });
+    expect(automationSwitch).toBeChecked();
+    fireEvent.click(automationSwitch);
     expect(screen.getByRole("button", { name: "생성" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "생성" }));
 
@@ -97,6 +123,7 @@ describe("ClientFormPanel optional service information", () => {
         endDate: null,
         voucherClient: false,
         serviceStatus: "pre_booking",
+        applyMessageAutomation: false,
       }));
     });
     expect(onClose).toHaveBeenCalledTimes(1);
