@@ -110,6 +110,8 @@ describe("RateLimitGuard", () => {
     });
 
     it("uses the same endpoint namespace when incrementing and resetting login", async () => {
+        const random = jest.spyOn(Math, "random").mockReturnValue(1);
+
         await guard.canActivate(createExecutionContext({
             ip: "198.51.100.10",
             body: { email: "user@example.com" },
@@ -124,6 +126,7 @@ describe("RateLimitGuard", () => {
         const resetKey = prisma.$executeRaw.mock.calls[0][0].values[0];
 
         expect(resetKey).toBe(incrementedKey);
+        random.mockRestore();
     });
 
     it("should probabilistically clean up expired windows inline", async () => {

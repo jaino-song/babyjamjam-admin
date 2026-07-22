@@ -61,7 +61,7 @@ function setup(options: {
 }
 
 describe("ServiceRecordFinalizationService", () => {
-    it("claims a due case once, creates every chunk, and revokes remaining links", async () => {
+    it("claims a ready case once, creates every chunk, and revokes remaining links", async () => {
         const { service, prisma, snapshot } = setup();
 
         await expect(service.processDueCases(new Date("2026-07-13T00:00:00.000Z"))).resolves.toBe(1);
@@ -83,6 +83,34 @@ describe("ServiceRecordFinalizationService", () => {
             where: { serviceRecordCaseId: "case-1", active: true },
             data: { active: false, revokedAt: expect.any(Date) },
         });
+        expect(prisma.service_record_case.findMany).toHaveBeenNthCalledWith(3, expect.objectContaining({
+            where: {
+                snapshotChunks: { none: { status: "MANUAL_REVIEW" } },
+                OR: [
+                    { status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE },
+                    {
+                        status: SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED,
+                        nextAttemptAt: { lte: new Date("2026-07-13T00:00:00.000Z") },
+                    },
+                ],
+            },
+        }));
+        expect(prisma.service_record_case.findMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            where: {
+                OR: [
+                    { status: SERVICE_RECORD_CASE_STATUS.WAITING_FOR_END },
+                    {
+                        finalizationDueAt: { lte: new Date("2026-07-13T00:00:00.000Z") },
+                        status: {
+                            in: [
+                                SERVICE_RECORD_CASE_STATUS.SCHEDULED,
+                                SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
+                            ],
+                        },
+                    },
+                ],
+            },
+        }));
     });
 
     it("does not call eformsign when another instance already owns the DB claim", async () => {

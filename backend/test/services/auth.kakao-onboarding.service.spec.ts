@@ -364,10 +364,8 @@ describe("AuthService Kakao onboarding", () => {
             "Manager User",
             "010-1234-5678",
             "1990-01-01",
-            "manager",
         );
 
-        expect(prisma.branch.findUnique).not.toHaveBeenCalled();
         expect(prisma.user_branch.create).not.toHaveBeenCalled();
     });
 });

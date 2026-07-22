@@ -1036,7 +1036,6 @@ export class AuthService {
         name: string,
         phone: string,
         birthDate: string,
-        role: string,
     ): Promise<RegistrationResult> {
         // Validate password strength
         const passwordValidation = this.validatePasswordStrength(password);
@@ -1076,7 +1075,7 @@ export class AuthService {
                     birthDate,
                     passwordHash,
                     role: null,
-                    requestedRole: role,
+                    requestedRole: 'user',
                     approvalStatus: 'pending',
                     authProvider: 'email',
                     emailVerified: false,

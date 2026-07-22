@@ -48,6 +48,7 @@ export class MessageLogEntity {
     markSent(aligoMid?: string): void {
         this.status = "sent";
         this.aligoMid = aligoMid ?? null;
+        this.errorMessage = null;
         this.lastAttemptAt = new Date();
         this.nextRetryAt = null;
         this.attempts += 1;

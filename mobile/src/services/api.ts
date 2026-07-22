@@ -46,6 +46,10 @@ export interface ContractDataDto {
   actualPrice: string;
 }
 
+export interface FeedbackTemplateIdResponse {
+    templateId: string | null;
+}
+
 const HEADLESS_DISPATCH_TIMEOUT_MS = 180_000;
 const HEADLESS_FINALIZE_TIMEOUT_MS = 60_000;
 const DEFAULT_EFORMSIGN_LIMIT = 100;
@@ -321,6 +325,10 @@ export const eformsignApi = {
     },
     getDocumentClientNames: async (): Promise<EformsignDocClientSummary[]> => {
         const { data } = await api.get('/eformsign-docs/client-names');
+        return data;
+    },
+    getFeedbackTemplateId: async (): Promise<FeedbackTemplateIdResponse> => {
+        const { data } = await api.get('/eformsign-docs/feedback-template-id');
         return data;
     },
     syncDocumentStatus: async (documentId: string): Promise<SyncedEformsignDocResponse> => {

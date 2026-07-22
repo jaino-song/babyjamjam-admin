@@ -155,8 +155,8 @@ describe("ServiceRecordLifecycleService", () => {
         );
     });
 
-    it("moves a complete record to READY_TO_FINALIZE only after its due time", async () => {
-        jest.useFakeTimers({ now: new Date("2026-07-13T00:00:00.000Z") });
+    it("moves a complete record to READY_TO_FINALIZE before its due time", async () => {
+        jest.useFakeTimers({ now: new Date("2026-07-02T00:00:00.000Z") });
         const record = {
             id: "case-1",
             status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,

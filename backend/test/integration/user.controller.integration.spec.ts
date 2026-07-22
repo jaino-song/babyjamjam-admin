@@ -407,14 +407,9 @@ describe("UserController (Integration)", () => {
         });
 
         describe("given role update", () => {
-            it("should update user role to admin", async () => {
+            it("should reject role 'admin' at the validation layer (지점장 is appointment-only)", async () => {
                 // Arrange
                 const updateDto = { role: "admin" };
-                const updatedUser = createMockUser({
-                    id: "promoted-user",
-                    role: "admin",
-                });
-                userService.update.mockResolvedValue(updatedUser);
 
                 // Act
                 const response = await request(app.getHttpServer())
@@ -423,13 +418,8 @@ describe("UserController (Integration)", () => {
                     .send(updateDto);
 
                 // Assert
-                expect(response.status).toBe(200);
-                expect(userService.update).toHaveBeenCalledWith(
-                    "promoted-user",
-                    expect.objectContaining({
-                        role: "admin",
-                    }),
-                );
+                expect(response.status).toBe(400);
+                expect(userService.update).not.toHaveBeenCalled();
             });
 
             it("should update user role to manager", async () => {
@@ -499,8 +489,8 @@ describe("UserController (Integration)", () => {
 
             it("should thread the caller's role from the JWT into the update params", async () => {
                 // Arrange (default mock caller is owner)
-                const updateDto = { role: "admin" };
-                const updatedUser = createMockUser({ id: "promoted-by-owner", role: "admin" });
+                const updateDto = { role: "manager" };
+                const updatedUser = createMockUser({ id: "promoted-by-owner", role: "manager" });
                 userService.update.mockResolvedValue(updatedUser);
 
                 // Act
@@ -514,15 +504,15 @@ describe("UserController (Integration)", () => {
                 expect(userService.update).toHaveBeenCalledWith(
                     "promoted-by-owner",
                     expect.objectContaining({
-                        role: "admin",
+                        role: "manager",
                         callerRole: "owner",
                     }),
                 );
             });
 
             it("should keep the legacy query update wrapper owner-only", async () => {
-                const updateDto = { role: "admin" };
-                userService.update.mockResolvedValue(createMockUser({ id: "target-user", role: "admin" }));
+                const updateDto = { role: "manager" };
+                userService.update.mockResolvedValue(createMockUser({ id: "target-user", role: "manager" }));
 
                 // Act
                 const response = await request(app.getHttpServer())
@@ -535,7 +525,7 @@ describe("UserController (Integration)", () => {
                 expect(userService.update).toHaveBeenCalledWith(
                     "target-user",
                     expect.objectContaining({
-                        role: "admin",
+                        role: "manager",
                         callerRole: "owner",
                     }),
                 );
@@ -616,13 +606,38 @@ describe("UserController (Integration)", () => {
     // ============================================
     describe("POST /users/:id/approve", () => {
         describe("given a valid approval by the owner", () => {
-            it("should require the owner to select a branch", async () => {
+            it("should approve the user with the owner-selected branch and role", async () => {
+                // Arrange
+                const summary = {
+                    id: "pending-user-1",
+                    name: "Pending User",
+                    email: "pending@example.com",
+                    role: "admin",
+                    approvalStatus: "approved",
+                    approvedAt: new Date("2026-07-13"),
+                    approvedBy: "owner-user-id",
+                    requestedRole: "admin",
+                    tokenVersion: 1,
+                };
+                userService.approve.mockResolvedValue(summary);
+
+                // Act
                 const response = await request(app.getHttpServer())
                     .post("/users/pending-user-1/approve")
-                    .send({ role: "admin" });
+                    .send({
+                        role: "admin",
+                        branchId: "22222222-2222-4222-8222-222222222222",
+                        ownerBranchId: "33333333-3333-4333-8333-333333333333",
+                    });
 
-                expect(response.status).toBe(400);
-                expect(userService.approve).not.toHaveBeenCalled();
+                // Assert
+                expect(response.status).toBe(201);
+                expect(userService.approve).toHaveBeenCalledWith("pending-user-1", {
+                    role: "admin",
+                    branchId: "22222222-2222-4222-8222-222222222222",
+                    ownerBranchId: "33333333-3333-4333-8333-333333333333",
+                    approvedBy: "owner-user-id",
+                });
             });
 
             it("should pass branchId through when provided", async () => {
@@ -677,11 +692,31 @@ describe("UserController (Integration)", () => {
                 expect(userService.approve).not.toHaveBeenCalled();
             });
 
+            it("should require a branch to be provided", async () => {
+                const response = await request(app.getHttpServer())
+                    .post("/users/pending-user-1/approve")
+                    .send({ role: "user" });
+
+                expect(response.status).toBe(400);
+                expect(userService.approve).not.toHaveBeenCalled();
+            });
+
             it("should reject a non-UUID branchId", async () => {
                 // Act
                 const response = await request(app.getHttpServer())
                     .post("/users/pending-user-1/approve")
                     .send({ role: "admin", branchId: "not-a-uuid" });
+
+                // Assert
+                expect(response.status).toBe(400);
+                expect(userService.approve).not.toHaveBeenCalled();
+            });
+
+            it("should require ownerBranchId when approving role 'admin' (지점장 임명 지점 필수)", async () => {
+                // Act
+                const response = await request(app.getHttpServer())
+                    .post("/users/pending-user-1/approve")
+                    .send({ role: "admin", branchId: "22222222-2222-4222-8222-222222222222" });
 
                 // Assert
                 expect(response.status).toBe(400);

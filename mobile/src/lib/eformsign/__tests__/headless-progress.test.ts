@@ -1,11 +1,20 @@
 import {
     CONTRACT_CREATION_PROGRESS_STEPS,
     INITIAL_HEADLESS_PROGRESS,
+    SERVICE_RECORD_FINALIZE_PROGRESS_STEPS,
     resolveFailedHeadlessProgress,
     resolveNextHeadlessProgress,
 } from "../headless-progress";
 
 describe("headless progress transitions", () => {
+    it("omits the service end-date step for service-record finalization", () => {
+        expect(SERVICE_RECORD_FINALIZE_PROGRESS_STEPS.map((step) => step.key)).toEqual([
+            "client-started",
+            "creating",
+            "sent",
+        ]);
+    });
+
     it("advances steps monotonically", () => {
         const current = {
             step: "info-inserted" as const,

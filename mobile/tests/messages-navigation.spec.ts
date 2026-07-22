@@ -35,8 +35,13 @@ test.describe("mobile messages navigation", () => {
 
     await expect(page.locator('[data-component="mobile-messages-navigation"]')).toBeVisible();
 
+    const sectionNavigation = page.getByRole("navigation", { name: "메시지 기능" });
+    await expect(sectionNavigation).toHaveAttribute("data-component", "section-nav-mobile");
+
     for (const [label, href] of expectedDestinations) {
-      await expect(page.getByRole("link", { name: new RegExp(label) })).toHaveAttribute("href", href);
+      await page.goto("/messages");
+      await page.getByRole("button", { name: label }).click();
+      await expect(page).toHaveURL(new RegExp(`${href}$`));
     }
   });
 

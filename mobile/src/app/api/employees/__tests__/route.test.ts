@@ -216,6 +216,27 @@ describe("employee API routes", () => {
     await expect(response.text()).resolves.toBe("");
   });
 
+  it("preserves the employee deletion conflict guidance", async () => {
+    mockDelete.mockRejectedValue({
+      response: {
+        status: 409,
+        data: {
+          message: "진행 중인 배정이 있는 직원은 삭제할 수 없습니다.",
+          error: "Conflict",
+        },
+      },
+    });
+
+    const response = await deleteEmployee(
+      createRequest("/api/employees?id=10", { method: "DELETE" }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      message: "진행 중인 배정이 있는 직원은 삭제할 수 없습니다.",
+    });
+  });
+
   describe("auth rejection", () => {
     it("rejects check-phone without auth_token", async () => {
       const request = new NextRequest("http://localhost/api/employees/check-phone?phone=01000000000");

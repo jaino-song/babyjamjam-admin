@@ -5,8 +5,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   AlertTriangle,
+  Calendar,
   CheckCircle2,
   CircleAlert,
+  ClipboardList,
   Download,
   Eye,
   FileCheck2,
@@ -43,6 +45,7 @@ import {
   getStatusCategory,
   isProviderReviewWorkflowStep,
   isDeletedStatusCode,
+  mapDocStatusLabel,
   normalizeStatusCode,
 } from "@/lib/eformsign/status-codes";
 import {
@@ -53,6 +56,7 @@ import {
 } from "@/lib/eformsign/display-name";
 import {
   CONTRACT_FINALIZE_PROGRESS_STEPS,
+  SERVICE_RECORD_FINALIZE_PROGRESS_STEPS,
   INITIAL_HEADLESS_PROGRESS,
   createHeadlessProgressId,
   getSafeHeadlessFailureMessage,
@@ -63,10 +67,17 @@ import {
   type HeadlessProgressState,
 } from "@/lib/eformsign/headless-progress";
 import { HeadlessProgressModal } from "@/components/app/eformsign/HeadlessProgressModal";
-import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
+import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import type { EformsignDocClientSummary } from "@babyjamjam/shared/types/eformsign";
 import { eformsignApi } from "@/services/api";
-import { Badge, ListCard, ListItemRow, ListLoadMoreButton, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
+import {
+  Badge,
+  ListCard,
+  ListItemRow,
+  ListLoadMoreButton,
+  ListLoadMoreSentinel,
+  MobileSectionNav,
+} from "@/components/app/mobile-redesign/primitives";
 import { ActivityTimeline } from "@/components/app/v3";
 import {
   DropdownMenu,
@@ -94,6 +105,7 @@ import "@/components/app/mobile-redesign/redesign.css";
 const STAFF_COMPLETION_IFRAME_ID = "contracts_staff_completion_iframe";
 
 type ContractCategory = "in-progress" | "drafting" | "completed" | "expired" | "unknown";
+type ContractSectionId = "maternal-contracts" | "service-records";
 type FilterKey = "전체" | "대기" | "검토 필요" | "완료" | "기간 만료" | "상태 확인";
 type DetailTabId = "basic" | "signers" | "messages";
 type NotificationStatus = "pending" | "sent" | "failed";
@@ -125,6 +137,10 @@ type ContractStageItem = {
 const EXCLUDED_CUSTOMER_NAMES: string[] = [];
 const CONTRACT_ROUTE_BODY_CLASS = "mobile-contracts-route";
 const FILTER_LABELS: FilterKey[] = ["전체", "대기", "검토 필요", "완료", "기간 만료", "상태 확인"];
+const CONTRACT_SECTIONS = [
+  { id: "maternal-contracts", label: "산모 계약서", icon: FileSignature },
+  { id: "service-records", label: "제공기록지", icon: ClipboardList },
+] as const;
 const CONTRACT_LIST_INITIAL_VISIBLE_COUNT = 9;
 const DROPDOWN_DIALOG_HANDOFF_DELAY_MS = 100;
 const CONTRACT_OPEN_CODES = new Set(["034", "064", "074", "076"]);
@@ -269,6 +285,18 @@ function contractNumber(doc: EformsignDocument): string {
 
 function templateName(doc: EformsignDocument): string {
   return doc.template?.name?.replace(/\s*계약서$/, "") || "";
+}
+
+function isServiceRecordDocument(
+  doc: EformsignDocument,
+  serviceRecordTemplateId: string | null | undefined,
+): boolean {
+  if (serviceRecordTemplateId && doc.template?.id === serviceRecordTemplateId) {
+    return true;
+  }
+
+  const documentLabel = `${doc.document_name ?? ""} ${doc.template?.name ?? ""}`;
+  return documentLabel.includes("제공기록지");
 }
 
 function formatDate(value: string | number | undefined | null): string {
@@ -1070,6 +1098,7 @@ function ContractDocRow({
 function ContractDetailContent({
   doc,
   metadata,
+  isServiceRecord,
   notificationLogs,
   activeTab,
   onTabChange,
@@ -1080,6 +1109,7 @@ function ContractDetailContent({
 }: {
   doc: EformsignDocument;
   metadata?: EformsignDocClientSummary;
+  isServiceRecord: boolean;
   notificationLogs: NotificationLogRecord[];
   activeTab: DetailTabId;
   onTabChange: (id: DetailTabId) => void;
@@ -1101,10 +1131,13 @@ function ContractDetailContent({
   const shouldShareReceipt = category === "completed";
   const contractNum = contractNumber(doc);
   const name = contractDisplayName(doc, undefined, true);
+  const resolvedCustomerName = metadata?.clientName.trim() || customerName(doc);
   const customerPhone =
+    metadata?.clientPhone?.trim() ||
     contractRecipientPhone(doc) ||
     documentFieldValue(doc, ["연락처", "휴대폰", "전화번호", "customerContact", "customerPhone"]) ||
     null;
+  const resolvedProviderName = metadata?.providerName?.trim() || providerName(doc);
   const downloadUrl = eformsignApi.getDocumentDownloadUrl(doc.id);
   const receiptDownloadUrl = eformsignApi.getDocumentReceiptDownloadUrl(doc.id);
   const previewUrl = eformsignApi.getDocumentPreviewUrl(doc.id);
@@ -1209,14 +1242,14 @@ function ContractDetailContent({
         name="contracts"
         avatar={<FileCheck2 size={24} strokeWidth={2.5} />}
         avatarTone="primary"
-        title={name}
+        title={isServiceRecord ? "제공기록지" : name}
         badges={[{ label: tones.badge, tone: tones.badgeMini as BadgeTone }]}
         menu={
           <DropdownMenu key={detailMenuKey} modal={false}>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-v3-text-muted transition-colors hover:bg-v3-dim-white [&_svg]:pointer-events-none"
+                className="flex h-[44px] w-[44px] flex-shrink-0 items-center justify-center rounded-xl text-v3-text-muted transition-colors hover:bg-v3-dim-white [&_svg]:pointer-events-none"
                 aria-label="계약 옵션"
                 data-component="mobile-contracts-detail-menu-trigger"
               >
@@ -1297,7 +1330,7 @@ function ContractDetailContent({
             ...(reviewNeeded && onFinalize
               ? [
                   {
-                    label: "지금 서명",
+                    label: "검토하기",
                     variant: "primary" as const,
                     onClick: () => onFinalize(doc, metadata),
                     dataComponent: "mobile-contracts-sign",
@@ -1366,11 +1399,11 @@ function ContractDetailContent({
 
           <MobileDetailTabPanel name="contracts" tabId="basic" activeTab={activeTab}>
             <InfoCard title="이용자 정보">
-              <InfoRow label="이용자" value={customerName(doc)} />
+              <InfoRow label="이용자" value={resolvedCustomerName} />
               {customerPhone ? (
                 <InfoRow label="연락처" value={formatClientPhone(customerPhone) ?? customerPhone} />
               ) : null}
-              <InfoRow label="제공인력" value={providerName(doc)} />
+              <InfoRow label="제공인력" value={resolvedProviderName} />
             </InfoCard>
             <InfoCard title="계약 정보" delay={60}>
               <InfoRow
@@ -1444,6 +1477,7 @@ export default function ContractsPage() {
   const clearPrefillClient = useClientDialogStore((state) => state.clearPrefillClient);
   const prefillContractCreation = useFormStore((state) => state.prefillFromContract);
   const [activeFilter, setActiveFilter] = useState<FilterKey>("전체");
+  const [activeSection, setActiveSection] = useState<ContractSectionId>("maternal-contracts");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDoc, setSelectedDoc] = useState<EformsignDocument | null>(null);
   const [activeTab, setActiveTab] = useState<DetailTabId>("basic");
@@ -1456,6 +1490,7 @@ export default function ContractsPage() {
   const [finalizeDoc, setFinalizeDoc] = useState<EformsignDocument | null>(null);
   const [finalizeEndDateInput, setFinalizeEndDateInput] = useState("");
   const [isFinalizeDialogOpen, setIsFinalizeDialogOpen] = useState(false);
+  const [isServiceRecordFinalizeConfirmOpen, setIsServiceRecordFinalizeConfirmOpen] = useState(false);
   const [isFinalizeSubmitting, setIsFinalizeSubmitting] = useState(false);
   const [finalizeProgress, setFinalizeProgress] = useState<HeadlessProgressState>(INITIAL_HEADLESS_PROGRESS);
   const [isFinalizeProgressOpen, setIsFinalizeProgressOpen] = useState(false);
@@ -1508,9 +1543,18 @@ export default function ContractsPage() {
     doc: EformsignDocument,
   ) => {
     setFinalizeDoc(doc);
-    setFinalizeEndDateInput(contractEndDateInputValue(doc));
     setFinalizeErrorHint(null);
     setFinalizeProgress(INITIAL_HEADLESS_PROGRESS);
+
+    if (isServiceRecordDocument(doc, feedbackTemplateData?.templateId)) {
+      setFinalizeEndDateInput("");
+      setIsFinalizeDialogOpen(false);
+      setIsServiceRecordFinalizeConfirmOpen(true);
+      return;
+    }
+
+    setFinalizeEndDateInput(contractEndDateInputValue(doc));
+    setIsServiceRecordFinalizeConfirmOpen(false);
     setIsFinalizeDialogOpen(true);
   };
 
@@ -1565,8 +1609,17 @@ export default function ContractsPage() {
 
   const handleFinalizeSubmit = async () => {
     if (!finalizeDoc) return;
-    const endDateIso = yymmddToIsoDate(finalizeEndDateInput);
-    if (!endDateIso) {
+    const isServiceRecordFinalize = isServiceRecordDocument(
+      finalizeDoc,
+      feedbackTemplateData?.templateId,
+    );
+    const endDateIso = isServiceRecordFinalize
+      ? undefined
+      : yymmddToIsoDate(finalizeEndDateInput);
+    const progressSteps = isServiceRecordFinalize
+      ? SERVICE_RECORD_FINALIZE_PROGRESS_STEPS
+      : CONTRACT_FINALIZE_PROGRESS_STEPS;
+    if (!isServiceRecordFinalize && !endDateIso) {
       setFinalizeErrorHint("서비스 종료일을 6자리(YYMMDD)로 입력해주세요.");
       return;
     }
@@ -1574,6 +1627,7 @@ export default function ContractsPage() {
     setIsFinalizeSubmitting(true);
     setFinalizeErrorHint(null);
     setIsFinalizeDialogOpen(false);
+    setIsServiceRecordFinalizeConfirmOpen(false);
     setFinalizeProgress({ step: "client-started", completed: false, failed: false });
     setIsFinalizeProgressOpen(true);
 
@@ -1597,7 +1651,7 @@ export default function ContractsPage() {
             const next = resolveFailedHeadlessProgress(
               current,
               data.failedStep,
-              CONTRACT_FINALIZE_PROGRESS_STEPS,
+              progressSteps,
             );
             if (next !== current) {
               setFinalizeErrorHint(errorHint);
@@ -1606,10 +1660,10 @@ export default function ContractsPage() {
           });
           return;
         }
-        if (!isHeadlessProgressStepKey(data.step, CONTRACT_FINALIZE_PROGRESS_STEPS)) return;
+        if (!isHeadlessProgressStepKey(data.step, progressSteps)) return;
         const nextStep = data.step;
         setFinalizeProgress((current) =>
-          resolveNextHeadlessProgress(current, nextStep, CONTRACT_FINALIZE_PROGRESS_STEPS),
+          resolveNextHeadlessProgress(current, nextStep, progressSteps),
         );
       });
 
@@ -1626,7 +1680,9 @@ export default function ContractsPage() {
         });
         setTimeout(() => {
           setIsFinalizeProgressOpen(false);
-          setFinalizeFeedback("계약서가 완료 처리되었습니다.");
+          setFinalizeFeedback(
+            `${isServiceRecordFinalize ? "제공기록지" : "계약서"}가 완료 처리되었습니다.`,
+          );
           setFinalizeDoc(null);
           setFinalizeEndDateInput("");
         }, 800);
@@ -1639,7 +1695,7 @@ export default function ContractsPage() {
         const next = resolveFailedHeadlessProgress(
           current,
           undefined,
-          CONTRACT_FINALIZE_PROGRESS_STEPS,
+          progressSteps,
         );
         if (next !== current) {
           setFinalizeErrorHint(errorHint);
@@ -1653,7 +1709,7 @@ export default function ContractsPage() {
         const next = resolveFailedHeadlessProgress(
           current,
           undefined,
-          CONTRACT_FINALIZE_PROGRESS_STEPS,
+          progressSteps,
         );
         if (next !== current) {
           setFinalizeErrorHint(errorHint);
@@ -1717,7 +1773,16 @@ export default function ContractsPage() {
   });
 
   const { data: allData, isLoading: isDocumentsLoading } = useEformsignDocumentsByType(isAuthenticated, null);
-  const isContractsLoading = isAuthLoading || (isAuthenticated && isDocumentsLoading && !allData);
+  const { data: feedbackTemplateData, isLoading: isFeedbackTemplateLoading } = useQuery({
+    queryKey: ["eformsign-docs", "feedback-template-id"],
+    queryFn: eformsignApi.getFeedbackTemplateId,
+    enabled: isAuthenticated,
+    staleTime: 1000 * 60 * 5,
+  });
+  const isContractsLoading =
+    isAuthLoading ||
+    (isAuthenticated && isDocumentsLoading && !allData) ||
+    (isAuthenticated && isFeedbackTemplateLoading && !feedbackTemplateData);
   const { data: documentClientSummaries = [] } = useQuery({
     queryKey: ["eformsign-doc-client-names"],
     queryFn: eformsignApi.getDocumentClientNames,
@@ -1801,8 +1866,8 @@ export default function ContractsPage() {
     if (!selectedDoc) return null;
     return {
       ...selectedDoc,
-      ...(selectedDocDetail?.id === selectedDoc.id ? selectedDocDetail : null),
       ...(selectedListDoc?.id === selectedDoc.id ? selectedListDoc : null),
+      ...(selectedDocDetail?.id === selectedDoc.id ? selectedDocDetail : null),
     };
   }, [selectedDoc, selectedDocDetail, selectedListDoc]);
 
@@ -1825,10 +1890,18 @@ export default function ContractsPage() {
     [displayDocuments],
   );
 
+  const sectionDocuments = useMemo(() => {
+    const serviceRecordTemplateId = feedbackTemplateData?.templateId;
+    return allDocuments.filter((doc) => {
+      const isServiceRecord = isServiceRecordDocument(doc, serviceRecordTemplateId);
+      return activeSection === "service-records" ? isServiceRecord : !isServiceRecord;
+    });
+  }, [activeSection, allDocuments, feedbackTemplateData?.templateId]);
+
   const filteredDocuments = useMemo(() => {
     const q = searchQuery.trim();
-    if (!q) return allDocuments;
-    return allDocuments.filter(
+    if (!q) return sectionDocuments;
+    return sectionDocuments.filter(
       (doc) => {
         return (
           matchesKoreanSearch(customerName(doc), q) ||
@@ -1838,7 +1911,7 @@ export default function ContractsPage() {
         );
       },
     );
-  }, [allDocuments, searchQuery]);
+  }, [searchQuery, sectionDocuments]);
 
   const grouped = useMemo(() => {
     const groups: Record<ContractCategory, EformsignDocument[]> = {
@@ -1927,7 +2000,7 @@ export default function ContractsPage() {
 
   const { visibleCount, isInitialLoad, hasMore, sentinelRef, scrollContainerRef, loadMore } =
     useListInfiniteScroll({
-      resetKey: `${activeFilter}::${searchQuery}`,
+      resetKey: `${activeSection}::${activeFilter}::${searchQuery}`,
       totalItems: maxFullCount,
       fallbackInitialCount: CONTRACT_LIST_INITIAL_VISIBLE_COUNT,
     });
@@ -1941,6 +2014,7 @@ export default function ContractsPage() {
   );
 
   const totalDocs = filteredDocuments.length;
+  const activeSectionLabel = activeSection === "maternal-contracts" ? "산모 계약서" : "제공기록지";
   const listCount = isContractsLoading ? (
     <span className="contracts-count-placeholder" aria-label="계약서 불러오는 중" />
   ) : (
@@ -1953,17 +2027,29 @@ export default function ContractsPage() {
       isOpen={Boolean(selectedDoc)}
       onClose={() => setSelectedDoc(null)}
       list={
-        <div className="shell-content" data-component="mobile-contracts-content">
+        <div
+          className="shell-content flex-col gap-[calc(8px*var(--glint-ui-scale,1))]"
+          data-component="mobile-contracts-content"
+        >
+          <MobileSectionNav
+            ariaLabel="계약 문서 섹션"
+            items={CONTRACT_SECTIONS}
+            activeId={activeSection}
+            onSelect={(sectionId) => {
+              setActiveSection(sectionId);
+              setActiveFilter("전체");
+            }}
+          />
           <ListCard
-            title="계약서"
+            title={activeSectionLabel}
             count={listCount}
-            actionLabel="계약 작성"
-            actionHref="/contracts/new"
+            actionLabel={activeSection === "maternal-contracts" ? "계약 작성" : undefined}
+            actionHref={activeSection === "maternal-contracts" ? "/contracts/new" : undefined}
             filters={filterItems}
             activeFilter={activeFilter}
             onFilterChange={(label) => setActiveFilter(label as FilterKey)}
             scrollRef={scrollContainerRef}
-            loadMoreFooter={
+            loadMore={
               isContractsLoading ? (
                 <div
                   className="contracts-load-more-placeholder"
@@ -1979,7 +2065,7 @@ export default function ContractsPage() {
             }
             beforeFilters={
               <MobileSearchBar
-                placeholder="고객명, 계약서명, 계약 번호 검색"
+                placeholder="고객명, 문서명, 문서 번호 검색"
                 label="contracts"
                 value={searchQuery}
                 onChange={setSearchQuery}
@@ -1999,8 +2085,8 @@ export default function ContractsPage() {
                 data-component="mobile-contracts-empty"
               >
                 {searchQuery.trim() || activeFilter !== "전체"
-                  ? "조건에 맞는 계약서가 없습니다."
-                  : "등록된 계약서가 없습니다."}
+                  ? `조건에 맞는 ${activeSectionLabel}가 없습니다.`
+                  : `등록된 ${activeSectionLabel}가 없습니다.`}
               </div>
             ) : (
               <>
@@ -2010,7 +2096,17 @@ export default function ContractsPage() {
                     const cat = categorize(doc);
                     const tones = categoryTones(cat);
                     const meta = progressLabel(doc);
-                    const name = contractDisplayName(doc);
+                    const isServiceRecordRow = activeSection === "service-records";
+                    const mappedCustomerName = documentClientSummaryById.get(doc.id)?.clientName.trim();
+                    const documentCustomerName = customerName(doc).trim();
+                    const serviceRecordCustomerName = mappedCustomerName
+                      || (documentCustomerName !== UNKNOWN_CUSTOMER_NAME ? documentCustomerName : "이름 없음");
+                    const name = isServiceRecordRow
+                      ? serviceRecordCustomerName === "-" ? "이름 없음" : serviceRecordCustomerName
+                      : contractDisplayName(doc);
+                    const badgeLabel = isServiceRecordRow
+                      ? mapDocStatusLabel(doc.current_status)
+                      : tones.badge;
 
                     return (
                       <ListItemRow
@@ -2033,17 +2129,45 @@ export default function ContractsPage() {
                         name={name}
                         style={{ animationDelay: `${Math.min(idx, 4) * 40}ms` }}
                         meta={
-                          <span
-                            className={
-                              tones.badgeMini === "muted" || cat === "completed"
-                                ? "step-label muted"
-                                : "step-label"
-                            }
-                          >
-                            {meta}
-                          </span>
+                          isServiceRecordRow ? (
+                            <>
+                              <span data-component="mobile-contracts-row-subtitle">제공기록지</span>
+                              <span
+                                className="flex flex-wrap items-center gap-x-2 gap-y-0.5"
+                                data-component="mobile-contracts-row-dates"
+                              >
+                                <span
+                                  className="inline-flex items-center gap-1 whitespace-nowrap"
+                                  data-component="mobile-contracts-row-sent-date"
+                                >
+                                  <Calendar className="size-3 shrink-0" />
+                                  발송 {formatDate(doc.created_date)}
+                                </span>
+                                {cat === "completed" ? (
+                                  <span
+                                    className="inline-flex items-center gap-1 whitespace-nowrap"
+                                    data-component="mobile-contracts-row-completed-date"
+                                  >
+                                    <CheckCircle2 className="size-3 shrink-0" />
+                                    완료 {formatDate(doc.updated_date)}
+                                  </span>
+                                ) : null}
+                              </span>
+                            </>
+                          ) : (
+                            <span
+                              className={
+                                tones.badgeMini === "muted" || cat === "completed"
+                                  ? "step-label muted"
+                                  : "step-label"
+                              }
+                            >
+                              {meta}
+                            </span>
+                          )
                         }
-                        right={<Badge label={tones.badge} tone={tones.badgeTone} />}
+                        metaClassName={isServiceRecordRow ? "list-meta flex flex-col items-start gap-0.5" : undefined}
+                        right={<Badge label={badgeLabel} tone={tones.badgeTone} />}
                         onClick={() => {
                           setSelectedDoc(doc);
                           setActiveTab("basic");
@@ -2069,6 +2193,10 @@ export default function ContractsPage() {
           <ContractDetailContent
             doc={selectedDetailDoc}
             metadata={selectedDocMetadata}
+            isServiceRecord={isServiceRecordDocument(
+              selectedDetailDoc,
+              feedbackTemplateData?.templateId,
+            )}
             notificationLogs={notificationLogs}
             activeTab={activeTab}
             onTabChange={setActiveTab}
@@ -2088,7 +2216,7 @@ export default function ContractsPage() {
     <>
       {mainSheet}
 
-      <ConfirmActionModal
+      <MobileTwoButtonModal
         open={deleteTargetDoc !== null}
         title="계약서 삭제"
         description="선택한 계약서를 삭제할까요?"
@@ -2102,6 +2230,27 @@ export default function ContractsPage() {
         }}
         onCancel={() => setDeleteTargetDoc(null)}
         onConfirm={handleDeleteDocumentConfirm}
+      />
+
+      <MobileTwoButtonModal
+        open={isServiceRecordFinalizeConfirmOpen}
+        title="완료할까요?"
+        cancelLabel="취소"
+        confirmLabel="완료"
+        confirmVariant="default"
+        actionOrder="cancel-confirm"
+        loading={isFinalizeSubmitting}
+        onOpenChange={(open) => {
+          if (!open && !isFinalizeSubmitting) {
+            setIsServiceRecordFinalizeConfirmOpen(false);
+            setFinalizeDoc(null);
+          }
+        }}
+        onCancel={() => {
+          setIsServiceRecordFinalizeConfirmOpen(false);
+          setFinalizeDoc(null);
+        }}
+        onConfirm={handleFinalizeSubmit}
       />
 
       {isFinalizeDialogOpen && finalizeDoc ? (
@@ -2140,7 +2289,7 @@ export default function ContractsPage() {
               <button
                 type="button"
                 className="flex-[2] rounded-xl bg-v3-primary py-3 text-[0.88rem] font-bold text-white shadow-[0_4px_14px_rgba(20,50,100,0.18)] disabled:opacity-45"
-                onClick={handleFinalizeSubmit}
+                onClick={() => void handleFinalizeSubmit()}
                 disabled={isFinalizeSubmitting}
               >
                 {isFinalizeSubmitting ? "처리 중..." : "완료"}
@@ -2153,7 +2302,11 @@ export default function ContractsPage() {
       <HeadlessProgressModal
         open={isFinalizeProgressOpen}
         title="최종 확인 처리 중"
-        steps={CONTRACT_FINALIZE_PROGRESS_STEPS}
+        steps={
+          finalizeDoc && isServiceRecordDocument(finalizeDoc, feedbackTemplateData?.templateId)
+            ? SERVICE_RECORD_FINALIZE_PROGRESS_STEPS
+            : CONTRACT_FINALIZE_PROGRESS_STEPS
+        }
         progress={finalizeProgress}
         errorHint={finalizeErrorHint}
         dataComponentPrefix="mobile-contracts-finalize-progress"
@@ -2166,7 +2319,7 @@ export default function ContractsPage() {
             <button
               type="button"
               onClick={() => setIsStaffIframeOpen(false)}
-              className="flex h-9 w-9 items-center justify-center rounded-lg text-v3-text"
+              className="flex h-[44px] w-[44px] items-center justify-center rounded-xl text-v3-text"
               aria-label="닫기"
             >
               <X size={20} strokeWidth={2.5} />

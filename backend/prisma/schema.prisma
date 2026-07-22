@@ -309,7 +309,7 @@ model branch {
   smsSenderApprovalApprovedBy  String?                         @map("sms_sender_approval_approved_by") @db.Uuid
   createdAt                    DateTime?                       @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                    DateTime?                       @default(now()) @map("updated_at") @db.Timestamptz(6)
-  ownerId                      String                          @map("owner_id") @db.Uuid
+  ownerId                      String?                         @map("owner_id") @db.Uuid
   areas                        area[]
   clients                      client[]
   documents                    document[]
@@ -335,7 +335,7 @@ model branch {
   serviceRecordSnapshotChunks  service_record_snapshot_chunk[]
   scheduleChangeRequests       schedule_change_request[]
   authSessions                 auth_session[]
-  owner                        user                            @relation(fields: [ownerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  owner                        user?                           @relation(fields: [ownerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   userBranches                 user_branch[]
 
   @@index([isActive], map: "idx_branch_is_active")
@@ -541,6 +541,14 @@ model voucher_price_info {
 
   @@unique([year, type, duration], map: "voucher_price_info_year_type_duration_uniq")
   @@index([type, duration, year])
+}
+
+model out_of_pocket_price_info {
+  id        Int      @id @default(autoincrement()) @db.SmallInt
+  duration  Int      @unique @db.SmallInt
+  fullPrice BigInt   @map("full_price")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 }
 
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments

@@ -16,6 +16,20 @@
 export const FEEDBACK_TEMPLATE_SESSIONS_PER_DOCUMENT = 5;
 
 /**
+ * Multi-tier 제공기록지 templates (BJJ-multi-tier): each tier is a fixed N-session grid sharing
+ * the same header + `feedbackDayFieldIds(n)` field-naming scheme, just with more slots. Only
+ * tiers whose env var is actually set are usable — an unset env key means that tier's template
+ * has not been deployed to this environment, so chunking must fall back to the tiers that are.
+ * The 5-session tier is the base tier and its env key must stay backward-compatible.
+ */
+export const FEEDBACK_TEMPLATE_TIER_ENV_KEYS: ReadonlyArray<{ tier: number; envKey: string }> = [
+    { tier: 5, envKey: "EFORMSIGN_FEEDBACK_TEMPLATE_ID" },
+    { tier: 10, envKey: "EFORMSIGN_FEEDBACK_TEMPLATE_ID_10" },
+    { tier: 15, envKey: "EFORMSIGN_FEEDBACK_TEMPLATE_ID_15" },
+    { tier: 20, envKey: "EFORMSIGN_FEEDBACK_TEMPLATE_ID_20" },
+];
+
+/**
  * Value that marks a selection field (결제 확인, and the ①–⑪ selection marks) as "selected".
  * 산모확인서명 N is NOT a checkbox mark — it is a binary(서명) field filled with a raw
  * `data:image/png;base64,...` dataURI by the mapper (see `feedbackDayFieldIds` below); this
@@ -52,7 +66,6 @@ export const FEEDBACK_HEADER_FIELD_IDS = {
     babyName: "신생아 이름",
     babyBirth: "신생아 출생일자", // date_yyyy-MM-dd
     babyWeight: "신생아 몸무게",
-    orgName: "제공기관 이름", // required at creation
     employeeName: "제공인력 이름",
 } as const;
 

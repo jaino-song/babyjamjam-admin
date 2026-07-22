@@ -24,10 +24,9 @@ export class ServiceRecordFinalizationService {
     async processDueCases(referenceDate = new Date(), limit = CASE_BATCH_SIZE): Promise<number> {
         await this.recoverStaleFinalizations(referenceDate);
         await this.completeReviewedCases(referenceDate, limit * 5);
-        await this.promoteDueCases(referenceDate, limit * 5);
+        await this.promoteEligibleCases(referenceDate, limit * 5);
         const candidates = await this.prisma.service_record_case.findMany({
             where: {
-                finalizationDueAt: { lte: referenceDate },
                 snapshotChunks: { none: { status: "MANUAL_REVIEW" } },
                 OR: [
                     { status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE },
@@ -47,7 +46,6 @@ export class ServiceRecordFinalizationService {
             const claimed = await this.prisma.service_record_case.updateMany({
                 where: {
                     id: candidate.id,
-                    finalizationDueAt: { lte: referenceDate },
                     OR: [
                         { status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE },
                         {
@@ -165,17 +163,21 @@ export class ServiceRecordFinalizationService {
         }
     }
 
-    private async promoteDueCases(referenceDate: Date, limit: number): Promise<void> {
+    private async promoteEligibleCases(referenceDate: Date, limit: number): Promise<void> {
         const candidates = await this.prisma.service_record_case.findMany({
             where: {
-                finalizationDueAt: { lte: referenceDate },
-                status: {
-                    in: [
-                        SERVICE_RECORD_CASE_STATUS.SCHEDULED,
-                        SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
-                        SERVICE_RECORD_CASE_STATUS.WAITING_FOR_END,
-                    ],
-                },
+                OR: [
+                    { status: SERVICE_RECORD_CASE_STATUS.WAITING_FOR_END },
+                    {
+                        finalizationDueAt: { lte: referenceDate },
+                        status: {
+                            in: [
+                                SERVICE_RECORD_CASE_STATUS.SCHEDULED,
+                                SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
+                            ],
+                        },
+                    },
+                ],
             },
             select: { id: true },
             orderBy: { finalizationDueAt: "asc" },

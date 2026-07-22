@@ -1,0 +1,42 @@
+/* Babyjamjam Admin — Spacing, radius, elevation */
+:root {
+  /* 4px grid */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* Radius — canonical 4px-step ladder */
+  --radius-xs: 4px;      /* checkboxes, micro chips */
+  --radius-sm: 8px;      /* small chips, tooltips, alerts */
+  --radius-md: 12px;     /* inputs, selects, menu items */
+  --radius-lg: 16px;     /* nav items, content cards, panels, popovers */
+  --radius-xl: 20px;     /* elevated cards */
+  --radius-2xl: 24px;    /* dialogs, surface cards */
+  --radius-pill: 999px;  /* buttons, badges, switches */
+
+  /* Z-index ladder — never write a raw z-index */
+  --z-raised: 1;          /* in-card layering */
+  --z-panel-overlay: 10;  /* panel-local overlays (ListPanel emptyState) */
+  --z-chrome: 40;         /* mobile app chrome — MobileHeader, MobileBottomNav */
+  --z-dropdown: 50;       /* Select, DropdownMenu */
+  --z-tooltip: 60;
+  --z-scrim: 100;         /* Dialog scrim */
+  --z-modal: 101;
+  --z-confirm-scrim: 120; /* Confirm stacks above an open dialog */
+  --z-confirm: 121;
+  --z-toast: 140;         /* always on top */
+
+  /* Elevation — navy-tinted, very soft */
+  --shadow-card: 0 4px 24px hsla(214, 50%, 20%, 0.06);
+  --shadow-hover: 0 12px 48px hsla(214, 50%, 20%, 0.12);
+  --shadow-float: 0 20px 60px hsla(214, 50%, 20%, 0.15);
+  --shadow-popover: 0 12px 36px hsla(214, 50%, 20%, 0.12);
+  --shadow-thumb: 0 1px 3px rgba(0, 0, 0, 0.2);
+  --shadow-content: 0 1px 8px rgba(31, 42, 61, 0.06);
+}

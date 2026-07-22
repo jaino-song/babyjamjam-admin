@@ -289,7 +289,7 @@ export function MessageHistoryDetailPanel({
             variant="success"
             size="sm"
           >
-            완료
+            {MESSAGE_HISTORY_STATUS_META[selectedRecord.status].label}
           </StatusBadge>
         ) : selectedRecord ? (
           <span

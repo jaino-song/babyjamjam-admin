@@ -54,7 +54,6 @@ export const registerRequestSchema = z.object({
   name: authNameSchema,
   phone: authPhoneSchema,
   birthDate: authBirthDateSchema,
-  role: z.enum(REGISTERABLE_ROLES, { message: "역할을 선택해주세요." }),
 });
 
 export const registerFormSchema = registerRequestSchema

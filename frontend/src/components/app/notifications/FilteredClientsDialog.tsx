@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { X } from "lucide-react";
-import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
@@ -212,7 +212,7 @@ export function FilteredClientsDialog({
                 client={editingClient}
             />
 
-            <ApprovalTwoButtonModal
+            <TwoButtonModal
                 open={deleteTargetClientId !== null}
                 onOpenChange={(open) => {
                     if (!open) setDeleteTargetClientId(null);

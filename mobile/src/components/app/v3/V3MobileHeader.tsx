@@ -30,7 +30,7 @@ export function V3MobileHeader() {
         </div>
       </div>
       <div className="navbar-icons" data-component="mobile-header-icons">
-        <NotificationBell className="!h-[38px] !w-[38px] !rounded-xl bg-transparent hover:bg-transparent hover:scale-100 active:scale-100 text-v3-text" />
+        <NotificationBell className="!h-[44px] !w-[44px] !rounded-xl bg-transparent hover:bg-transparent hover:scale-100 active:scale-100 text-v3-text" />
       </div>
     </header>
   );

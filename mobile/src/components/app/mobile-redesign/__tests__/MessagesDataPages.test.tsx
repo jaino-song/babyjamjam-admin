@@ -15,13 +15,17 @@ jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
 const mockUseMessageHistory = useMessageHistory as jest.Mock;
 const mockUseUpcomingMessageTriggerJobs = useUpcomingMessageTriggerJobs as jest.Mock;
 
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn() }),
+}));
+
 describe("mobile message data pages", () => {
   beforeEach(() => {
     mockUseMessageHistory.mockReturnValue({ data: [], isLoading: false, isError: false });
     mockUseUpcomingMessageTriggerJobs.mockReturnValue({ data: [], isLoading: false, isError: false });
   });
 
-  it("renders actual upcoming jobs and links back to the messages hub", () => {
+  it("renders actual upcoming jobs with the scheduled section navigation", () => {
     mockUseUpcomingMessageTriggerJobs.mockReturnValue({
       isLoading: false,
       isError: false,
@@ -53,12 +57,24 @@ describe("mobile message data pages", () => {
       }],
     });
 
-    render(<MessagesScheduledPage />);
+    const { container } = render(<MessagesScheduledPage />);
+
+    const scheduledItem = container.querySelector('[data-component="mobile-messages-scheduled-item"]');
+    const rowInfo = scheduledItem?.querySelector(".message-data-row-info");
 
     expect(screen.getByText("김고객")).toBeInTheDocument();
     expect(screen.getByText(/서비스 안내/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "메시지로 돌아가기" }))
-      .toHaveAttribute("href", "/messages");
+    expect(rowInfo?.querySelector(".message-data-row-title")).toHaveTextContent("김고객");
+    expect(rowInfo?.querySelector(".message-data-row-subtitle")).toHaveTextContent("서비스 안내");
+    expect(scheduledItem).not.toHaveTextContent("01012345678");
+    expect(screen.getByRole("button", { name: "발송 예정" }))
+      .toHaveAttribute("aria-pressed", "true");
+    expect(container.querySelector('[data-component="mobile-redesign-list-title"] .list-title-text'))
+      .toHaveTextContent("발송 예정");
+    expect(container.querySelector('[data-component="mobile-redesign-list-card"]'))
+      .toContainElement(container.querySelector('[data-component="mobile-redesign-list-scroll"]'));
+    expect(screen.queryByRole("link", { name: "메시지로 돌아가기" }))
+      .not.toBeInTheDocument();
   });
 
   it("shows SMS history and excludes non-SMS provider records", () => {
@@ -105,11 +121,13 @@ describe("mobile message data pages", () => {
       ],
     });
 
-    render(<MessagesHistoryPage />);
+    const { container } = render(<MessagesHistoryPage />);
 
     expect(screen.getByText(/김문자/)).toBeInTheDocument();
     expect(screen.queryByText("김알림톡")).not.toBeInTheDocument();
     expect(screen.getByText("1건")).toBeInTheDocument();
+    expect(container.querySelector('[data-component="mobile-redesign-list-title"] .list-title-text'))
+      .toHaveTextContent("발송 기록");
     expect(screen.getByText("발송 성공")).toBeInTheDocument();
   });
 
@@ -180,7 +198,8 @@ describe("mobile message data pages", () => {
 
     await user.click(closeButton!);
 
-    expect(screen.getByRole("heading", { name: "발송 기록" })).toBeInTheDocument();
+    expect(container.querySelector('[data-component="mobile-redesign-list-title"] .list-title-text'))
+      .toHaveTextContent("발송 기록");
     expect(stack).not.toHaveClass("show-detail");
     expect(detailPage).toHaveAttribute("aria-hidden", "true");
     expect(screen.queryByText("01012345678")).not.toBeInTheDocument();

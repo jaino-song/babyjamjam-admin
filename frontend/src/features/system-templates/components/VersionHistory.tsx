@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Card } from '@/components/ui/card';
-import { ApprovalTwoButtonModal } from '@/components/app/ui/ApprovalTwoButtonModal';
+import { TwoButtonModal } from '@/components/app/ui/TwoButtonModal';
 import {
   Sheet,
   SheetContent,
@@ -194,7 +194,7 @@ export function VersionHistory({ templateKey, onRollback }: Props) {
         </DialogContent>
       </Dialog>
 
-      <ApprovalTwoButtonModal
+      <TwoButtonModal
         open={confirmDialog !== null}
         onOpenChange={(nextOpen) => {
           if (!nextOpen) setConfirmDialog(null);

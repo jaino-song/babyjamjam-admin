@@ -10,7 +10,7 @@ import { ClientDetailModal } from "./ClientDetailModal";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { ExpandableSearch } from "@/components/app/v3/ExpandableSearch";
-import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -312,7 +312,7 @@ export function ClientsTable() {
                 client={editingClient}
             />
 
-            <ApprovalTwoButtonModal
+            <TwoButtonModal
                 open={deleteTargetClientId !== null}
                 onOpenChange={(open) => {
                     if (!open) setDeleteTargetClientId(null);

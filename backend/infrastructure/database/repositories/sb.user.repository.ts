@@ -114,6 +114,13 @@ export class SbUserRepository implements IUserRepository {
         return deleted.count === 1;
     }
 
+    async clearBranchOwnerships(userId: string): Promise<void> {
+        await this.prismaService.branch.updateMany({
+            where: { ownerId: userId },
+            data: { ownerId: null },
+        });
+    }
+
     async findByRoles(roles: string[]): Promise<UserEntity[]> {
         const users = await this.prismaService.user.findMany({
             where: {

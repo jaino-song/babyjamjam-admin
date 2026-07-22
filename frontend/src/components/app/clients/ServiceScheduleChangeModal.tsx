@@ -1,6 +1,6 @@
 "use client";
 
-import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { Input } from "@/components/ui/input";
 
 interface ServiceScheduleChangeModalProps {
@@ -29,7 +29,7 @@ export function ServiceScheduleChangeModal({
     const isPostponed = selectedDate > currentDate;
 
     return (
-        <ApprovalTwoButtonModal
+        <TwoButtonModal
             open={open}
             onOpenChange={(nextOpen) => {
                 if (!nextOpen) onClose();
@@ -61,6 +61,6 @@ export function ServiceScheduleChangeModal({
                     onChange={(event) => onDateChange(event.target.value)}
                 />
             </div>
-        </ApprovalTwoButtonModal>
+        </TwoButtonModal>
     );
 }

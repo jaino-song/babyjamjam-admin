@@ -89,6 +89,46 @@ describe("ClientServiceRecordsTab", () => {
         ).not.toBeInTheDocument();
     });
 
+    it("refreshes the session records and exposes the loading state", () => {
+        const onRefresh = jest.fn();
+        const assignment = createAssignment(1, "none");
+        const { rerender } = render(
+            <ClientServiceRecordsTab
+                overview={{ assignments: [assignment] }}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+                isRefreshing={false}
+                onRefresh={onRefresh}
+            />,
+        );
+
+        const refreshButton = screen.getByRole("button", { name: "제공기록 새로고침" });
+        expect(refreshButton.nextElementSibling).toHaveTextContent("0/1 제출완료");
+
+        fireEvent.click(refreshButton);
+
+        expect(onRefresh).toHaveBeenCalledTimes(1);
+
+        rerender(
+            <ClientServiceRecordsTab
+                overview={{ assignments: [assignment] }}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+                isRefreshing
+                onRefresh={onRefresh}
+            />,
+        );
+
+        const refreshingButton = screen.getByRole("button", { name: "제공기록 새로고침 중" });
+        expect(refreshingButton).toBeDisabled();
+        expect(refreshingButton).toHaveAttribute("aria-busy", "true");
+        expect(refreshingButton.querySelector("svg")).toHaveClass(
+            "service-record-refresh-icon--spinning",
+        );
+    });
+
     it("renders the main link states", () => {
         const overview: ServiceRecordOverview = {
             assignments: [

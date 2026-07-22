@@ -91,7 +91,7 @@
   flex-shrink: 0;
   grid-template-columns: minmax(96px, 0.9fr) minmax(132px, 1.4fr);
   gap: 10px;
-  padding: 16px;
+  padding: 16px 16px max(16px, env(safe-area-inset-bottom));
   border: 0;
   border-radius: 16px;
   background: white;
@@ -123,23 +123,4 @@
   cursor: not-allowed;
   opacity: 0.45;
   box-shadow: none;
-}
-
-@media (max-width: 767px) {
-  .shell {
-    width: 100vw;
-    max-width: none;
-    height: 100dvh;
-    max-height: none;
-  }
-
-  .stack {
-    height: 100dvh !important;
-    max-height: none;
-  }
-
-  .detail {
-    height: calc(100dvh - var(--mobile-detail-top-gap, 5vh)) !important;
-    max-height: calc(100dvh - var(--mobile-detail-top-gap, 5vh)) !important;
-  }
 }

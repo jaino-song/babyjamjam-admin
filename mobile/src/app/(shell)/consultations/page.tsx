@@ -375,7 +375,7 @@ export default function ConsultationsPage() {
             activeFilter={activeFilter}
             onFilterChange={setActiveFilter}
             scrollRef={scrollContainerRef}
-            loadMoreFooter={
+            loadMore={
               isInitialLoad && hasMore ? (
                 <ListLoadMoreButton
                   onLoadMore={loadMore}

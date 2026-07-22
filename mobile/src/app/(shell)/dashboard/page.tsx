@@ -18,7 +18,7 @@ import { t } from "@/lib/i18n/translations";
 import { toast } from "@/hooks/use-toast";
 import { useInitialUser } from "@/providers/UserProvider";
 import { ClientFormDialog } from "@/components/app/clients/ClientFormDialog";
-import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
+import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { ClientDetailContent, type DetailTabId } from "@/components/app/clients/client-detail";
 import { DashboardRedesign } from "@/components/app/mobile-redesign/DashboardRedesign";
 import { deriveDashboardAnalyticsFromClients } from "@/lib/dashboard/analytics";
@@ -484,7 +484,7 @@ export default function DashboardPage() {
         }
       />
 
-      <ConfirmActionModal
+      <MobileTwoButtonModal
         open={deleteTargetClientId != null}
         title={t(locale, "common.delete")}
         description={t(locale, "clients.delete-confirm")}

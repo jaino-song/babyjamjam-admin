@@ -39,6 +39,7 @@
   background: rgba(255, 255, 255, 0.8);
   box-shadow: 0 12px 48px hsla(214, 50%, 20%, 0.12);
   padding: 5px;
+  --tw-translate-x: 0px !important;
   translate: 0 0 !important;
   transform: none !important;
   -webkit-backdrop-filter: blur(20px) saturate(180%);
@@ -126,8 +127,8 @@
 .navbarIconBtn {
   position: relative;
   display: flex;
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
   cursor: pointer;
   align-items: center;
   justify-content: center;
@@ -391,7 +392,7 @@
 }
 
 .chatInput {
-  min-height: 24px;
+  min-height: 44px;
   max-height: 100px;
   flex: 1;
   resize: none;
@@ -415,8 +416,8 @@
 
 .chatSend {
   display: flex;
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   flex-shrink: 0;
   cursor: pointer;
   align-items: center;

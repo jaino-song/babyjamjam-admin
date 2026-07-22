@@ -176,8 +176,7 @@ export function MessageTriggerList() {
   }, [updateRuleMutation]);
 
   return (
-    <div className="list-card-scroll" data-component="message-trigger-scroll">
-      <div className="section-block" data-component="message-trigger-section">
+    <div className="section-block" data-component="message-trigger-section">
         <div className="section-header" data-component="message-trigger-section-header">자동 전송 트리거</div>
 
         {displayRows.map((row) => {
@@ -260,7 +259,6 @@ export function MessageTriggerList() {
             등록된 자동 전송 트리거가 없습니다.
           </div>
         )}
-      </div>
     </div>
   );
 }
