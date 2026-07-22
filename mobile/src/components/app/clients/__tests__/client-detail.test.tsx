@@ -1,7 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 
-import { ClientDetailContent } from "../client-detail";
+import {
+  ClientDetailContent,
+  type ClientNotificationLogRecord,
+} from "../client-detail";
 import type { Client } from "@/lib/client/types";
 import type { EformsignDocument } from "@/lib/eformsign/types";
 
@@ -173,5 +176,52 @@ describe("ClientDetailContent", () => {
     expect(screen.getByText("서비스 기간").closest("div")).toHaveTextContent("10일");
     expect(screen.queryByText("계약 서명일")).not.toBeInTheDocument();
     expect(screen.queryByText("본인부담금 수령일")).not.toBeInTheDocument();
+  });
+
+  it("shows an original failure and its successful retry as separate history items", () => {
+    const baseLog: ClientNotificationLogRecord = {
+      id: 49,
+      provider: "aligo_sms",
+      templateKey: "service_record_link_sms",
+      receiver: "01012345678",
+      recipientPhone: "01012345678",
+      recipientName: "관리사",
+      clientId: client.id,
+      status: "failed",
+      messageBody: "제공기록지 작성 링크",
+      errorMessage: "등록/인증되지 않은 발신번호입니다.",
+      createdAt: "2026-07-22T17:13:11.811Z",
+      ruleName: "제공기록지 작성 링크",
+      variables: {},
+    };
+
+    render(
+      <ClientDetailContent
+        client={client}
+        contractDocument={null}
+        activeTab="message"
+        notificationLogs={[
+          {
+            ...baseLog,
+            id: 50,
+            status: "sent",
+            errorMessage: null,
+            createdAt: "2026-07-22T17:30:00.850Z",
+            variables: { retryOfLogId: "49", retryAttempt: "2" },
+          },
+          baseLog,
+        ]}
+        onTabChange={jest.fn()}
+        onMessage={jest.fn()}
+        onIssueContract={jest.fn()}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+        onClientUpdated={jest.fn()}
+      />,
+    );
+
+    expect(screen.getAllByText("메시지 · 제공기록지 작성 링크")).toHaveLength(2);
+    expect(screen.getByText("발송 실패")).toBeInTheDocument();
+    expect(screen.getByText("발송 성공")).toBeInTheDocument();
   });
 });
