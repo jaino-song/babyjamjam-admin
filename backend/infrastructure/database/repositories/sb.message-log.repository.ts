@@ -33,13 +33,19 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         retryLog: MessageLogEntity,
     ): Promise<MessageLogEntity | null> {
         return this.prisma.$transaction(async (transaction) => {
+            const claimedAt = new Date(Date.now());
             const claimed = await transaction.message_log.updateMany({
                 where: {
                     id: sourceLog.id,
+                    branchId: sourceLog.branchId,
                     status: sourceLog.status,
                     nextRetryAt: sourceLog.nextRetryAt,
+                    updatedAt: sourceLog.updatedAt,
                 },
-                data: { nextRetryAt: null },
+                data: {
+                    nextRetryAt: null,
+                    updatedAt: claimedAt,
+                },
             });
 
             if (claimed.count !== 1) {
@@ -51,6 +57,13 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             });
             return MessageLogMapper.toDomain(row);
         });
+    }
+
+    async findByIdInBranch(branchId: string, id: number): Promise<MessageLogEntity | null> {
+        const row = await this.prisma.message_log.findFirst({
+            where: { id, branchId },
+        });
+        return row ? MessageLogMapper.toDomain(row) : null;
     }
 
     async findSentTriggerJobIds(jobIds: string[]): Promise<Set<string>> {

@@ -1,4 +1,4 @@
-import { ForbiddenException } from "@nestjs/common";
+import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SmsRetryService } from "application/services/sms-retry.service";
@@ -8,6 +8,7 @@ import { IMessageLogRepository } from "domain/repositories/message-log.repositor
 describe("SmsRetryService", () => {
     const createMockLogRepository = () => ({
         startRetryAttempt: jest.fn(),
+        findByIdInBranch: jest.fn(),
         update: jest.fn(),
     });
     const createMockAligoService = () => ({
@@ -148,6 +149,64 @@ describe("SmsRetryService", () => {
             attempts: 1,
             errorMessage: "등록되지 않은 IP 입니다.",
         }));
+    });
+
+    it("manually retries a branch-owned failure as a separate history item", async () => {
+        const sourceLog = createSmsRetryLog();
+        logRepository.findByIdInBranch.mockResolvedValue(sourceLog);
+        aligoService.sendSms.mockResolvedValue({
+            request: {
+                senderPhone: "0212345678",
+                receiver: "01012345678",
+                msgType: "LMS",
+                testModeYn: "N",
+            },
+            response: {
+                result_code: 1,
+                message: "성공적으로 전송요청 하였습니다.",
+                msg_id: 123,
+                success_cnt: 1,
+                error_cnt: 0,
+                msg_type: "LMS",
+            },
+        });
+
+        const result = await service.retryById(
+            "11111111-1111-1111-1111-111111111111",
+            77,
+        );
+
+        expect(logRepository.findByIdInBranch).toHaveBeenCalledWith(
+            "11111111-1111-1111-1111-111111111111",
+            77,
+        );
+        expect(result).toEqual(expect.objectContaining({ id: 78, status: "sent" }));
+        expect(sourceLog).toEqual(expect.objectContaining({
+            id: 77,
+            status: "failed",
+            errorMessage: "등록되지 않은 IP 입니다.",
+        }));
+    });
+
+    it("does not reveal or retry a log owned by another branch", async () => {
+        logRepository.findByIdInBranch.mockResolvedValue(null);
+
+        await expect(service.retryById("branch-2", 77)).rejects.toThrow(NotFoundException);
+
+        expect(logRepository.startRetryAttempt).not.toHaveBeenCalled();
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+    });
+
+    it("rejects a duplicate manual retry when another request already claimed the log", async () => {
+        const sourceLog = createSmsRetryLog();
+        logRepository.findByIdInBranch.mockResolvedValue(sourceLog);
+        logRepository.startRetryAttempt.mockResolvedValue(null);
+
+        await expect(
+            service.retryById("11111111-1111-1111-1111-111111111111", 77),
+        ).rejects.toThrow(ConflictException);
+
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
     });
 
     it("schedules another five-minute retry when an automatic SMS retry is still rejected", async () => {

@@ -7,6 +7,7 @@ export interface IMessageLogRepository {
         sourceLog: MessageLogEntity,
         retryLog: MessageLogEntity,
     ): Promise<MessageLogEntity | null>;
+    findByIdInBranch(branchId: string, id: number): Promise<MessageLogEntity | null>;
     findSentTriggerJobIds(jobIds: string[]): Promise<Set<string>>;
     findPendingRetries(): Promise<MessageLogEntity[]>;
     findRetryableServiceRecordSmsByScheduleId(scheduleId: number): Promise<MessageLogEntity[]>;
