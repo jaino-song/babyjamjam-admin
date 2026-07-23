@@ -44,6 +44,10 @@ const PHONE_PATTERN = /(?:\+?82[-\s]?)?0?1[016789][-.\s]?\d{3,4}[-.\s]?\d{4}/g;
 const BEARER_PATTERN = /(bearer\s+)[^\s,;]+/gi;
 const SERVICE_RECORD_TOKEN_PATTERN =
     /(\/(?:api\/)?service-record\/link\/)[^/?#\s]+/gi;
+const SERVICE_RECORD_RESOURCE_ID_PATTERN =
+    /(\/(?:api\/)?(?:admin\/service-records\/(?:client|schedules)|schedule-change-requests\/schedules)\/)[^/?#\s]+/gi;
+const SERVICE_RECORD_SESSION_ID_PATTERN =
+    /(\/(?:api\/)?service-record\/sessions\/)[^/?#\s]+/gi;
 const UUID_PATH_SEGMENT_PATTERN =
     /\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?=\/|$)/gi;
 const SERVICE_RECORD_SIGNAL_PATTERN =
@@ -57,6 +61,8 @@ function sanitizeText(value: string): string {
         .replace(EMAIL_PATTERN, "[Email]")
         .replace(PHONE_PATTERN, "[Phone]")
         .replace(SERVICE_RECORD_TOKEN_PATTERN, `$1${FILTERED_VALUE}`)
+        .replace(SERVICE_RECORD_RESOURCE_ID_PATTERN, `$1${FILTERED_VALUE}`)
+        .replace(SERVICE_RECORD_SESSION_ID_PATTERN, `$1${FILTERED_VALUE}`)
         .replace(UUID_PATH_SEGMENT_PATTERN, `/${FILTERED_VALUE}`);
 }
 
@@ -105,6 +111,9 @@ export function sanitizeSentryEvent(event: Event): Event {
     return {
         ...event,
         message: event.message ? "Service-record backend failure" : event.message,
+        transaction: event.transaction
+            ? sanitizeText(event.transaction.replace(/[?#].*$/, ""))
+            : event.transaction,
         user: undefined,
         request: event.request
             ? {

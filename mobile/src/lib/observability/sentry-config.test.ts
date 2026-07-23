@@ -8,9 +8,24 @@ describe("mobile service-record Sentry scope", () => {
     expect(sanitizeSentryUrl("https://mobile.example.com/service-record/efl_secret")).toBe(
       "https://mobile.example.com/service-record/[Filtered]",
     );
-    expect(sanitizeSentryUrl("/api/service-record/efl_secret/sessions/1/submit")).toBe(
-      "/api/service-record/[Filtered]/sessions/1/submit",
+    expect(sanitizeSentryUrl("/service-record/link/efl_secret/context")).toBe(
+      "/service-record/link/[Filtered]/context",
     );
+    expect(sanitizeSentryUrl("/api/service-record/efl_secret/sessions/1/submit")).toBe(
+      "/api/service-record/[Filtered]/sessions/[Filtered]/submit",
+    );
+  });
+
+  it("redacts service-record resource identifiers from URLs", () => {
+    expect(sanitizeSentryUrl("/api/admin/service-records/client/77")).toBe(
+      "/api/admin/service-records/client/[Filtered]",
+    );
+    expect(sanitizeSentryUrl("/admin/service-records/schedules/431/finalize")).toBe(
+      "/admin/service-records/schedules/[Filtered]/finalize",
+    );
+    expect(
+      sanitizeSentryUrl("/api/schedule-change-requests/schedules/431/apply"),
+    ).toBe("/api/schedule-change-requests/schedules/[Filtered]/apply");
   });
 
   it("redacts UUID path segments from URLs", () => {

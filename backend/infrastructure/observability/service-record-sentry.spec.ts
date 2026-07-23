@@ -102,6 +102,32 @@ describe("service-record backend Sentry contract", () => {
         ).toBe("/admin/service-records/client/[Filtered]");
     });
 
+    it("redacts service-record resource identifiers and transaction paths", () => {
+        expect(sanitizeSentryUrl("/admin/service-records/client/77")).toBe(
+            "/admin/service-records/client/[Filtered]",
+        );
+        expect(sanitizeSentryUrl("/admin/service-records/schedules/431/finalize")).toBe(
+            "/admin/service-records/schedules/[Filtered]/finalize",
+        );
+        expect(
+            sanitizeSentryUrl("/schedule-change-requests/schedules/431/preview"),
+        ).toBe("/schedule-change-requests/schedules/[Filtered]/preview");
+        expect(sanitizeSentryUrl("/service-record/link/efl_secret")).toBe(
+            "/service-record/link/[Filtered]",
+        );
+        expect(sanitizeSentryUrl("/service-record/sessions/9/submit")).toBe(
+            "/service-record/sessions/[Filtered]/submit",
+        );
+
+        expect(filterAndSanitizeSentryEvent({
+            type: undefined,
+            tags: { feature: "service-records" },
+            transaction: "GET /admin/service-records/client/77?expand=schedules",
+        })).toMatchObject({
+            transaction: "GET /admin/service-records/client/[Filtered]",
+        });
+    });
+
     it("captures a handled background failure once with bounded tags and context", () => {
         const error = new Error("snapshot failed");
         captureServiceRecordError(error, {
