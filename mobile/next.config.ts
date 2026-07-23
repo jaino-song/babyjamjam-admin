@@ -3,9 +3,12 @@ import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
 import packageJson from "./package.json";
 
+const sentryRelease = process.env.SENTRY_RELEASE ?? process.env.VERCEL_GIT_COMMIT_SHA;
+
 const nextConfig: NextConfig = {
     env: {
         NEXT_PUBLIC_APP_VERSION: packageJson.version,
+        NEXT_PUBLIC_SENTRY_RELEASE: sentryRelease,
     },
     // Workspace package ships TS source; Next transpiles it in-app.
     transpilePackages: ["@babyjamjam/shared"],
