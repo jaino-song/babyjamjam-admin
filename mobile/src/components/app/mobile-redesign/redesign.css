@@ -4509,9 +4509,13 @@ main[data-component="main-content"]:has([data-component="select-branch"]) > [dat
 }
 .branch-list {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 10px;
-  margin-bottom: auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
 }
 .branch-card {
   background: white;
@@ -4526,6 +4530,7 @@ main[data-component="main-content"]:has([data-component="select-branch"]) > [dat
   width: 100%;
   font-family: inherit;
   text-align: left;
+  flex-shrink: 0;
 }
 .branch-card:disabled {
   cursor: not-allowed;
