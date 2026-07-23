@@ -503,12 +503,14 @@ export class AuthService {
             return [];
         }
 
-        return userOrgs.filter((userOrg) => isVisibleStaffBranchSlug(userOrg.branch.slug)).map(userOrg => ({
-            id: userOrg.branch.id,
-            name: userOrg.branch.name,
-            slug: userOrg.branch.slug,
-            role: userOrg.role ?? 'member',
-        }));
+        return userOrgs
+            .filter((userOrg) => userOrg.branch.isActive === true && isVisibleStaffBranchSlug(userOrg.branch.slug))
+            .map(userOrg => ({
+                id: userOrg.branch.id,
+                name: userOrg.branch.name,
+                slug: userOrg.branch.slug,
+                role: userOrg.role ?? 'member',
+            }));
     }
 
     private async pruneAuthFlowStates(): Promise<void> {

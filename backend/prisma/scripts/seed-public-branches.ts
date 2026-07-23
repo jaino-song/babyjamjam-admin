@@ -7,7 +7,7 @@ const prisma = new PrismaClient();
 const PUBLIC_BRANCHES = [
     {
         slug: INCHEON_STAFF_BRANCH_SLUG,
-        name: "인천점",
+        name: "인천 아이미래로",
         region: "인천",
         district: "인천",
         branchType: "direct",
@@ -101,22 +101,11 @@ async function main(): Promise<void> {
         });
     }
 
-    const deactivatedIncheonDistrictBranches = await prisma.branch.updateMany({
-        where: {
-            slug: { not: INCHEON_STAFF_BRANCH_SLUG },
-            OR: [
-                { region: "인천" },
-                { slug: { startsWith: `${INCHEON_STAFF_BRANCH_SLUG}-` } },
-            ],
-        },
-        data: {
-            isActive: false,
-        },
-    });
-
+    // NOTE: Incheon district branches (slug `incheon-*`) are now real,
+    // staff-operational branches and must stay active. They are intentionally
+    // NOT deactivated here anymore.
     console.log(
-        `Seeded ${PUBLIC_BRANCHES.length} public branches for ${owner.email}; ` +
-        `deactivated ${deactivatedIncheonDistrictBranches.count} Incheon district branches.`,
+        `Seeded ${PUBLIC_BRANCHES.length} public branches for ${owner.email}.`,
     );
 }
 

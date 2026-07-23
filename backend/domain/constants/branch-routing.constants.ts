@@ -23,7 +23,11 @@ export function getStaffBranchSlugForPublicInquiry(publicBranchSlug: string): st
     return branchSlug;
 }
 
-export function isVisibleStaffBranchSlug(branchSlug: string): boolean {
-    return branchSlug === INCHEON_STAFF_BRANCH_SLUG
-        || !branchSlug.startsWith(INCHEON_PUBLIC_BRANCH_SLUG_PREFIX);
+// All registered branches are now real, staff-operational branches. Staff
+// visibility is governed solely by the branch's `isActive` flag (checked by the
+// callers), so no slug-based hiding is applied here. The Incheon district slugs
+// and `getStaffBranchSlugForPublicInquiry` above are retained because they still
+// drive public-inquiry routing (district inquiries centralize on the HQ branch).
+export function isVisibleStaffBranchSlug(_branchSlug: string): boolean {
+    return true;
 }
