@@ -186,7 +186,7 @@
       "ui-architecture/no-page-local-components": 1
     },
     "mobile/src/app/(shell)/contracts/new/page.tsx": {
-      "data-component/require-data-component": 40,
+      "data-component/require-data-component": 17,
       "ui-architecture/no-page-local-components": 1,
       "ui-architecture/no-raw-ui-in-pages": 21,
       "ui-architecture/no-visual-tailwind-in-pages": 5

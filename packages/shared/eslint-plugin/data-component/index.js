@@ -11,7 +11,16 @@ const STRUCTURAL_ELEMENTS = new Set([
   "footer",
 ]);
 
-const KEBAB_CASE_REGEX = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
+const CANONICAL_DATA_COMPONENT_REGEX =
+  /^(desktop|mobile)_[a-z0-9]+(?:-[a-z0-9]+)*(?:_[a-z0-9]+(?:-[a-z0-9]+)*){1,}$/;
+const LEGACY_KEBAB_CASE_REGEX = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
+
+function isValidDataComponent(value) {
+  return (
+    CANONICAL_DATA_COMPONENT_REGEX.test(value) ||
+    LEGACY_KEBAB_CASE_REGEX.test(value)
+  );
+}
 
 const requireDataComponent = {
   meta: {
@@ -27,7 +36,7 @@ const requireDataComponent = {
       missingDataComponent:
         "Structural element <{{element}}> is missing a 'data-component' attribute.",
       invalidFormat:
-        "data-component value '{{value}}' must be kebab-case (e.g., 'my-component-name').",
+        "data-component value '{{value}}' must use the canonical platform_page_organism_component format or the legacy kebab-case migration format.",
     },
   },
   create(context) {
@@ -58,14 +67,15 @@ const requireDataComponent = {
           return;
         }
 
-        // Validate kebab-case format
+        // Canonical names are preferred; legacy kebab-case stays valid until
+        // the remaining routes complete the migration.
         const value = dataComponentAttr.value;
         if (
           value &&
           value.type === "Literal" &&
           typeof value.value === "string"
         ) {
-          if (!KEBAB_CASE_REGEX.test(value.value)) {
+          if (!isValidDataComponent(value.value)) {
             context.report({
               node: dataComponentAttr,
               messageId: "invalidFormat",

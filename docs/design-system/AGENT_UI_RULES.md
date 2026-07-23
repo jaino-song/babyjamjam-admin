@@ -14,7 +14,9 @@
 3. 없으면 **page에 직접 만들지 않는다.** 새 UI가 필요하면 먼저 디자인 시스템 레이어(`components/ui`, `components/app/ui`, `components/app/v3`)에 컴포넌트 추가를 제안하고, 승인 후 그 레이어에 만든 다음 manifest에 등록한다.
 4. `page.tsx`는 template/organism 조립만 한다. 데이터 페칭 훅 호출 + 컴포넌트 조립 + layout 클래스 소량이 전부다.
 5. 새 컴포넌트의 설계는 [`frontend/docs/design-system/README.md`](../../frontend/docs/design-system/README.md)의 semantic atomic design 원칙(base/variant/size/layout 분리, intent 중심 variant 네이밍)을 따른다.
-6. `data-component` 속성은 kebab-case `{page}-{parent}-{child}-{element}` — [`mobile/DATA-COMPONENT-CONVENTION.md`](../../mobile/DATA-COMPONENT-CONVENTION.md) 참조.
+6. `data-component` 속성은 `{platform}_{page}_{organism}_{component}[_{sub}…]` 형식을 사용한다.
+   `_`는 논리 세그먼트, `-`는 세그먼트 내부 kebab-case에만 사용한다. 기존 kebab-case 값은
+   점진적 마이그레이션 동안만 호환하며, 새 코드에는 사용하지 않는다.
 
 ## 금지 목록 (page.tsx 기준, ESLint로 강제)
 
