@@ -68,7 +68,7 @@ describe("captureServiceRecordError", () => {
     expect(mockScope.setContext).toHaveBeenCalledWith("serviceRecord", {
       operation: "submit-session",
       method: "POST",
-      path: "/service-record/[Filtered]/sessions/1/submit",
+      path: "/service-record/[Filtered]/sessions/[Filtered]/submit",
       status: 503,
       code: null,
       runtime: "browser",
