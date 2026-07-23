@@ -747,7 +747,15 @@ export class ClientService {
                             phone: schedule.secondaryEmployee.phone ?? null,
                         }
                         : null,
-                    pendingScheduleChange: pendingScheduleChange
+                    // Guard against legacy rows whose date columns are null at the DB
+                    // level even though the schema now types them non-null — calling
+                    // toISOString() on such a null throws and 500s the whole overview.
+                    pendingScheduleChange:
+                        pendingScheduleChange
+                        && pendingScheduleChange.fromDate
+                        && pendingScheduleChange.toDate
+                        && pendingScheduleChange.oldEndDate
+                        && pendingScheduleChange.newEndDate
                         ? {
                             id: pendingScheduleChange.id,
                             sessionIndex: pendingScheduleChange.sessionIndex,
