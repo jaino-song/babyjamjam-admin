@@ -179,7 +179,7 @@ jobs:
         run: pnpm --filter ./mobile run test:e2e
 
       - name: Upload Playwright report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: mobile-playwright-report
@@ -187,7 +187,7 @@ jobs:
           retention-days: 30
 
       - name: Upload backend log
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: mobile-backend-log
