@@ -53,6 +53,9 @@ jobs:
       - name: Lint
         run: pnpm --filter ./mobile run lint
 
+      - name: UI architecture gate
+        run: pnpm lint:ui-architecture --platform mobile
+
       - name: Unit tests
         run: pnpm --filter ./mobile test
         env:
