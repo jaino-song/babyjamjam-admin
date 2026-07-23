@@ -39,14 +39,14 @@ export const GreetingMessageForm = ({
   }, [displayMessage, onPreviewMessageChange]);
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(displayMessage);
-    alert(t(locale, "common.copy-success-message"));
+    return navigator.clipboard.writeText(displayMessage);
   };
 
   const messageCard = displayMessage ? (
     <AutoFillMsgCard
       title={t(locale, "common.generated-message-title")}
       copyButtonText={t(locale, "common.copy-button")}
+      copySuccessMessage={t(locale, "common.copy-success-message")}
       message={displayMessage}
       bodyDescription={systemTemplate?.description || "기본 인사 메시지를 검토하고 바로 수정할 수 있습니다."}
       onMessageChange={(message) => {

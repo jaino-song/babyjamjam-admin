@@ -416,6 +416,44 @@ describe("SbClientRepository", () => {
                 expect(result.address).toBeNull();
             });
         });
+
+        it("creates the client and initial employee schedule in one nested write", async () => {
+            const entity = createClientEntity();
+            clientModel.create.mockResolvedValue({
+                ...createClientRow({ id: 9, name: "Test Client" }),
+                employeeSchedules: [{ id: 44 }],
+            });
+
+            const result = await repository.createWithInitialSchedule(branchId, entity, {
+                primaryEmployeeId: 5,
+                secondaryEmployeeId: 6,
+                workAddress: "Test Address",
+                startDate: new Date("2024-02-01T00:00:00.000Z"),
+                endDate: new Date("2024-08-01T00:00:00.000Z"),
+            });
+
+            expect(clientModel.create).toHaveBeenCalledWith(expect.objectContaining({
+                data: expect.objectContaining({
+                    branchId,
+                    employeeSchedules: {
+                        create: {
+                            branchId,
+                            primaryEmployeeId: 5,
+                            secondaryEmployeeId: 6,
+                            workAddress: "Test Address",
+                            startDate: new Date("2024-02-01T00:00:00.000Z"),
+                            endDate: new Date("2024-08-01T00:00:00.000Z"),
+                            replaced: false,
+                        },
+                    },
+                }),
+                select: expect.objectContaining({
+                    employeeSchedules: expect.any(Object),
+                }),
+            }));
+            expect(result.client.id).toBe(9);
+            expect(result.scheduleId).toBe(44);
+        });
     });
 
     // ============================================
@@ -473,6 +511,7 @@ describe("SbClientRepository", () => {
                         birthday: "880520",
                         serviceStatus: "in_progress",
                         breastPump: true,
+                        suppressGreetingSms: false,
                         eDocId: null,
                         dueDate: null,
                         areaId: null,
@@ -634,11 +673,12 @@ describe("SbClientRepository", () => {
     // delete
     // ============================================
     describe("delete", () => {
-        describe("given a valid client id", () => {
-            it("should delete the client", async () => {
-                // Arrange
-                clientModel.deleteMany.mockResolvedValue({ count: 1 });
+        beforeEach(() => {
+            clientModel.deleteMany.mockResolvedValue({ count: 1 });
+        });
 
+        describe("given a valid client id", () => {
+            it("should delete only the tenant-scoped client", async () => {
                 // Act
                 await repository.delete(branchId, 4);
 
@@ -652,9 +692,6 @@ describe("SbClientRepository", () => {
 
         describe("given different client ids", () => {
             it.each([1, 10, 100, 999])("should delete client with id %i", async (id) => {
-                // Arrange
-                clientModel.deleteMany.mockResolvedValue({ count: 1 });
-
                 // Act
                 await repository.delete(branchId, id);
 

@@ -1,11 +1,12 @@
 import { api } from "@/lib/api/client";
-import type { AlimtalkProvider } from "@/services/api";
 import type {
+    MessageLogRecord,
     MessageTriggerRule,
     CreateMessageTriggerRuleDto,
     TriggerEventType,
     TriggerRecipientType,
     TriggerTemplateCatalogItem,
+    UpcomingMessageTriggerJob,
     UpdateMessageTriggerRuleDto,
 } from "../types";
 
@@ -18,11 +19,18 @@ export const messageTriggersApi = {
         api.patch<MessageTriggerRule>(`/message-trigger-rules/${id}`, dto),
     delete: (id: string) => api.delete(`/message-trigger-rules/${id}`),
     listTemplates: (params: {
-        provider: Exclude<AlimtalkProvider, "none">;
         eventType?: TriggerEventType;
         recipientType?: TriggerRecipientType;
     }) =>
         api.get<TriggerTemplateCatalogItem[]>("/message-trigger-templates", {
             params,
+        }),
+    listUpcomingJobs: (limit = 200) =>
+        api.get<UpcomingMessageTriggerJob[]>("/message-trigger-jobs/upcoming", {
+            params: { limit },
+        }),
+    listHistory: (limit = 200) =>
+        api.get<MessageLogRecord[]>("/message-logs", {
+            params: { limit },
         }),
 };

@@ -10,6 +10,7 @@ import { ClientDetailModal } from "./ClientDetailModal";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { ExpandableSearch } from "@/components/app/v3/ExpandableSearch";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -19,6 +20,7 @@ import { cn } from "@/lib/utils";
 
 const STATUS_FILTER_OPTIONS: Array<{ value: ServiceStatus | null; label: string }> = [
     { value: null, label: "전체" },
+    { value: "pre_booking", label: "예약 전" },
     { value: "waiting", label: "대기" },
     { value: "replacement_requested", label: "교체 요청" },
     { value: "active", label: "진행중" },
@@ -28,6 +30,7 @@ const STATUS_FILTER_OPTIONS: Array<{ value: ServiceStatus | null; label: string 
 
 const getStatusBadgeVariant = (status: ServiceStatus | null) => {
     switch (status) {
+        case "pre_booking": return "outline";
         case "waiting": return "v3-pending";
         case "replacement_requested": return "v3-expired";
         case "active": return "v3-active";
@@ -67,6 +70,7 @@ export function ClientsTable() {
     const [detailModalOpen, setDetailModalOpen] = useState(false);
     const [selectedClient, setSelectedClient] = useState<Client | null>(null);
     const [editingClient, setEditingClient] = useState<Client | null>(null);
+    const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState<ServiceStatus | null>(null);
 
@@ -103,13 +107,18 @@ export function ClientsTable() {
         setFormDialogOpen(true);
     };
 
-    const handleDelete = async (id: number) => {
-        if (window.confirm(t(locale, "clients.delete-confirm"))) {
-            try {
-                await deleteClient.mutateAsync(id);
-            } catch (err) {
-                console.error("Failed to delete client:", err);
-            }
+    const handleDeleteRequest = (id: number) => {
+        setDeleteTargetClientId(id);
+    };
+
+    const handleDeleteConfirm = async () => {
+        if (deleteTargetClientId === null) return;
+
+        try {
+            await deleteClient.mutateAsync(deleteTargetClientId);
+            setDeleteTargetClientId(null);
+        } catch (err) {
+            console.error("Failed to delete client:", err);
         }
     };
 
@@ -294,13 +303,28 @@ export function ClientsTable() {
                 onClose={handleDetailModalClose}
                 client={selectedClient}
                 onEdit={handleEdit}
-                onDelete={handleDelete}
+                onDelete={handleDeleteRequest}
             />
 
             <ClientFormDialog
                 open={formDialogOpen}
                 onClose={handleFormDialogClose}
                 client={editingClient}
+            />
+
+            <TwoButtonModal
+                open={deleteTargetClientId !== null}
+                onOpenChange={(open) => {
+                    if (!open) setDeleteTargetClientId(null);
+                }}
+                dataComponent="clients-table-delete-approval"
+                title={t(locale, "clients.delete-confirm")}
+                description="삭제한 고객 정보는 복구할 수 없습니다."
+                approvalLabel={t(locale, "common.delete")}
+                pendingLabel="삭제 중..."
+                approvalVariant="destructive"
+                isPending={deleteClient.isPending}
+                onApprove={() => void handleDeleteConfirm()}
             />
         </div>
     );

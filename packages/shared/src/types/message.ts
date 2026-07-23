@@ -47,7 +47,7 @@ export type MessageTriggerTemplateKey =
   | "SERVICE_INFO"
   | "SERVICE_END_REMINDER"
   | "EMPLOYEE_ASSIGNED"
-  | "SERVICE_FEEDBACK_LINK"
+  | "SERVICE_RECORD_LINK"
   | "CLIENT_GREETING"
   | "PRICE_INFO"
   | "REMINDER"
@@ -61,6 +61,7 @@ export const SMS_TRIGGER_TO_SYSTEM_TEMPLATE: Partial<
   Record<MessageTriggerTemplateKey, SystemTemplateKey>
 > = {
   SERVICE_INFO: "SERVICE_INFO",
+  SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK",
   CLIENT_GREETING: "GREETING",
   PRICE_INFO: "PRICE_INFO",
   REMINDER: "REMINDER",
@@ -69,13 +70,13 @@ export const SMS_TRIGGER_TO_SYSTEM_TEMPLATE: Partial<
   INFO: "INFO",
 };
 
-// Canonical source of truth for which trigger templates are delivered over SMS
-// vs alimtalk. Adding a new SMS template here flows it through the SMS form's
+// Canonical source of truth for trigger templates delivered over SMS.
+// Adding a new SMS template here flows it through the SMS form's
 // data-driven dropdowns, the channel filters, and the backend delivery drift
 // guard without hardcoded per-surface lists.
 export const SMS_TRIGGER_TEMPLATE_KEYS: MessageTriggerTemplateKey[] = [
   "SERVICE_INFO",
-  "SERVICE_FEEDBACK_LINK",
+  "SERVICE_RECORD_LINK",
   "CLIENT_GREETING",
   "PRICE_INFO",
   "REMINDER",
@@ -86,12 +87,11 @@ export const SMS_TRIGGER_TEMPLATE_KEYS: MessageTriggerTemplateKey[] = [
 
 export function getTriggerTemplateChannel(
   key: MessageTriggerTemplateKey,
-): "sms" | "alimtalk" {
-  return SMS_TRIGGER_TEMPLATE_KEYS.includes(key) ? "sms" : "alimtalk";
+): "sms" | "unsupported" {
+  return SMS_TRIGGER_TEMPLATE_KEYS.includes(key) ? "sms" : "unsupported";
 }
 
-export type SupportedTriggerProvider = "aligo_alimtalk";
-export type AlimtalkProvider = SupportedTriggerProvider | "none";
+export type SupportedTriggerProvider = "sms";
 
 export interface MessageTriggerTemplateVariable {
   key: string;
@@ -143,6 +143,7 @@ export type UpdateMessageTriggerRuleDto =
 
 export type MessageTriggerJobStatus =
   | "pending"
+  | "processing"
   | "sent"
   | "failed"
   | "canceled";
@@ -181,15 +182,16 @@ export interface UpcomingMessageTriggerJob {
   updatedAt: string;
 }
 
-export type MessageLogStatus = "pending" | "sent" | "failed";
+export type MessageLogStatus = "pending" | "sent" | "failed" | "canceled";
 
 export interface MessageLogRecord {
-  id: number;
+  id: number | string;
   provider: string;
   templateKey: string;
   triggerJobId: string | null;
   receiver: string;
   clientId: number | null;
+  recipientPhone: string | null;
   messageBody: string;
   variables: Record<string, string>;
   status: MessageLogStatus;
@@ -210,72 +212,6 @@ export interface MessageLogRecord {
   recipientName: string | null;
   clientName: string | null;
   employeeName: string | null;
-}
-
-export interface AlimtalkProviderResponse {
-  provider: AlimtalkProvider;
-  enabled: boolean;
-  updatedAt?: string;
-}
-
-export type AlimtalkTemplateType = "BA" | "EX" | "AD" | "MI";
-export type AlimtalkTemplateEmphasisType = "NONE" | "TEXT" | "IMAGE";
-export type AlimtalkTemplateButtonLinkType =
-  | "WL"
-  | "AL"
-  | "BK"
-  | "MD"
-  | "DS"
-  | "AC";
-
-export interface AlimtalkTemplateButton {
-  name: string;
-  linkType: AlimtalkTemplateButtonLinkType;
-  linkM?: string;
-  linkP?: string;
-  linkI?: string;
-  linkA?: string;
-}
-
-export interface CreateAlimtalkTemplateButtonDto
-  extends AlimtalkTemplateButton {}
-
-export interface CreateAlimtalkTemplateDto {
-  name: string;
-  tplType: AlimtalkTemplateType;
-  tplEmType: AlimtalkTemplateEmphasisType;
-  title?: string;
-  subtitle?: string;
-  content: string;
-  extra?: string;
-  advert?: string;
-  buttons: CreateAlimtalkTemplateButtonDto[];
-}
-
-export interface AlimtalkTemplateListItem {
-  templateCode: string;
-  name: string;
-  content: string;
-  title?: string;
-  subtitle?: string;
-  extra?: string;
-  advert?: string;
-  templateType: AlimtalkTemplateType;
-  emphasisType: AlimtalkTemplateEmphasisType;
-  inspectionStatus?: string;
-  isApproved: boolean;
-  category?: string;
-  buttons: AlimtalkTemplateButton[];
-  createdAt?: string;
-  updatedAt?: string;
-  senderKey?: string;
-}
-
-// The create-template endpoint currently returns the raw Aligo payload.
-export interface AligoTemplateCreateResponse {
-  code: number;
-  message: string;
-  info?: Record<string, unknown>;
 }
 
 export type MessageTemplateVariableType =
@@ -441,6 +377,6 @@ export interface SystemAdminBranchRequest {
   isActive: boolean;
   createdAt: string | null;
   updatedAt: string | null;
-  owner: SystemAdminBranchUser;
+  owner: SystemAdminBranchUser | null;
   messageSenderApproval: SystemAdminBranchMessageSenderApproval;
 }

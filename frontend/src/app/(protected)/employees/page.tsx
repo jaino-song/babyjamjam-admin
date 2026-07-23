@@ -1,6 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import {
+    EMPLOYEE_STATUS_LABELS,
+    OPEN_TO_NEXT_WORK_LABELS,
+} from "@babyjamjam/shared/constants/employee-status";
+import { getApiErrorMessage } from "@babyjamjam/shared";
 import { cn } from "@/lib/utils";
 import {
     Users,
@@ -17,7 +22,6 @@ import {
 } from "lucide-react";
 import {
     Employee,
-    EmployeeStatus,
     useDeleteEmployee,
 } from "@/hooks/useEmployees";
 import { useInfiniteEmployees } from "@/hooks/useInfiniteEmployees";
@@ -25,6 +29,8 @@ import {
     EmployeeFormDialog,
     EmployeeFormPanel,
 } from "@/components/app/employees/EmployeeFormDialog";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
+import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import {
     StatsBar,
     SplitLayout,
@@ -49,18 +55,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { formatWorkAreaLabel } from "@/components/app/employees/employee-form.constants";
 import { getEmployeeGradeBadgeStyle, normalizeEmployeeGrade } from "@/features/employees/grade";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 
 const filterItems = [
     { label: "전체", value: "all" },
-    { label: "근무 가능", value: "active" },
-    { label: "근무 불가", value: "inactive" },
+    { label: EMPLOYEE_STATUS_LABELS.available, value: "active" },
+    { label: EMPLOYEE_STATUS_LABELS.unavailable, value: "inactive" },
 ];
-
-const EMPLOYEE_STATUS_LABEL: Record<EmployeeStatus, string> = {
-    available: "근무 가능",
-    working: "근무중",
-    unavailable: "근무 불가",
-};
 
 function getGradeBadge(grade: string) {
     const { label, variant } = getEmployeeGradeBadgeStyle(grade);
@@ -75,7 +76,7 @@ function getGradeBadge(grade: string) {
 function getOpenToNextWorkBadge(openToNextWork: boolean) {
     return (
         <StatusPill variant={openToNextWork ? "success" : "neutral"} size="sm" className="px-2.5 py-0.5 text-[0.6rem]">
-            {openToNextWork ? "근무 가능" : "근무 불가"}
+            {OPEN_TO_NEXT_WORK_LABELS[openToNextWork ? "true" : "false"]}
         </StatusPill>
     );
 }
@@ -88,7 +89,7 @@ function getEmployeeAvatarClassName(openToNextWork: boolean): string {
 
 function formatDate(dateStr: string | null | undefined): string {
     if (!dateStr) return "-";
-    return new Date(dateStr).toLocaleDateString("ko-KR");
+    return formatDateForDisplay(dateStr);
 }
 
 function formatPhoneNumber(phone: string | null | undefined): string {
@@ -108,6 +109,8 @@ export default function EmployeesPage() {
     const [formDialogOpen, setFormDialogOpen] = useState(false);
     const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
     const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+    const [deleteTargetEmployeeId, setDeleteTargetEmployeeId] = useState<number | null>(null);
+    const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
 
     const {
         employees,
@@ -146,22 +149,29 @@ export default function EmployeesPage() {
         setFormDialogOpen(true);
     };
 
-    const handleDelete = async (id: number): Promise<boolean> => {
-        if (window.confirm("정말 삭제하시겠습니까?")) {
-            try {
-                await deleteEmployee.mutateAsync(id);
+    const handleDeleteRequest = (id: number) => {
+        setDeleteTargetEmployeeId(id);
+    };
 
-                if (selectedEmployee?.id === id) {
-                    setSelectedEmployee(null);
-                }
+    const handleDeleteConfirm = async () => {
+        if (deleteTargetEmployeeId === null) return;
 
-                return true;
-            } catch (err) {
-                console.error("Failed to delete employee:", err);
-                return false;
+        try {
+            await deleteEmployee.mutateAsync(deleteTargetEmployeeId);
+
+            if (selectedEmployee?.id === deleteTargetEmployeeId) {
+                setSelectedEmployee(null);
             }
+
+            setDeleteTargetEmployeeId(null);
+        } catch (err) {
+            console.error("Failed to delete employee:", err);
+            setDeleteTargetEmployeeId(null);
+            setDeleteErrorMessage(getApiErrorMessage(
+                err,
+                "제공인력 삭제에 실패했습니다. 다시 시도해 주세요.",
+            ));
         }
-        return false;
     };
 
     const handleFormDialogClose = () => {
@@ -186,8 +196,8 @@ export default function EmployeesPage() {
                 items={[
                     { icon: Users, value: stats.total, label: "전체 직원", counter: "명" },
                     { icon: Briefcase, value: stats.working, label: "근무 중", counter: "명", colorIndex: 2 },
-                    { icon: Clock, value: stats.available, label: "근무 가능", counter: "명", colorIndex: 1 },
-                    { icon: CircleOff, value: stats.unavailable, label: "근무 불가", counter: "명", colorIndex: 3 },
+                    { icon: Clock, value: stats.available, label: EMPLOYEE_STATUS_LABELS.available, counter: "명", colorIndex: 1 },
+                    { icon: CircleOff, value: stats.unavailable, label: EMPLOYEE_STATUS_LABELS.unavailable, counter: "명", colorIndex: 3 },
                 ]}
             />
 
@@ -217,7 +227,7 @@ export default function EmployeesPage() {
                             label="직원 추가"
                             onClick={handleAddNew}
                             data-component="employees-header-add"
-                            className="text-[calc(12px*var(--v3-ui-scale,1))]"
+                            className="text-[calc(12px*var(--glint-ui-scale,1))]"
                         />
                     }
                     emptyState={!isLoading && employees.length === 0 ? (
@@ -269,7 +279,7 @@ export default function EmployeesPage() {
                                         title={employee.name}
                                         subtitle={
                                             <span className="flex items-center gap-1 truncate">
-                                                <Phone className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(12px*var(--v3-ui-scale,1))]" />
+                                                <Phone className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))]" />
                                                 {formatPhoneNumber(employee.phone)}
                                             </span>
                                         }
@@ -307,7 +317,7 @@ export default function EmployeesPage() {
                     <EmployeeDetail
                         employee={selectedEmployee}
                         onEdit={handleEdit}
-                        onDelete={handleDelete}
+                        onDelete={handleDeleteRequest}
                     />
                 ) : (
                     <EmptyState name="employees-empty-detail" icon={Users} message="직원을 선택하면 상세 정보가 표시됩니다" />
@@ -319,6 +329,32 @@ export default function EmployeesPage() {
                 onClose={handleFormDialogClose}
                 employee={editingEmployee}
             />
+
+            <TwoButtonModal
+                open={deleteTargetEmployeeId !== null}
+                onOpenChange={(open) => {
+                    if (!open) setDeleteTargetEmployeeId(null);
+                }}
+                dataComponent="employees-delete-approval"
+                title="직원을 삭제하시겠습니까?"
+                description="삭제한 직원 정보는 복구할 수 없습니다."
+                approvalLabel="삭제"
+                pendingLabel="삭제 중..."
+                approvalVariant="destructive"
+                isPending={deleteEmployee.isPending}
+                onApprove={() => void handleDeleteConfirm()}
+            />
+            <NotificationOneButtonModal
+                open={deleteErrorMessage !== null}
+                onOpenChange={(open) => {
+                    if (!open) setDeleteErrorMessage(null);
+                }}
+                dataComponent="employees-delete-error-notification"
+                title="직원을 삭제하지 못했습니다."
+                description={deleteErrorMessage ?? ""}
+                isDescriptionVisuallyHidden={false}
+                onAcknowledge={() => setDeleteErrorMessage(null)}
+            />
         </PageSection>
     );
 }
@@ -326,7 +362,7 @@ export default function EmployeesPage() {
 interface EmployeeDetailProps {
     employee: Employee;
     onEdit: (employee: Employee) => void;
-    onDelete: (id: number) => Promise<boolean>;
+    onDelete: (id: number) => void;
 }
 
 function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
@@ -355,6 +391,7 @@ function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
                     <DropdownMenuTrigger asChild>
                         <button
                             type="button"
+                            aria-label="직원 작업 메뉴 열기"
                             className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors"
                         >
                             <MoreVertical className="w-5 h-5 text-v3-text-muted" />
@@ -366,9 +403,8 @@ function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
                             수정
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                            onClick={() => {
-                                void onDelete(employee.id);
-                            }}
+                            data-component="employees-detail-menu-delete"
+                            onClick={() => onDelete(employee.id)}
                             className="gap-2 text-destructive focus:text-destructive"
                         >
                             <Trash2 className="w-4 h-4" />
@@ -382,7 +418,7 @@ function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
                 <InfoCard title="기본 정보">
                     <InfoRow label="이름" value={employee.name} />
                     <InfoRow label="연락처" value={formatPhoneNumber(employee.phone)} />
-                    <InfoRow label="근무 상태" value={EMPLOYEE_STATUS_LABEL[employee.status]} />
+                    <InfoRow label="근무 상태" value={EMPLOYEE_STATUS_LABELS[employee.status]} />
                 </InfoCard>
 
                 <InfoCard title="업무 정보">

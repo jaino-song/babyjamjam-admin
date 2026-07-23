@@ -1,12 +1,16 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { ExecutionContext, INestApplication, ValidationPipe, UnauthorizedException } from "@nestjs/common";
+import { ExecutionContext, ForbiddenException, INestApplication, ValidationPipe, UnauthorizedException } from "@nestjs/common";
 import request from "supertest";
 import { AuthController } from "interface/controllers/auth.controller";
 import { AuthService } from "application/services/auth.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { AuthGuard } from "@nestjs/passport";
 import { RateLimitGuard } from "infrastructure/auth/rate-limit.guard";
+import { GUARDS_METADATA } from "@nestjs/common/constants";
+import {
+    KakaoAuthGuard,
+    KAKAO_OAUTH_ERROR_REQUEST_KEY,
+} from "infrastructure/auth/kakao-auth.guard";
 
 describe("AuthController (Integration)", () => {
     // ============================================
@@ -17,6 +21,7 @@ describe("AuthController (Integration)", () => {
     let authService: jest.Mocked<AuthService>;
     let prismaService: jest.Mocked<PrismaService>;
     let rateLimitGuard: jest.Mocked<Pick<RateLimitGuard, "canActivate" | "resetForKey">>;
+    let authController: AuthController;
 
     // Several callback tests mutate process.env (NODE_ENV, *_FRONTEND_URL).
     // Snapshot once, give each test a fresh copy, and restore at the end so the
@@ -74,6 +79,12 @@ describe("AuthController (Integration)", () => {
     const mockKakaoGuard = {
         canActivate: jest.fn((context) => {
             const req = context.switchToHttp().getRequest();
+            if (typeof req.query?.error === "string") {
+                req[KAKAO_OAUTH_ERROR_REQUEST_KEY] = req.query.error === "access_denied"
+                    ? "OAUTH_CANCELLED"
+                    : "OAUTH_PROVIDER_ERROR";
+                return true;
+            }
             req.user = mockKakaoUser;
             return true;
         }),
@@ -92,7 +103,7 @@ describe("AuthController (Integration)", () => {
             getPendingKakaoSignup: jest.fn(),
             completeKakaoOnboarding: jest.fn(),
             getPendingAccountOnboarding: jest.fn(),
-            completeAccountOnboarding: jest.fn(),
+            linkKakaoToAccount: jest.fn(),
             // Kakao OAuth state binding (login-CSRF protection). The callback
             // rejects with invalid_oauth_state unless verifyKakaoLoginState
             // resolves truthy; /auth/kakao mints the signed state + nonce.
@@ -110,7 +121,7 @@ describe("AuthController (Integration)", () => {
         };
         const mockRateLimitGuard = {
             canActivate: jest.fn(async (_context: ExecutionContext) => true),
-            resetForKey: jest.fn(),
+            resetForKey: jest.fn().mockResolvedValue(undefined),
         } satisfies jest.Mocked<Pick<RateLimitGuard, "canActivate" | "resetForKey">>;
 
         const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -128,11 +139,12 @@ describe("AuthController (Integration)", () => {
                     provide: RateLimitGuard,
                     useValue: mockRateLimitGuard,
                 },
+                KakaoAuthGuard,
             ],
         })
             .overrideGuard(JwtGuard)
             .useValue(mockJwtGuard)
-            .overrideGuard(AuthGuard("kakao"))
+            .overrideGuard(KakaoAuthGuard)
             .useValue(mockKakaoGuard)
             .overrideGuard(RateLimitGuard)
             .useValue(mockRateLimitGuard)
@@ -145,6 +157,7 @@ describe("AuthController (Integration)", () => {
         authService = moduleFixture.get(AuthService);
         prismaService = moduleFixture.get(PrismaService);
         rateLimitGuard = mockRateLimitGuard;
+        authController = moduleFixture.get(AuthController);
     });
 
     afterEach(async () => {
@@ -172,6 +185,22 @@ describe("AuthController (Integration)", () => {
                 expect(response.headers['location']).toContain("kauth.kakao.com/oauth/authorize");
                 expect(authService.createKakaoLoginState).toHaveBeenCalled();
                 expect(String(response.headers['set-cookie'] ?? "")).toContain("kakao_oauth_nonce=");
+            });
+
+            it("binds legacy logins to the signed legacy client", async () => {
+                const response = await request(app.getHttpServer())
+                    .get("/auth/kakao?client=legacy");
+
+                expect(response.status).toBe(302);
+                expect(authService.createKakaoLoginState).toHaveBeenCalledWith("legacy");
+            });
+
+            it("falls back to desktop for an unrecognized client", async () => {
+                const response = await request(app.getHttpServer())
+                    .get("/auth/kakao?client=https://attacker.example.com");
+
+                expect(response.status).toBe(302);
+                expect(authService.createKakaoLoginState).toHaveBeenCalledWith("desktop");
             });
         });
     });
@@ -274,9 +303,68 @@ describe("AuthController (Integration)", () => {
                 expect(response.status).toBe(302);
                 expect(response.headers['location']).toBe(`https://app.example.com/callback?code=${authCode}`);
             });
+
+            it("returns a signed legacy login to the allowlisted legacy callback", async () => {
+                const authCode = "legacy-auth-code";
+                authService.verifyKakaoLoginState.mockResolvedValueOnce({ client: "legacy" });
+                authService.validateKakaoUser.mockResolvedValue({
+                    user: mockUser.id,
+                    ...mockTokens,
+                });
+                authService.createAuthCode.mockResolvedValue(authCode);
+                process.env['NODE_ENV'] = "production";
+
+                const response = await request(app.getHttpServer())
+                    .get("/auth/kakao/callback?state=valid-legacy-state");
+
+                expect(response.status).toBe(302);
+                expect(response.headers['location']).toBe(
+                    `https://imirae-incheon-back-office.vercel.app/auth/callback?code=${authCode}`,
+                );
+            });
         });
 
         describe("given authService throws error", () => {
+            it("redirects pending accounts to the login approval modal", async () => {
+                authService.validateKakaoUser.mockRejectedValue(
+                    new ForbiddenException({
+                        code: "PENDING_APPROVAL",
+                        message: "관리자 승인 대기 중입니다.",
+                    }),
+                );
+                process.env['NODE_ENV'] = "development";
+                process.env['DEVELOPMENT_FRONTEND_URL'] = "http://localhost:3000";
+
+                const response = await request(app.getHttpServer())
+                    .get("/auth/kakao/callback?state=valid-login-state");
+
+                expect(response.status).toBe(302);
+                expect(response.headers['location']).toBe(
+                    "http://localhost:3000/login?authError=PENDING_APPROVAL",
+                );
+                expect(authService.createAuthCode).not.toHaveBeenCalled();
+            });
+
+            it("redirects rejected accounts to the login rejection modal", async () => {
+                authService.validateKakaoUser.mockRejectedValue(
+                    new ForbiddenException({
+                        code: "ACCOUNT_REJECTED",
+                        message: "가입이 거부되었습니다.",
+                    }),
+                );
+                process.env['NODE_ENV'] = "development";
+                process.env['DEVELOPMENT_FRONTEND_URL'] = "http://localhost:3000";
+
+                const response = await request(app.getHttpServer())
+                    .get("/auth/kakao/callback?state=valid-login-state");
+
+                expect(response.status).toBe(302);
+                expect(response.headers['location']).toBe(
+                    "http://localhost:3000/login?authError=ACCOUNT_REJECTED",
+                );
+                expect(authService.createAuthCode).not.toHaveBeenCalled();
+            });
+
             it("should propagate the error", async () => {
                 // Arrange
                 authService.validateKakaoUser.mockRejectedValue(
@@ -301,7 +389,7 @@ describe("AuthController (Integration)", () => {
                     .get("/auth/kakao/callback");
 
                 expect(response.status).toBe(302);
-                expect(response.headers['location']).toBe("http://localhost:3000/login?error=invalid_oauth_state");
+                expect(response.headers['location']).toBe("http://localhost:3000/login?authError=INVALID_OAUTH_STATE");
                 expect(authService.validateKakaoUser).not.toHaveBeenCalled();
             });
 
@@ -314,13 +402,94 @@ describe("AuthController (Integration)", () => {
                     .get("/auth/kakao/callback?state=forged-or-expired");
 
                 expect(response.status).toBe(302);
-                expect(response.headers['location']).toBe("http://localhost:3000/login?error=invalid_oauth_state");
+                expect(response.headers['location']).toBe("http://localhost:3000/login?authError=INVALID_OAUTH_STATE");
                 expect(authService.validateKakaoUser).not.toHaveBeenCalled();
+            });
+        });
+
+        describe("given Kakao returns an OAuth error", () => {
+            beforeEach(() => {
+                process.env['NODE_ENV'] = "development";
+                process.env['DEVELOPMENT_FRONTEND_URL'] = "http://localhost:3000";
+            });
+
+            it("redirects user cancellation to the login modal after state verification", async () => {
+                const response = await request(app.getHttpServer())
+                    .get("/auth/kakao/callback?state=valid-login-state&error=access_denied");
+
+                expect(response.status).toBe(302);
+                expect(response.headers['location']).toBe(
+                    "http://localhost:3000/login?authError=OAUTH_CANCELLED",
+                );
+                expect(authService.validateKakaoUser).not.toHaveBeenCalled();
+            });
+
+            it("redirects provider failures to a safe login error", async () => {
+                const response = await request(app.getHttpServer())
+                    .get("/auth/kakao/callback?state=valid-login-state&error=server_error");
+
+                expect(response.status).toBe(302);
+                expect(response.headers['location']).toBe(
+                    "http://localhost:3000/login?authError=OAUTH_PROVIDER_ERROR",
+                );
+                expect(authService.validateKakaoUser).not.toHaveBeenCalled();
+            });
+        });
+
+        describe("given the callback is for account linking", () => {
+            beforeEach(() => {
+                process.env['NODE_ENV'] = "development";
+                process.env['DEVELOPMENT_FRONTEND_URL'] = "http://localhost:3000";
+                authService.verifyLinkingState.mockResolvedValue({
+                    userId: mockUser.id,
+                    sessionId: "session-id",
+                    purpose: "kakao_link",
+                });
+            });
+
+            it("redirects successful links to the existing settings route", async () => {
+                const response = await request(app.getHttpServer())
+                    .get("/auth/kakao/callback?state=valid-linking-state");
+
+                expect(response.status).toBe(302);
+                expect(response.headers['location']).toBe(
+                    "http://localhost:3000/settings?kakaoLinked=true",
+                );
+            });
+
+            it("redirects cancelled links to a safe settings modal", async () => {
+                const response = await request(app.getHttpServer())
+                    .get("/auth/kakao/callback?state=valid-linking-state&error=access_denied");
+
+                expect(response.status).toBe(302);
+                expect(response.headers['location']).toBe(
+                    "http://localhost:3000/settings?authError=OAUTH_CANCELLED",
+                );
+                expect(authService.linkKakaoToAccount).not.toHaveBeenCalled();
             });
         });
     });
 
     describe("POST /auth/login", () => {
+        it("returns the stable approval error code for pending accounts", async () => {
+            authService.validateEmailPassword.mockRejectedValue(
+                new ForbiddenException({
+                    code: "PENDING_APPROVAL",
+                    message: "관리자 승인 대기 중입니다.",
+                }),
+            );
+
+            const response = await request(app.getHttpServer())
+                .post("/auth/login")
+                .send({ email: "test@example.com", password: "Password1!" });
+
+            expect(response.status).toBe(403);
+            expect(response.body).toEqual({
+                code: "PENDING_APPROVAL",
+                message: "관리자 승인 대기 중입니다.",
+            });
+        });
+
         it("should reset the injected rate limiter on successful login", async () => {
             const validationResult = {
                 user: mockUser.id,
@@ -340,7 +509,11 @@ describe("AuthController (Integration)", () => {
                 success: true,
                 ...validationResult,
             });
-            expect(rateLimitGuard.resetForKey).toHaveBeenCalledWith(expect.any(String), "test@example.com");
+            expect(rateLimitGuard.resetForKey).toHaveBeenCalledWith(
+                expect.any(String),
+                "test@example.com",
+                "post:login",
+            );
         });
 
         it("should return pending onboarding payload for incomplete existing users", async () => {
@@ -370,6 +543,56 @@ describe("AuthController (Integration)", () => {
                 pendingAccountOnboardingToken: "pending-account-token",
             });
             expect(authService.startPendingAccountOnboarding).toHaveBeenCalledWith(mockUser.id);
+        });
+    });
+
+    describe("auth enumeration and brute-force protection", () => {
+        it("should not expose Kakao linkability from check-email", async () => {
+            (prismaService.user.findUnique as jest.Mock).mockResolvedValue({ id: mockUser.id });
+
+            const response = await authController.checkEmail("Test@Example.com");
+
+            expect(response).toEqual({ exists: true });
+            expect(response).not.toHaveProperty("linkable");
+            expect(prismaService.user.findUnique).toHaveBeenCalledWith({
+                where: { email: "test@example.com" },
+                select: { id: true },
+            });
+        });
+
+        it("should find an existing phone using normalized digits", async () => {
+            (prismaService.user.findFirst as jest.Mock).mockResolvedValue({ id: mockUser.id });
+
+            const response = await authController.checkPhone("01066211878");
+
+            expect(response).toEqual({ exists: true });
+            expect(prismaService.user.findFirst).toHaveBeenCalledWith({
+                where: { phone: { in: ["01066211878", "010-6621-1878"] } },
+                select: { id: true },
+            });
+        });
+
+        it("should skip the user query for an invalid phone", async () => {
+            const response = await authController.checkPhone("010-1234");
+
+            expect(response).toEqual({ exists: false });
+            expect(prismaService.user.findFirst).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            "completeKakaoOnboarding",
+            "completeAccountOnboarding",
+            "refreshToken",
+            "resetPassword",
+            "getAllActiveBranches",
+            "checkPhone",
+        ] as const)("should apply RateLimitGuard to %s", (methodName) => {
+            const guards = Reflect.getMetadata(
+                GUARDS_METADATA,
+                AuthController.prototype[methodName],
+            ) as unknown[] | undefined;
+
+            expect(guards).toContain(RateLimitGuard);
         });
     });
 
@@ -609,8 +832,9 @@ describe("AuthController (Integration)", () => {
     describe("POST /auth/kakao/complete-signup", () => {
         it("should complete kakao onboarding and return tokens", async () => {
             authService.completeKakaoOnboarding.mockResolvedValue({
-                user: mockUser.id,
-                ...mockTokens,
+                success: true,
+                userId: mockUser.id,
+                message: "관리자 승인 대기 중입니다.",
             });
 
             const response = await request(app.getHttpServer())
@@ -619,7 +843,6 @@ describe("AuthController (Integration)", () => {
                 .send({
                     phone: "010-1234-5678",
                     birthDate: "1990-01-01",
-                    branchId: "550e8400-e29b-41d4-a716-446655440000",
                     role: "user",
                 });
 
@@ -628,7 +851,6 @@ describe("AuthController (Integration)", () => {
                 "pending-token",
                 "010-1234-5678",
                 "1990-01-01",
-                "550e8400-e29b-41d4-a716-446655440000",
                 "user",
             );
         });
@@ -639,7 +861,6 @@ describe("AuthController (Integration)", () => {
                 .send({
                     phone: "010-1234-5678",
                     birthDate: "1990-01-01",
-                    branchId: "550e8400-e29b-41d4-a716-446655440000",
                     role: "user",
                 });
 
@@ -648,12 +869,7 @@ describe("AuthController (Integration)", () => {
     });
 
     describe("POST /auth/onboarding/complete", () => {
-        it("should complete account onboarding and return tokens", async () => {
-            authService.completeAccountOnboarding.mockResolvedValue({
-                user: mockUser.id,
-                ...mockTokens,
-            });
-
+        it("should reject post-approval self-service profile and branch assignment", async () => {
             const response = await request(app.getHttpServer())
                 .post("/auth/onboarding/complete")
                 .set("x-pending-onboarding-token", "pending-onboarding-token")
@@ -664,17 +880,11 @@ describe("AuthController (Integration)", () => {
                     role: "manager",
                 });
 
-            expect(response.status).toBe(201);
-            expect(authService.completeAccountOnboarding).toHaveBeenCalledWith(
-                "pending-onboarding-token",
-                "010-1234-5678",
-                "1990-01-01",
-                "550e8400-e29b-41d4-a716-446655440000",
-                "manager",
-            );
+            expect(response.status).toBe(403);
+            expect(response.body.code).toBe("ACCOUNT_PROFILE_INCOMPLETE");
         });
 
-        it("should return 400 when onboarding token is missing", async () => {
+        it("should reject the endpoint even when the onboarding token is missing", async () => {
             const response = await request(app.getHttpServer())
                 .post("/auth/onboarding/complete")
                 .send({
@@ -684,7 +894,7 @@ describe("AuthController (Integration)", () => {
                     role: "manager",
                 });
 
-            expect(response.status).toBe(400);
+            expect(response.status).toBe(403);
         });
     });
 

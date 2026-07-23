@@ -41,6 +41,7 @@ interface CreateClientProps {
     eDocId: string | null;
     areaId?: string | null;
     createdAt?: Date | null;
+    suppressGreetingSms?: boolean;
 }
 
 export class ClientEntity {
@@ -66,8 +67,9 @@ export class ClientEntity {
         public createdAt: Date | null = null,
         public areaId: string | null = null,
         // Owning tenant; populated by ClientMapper on reads so downstream
-        // consumers (e.g. alimtalk log rows) can scope records to the branch.
+        // consumers (e.g. message log rows) can scope records to the branch.
         public branchId: string | null = null,
+        public suppressGreetingSms: boolean = false,
     ) {}
 
     isGoingToCareCenter(): boolean {
@@ -119,6 +121,8 @@ export class ClientEntity {
             props.dueDate,
             props.createdAt ?? new Date(),
             props.areaId ?? null,
+            null,
+            props.suppressGreetingSms ?? false,
         );
     }
 
@@ -168,6 +172,8 @@ export class ClientEntity {
         eDocId: string | null,
         createdAt: Date | null = null,
         areaId: string | null = null,
+        branchId: string | null = null,
+        suppressGreetingSms: boolean = false,
     ): ClientEntity {
         return new ClientEntity(
             id,
@@ -190,6 +196,8 @@ export class ClientEntity {
             dueDate,
             createdAt,
             areaId,
+            branchId,
+            suppressGreetingSms,
         );
     }
 }

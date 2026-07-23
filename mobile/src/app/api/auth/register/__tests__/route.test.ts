@@ -25,12 +25,10 @@ function createRequest(body: BodyInit): NextRequest {
 
 const validBody = {
     email: "user@example.com",
-    password: "password123",
+    password: "Password1!",
     name: "Hong Gildong",
     phone: "010-1234-5678",
     birthDate: "1990-01-01",
-    branchId: "11111111-1111-4111-8111-111111111111",
-    role: "user",
 };
 
 describe("POST /api/auth/register", () => {

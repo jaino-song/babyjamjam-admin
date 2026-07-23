@@ -16,9 +16,11 @@ import { Card } from "@/components/ui/card";
 import { ContentPaper } from "../root/content-paper";
 import { DataTablePagination } from "../ui/datatable/DataTablePagination";
 import { cn } from "@/lib/utils";
+import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 
 const STATUS_FILTER_OPTIONS = [
     { value: null, label: "전체" },
+    { value: "pre_booking", label: "예약 전" },
     { value: "active", label: "진행중" },
     { value: "pending", label: "대기" },
     { value: "completed", label: "완료" },
@@ -27,6 +29,7 @@ const STATUS_FILTER_OPTIONS = [
 
 const getStatusBadgeVariant = (status: string | null) => {
     switch (status) {
+        case "pre_booking": return "outline";
         case "active": return "v3-active";
         case "pending": return "v3-pending";
         case "waiting": return "v3-pending";
@@ -69,6 +72,7 @@ export function ClientsTable() {
     const [editingClient, setEditingClient] = useState<Client | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState<string | null>(null);
+    const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
 
     const { data, isLoading } = useClients(
         page + 1,
@@ -97,13 +101,20 @@ export function ClientsTable() {
         setFormDialogOpen(true);
     };
 
-    const handleDelete = async (id: number) => {
-        if (window.confirm(t(locale, "clients.delete-confirm"))) {
-            try {
-                await deleteClient.mutateAsync(id);
-            } catch (err) {
-                console.error("Failed to delete client:", err);
-            }
+    const handleDelete = (id: number) => {
+        setDeleteTargetClientId(id);
+    };
+
+    const handleDeleteConfirm = async () => {
+        if (deleteTargetClientId === null) return;
+
+        try {
+            await deleteClient.mutateAsync(deleteTargetClientId);
+            setDeleteTargetClientId(null);
+            handleDetailModalClose();
+        } catch (err) {
+            console.error("Failed to delete client:", err);
+            setDeleteTargetClientId(null);
         }
     };
 
@@ -298,6 +309,21 @@ export function ClientsTable() {
                 open={formDialogOpen}
                 onClose={handleFormDialogClose}
                 client={editingClient}
+            />
+
+            <ApprovalTwoButtonModal
+                open={deleteTargetClientId !== null}
+                onOpenChange={(open) => {
+                    if (!open) setDeleteTargetClientId(null);
+                }}
+                dataComponent="clients-delete-approval"
+                title="고객을 삭제하시겠습니까?"
+                description={t(locale, "clients.delete-confirm")}
+                approvalLabel={t(locale, "common.delete")}
+                pendingLabel="삭제 중..."
+                approvalVariant="destructive"
+                isPending={deleteClient.isPending}
+                onApprove={handleDeleteConfirm}
             />
         </div>
     );

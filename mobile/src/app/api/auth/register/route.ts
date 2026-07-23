@@ -1,5 +1,5 @@
 import { NextResponse, NextRequest } from "next/server";
-import { z } from "zod";
+import { registerRequestSchema } from "@babyjamjam/shared";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
 import { getUpstreamErrorStatus, logUpstreamError, parseBody, sanitizeUpstreamClientError } from "@/lib/api/route-utils";
@@ -12,20 +12,8 @@ interface APIErrorResponse {
     hasKakaoAccount?: boolean;
 }
 
-const registerSchema = z
-    .object({
-        email: z.string().email(),
-        password: z.string().min(8),
-        name: z.string().min(1),
-        phone: z.string().min(1),
-        birthDate: z.string().min(1),
-        branchId: z.string().min(1),
-        role: z.string().min(1),
-    })
-    .passthrough();
-
 export async function POST(request: NextRequest) {
-    const { data, response } = await parseBody(registerSchema, request);
+    const { data, response } = await parseBody(registerRequestSchema, request);
     if (response) return response;
 
     try {

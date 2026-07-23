@@ -5,6 +5,7 @@ import { EformsignApiClient } from "infrastructure/api/eformsign-api.client";
 import { GeminiChatGateway } from "infrastructure/api/gemini-chat.gateway";
 import { VercelGeminiGateway } from "infrastructure/api/vercel-gemini.gateway";
 import {
+    assertVendorStubsConfigured,
     createAligoPortClient,
     createEformsignClientRepository,
     createGeminiGateway,
@@ -127,5 +128,76 @@ describe("vendor stub factory selection", () => {
             { type: "text", content: "안녕하세요 반가워요" },
             { type: "done" },
         ]);
+    });
+});
+
+function createBootEnvConfigService(overrides: Record<string, string | undefined>): ConfigService {
+    return {
+        get: jest.fn((key: string) => overrides[key]),
+    } as unknown as ConfigService;
+}
+
+describe("assertVendorStubsConfigured (boot-time guard)", () => {
+    it("throws when NODE_ENV=test and E2E_VENDOR_STUBS is unset", () => {
+        const configService = createBootEnvConfigService({ NODE_ENV: "test" });
+
+        expect(() => assertVendorStubsConfigured(configService)).toThrow(/E2E_VENDOR_STUBS=1/);
+    });
+
+    it("passes when NODE_ENV=test and E2E_VENDOR_STUBS=1", () => {
+        const configService = createBootEnvConfigService({ NODE_ENV: "test", E2E_VENDOR_STUBS: "1" });
+
+        expect(() => assertVendorStubsConfigured(configService)).not.toThrow();
+    });
+
+    it("passes when NODE_ENV=production and E2E_VENDOR_STUBS is unset (no regression)", () => {
+        const configService = createBootEnvConfigService({ NODE_ENV: "production" });
+
+        expect(() => assertVendorStubsConfigured(configService)).not.toThrow();
+    });
+
+    it("passes when NODE_ENV=development and no CI/test signal (local dev, no regression)", () => {
+        const configService = createBootEnvConfigService({ NODE_ENV: "development" });
+
+        expect(() => assertVendorStubsConfigured(configService)).not.toThrow();
+    });
+
+    it("passes in a Railway preview runtime even when the platform exposes CI=true", () => {
+        const configService = createBootEnvConfigService({ NODE_ENV: "preview", CI: "true" });
+
+        expect(() => assertVendorStubsConfigured(configService)).not.toThrow();
+    });
+
+    it("throws in GitHub Actions when the e2e flag is unset", () => {
+        const configService = createBootEnvConfigService({
+            NODE_ENV: "development",
+            CI: "true",
+            GITHUB_ACTIONS: "true",
+        });
+
+        expect(() => assertVendorStubsConfigured(configService)).toThrow(/E2E_VENDOR_STUBS=1/);
+    });
+
+    it("passes in GitHub Actions when E2E_VENDOR_STUBS=1", () => {
+        const configService = createBootEnvConfigService({
+            NODE_ENV: "development",
+            CI: "true",
+            GITHUB_ACTIONS: "true",
+            E2E_VENDOR_STUBS: "1",
+        });
+
+        expect(() => assertVendorStubsConfigured(configService)).not.toThrow();
+    });
+
+    it("never throws in production even if CI/test signals are also present (production guard wins)", () => {
+        const configService = createBootEnvConfigService({ NODE_ENV: "production", CI: "true" });
+
+        expect(() => assertVendorStubsConfigured(configService)).not.toThrow();
+    });
+
+    it("includes a near-miss hint when a truthy-but-not-'1' value is detected", () => {
+        const configService = createBootEnvConfigService({ NODE_ENV: "test", E2E_VENDOR_STUBS: "true" });
+
+        expect(() => assertVendorStubsConfigured(configService)).toThrow(/detected value "true"/);
     });
 });

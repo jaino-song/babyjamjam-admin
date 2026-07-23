@@ -25,6 +25,7 @@ const clientEnvSchema = z.object({
     NEXT_PUBLIC_API_BASE_URL: optionalTrimmedString,
     NEXT_PUBLIC_APP_VERSION: optionalTrimmedString,
     NEXT_PUBLIC_E2E_TEST: optionalTrimmedString,
+    NEXT_PUBLIC_VERCEL_GIT_COMMIT_REF: optionalTrimmedString,
 });
 
 const serverEnvSchema = clientEnvSchema.extend({
@@ -170,6 +171,7 @@ export const clientEnv = parseEnv(clientEnvSchema, {
     NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL,
     NEXT_PUBLIC_APP_VERSION: process.env.NEXT_PUBLIC_APP_VERSION,
     NEXT_PUBLIC_E2E_TEST: process.env.NEXT_PUBLIC_E2E_TEST,
+    NEXT_PUBLIC_VERCEL_GIT_COMMIT_REF: process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_REF,
 });
 
 const serverRuntimeConfig = typeof window === "undefined"
@@ -180,12 +182,15 @@ const serverRuntimeConfig = typeof window === "undefined"
         DEVELOPMENT_API_BASE_URL: process.env.DEVELOPMENT_API_BASE_URL,
         NEXT_PUBLIC_APP_VERSION: process.env.NEXT_PUBLIC_APP_VERSION,
         NEXT_PUBLIC_E2E_TEST: process.env.NEXT_PUBLIC_E2E_TEST,
+        NEXT_PUBLIC_VERCEL_GIT_COMMIT_REF: process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_REF,
         E2E_TEST: process.env.E2E_TEST,
     }))
     : null;
 
 export const APP_VERSION = clientEnv.NEXT_PUBLIC_APP_VERSION ?? "0.0.0";
 export const IS_DEVELOPMENT = clientEnv.NODE_ENV === "development";
+export const IS_DEV_DEPLOYMENT = IS_DEVELOPMENT
+    || clientEnv.NEXT_PUBLIC_VERCEL_GIT_COMMIT_REF === "dev";
 export const IS_E2E_TEST = clientEnv.NEXT_PUBLIC_E2E_TEST === "true"
     || (typeof window === "undefined" && serverRuntimeConfig?.env.E2E_TEST === "true");
 export const PUBLIC_BACKEND_BASE_URL = resolveClientBackendBaseUrl();

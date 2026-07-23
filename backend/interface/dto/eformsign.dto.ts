@@ -146,11 +146,10 @@ export class GenerateDocumentRequestDto {
     @IsNotEmpty()
     refreshToken!: string;
 
-    @IsOptional()
     @Type(() => Number)
     @IsInt()
     @Min(1)
-    clientId?: number;
+    clientId!: number;
 }
 
 export class DeleteDocumentsRequestDto {

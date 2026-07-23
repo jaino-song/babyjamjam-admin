@@ -782,7 +782,7 @@ export function useContractCreationFlow(): ContractCreationFlow {
 
   const runIframeFallback = async (
     contractData: ContractDataDto,
-    finalClientId: number | null,
+    finalClientId: number,
     expiry: dayjs.Dayjs,
   ) => {
     if (!isEformsignLoaded) {
@@ -791,7 +791,7 @@ export function useContractCreationFlow(): ContractCreationFlow {
     }
     const documentOption: EformsignDocumentOption = await eformsignApi.generateDocument(
       contractData as unknown as Parameters<typeof eformsignApi.generateDocument>[0],
-      finalClientId ?? undefined,
+      finalClientId,
     );
     setIsEformsignModalOpen(true);
     setTimeout(() => {
@@ -847,6 +847,9 @@ export function useContractCreationFlow(): ContractCreationFlow {
         });
         finalClientId = newClient.id;
         setClientId(newClient.id);
+      }
+      if (!finalClientId) {
+        throw new Error("고객 정보를 먼저 선택하거나 등록해 주세요.");
       }
 
       const authResult = await eformsignApi.authenticate(Date.now(), undefined, { force: true });
@@ -915,7 +918,7 @@ export function useContractCreationFlow(): ContractCreationFlow {
 
         const headless = await eformsignApi.dispatchHeadless(
           contractData as unknown as Parameters<typeof eformsignApi.dispatchHeadless>[0],
-          finalClientId ?? undefined,
+          finalClientId,
           progressId,
         );
 

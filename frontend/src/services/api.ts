@@ -1,9 +1,7 @@
 import axios from "axios";
-import type {
-    AlimtalkProvider,
-    AlimtalkProviderResponse,
-} from "@babyjamjam/shared/types/message";
 import { api } from "@/lib/api/client";
+import { safeStorageSetItem } from "@/lib/safe-storage";
+import type { RegisterRequest } from "@babyjamjam/shared";
 import { ContractDataDto } from '@/backend/application/dto/contract.dto';
 import {
     EformsignApiListResponse,
@@ -27,13 +25,50 @@ import type {
 const DEFAULT_EFORMSIGN_LIMIT = 100;
 const DEFAULT_EFORMSIGN_SKIP = 0;
 
-function normalizeDocumentListResponse(
+export interface FeedbackTemplateIdResponse {
+    templateId: string | null;
+    templateIds?: string[];
+}
+
+export interface LocalEformsignDocRecord {
+    id?: number;
+    documentId: string;
+    createdDate: string;
+    updatedDate: string;
+    statusType: string;
+    statusDetail: string;
+    stepType: string;
+    stepIndex: string;
+    stepName: string;
+    stepRecipientType: string;
+    stepRecipientName: string;
+    stepRecipientSms: string;
+    expiredDate: string;
+    expired: boolean;
+    clientId: number;
+    documentKind: "contract" | "service_record_snapshot" | null;
+    employeeScheduleId: number | null;
+    templateId: string | null;
+}
+
+export interface SyncedEformsignDocResponse {
+    id?: number;
+    documentId: string;
+    statusType: string;
+    statusDetail: string;
+    stepType: string;
+    stepIndex: string;
+    stepName: string;
+    expired?: boolean;
+}
+
+export function normalizeDocumentListResponse(
     response: EformsignApiListResponse,
     params?: { limit?: number; skip?: number },
 ): EformsignDocumentsResponse {
     return {
         documents: response.documents ?? [],
-        total_rows: response.total_count ?? response.documents?.length ?? 0,
+        total_rows: response.total_rows ?? response.total_count ?? response.documents?.length ?? 0,
         limit: params?.limit ?? DEFAULT_EFORMSIGN_LIMIT,
         skip: params?.skip ?? DEFAULT_EFORMSIGN_SKIP,
     };
@@ -61,15 +96,7 @@ export const authApi = {
     },
 
     // Email authentication
-    register: async (params: {
-        email: string;
-        password: string;
-        name?: string;
-        phone: string;
-        birthDate: string;
-        branchId: string;
-        role: string;
-    }): Promise<AuthResponse> => {
+    register: async (params: RegisterRequest): Promise<AuthResponse> => {
         const { data } = await api.post('/auth/register', params);
         return data;
     },
@@ -161,7 +188,7 @@ export const eformsignApi = {
         });
         return data as { clientId?: number | null } | null;
     },
-    generateDocument: async (contractData: ContractDataDto, clientId?: number) => {
+    generateDocument: async (contractData: ContractDataDto, clientId: number) => {
         const { data } = await api.post('/generate-document', { contractData, clientId });
         return data;
     },
@@ -187,19 +214,19 @@ export const eformsignApi = {
     // Documents APIs - token is read from httpOnly cookie on server
     // Note: eformsign routes use /eformsign prefix to avoid conflict with file storage /documents
     // Unified endpoint - fetches all documents in single request (more efficient)
-    getAllDocuments: async (params?: { limit?: number; skip?: number; type?: string | null }): Promise<EformsignDocumentsResponse> => {
+    getAllDocuments: async (params?: { limit?: number; skip?: number; type?: string | null; templateId?: string; templateMatch?: "include" | "exclude" }): Promise<EformsignDocumentsResponse> => {
         const { data } = await api.get('/eformsign/documents', { params });
         return data;
     },
-    getInProgressDocuments: async (params?: { limit?: number; skip?: number }): Promise<EformsignDocumentsResponse> => {
+    getInProgressDocuments: async (params?: { limit?: number; skip?: number; templateId?: string; templateMatch?: "include" | "exclude" }): Promise<EformsignDocumentsResponse> => {
         const { data } = await api.get<EformsignApiListResponse>('/eformsign/documents/in-progress', { params });
         return normalizeDocumentListResponse(data, params);
     },
-    getCompletedDocuments: async (params?: { limit?: number; skip?: number }): Promise<EformsignDocumentsResponse> => {
+    getCompletedDocuments: async (params?: { limit?: number; skip?: number; templateId?: string; templateMatch?: "include" | "exclude" }): Promise<EformsignDocumentsResponse> => {
         const { data } = await api.get<EformsignApiListResponse>('/eformsign/documents/completed', { params });
         return normalizeDocumentListResponse(data, params);
     },
-    getExpiredDocuments: async (params?: { limit?: number; skip?: number }): Promise<EformsignDocumentsResponse> => {
+    getExpiredDocuments: async (params?: { limit?: number; skip?: number; templateId?: string; templateMatch?: "include" | "exclude" }): Promise<EformsignDocumentsResponse> => {
         const { data } = await api.get<EformsignApiListResponse>('/eformsign/documents/expired', { params });
         return normalizeDocumentListResponse(data, params);
     },
@@ -232,14 +259,20 @@ export const eformsignApi = {
      */
     dispatchHeadless: async (
         contractData: ContractDataDto,
-        clientId?: number,
+        clientId: number,
         progressId?: string,
-    ): Promise<HeadlessDispatchResponse> => {
+        force?: boolean,
+    ): Promise<Omit<HeadlessDispatchResponse, "fallbackHint"> & { remoteDocumentId?: string; existingDocumentId?: string; fallbackHint?: "iframe" | "adopt" | "manual_check" | "adopt-or-manual" }> => {
         const { data } = await api.post('/eformsign-docs/dispatch-headless', {
             contractData,
             clientId,
             progressId,
+            force,
         });
+        return data;
+    },
+    adoptDocument: async (documentId: string, clientId?: number): Promise<{ id?: number; documentId: string }> => {
+        const { data } = await api.post('/eformsign-docs/adopt', { documentId, clientId });
         return data;
     },
     /**
@@ -262,6 +295,20 @@ export const eformsignApi = {
         const { data } = await api.get('/eformsign-docs/client-names');
         return data;
     },
+    getFeedbackTemplateId: async (): Promise<FeedbackTemplateIdResponse> => {
+        const { data } = await api.get('/eformsign-docs/feedback-template-id');
+        return data;
+    },
+    getDocumentsByClientId: async (clientId: number): Promise<LocalEformsignDocRecord[]> => {
+        const { data } = await api.get('/eformsign-docs/client', {
+            params: { clientId },
+        });
+        return data;
+    },
+    syncDocumentStatus: async (documentId: string): Promise<SyncedEformsignDocResponse> => {
+        const { data } = await api.post('/eformsign-docs/sync-status', { documentId });
+        return data;
+    },
     // 전체 탭 StatsBar 카운터용 원시 신호. 토큰은 프록시가 서버에서 주입.
     getDocumentStatusCounts: async (): Promise<EformsignStatusCountsResponse> => {
         const { data } = await api.get('/eformsign/documents/status-counts');
@@ -269,7 +316,25 @@ export const eformsignApi = {
     },
 }
 
-export type { AlimtalkProvider, AlimtalkProviderResponse };
+export async function withEformsignReauth<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+        return await fn();
+    } catch (error) {
+        if (!axios.isAxiosError(error)) throw error;
+
+        const status = error.response?.status;
+        if (status !== 401 && status !== 403) throw error;
+
+        try {
+            const executionTime = Date.now();
+            await eformsignApi.authenticate(executionTime);
+            safeStorageSetItem("session", "eformsign_auth_time", executionTime.toString());
+            return await fn();
+        } catch {
+            throw error;
+        }
+    }
+}
 
 export type MessageSenderApprovalStatus = "not_requested" | "pending" | "approved";
 
@@ -279,6 +344,38 @@ export interface MessageSenderApprovalResponse {
     canRequest: boolean;
     requestedAt: string | null;
     approvedAt: string | null;
+}
+
+export interface MessageAutomationPolicyRow {
+    id: string;
+    label: string;
+    value: string;
+}
+
+export interface MessageAutomationPolicy {
+    id: string;
+    title: string;
+    description: string;
+    active: boolean;
+    requiresApproval: boolean;
+    rows: MessageAutomationPolicyRow[];
+}
+
+export interface MessageAutomationPastTriggerConfig {
+    sendIntervalMinutes: number;
+    ruleOrder: string[];
+}
+
+export interface ClientRegistrationPolicy {
+    clientAutoRegistration: boolean;
+    greetingOnAutoRegistration: boolean;
+}
+
+export type ClientRegistrationPolicyPatch = Partial<ClientRegistrationPolicy>;
+
+export interface MessageAutomationPoliciesResponse {
+    policies: MessageAutomationPolicy[];
+    pastTriggerConfig: MessageAutomationPastTriggerConfig;
 }
 
 export interface NotificationPreferencesResponse {
@@ -364,16 +461,32 @@ export interface ConsultationInquiryListParams {
 }
 
 export const settingsApi = {
-    getAlimtalkProvider: async (): Promise<AlimtalkProviderResponse> => {
-        const { data } = await api.get('/settings/alimtalk-provider');
+    getClientRegistrationPolicy: async (): Promise<ClientRegistrationPolicy> => {
+        const { data } = await api.get("/settings/client-registration-policy");
         return data;
     },
-    updateAlimtalkProvider: async (provider: AlimtalkProvider): Promise<AlimtalkProviderResponse> => {
-        const { data } = await api.put('/settings/alimtalk-provider', { provider });
+    updateClientRegistrationPolicy: async (
+        patch: ClientRegistrationPolicyPatch,
+    ): Promise<ClientRegistrationPolicy> => {
+        const { data } = await api.put("/settings/client-registration-policy", patch);
         return data;
     },
     getMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {
         const { data } = await api.get("/settings/message-sender-approval");
+        return data;
+    },
+    getMessageAutomationPolicies: async (): Promise<MessageAutomationPoliciesResponse> => {
+        const { data } = await api.get("/settings/message-automation-policies");
+        return data;
+    },
+    updateMessageAutomationPastTriggerConfig: async (
+        config: MessageAutomationPastTriggerConfig,
+    ): Promise<MessageAutomationPastTriggerConfig> => {
+        const { data } = await api.put("/settings/message-automation-policies/past-trigger", config);
+        return data;
+    },
+    requestMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {
+        const { data } = await api.post("/settings/message-sender-approval/request");
         return data;
     },
     getNotificationPreferences: async (): Promise<NotificationPreferencesResponse> => {

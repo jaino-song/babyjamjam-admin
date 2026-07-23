@@ -10,9 +10,9 @@ const inputVariants = cva(
         default:
           "h-10 rounded-2xl border border-input px-3 py-2 text-sm ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 transition-colors",
         v3:
-          "w-full rounded-2xl border-[1.5px] border-v3-border bg-white px-4 py-3 text-[0.85rem] font-[Pretendard] text-v3-dark outline-none transition-all placeholder:text-v3-text-muted focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)] focus-visible:ring-0 focus-visible:ring-offset-0",
+          "box-border h-[44px] w-full rounded-[12px] border-[1.5px] border-input bg-white px-[14px] py-0 text-[0.9rem] font-[inherit] leading-normal text-v3-dark outline-none transition-colors placeholder:text-v3-text-muted placeholder:opacity-60 focus:border-v3-primary focus-visible:ring-0 focus-visible:ring-offset-0 disabled:bg-[hsl(220_20%_97%)] disabled:opacity-55",
         "v3-pill":
-          "border border-[hsl(220,20%,90%)] px-4 py-3 text-sm rounded-pill transition-all duration-200 ease-in-out focus-visible:border-primary focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.1)] focus-visible:scale-[1.02]",
+          "border border-input px-4 py-3 text-sm rounded-pill transition-all duration-200 ease-in-out focus-visible:border-primary focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.1)] focus-visible:scale-[1.02]",
       },
     },
     defaultVariants: {
@@ -25,13 +25,13 @@ export interface InputProps
   extends React.InputHTMLAttributes<HTMLInputElement>,
     VariantProps<typeof inputVariants> {
   error?: boolean
+  "data-component"?: string
 }
 
 const Input = React.forwardRef<HTMLInputElement, InputProps>(
-  ({ className, type, variant, error, ...props }, ref) => {
+  ({ className, type, variant, error, "data-component": dataComponent, ...props }, ref) => {
     return (
       <input
-        data-component="input"
         type={type}
         className={cn(
           inputVariants({ variant, className }),
@@ -39,6 +39,8 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
         )}
         ref={ref}
         {...props}
+        data-component={dataComponent ?? "input"}
+        data-source-component="Input"
       />
     )
   }

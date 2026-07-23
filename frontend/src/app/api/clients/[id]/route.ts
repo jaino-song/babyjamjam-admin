@@ -1,7 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
+import { errorResponse, getUpstreamErrorStatus, logUpstreamError } from "@/lib/api/route-utils";
 
 type RouteParams = { params: Promise<{ id: string }> };
+
+const CLIENT_DELETE_CONFLICT_CODE = "CLIENT_DELETE_CONFLICT";
+const CLIENT_DELETE_CONFLICT_MESSAGE =
+    "연결된 데이터로 인해 고객을 삭제할 수 없습니다. 잠시 후 다시 시도해 주세요.";
+const CLIENT_DELETE_CONFLICT_FALLBACK =
+    "연결된 정보 때문에 고객을 삭제할 수 없습니다. 잠시 후 다시 시도해 주세요.";
+
+function getUpstreamErrorCode(error: unknown): unknown {
+    if (!error || typeof error !== "object" || !("response" in error)) return undefined;
+    const response = (error as { response?: { data?: unknown } }).response;
+    if (!response?.data || typeof response.data !== "object") return undefined;
+    return (response.data as { code?: unknown }).code;
+}
 
 // Helper to get auth token from request
 function getAuthToken(request: NextRequest): string | null {
@@ -72,10 +86,19 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         });
         return NextResponse.json({ success: true });
     } catch (error) {
-        console.error("[API] Error deleting client:", error);
-        return NextResponse.json(
-            { error: "Failed to delete client" },
-            { status: 500 }
-        );
+        if (getUpstreamErrorStatus(error) === 409) {
+            const isAllowlistedConflict = getUpstreamErrorCode(error) === CLIENT_DELETE_CONFLICT_CODE;
+            logUpstreamError("delete client", error);
+            return NextResponse.json(
+                {
+                    error: isAllowlistedConflict
+                        ? CLIENT_DELETE_CONFLICT_MESSAGE
+                        : CLIENT_DELETE_CONFLICT_FALLBACK,
+                    code: CLIENT_DELETE_CONFLICT_CODE,
+                },
+                { status: 409 },
+            );
+        }
+        return errorResponse(error, "delete client");
     }
 }

@@ -17,6 +17,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 
 interface TemplateListItem {
   id: string;
@@ -26,11 +27,7 @@ interface TemplateListItem {
 }
 
 const formatDate = (dateString: string): string => {
-  return new Date(dateString).toLocaleDateString("ko-KR", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
+  return formatDateForDisplay(dateString);
 };
 
 function TemplateEditorLoadingSkeleton({ name }: { name: string }) {

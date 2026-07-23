@@ -4,6 +4,7 @@ import {
   Calendar,
   Calculator,
   File,
+  FileText,
   MessageCircle,
   MessageSquareText,
   Send,
@@ -253,6 +254,7 @@ export const menuGroups: MenuGroup[] = [
       { label: "상담", href: "/consultations", icon: MessageCircle, tone: "burgundy", badge: "3" },
       { label: "고객", href: "/clients", icon: Users, tone: "primary", value: "42명" },
       { label: "제공인력", href: "/employees", icon: UserCheck, tone: "purple", value: "12명" },
+      { label: "전자문서", href: "/contracts", icon: FileText, tone: "green" },
       { label: "일정 캘린더", href: "/employees/schedule", icon: Calendar, tone: "orange", disabled: true, statusLabel: "출시 예정" },
       { label: "통계 보고서", href: "/dashboard/analytics", icon: BarChart3, tone: "green", disabled: true, statusLabel: "출시 예정" },
     ],
@@ -262,7 +264,7 @@ export const menuGroups: MenuGroup[] = [
     rows: [
       { label: "가격표", href: "/prices", icon: Calculator, tone: "orange" },
       { label: "메시지", href: "/messages", icon: MessageSquareText, tone: "primary", value: "36건" },
-      { label: "발송 자동화", href: "/alimtalk", icon: Send, tone: "gold", value: "2개" },
+      { label: "발송 자동화", href: "/messages/automation", icon: Send, tone: "gold", value: "2개" },
     ],
   },
   {

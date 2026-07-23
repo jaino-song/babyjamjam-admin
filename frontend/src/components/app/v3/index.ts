@@ -15,6 +15,8 @@ export { PanelTitleGroup } from './PanelTitleGroup';
 export { FilterChips } from './FilterChips';
 export { SearchFilterBar } from './SearchFilterBar';
 export { InfoCard } from './InfoCard';
+export { FormCard } from './FormCard';
+export type { FormCardProps } from './FormCard';
 export { InfoRow } from './InfoRow';
 export { ActivityTimeline } from './ActivityTimeline';
 export { StatusBadge } from './StatusBadge';

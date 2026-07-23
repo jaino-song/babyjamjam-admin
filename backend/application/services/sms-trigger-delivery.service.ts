@@ -1,17 +1,17 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { AligoService } from "application/services/aligo.service";
-import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SystemTemplateService } from "application/services/system-template.service";
 import { SendAligoSmsResult } from "application/dto/aligo/send-sms.dto";
 import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey } from "domain/constants/system-template-registry";
 import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import {
-    SERVICE_FEEDBACK_LINK_SMS_AUTOMATION_KEY,
-    SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
-    SERVICE_FEEDBACK_LINK_SMS_TITLE,
-    SERVICE_FEEDBACK_LINK_SMS_TRIGGER_TYPE,
-} from "domain/constants/service-feedback-link-message";
+    SERVICE_RECORD_LINK_SMS_AUTOMATION_KEY,
+    SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
+    SERVICE_RECORD_LINK_SMS_TITLE,
+    SERVICE_RECORD_LINK_SMS_TRIGGER_TYPE,
+} from "domain/constants/service-record-link-message";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import {
     MessageLogEntity,
     MessageLogStatus,
@@ -21,6 +21,7 @@ import {
     MESSAGE_LOG_REPOSITORY,
     IMessageLogRepository,
 } from "domain/repositories/message-log.repository.interface";
+import { isTransientPrismaConnectivityError } from "infrastructure/database/prisma-error.utils";
 
 interface SmsTemplateDeliveryConfig {
     smsLogTemplateKey: string;
@@ -32,12 +33,40 @@ interface SmsTemplateDeliveryConfig {
 }
 
 export const SMS_TEMPLATE_DELIVERY: Partial<Record<MessageTriggerTemplateKey, SmsTemplateDeliveryConfig>> = {
+    [MessageTriggerTemplateKey.CLIENT_WELCOME]: {
+        smsLogTemplateKey: "client_welcome_sms",
+        automationKey: "CLIENT_WELCOME_SMS",
+        triggerType: "client_created",
+        title: "고객 등록 안내",
+        systemTemplateKey: SystemTemplateKey.CLIENT_WELCOME,
+    },
+    [MessageTriggerTemplateKey.SERVICE_START_REMINDER]: {
+        smsLogTemplateKey: "service_start_reminder_sms",
+        automationKey: "SERVICE_START_REMINDER_SMS",
+        triggerType: "service_start_reminder",
+        title: "서비스 시작 알림",
+        systemTemplateKey: SystemTemplateKey.SERVICE_START_REMINDER,
+    },
     [MessageTriggerTemplateKey.SERVICE_INFO]: {
         smsLogTemplateKey: "service_info_sms",
         automationKey: "SERVICE_INFO_SMS",
         triggerType: "service_start_before_7_days",
         title: "서비스 안내",
         systemTemplateKey: SystemTemplateKey.SERVICE_INFO,
+    },
+    [MessageTriggerTemplateKey.SERVICE_END_REMINDER]: {
+        smsLogTemplateKey: "service_end_reminder_sms",
+        automationKey: "SERVICE_END_REMINDER_SMS",
+        triggerType: "service_end_reminder",
+        title: "서비스 종료 알림",
+        systemTemplateKey: SystemTemplateKey.SERVICE_END_REMINDER,
+    },
+    [MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED]: {
+        smsLogTemplateKey: "employee_assigned_sms",
+        automationKey: "EMPLOYEE_ASSIGNED_SMS",
+        triggerType: "employee_assigned",
+        title: "직원 배정 알림",
+        systemTemplateKey: SystemTemplateKey.EMPLOYEE_ASSIGNED,
     },
     [MessageTriggerTemplateKey.CLIENT_GREETING]: {
         smsLogTemplateKey: "client_greeting_sms",
@@ -81,12 +110,12 @@ export const SMS_TEMPLATE_DELIVERY: Partial<Record<MessageTriggerTemplateKey, Sm
         title: "정보 안내",
         systemTemplateKey: SystemTemplateKey.INFO,
     },
-    [MessageTriggerTemplateKey.SERVICE_FEEDBACK_LINK]: {
-        smsLogTemplateKey: SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
-        automationKey: SERVICE_FEEDBACK_LINK_SMS_AUTOMATION_KEY,
-        triggerType: SERVICE_FEEDBACK_LINK_SMS_TRIGGER_TYPE,
-        title: SERVICE_FEEDBACK_LINK_SMS_TITLE,
-        usePayloadMessage: true,
+    [MessageTriggerTemplateKey.SERVICE_RECORD_LINK]: {
+        smsLogTemplateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
+        automationKey: SERVICE_RECORD_LINK_SMS_AUTOMATION_KEY,
+        triggerType: SERVICE_RECORD_LINK_SMS_TRIGGER_TYPE,
+        title: SERVICE_RECORD_LINK_SMS_TITLE,
+        systemTemplateKey: SystemTemplateKey.SERVICE_RECORD_LINK,
     },
 };
 
@@ -95,7 +124,6 @@ export class SmsTriggerDeliveryService {
     private readonly logger = new Logger(SmsTriggerDeliveryService.name);
 
     constructor(
-        private readonly messageSenderApprovalService: MessageSenderApprovalService,
         private readonly aligoService: AligoService,
         private readonly systemTemplateService: SystemTemplateService,
         @Inject(MESSAGE_LOG_REPOSITORY)
@@ -108,7 +136,7 @@ export class SmsTriggerDeliveryService {
 
     async sendJob(job: MessageTriggerJobEntity): Promise<boolean> {
         if (!job.branchId) {
-            return false;
+            throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
 
         const config = SMS_TEMPLATE_DELIVERY[job.templateKey];
@@ -116,7 +144,6 @@ export class SmsTriggerDeliveryService {
             return false;
         }
 
-        await this.messageSenderApprovalService.ensureApproved(job.branchId);
         return this.sendSmsJob(job, config);
     }
 
@@ -127,11 +154,14 @@ export class SmsTriggerDeliveryService {
         const payload = job.payload;
         const baseVariables: Record<string, string> = {
             name: payload.recipientName,
+            employeeName: payload.recipientName,
             clientName: payload.recipientName,
+            buttonUrl: payload.buttonUrl ?? "",
+            serviceRecordUrl: payload.buttonUrl ?? "",
             ...payload.templateVariables,
         };
         if (config.systemTemplateKey === SystemTemplateKey.PRICE_INFO) {
-            const requiredKeys = ["fullPrice", "actualPrice", "bankName", "accNum", "duration", "type"];
+            const requiredKeys = ["fullPrice", "grant", "actualPrice", "bankName", "accNum", "duration", "type"];
             const missing = requiredKeys.filter((key) => !baseVariables[key]?.trim());
             if (missing.length > 0) {
                 job.cancel(`비용 안내 발송 건너뜀: 필수 정보 누락 (${missing.join(", ")})`);
@@ -200,6 +230,13 @@ export class SmsTriggerDeliveryService {
             const template = await this.systemTemplateService.getByKey(systemTemplateKey);
             return this.renderTemplate(template.content, variables);
         } catch (error) {
+            if (isTransientPrismaConnectivityError(error)) {
+                throw new TriggerJobDeferredError(
+                    "transient",
+                    error instanceof Error ? error.message : String(error),
+                );
+            }
+
             this.logger.warn(
                 `[SMS Automation] Failed to load system template ${systemTemplateKey}, using registry default: ${
                     error instanceof Error ? error.message : String(error)
@@ -269,6 +306,8 @@ export class SmsTriggerDeliveryService {
                     : null,
                 now,
                 now,
+                params.job.payload.recipientName,
+                params.job.payload.recipientPhone,
             ),
         );
     }

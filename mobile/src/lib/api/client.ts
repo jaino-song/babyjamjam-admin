@@ -38,6 +38,13 @@ export function isEformsignTokenEndpoint(url?: string): boolean {
     ));
 }
 
+export function isConcurrentAuthRefreshError(error: unknown): boolean {
+    return axios.isAxiosError(error)
+        && error.response?.status === 409
+        && (error.response?.data as { code?: string } | undefined)?.code
+            === "AUTH_REFRESH_REPLAY_CONCURRENT";
+}
+
 // Token refresh state management
 let isEformsignRefreshing = false;
 let isAuthRefreshing = false;
@@ -148,15 +155,20 @@ api.interceptors.response.use(
                 processQueue(authFailedQueue);
                 return axios(originalRequest);
             } catch (refreshError) {
+                if (isConcurrentAuthRefreshError(refreshError)) {
+                    await new Promise((resolve) => setTimeout(resolve, 250));
+                    processQueue(authFailedQueue);
+                    return axios(originalRequest);
+                }
                 processQueue(authFailedQueue, refreshError as AxiosError);
 
                 // If refresh fails, redirect to login (unless already on auth page).
-                // The no-login feedback wizard (/feedback/[token]) must never bounce to
+                // The no-login service-record wizard (/service-record/[token]) must never bounce to
                 // /login — global shell requests 401 there by design.
                 if (!isRedirectingToLogin) {
                     const currentPath = window.location.pathname;
                     const isAuthPage = isPublicAuthPath(currentPath);
-                    const isNoLoginWizard = currentPath.startsWith("/feedback");
+                    const isNoLoginWizard = currentPath.startsWith("/service-record");
                     if (!isAuthPage && !isNoLoginWizard) {
                         isRedirectingToLogin = true;
                         window.location.href = '/login';

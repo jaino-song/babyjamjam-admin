@@ -1,4 +1,5 @@
 import { EformsignWebhookService } from "application/services/eformsign-webhook.service";
+import { UpdateEformsignDocStatusUsecase } from "application/usecases/eformsign-doc/update-eformsign-doc-status.usecase";
 import { ClientEntity } from "domain/entities/client.entity";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 import { EformsignWebhookPayloadDto } from "interface/dto/eformsign-webhook.dto";
@@ -91,9 +92,6 @@ describe("EformsignWebhookService", () => {
     const syncClientEndDateUsecase = {
         execute: jest.fn(),
     };
-    const alimtalkService = {
-        sendContractSignedAlimtalk: jest.fn(),
-    };
     const eformsignApiClient = {
         getAccessToken: jest.fn(),
         getDocument: jest.fn(),
@@ -108,6 +106,7 @@ describe("EformsignWebhookService", () => {
         findByDocumentId: jest.fn(),
         findBranchIdByDocumentId: jest.fn(),
         claimCompletionStatus: jest.fn(),
+        update: jest.fn(),
     };
     const employeeScheduleRepository = {
         findByClientId: jest.fn(),
@@ -119,6 +118,9 @@ describe("EformsignWebhookService", () => {
         emit: jest.fn(),
         events$: { subscribe: jest.fn() },
     };
+    const serviceRecordLifecycle = {
+        syncEndDateFromContract: jest.fn(),
+    };
 
     let service: EformsignWebhookService;
 
@@ -127,7 +129,6 @@ describe("EformsignWebhookService", () => {
             updateStatusUsecase as never,
             linkDocumentUsecase as never,
             syncClientEndDateUsecase as never,
-            alimtalkService as never,
             eventBus as never,
             notificationService as never,
             eformsignApiClient as never,
@@ -135,6 +136,8 @@ describe("EformsignWebhookService", () => {
             eformsignDocRepository as never,
             employeeScheduleRepository as never,
             employeeRepository as never,
+            undefined,
+            serviceRecordLifecycle as never,
         );
 
         updateStatusUsecase.execute.mockResolvedValue(createDocEntity());
@@ -161,7 +164,6 @@ describe("EformsignWebhookService", () => {
         clientRepository.findById.mockResolvedValue(createClientEntity());
         employeeScheduleRepository.findByClientId.mockResolvedValue([]);
         employeeRepository.findById.mockResolvedValue(null);
-        alimtalkService.sendContractSignedAlimtalk.mockResolvedValue(undefined);
     });
 
     afterEach(() => {
@@ -169,10 +171,30 @@ describe("EformsignWebhookService", () => {
     });
 
     it("should call link and sync usecases for DOC_COMPLETE document events", async () => {
+        const target = {
+            clientId: 9,
+            endDate: new Date("2026-07-31T00:00:00.000Z"),
+        };
+        syncClientEndDateUsecase.execute.mockResolvedValue(target);
+
         await expect(service.processWebhook(createDocumentPayload())).resolves.toBeUndefined();
 
         expect(linkDocumentUsecase.execute).toHaveBeenCalledWith(branchId, documentId);
-        expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(branchId, documentId, "test-access-token");
+        expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(
+            branchId,
+            documentId,
+            "test-access-token",
+            expect.objectContaining({ persist: expect.any(Function) }),
+        );
+        const options = syncClientEndDateUsecase.execute.mock.calls[0][3] as {
+            persist: (value: typeof target) => Promise<void>;
+        };
+        await options.persist(target);
+        expect(serviceRecordLifecycle.syncEndDateFromContract).toHaveBeenCalledWith({
+            branchId,
+            clientId: 9,
+            endDate: target.endDate,
+        });
     });
 
     it("should resolve the branch from the local document before processing webhook status", async () => {
@@ -191,15 +213,24 @@ describe("EformsignWebhookService", () => {
         await expect(service.processWebhook(createDocumentPayload())).resolves.toBeUndefined();
 
         expect(linkDocumentUsecase.execute).toHaveBeenCalledWith(branchId, documentId);
-        expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(branchId, documentId, "test-access-token");
-        expect(alimtalkService.sendContractSignedAlimtalk).toHaveBeenCalledTimes(1);
+        expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(
+            branchId,
+            documentId,
+            "test-access-token",
+            expect.objectContaining({ persist: expect.any(Function) }),
+        );
     });
 
     it("should call link and sync usecases for DOC_COMPLETE ready_document_pdf events", async () => {
         await expect(service.processWebhook(createReadyPdfPayload())).resolves.toBeUndefined();
 
         expect(linkDocumentUsecase.execute).toHaveBeenCalledWith(branchId, documentId);
-        expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(branchId, documentId, "test-access-token");
+        expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(
+            branchId,
+            documentId,
+            "test-access-token",
+            expect.objectContaining({ persist: expect.any(Function) }),
+        );
     });
 
     it("should keep processing ready_document_pdf events when sync throws", async () => {
@@ -208,8 +239,12 @@ describe("EformsignWebhookService", () => {
         await expect(service.processWebhook(createReadyPdfPayload())).resolves.toBeUndefined();
 
         expect(linkDocumentUsecase.execute).toHaveBeenCalledWith(branchId, documentId);
-        expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(branchId, documentId, "test-access-token");
-        expect(alimtalkService.sendContractSignedAlimtalk).toHaveBeenCalledTimes(1);
+        expect(syncClientEndDateUsecase.execute).toHaveBeenCalledWith(
+            branchId,
+            documentId,
+            "test-access-token",
+            expect.objectContaining({ persist: expect.any(Function) }),
+        );
     });
 
     it("should notify branch users when a document reaches review-required status", async () => {
@@ -257,6 +292,25 @@ describe("EformsignWebhookService", () => {
         await expect(service.processWebhook(payload)).resolves.toBeUndefined();
 
         expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+    });
+
+    it("should keep the client contract pointer linked on non-complete document status updates", async () => {
+        const payload = createDocumentPayload();
+        if (!payload.document) {
+            throw new Error("document payload is required");
+        }
+        payload.document.status = "doc_request_participant";
+
+        await expect(service.processWebhook(payload)).resolves.toBeUndefined();
+
+        expect(updateStatusUsecase.execute).toHaveBeenCalledWith(
+            branchId,
+            expect.objectContaining({
+                documentId,
+                statusType: "060",
+            }),
+        );
+        expect(linkDocumentUsecase.execute).toHaveBeenCalledWith(branchId, documentId);
     });
 
     it("should not notify branch users for a user participant step even when eformsign reports recipient_type 01", async () => {
@@ -328,7 +382,7 @@ describe("EformsignWebhookService", () => {
         });
     });
 
-    it("should acknowledge duplicate completion webhooks without sending alimtalk twice", async () => {
+    it("should acknowledge duplicate completion webhooks without repeating completion side effects", async () => {
         eformsignDocRepository.claimCompletionStatus
             .mockResolvedValueOnce("claimed")
             .mockResolvedValueOnce("duplicate");
@@ -338,7 +392,69 @@ describe("EformsignWebhookService", () => {
 
         expect(linkDocumentUsecase.execute).toHaveBeenCalledTimes(1);
         expect(syncClientEndDateUsecase.execute).toHaveBeenCalledTimes(1);
-        expect(alimtalkService.sendContractSignedAlimtalk).toHaveBeenCalledTimes(1);
         expect(eventBus.emit).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps a completed document's status when a stale document_action webhook arrives after completion (P1-11)", async () => {
+        // Wire the REAL usecase (the single write gateway) instead of the jest.fn()
+        // mock used elsewhere in this file, so the guard inside
+        // UpdateEformsignDocStatusUsecase.execute is actually exercised end-to-end.
+        const realUpdateStatusUsecase = new UpdateEformsignDocStatusUsecase(eformsignDocRepository as never);
+        const serviceWithRealUsecase = new EformsignWebhookService(
+            realUpdateStatusUsecase as never,
+            linkDocumentUsecase as never,
+            syncClientEndDateUsecase as never,
+            eventBus as never,
+            notificationService as never,
+            eformsignApiClient as never,
+            clientRepository as never,
+            eformsignDocRepository as never,
+            employeeScheduleRepository as never,
+            employeeRepository as never,
+            undefined,
+            serviceRecordLifecycle as never,
+        );
+
+        eformsignDocRepository.findByDocumentId.mockResolvedValue(
+            EformsignDocEntity.reconstitute({
+                id: 1,
+                documentId,
+                createdDate: new Date("2026-05-01T00:00:00.000Z"),
+                updatedDate: new Date("2026-05-03T00:00:00.000Z"),
+                statusType: "050",
+                statusDetail: "완료",
+                stepType: "05",
+                stepIndex: "3",
+                stepName: "이용자",
+                stepRecipientType: "01",
+                stepRecipientName: "직원",
+                stepRecipientSms: "01012345678",
+                expiredDate: new Date("2026-06-01T00:00:00.000Z"),
+                expired: false,
+                clientId: 9,
+            }),
+        );
+
+        const staleDocumentActionPayload: EformsignWebhookPayloadDto = {
+            webhook_id: "wh-3",
+            webhook_name: "test",
+            company_id: "company-1",
+            event_type: "document_action",
+            document: {
+                id: documentId,
+                document_title: "산모신생아건강관리서비스 계약서",
+                template_id: "template-1",
+                template_name: "template",
+                workflow_seq: 3,
+                workflow_name: "직원 확정",
+                status: "doc_complete",
+                action: "doc_open_participant",
+                updated_date: Date.now(),
+            },
+        };
+
+        await expect(serviceWithRealUsecase.processWebhook(staleDocumentActionPayload)).resolves.toBeUndefined();
+
+        expect(eformsignDocRepository.update).not.toHaveBeenCalled();
     });
 });

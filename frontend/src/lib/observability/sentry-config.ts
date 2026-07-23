@@ -1,0 +1,196 @@
+import type { Breadcrumb, ErrorEvent, Event, Log } from "@sentry/nextjs";
+
+type SentryTransactionEvent = Event & { type: "transaction" };
+
+const FILTERED_VALUE = "[Filtered]";
+const SENTRY_APP_TAG = "babyjamjam-admin";
+const MAX_SANITIZE_DEPTH = 3;
+
+const SENSITIVE_FIELD_PATTERN =
+  /authorization|cookie|password|token|secret|api[_-]?key|email|phone|mobile|address|birth|resident|content|message|body/i;
+const URL_FIELD_PATTERN = /(^|[._-])(url|uri)([._-]|$)/i;
+const QUERY_FIELD_PATTERN = /(^|[._-])query(?:_string)?([._-]|$)/i;
+const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+const PHONE_PATTERN = /(?:\+?82[-\s]?)?0?1[016789][-.\s]?\d{3,4}[-.\s]?\d{4}/g;
+const BEARER_PATTERN = /(bearer\s+)[^\s,;]+/gi;
+const SECRET_ASSIGNMENT_PATTERN =
+  /((?:password|token|secret|api[_-]?key|authorization)\s*[:=]\s*)[^\s,;]+/gi;
+
+function readSampleRate(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : fallback;
+}
+
+export function sanitizeSentryText(value: string): string {
+  return value
+    .replace(BEARER_PATTERN, `$1${FILTERED_VALUE}`)
+    .replace(SECRET_ASSIGNMENT_PATTERN, `$1${FILTERED_VALUE}`)
+    .replace(EMAIL_PATTERN, "[Email]")
+    .replace(PHONE_PATTERN, "[Phone]");
+}
+
+export function sanitizeSentryUrl(value: string | undefined): string | undefined {
+  if (!value) return value;
+
+  try {
+    const baseUrl = "https://sentry.local";
+    const parsed = new URL(value, baseUrl);
+    const path = sanitizeSentryText(parsed.pathname);
+    return parsed.origin === baseUrl ? path : `${parsed.origin}${path}`;
+  } catch {
+    return sanitizeSentryText(value.split(/[?#]/, 1)[0] ?? value);
+  }
+}
+
+function sanitizeUnknown(value: unknown, depth = 0): unknown {
+  if (typeof value === "string") return sanitizeSentryText(value);
+  if (value === null || typeof value !== "object") return value;
+  if (depth >= MAX_SANITIZE_DEPTH) return FILTERED_VALUE;
+
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeUnknown(item, depth + 1));
+  }
+
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: sanitizeSentryText(value.message),
+    };
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, nestedValue]) => {
+      if (SENSITIVE_FIELD_PATTERN.test(key) || QUERY_FIELD_PATTERN.test(key)) {
+        return [key, FILTERED_VALUE];
+      }
+      if (URL_FIELD_PATTERN.test(key) && typeof nestedValue === "string") {
+        return [key, sanitizeSentryUrl(nestedValue)];
+      }
+      return [key, sanitizeUnknown(nestedValue, depth + 1)];
+    }),
+  );
+}
+
+function sanitizeHeaders(headers: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (!headers) return headers;
+
+  return Object.fromEntries(
+    Object.entries(headers).map(([key, value]) => [
+      key,
+      SENSITIVE_FIELD_PATTERN.test(key) ? FILTERED_VALUE : sanitizeSentryText(value),
+    ]),
+  );
+}
+
+export function sanitizeSentryBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb {
+  return {
+    ...breadcrumb,
+    message: breadcrumb.message ? sanitizeSentryText(breadcrumb.message) : breadcrumb.message,
+    data: breadcrumb.data
+      ? (sanitizeUnknown(breadcrumb.data) as Record<string, unknown>)
+      : breadcrumb.data,
+  };
+}
+
+export function sanitizeSentryEvent(event: Event): Event {
+  return {
+    ...event,
+    message: event.message ? sanitizeSentryText(event.message) : event.message,
+    transaction: event.transaction
+      ? sanitizeSentryText(event.transaction.replace(/[?#].*$/, ""))
+      : event.transaction,
+    user: event.user?.id ? { id: String(event.user.id) } : undefined,
+    request: event.request
+      ? {
+          ...event.request,
+          url: sanitizeSentryUrl(event.request.url),
+          data: undefined,
+          query_string: undefined,
+          cookies: undefined,
+          headers: sanitizeHeaders(event.request.headers),
+        }
+      : event.request,
+    logentry: event.logentry
+      ? {
+          message: event.logentry.message
+            ? sanitizeSentryText(event.logentry.message)
+            : event.logentry.message,
+          params: event.logentry.params?.map((param) => sanitizeUnknown(param)),
+        }
+      : event.logentry,
+    exception: event.exception
+      ? {
+          ...event.exception,
+          values: event.exception.values?.map((exception) => ({
+            ...exception,
+            value: exception.value ? sanitizeSentryText(exception.value) : exception.value,
+          })),
+        }
+      : event.exception,
+    breadcrumbs: event.breadcrumbs?.map(sanitizeSentryBreadcrumb),
+    extra: event.extra ? (sanitizeUnknown(event.extra) as Record<string, unknown>) : event.extra,
+    spans: event.spans?.map((span) => ({
+      ...span,
+      description: span.description ? sanitizeSentryText(span.description) : span.description,
+      data: span.data ? (sanitizeUnknown(span.data) as typeof span.data) : span.data,
+    })),
+  };
+}
+
+function sanitizeSentryErrorEvent(event: ErrorEvent): ErrorEvent {
+  return sanitizeSentryEvent(event) as ErrorEvent;
+}
+
+function sanitizeSentryTransactionEvent(event: SentryTransactionEvent): SentryTransactionEvent {
+  return sanitizeSentryEvent(event) as SentryTransactionEvent;
+}
+
+export function sanitizeSentryLog(log: Log): Log {
+  return {
+    ...log,
+    message: sanitizeSentryText(String(log.message)),
+    attributes: log.attributes
+      ? (sanitizeUnknown(log.attributes) as Record<string, unknown>)
+      : log.attributes,
+  };
+}
+
+export function getSentryRuntimeOptions() {
+  const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
+  const isProduction = process.env.NODE_ENV === "production";
+
+  return {
+    dsn,
+    enabled: Boolean(dsn),
+    environment:
+      process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT ?? process.env.VERCEL_ENV ?? process.env.NODE_ENV,
+    sampleRate: 1,
+    tracesSampleRate: readSampleRate(
+      process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE,
+      isProduction ? 0.2 : 1,
+    ),
+    sendDefaultPii: false,
+    attachStacktrace: true,
+    enableLogs: true,
+    initialScope: {
+      tags: {
+        app: SENTRY_APP_TAG,
+        surface: "frontend",
+      },
+    },
+    beforeBreadcrumb: sanitizeSentryBreadcrumb,
+    beforeSend: sanitizeSentryErrorEvent,
+    beforeSendTransaction: sanitizeSentryTransactionEvent,
+    beforeSendLog: sanitizeSentryLog,
+  };
+}
+
+export function getReplaySessionSampleRate(): number {
+  return readSampleRate(process.env.NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE, 0.1);
+}
+
+export function getReplayErrorSampleRate(): number {
+  return readSampleRate(process.env.NEXT_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE, 1);
+}

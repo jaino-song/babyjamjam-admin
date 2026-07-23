@@ -35,11 +35,27 @@ const first = (rows: SystemAdminBranchRequestDto[]): SystemAdminBranchRequestDto
  *  - Null/absent column handling for nullable branch fields.
  */
 describe("SystemAdminService", () => {
-    type MockBranchModel = { findMany: jest.Mock };
-    type MockUserModel = { findMany: jest.Mock };
+    type MockBranchModel = {
+        findMany: jest.Mock;
+        findUnique: jest.Mock;
+        findFirst: jest.Mock;
+        create: jest.Mock;
+        update: jest.Mock;
+    };
+    type MockUserModel = {
+        findMany: jest.Mock;
+        findFirst: jest.Mock;
+        findUnique: jest.Mock;
+        update: jest.Mock;
+        updateMany: jest.Mock;
+    };
+    type MockUserBranchModel = {
+        upsert: jest.Mock;
+    };
 
     let branchModel: MockBranchModel;
     let userModel: MockUserModel;
+    let userBranchModel: MockUserBranchModel;
     let prisma: PrismaService;
     let service: SystemAdminService;
 
@@ -86,16 +102,46 @@ describe("SystemAdminService", () => {
     });
 
     beforeEach(() => {
-        branchModel = { findMany: jest.fn() };
-        userModel = { findMany: jest.fn() };
+        branchModel = {
+            findMany: jest.fn(),
+            findUnique: jest.fn(),
+            findFirst: jest.fn(),
+            create: jest.fn(),
+            update: jest.fn(),
+        };
+        userModel = {
+            findMany: jest.fn(),
+            findFirst: jest.fn(),
+            findUnique: jest.fn(),
+            update: jest.fn(),
+            updateMany: jest.fn(),
+        };
+        userBranchModel = {
+            upsert: jest.fn(),
+        };
         prisma = {
             branch: branchModel,
             user: userModel,
+            user_branch: userBranchModel,
+            $transaction: jest.fn(async (callback) => callback({
+                branch: branchModel,
+                user: userModel,
+                user_branch: userBranchModel,
+            })),
         } as unknown as PrismaService;
         service = new SystemAdminService(prisma);
 
         branchModel.findMany.mockResolvedValue([createBranchRow()]);
+        branchModel.findUnique.mockResolvedValue(createBranchRow({
+            smsSenderApprovalRequestedBy: null,
+        }));
+        branchModel.create.mockResolvedValue({ id: "branch-1" });
+        branchModel.update.mockResolvedValue({ id: "branch-1" });
+        branchModel.findFirst.mockResolvedValue(null);
         userModel.findMany.mockResolvedValue([createRequesterRow()]);
+        userModel.findFirst.mockResolvedValue({ id: "owner-1", role: "manager" });
+        userModel.findUnique.mockResolvedValue(null);
+        userModel.updateMany.mockResolvedValue({ count: 0 });
     });
 
     afterEach(() => {
@@ -341,6 +387,233 @@ describe("SystemAdminService", () => {
 
             expect(result).toEqual([]);
             expect(userModel.findMany).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("branch mutations", () => {
+        const branchInput = {
+            name: "송도점",
+            slug: "songdo",
+            ownerId: "owner-1",
+            region: "인천",
+            district: "연수구",
+            address: "인천 연수구 송도동",
+            phone: "032-111-2222",
+            email: "songdo@example.com",
+            isActive: true,
+        };
+
+        it("creates a branch and promotes an approved existing account to branch manager", async () => {
+            const result = await service.createBranch(branchInput);
+
+            expect(userModel.findFirst).toHaveBeenCalledWith({
+                where: {
+                    id: "owner-1",
+                    approvalStatus: "approved",
+                    role: { in: ["owner", "admin", "manager", "user"] },
+                },
+                select: { id: true, role: true },
+            });
+            expect(branchModel.create).toHaveBeenCalledWith({
+                data: branchInput,
+                select: { id: true },
+            });
+            expect(userBranchModel.upsert).toHaveBeenCalledWith({
+                where: {
+                    userId_branchId: {
+                        userId: "owner-1",
+                        branchId: "branch-1",
+                    },
+                },
+                create: {
+                    userId: "owner-1",
+                    branchId: "branch-1",
+                    role: "admin",
+                },
+                update: { role: "admin" },
+            });
+            expect(userModel.update).toHaveBeenCalledWith({
+                where: { id: "owner-1" },
+                data: { role: "admin" },
+            });
+            expect(result.id).toBe("branch-1");
+        });
+
+        it("preserves the system owner role when the owner manages a branch", async () => {
+            userModel.findFirst.mockResolvedValue({ id: "owner-1", role: "owner" });
+
+            await service.createBranch(branchInput);
+
+            expect(userModel.update).toHaveBeenCalledWith({
+                where: { id: "owner-1" },
+                data: { role: "owner" },
+            });
+        });
+
+        it("normalizes cleared optional fields to null when updating", async () => {
+            await service.updateBranch("branch-1", {
+                ...branchInput,
+                region: "",
+                address: "   ",
+                isActive: false,
+            });
+
+            expect(branchModel.update).toHaveBeenCalledWith({
+                where: { id: "branch-1" },
+                data: expect.objectContaining({
+                    name: "송도점",
+                    slug: "songdo",
+                    ownerId: "owner-1",
+                    region: null,
+                    address: null,
+                    isActive: false,
+                    updatedAt: expect.any(Date),
+                }),
+            });
+            expect(userBranchModel.upsert).toHaveBeenCalledWith({
+                where: {
+                    userId_branchId: {
+                        userId: "owner-1",
+                        branchId: "branch-1",
+                    },
+                },
+                create: {
+                    userId: "owner-1",
+                    branchId: "branch-1",
+                    role: "admin",
+                },
+                update: { role: "admin" },
+            });
+        });
+
+        it("rejects an unknown or unapproved branch manager before writing", async () => {
+            userModel.findFirst.mockResolvedValue(null);
+
+            await expect(service.createBranch(branchInput)).rejects.toThrow(
+                "승인된 계정을 찾을 수 없습니다.",
+            );
+            expect(branchModel.create).not.toHaveBeenCalled();
+        });
+
+        it("creates a branch with a null owner without looking up or promoting a manager", async () => {
+            const result = await service.createBranch({ ...branchInput, ownerId: null });
+
+            expect(userModel.findFirst).not.toHaveBeenCalled();
+            expect(branchModel.create).toHaveBeenCalledWith({
+                data: { ...branchInput, ownerId: null },
+                select: { id: true },
+            });
+            expect(userBranchModel.upsert).not.toHaveBeenCalled();
+            expect(userModel.update).not.toHaveBeenCalled();
+            expect(result.id).toBe("branch-1");
+        });
+
+        it("updates a branch to a null owner without promoting a manager", async () => {
+            await service.updateBranch("branch-1", {
+                ...branchInput,
+                ownerId: null,
+            });
+
+            expect(userModel.findFirst).not.toHaveBeenCalled();
+            expect(branchModel.update).toHaveBeenCalledWith({
+                where: { id: "branch-1" },
+                data: expect.objectContaining({
+                    ownerId: null,
+                }),
+            });
+            expect(userBranchModel.upsert).not.toHaveBeenCalled();
+            expect(userModel.update).not.toHaveBeenCalled();
+        });
+
+        it("throws NotFoundException when the branch to update does not exist", async () => {
+            branchModel.findUnique.mockResolvedValueOnce(null);
+
+            await expect(
+                service.updateBranch("missing-branch", { ...branchInput, ownerId: null }),
+            ).rejects.toThrow("지점을 찾을 수 없습니다.");
+
+            expect(branchModel.update).not.toHaveBeenCalled();
+        });
+    });
+
+    // ============================================
+    // Owner demotion on 지점장 교체/해제 (updateBranch)
+    // ============================================
+    describe("owner demotion on branch update", () => {
+        const demotionInput = {
+            name: "송도점",
+            slug: "songdo",
+            isActive: true,
+        };
+
+        it("demotes the previous owner (role admin, owns no other branch) to 'user' on 교체", async () => {
+            branchModel.findUnique.mockResolvedValueOnce({ ownerId: "prev-owner-1" });
+            branchModel.findFirst.mockResolvedValueOnce(null);
+            userModel.findFirst.mockResolvedValue({ id: "new-owner-1", role: "manager" });
+
+            await service.updateBranch("branch-1", {
+                ...demotionInput,
+                ownerId: "new-owner-1",
+            });
+
+            expect(branchModel.findFirst).toHaveBeenCalledWith({
+                where: { ownerId: "prev-owner-1" },
+                select: { id: true },
+            });
+            expect(userModel.updateMany).toHaveBeenCalledWith({
+                where: { id: "prev-owner-1", role: "admin" },
+                data: { role: "user" },
+            });
+        });
+
+        it("does NOT demote the previous owner when they still own another branch", async () => {
+            branchModel.findUnique.mockResolvedValueOnce({ ownerId: "prev-owner-1" });
+            branchModel.findFirst.mockResolvedValueOnce({ id: "other-branch" });
+            userModel.findFirst.mockResolvedValue({ id: "new-owner-1", role: "manager" });
+
+            await service.updateBranch("branch-1", {
+                ...demotionInput,
+                ownerId: "new-owner-1",
+            });
+
+            expect(userModel.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("does NOT run the demotion query when dto.ownerId is not provided", async () => {
+            branchModel.findUnique.mockResolvedValueOnce({ ownerId: "prev-owner-1" });
+
+            await service.updateBranch("branch-1", demotionInput);
+
+            expect(branchModel.findFirst).not.toHaveBeenCalled();
+            expect(userModel.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("runs the demotion path on 해제 (ownerId explicitly set to null)", async () => {
+            branchModel.findUnique.mockResolvedValueOnce({ ownerId: "prev-owner-1" });
+            branchModel.findFirst.mockResolvedValueOnce(null);
+
+            await service.updateBranch("branch-1", {
+                ...demotionInput,
+                ownerId: null,
+            });
+
+            expect(userModel.updateMany).toHaveBeenCalledWith({
+                where: { id: "prev-owner-1", role: "admin" },
+                data: { role: "user" },
+            });
+        });
+
+        it("does NOT demote when the branch previously had no owner", async () => {
+            branchModel.findUnique.mockResolvedValueOnce({ ownerId: null });
+            userModel.findFirst.mockResolvedValue({ id: "new-owner-1", role: "manager" });
+
+            await service.updateBranch("branch-1", {
+                ...demotionInput,
+                ownerId: "new-owner-1",
+            });
+
+            expect(branchModel.findFirst).not.toHaveBeenCalled();
+            expect(userModel.updateMany).not.toHaveBeenCalled();
         });
     });
 });

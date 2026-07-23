@@ -17,6 +17,7 @@ import {
     type MessageTriggerTemplateCatalogItem,
 } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
+import { SmsRetryService } from "application/services/sms-retry.service";
 
 describe("MessageTriggerController (Integration)", () => {
     type RuleOverrides = Partial<{
@@ -43,6 +44,9 @@ describe("MessageTriggerController (Integration)", () => {
         updateRule: jest.Mock;
         deleteRule: jest.Mock;
         listTemplates: jest.Mock;
+    };
+    let smsRetryService: {
+        retryById: jest.Mock;
     };
 
     const branchId = "org-1";
@@ -99,11 +103,12 @@ describe("MessageTriggerController (Integration)", () => {
         overrides: Partial<MessageLogRecordView> = {},
     ): MessageLogRecordView => ({
         id: overrides.id ?? 1,
-        provider: overrides.provider ?? "aligo_alimtalk",
-        templateKey: overrides.templateKey ?? MessageTriggerTemplateKey.CLIENT_WELCOME,
+        provider: overrides.provider ?? "aligo_sms",
+        templateKey: overrides.templateKey ?? MessageTriggerTemplateKey.SERVICE_INFO,
         triggerJobId: overrides.triggerJobId ?? "job-1",
         receiver: overrides.receiver ?? "010-1234-5678",
         clientId: overrides.clientId ?? 101,
+        recipientPhone: overrides.recipientPhone ?? "010-1234-5678",
         messageBody: overrides.messageBody ?? "고객 등록 안내 메시지",
         variables: overrides.variables ?? { clientName: "김고객" },
         status: overrides.status ?? "sent",
@@ -129,14 +134,14 @@ describe("MessageTriggerController (Integration)", () => {
     const createMockTemplate = (
         overrides: Partial<MessageTriggerTemplateCatalogItem> = {},
     ): MessageTriggerTemplateCatalogItem => ({
-        key: overrides.key ?? MessageTriggerTemplateKey.CLIENT_WELCOME,
-        name: overrides.name ?? "고객 등록 안내",
-        description: overrides.description ?? "고객 등록 직후 발송",
-        allowedEventTypes: overrides.allowedEventTypes ?? [MessageTriggerEventType.CLIENT_CREATED],
+        key: overrides.key ?? MessageTriggerTemplateKey.SERVICE_INFO,
+        name: overrides.name ?? "서비스 안내",
+        description: overrides.description ?? "서비스 시작 전 안내",
+        allowedEventTypes: overrides.allowedEventTypes ?? [MessageTriggerEventType.SERVICE_START],
         allowedRecipientTypes: overrides.allowedRecipientTypes ?? [MessageTriggerRecipientType.CLIENT],
         requiredVariables: overrides.requiredVariables ?? [{ key: "clientName", label: "고객명" }],
         providers: overrides.providers ?? {
-            aligo_alimtalk: { templateKey: "CLIENT_CREATED" },
+            sms: { templateKey: "SERVICE_INFO" },
         },
     });
 
@@ -151,6 +156,9 @@ describe("MessageTriggerController (Integration)", () => {
             deleteRule: jest.fn(),
             listTemplates: jest.fn(),
         };
+        smsRetryService = {
+            retryById: jest.fn(),
+        };
 
         const mockAuthGuard = {
             canActivate: (context: ExecutionContext) => {
@@ -159,6 +167,12 @@ describe("MessageTriggerController (Integration)", () => {
                     userId: "user-1",
                     branchId,
                     role: "admin",
+                    branchRole: "admin",
+                };
+                requestContext.tenant = {
+                    userId: "user-1",
+                    branchId,
+                    globalRole: "admin",
                     branchRole: "admin",
                 };
                 return true;
@@ -171,6 +185,10 @@ describe("MessageTriggerController (Integration)", () => {
                 {
                     provide: MessageTriggerService,
                     useValue: triggerService,
+                },
+                {
+                    provide: SmsRetryService,
+                    useValue: smsRetryService,
                 },
             ],
         })
@@ -245,6 +263,35 @@ describe("MessageTriggerController (Integration)", () => {
 
             expect(response.status).toBe(200);
             expect(triggerService.listHistory).toHaveBeenCalledWith(branchId, 25, 50);
+        });
+    });
+
+    describe("POST /message-logs/:id/retry", () => {
+        it("schedules the branch-owned history log for retry", async () => {
+            smsRetryService.retryById.mockResolvedValue({
+                id: 77,
+                status: "pending",
+                templateKey: "service_record_link_sms",
+            });
+
+            const response = await request(app.getHttpServer())
+                .post("/message-logs/77/retry");
+
+            expect(response.status).toBe(201);
+            expect(response.body).toMatchObject({
+                id: 77,
+                status: "pending",
+                templateKey: "service_record_link_sms",
+            });
+            expect(smsRetryService.retryById).toHaveBeenCalledWith(branchId, 77);
+        });
+
+        it("rejects an invalid log id before retrying", async () => {
+            const response = await request(app.getHttpServer())
+                .post("/message-logs/not-a-number/retry");
+
+            expect(response.status).toBe(400);
+            expect(smsRetryService.retryById).not.toHaveBeenCalled();
         });
     });
 
@@ -404,22 +451,20 @@ describe("MessageTriggerController (Integration)", () => {
     });
 
     describe("GET /message-trigger-templates", () => {
-        it("passes provider and filters through to the service", async () => {
+        it("passes SMS catalog filters through to the service", async () => {
             triggerService.listTemplates.mockResolvedValue([createMockTemplate()]);
 
             const response = await request(app.getHttpServer())
                 .get("/message-trigger-templates")
                 .query({
-                    provider: "aligo_alimtalk",
-                    eventType: "CLIENT_CREATED",
+                    eventType: "SERVICE_START",
                     recipientType: "CLIENT",
                 });
 
             expect(response.status).toBe(200);
             expect(response.body).toHaveLength(1);
             expect(triggerService.listTemplates).toHaveBeenCalledWith({
-                provider: "aligo_alimtalk",
-                eventType: "CLIENT_CREATED",
+                eventType: "SERVICE_START",
                 recipientType: "CLIENT",
             });
         });

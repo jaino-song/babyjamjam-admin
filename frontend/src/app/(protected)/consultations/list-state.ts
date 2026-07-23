@@ -1,4 +1,5 @@
 import type { ConsultationInquiry } from "@/services/api";
+import { matchesSearchQuery } from "@/lib/search/korean-search";
 
 export function getConsultationIdentityKey(inquiry: ConsultationInquiry): string {
   return `${inquiry.motherName.trim().toLowerCase()}::${inquiry.phone.replace(/\D/g, "")}`;
@@ -28,14 +29,24 @@ export function getDisplayedConsultationInquiries({
   inquiries,
   selectedInquiry,
   activeReadState,
+  search = "",
 }: {
   inquiries: ConsultationInquiry[];
   selectedInquiry: ConsultationInquiry | null;
   activeReadState: string;
+  search?: string;
 }): ConsultationInquiry[] {
-  const visibleInquiries = getLatestUniqueConsultationInquiries(inquiries);
+  const matchesSearch = (inquiry: ConsultationInquiry) =>
+    matchesSearchQuery(search, [inquiry.motherName, inquiry.phone, inquiry.address]);
+  const visibleInquiries = getLatestUniqueConsultationInquiries(
+    inquiries.filter(matchesSearch),
+  );
 
-  if (activeReadState !== "unread" || !selectedInquiry) {
+  if (
+    activeReadState !== "unread" ||
+    !selectedInquiry ||
+    !matchesSearch(selectedInquiry)
+  ) {
     return visibleInquiries;
   }
 

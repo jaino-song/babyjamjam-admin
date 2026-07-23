@@ -55,7 +55,7 @@ const createMockDocument = (
     expired_date: Date.now() + 86400000,
     _expired: false,
   },
-  fields: [],
+  fields: customer_name ? [{ id: '이용자 성명', value: customer_name }] : [],
   next_status: [],
   previous_status: [],
   histories: [],

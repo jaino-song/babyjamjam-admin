@@ -20,6 +20,7 @@ export const SYSTEM_TEMPLATE_KEYS = [
   'THANKS',
   'SURVEY',
   'SERVICE_INFO',
+  'SERVICE_RECORD_LINK',
   'REMINDER',
   'INFO',
 ] as const;

@@ -39,14 +39,14 @@ export const InfoMessageForm = ({
   }, [displayMessage, onPreviewMessageChange]);
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(displayMessage);
-    alert(t(locale, "common.copy-success-message"));
+    return navigator.clipboard.writeText(displayMessage);
   };
 
   const messageCard = displayMessage ? (
     <AutoFillMsgCard
       title={t(locale, "common.generated-message-title")}
       copyButtonText={t(locale, "common.copy-button")}
+      copySuccessMessage={t(locale, "common.copy-success-message")}
       message={displayMessage}
       bodyDescription="메시지 내용을 수정할 수 있어요."
       onMessageChange={(message) => {

@@ -1,12 +1,31 @@
 "use client";
 
 import { useState, type KeyboardEvent, type ReactNode } from "react";
-import { CircleAlert, FileCheck2, MessageCircle, MoreVertical, SquarePen, Trash2, User } from "lucide-react";
+import { CalendarDays, CircleAlert, FileCheck2, MessageCircle, MoreVertical, RotateCcw, SquarePen, Trash2, User } from "lucide-react";
 
 import { Client } from "@/lib/client/types";
 import { getMobileClientBadges } from "@/lib/client/badges";
 import { EformsignDocument } from "@/lib/eformsign/types";
-import { useClientServiceRecords } from "@/hooks/useServiceRecords";
+import {
+  applyServiceScheduleChange,
+  fetchClientServiceRecords,
+  previewServiceScheduleChange,
+  resetServiceRecordLink,
+  useClientServiceRecords,
+} from "@/hooks/useServiceRecords";
+import { approveScheduleChange, rejectScheduleChange } from "@/hooks/useClients";
+import { toast } from "@/hooks/use-toast";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
+import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
+import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import {
+  MESSAGE_HISTORY_STATUS_LABELS,
+  formatMessageDateTimeCompact,
+  formatMessageFailureReason,
+  getMessageChannelLabel,
+  getMessageHistoryTitle,
+} from "@babyjamjam/shared";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,8 +43,31 @@ import {
 } from "@/components/app/mobile-redesign/detail-sheet";
 import { ClientMessageHistoryDetail } from "@/components/app/clients/client-message-history-detail";
 import { ClientServiceRecords } from "@/components/app/clients/client-service-records";
+import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/ServiceRecordLinkResetResultModal";
+import { ServiceScheduleChangeModal } from "@/components/app/clients/ServiceScheduleChangeModal";
+import { getScheduleChangeErrorMessage } from "@/lib/service-records/schedule-change-error";
 
 type UnknownRecord = Record<string, unknown>;
+
+interface ServiceScheduleChangeTarget {
+  scheduleId: number;
+  sessionIndex: number;
+  currentDate: string;
+  minimumDate: string;
+}
+
+function getTodayIsoDate(): string {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const day = String(today.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatScheduleChangeMonthDay(value: string): string {
+  const match = value.match(/^\d{4}-(\d{2})-(\d{2})$/);
+  return match ? `${Number(match[1])}월 ${Number(match[2])}일` : value;
+}
 
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null;
@@ -150,7 +192,7 @@ function compactDateToIsoDate(value: string | null | undefined): string | null {
 function formatIsoDateParts(isoDate: string): string | null {
   const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!match) return null;
-  return `${match[1]}년 ${match[2]}월 ${match[3]}일`;
+  return `${match[1]}.${match[2]}.${match[3]}`;
 }
 
 function isoDateFromTimestamp(value: string | number | null | undefined): string | null {
@@ -210,16 +252,14 @@ function firstValue(...values: Array<string | number | null | undefined>): strin
 
 function formatDate(dateStr: string | null | undefined): string {
   if (!dateStr) return "-";
+  if (/^\d{6}$/.test(dateStr)) return formatBirthdayYYMMDD(dateStr);
   const normalized = compactDateToIsoDate(dateStr) ?? yymmddToIsoDate(dateStr) ?? dateStr;
   const formatted = formatIsoDateParts(normalized);
   if (formatted) return formatted;
 
   const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) return dateStr;
-  const year = String(date.getFullYear());
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}년 ${month}월 ${day}일`;
+  return formatDateForDisplay(date, dateStr);
 }
 
 function formatPrice(price: string | null): string {
@@ -273,13 +313,6 @@ function documentServicePeriodRange(doc: EformsignDocument | null | undefined): 
   if (!start || !end) return null;
 
   return { start, end };
-}
-
-function formatDateRange(startDate: string | null | undefined, endDate: string | null | undefined): string {
-  if (!startDate && !endDate) return "-";
-  if (!startDate) return formatDate(endDate);
-  if (!endDate) return formatDate(startDate);
-  return `${formatDate(startDate)} ~ ${formatDate(endDate)}`;
 }
 
 function contractPrimaryEmployeeName(doc: EformsignDocument | null | undefined): string | null {
@@ -348,6 +381,15 @@ export interface ClientGroup {
 
 export const GROUPS: ClientGroup[] = [
   {
+    key: "pre_booking",
+    title: "예약 전",
+    badge: "예약 전",
+    badgeTone: "muted",
+    badgeMini: "muted",
+    match: (c) => c.serviceStatus === "pre_booking",
+    counter: "명",
+  },
+  {
     key: "active",
     title: "진행중",
     badge: "진행중",
@@ -398,13 +440,14 @@ export function shouldShowMissingContractBadge(client: Client): boolean {
   return client.serviceStatus === "active" && client.documentStatus !== "completed";
 }
 
-export type DetailTabId = "basic" | "contracts" | "alimtalk" | "serviceRecords";
+export type DetailTabId = "scheduleChange" | "basic" | "contracts" | "message" | "serviceRecords";
 
 export interface ClientNotificationLogRecord {
   id: number;
   provider: string;
   templateKey: string;
   receiver: string | null;
+  recipientPhone?: string | null;
   recipientName: string | null;
   clientId: number | null;
   status: "pending" | "sent" | "failed" | string;
@@ -417,9 +460,6 @@ export interface ClientNotificationLogRecord {
 
 type DetailRowTone = "green" | "primary" | "orange" | "muted" | "burgundy" | "purple";
 const CLIENT_GREETING_SMS_TEMPLATE_KEY = "client_greeting_sms";
-const CLIENT_GREETING_SMS_TITLE = "인사 메시지";
-const SERVICE_FEEDBACK_LINK_SMS_TEMPLATE_KEY = "service_feedback_link_sms";
-const SERVICE_FEEDBACK_LINK_SMS_TITLE = "제공기록지 작성 링크";
 
 function DetailDocRow({
   icon,
@@ -471,23 +511,27 @@ function DetailDocRow({
   );
 }
 
-function notificationChannelLabel(log: ClientNotificationLogRecord): "알림톡" | "SMS" {
-  return log.provider.toLowerCase().includes("sms") ? "SMS" : "알림톡";
+function notificationChannelLabel(log: ClientNotificationLogRecord): string {
+  return getMessageChannelLabel(log.provider);
 }
 
 function notificationVariables(log: ClientNotificationLogRecord): Record<string, unknown> {
   return isRecord(log.variables) ? log.variables : {};
 }
 
+function notificationStringVariables(log: ClientNotificationLogRecord): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(notificationVariables(log))
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+}
+
 function notificationTitle(log: ClientNotificationLogRecord): string {
-  if (log.ruleName?.trim()) return log.ruleName;
-  const variables = notificationVariables(log);
-  const variableTitle = stringFromUnknown(variables.title);
-  if (variableTitle) return variableTitle;
-  if (log.templateKey === CLIENT_GREETING_SMS_TEMPLATE_KEY) return CLIENT_GREETING_SMS_TITLE;
-  if (log.templateKey === SERVICE_FEEDBACK_LINK_SMS_TEMPLATE_KEY) return SERVICE_FEEDBACK_LINK_SMS_TITLE;
-  if (log.templateKey === "manual_sms") return "수동 메시지";
-  return log.templateKey || "발송 내역";
+  return getMessageHistoryTitle({
+    templateKey: log.templateKey,
+    variables: notificationStringVariables(log),
+    ruleName: log.ruleName,
+  });
 }
 
 function isClientGreetingSmsLog(log: ClientNotificationLogRecord): boolean {
@@ -522,11 +566,13 @@ function visibleNotificationLogs(logs: ClientNotificationLogRecord[]): ClientNot
 function notificationStatusLabel(status: string): string {
   switch (status) {
     case "failed":
-      return "실패";
+      return MESSAGE_HISTORY_STATUS_LABELS.failed;
     case "pending":
-      return "대기";
+      return MESSAGE_HISTORY_STATUS_LABELS.pending;
     case "sent":
-      return "완료";
+      return MESSAGE_HISTORY_STATUS_LABELS.sent;
+    case "canceled":
+      return MESSAGE_HISTORY_STATUS_LABELS.canceled;
     default:
       return status || "-";
   }
@@ -540,24 +586,15 @@ function notificationStatusTone(status: string): DetailRowTone {
       return "orange";
     case "sent":
       return "green";
+    case "canceled":
+      return "muted";
     default:
       return "muted";
   }
 }
 
 function formatNotificationTime(createdAt: string): string {
-  const date = new Date(createdAt);
-  if (Number.isNaN(date.getTime())) return createdAt || "-";
-
-  const year = String(date.getFullYear());
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  const time = new Intl.DateTimeFormat("ko-KR", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  }).format(date);
-  return `${year}년 ${month}월 ${day}일 ${time}`;
+  return formatMessageDateTimeCompact(createdAt);
 }
 
 export function ClientDetailContent({
@@ -566,24 +603,30 @@ export function ClientDetailContent({
   activeTab,
   notificationLogs = [],
   isNotificationLogsLoading = false,
+  isNotificationLogsError = false,
+  onRetryNotificationLogs,
   isIssuingContract = false,
   onTabChange,
   onMessage,
   onIssueContract,
   onEdit,
   onDelete,
+  onClientUpdated,
 }: {
   client: Client;
   contractDocument?: EformsignDocument | null;
   activeTab: DetailTabId;
   notificationLogs?: ClientNotificationLogRecord[];
   isNotificationLogsLoading?: boolean;
+  isNotificationLogsError?: boolean;
+  onRetryNotificationLogs?: () => void;
   isIssuingContract?: boolean;
   onTabChange: (id: DetailTabId) => void;
   onMessage: () => void;
   onIssueContract: (client: Client) => void;
   onEdit: (client: Client) => void;
   onDelete: (id: number) => void;
+  onClientUpdated: (client: Client) => void;
 }) {
   // Keyed selection so the open message-detail auto-resets when the tab or client changes
   // (derive-during-render — avoids a setState-in-effect).
@@ -593,6 +636,149 @@ export function ClientDetailContent({
   const serviceRecordsQuery = useClientServiceRecords(client.id, {
     enabled: activeTab === "serviceRecords",
   });
+  const [resetLinkModalOpen, setResetLinkModalOpen] = useState(false);
+  const [resetServiceRecordUrl, setResetServiceRecordUrl] = useState<string | null>(null);
+  const [isResettingLink, setIsResettingLink] = useState(false);
+  const [scheduleChangeTarget, setScheduleChangeTarget] = useState<ServiceScheduleChangeTarget | null>(null);
+  const [selectedScheduleChangeDate, setSelectedScheduleChangeDate] = useState("");
+  const [isPreparingScheduleChange, setIsPreparingScheduleChange] = useState(false);
+  const [isApplyingScheduleChange, setIsApplyingScheduleChange] = useState(false);
+  const [isScheduleChangeDecisionPending, setIsScheduleChangeDecisionPending] = useState(false);
+
+  const handleResetServiceRecordLink = async () => {
+    setIsResettingLink(true);
+    try {
+      const overview = await fetchClientServiceRecords(client.id);
+      const assignments = overview.assignments ?? [];
+      const activeAssignment = assignments.find((assignment) => !assignment.replaced)
+        ?? assignments[0]
+        ?? null;
+      if (!activeAssignment) {
+        toast({
+          description: "관리사 배정이 없어 링크를 재설정할 수 없습니다.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const reset = await resetServiceRecordLink(activeAssignment.scheduleId);
+      setResetLinkModalOpen(false);
+      setResetServiceRecordUrl(reset.serviceRecordUrl);
+    } catch {
+      toast({
+        description: "제공기록지 링크 재설정에 실패했습니다. 잠시 후 다시 시도해 주세요.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsResettingLink(false);
+    }
+  };
+
+  const handleOpenServiceScheduleChange = async () => {
+    setIsPreparingScheduleChange(true);
+    try {
+      const overview = await fetchClientServiceRecords(client.id);
+      const assignments = overview.assignments ?? [];
+      const activeAssignment = assignments.find((assignment) => !assignment.replaced)
+        ?? assignments[0]
+        ?? null;
+      if (!activeAssignment) {
+        toast({
+          description: "관리사 배정이 없어 서비스 일정을 변경할 수 없습니다.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const preview = await previewServiceScheduleChange(activeAssignment.scheduleId);
+      const today = getTodayIsoDate();
+      const minimumDate = preview.minimumDate > today ? preview.minimumDate : today;
+      setSelectedScheduleChangeDate(minimumDate);
+      setScheduleChangeTarget({
+        scheduleId: activeAssignment.scheduleId,
+        sessionIndex: preview.sessionIndex,
+        currentDate: preview.fromDate,
+        minimumDate,
+      });
+    } catch {
+      toast({
+        description: "변경할 수 있는 다음 서비스 일정을 불러오지 못했습니다.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsPreparingScheduleChange(false);
+    }
+  };
+
+  const handleApplyServiceScheduleChange = async () => {
+    if (!scheduleChangeTarget) return;
+
+    setIsApplyingScheduleChange(true);
+    try {
+      const changed = await applyServiceScheduleChange(scheduleChangeTarget.scheduleId, {
+        toDate: selectedScheduleChangeDate,
+      });
+      onClientUpdated({
+        ...client,
+        endDate: changed.newEndDate,
+        pendingScheduleChange: null,
+      });
+      setScheduleChangeTarget(null);
+      setSelectedScheduleChangeDate("");
+      toast({ description: `서비스 일정과 종료일(${changed.newEndDate})이 변경되었습니다.` });
+    } catch (error) {
+      toast({
+        description: getScheduleChangeErrorMessage(error),
+        variant: "destructive",
+      });
+    } finally {
+      setIsApplyingScheduleChange(false);
+    }
+  };
+
+  const handleCopyResetServiceRecordLink = async (serviceRecordUrl: string) => {
+    try {
+      await navigator.clipboard.writeText(serviceRecordUrl);
+      toast({ description: "제공기록지 링크를 복사했습니다." });
+    } catch {
+      toast({
+        description: "링크 복사에 실패했습니다. 링크를 직접 선택해 복사해 주세요.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleScheduleChangeDecision = async (decision: "approve" | "reject") => {
+    const pendingScheduleChange = client.pendingScheduleChange;
+    if (!pendingScheduleChange) return;
+
+    setIsScheduleChangeDecisionPending(true);
+    try {
+      if (decision === "approve") {
+        await approveScheduleChange(pendingScheduleChange.id);
+      } else {
+        await rejectScheduleChange(pendingScheduleChange.id);
+      }
+      onClientUpdated({
+        ...client,
+        endDate: decision === "approve" ? pendingScheduleChange.newEndDate : client.endDate,
+        pendingScheduleChange: null,
+      });
+      onTabChange("basic");
+      toast({
+        description: decision === "approve"
+          ? "일정 변경 요청을 승인했습니다."
+          : "일정 변경 요청을 거부했습니다.",
+      });
+    } catch (error) {
+      toast({
+        description: getScheduleChangeErrorMessage(error),
+        variant: "destructive",
+      });
+    } finally {
+      setIsScheduleChangeDecisionPending(false);
+    }
+  };
 
   const group = GROUPS.find((g) => g.match(client)) ?? GROUPS[1];
   const clientBadges = getMobileClientBadges(client);
@@ -636,17 +822,20 @@ export function ClientDetailContent({
     documentFieldValue(contractDocument, ["이용자 주소", "주소", "customerAddress", "address"]),
   );
   const primaryEmployeeName = firstValue(client.primaryEmployee?.name, contractPrimaryEmployeeName(contractDocument));
-  const primaryEmployeePhone = documentFieldValue(contractDocument, [
-    "제공인력 1 연락처",
-    "제공인력1연락처",
-    "제공인력 연락처",
-    "관리사 연락처",
-    "산후관리사 연락처",
-    "caretaker1Contact",
-    "caretakerContact",
-    "employeePhone",
-    "providerPhone",
-  ]);
+  const primaryEmployeePhone = firstValue(
+    client.primaryEmployee?.phone,
+    documentFieldValue(contractDocument, [
+      "제공인력 1 연락처",
+      "제공인력1연락처",
+      "제공인력 연락처",
+      "관리사 연락처",
+      "산후관리사 연락처",
+      "caretaker1Contact",
+      "caretakerContact",
+      "employeePhone",
+      "providerPhone",
+    ]),
+  );
   const secondaryEmployeeName = firstValue(
     client.secondaryEmployee?.name,
     documentFieldValue(contractDocument, [
@@ -658,14 +847,17 @@ export function ClientDetailContent({
       "secondaryEmployeeName",
     ]),
   );
-  const secondaryEmployeePhone = documentFieldValue(contractDocument, [
-    "제공인력 2 연락처",
-    "제공인력2연락처",
-    "보조 제공인력 연락처",
-    "보조관리사 연락처",
-    "caretaker2Contact",
-    "secondaryEmployeePhone",
-  ]);
+  const secondaryEmployeePhone = firstValue(
+    client.secondaryEmployee?.phone,
+    documentFieldValue(contractDocument, [
+      "제공인력 2 연락처",
+      "제공인력2연락처",
+      "보조 제공인력 연락처",
+      "보조관리사 연락처",
+      "caretaker2Contact",
+      "secondaryEmployeePhone",
+    ]),
+  );
   const serviceType = firstValue(
     client.type,
     documentFieldValue(contractDocument, [
@@ -797,111 +989,6 @@ export function ClientDetailContent({
       ],
     },
   );
-  const paymentReceiptDate = contractDateValue(
-    contractDocument,
-    [
-      "본인부담금 수령 날짜",
-      "본인부담금수령날짜",
-      "본인부담금 수령일",
-      "본인부담금수령일",
-      "본인부담금 수령 일자",
-      "본인부담금수령일자",
-      "본인 부담금 수령 날짜",
-      "본인 부담금 수령일",
-      "본인 부담금 수령 일자",
-      "본인부담금 결제일",
-      "본인부담금 납부일",
-      "본인부담금 결제 날짜",
-      "본인부담금결제날짜",
-      "본인부담금 납부 날짜",
-      "본인부담금납부날짜",
-      "영수증 날짜",
-      "영수증날짜",
-      "영수증 일자",
-      "영수증일자",
-      "영수증 일",
-      "영수증일",
-      "영수증 발행일",
-      "영수증발행일",
-      "paymentDate",
-      "receiptDate",
-    ],
-    {
-      year: [
-        "본인부담금 수령 년도",
-        "본인부담금수령년도",
-        "본인부담금 수령 연도",
-        "본인부담금수령연도",
-        "본인부담금 수령 년",
-        "본인부담금수령년",
-        "본인 부담금 수령 년도",
-        "본인 부담금 수령 연도",
-        "본인 부담금 수령 년",
-        "본인부담금 결제 년도",
-        "본인부담금결제년도",
-        "본인부담금 납부 년도",
-        "본인부담금납부년도",
-        "영수증 년도",
-        "영수증년도",
-        "영수증 연도",
-        "영수증연도",
-        "영수증 년",
-        "영수증년",
-        "수령 년도",
-        "수령년도",
-        "납부 년도",
-        "납부년도",
-        "결제 년도",
-        "결제년도",
-        "paymentYear",
-        "receiptYear",
-        "selfPayReceiptYear",
-        "copayReceiptYear",
-      ],
-      month: [
-        "본인부담금 수령 월",
-        "본인부담금수령월",
-        "본인 부담금 수령 월",
-        "본인부담금 결제 월",
-        "본인부담금결제월",
-        "본인부담금 납부 월",
-        "본인부담금납부월",
-        "영수증 월",
-        "영수증월",
-        "수령 월",
-        "수령월",
-        "납부 월",
-        "납부월",
-        "결제 월",
-        "결제월",
-        "paymentMonth",
-        "receiptMonth",
-        "selfPayReceiptMonth",
-        "copayReceiptMonth",
-      ],
-      day: [
-        "본인부담금 수령 일",
-        "본인부담금수령일",
-        "본인 부담금 수령 일",
-        "본인부담금 결제 일",
-        "본인부담금결제일",
-        "본인부담금 납부 일",
-        "본인부담금납부일",
-        "영수증 일",
-        "영수증일",
-        "수령 일",
-        "수령일",
-        "납부 일",
-        "납부일",
-        "결제 일",
-        "결제일",
-        "paymentDay",
-        "receiptDay",
-        "selfPayReceiptDay",
-        "copayReceiptDay",
-      ],
-    },
-  );
   const isContractCompleted = client.documentStatus === "completed";
   const contractDocCompletedDate = firstValue(
     isoDateFromTimestamp(contractDocument?.updated_date),
@@ -937,12 +1024,7 @@ export function ClientDetailContent({
     client.actualPrice,
     numericText(documentFieldValue(contractDocument, ["본인부담금", "실결제금액", "actualPrice"])),
   );
-  const servicePeriodLabel =
-    serviceStartDate || serviceEndDate
-      ? formatDateRange(serviceStartDate, serviceEndDate)
-      : serviceDuration
-        ? `${serviceDuration}일`
-        : "-";
+  const servicePeriodLabel = serviceDuration ? `${serviceDuration}일` : "-";
 
   return (
     <MobileDetailPage name="clients">
@@ -957,7 +1039,7 @@ export function ClientDetailContent({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-v3-text-muted transition-colors hover:bg-v3-dim-white"
+                className="flex h-[44px] w-[44px] flex-shrink-0 items-center justify-center rounded-xl text-v3-text-muted transition-colors hover:bg-v3-dim-white"
                 aria-label="고객 옵션"
                 data-component="mobile-clients-detail-menu-trigger"
               >
@@ -977,6 +1059,23 @@ export function ClientDetailContent({
               >
                 <SquarePen className="size-[15px]" strokeWidth={2} />
                 수정
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={isPreparingScheduleChange}
+                onClick={() => void handleOpenServiceScheduleChange()}
+                className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
+                data-component="mobile-clients-detail-menu-change-service-schedule"
+              >
+                <CalendarDays className="size-[15px]" strokeWidth={2} />
+                서비스 일정 변경
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => setResetLinkModalOpen(true)}
+                className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
+                data-component="mobile-clients-detail-menu-reset-service-record-link"
+              >
+                <RotateCcw className="size-[15px]" strokeWidth={2} />
+                제공기록지 링크 재설정
               </DropdownMenuItem>
               <DropdownMenuItem
                 variant="destructive"
@@ -1012,38 +1111,124 @@ export function ClientDetailContent({
         ]}
       />
 
+      <ApprovalTwoButtonModal
+        open={resetLinkModalOpen}
+        onOpenChange={(open) => {
+          if (!open && !isResettingLink) {
+            setResetLinkModalOpen(open);
+          }
+        }}
+                dataComponent="clients-detail-reset-service-record-link-approval"
+                title="제공기록지 링크를 재설정하시겠습니까?"
+                description="기존 링크는 만료되고 새 링크가 생성됩니다. 메시지는 발송되지 않습니다."
+                isDescriptionVisuallyHidden={false}
+                approvalLabel="링크 재설정"
+        pendingLabel="재설정 중..."
+        isPending={isResettingLink}
+        onApprove={() => void handleResetServiceRecordLink()}
+      />
+
+      <ServiceRecordLinkResetResultModal
+        open={resetServiceRecordUrl !== null}
+        serviceRecordUrl={resetServiceRecordUrl ?? ""}
+        onClose={() => setResetServiceRecordUrl(null)}
+        onCopy={(serviceRecordUrl) => void handleCopyResetServiceRecordLink(serviceRecordUrl)}
+      />
+
+      {scheduleChangeTarget ? (
+        <ServiceScheduleChangeModal
+          open
+          sessionIndex={scheduleChangeTarget.sessionIndex}
+          currentDate={scheduleChangeTarget.currentDate}
+          minimumDate={scheduleChangeTarget.minimumDate}
+          selectedDate={selectedScheduleChangeDate}
+          isPending={isApplyingScheduleChange}
+          onDateChange={setSelectedScheduleChangeDate}
+          onClose={() => {
+            setScheduleChangeTarget(null);
+            setSelectedScheduleChangeDate("");
+          }}
+          onSubmit={() => void handleApplyServiceScheduleChange()}
+        />
+      ) : null}
+
       <DetailTabPills
         tabs={[
+          ...(client.pendingScheduleChange ? [{ id: "scheduleChange", label: "일정 변경" }] : []),
           { id: "basic", label: "기본 정보" },
           { id: "contracts", label: "계약서 정보" },
-          { id: "alimtalk", label: "알림 발송" },
+          { id: "message", label: "알림 발송" },
           { id: "serviceRecords", label: "제공기록지" },
         ]}
         activeTab={activeTab}
         onTabChange={(id) => onTabChange(id as DetailTabId)}
       />
 
+      {client.pendingScheduleChange ? (
+        <MobileDetailTabPanel name="clients" tabId="scheduleChange" activeTab={activeTab}>
+          <InfoCard title="서비스 일정 변경 요청이 있습니다.">
+            <InfoRow
+              label="기존 날짜"
+              value={formatScheduleChangeMonthDay(client.pendingScheduleChange.fromDate)}
+            />
+            <InfoRow
+              label="변경 날짜"
+              value={formatScheduleChangeMonthDay(client.pendingScheduleChange.toDate)}
+            />
+            <InfoRow label="회차" value={`${client.pendingScheduleChange.sessionIndex}회차`} />
+            <InfoRow
+              label="종료일"
+              value={`${client.pendingScheduleChange.oldEndDate} → ${client.pendingScheduleChange.newEndDate}`}
+            />
+            <div className="detail-actions card-actions mt-3">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={isScheduleChangeDecisionPending}
+                onClick={() => void handleScheduleChangeDecision("reject")}
+                data-component="mobile-clients-schedule-change-reject"
+              >
+                거부
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={isScheduleChangeDecisionPending}
+                onClick={() => void handleScheduleChangeDecision("approve")}
+                data-component="mobile-clients-schedule-change-approve"
+              >
+                승인
+              </button>
+            </div>
+          </InfoCard>
+        </MobileDetailTabPanel>
+      ) : null}
+
       <MobileDetailTabPanel name="clients" tabId="basic" activeTab={activeTab}>
         <InfoCard title="고객 정보">
           <InfoRow label="이름" value={client.name} />
           <InfoRow label="생년월일" value={formatDate(birthDate)} />
           <InfoRow label="출산 예정일" value={formatDate(dueDate)} />
-          <InfoRow label="연락처" value={phone ?? "-"} />
+          <InfoRow label="연락처" value={phone ? formatKoreanPhoneNumber(phone) : "-"} />
           <InfoRow label="주소" value={address ?? "-"} />
         </InfoCard>
-        <InfoCard title="제공인력" delay={60}>
-          <InfoRow label="제공인력 1" value={primaryEmployeeName ?? "-"} />
-          {primaryEmployeePhone && <InfoRow label="제공인력 1 연락처" value={primaryEmployeePhone} />}
-          <InfoRow label="제공인력 2" value={secondaryEmployeeName ?? "-"} />
-          {secondaryEmployeePhone && <InfoRow label="제공인력 2 연락처" value={secondaryEmployeePhone} />}
+        <InfoCard title="담당 관리사" delay={60}>
+          <InfoRow label="주 담당 인력" value={primaryEmployeeName ?? "-"} />
+          <InfoRow
+            label="주 담당 인력 연락처"
+            value={primaryEmployeePhone ? formatKoreanPhoneNumber(primaryEmployeePhone) : "-"}
+          />
+          <InfoRow label="보조 담당 인력" value={secondaryEmployeeName ?? "-"} />
+          <InfoRow
+            label="보조 담당 인력 연락처"
+            value={secondaryEmployeePhone ? formatKoreanPhoneNumber(secondaryEmployeePhone) : "-"}
+          />
         </InfoCard>
         <InfoCard title="서비스 정보" delay={120}>
           <InfoRow label="바우처 유형" value={serviceType ?? "-"} />
           <InfoRow label="서비스 기간" value={servicePeriodLabel} />
           <InfoRow label="시작일" value={formatDate(serviceStartDate)} />
           <InfoRow label="종료일" value={formatDate(serviceEndDate)} />
-          <InfoRow label="계약 서명일" value={formatDate(contractSignDate)} />
-          <InfoRow label="본인부담금 수령일" value={formatDate(paymentReceiptDate)} />
           <InfoRow label="총 서비스 금액" value={formatPrice(fullPrice)} />
           <InfoRow label="정부지원금" value={formatPrice(grant)} />
           <InfoRow label="본인부담금" value={formatPrice(actualPrice)} />
@@ -1083,31 +1268,44 @@ export function ClientDetailContent({
         )}
       </MobileDetailTabPanel>
 
-      <MobileDetailTabPanel name="clients" tabId="alimtalk" activeTab={activeTab}>
+      <MobileDetailTabPanel name="clients" tabId="message" activeTab={activeTab}>
         {selectedLog ? (
           <ClientMessageHistoryDetail
             view={{
               title: notificationTitle(selectedLog),
+              templateLabel: notificationTitle(selectedLog),
               channelLabel: notificationChannelLabel(selectedLog),
               statusLabel: notificationStatusLabel(selectedLog.status),
               statusTone: notificationStatusTone(selectedLog.status),
               sentAtLabel: formatNotificationTime(selectedLog.createdAt),
               recipientName: selectedLog.recipientName?.trim() || client.name,
-              recipientPhone: selectedLog.receiver?.trim() || "-",
+              recipientPhone: selectedLog.recipientPhone?.trim() || selectedLog.receiver?.trim() || "-",
               messageBody: selectedLog.messageBody?.trim()
                 ? selectedLog.messageBody
                 : "내용이 없습니다.",
-              failureReason: selectedLog.errorMessage?.trim()
-                ? selectedLog.errorMessage
-                : null,
+              failureReason: formatMessageFailureReason(selectedLog.errorMessage) || null,
             }}
             onBack={() => setSelectedEntry(null)}
           />
         ) : (
           <InfoCard title="발송 내역">
             {isNotificationLogsLoading ? (
-              <div className="detail-empty-state" data-component="mobile-clients-alimtalk-loading">
+              <div className="detail-empty-state" data-component="mobile-clients-message-loading">
                 발송 내역을 불러오는 중입니다.
+              </div>
+            ) : isNotificationLogsError ? (
+              <div className="detail-empty-state" data-component="mobile-clients-message-error">
+                <p>발송 내역을 불러오지 못했습니다.</p>
+                {onRetryNotificationLogs ? (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={onRetryNotificationLogs}
+                    data-component="mobile-clients-message-retry"
+                  >
+                    다시 시도
+                  </button>
+                ) : null}
               </div>
             ) : displayNotificationLogs.length > 0 ? (
               displayNotificationLogs.map((log) => {
@@ -1132,7 +1330,7 @@ export function ClientDetailContent({
                 );
               })
             ) : (
-              <div className="detail-empty-state" data-component="mobile-clients-alimtalk-empty">
+              <div className="detail-empty-state" data-component="mobile-clients-message-empty">
                 발송 내역이 없습니다.
               </div>
             )}
@@ -1152,6 +1350,8 @@ export function ClientDetailContent({
           overview={serviceRecordsQuery.data}
           isLoading={serviceRecordsQuery.isLoading}
           isError={serviceRecordsQuery.isError}
+          isRefreshing={serviceRecordsQuery.isFetching && !serviceRecordsQuery.isLoading}
+          onRefresh={() => void serviceRecordsQuery.refetch()}
         />
       </MobileDetailTabPanel>
     </MobileDetailPage>

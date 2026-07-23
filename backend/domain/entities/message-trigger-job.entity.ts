@@ -2,8 +2,21 @@ import {
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
+import {
+    TRIGGER_JOB_CONFIG_RETRY_DELAY_MS,
+    TRIGGER_JOB_MAX_ATTEMPTS,
+    TRIGGER_JOB_RETRY_DELAY_MS,
+} from "domain/constants/message-automation-policy";
 
-export type MessageTriggerJobStatus = "pending" | "sent" | "failed" | "canceled";
+export type MessageTriggerJobStatus = "pending" | "processing" | "sent" | "failed" | "canceled";
+
+export interface MessageTriggerCatchUpMetadata {
+    batchId: string;
+    sequence: number;
+    intervalMinutes: number;
+    originalScheduledFor: string;
+    predecessorDedupeKey: string | null;
+}
 
 export interface MessageTriggerJobPayload {
     clientId?: number | null;
@@ -16,6 +29,7 @@ export interface MessageTriggerJobPayload {
     templateVariables: Record<string, string>;
     buttonUrl?: string | null;
     messageBody?: string | null;
+    catchUp?: MessageTriggerCatchUpMetadata;
 }
 
 export class MessageTriggerJobEntity {
@@ -35,6 +49,8 @@ export class MessageTriggerJobEntity {
         public templateKey: MessageTriggerTemplateKey,
         public dedupeKey: string,
         public payload: MessageTriggerJobPayload,
+        public attempts: number,
+        public nextAttemptAt: Date | null,
         public createdAt: Date,
         public updatedAt: Date,
     ) {}
@@ -68,6 +84,8 @@ export class MessageTriggerJobEntity {
             params.templateKey,
             params.dedupeKey,
             params.payload,
+            0,
+            null,
             now,
             now,
         );
@@ -91,6 +109,8 @@ export class MessageTriggerJobEntity {
         payload: MessageTriggerJobPayload,
         createdAt: Date,
         updatedAt: Date,
+        attempts = 0,
+        nextAttemptAt: Date | null = null,
     ): MessageTriggerJobEntity {
         return new MessageTriggerJobEntity(
             id,
@@ -108,14 +128,43 @@ export class MessageTriggerJobEntity {
             templateKey,
             dedupeKey,
             payload,
+            attempts,
+            nextAttemptAt,
             createdAt,
             updatedAt,
         );
     }
 
+    markProcessing(): void {
+        this.status = "processing";
+        this.updatedAt = new Date();
+    }
+
+    defer(kind: "config" | "transient", reason: string): void {
+        const now = new Date();
+
+        if (kind === "config") {
+            this.status = "pending";
+            this.nextAttemptAt = new Date(now.getTime() + TRIGGER_JOB_CONFIG_RETRY_DELAY_MS);
+            this.updatedAt = now;
+            return;
+        }
+
+        this.attempts += 1;
+        if (this.attempts >= TRIGGER_JOB_MAX_ATTEMPTS) {
+            this.markFailed(reason);
+            return;
+        }
+
+        this.status = "pending";
+        this.nextAttemptAt = new Date(now.getTime() + TRIGGER_JOB_RETRY_DELAY_MS);
+        this.updatedAt = now;
+    }
+
     markSent(): void {
         this.status = "sent";
         this.sentAt = new Date();
+        this.nextAttemptAt = null;
         this.updatedAt = new Date();
     }
 

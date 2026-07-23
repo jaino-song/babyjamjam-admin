@@ -608,8 +608,34 @@
   }
 }
 
+/* Glint UI Scale: responsive sizing tokens for dense application surfaces. */
+.glint-ui-scale-scope {
+  --glint-ui-scope-scale: var(
+    --glint-ui-scale,
+    calc(min(calc(100vw / 1920px), calc(100vh / 1080px)) * 1.1)
+  );
+  --spacing: calc(4px * var(--glint-ui-scope-scale));
+  --text-xs: calc(12px * var(--glint-ui-scope-scale));
+  --text-sm: calc(14px * var(--glint-ui-scope-scale));
+  --text-base: calc(16px * var(--glint-ui-scope-scale));
+  --text-lg: calc(18px * var(--glint-ui-scope-scale));
+  --text-xl: calc(20px * var(--glint-ui-scope-scale));
+  --text-2xl: calc(24px * var(--glint-ui-scope-scale));
+  --text-3xl: calc(30px * var(--glint-ui-scope-scale));
+  --radius-xs: calc(2px * var(--glint-ui-scope-scale));
+  --radius-sm: calc(4px * var(--glint-ui-scope-scale));
+  --radius-md: calc(6px * var(--glint-ui-scope-scale));
+  --radius-lg: calc(8px * var(--glint-ui-scope-scale));
+  --radius-xl: calc(24px * var(--glint-ui-scope-scale));
+  --radius-2xl: calc(28px * var(--glint-ui-scope-scale));
+  --radius-3xl: calc(32px * var(--glint-ui-scope-scale));
+  --radius-pill: calc(50px * var(--glint-ui-scope-scale));
+  font-size: calc(16px * var(--glint-ui-scope-scale));
+}
+
 /* V3: animate direct children of a container (used for page sections and SplitLayout). */
 @layer utilities {
+
   .v3-slide-up-children > * {
     animation: var(--animate-v3-slide-up);
     /* Critical for staggered delays: apply the 0% keyframe during the delay. */
@@ -748,7 +774,7 @@
 [data-component="main-content"][data-mode="compact"] [data-component="contracts-sections"],
 [data-component="main-content"][data-mode="compact"] [data-component="clients-sections"],
 [data-component="main-content"][data-mode="compact"] [data-component="system-admin-sections"],
-[data-component="main-content"][data-mode="compact"] [data-component="alimtalk-sections"],
+[data-component="main-content"][data-mode="compact"] [data-component="messages-sections"],
 [data-component="main-content"][data-mode="compact"] [data-component="settings-sections"] {
   align-items: stretch;
   flex-direction: column;
@@ -760,7 +786,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   )) {
     padding-top: 16px;
@@ -771,7 +797,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   ) {
     align-items: stretch;
@@ -783,7 +809,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   ) [data-component="section-nav"] {
     width: 100%;
@@ -794,7 +820,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   ) [data-component="section-nav-desktop"] {
     display: none !important;
@@ -805,7 +831,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   ) [data-component="section-nav-mobile"] {
     display: block !important;
@@ -816,7 +842,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   ) [data-component="split-layout"] {
     display: block;
@@ -832,7 +858,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   ) [data-component="split-layout-track"] {
     display: flex;
@@ -845,7 +871,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   ) [data-component="split-layout"][data-columns="2"][data-has-selection="true"] [data-component="split-layout-track"] {
     transform: translateX(calc(-100% - var(--compact-panel-gap, 16px)));
@@ -856,7 +882,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   ) [data-component="split-layout-panel"] {
     flex-shrink: 0;
@@ -870,7 +896,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   ) [data-component="split-layout-panel"] > [data-component="list-panel"],
   :is(
@@ -878,7 +904,7 @@
     [data-component="contracts-sections"],
     [data-component="clients-sections"],
     [data-component="system-admin-sections"],
-    [data-component="alimtalk-sections"],
+    [data-component="messages-sections"],
     [data-component="settings-sections"]
   ) [data-component="split-layout-panel"] > [data-component="detail-panel"] {
     width: 100%;
@@ -1107,7 +1133,7 @@ body {
 
 /* Search expand - search input width expansion */
 .expandable-search-overlay-surface {
-  width: calc(32px * var(--v3-ui-scale, 1));
+  width: calc(32px * var(--glint-ui-scale, 1));
   transition:
     width 260ms cubic-bezier(0.22, 1, 0.36, 1),
     background 180ms ease-out;
@@ -1129,7 +1155,7 @@ body {
 
 .expandable-search-overlay-surface[data-expanded="true"] .expandable-search-overlay-input {
   opacity: 1;
-  padding-inline: calc(8px * var(--v3-ui-scale, 1));
+  padding-inline: calc(8px * var(--glint-ui-scale, 1));
   pointer-events: auto;
   transition-delay: 60ms, 0ms;
 }
@@ -1537,6 +1563,12 @@ body {
   }
 }
 
+@keyframes service-record-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .animate-pop-in {
   animation: popIn 0.3s ease-out;
 }
@@ -1559,4 +1591,15 @@ body {
 
 .contract-creation-processing-spinner {
   animation: contract-creation-processing-spin 0.8s linear infinite;
+}
+
+.service-record-refresh-icon--spinning {
+  animation: service-record-refresh-spin 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .service-record-refresh-icon--spinning {
+    animation: none;
+    opacity: 0.65;
+  }
 }

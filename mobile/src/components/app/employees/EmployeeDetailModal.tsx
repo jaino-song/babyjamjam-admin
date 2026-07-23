@@ -5,6 +5,7 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { Employee } from "@/hooks/useEmployees";
 import { normalizeEmployeeGrade } from "@/features/employees/grade";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 
 import {
     Dialog,
@@ -24,12 +25,11 @@ interface EmployeeDetailModalProps {
     onClose: () => void;
     employee: Employee | null;
     onEdit: (employee: Employee) => void;
-    onDelete: (id: number) => Promise<boolean>; // Returns true if deletion succeeded
+    onDelete: (id: number) => void;
 }
 
 const formatDate = (dateStr: string | null | undefined): string => {
-    if (!dateStr) return "-";
-    return new Date(dateStr).toLocaleDateString("ko-KR");
+    return formatDateForDisplay(dateStr);
 };
 
 const formatPhoneNumber = (phone: string | null | undefined): string => {
@@ -56,11 +56,8 @@ export function EmployeeDetailModal({
         onClose();
     };
 
-    const handleDelete = async () => {
-        const success = await onDelete(employee.id);
-        if (success) {
-            onClose(); // Only close modal if deletion succeeded
-        }
+    const handleDelete = () => {
+        onDelete(employee.id);
     };
 
     const getStatusBadge = (openToNextWork: boolean) => {

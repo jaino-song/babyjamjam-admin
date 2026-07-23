@@ -33,7 +33,7 @@ const createTriggerRuleSchema = z
       "SERVICE_INFO",
       "SERVICE_END_REMINDER",
       "EMPLOYEE_ASSIGNED",
-      "SERVICE_FEEDBACK_LINK",
+      "SERVICE_RECORD_LINK",
       "CLIENT_GREETING",
       "PRICE_INFO",
       "REMINDER",

@@ -39,7 +39,7 @@ export function ExpandableSearch({
     <div data-component="expandable-search" className={cn("flex items-center gap-1.5", className)}>
       <button
         onClick={handleToggle}
-        className="w-8 h-8 rounded-2xl flex items-center justify-center hover:bg-v3-dim-white"
+        className="flex h-[44px] w-[44px] items-center justify-center rounded-2xl hover:bg-v3-dim-white"
       >
         <Search className={expanded ? "hidden" : "w-[18px] h-[18px] text-v3-text-muted"} />
       </button>

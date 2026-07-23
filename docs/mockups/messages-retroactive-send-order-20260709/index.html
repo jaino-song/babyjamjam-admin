@@ -1,0 +1,999 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>지난 자동 전송 순서 설정 Mockup</title>
+    <style>
+      :root {
+        --bg: #f4f7fb;
+        --surface: #ffffff;
+        --surface-soft: #f8fafc;
+        --surface-tint: #edf6f2;
+        --ink: #172033;
+        --muted: #6f7c8d;
+        --line: #dbe4ef;
+        --line-strong: #c9d6e5;
+        --primary: #0f766e;
+        --primary-dark: #0b5f59;
+        --primary-soft: #dff4ef;
+        --accent: #2563eb;
+        --warning: #b7791f;
+        --warning-soft: #fff6db;
+        --danger: #b4234a;
+        --shadow: 0 24px 70px rgba(23, 32, 51, 0.12);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at 8% 0%, rgba(15, 118, 110, 0.14), transparent 26rem),
+          linear-gradient(135deg, #fbfcfe 0%, var(--bg) 100%);
+        color: var(--ink);
+        font-family: Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      button,
+      input {
+        font: inherit;
+      }
+
+      .page {
+        width: min(1320px, calc(100vw - 48px));
+        margin: 0 auto;
+        padding: 32px 0;
+      }
+
+      .app-shell {
+        overflow: hidden;
+        min-height: 820px;
+        border: 1px solid rgba(201, 214, 229, 0.72);
+        border-radius: 28px;
+        background: rgba(255, 255, 255, 0.82);
+        box-shadow: var(--shadow);
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 22px 26px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.9);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .mark {
+        display: grid;
+        width: 42px;
+        height: 42px;
+        place-items: center;
+        border-radius: 14px;
+        background: var(--primary-soft);
+        color: var(--primary);
+      }
+
+      .mark svg,
+      .mini-icon svg,
+      .row-icon svg,
+      .toolbar-icon svg {
+        display: block;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      .brand-title {
+        font-size: 17px;
+        font-weight: 800;
+        line-height: 1.2;
+      }
+
+      .brand-subtitle {
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .section-tabs {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--surface-soft);
+      }
+
+      .tab {
+        min-height: 34px;
+        border: 0;
+        border-radius: 12px;
+        background: transparent;
+        color: var(--muted);
+        padding: 0 13px;
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .tab.active {
+        background: var(--surface);
+        color: var(--primary-dark);
+        box-shadow: 0 4px 16px rgba(23, 32, 51, 0.08);
+      }
+
+      .content {
+        display: grid;
+        min-height: 748px;
+        grid-template-columns: 380px minmax(0, 1fr);
+        gap: 22px;
+        padding: 24px;
+      }
+
+      .panel {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        background: var(--surface);
+      }
+
+      .panel-header {
+        padding: 22px 22px 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .panel-title-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .panel-title {
+        font-size: 18px;
+        font-weight: 850;
+        line-height: 1.2;
+      }
+
+      .panel-subtitle {
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 650;
+        line-height: 1.55;
+      }
+
+      .count-pill,
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 26px;
+        white-space: nowrap;
+        border-radius: 999px;
+        background: var(--primary-soft);
+        color: var(--primary-dark);
+        padding: 0 10px;
+        font-size: 11px;
+        font-weight: 850;
+      }
+
+      .list {
+        display: grid;
+        gap: 10px;
+        padding: 14px;
+      }
+
+      .list-item {
+        display: grid;
+        grid-template-columns: 42px minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: center;
+        min-height: 74px;
+        border: 1px solid transparent;
+        border-radius: 18px;
+        background: var(--surface-soft);
+        padding: 12px;
+      }
+
+      .list-item.active {
+        border-color: rgba(15, 118, 110, 0.26);
+        background: var(--primary);
+        color: #ffffff;
+        box-shadow: 0 18px 38px rgba(15, 118, 110, 0.22);
+      }
+
+      .list-item.active .item-subtitle,
+      .list-item.active .switch-label {
+        color: rgba(255, 255, 255, 0.82);
+      }
+
+      .list-item.active .row-icon,
+      .list-item.active .switch {
+        background: rgba(255, 255, 255, 0.18);
+        color: #ffffff;
+      }
+
+      .row-icon {
+        display: grid;
+        width: 42px;
+        height: 42px;
+        place-items: center;
+        border-radius: 15px;
+        background: #ffffff;
+        color: var(--primary);
+      }
+
+      .item-title {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 13px;
+        font-weight: 850;
+      }
+
+      .item-subtitle {
+        display: -webkit-box;
+        overflow: hidden;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 650;
+        line-height: 1.45;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+      }
+
+      .switch-wrap {
+        display: grid;
+        justify-items: end;
+        gap: 5px;
+      }
+
+      .switch {
+        position: relative;
+        width: 36px;
+        height: 22px;
+        border-radius: 999px;
+        background: var(--primary);
+      }
+
+      .switch::after {
+        position: absolute;
+        top: 3px;
+        right: 3px;
+        width: 16px;
+        height: 16px;
+        border-radius: 999px;
+        background: #ffffff;
+        content: "";
+      }
+
+      .switch-label {
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 800;
+      }
+
+      .detail {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+      }
+
+      .detail-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 24px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .detail-heading {
+        display: flex;
+        min-width: 0;
+        gap: 16px;
+      }
+
+      .detail-avatar {
+        display: grid;
+        width: 52px;
+        height: 52px;
+        flex: 0 0 auto;
+        place-items: center;
+        border-radius: 17px;
+        background: var(--primary-soft);
+        color: var(--primary);
+      }
+
+      .detail-title {
+        font-size: 21px;
+        font-weight: 900;
+        line-height: 1.15;
+      }
+
+      .detail-subtitle {
+        margin-top: 7px;
+        max-width: 720px;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 650;
+        line-height: 1.6;
+      }
+
+      .detail-body {
+        display: grid;
+        gap: 18px;
+        padding: 22px 24px 26px;
+      }
+
+      .info-strip {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .metric {
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: var(--surface-soft);
+        padding: 15px;
+      }
+
+      .metric-label {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 800;
+      }
+
+      .metric-value {
+        margin-top: 7px;
+        font-size: 16px;
+        font-weight: 900;
+      }
+
+      .callout {
+        display: flex;
+        gap: 13px;
+        border: 1px solid rgba(183, 121, 31, 0.26);
+        border-radius: 18px;
+        background: var(--warning-soft);
+        padding: 15px;
+      }
+
+      .callout .mini-icon {
+        background: #ffffff;
+        color: var(--warning);
+      }
+
+      .mini-icon {
+        display: grid;
+        width: 34px;
+        height: 34px;
+        flex: 0 0 auto;
+        place-items: center;
+        border-radius: 12px;
+        background: var(--primary-soft);
+        color: var(--primary);
+      }
+
+      .callout-title {
+        font-size: 12px;
+        font-weight: 900;
+      }
+
+      .callout-text {
+        margin-top: 4px;
+        color: #6c541e;
+        font-size: 12px;
+        font-weight: 650;
+        line-height: 1.55;
+      }
+
+      .form-card {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        background: var(--surface);
+      }
+
+      .form-card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 18px 18px 14px;
+        border-bottom: 1px solid var(--line);
+        background: var(--surface-soft);
+      }
+
+      .form-title {
+        font-size: 14px;
+        font-weight: 900;
+      }
+
+      .form-note {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 650;
+      }
+
+      .toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .toolbar-button,
+      .primary-button,
+      .secondary-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        min-height: 36px;
+        border-radius: 12px;
+        padding: 0 13px;
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      .toolbar-button,
+      .secondary-button {
+        border: 1px solid var(--line-strong);
+        background: #ffffff;
+        color: var(--ink);
+      }
+
+      .primary-button {
+        border: 1px solid var(--primary-dark);
+        background: var(--primary);
+        color: #ffffff;
+      }
+
+      .order-list {
+        display: grid;
+        gap: 0;
+      }
+
+      .order-row {
+        display: grid;
+        grid-template-columns: 54px minmax(210px, 1fr) 160px 130px 100px;
+        gap: 14px;
+        align-items: center;
+        min-height: 82px;
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .order-row:last-child {
+        border-bottom: 0;
+      }
+
+      .order-number {
+        display: grid;
+        width: 38px;
+        height: 38px;
+        place-items: center;
+        border-radius: 13px;
+        background: var(--primary-soft);
+        color: var(--primary-dark);
+        font-size: 13px;
+        font-weight: 950;
+      }
+
+      .message-name {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        min-width: 0;
+      }
+
+      .message-icon {
+        display: grid;
+        width: 36px;
+        height: 36px;
+        flex: 0 0 auto;
+        place-items: center;
+        border-radius: 13px;
+        background: #edf2ff;
+        color: var(--accent);
+      }
+
+      .message-title {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 13px;
+        font-weight: 900;
+      }
+
+      .message-meta {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .select-like,
+      .order-input {
+        display: flex;
+        align-items: center;
+        min-height: 38px;
+        border: 1px solid var(--line-strong);
+        border-radius: 13px;
+        background: #ffffff;
+        color: var(--ink);
+        padding: 0 11px;
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .order-input {
+        justify-content: space-between;
+      }
+
+      .order-input input {
+        width: 48px;
+        border: 0;
+        outline: 0;
+        color: var(--ink);
+        font-size: 13px;
+        font-weight: 900;
+      }
+
+      .move-buttons {
+        display: flex;
+        justify-content: flex-end;
+        gap: 6px;
+      }
+
+      .icon-button {
+        display: grid;
+        width: 36px;
+        height: 36px;
+        place-items: center;
+        border: 1px solid var(--line-strong);
+        border-radius: 12px;
+        background: #ffffff;
+        color: var(--ink);
+      }
+
+      .icon-button:disabled {
+        color: #b5c0cc;
+        background: var(--surface-soft);
+      }
+
+      .status-text {
+        justify-self: start;
+        border-radius: 999px;
+        background: var(--surface-tint);
+        color: var(--primary-dark);
+        padding: 6px 9px;
+        font-size: 11px;
+        font-weight: 850;
+      }
+
+      .status-text.off {
+        background: #f1f5f9;
+        color: var(--muted);
+      }
+
+      .footer-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        border-top: 1px solid var(--line);
+        padding: 16px 18px;
+        background: var(--surface-soft);
+      }
+
+      .save-note {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      @media (max-width: 1080px) {
+        .page {
+          width: min(100vw - 28px, 820px);
+          padding: 18px 0;
+        }
+
+        .content {
+          grid-template-columns: 1fr;
+        }
+
+        .info-strip {
+          grid-template-columns: 1fr;
+        }
+
+        .order-row {
+          grid-template-columns: 44px minmax(0, 1fr);
+        }
+
+        .select-like,
+        .order-input,
+        .status-text,
+        .move-buttons {
+          grid-column: 2;
+        }
+      }
+
+      @media (max-width: 720px) {
+        .topbar,
+        .detail-header,
+        .form-card-header,
+        .footer-actions {
+          align-items: stretch;
+          flex-direction: column;
+        }
+
+        .section-tabs {
+          overflow-x: auto;
+        }
+
+        .content {
+          padding: 14px;
+        }
+
+        .detail-body {
+          padding: 16px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="app-shell">
+        <header class="topbar">
+          <div class="brand">
+            <div class="mark" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                <path d="M4 7.5h16M7 12h10M9.5 16.5h5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              </svg>
+            </div>
+            <div>
+              <h1 class="brand-title">메시지</h1>
+              <p class="brand-subtitle">자동 전송과 설정을 관리합니다</p>
+            </div>
+          </div>
+
+          <nav class="section-tabs" aria-label="메시지 섹션">
+            <button class="tab">자동 전송</button>
+            <button class="tab">발송 내역</button>
+            <button class="tab active">설정</button>
+          </nav>
+        </header>
+
+        <div class="content">
+          <aside class="panel">
+            <div class="panel-header">
+              <div class="panel-title-row">
+                <div>
+                  <h2 class="panel-title">설정</h2>
+                  <p class="panel-subtitle">메시지에 관련된 설정들을 정할 수 있어요</p>
+                </div>
+                <span class="count-pill">5개</span>
+              </div>
+            </div>
+
+            <div class="list">
+              <article class="list-item">
+                <div class="row-icon" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path d="M8 7h8M8 12h6M6 20h12a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 class="item-title">제공기록지 전송 자동화 규칙</h3>
+                  <p class="item-subtitle">서비스 시작일 오후 3시에 주 담당 제공인력에게 작성 링크를 발송합니다.</p>
+                </div>
+                <div class="switch-wrap">
+                  <span class="switch" aria-hidden="true"></span>
+                  <span class="switch-label">활성</span>
+                </div>
+              </article>
+
+              <article class="list-item active">
+                <div class="row-icon" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path d="M7 8h10M7 12h7M7 16h4M18 3v18M6 3v18" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 class="item-title">지난 자동 전송 순서</h3>
+                  <p class="item-subtitle">고객 등록 시 이미 지난 자동 메시지를 어떤 순서로 보낼지 정합니다.</p>
+                </div>
+                <div class="switch-wrap">
+                  <span class="switch" aria-hidden="true"></span>
+                  <span class="switch-label">활성</span>
+                </div>
+              </article>
+
+              <article class="list-item">
+                <div class="row-icon" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path d="M3 12a9 9 0 1 0 3-6.7M3 4v6h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 class="item-title">SMS 재시도 규칙</h3>
+                  <p class="item-subtitle">SMS 전송 실패 시 5분 후 자동 재시도합니다.</p>
+                </div>
+                <div class="switch-wrap">
+                  <span class="switch" aria-hidden="true"></span>
+                  <span class="switch-label">활성</span>
+                </div>
+              </article>
+
+              <article class="list-item">
+                <div class="row-icon" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path d="M12 8v4l3 2M21 12a9 9 0 1 1-2.6-6.4" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 class="item-title">지난 자동 전송 처리 규칙</h3>
+                  <p class="item-subtitle">고객 추가 시점보다 이미 지난 자동 전송 루틴 처리 방식을 관리합니다.</p>
+                </div>
+                <div class="switch-wrap">
+                  <span class="switch" aria-hidden="true"></span>
+                  <span class="switch-label">활성</span>
+                </div>
+              </article>
+
+              <article class="list-item">
+                <div class="row-icon" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path d="M8 12h8M12 8v8M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 class="item-title">중복 전송 확인</h3>
+                  <p class="item-subtitle">72시간 내 같은 번호와 같은 메시지는 전송 전 확인합니다.</p>
+                </div>
+                <div class="switch-wrap">
+                  <span class="switch" aria-hidden="true"></span>
+                  <span class="switch-label">활성</span>
+                </div>
+              </article>
+            </div>
+          </aside>
+
+          <section class="panel detail">
+            <div class="detail-header">
+              <div class="detail-heading">
+                <div class="detail-avatar" aria-hidden="true">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                    <path d="M6 5h12M6 12h9M6 19h6M18 5v14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  </svg>
+                </div>
+                <div>
+                  <h2 class="detail-title">지난 자동 전송 순서</h2>
+                  <p class="detail-subtitle">
+                    신규 고객 등록 시점에 이미 지나간 자동 메시지가 여러 개 있으면, 아래 순서대로 발송합니다.
+                    기본 발송 시간은 그대로 유지하고 같은 시점에 몰린 지난 메시지만 이 순서를 사용합니다.
+                  </p>
+                </div>
+              </div>
+              <span class="status-pill">변경 가능</span>
+            </div>
+
+            <div class="detail-body">
+              <div class="info-strip">
+                <div class="metric">
+                  <p class="metric-label">적용 대상</p>
+                  <p class="metric-value">지난 자동 메시지</p>
+                </div>
+                <div class="metric">
+                  <p class="metric-label">정렬 기준</p>
+                  <p class="metric-value">빠른 시간 + 지정 순서</p>
+                </div>
+                <div class="metric">
+                  <p class="metric-label">기본값</p>
+                  <p class="metric-value">인사 후 리마인더</p>
+                </div>
+              </div>
+
+              <div class="callout">
+                <div class="mini-icon" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path d="M12 8v5M12 17h.01M10.3 3.9 2.6 17.2A2 2 0 0 0 4.3 20h15.4a2 2 0 0 0 1.7-2.8L13.7 3.9a2 2 0 0 0-3.4 0Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 class="callout-title">예시</h3>
+                  <p class="callout-text">
+                    고객이 늦게 등록되어 인사 메시지와 리마인더가 모두 지난 메시지가 되면,
+                    아래 순서에 따라 인사 메시지를 먼저 보내고 리마인더를 다음으로 보냅니다.
+                  </p>
+                </div>
+              </div>
+
+              <div class="form-card">
+                <div class="form-card-header">
+                  <div>
+                    <h3 class="form-title">발송 순서</h3>
+                    <p class="form-note">숫자가 작을수록 먼저 발송됩니다. 비활성 규칙은 목록에 남지만 전송되지 않습니다.</p>
+                  </div>
+                  <div class="toolbar">
+                    <button class="toolbar-button" type="button">
+                      <span class="toolbar-icon" aria-hidden="true">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                          <path d="M3 12a9 9 0 1 0 3-6.7M3 4v6h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                      </span>
+                      기본값
+                    </button>
+                  </div>
+                </div>
+
+                <div class="order-list">
+                  <div class="order-row">
+                    <div class="order-number">1</div>
+                    <div class="message-name">
+                      <div class="message-icon" aria-hidden="true">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+                          <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v8Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p class="message-title">신규 고객 인사 메시지</p>
+                        <p class="message-meta">CLIENT_CREATED · 즉시 · 고객</p>
+                      </div>
+                    </div>
+                    <div class="select-like">인사 메시지</div>
+                    <label class="order-input">
+                      <input value="1" aria-label="신규 고객 인사 메시지 순서" />
+                      순서
+                    </label>
+                    <div class="move-buttons">
+                      <button class="icon-button" type="button" disabled aria-label="위로 이동">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                          <path d="m18 15-6-6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                      </button>
+                      <button class="icon-button" type="button" aria-label="아래로 이동">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                          <path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="order-row">
+                    <div class="order-number">2</div>
+                    <div class="message-name">
+                      <div class="message-icon" aria-hidden="true">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+                          <path d="M12 8v5l3 2M21 12a9 9 0 1 1-9-9" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p class="message-title">서비스 시작 리마인더</p>
+                        <p class="message-meta">SERVICE_START · 1일 전 · 고객</p>
+                      </div>
+                    </div>
+                    <div class="select-like">리마인더</div>
+                    <label class="order-input">
+                      <input value="2" aria-label="서비스 시작 리마인더 순서" />
+                      순서
+                    </label>
+                    <div class="move-buttons">
+                      <button class="icon-button" type="button" aria-label="위로 이동">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                          <path d="m18 15-6-6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                      </button>
+                      <button class="icon-button" type="button" aria-label="아래로 이동">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                          <path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="order-row">
+                    <div class="order-number">3</div>
+                    <div class="message-name">
+                      <div class="message-icon" aria-hidden="true">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+                          <path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p class="message-title">서비스 안내 메시지</p>
+                        <p class="message-meta">SERVICE_START · 7일 전 · 고객</p>
+                      </div>
+                    </div>
+                    <div class="select-like">서비스 안내</div>
+                    <label class="order-input">
+                      <input value="3" aria-label="서비스 안내 메시지 순서" />
+                      순서
+                    </label>
+                    <div class="move-buttons">
+                      <button class="icon-button" type="button" aria-label="위로 이동">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                          <path d="m18 15-6-6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                      </button>
+                      <button class="icon-button" type="button" aria-label="아래로 이동">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                          <path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="order-row">
+                    <div class="order-number">4</div>
+                    <div class="message-name">
+                      <div class="message-icon" aria-hidden="true">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+                          <path d="M20 7 9 18l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p class="message-title">종료 감사 메시지</p>
+                        <p class="message-meta">SERVICE_END · 당일 · 고객</p>
+                      </div>
+                    </div>
+                    <div class="select-like">감사 메시지</div>
+                    <label class="order-input">
+                      <input value="4" aria-label="종료 감사 메시지 순서" />
+                      순서
+                    </label>
+                    <div class="move-buttons">
+                      <button class="icon-button" type="button" aria-label="위로 이동">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                          <path d="m18 15-6-6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                      </button>
+                      <button class="icon-button" type="button" disabled aria-label="아래로 이동">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                          <path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="footer-actions">
+                  <p class="save-note">저장하면 앞으로 생성되는 지난 자동 전송 작업에 적용됩니다.</p>
+                  <div class="toolbar">
+                    <button class="secondary-button" type="button">취소</button>
+                    <button class="primary-button" type="button">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                      </svg>
+                      순서 저장
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

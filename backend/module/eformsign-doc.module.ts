@@ -11,12 +11,14 @@ import {
     FetchAllEformsignDocsFromApiUsecase,
     FetchEformsignDocFromApiUsecase,
     UpdateEformsignDocStatusUsecase,
+    LinkDocumentToClientUsecase,
     CreateEformsignDocUsecase,
     CreateAndSendContractUsecase,
     ListClientNamesByBranchUsecase,
     SyncClientEndDateUsecase,
     DispatchDocumentHeadlessUsecase,
     FinalizeDocumentHeadlessUsecase,
+    AdoptEformsignDocUsecase,
 } from "application/usecases/eformsign-doc";
 import { EFORMSIGN_DOC_REPOSITORY } from "domain/repositories/eformsign-doc.repository.interface";
 import { EFORMSIGN_CLIENT_REPOSITORY } from "domain/repositories/eformsign.client.interface";
@@ -32,7 +34,8 @@ import { EformsignHeadlessProgressService } from "application/services/eformsign
 import { EformsignHeadlessService } from "infrastructure/automation/eformsign-headless.service";
 import { AreaTemplateModule } from "module/area-template.module";
 import { EformsignDocController } from "interface/controllers/eformsign-doc.controller";
-import { CreateAndSendFeedbackSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-feedback-snapshot.usecase";
+import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase";
+import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
 
 @Module({
     imports: [DatabaseModule, AreaTemplateModule],
@@ -46,6 +49,7 @@ import { CreateAndSendFeedbackSnapshotUsecase } from "application/usecases/eform
         ListOtherBranchDocumentIdsUsecase,
         CreateEformsignDocUsecase,
         UpdateEformsignDocStatusUsecase,
+        LinkDocumentToClientUsecase,
         ListClientNamesByBranchUsecase,
         SyncClientEndDateUsecase,
         // Use cases - External API
@@ -55,17 +59,19 @@ import { CreateAndSendFeedbackSnapshotUsecase } from "application/usecases/eform
         FetchEformsignDocFromApiUsecase,
         // Use cases - Contract creation
         CreateAndSendContractUsecase,
-        // Use case - Feedback snapshot (BJJ-247)
-        CreateAndSendFeedbackSnapshotUsecase,
+        // Use case - Service record snapshot (BJJ-247)
+        CreateAndSendServiceRecordSnapshotUsecase,
         // Use cases - Headless dispatch (BJJ-90)
         DispatchDocumentHeadlessUsecase,
         FinalizeDocumentHeadlessUsecase,
+        AdoptEformsignDocUsecase,
         // Services
         EformsignDocService,
         EformsignService,
         EformsignHeadlessService,
         EformsignDocsEventBus,
         EformsignHeadlessProgressService,
+        ContractClientAssignmentGuardService,
         // Repository bindings
         {
             provide: EFORMSIGN_DOC_REPOSITORY,
@@ -87,7 +93,7 @@ import { CreateAndSendFeedbackSnapshotUsecase } from "application/usecases/eform
         EformsignDocsEventBus,
         EformsignHeadlessProgressService,
         EFORMSIGN_CLIENT_REPOSITORY,
-        CreateAndSendFeedbackSnapshotUsecase,
+        CreateAndSendServiceRecordSnapshotUsecase,
     ],
 })
 export class EformsignDocModule {}

@@ -1,7 +1,15 @@
-import { BadRequestException, Body, Controller, ForbiddenException, Get, Headers, Ip, Post, Query, Req, Request, Res, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Headers, Ip, Logger, Post, Query, Req, Request, Res, UseGuards } from "@nestjs/common";
 import { Response, Request as ExpressRequest } from "express";
-import { AuthGuard } from "@nestjs/passport";
-import { AuthService, NO_ACCESSIBLE_BRANCH_MESSAGE, type KakaoUserValidationResult } from "../../application/services/auth.service";
+import {
+    AuthService,
+    type KakaoLoginClient,
+    type KakaoUserValidationResult,
+} from "../../application/services/auth.service";
+import {
+    AUTH_ERROR_CODES,
+    isAuthErrorCode,
+    type AuthErrorCode,
+} from "../../application/constants/auth-error.constants";
 import { JwtGuard } from "../../infrastructure/auth/jwt.guard";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
 import { TokenExchangeDto } from "interface/dto/token-exchange.dto";
@@ -19,14 +27,22 @@ import {
 } from "interface/dto/email-auth.dto";
 import { SelectBranchDto, SwitchBranchDto } from "interface/dto/branch-auth.dto";
 import { CompleteKakaoOnboardingDto } from "interface/dto/kakao-onboarding.dto";
-import { isVisibleStaffBranchSlug } from "domain/constants/branch-routing.constants";
+import { LogoutDto } from "interface/dto/logout.dto";
 import { getKakaoOAuthConfig } from "infrastructure/auth/kakao-config";
+import {
+    KakaoAuthGuard,
+    KAKAO_OAUTH_ERROR_REQUEST_KEY,
+    type KakaoCallbackRequest,
+} from "../../infrastructure/auth/kakao-auth.guard";
+import { normalizePhone } from "application/utils/normalize-phone";
 
 @Controller("auth")
 export class AuthController {
     private static readonly PENDING_SIGNUP_TOKEN_HEADER = "x-pending-signup-token";
     private static readonly PENDING_ONBOARDING_TOKEN_HEADER = "x-pending-onboarding-token";
     private static readonly OAUTH_NONCE_COOKIE = "kakao_oauth_nonce";
+    private static readonly LEGACY_FRONTEND_URL = "https://imirae-incheon-back-office.vercel.app";
+    private readonly logger = new Logger(AuthController.name);
 
     constructor(
         private readonly authService: AuthService,
@@ -37,13 +53,17 @@ export class AuthController {
     @Get("kakao")
     async kakaoLogin(@Query("client") client: string | undefined, @Res() res: Response) {
         // Initiate Kakao OAuth manually so we can both:
-        //  - carry the originating client (mobile vs desktop) in the OAuth `state`, so the
-        //    callback returns mobile users to m.staff.* instead of the desktop domain, and
+        //  - carry the allowlisted originating client in the OAuth `state`, so the callback
+        //    returns mobile and legacy users to their own frontend instead of the desktop domain, and
         //  - bind the round-trip to THIS browser with a single-use nonce cookie, so a forged
         //    callback from another browser is rejected (login-CSRF protection).
         // Both frontends navigate the browser directly to this backend host to start the flow,
         // so the nonce cookie set here is sent back on the callback (same host).
-        const target = client === "mobile" ? "mobile" : "desktop";
+        const target: KakaoLoginClient = client === "mobile"
+            ? "mobile"
+            : client === "legacy"
+                ? "legacy"
+                : "desktop";
         const { signedState, nonce } = await this.authService.createKakaoLoginState(target);
         this.setOAuthNonceCookie(res, nonce);
 
@@ -51,21 +71,37 @@ export class AuthController {
     }
 
     @Get("kakao/callback")
-    @UseGuards(AuthGuard("kakao"))
-    async kakaoCallback(@Req() req: any, @Res() res: Response) {
+    @UseGuards(KakaoAuthGuard)
+    async kakaoCallback(@Req() req: KakaoCallbackRequest, @Res() res: Response) {
         // `state` is a signed JWT: { client, nonce } for login, or a userId payload for
         // linking. For login, the matching single-use nonce was stored in an httpOnly cookie
         // at initiation; reading + clearing it here and requiring it to match the signed nonce
         // binds this callback to the browser that started the flow (login-CSRF protection).
-        const state = req.query.state as string | undefined;
+        const state = req.query["state"] as string | undefined;
         const nonce = req.cookies?.[AuthController.OAUTH_NONCE_COOKIE] as string | undefined;
         this.clearOAuthNonceCookie(res);
 
         // Account-linking flow: state is a signed JWT bound to a userId (JwtGuard-gated).
         const linkingInfo = state ? await this.authService.verifyLinkingState(state) : null;
         if (linkingInfo) {
+            const oauthErrorCode = req[KAKAO_OAUTH_ERROR_REQUEST_KEY];
+            if (oauthErrorCode) {
+                return this.redirectWithAuthError(
+                    res,
+                    `${this.resolveFrontendURL("desktop")}/settings`,
+                    oauthErrorCode,
+                );
+            }
+
             console.log(`[Auth] Linking Kakao account to user ${linkingInfo.userId}`);
-            return this.completeKakaoLink(linkingInfo.userId, req.user, res, this.resolveFrontendURL("desktop"));
+            return this.completeKakaoLink(
+                linkingInfo.userId,
+                linkingInfo.sessionId,
+                state!,
+                req.user,
+                res,
+                this.resolveFrontendURL("desktop"),
+            );
         }
 
         // Login/registration flow: state is a signed JWT carrying { client, nonce }.
@@ -73,19 +109,43 @@ export class AuthController {
         if (!loginState) {
             // Login-CSRF guard: state missing/forged/expired, or its nonce does not match the cookie.
             console.warn("[Auth] Rejected Kakao callback: invalid or unbound OAuth state");
-            return res.redirect(`${this.resolveFrontendURL("desktop")}/login?error=invalid_oauth_state`);
+            return this.redirectWithAuthError(
+                res,
+                `${this.resolveFrontendURL("desktop")}/login`,
+                AUTH_ERROR_CODES.INVALID_OAUTH_STATE,
+            );
         }
 
         const frontendURL = this.resolveFrontendURL(loginState.client);
+        const oauthErrorCode = req[KAKAO_OAUTH_ERROR_REQUEST_KEY];
+        if (oauthErrorCode) {
+            return this.redirectWithAuthError(
+                res,
+                `${frontendURL}/login`,
+                oauthErrorCode,
+            );
+        }
+
+        if (!req.user) {
+            return this.redirectWithAuthError(
+                res,
+                `${frontendURL}/login`,
+                AUTH_ERROR_CODES.OAUTH_PROVIDER_ERROR,
+            );
+        }
 
         // Normal login/registration flow
         let result: KakaoUserValidationResult;
         try {
             result = await this.authService.validateKakaoUser(req.user);
         } catch (error) {
-            if (error instanceof ForbiddenException && error.message === NO_ACCESSIBLE_BRANCH_MESSAGE) {
-                const query = new URLSearchParams({ error: NO_ACCESSIBLE_BRANCH_MESSAGE });
-                return res.redirect(`${frontendURL}/callback?${query.toString()}`);
+            const authErrorCode = this.getAuthErrorCode(error);
+            if (authErrorCode) {
+                return this.redirectWithAuthError(
+                    res,
+                    `${frontendURL}/login`,
+                    authErrorCode,
+                );
             }
 
             throw error;
@@ -97,9 +157,10 @@ export class AuthController {
                 : await this.authService.createPendingAccountOnboardingCode(result.userId)
             : await this.authService.createAuthCode(result as { accessToken: string; refreshToken: string; requiresBranchSelection?: boolean });
 
-        console.log(`[Auth] Redirecting to ${frontendURL}/callback (NODE_ENV: ${process.env['NODE_ENV']})`);
+        const callbackPath = this.resolveCallbackPath(loginState.client);
+        this.logger.log(`[Auth] Redirecting to ${frontendURL}${callbackPath} (NODE_ENV: ${process.env['NODE_ENV']})`);
 
-        res.redirect(`${frontendURL}/callback?code=${code}`);
+        res.redirect(`${frontendURL}${callbackPath}?code=${code}`);
     }
 
     @Get("me")
@@ -151,6 +212,7 @@ export class AuthController {
     }
 
     @Post("kakao/complete-signup")
+    @UseGuards(RateLimitGuard)
     async completeKakaoOnboarding(
         @Headers(AuthController.PENDING_SIGNUP_TOKEN_HEADER) headerToken: string | undefined,
         @Query("token") queryToken: string | undefined,
@@ -165,7 +227,6 @@ export class AuthController {
             token,
             body.phone,
             body.birthDate,
-            body.branchId,
             body.role,
         );
     }
@@ -184,26 +245,16 @@ export class AuthController {
     }
 
     @Post("onboarding/complete")
-    async completeAccountOnboarding(
-        @Headers(AuthController.PENDING_ONBOARDING_TOKEN_HEADER) headerToken: string | undefined,
-        @Query("token") queryToken: string | undefined,
-        @Body() body: CompleteKakaoOnboardingDto,
-    ) {
-        const token = headerToken ?? queryToken;
-        if (!token) {
-            throw new BadRequestException("Pending onboarding token is required");
-        }
-
-        return this.authService.completeAccountOnboarding(
-            token,
-            body.phone,
-            body.birthDate,
-            body.branchId,
-            body.role,
-        );
+    @UseGuards(RateLimitGuard)
+    completeAccountOnboarding(): never {
+        throw new ForbiddenException({
+            code: AUTH_ERROR_CODES.ACCOUNT_PROFILE_INCOMPLETE,
+            message: "가입 정보와 지점 배정은 오너가 확인해야 합니다.",
+        });
     }
 
     @Post("refresh-token")
+    @UseGuards(RateLimitGuard)
     async refreshToken(@Body() body: RefreshTokenDto) {
         const tokens = await this.authService.refreshTokens(body.refreshToken);
         return tokens;
@@ -220,13 +271,11 @@ export class AuthController {
             body.name,
             body.phone,
             body.birthDate,
-            body.branchId,
-            body.role,
         );
 
         // Reset rate limit on successful registration
         if (result.success) {
-            this.rateLimitGuard.resetForKey(ip, body.email);
+            await this.rateLimitGuard.resetForKey(ip, body.email, "post:register");
         }
 
         return result;
@@ -238,55 +287,79 @@ export class AuthController {
         const normalizedEmail = email?.trim().toLowerCase();
 
         if (!normalizedEmail) {
-            return { exists: false, linkable: false };
+            return { exists: false };
         }
 
         const user = await this.prisma.user.findUnique({
             where: { email: normalizedEmail },
-            select: { id: true, kakaoId: true, passwordHash: true },
+            select: { id: true },
         });
 
-        const linkable = Boolean(user?.kakaoId && !user.passwordHash);
-        return {
-            exists: Boolean(user),
-            linkable,
-        };
+        return { exists: Boolean(user) };
+    }
+
+    @Get("check-phone")
+    @UseGuards(RateLimitGuard)
+    async checkPhone(@Query("phone") phone?: string) {
+        const normalizedPhone = normalizePhone(phone);
+
+        if (!normalizedPhone || normalizedPhone.length !== 11) {
+            return { exists: false };
+        }
+
+        const formattedPhone = [
+            normalizedPhone.slice(0, 3),
+            normalizedPhone.slice(3, 7),
+            normalizedPhone.slice(7),
+        ].join("-");
+        const user = await this.prisma.user.findFirst({
+            where: { phone: { in: [normalizedPhone, formattedPhone] } },
+            select: { id: true },
+        });
+
+        return { exists: Boolean(user) };
     }
 
     @Post("login")
     @UseGuards(RateLimitGuard)
-    async login(@Body() body: LoginDto, @Ip() ip: string, @Req() req: ExpressRequest) {
-        const result = await this.authService.validateEmailPassword(
-            body.email,
-            body.password,
-        );
+    async login(@Body() body: LoginDto, @Ip() ip: string) {
+        const startedAt = Date.now();
+        try {
+            const result = await this.authService.validateEmailPassword(
+                body.email,
+                body.password,
+            );
 
-        if (!result) {
-            // Don't reset rate limit on failed login
-            return {
-                success: false,
-                message: '이메일 또는 비밀번호가 올바르지 않습니다.',
-            };
-        }
+            if (!result) {
+                return {
+                    success: false,
+                    message: '이메일 또는 비밀번호가 올바르지 않습니다.',
+                };
+            }
 
-        // Reset rate limit on successful login
-        this.rateLimitGuard.resetForKey(ip, body.email);
+            await this.rateLimitGuard.resetForKey(ip, body.email, "post:login");
 
-        if ("onboardingRequired" in result && result.onboardingRequired) {
-            const pendingAccountOnboardingToken = await this.authService.startPendingAccountOnboarding(result.userId);
+            if ("onboardingRequired" in result && result.onboardingRequired) {
+                const pendingAccountOnboardingToken = await this.authService.startPendingAccountOnboarding(result.userId);
+
+                return {
+                    success: true,
+                    onboardingRequired: true,
+                    onboardingRoute: "/onboarding",
+                    pendingAccountOnboardingToken,
+                };
+            }
 
             return {
                 success: true,
-                onboardingRequired: true,
-                onboardingRoute: "/onboarding",
-                pendingAccountOnboardingToken,
+                ...result,
             };
+        } finally {
+            this.logger.log(JSON.stringify({
+                event: "auth_login_duration_ms",
+                durationMs: Date.now() - startedAt,
+            }));
         }
-
-        return {
-            success: true,
-            ...result,
-        };
     }
 
     @Post("verify-email")
@@ -301,6 +374,7 @@ export class AuthController {
     }
 
     @Post("reset-password")
+    @UseGuards(RateLimitGuard)
     async resetPassword(@Body() body: ResetPasswordDto) {
         return this.authService.resetPassword(body.token, body.newPassword);
     }
@@ -314,7 +388,11 @@ export class AuthController {
     @Post("link-password")
     @UseGuards(JwtGuard)
     async linkPassword(@Body() body: LinkPasswordDto, @Request() req: any) {
-        return this.authService.linkPasswordToOAuthAccount(req.user.userId, body.password);
+        return this.authService.linkPasswordToOAuthAccount(
+            req.user.userId,
+            body.password,
+            req.user.sessionId,
+        );
     }
 
     /**
@@ -324,7 +402,10 @@ export class AuthController {
     @Get("kakao/link")
     @UseGuards(JwtGuard)
     async initiateKakaoLink(@Request() req: any, @Res() res: Response) {
-        const state = await this.authService.createLinkingState(req.user.userId);
+        const state = await this.authService.createLinkingState(
+            req.user.userId,
+            req.user.sessionId,
+        );
         res.redirect(this.buildKakaoAuthorizeUrl(state));
     }
 
@@ -334,19 +415,29 @@ export class AuthController {
      */
     private async completeKakaoLink(
         userId: string,
+        sessionId: string,
+        linkingStateToken: string,
         kakaoData: any,
         res: Response,
         frontendURL: string,
     ) {
         try {
-            await this.authService.linkKakaoToAccount(userId, kakaoData);
+            await this.authService.linkKakaoToAccount(
+                userId,
+                kakaoData,
+                sessionId,
+                linkingStateToken,
+            );
 
             // Redirect to frontend with success
-            res.redirect(`${frontendURL}/dashboard/settings?kakao_linked=true`);
+            res.redirect(`${frontendURL}/settings?kakaoLinked=true`);
         } catch (error: any) {
-            // Redirect to frontend with error
-            const errorMessage = encodeURIComponent(error.message || '카카오 연결에 실패했습니다.');
-            res.redirect(`${frontendURL}/dashboard/settings?kakao_link_error=${errorMessage}`);
+            this.logger.warn(`Kakao account linking failed: ${error instanceof Error ? error.message : "unknown error"}`);
+            this.redirectWithAuthError(
+                res,
+                `${frontendURL}/settings`,
+                AUTH_ERROR_CODES.OAUTH_PROVIDER_ERROR,
+            );
         }
     }
 
@@ -360,15 +451,9 @@ export class AuthController {
     }
 
     @Get("branches/all")
+    @UseGuards(RateLimitGuard)
     async getAllActiveBranches() {
-        const branches = await this.prisma.branch.findMany({
-            where: { isActive: true },
-            select: { id: true, name: true, slug: true },
-            orderBy: { name: 'asc' },
-        });
-        return branches
-            .filter((branch) => isVisibleStaffBranchSlug(branch.slug))
-            .map(({ id, name }) => ({ id, name }));
+        return this.authService.getPublicActiveBranches();
     }
 
     @Post("select-branch")
@@ -380,7 +465,8 @@ export class AuthController {
     ) {
         const tokens = await this.authService.selectBranch(
             req.user.userId,
-            body.branchId
+            body.branchId,
+            req.user.sessionId,
         );
 
         this.setAuthCookies(res, tokens);
@@ -398,7 +484,8 @@ export class AuthController {
         const tokens = await this.authService.switchBranch(
             req.user.userId,
             body.currentBranchId,
-            body.newBranchId
+            body.newBranchId,
+            req.user.sessionId,
         );
 
         this.setAuthCookies(res, tokens);
@@ -407,16 +494,61 @@ export class AuthController {
     }
 
     @Post("logout")
-    async logout(@Res({ passthrough: true }) res: Response) {
+    async logout(
+        @Body() body: LogoutDto,
+        @Req() req: ExpressRequest,
+        @Res({ passthrough: true }) res: Response,
+    ) {
+        const authorization = req.headers.authorization;
+        const accessToken = authorization?.startsWith("Bearer ")
+            ? authorization.slice("Bearer ".length)
+            : undefined;
+        await this.authService.logoutWithCredentials({
+            refreshToken: body.refreshToken || req.cookies?.["refresh_token"],
+            accessToken,
+        });
         // Clear auth cookies
         res.clearCookie('auth_token', { path: '/' });
         res.clearCookie('refresh_token', { path: '/' });
         res.clearCookie('selected_branch_id', { path: '/' });
+        res.clearCookie('auto_login', { path: '/' });
 
         return { success: true, message: 'Logged out successfully' };
     }
 
+    @Post("logout-all")
+    @UseGuards(JwtGuard)
+    async logoutAll(
+        @Request() req: any,
+        @Res({ passthrough: true }) res: Response,
+    ) {
+        await this.authService.logoutAllSessions(req.user.userId);
+        res.clearCookie('auth_token', { path: '/' });
+        res.clearCookie('refresh_token', { path: '/' });
+        res.clearCookie('selected_branch_id', { path: '/' });
+        res.clearCookie('auto_login', { path: '/' });
+        return { success: true, message: 'Logged out from all sessions' };
+    }
+
     // ==================== Private Helper Methods ====================
+
+    private getAuthErrorCode(error: unknown): AuthErrorCode | null {
+        if (!(error instanceof ForbiddenException)) return null;
+
+        const response = error.getResponse();
+        const code = typeof response === "object"
+            && response !== null
+            && "code" in response
+            ? response.code
+            : undefined;
+
+        return isAuthErrorCode(code) ? code : null;
+    }
+
+    private redirectWithAuthError(res: Response, pathname: string, code: AuthErrorCode) {
+        const query = new URLSearchParams({ authError: code });
+        return res.redirect(`${pathname}?${query.toString()}`);
+    }
 
     private getRoleFromToken(token: string): string | null {
         const [, payload] = token.split(".");
@@ -430,16 +562,20 @@ export class AuthController {
         }
     }
 
-    private resolveFrontendURL(client: "mobile" | "desktop"): string {
+    private resolveFrontendURL(client: KakaoLoginClient): string {
         const nodeEnv = process.env['NODE_ENV'];
         const fallback = "http://localhost:3000";
+
+        if (client === "legacy" && nodeEnv === "production") {
+            return AuthController.LEGACY_FRONTEND_URL;
+        }
 
         const desktopURL =
             nodeEnv === "production" ? process.env['PRODUCTION_FRONTEND_URL']
             : nodeEnv === "preview" ? process.env['PREVIEW_FRONTEND_URL']
             : process.env['DEVELOPMENT_FRONTEND_URL'];
 
-        if (client === "desktop") {
+        if (client !== "mobile") {
             return desktopURL ?? fallback;
         }
 
@@ -451,6 +587,10 @@ export class AuthController {
         // Fall back to the desktop URL until the mobile URL env var is configured, so a
         // missing var degrades gracefully (current behavior) instead of breaking login.
         return mobileURL ?? desktopURL ?? fallback;
+    }
+
+    private resolveCallbackPath(client: KakaoLoginClient): "/callback" | "/auth/callback" {
+        return client === "legacy" ? "/auth/callback" : "/callback";
     }
 
     private buildKakaoAuthorizeUrl(state: string): string {
@@ -480,14 +620,14 @@ export class AuthController {
     private setAuthCookies(res: Response, tokens: { accessToken: string; refreshToken: string }) {
         const isProduction = process.env['NODE_ENV'] === 'production';
         const role = this.getRoleFromToken(tokens.accessToken);
-        const maxAge = getAuthTokenMaxAgeMs(role);
+        const refreshMaxAge = getAuthTokenMaxAgeMs(role);
 
         res.cookie('auth_token', tokens.accessToken, {
             httpOnly: true,
             secure: isProduction,
             sameSite: 'lax',
             path: '/',
-            maxAge,
+            maxAge: 15 * 60 * 1000,
         });
 
         res.cookie('refresh_token', tokens.refreshToken, {
@@ -495,7 +635,7 @@ export class AuthController {
             secure: isProduction,
             sameSite: 'lax',
             path: '/',
-            maxAge,
+            maxAge: refreshMaxAge,
         });
     }
 }

@@ -1,5 +1,6 @@
 import { UnauthorizedException, ForbiddenException } from "@nestjs/common";
 import { AuthService } from "../../application/services/auth.service";
+import { AuthSessionService } from "../../application/services/auth-session.service";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
 import { JwtService } from "@nestjs/jwt";
 import { EmailPort } from "../../domain/ports/email.port";
@@ -9,11 +10,13 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
     // Test Fixtures & Setup
     // ============================================
 
-    const createMockPrismaService = () => ({
+    const createMockPrismaService = () => {
+        const prisma = {
         user: {
             findFirst: jest.fn(),
             findUnique: jest.fn(),
             create: jest.fn(),
+            update: jest.fn(),
         },
         user_branch: {
             findFirst: jest.fn(),
@@ -24,7 +27,21 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
             findUnique: jest.fn(),
             findMany: jest.fn(),
         },
-    });
+        auth_token: {
+            create: jest.fn(),
+            deleteMany: jest.fn(),
+        },
+        auth_email_outbox: {
+            create: jest.fn(),
+        },
+        auth_session: {
+            updateMany: jest.fn(),
+        },
+        $transaction: jest.fn(),
+        };
+        prisma.$transaction.mockImplementation(async (callback: (tx: typeof prisma) => unknown) => callback(prisma));
+        return prisma;
+    };
 
     const createMockJwtService = () => ({
         signAsync: jest.fn(),
@@ -43,6 +60,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
         findByUserIdAndType: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
+        consumeWithinTx: jest.fn(),
         delete: jest.fn(),
         deleteByUserIdAndType: jest.fn(),
         deleteExpiredTokens: jest.fn(),
@@ -57,6 +75,8 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
         birthDate: "1990-01-01",
         profileImage: null,
         role: "user",
+        approvalStatus: "approved",
+        tokenVersion: 0,
     };
 
     const mockBranch = {
@@ -92,19 +112,53 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
     let jwtService: ReturnType<typeof createMockJwtService>;
     let emailService: EmailPort;
     let authTokenRepository: ReturnType<typeof createMockAuthTokenRepository>;
+    let authSessionService: {
+        issueSession: jest.Mock;
+        changeSessionBranch: jest.Mock;
+        rotateRefreshToken: jest.Mock;
+    };
 
     beforeEach(() => {
         prismaService = createMockPrismaService();
         jwtService = createMockJwtService();
         emailService = createMockEmailService();
         authTokenRepository = createMockAuthTokenRepository();
+        const issueTokens = async (
+            user: typeof mockUser,
+            branch?: { branchId?: string; branchRole?: string },
+        ) => ({
+            accessToken: await jwtService.signAsync({
+                sub: user.id,
+                sid: "session-1",
+                role: user.role,
+                tokenVersion: user.tokenVersion,
+                ...(branch?.branchId
+                    ? {
+                        branchId: branch.branchId,
+                        branchRole: branch.branchRole,
+                    }
+                    : {}),
+                type: "access",
+            }, { expiresIn: "15m" }),
+            refreshToken: "refresh-id.opaque-secret",
+        });
+        authSessionService = {
+            issueSession: jest.fn(issueTokens),
+            changeSessionBranch: jest.fn((
+                _sessionId: string,
+                user: typeof mockUser,
+                branch: { branchId?: string; branchRole?: string },
+            ) => issueTokens(user, branch)),
+            rotateRefreshToken: jest.fn(),
+        };
 
         // Type assertion to work around constructor typing
         service = new AuthService(
             prismaService as unknown as PrismaService,
             jwtService as unknown as JwtService,
             emailService,
-            authTokenRepository as unknown as ReturnType<typeof createMockAuthTokenRepository>
+            authTokenRepository as unknown as ReturnType<typeof createMockAuthTokenRepository>,
+            authSessionService as unknown as AuthSessionService,
         );
 
         // Setup default mock returns
@@ -141,7 +195,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 await service.validateKakaoUser(kakaoData);
 
                 // #then
-                expect(jwtService.signAsync).toHaveBeenCalledTimes(2);
+                expect(jwtService.signAsync).toHaveBeenCalledTimes(1);
                 const accessCall = jwtService.signAsync.mock.calls.find(
                     (call: any[]) => call[0]?.type === "access"
                 );
@@ -172,7 +226,8 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 const accessCall = jwtService.signAsync.mock.calls.find(
                     (call: any[]) => call[0]?.type === "access"
                 );
-                expect(accessCall?.[0]).not.toHaveProperty("branchId");
+                expect(accessCall).toBeDefined();
+                expect(accessCall![0]).not.toHaveProperty("branchId");
             });
 
             it("should set requiresBranchSelection=true in result", async () => {
@@ -356,12 +411,9 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
             });
         });
 
-        it.each([
-            { role: "owner", expectedExpiresIn: "30d" },
-            { role: "admin", expectedExpiresIn: "7d" },
-            { role: "manager", expectedExpiresIn: "7d" },
-            { role: "user", expectedExpiresIn: "3d" },
-        ])("should issue $expectedExpiresIn tokens for $role role", async ({ role, expectedExpiresIn }) => {
+        it.each(["owner", "admin", "manager", "user"])(
+        "should issue a 15m access token and opaque refresh session for %s",
+        async (role) => {
             // #given
             const userId = mockUser.id;
             const branchId = mockBranch.id;
@@ -381,12 +433,11 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
             const accessCall = jwtService.signAsync.mock.calls.find(
                 (call: any[]) => call[0]?.type === "access"
             );
-            const refreshCall = jwtService.signAsync.mock.calls.find(
-                (call: any[]) => call[0]?.type === "refresh"
-            );
-            expect(accessCall?.[1]).toEqual({ expiresIn: expectedExpiresIn });
-            expect(refreshCall?.[1]).toEqual({ expiresIn: expectedExpiresIn });
-        });
+            expect(accessCall?.[1]).toEqual({ expiresIn: "15m" });
+            expect(authSessionService.issueSession).toHaveBeenCalled();
+            expect(jwtService.signAsync.mock.calls).toHaveLength(1);
+        },
+        );
     });
 
     // ============================================
@@ -443,17 +494,14 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
     // registerWithEmail Tests
     // ============================================
     describe("registerWithEmail", () => {
-        it("should allow passwords without uppercase letters when other requirements pass", async () => {
+        it("should reject passwords without uppercase letters", async () => {
             const result = service.validatePasswordStrength("password1!");
 
-            expect(result).toEqual({
-                valid: true,
-                errors: [],
-            });
+            expect(result.valid).toBe(false);
+            expect(result.errors).toContain("비밀번호에 대문자가 포함되어야 합니다.");
         });
 
-        it("should preserve the submitted branch role on membership creation", async () => {
-            prismaService.branch.findUnique.mockResolvedValue(mockBranch);
+        it("should leave branch assignment to the owner approval flow", async () => {
             prismaService.user.findUnique
                 .mockResolvedValueOnce(null)
                 .mockResolvedValueOnce({ name: "Manager User" });
@@ -469,21 +517,14 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
 
             await service.registerWithEmail(
                 "manager@example.com",
-                "password1!",
+                "Password1!",
                 "Manager User",
                 "010-1234-5678",
                 "1990-01-01",
-                mockBranch.id,
-                "manager",
             );
 
-            expect(prismaService.user_branch.create).toHaveBeenCalledWith({
-                data: {
-                    userId: "new-user-uuid-123",
-                    branchId: mockBranch.id,
-                    role: "manager",
-                },
-            });
+            expect(prismaService.branch.findUnique).not.toHaveBeenCalled();
+            expect(prismaService.user_branch.create).not.toHaveBeenCalled();
         });
     });
 
@@ -491,91 +532,20 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
     // refreshTokens Tests
     // ============================================
     describe("refreshTokens", () => {
-        describe("given refresh token with branchId", () => {
-            it("should preserve branchId in new tokens", async () => {
-                // #given
-                const refreshToken = "valid-refresh-token";
-                const decodedPayload = {
-                    sub: mockUser.id,
-                    role: mockUser.role,
-                    type: "refresh" as const,
-                    branchId: mockBranch.id,
-                };
-
-                jwtService.verifyAsync.mockResolvedValue(decodedPayload);
-                prismaService.user.findUnique.mockResolvedValue(mockUser);
-
-                // #when
-                await service.refreshTokens(refreshToken);
-
-                // #then
-                const accessCall = jwtService.signAsync.mock.calls.find(
-                    (call: any[]) => call[0]?.type === "access"
-                );
-                const refreshCall = jwtService.signAsync.mock.calls.find(
-                    (call: any[]) => call[0]?.type === "refresh"
-                );
-                expect(accessCall?.[0]).toHaveProperty("branchId", mockBranch.id);
-                expect(refreshCall?.[0]).toHaveProperty("branchId", mockBranch.id);
+        it("delegates opaque refresh rotation without decoding it as JWT", async () => {
+            authSessionService.rotateRefreshToken.mockResolvedValue({
+                accessToken: "new-access",
+                refreshToken: "next-id.next-secret",
             });
-        });
 
-        describe("given refresh token without branchId", () => {
-            it("should issue tokens without branchId", async () => {
-                // #given
-                const refreshToken = "valid-refresh-token";
-                const decodedPayload = {
-                    sub: mockUser.id,
-                    role: mockUser.role,
-                    type: "refresh" as const,
-                };
-
-                jwtService.verifyAsync.mockResolvedValue(decodedPayload);
-                prismaService.user.findUnique.mockResolvedValue(mockUser);
-
-                // #when
-                await service.refreshTokens(refreshToken);
-
-                // #then
-                const accessCall = jwtService.signAsync.mock.calls.find(
-                    (call: any[]) => call[0]?.type === "access"
-                );
-                const refreshCall = jwtService.signAsync.mock.calls.find(
-                    (call: any[]) => call[0]?.type === "refresh"
-                );
-                expect(accessCall?.[0]).not.toHaveProperty("branchId");
-                expect(refreshCall?.[0]).not.toHaveProperty("branchId");
+            await expect(service.refreshTokens("token-id.opaque-secret")).resolves.toEqual({
+                accessToken: "new-access",
+                refreshToken: "next-id.next-secret",
             });
-        });
-
-        describe("given user no longer belongs to branch from refresh token", () => {
-            it("should issue tokens without branchId", async () => {
-                // #given
-                const refreshToken = "valid-refresh-token";
-                const decodedPayload = {
-                    sub: mockUser.id,
-                    role: mockUser.role,
-                    type: "refresh" as const,
-                    branchId: mockBranch.id,
-                };
-
-                jwtService.verifyAsync.mockResolvedValue(decodedPayload);
-                prismaService.user.findUnique.mockResolvedValue(mockUser);
-                prismaService.user_branch.findFirst.mockResolvedValue(null);
-
-                // #when
-                await service.refreshTokens(refreshToken);
-
-                // #then
-                const accessCall = jwtService.signAsync.mock.calls.find(
-                    (call: any[]) => call[0]?.type === "access"
-                );
-                const refreshCall = jwtService.signAsync.mock.calls.find(
-                    (call: any[]) => call[0]?.type === "refresh"
-                );
-                expect(accessCall?.[0]).not.toHaveProperty("branchId");
-                expect(refreshCall?.[0]).not.toHaveProperty("branchId");
-            });
+            expect(authSessionService.rotateRefreshToken).toHaveBeenCalledWith(
+                "token-id.opaque-secret",
+            );
+            expect(jwtService.verifyAsync).not.toHaveBeenCalled();
         });
     });
 
@@ -709,40 +679,32 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
     });
 
     // ============================================
-    // Email Failure Resilience Tests
+    // Email outbox resilience tests
     // ============================================
     describe("requestPasswordReset", () => {
-        it("should return success even when password reset email delivery fails", async () => {
+        it("should return success after queuing a password reset email", async () => {
             // #given
             prismaService.user.findUnique.mockResolvedValue({
                 ...mockUser,
                 emailVerified: true,
             });
-            authTokenRepository.deleteByUserIdAndType.mockResolvedValue(undefined);
-            authTokenRepository.create.mockResolvedValue(undefined);
-            (emailService.sendPasswordResetEmail as jest.Mock).mockRejectedValue(
-                new Error("resend unavailable"),
-            );
-
-            // #when
             const result = await service.requestPasswordReset(mockUser.email);
 
-            // #then
             expect(result).toEqual({
                 success: true,
                 message: "비밀번호 재설정 이메일이 발송되었습니다.",
             });
-            expect(authTokenRepository.deleteByUserIdAndType).toHaveBeenCalledWith(
-                mockUser.id,
-                "password_reset",
-            );
-            expect(authTokenRepository.create).toHaveBeenCalledTimes(1);
-            expect(emailService.sendPasswordResetEmail).toHaveBeenCalledTimes(1);
+            expect(prismaService.auth_token.deleteMany).toHaveBeenCalledWith({
+                where: { userId: mockUser.id, type: "password_reset" },
+            });
+            expect(prismaService.auth_token.create).toHaveBeenCalledTimes(1);
+            expect(prismaService.auth_email_outbox.create).toHaveBeenCalledTimes(1);
+            expect(emailService.sendPasswordResetEmail).not.toHaveBeenCalled();
         });
     });
 
     describe("resendVerificationEmail", () => {
-        it("should return success even when verification email delivery fails", async () => {
+        it("should return success after queuing a verification email", async () => {
             // #given
             prismaService.user.findUnique
                 .mockResolvedValueOnce({
@@ -752,26 +714,18 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 .mockResolvedValueOnce({
                     name: mockUser.name,
                 });
-            authTokenRepository.deleteByUserIdAndType.mockResolvedValue(undefined);
-            authTokenRepository.create.mockResolvedValue(undefined);
-            (emailService.sendVerificationEmail as jest.Mock).mockRejectedValue(
-                new Error("resend unavailable"),
-            );
-
-            // #when
             const result = await service.resendVerificationEmail(mockUser.email);
 
-            // #then
             expect(result).toEqual({
                 success: true,
                 message: "인증 이메일이 발송되었습니다.",
             });
-            expect(authTokenRepository.deleteByUserIdAndType).toHaveBeenCalledWith(
-                mockUser.id,
-                "email_verification",
-            );
-            expect(authTokenRepository.create).toHaveBeenCalledTimes(1);
-            expect(emailService.sendVerificationEmail).toHaveBeenCalledTimes(1);
+            expect(prismaService.auth_token.deleteMany).toHaveBeenCalledWith({
+                where: { userId: mockUser.id, type: "email_verification" },
+            });
+            expect(prismaService.auth_token.create).toHaveBeenCalledTimes(1);
+            expect(prismaService.auth_email_outbox.create).toHaveBeenCalledTimes(1);
+            expect(emailService.sendVerificationEmail).not.toHaveBeenCalled();
         });
     });
 });

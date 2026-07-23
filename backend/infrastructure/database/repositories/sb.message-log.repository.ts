@@ -5,9 +5,9 @@ import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { MessageLogMapper } from "infrastructure/database/mapper/message-log.mapper";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
-    SERVICE_FEEDBACK_LINK_RULE_ID,
-    SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
-} from "domain/constants/service-feedback-link-message";
+    SERVICE_RECORD_LINK_RULE_ID,
+    SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
+} from "domain/constants/service-record-link-message";
 
 @Injectable()
 export class SbMessageLogRepository implements IMessageLogRepository {
@@ -28,6 +28,64 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         return MessageLogMapper.toDomain(row);
     }
 
+    async startRetryAttempt(
+        sourceLog: MessageLogEntity,
+        retryLog: MessageLogEntity,
+    ): Promise<MessageLogEntity | null> {
+        return this.prisma.$transaction(async (transaction) => {
+            const claimedAt = new Date(Date.now());
+            const claimed = await transaction.message_log.updateMany({
+                where: {
+                    id: sourceLog.id,
+                    branchId: sourceLog.branchId,
+                    status: sourceLog.status,
+                    nextRetryAt: sourceLog.nextRetryAt,
+                    updatedAt: sourceLog.updatedAt,
+                },
+                data: {
+                    nextRetryAt: null,
+                    updatedAt: claimedAt,
+                },
+            });
+
+            if (claimed.count !== 1) {
+                return null;
+            }
+
+            const row = await transaction.message_log.create({
+                data: MessageLogMapper.toPrismaCreate(retryLog),
+            });
+            return MessageLogMapper.toDomain(row);
+        });
+    }
+
+    async findByIdInBranch(branchId: string, id: number): Promise<MessageLogEntity | null> {
+        const row = await this.prisma.message_log.findFirst({
+            where: { id, branchId },
+        });
+        return row ? MessageLogMapper.toDomain(row) : null;
+    }
+
+    async findSentTriggerJobIds(jobIds: string[]): Promise<Set<string>> {
+        if (jobIds.length === 0) {
+            return new Set<string>();
+        }
+
+        const rows = await this.prisma.message_log.findMany({
+            where: {
+                triggerJobId: { in: jobIds },
+                status: "sent",
+            },
+            select: { triggerJobId: true },
+        });
+
+        return new Set(
+            rows
+                .map((row) => row.triggerJobId)
+                .filter((triggerJobId): triggerJobId is string => Boolean(triggerJobId)),
+        );
+    }
+
     async findPendingRetries(): Promise<MessageLogEntity[]> {
         const rows = await this.prisma.message_log.findMany({
             where: {
@@ -40,11 +98,11 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         return rows.map(MessageLogMapper.toDomain);
     }
 
-    async findRetryableServiceFeedbackSmsByScheduleId(scheduleId: number): Promise<MessageLogEntity[]> {
+    async findRetryableServiceRecordSmsByScheduleId(scheduleId: number): Promise<MessageLogEntity[]> {
         const jobs = await this.prisma.message_trigger_job.findMany({
             where: {
                 employeeScheduleId: scheduleId,
-                ruleId: SERVICE_FEEDBACK_LINK_RULE_ID,
+                ruleId: SERVICE_RECORD_LINK_RULE_ID,
             },
             select: { id: true },
         });
@@ -53,7 +111,7 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         const rows = await this.prisma.message_log.findMany({
             where: {
                 provider: "aligo_sms",
-                templateKey: SERVICE_FEEDBACK_LINK_SMS_LOG_TEMPLATE_KEY,
+                templateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
                 status: { in: ["pending", "failed"] },
                 nextRetryAt: { not: null },
                 OR: [

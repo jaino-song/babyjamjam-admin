@@ -100,8 +100,7 @@ export const CustomTemplateForm = ({
     const generatedMessage = messageOverride ?? templateMessage;
 
     const handleCopy = () => {
-        navigator.clipboard.writeText(generatedMessage);
-        alert(t(locale, "common.copy-success-message"));
+        return navigator.clipboard.writeText(generatedMessage);
     };
 
     const variableItems = template.variables
@@ -141,6 +140,7 @@ export const CustomTemplateForm = ({
         <AutoFillMsgCard
             title={t(locale, "common.generated-message-title")}
             copyButtonText={t(locale, "common.copy-button")}
+            copySuccessMessage={t(locale, "common.copy-success-message")}
             message={generatedMessage}
             bodyDescription={`${template.name} 템플릿의 본문과 변수를 함께 검토할 수 있습니다.`}
             metaItems={[

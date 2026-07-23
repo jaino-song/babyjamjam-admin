@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useEffect } from "react";
 import { Plus, Upload, CloudUpload, FileText, Image as ImageIcon, File, Loader2 } from "lucide-react";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
@@ -434,42 +435,22 @@ export function DocumentsTable() {
                 isLoading={createCategoryMutation.isPending}
             />
 
-            {/* Delete Confirmation Dialog */}
-            <Dialog open={!!deleteDoc} onOpenChange={(open: boolean) => !open && setDeleteDoc(null)}>
-                <DialogContent className="sm:max-w-[400px]">
-                    <DialogHeader>
-                        <DialogTitle>{t(locale, "documents.delete-confirm-title")}</DialogTitle>
-                        <DialogDescription>
-                            {t(locale, "documents.delete-confirm-message")}
-                        </DialogDescription>
-                    </DialogHeader>
-                    <DialogFooter className="gap-2">
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setDeleteDoc(null)}
-                            disabled={deleteMutation.isPending}
-                        >
-                            {t(locale, "common.cancel")}
-                        </Button>
-                        <Button
-                            variant="destructive"
-                            size="sm"
-                            onClick={handleDelete}
-                            disabled={deleteMutation.isPending}
-                        >
-                            {deleteMutation.isPending ? (
-                                <>
-                                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                                    {t(locale, "common.deleting")}
-                                </>
-                            ) : (
-                                t(locale, "common.delete")
-                            )}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
+            <TwoButtonModal
+                open={deleteDoc !== null}
+                onOpenChange={(open) => {
+                    if (!open) setDeleteDoc(null);
+                }}
+                dataComponent="documents-delete-approval"
+                title={t(locale, "documents.delete-confirm-title")}
+                description={t(locale, "documents.delete-confirm-message")}
+                isDescriptionVisuallyHidden={false}
+                cancelLabel={t(locale, "common.cancel")}
+                approvalLabel={t(locale, "common.delete")}
+                pendingLabel={t(locale, "common.deleting")}
+                approvalVariant="destructive"
+                isPending={deleteMutation.isPending}
+                onApprove={() => void handleDelete()}
+            />
         </ContentPaper>
     );
 }

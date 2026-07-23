@@ -7,7 +7,6 @@ import { Check, CheckCircle, Link2 } from "lucide-react";
 import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { FormField } from "@/components/auth/form-field";
 import { PasswordRequirements } from "@/components/auth/password-requirements";
-import { SelectField } from "@/components/auth/select-field";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -24,6 +23,10 @@ const REGISTER_PRIMARY_BUTTON_CLASS_NAME = "h-10 gap-1.5 px-5 text-[0.72rem] fon
 const REGISTER_SECONDARY_BUTTON_CLASS_NAME = "h-10 gap-1.5 px-5 text-[0.72rem] font-semibold md:text-[0.77rem]";
 const REGISTER_PASSWORD_REQUIREMENTS_CLASS_NAME = "justify-center [&_li]:text-[0.78rem] [&_svg]:h-3.5 [&_svg]:w-3.5";
 const REGISTER_SUBTITLE = "필수 정보를 단계별로 입력해 주세요.";
+const PHONE_DUPLICATE_CHECK_PENDING_MESSAGE = "연락처 중복 확인 중입니다. 잠시만 기다려주세요.";
+const PHONE_DUPLICATE_CHECK_FAILED_MESSAGE = "문제가 발생했어요. 새로고침 해주세요.";
+const PHONE_DUPLICATE_AVAILABLE_MESSAGE = "등록 가능한 번호입니다.";
+const PHONE_DUPLICATE_ERROR_MESSAGE = "이미 존재하는 사용자 입니다.";
 const REGISTER_STEP_TRANSITION = {
   duration: 0.18,
   ease: [0.22, 1, 0.36, 1] as const,
@@ -173,15 +176,16 @@ function RegisterStepFields({
   errors,
   emailLinkableMessage,
   isLoading,
-  isLoadingOrgs,
   passwordStrength,
-  branches,
-  roleOptions,
   handleChange,
   handleEmailBlur,
   handlePhoneChange,
   handleBirthDateChange,
-  handleSelectChange,
+  hasPhoneDuplicateCheckFailed,
+  isCheckingPhoneDuplicate,
+  isPhoneCheckReady,
+  isPhoneDuplicate,
+  lastCheckedPhoneDigits,
 }: Pick<
   ReturnType<typeof useRegisterPageController>,
   | "currentStep"
@@ -189,16 +193,39 @@ function RegisterStepFields({
   | "errors"
   | "emailLinkableMessage"
   | "isLoading"
-  | "isLoadingOrgs"
   | "passwordStrength"
-  | "branches"
-  | "roleOptions"
+  | "hasPhoneDuplicateCheckFailed"
+  | "isCheckingPhoneDuplicate"
+  | "isPhoneCheckReady"
+  | "isPhoneDuplicate"
+  | "lastCheckedPhoneDigits"
   | "handleChange"
   | "handleEmailBlur"
   | "handlePhoneChange"
   | "handleBirthDateChange"
-  | "handleSelectChange"
 >) {
+  const phoneDigits = (formData.phone ?? "").replace(/\D/g, "");
+  const phoneInlineMessage =
+    phoneDigits.length === 11
+      ? isPhoneCheckReady
+        ? PHONE_DUPLICATE_AVAILABLE_MESSAGE
+        : isCheckingPhoneDuplicate
+          ? PHONE_DUPLICATE_CHECK_PENDING_MESSAGE
+          : hasPhoneDuplicateCheckFailed
+            ? PHONE_DUPLICATE_CHECK_FAILED_MESSAGE
+            : lastCheckedPhoneDigits !== phoneDigits
+              ? PHONE_DUPLICATE_CHECK_PENDING_MESSAGE
+              : isPhoneDuplicate
+                ? PHONE_DUPLICATE_ERROR_MESSAGE
+                : null
+      : null;
+  const hasPhoneStatusError =
+    phoneDigits.length === 11 &&
+    (hasPhoneDuplicateCheckFailed ||
+      (lastCheckedPhoneDigits === phoneDigits && isPhoneDuplicate));
+  const phoneFieldError = errors.phone ??
+    (hasPhoneStatusError ? phoneInlineMessage ?? undefined : undefined);
+
   return (
     <div data-component="auth-register-step-fields" className="flex flex-col gap-[14px]">
       {currentStep === 0 ? (
@@ -273,14 +300,27 @@ function RegisterStepFields({
             data-component="auth-register-confirm-field"
           />
         </>
-      ) : currentStep === 1 ? (
+      ) : (
         <>
           <FormField
             label="전화번호"
             type="tel"
             value={formData.phone}
             onChange={handlePhoneChange}
-            error={errors.phone}
+            error={phoneFieldError}
+            labelTrailing={
+              phoneInlineMessage && !phoneFieldError ? (
+                <span
+                  aria-live="polite"
+                  className={cn(
+                    "inline-flex min-h-[0.6875rem] items-center justify-end text-right text-[0.68rem] font-semibold leading-none",
+                    isPhoneCheckReady ? "text-v3-green" : "text-v3-text-muted",
+                  )}
+                >
+                  {phoneInlineMessage}
+                </span>
+              ) : undefined
+            }
             errorDisplay="inline"
             disabled={isLoading}
             autoComplete="tel"
@@ -303,32 +343,6 @@ function RegisterStepFields({
             maxLength={10}
             placeholder="1990-01-01"
             data-component="auth-register-birthdate-field"
-          />
-        </>
-      ) : (
-        <>
-          <SelectField
-            label="지점명"
-            value={formData.branchId}
-            onValueChange={handleSelectChange("branchId")}
-            options={branches}
-            placeholder={isLoadingOrgs ? "지점 목록 불러오는 중..." : "지점을 선택해주세요"}
-            error={errors.branchId}
-            errorDisplay="inline"
-            disabled={isLoading || isLoadingOrgs}
-            data-component="auth-register-branch-field"
-          />
-
-          <SelectField
-            label="역할"
-            value={formData.role}
-            onValueChange={handleSelectChange("role")}
-            options={roleOptions}
-            placeholder="역할을 선택해주세요"
-            error={errors.role}
-            errorDisplay="inline"
-            disabled={isLoading}
-            data-component="auth-register-role-field"
           />
         </>
       )}
@@ -375,7 +389,13 @@ export function RegisterPageContent({ variant }: RegisterPageContentProps) {
         content: "auth-register-content",
       }}
       title={isSuccess ? (accountsLinked ? "계정이 연결되었습니다!" : "회원가입 완료!") : "회원가입"}
-      subtitle={isSuccess ? "이메일 인증 후 로그인을 진행해 주세요." : REGISTER_SUBTITLE}
+      subtitle={
+        isSuccess
+          ? accountsLinked
+            ? "이메일 인증 후 로그인을 진행해 주세요."
+            : "오너 승인 후 로그인할 수 있어요."
+          : REGISTER_SUBTITLE
+      }
       className={REGISTER_CARD_CLASS_NAME}
       contentClassName="gap-0"
       mobileWrapperClassName="px-4 py-6"
@@ -411,7 +431,9 @@ export function RegisterPageContent({ variant }: RegisterPageContentProps) {
                   <p data-component="auth-register-success-message" className="text-muted-foreground">
                     인증 이메일이 발송되었습니다.
                     <br />
-                    이메일을 확인하여 계정을 활성화해 주세요.
+                    이메일 인증을 완료해 주세요.
+                    <br />
+                    오너 승인이 완료되면 로그인할 수 있어요.
                   </p>
                 </>
               )}

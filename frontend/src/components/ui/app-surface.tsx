@@ -20,37 +20,37 @@ export const APP_FORM_DIALOG_CONTENT_CLASS_NAME =
   "h-[90vh] max-h-[calc(100vh-1.5rem)] w-[min(720px,calc(100vw-1.5rem))] max-w-[720px] grid-rows-[auto_minmax(0,1fr)_auto]";
 export const APP_DIALOG_HEADER_CLASS_NAME = "border-b border-v3-border bg-white p-4 text-left";
 export const APP_DIALOG_HEADER_ROW_CLASS_NAME = "flex items-center justify-between gap-4";
-export const APP_DIALOG_TITLE_CLASS_NAME = "text-[calc(16px*var(--v3-ui-scale,1))] font-bold text-v3-dark";
+export const APP_DIALOG_TITLE_CLASS_NAME = "text-[calc(16px*var(--glint-ui-scale,1))] font-bold text-v3-dark";
 export const APP_DIALOG_DESCRIPTION_CLASS_NAME =
-  "mt-[calc(6px*var(--v3-ui-scale,1))] text-[calc(12px*var(--v3-ui-scale,1))] leading-[calc(20px*var(--v3-ui-scale,1))] text-v3-text-muted";
+  "mt-[calc(6px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] leading-[calc(20px*var(--glint-ui-scale,1))] text-v3-text-muted";
 export const APP_DIALOG_EYEBROW_CLASS_NAME =
-  "mb-[calc(12px*var(--v3-ui-scale,1))] inline-flex items-center rounded-full bg-white/80 px-[calc(12px*var(--v3-ui-scale,1))] py-[calc(4px*var(--v3-ui-scale,1))] text-[calc(10.88px*var(--v3-ui-scale,1))] font-semibold uppercase tracking-[0.12em] text-v3-primary shadow-sm";
+  "mb-[calc(12px*var(--glint-ui-scale,1))] inline-flex items-center rounded-full bg-white/80 px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(4px*var(--glint-ui-scale,1))] text-[calc(10.88px*var(--glint-ui-scale,1))] font-semibold uppercase tracking-[0.12em] text-v3-primary shadow-sm";
 export const APP_DIALOG_BODY_CLASS_NAME = "min-h-0 space-y-5 overflow-y-auto px-6 py-6";
 export const APP_DIALOG_FOOTER_CLASS_NAME = "border-t border-v3-border bg-white p-4 sm:justify-end";
 export const APP_DIALOG_INLINE_CLOSE_BUTTON_CLASS_NAME =
-  "flex h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-full border-0 bg-transparent p-0 text-v3-text-muted shadow-none transition-colors hover:text-v3-dark";
+  "flex h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-full border-0 bg-transparent p-0 text-v3-text-muted shadow-none transition-colors hover:text-v3-dark";
 export const APP_DIALOG_FLOATING_CLOSE_BUTTON_CLASS_NAME =
   "absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full border border-v3-border bg-white text-v3-text-muted transition-colors hover:bg-white hover:text-v3-dark focus:outline-none focus:ring-2 focus:ring-v3-primary/20 disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4";
 export const APP_DIALOG_CLOSE_ICON_CLASS_NAME =
-  "h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]";
+  "h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]";
 
 export const APP_CONTENT_CARD_CLASS_NAME =
-  "rounded-[16px] bg-white p-[calc(16px*var(--v3-ui-scale,1))] shadow-[0_1px_8px_rgba(31,42,61,0.06)]";
+  "rounded-[16px] bg-white p-[calc(16px*var(--glint-ui-scale,1))] shadow-[0_1px_8px_rgba(31,42,61,0.06)]";
 export const APP_CONTENT_CARD_MUTED_CLASS_NAME =
-  "rounded-[18px] bg-v3-dim-white p-[calc(16px*var(--v3-ui-scale,1))]";
+  "rounded-[18px] bg-v3-dim-white p-[calc(16px*var(--glint-ui-scale,1))]";
 export const APP_CONTENT_CARD_OUTLINED_CLASS_NAME =
-  "rounded-[16px] border border-v3-border/70 bg-white p-[calc(16px*var(--v3-ui-scale,1))]";
+  "rounded-[16px] border border-v3-border/70 bg-white p-[calc(16px*var(--glint-ui-scale,1))]";
 export const APP_CONTENT_CARD_TITLE_CLASS_NAME =
-  "m-0 text-[calc(12px*var(--v3-ui-scale,1))] font-bold leading-[1.3] text-v3-text";
+  "m-0 text-[calc(12px*var(--glint-ui-scale,1))] font-bold leading-[1.3] text-v3-text";
 export const APP_CONTENT_CARD_EYEBROW_TITLE_CLASS_NAME =
-  "m-0 text-[calc(12px*var(--v3-ui-scale,1))] font-semibold uppercase tracking-[0.1em] text-v3-text-muted";
+  "m-0 text-[calc(12px*var(--glint-ui-scale,1))] font-semibold uppercase tracking-[0.1em] text-v3-text-muted";
 export const APP_CONTENT_CARD_DESCRIPTION_CLASS_NAME =
-  "m-0 text-[calc(11.2px*var(--v3-ui-scale,1))] font-semibold leading-[1.4] text-v3-text-muted";
-export const APP_CONTENT_CARD_BODY_CLASS_NAME = "grid gap-[calc(14px*var(--v3-ui-scale,1))]";
+  "m-0 text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold leading-[1.4] text-v3-text-muted";
+export const APP_CONTENT_CARD_BODY_CLASS_NAME = "grid gap-[calc(14px*var(--glint-ui-scale,1))]";
 export const APP_CONTENT_BODY_CARD_CLASS_NAME =
-  "rounded-[18px] bg-white p-[calc(16px*var(--v3-ui-scale,1))]";
+  "rounded-[18px] bg-white p-[calc(16px*var(--glint-ui-scale,1))]";
 export const APP_CONTENT_BODY_CARD_OUTLINED_CLASS_NAME =
-  "rounded-[18px] border border-v3-border bg-white p-[calc(16px*var(--v3-ui-scale,1))]";
+  "rounded-[18px] border border-v3-border bg-white p-[calc(16px*var(--glint-ui-scale,1))]";
 export const APP_SURFACE_CARD_CLASS_NAME =
   "relative w-full rounded-[28px] border-0 bg-white p-6 text-foreground shadow-v3 sm:p-7";
 
@@ -115,18 +115,18 @@ export function AppContentCard({
   return (
     <Component
       data-component={dataComponent}
-      className={cn("grid gap-[calc(12px*var(--v3-ui-scale,1))]", variantClassName, className)}
+      className={cn("grid gap-[calc(12px*var(--glint-ui-scale,1))]", variantClassName, className)}
       {...props}
     >
       {title || description ? (
         <div
           data-component={headerDataComponent ?? `${dataComponent}-head`}
-          className={cn("grid gap-[calc(3px*var(--v3-ui-scale,1))]", headerClassName)}
+          className={cn("grid gap-[calc(3px*var(--glint-ui-scale,1))]", headerClassName)}
         >
           {title ? (
             <div
               data-component={`${dataComponent}-title-row`}
-              className="flex items-center gap-[calc(8px*var(--v3-ui-scale,1))]"
+              className="flex items-center gap-[calc(8px*var(--glint-ui-scale,1))]"
             >
               <TitleElement
                 data-component={titleDataComponent ?? `${dataComponent}-title`}

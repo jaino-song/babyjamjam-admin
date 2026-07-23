@@ -7,14 +7,6 @@ import {
 } from "domain/ports/call-extraction.port";
 import { GeminiCallExtractionAdapter } from "infrastructure/api/gemini-call-extraction.adapter";
 import {
-    AligoAlimtalkResponse,
-    AligoCreateTemplateParams,
-    AligoSendAlimtalkParams,
-    AligoTemplateCreateResponse,
-    AligoTemplateListResponse,
-    IAligoApiPort,
-} from "domain/ports/aligo-api.port";
-import {
     AligoSendSmsParams,
     AligoSmsResponse,
     IAligoSmsApiPort,
@@ -24,6 +16,7 @@ import {
     CreateDocumentResponse,
     EformsignApiDocumentResponse,
     EformsignApiListResponse,
+    EformsignReviewerMember,
     EformsignTokenResponse,
     IEformsignClientRepository,
 } from "domain/repositories/eformsign.client.interface";
@@ -337,12 +330,61 @@ function buildFallbackStubDocument(documentId: string): EformsignStubDocument {
 }
 
 function buildCreatedStubDocumentId(payload: CreateDocumentPayload): string {
-    const source = `${payload.templateId}:${payload.documentName}:${payload.recipient.sms}`;
+    const recipientKey = payload.recipient?.sms ?? payload.reviewer?.id ?? "";
+    const source = `${payload.templateId}:${payload.documentName}:${recipientKey}`;
     return `doc-stub-${Buffer.from(source).toString("hex").slice(0, 16)}`;
 }
 
 export function areE2EVendorStubsEnabled(configService: Pick<ConfigService, "get">): boolean {
     return configService.get<string>(E2E_VENDOR_STUBS_ENV) === "1";
+}
+
+/**
+ * Fail-fast guard for the opposite direction from the NODE_ENV=production
+ * check in main.ts: in a test-like boot, a MISSING or misspelled
+ * E2E_VENDOR_STUBS must never silently fall through to the real Aligo /
+ * eformsign / Gemini clients (createAligoPortClient / createEformsignClientRepository /
+ * createGeminiGateway above all fail open to the real client when the flag
+ * isn't exactly "1").
+ *
+ * "Test-like" is NOT just NODE_ENV==="test" — the one place this repo boots
+ * main.ts under e2e conditions (.github/workflows/mobile-ci.yml `e2e` job)
+ * deliberately sets NODE_ENV=development (only production is special-cased
+ * elsewhere) alongside CI=true, GITHUB_ACTIONS=true, and E2E_VENDOR_STUBS=1. Jest unit specs never
+ * invoke bootstrap() at all (see test/e2e/call-inbox.e2e.spec.ts header — the
+ * AppModule can't even be built under ts-jest), so NODE_ENV=test alone would
+ * never actually cover the real failure mode this guards against. Hence:
+ * NODE_ENV==="test" OR the GitHub Actions CI runtime (and never for
+ * NODE_ENV==="production", which already has its own dedicated guard and must
+ * not regress). CI alone is insufficient because deployment platforms such as
+ * Railway also expose CI=true to production-like preview runtimes.
+ */
+export function assertVendorStubsConfigured(configService: Pick<ConfigService, "get">): void {
+    const nodeEnv = configService.get<string>("NODE_ENV");
+    if (nodeEnv === "production") {
+        return;
+    }
+
+    const isCi = configService.get<string>("CI") === "true";
+    const isGitHubActions = configService.get<string>("GITHUB_ACTIONS") === "true";
+    const isTestLikeEnv = nodeEnv === "test" || (isCi && isGitHubActions);
+    if (!isTestLikeEnv) {
+        return;
+    }
+
+    const rawValue = configService.get<string>(E2E_VENDOR_STUBS_ENV);
+    if (rawValue === "1") {
+        return;
+    }
+
+    const nearMissHint = rawValue !== undefined && rawValue !== ""
+        ? ` 감지된 값 "${rawValue}"은 정확히 "1"이 아니므로 무효 처리되어 실 API가 호출됩니다 (detected value "${rawValue}" is not exactly "1" — it is silently ignored and real vendor APIs will be called).`
+        : "";
+
+    throw new Error(
+        `E2E/test 환경에서는 ${E2E_VENDOR_STUBS_ENV}=1이 필수입니다 — 실제 외부 API(Aligo/eformsign/Gemini) 호출을 차단합니다.${nearMissHint} ` +
+        `(${E2E_VENDOR_STUBS_ENV} must be exactly "1" in test/e2e environments to block real vendor API calls.)`,
+    );
 }
 
 export function buildEformsignStubTokenResponse(): EformsignTokenResponse {
@@ -447,6 +489,16 @@ export class E2eEformsignClientStub implements IEformsignClientRepository {
         return Promise.resolve(buildEformsignStubDocuments());
     }
 
+    findDocumentsByTitle(
+        accessToken: string,
+        title: string,
+    ): Promise<EformsignApiDocumentResponse[]> {
+        void accessToken;
+        return Promise.resolve(
+            buildEformsignStubDocuments().filter((document) => document.document_name === title),
+        );
+    }
+
     getDocument(accessToken: string, documentId: string): Promise<EformsignApiDocumentResponse> {
         void accessToken;
         return Promise.resolve(buildEformsignStubDocument(documentId));
@@ -456,43 +508,15 @@ export class E2eEformsignClientStub implements IEformsignClientRepository {
         void accessToken;
         return Promise.resolve(buildEformsignStubCreateDocumentResponse(payload));
     }
+
+    getTemplateReviewer(accessToken: string, templateId: string): Promise<EformsignReviewerMember | null> {
+        void accessToken;
+        void templateId;
+        return Promise.resolve({ name: "E2E 검토자", id: "e2e-reviewer@example.com", phoneNumber: "01000000000" });
+    }
 }
 
-export class E2eAligoApiStub implements IAligoApiPort, IAligoSmsApiPort {
-    sendAlimtalk(params: AligoSendAlimtalkParams): Promise<AligoAlimtalkResponse> {
-        void params;
-        return Promise.resolve({
-            code: 0,
-            message: "stubbed",
-            info: {
-                type: "AT",
-                mid: 1,
-                current: "2026-06-06 00:00:00",
-                unit: 1,
-                total: 1,
-                scnt: 1,
-                fcnt: 0,
-            },
-        });
-    }
-
-    createTemplate(params: AligoCreateTemplateParams): Promise<AligoTemplateCreateResponse> {
-        void params;
-        return Promise.resolve({
-            code: 0,
-            message: "stubbed",
-            info: {},
-        });
-    }
-
-    listTemplates(): Promise<AligoTemplateListResponse> {
-        return Promise.resolve({
-            code: 0,
-            message: "stubbed",
-            list: [],
-        });
-    }
-
+export class E2eAligoApiStub implements IAligoSmsApiPort {
     sendSms(params: AligoSendSmsParams): Promise<AligoSmsResponse> {
         return Promise.resolve({
             result_code: 1,
@@ -563,7 +587,7 @@ export function createEformsignClientRepository(configService: ConfigService): I
         : new EformsignApiClient(configService);
 }
 
-export function createAligoPortClient(configService: ConfigService): IAligoApiPort & IAligoSmsApiPort {
+export function createAligoPortClient(configService: ConfigService): IAligoSmsApiPort {
     return areE2EVendorStubsEnabled(configService)
         ? new E2eAligoApiStub()
         : new AligoApiClient(configService);

@@ -8,11 +8,12 @@ export async function logout(): Promise<{ success: boolean; error?: string }> {
   try {
     const cookieStore = await cookies();
     const token = cookieStore.get("auth_token")?.value;
+    const refreshToken = cookieStore.get("refresh_token")?.value;
 
-    if (token) {
+    if (token || refreshToken) {
       try {
-        await serverAPIClient.post("/auth/logout", {}, {
-          headers: { Authorization: `Bearer ${token}` },
+        await serverAPIClient.post("/auth/logout", { refreshToken }, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         });
       } catch {
         // Ignore backend errors; local session cookies are cleared below.

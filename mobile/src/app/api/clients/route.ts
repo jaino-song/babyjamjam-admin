@@ -1,4 +1,5 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { getClientConflictPayload } from "@babyjamjam/shared";
 import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
 import {
@@ -70,6 +71,10 @@ export async function POST(request: NextRequest) {
         });
         return backendJsonResponse(backendResponse);
     } catch (error) {
+        const conflict = getClientConflictPayload(error);
+        if (conflict) {
+            return NextResponse.json(conflict, { status: 409 });
+        }
         return errorResponse(error, "create client");
     }
 }

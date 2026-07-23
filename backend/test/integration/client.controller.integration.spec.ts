@@ -89,6 +89,12 @@ describe("ClientController (Integration)", () => {
                     role: "admin",
                     branchRole: "admin",
                 };
+                requestContext.tenant = {
+                    userId: "user-1",
+                    branchId: "org-1",
+                    globalRole: "admin",
+                    branchRole: "admin",
+                };
                 return true;
             },
         };
@@ -154,7 +160,7 @@ describe("ClientController (Integration)", () => {
                 );
             });
 
-            it("should pass suppressGreetingSms to the service when provided", async () => {
+            it("should pass message automation preferences to the service when provided", async () => {
                 // Arrange
                 const createDto = {
                     name: "Contract Client",
@@ -164,6 +170,7 @@ describe("ClientController (Integration)", () => {
                     voucherClient: true,
                     breastPump: false,
                     suppressGreetingSms: true,
+                    applyMessageAutomation: false,
                 };
                 clientService.create.mockResolvedValue(createMockClient({ id: 6, ...createDto }));
 
@@ -179,6 +186,7 @@ describe("ClientController (Integration)", () => {
                     expect.objectContaining({
                         name: "Contract Client",
                         suppressGreetingSms: true,
+                        applyMessageAutomation: false,
                     }),
                 );
             });

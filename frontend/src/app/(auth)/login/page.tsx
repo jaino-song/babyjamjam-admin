@@ -3,6 +3,7 @@
 import { Suspense } from "react";
 import dynamic from "next/dynamic";
 
+import { LoginAuthErrorModal } from "@/features/auth/login/shared/login-auth-error-modal";
 import { useAuthShellVariant } from "@/features/auth/shared/use-auth-shell-variant";
 
 function AuthLoginLoading() {
@@ -34,5 +35,10 @@ function LoginPageContent() {
     return <AuthLoginLoading />;
   }
 
-  return shellVariant === "mobile" ? <LoginPageMobile /> : <LoginPageDesktop />;
+  return (
+    <>
+      {shellVariant === "mobile" ? <LoginPageMobile /> : <LoginPageDesktop />}
+      <LoginAuthErrorModal />
+    </>
+  );
 }

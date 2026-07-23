@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { getApiErrorMessage } from "@babyjamjam/shared";
 import {
     Workflow,
     Users,
@@ -13,6 +15,7 @@ import {
     AlertTriangle,
     MoreVertical,
     Pencil,
+    RotateCcw,
     Trash2,
     FileSignature,
 } from "lucide-react";
@@ -22,14 +25,14 @@ import {
     DropdownMenuItem,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Button } from "@/components/ui/button";
 import {
-    useApproveScheduleChange,
     useClients,
     useDeleteClient,
-    useRejectScheduleChange,
     useClient,
 } from "@/features/clients/hooks/use-clients";
+import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
+import { getScheduleChangeErrorMessage } from "@/features/service-records/utils/schedule-change-error";
+import { useToast } from "@/hooks/use-toast";
 import type { Client, ServiceStatus } from "@/lib/client/types";
 import {
     getClientBadgeAvatarClassName,
@@ -37,53 +40,44 @@ import {
     getPrimaryClientBadge,
     prioritizeClientBadges,
 } from "@/lib/client/badges";
-import { useToast } from "@/hooks/use-toast";
-import { useMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
-import type { MessageLogRecord } from "@/features/message-triggers/types";
-import {
-    getMessageHistoryTimestamp,
-    MessageHistoryDetailPanel,
-    MESSAGE_HISTORY_STATUS_META,
-    normalizeMessageHistoryRecord,
-    type MessageHistoryRecord,
-} from "@/components/app/messages/MessageHistoryDetailPanel";
 import {
     CLIENT_FORM_STEPPER_STEPS,
     ClientFormDialog,
     ClientFormPanel,
 } from "@/components/app/clients/ClientFormDialog";
+import { ClientDetailPanel } from "@/components/app/clients/ClientDetailPanel";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
+import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
+import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/ServiceRecordLinkResetResultModal";
+import { ServiceScheduleChangeModal } from "@/components/app/clients/ServiceScheduleChangeModal";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { cn } from "@/lib/utils";
 import {
     StatsBar,
     SplitLayout,
     ListPanel,
     DetailPanel,
     InfoCard,
-    InfoRow,
     StatusBadge,
     AnimatedSlotList,
     AnimatedSlotListItemContent,
     HeaderActionButton,
     EmptyState,
-    DetailEmptyState,
     PageSection,
     ListEmptyState,
-    DetailTabPanels,
-    DetailTabs,
     SectionNav,
     SteppedWizardStepper,
 } from "@/components/app/v3";
-import { matchesKoreanSearch } from "@/lib/search/korean-search";
-import { normalizeKoreanPhoneLookupKey } from "@/lib/phone";
-import { matchesMessageHistoryClient } from "@/lib/message-history/client-match";
+import { matchesSearchQuery } from "@/lib/search/korean-search";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
+import { settingsApi, type ClientRegistrationPolicy } from "@/services/api";
 
 const FILTER_CHIPS = [
     { label: "전체", value: "all" },
+    { label: "예약 전", value: "pre_booking" },
     { label: "대기", value: "waiting" },
     { label: "교체 요청", value: "replacement_requested" },
     { label: "진행중", value: "active" },
@@ -98,23 +92,10 @@ const CLIENT_SECTIONS = [
 
 type ClientSectionId = (typeof CLIENT_SECTIONS)[number]["id"];
 
-const CLIENT_DETAIL_TABS = [
-    { key: "basic", label: "기본 정보" },
-    { key: "contracts", label: "계약서 정보" },
-    { key: "alimtalk", label: "메시지 발송 현황" },
-] as const;
-
-const SCHEDULE_CHANGE_DETAIL_TAB = { key: "schedule-change", label: "일정 변경" } as const;
-
-type ClientDetailTabKey =
-    | (typeof CLIENT_DETAIL_TABS)[number]["key"]
-    | typeof SCHEDULE_CHANGE_DETAIL_TAB["key"];
-
 type ClientAutomationItem = {
     id: "eformsign-auto-client-registration";
     title: string;
     subtitle: string;
-    defaultEnabled: boolean;
     icon: typeof FileSignature;
 };
 
@@ -123,61 +104,9 @@ const CLIENT_AUTOMATION_ITEMS: readonly ClientAutomationItem[] = [
         id: "eformsign-auto-client-registration",
         title: "전자문서 자동 고객 등록",
         subtitle: "전자문서 생성 시 고객 정보가 자동으로 등록됩니다.",
-        defaultEnabled: true,
         icon: FileSignature,
     },
 ];
-
-const CLIENT_MESSAGE_HISTORY_LIMIT = 500;
-const CLIENT_MESSAGE_DETAIL_SLIDE_DURATION_MS = 300;
-const CLIENT_MESSAGE_HISTORY_LIST_STATUS_LABELS = {
-    sent: "성공",
-    failed: "실패",
-    pending: "대기",
-} satisfies Record<MessageHistoryRecord["status"], string>;
-
-const formatDate = (dateStr: string | null): string => {
-    if (!dateStr) return "-";
-    return new Date(dateStr).toLocaleDateString("ko-KR");
-};
-
-const formatScheduleChangeMonthDay = (dateStr: string): string => {
-    const [, month, day] = dateStr.split("-");
-    const monthNumber = Number(month);
-    const dayNumber = Number(day);
-
-    if (!month || !day || Number.isNaN(monthNumber) || Number.isNaN(dayNumber)) {
-        return dateStr;
-    }
-
-    return `${monthNumber}월 ${dayNumber}일`;
-};
-
-const getScheduleChangeErrorCode = (error: unknown): string | null => {
-    if (!error || typeof error !== "object" || !("response" in error)) {
-        return null;
-    }
-
-    const response = error.response;
-    if (!response || typeof response !== "object" || !("data" in response)) {
-        return null;
-    }
-
-    const data = response.data;
-    if (!data || typeof data !== "object" || !("code" in data)) {
-        return null;
-    }
-
-    return typeof data.code === "string" ? data.code : null;
-};
-
-const formatPrice = (price: string | null): string => {
-    if (!price) return "-";
-    const cleaned = price.replace(/,/g, "");
-    const num = parseInt(cleaned, 10);
-    if (isNaN(num)) return "-";
-    return `${num.toLocaleString("ko-KR")}원`;
-};
 
 const toDate = (value: string | null): Date | null => {
     if (!value) return null;
@@ -185,8 +114,25 @@ const toDate = (value: string | null): Date | null => {
     return Number.isNaN(date.getTime()) ? null : date;
 };
 
+const getTodayIsoDate = (): string => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, "0");
+    const day = String(today.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+};
+
+interface ServiceScheduleChangeTarget {
+    scheduleId: number;
+    sessionIndex: number;
+    currentDate: string;
+    minimumDate: string;
+}
+
 const filterValueToStatus = (filter: string): ServiceStatus | null => {
     switch (filter) {
+        case "pre_booking":
+            return "pre_booking";
         case "waiting":
             return "waiting";
         case "replacement_requested":
@@ -202,220 +148,34 @@ const filterValueToStatus = (filter: string): ServiceStatus | null => {
     }
 };
 
-function getClientMessageHistoryTime(record: MessageLogRecord) {
-    const timestamp = getMessageHistoryTimestamp(record);
-    const time = new Date(timestamp).getTime();
-    return Number.isNaN(time) ? 0 : time;
-}
-
-function ClientMessageHistoryList({
-    records,
-    canLookupMessages,
-    isError,
-    isLoading,
-    clientName,
-    selectedRecordId,
-    onSelectRecord,
-}: {
-    records: MessageLogRecord[];
-    canLookupMessages: boolean;
-    isError: boolean;
-    isLoading: boolean;
-    clientName: string;
-    selectedRecordId: number | null;
-    onSelectRecord: (record: MessageLogRecord) => void;
-}) {
-    if (!canLookupMessages) {
-        return (
-            <DetailEmptyState
-                name="clients-detail-messages-empty"
-                message="고객 정보가 없어 메시지 발송 내역을 조회할 수 없습니다"
-            />
-        );
-    }
-
-    if (isLoading) {
-        return (
-            <div data-component="clients-detail-messages-skeleton-list" className="space-y-2">
-                {[0, 1, 2].map((index) => (
-                    <div
-                        key={index}
-                        data-component="clients-detail-messages-skeleton-item"
-                        className="flex items-center gap-[calc(12px*var(--v3-ui-scale,1))] rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--v3-ui-scale,1))]"
-                    >
-                        <Skeleton className="h-[calc(44px*var(--v3-ui-scale,1))] w-[calc(44px*var(--v3-ui-scale,1))] shrink-0 rounded-[14px] bg-v3-dim-white" />
-                        <div data-component="clients-detail-messages-skeleton-copy" className="min-w-0 flex-1 space-y-2">
-                            <Skeleton className="h-[calc(16px*var(--v3-ui-scale,1))] w-[calc(96px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
-                            <Skeleton className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(160px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
-                            <Skeleton className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(208px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
-                        </div>
-                        <div data-component="clients-detail-messages-skeleton-meta" className="ml-auto flex shrink-0 flex-col items-end gap-1">
-                            <Skeleton className="h-[calc(24px*var(--v3-ui-scale,1))] w-[calc(56px*var(--v3-ui-scale,1))] rounded-full bg-v3-dim-white" />
-                            <Skeleton className="h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(80px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
-                        </div>
-                    </div>
-                ))}
-            </div>
-        );
-    }
-
-    if (isError) {
-        return (
-            <div data-component="clients-detail-messages-error" className="text-center py-12 text-v3-text-muted text-[0.85rem]">
-                메시지 발송 내역을 불러오지 못했습니다
-            </div>
-        );
-    }
-
-    if (records.length === 0) {
-        return (
-            <DetailEmptyState
-                name="clients-detail-messages-empty"
-                message="메시지 발송 내역이 없습니다"
-            />
-        );
-    }
-
-    return (
-        <div data-component="clients-detail-messages-list">
-            <AnimatedSlotList<MessageLogRecord>
-                items={records}
-                isLoading={false}
-                itemVariant="card"
-                itemDataComponent="clients-detail-messages-list-item"
-                getItemKey={(record) => String(record.id)}
-                getSlotState={({ item }) => ({
-                    isActive: item?.id === selectedRecordId,
-                    isInteractive: Boolean(item),
-                })}
-                onSlotClick={(record) => onSelectRecord(record)}
-                render={({ item: record }) => {
-                    if (!record) return null;
-
-                    const normalizedRecord = normalizeMessageHistoryRecord(record, {
-                        recipientNameFallback: clientName,
-                        recipientListLabelFallback: clientName,
-                    });
-                    const statusMeta = MESSAGE_HISTORY_STATUS_META[normalizedRecord.status] ?? MESSAGE_HISTORY_STATUS_META.failed;
-                    const statusBorderClassName =
-                        normalizedRecord.status === "sent"
-                            ? "border-[hsl(137,34%,84%)]"
-                            : normalizedRecord.status === "pending"
-                                ? "border-amber-100"
-                                : "border-red-100";
-                    const ItemIcon = normalizedRecord.icon;
-
-                    return (
-                        <AnimatedSlotListItemContent
-                            dataComponent="clients-detail-messages-list-item"
-                            icon={ItemIcon}
-                            iconContainerClassName="text-v3-primary"
-                            title={normalizedRecord.title}
-                            subtitle={normalizedRecord.messagePreview}
-                            status={
-                                <div
-                                    data-component="clients-detail-messages-list-item-meta"
-                                    className="flex shrink-0 flex-col items-end justify-end gap-1 text-right"
-                                >
-                                    <span
-                                        data-component="clients-detail-messages-list-item-status"
-                                        className={cn(
-                                            "inline-flex shrink-0 items-center justify-center overflow-hidden rounded-[50px] border px-[calc(12px*var(--v3-ui-scale,1))] py-[calc(4px*var(--v3-ui-scale,1))] text-[calc(10.4px*var(--v3-ui-scale,1))] font-semibold whitespace-nowrap transition-colors",
-                                            statusMeta.tone,
-                                            statusBorderClassName
-                                        )}
-                                    >
-                                        {CLIENT_MESSAGE_HISTORY_LIST_STATUS_LABELS[normalizedRecord.status]}
-                                    </span>
-                                </div>
-                            }
-                        />
-                    );
-                }}
-            />
-        </div>
-    );
-}
-
-function ClientMessageDetailSlide({
-    isMessageDetailActive,
-    selectedRecord,
-    onBack,
-    children,
-}: {
-    isMessageDetailActive: boolean;
-    selectedRecord: MessageHistoryRecord | null;
-    onBack: () => void;
-    children: ReactNode;
-}) {
-    const shouldRenderMessageDetail = selectedRecord !== null;
-
-    return (
-        <div
-            data-component="clients-detail-message-slide"
-            data-active-panel={isMessageDetailActive ? "message" : "client"}
-            className="h-full min-h-0 overflow-hidden"
-        >
-            <div
-                data-component="clients-detail-message-slide-track"
-                className={cn(
-                    "flex h-full min-h-0 gap-[var(--compact-panel-gap,16px)] transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform motion-reduce:transition-none",
-                )}
-                style={{
-                    transform: isMessageDetailActive
-                        ? "translateX(calc(-100% - var(--compact-panel-gap, 16px)))"
-                        : "translateX(0)",
-                }}
-            >
-                <div
-                    data-component="clients-detail-message-slide-panel"
-                    data-panel="client"
-                    aria-hidden={isMessageDetailActive}
-                    className={cn("h-full min-h-0 w-full min-w-0 shrink-0", isMessageDetailActive && "pointer-events-none")}
-                >
-                    {children}
-                </div>
-                <div
-                    data-component="clients-detail-message-slide-panel"
-                    data-panel="message"
-                    aria-hidden={!isMessageDetailActive}
-                    className={cn(
-                        "h-full min-h-0 w-full min-w-0 shrink-0",
-                        !isMessageDetailActive && "pointer-events-none"
-                    )}
-                >
-                    {shouldRenderMessageDetail ? (
-                        <MessageHistoryDetailPanel
-                            selectedRecord={selectedRecord}
-                            backAction={{
-                                label: "고객 상세로 돌아가기",
-                                onClick: onBack,
-                            }}
-                            dataComponentPrefix="clients-message-history"
-                        />
-                    ) : null}
-                </div>
-            </div>
-        </div>
-    );
-}
-
 function ClientAutomationSection() {
+    const { toast } = useToast();
+    const queryClient = useQueryClient();
+    const { data: policy, isLoading } = useQuery({
+        queryKey: ["settings", "client-registration-policy"],
+        queryFn: settingsApi.getClientRegistrationPolicy,
+    });
     const [selectedAutomationId, setSelectedAutomationId] = useState<ClientAutomationItem["id"] | null>(null);
-    const [automationEnabledById, setAutomationEnabledById] = useState<Record<ClientAutomationItem["id"], boolean>>(() =>
-        CLIENT_AUTOMATION_ITEMS.reduce(
-            (acc, item) => ({
-                ...acc,
-                [item.id]: item.defaultEnabled,
-            }),
-            {} as Record<ClientAutomationItem["id"], boolean>,
-        ),
-    );
+    const updatePolicy = useMutation({
+        mutationFn: settingsApi.updateClientRegistrationPolicy,
+        onMutate: async ({ clientAutoRegistration }: { clientAutoRegistration?: boolean }) => {
+            await queryClient.cancelQueries({ queryKey: ["settings", "client-registration-policy"] });
+            const previous = queryClient.getQueryData<ClientRegistrationPolicy>(["settings", "client-registration-policy"]);
+            queryClient.setQueryData<ClientRegistrationPolicy>(["settings", "client-registration-policy"], (current) =>
+                current && clientAutoRegistration !== undefined ? { ...current, clientAutoRegistration } : current,
+            );
+            return { previous };
+        },
+        onError: (_error, _variables, context) => {
+            if (context?.previous) queryClient.setQueryData(["settings", "client-registration-policy"], context.previous);
+            toast({ variant: "destructive", description: "고객 자동 등록 설정 저장 중 오류가 발생했습니다." });
+        },
+        onSuccess: (saved) => queryClient.setQueryData(["settings", "client-registration-policy"], saved),
+        onSettled: () => void queryClient.invalidateQueries({ queryKey: ["settings", "client-registration-policy"] }),
+    });
     const selectedAutomation =
         CLIENT_AUTOMATION_ITEMS.find((item) => item.id === selectedAutomationId) ?? null;
-    const selectedAutomationEnabled = selectedAutomation
-        ? automationEnabledById[selectedAutomation.id]
-        : false;
+    const selectedAutomationEnabled = selectedAutomation ? policy?.clientAutoRegistration === true : false;
 
     return (
         <section data-component="clients-automation-section" className="flex h-full min-h-0 flex-1 flex-col">
@@ -453,14 +213,10 @@ function ClientAutomationSection() {
                                             <Switch
                                                 data-component="clients-automation-item-toggle"
                                                 aria-label={`${item.title} 사용`}
-                                                checked={automationEnabledById[item.id]}
+                                                checked={policy?.clientAutoRegistration === true}
+                                                disabled={isLoading || updatePolicy.isPending}
                                                 onClick={(event) => event.stopPropagation()}
-                                                onCheckedChange={(checked) =>
-                                                    setAutomationEnabledById((current) => ({
-                                                        ...current,
-                                                        [item.id]: checked,
-                                                    }))
-                                                }
+                                                onCheckedChange={(checked) => updatePolicy.mutate({ clientAutoRegistration: checked })}
                                                 className="ml-auto shrink-0"
                                             />
                                         )}
@@ -477,7 +233,7 @@ function ClientAutomationSection() {
                         title={selectedAutomation.title}
                         subtitle={selectedAutomation.subtitle}
                     >
-                        <InfoCard title="임시 안내">
+                        <InfoCard title="자동화 안내">
                             <p data-component="clients-automation-detail-temporary-copy" className="text-[0.85rem] leading-6 text-v3-text-muted">
                                 {selectedAutomationEnabled
                                     ? "전자문서 생성 시에 자동으로 고객이 등록됩니다."
@@ -508,7 +264,6 @@ export default function ClientsPage() {
     const locale = useLocale();
     const router = useRouter();
     const searchParams = useSearchParams();
-    const { toast } = useToast();
     const clientIdParam = searchParams.get("id");
     const shouldOpenClientFormFromUrl = searchParams.get("openClientForm") === "1";
 
@@ -516,28 +271,25 @@ export default function ClientsPage() {
     const [isCreatingClient, setIsCreatingClient] = useState(false);
     const [formDialogOpen, setFormDialogOpen] = useState(false);
     const [editingClient, setEditingClient] = useState<Client | null>(null);
+    const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
+    const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
+    const [resetLinkTargetClientId, setResetLinkTargetClientId] = useState<number | null>(null);
+    const [resetServiceRecordUrl, setResetServiceRecordUrl] = useState<string | null>(null);
+    const [isResettingLink, setIsResettingLink] = useState(false);
+    const [scheduleChangeTarget, setScheduleChangeTarget] = useState<ServiceScheduleChangeTarget | null>(null);
+    const [selectedScheduleChangeDate, setSelectedScheduleChangeDate] = useState("");
+    const [isPreparingScheduleChange, setIsPreparingScheduleChange] = useState(false);
+    const [isApplyingScheduleChange, setIsApplyingScheduleChange] = useState(false);
+    const { toast } = useToast();
+    const queryClient = useQueryClient();
     const [searchQuery, setSearchQuery] = useState("");
     const [activeFilter, setActiveFilter] = useState("all");
-    const [detailTabState, setDetailTabState] = useState<{ key: ClientDetailTabKey; clientId: number | null }>({
-        key: "basic",
-        clientId: null,
-    });
     const [activeSection, setActiveSection] = useState<ClientSectionId>("list");
     const [clientFormActiveStep, setClientFormActiveStep] = useState(0);
-    const [selectedMessageHistoryId, setSelectedMessageHistoryId] = useState<number | null>(null);
-    const [isMessageHistoryDetailVisible, setIsMessageHistoryDetailVisible] = useState(false);
-    const clearMessageHistorySelectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [detailModalOpen, setDetailModalOpen] = useState(false);
 
     const { data, isLoading } = useClients(1, 50);
     const deleteClient = useDeleteClient();
-    const approveScheduleChange = useApproveScheduleChange();
-    const rejectScheduleChange = useRejectScheduleChange();
-    const {
-        data: messageHistoryData = [],
-        isLoading: isMessageHistoryLoading,
-        isError: isMessageHistoryError,
-    } = useMessageHistory(CLIENT_MESSAGE_HISTORY_LIMIT);
 
     const { data: clientFromParam } = useClient(
         clientIdParam ? Number(clientIdParam) : 0
@@ -562,79 +314,15 @@ export default function ClientsPage() {
     const activeSelectedClient = selectedClientFromList ?? (clientIdParam ? clientFromParamList ?? clientFromParam ?? null : null);
     const panelFormClient = null;
     const shouldShowClientFormPanel = isCreatingClient || shouldOpenClientFormFromUrl;
-    const activeScheduleChange = activeSelectedClient?.pendingScheduleChange ?? null;
-    const hasActiveScheduleChange = Boolean(activeScheduleChange);
-    const activeClientDetailTabs = useMemo(
-        () => hasActiveScheduleChange ? [SCHEDULE_CHANGE_DETAIL_TAB, ...CLIENT_DETAIL_TABS] : [...CLIENT_DETAIL_TABS],
-        [hasActiveScheduleChange]
-    );
-    const activeSelectedClientBadges = useMemo(
-        () => activeSelectedClient ? getClientBadges(activeSelectedClient) : [],
-        [activeSelectedClient]
-    );
-    const activeSelectedClientPhoneKey = useMemo(
-        () => normalizeKoreanPhoneLookupKey(activeSelectedClient?.phone ?? ""),
-        [activeSelectedClient?.phone]
-    );
-    const activeSelectedClientId = activeSelectedClient?.id ?? null;
-
-    const activeDetailTab = useMemo<ClientDetailTabKey>(() => {
-        if (detailTabState.clientId !== activeSelectedClientId) {
-            if (activeScheduleChange) {
-                return "schedule-change";
-            }
-
-            return detailTabState.key === "schedule-change" ? "basic" : detailTabState.key;
-        }
-
-        if (detailTabState.key === "schedule-change" && !hasActiveScheduleChange) {
-            return "basic";
-        }
-
-        return detailTabState.key;
-    }, [activeScheduleChange, activeSelectedClientId, detailTabState, hasActiveScheduleChange]);
-
-    const setActiveDetailTab = (key: ClientDetailTabKey, clientId: number | null = activeSelectedClientId) => {
-        setDetailTabState({ key, clientId });
-    };
-
-    const isScheduleChangeActionPending = approveScheduleChange.isPending || rejectScheduleChange.isPending;
-
-    const activeClientMessageHistory = useMemo(
-        () =>
-            activeSelectedClientId !== null || activeSelectedClientPhoneKey
-                ? messageHistoryData
-                    .filter((record) => matchesMessageHistoryClient(record, activeSelectedClient))
-                    .sort((left, right) => getClientMessageHistoryTime(right) - getClientMessageHistoryTime(left))
-                : [],
-        [activeSelectedClient, activeSelectedClientId, activeSelectedClientPhoneKey, messageHistoryData]
-    );
-
-    const selectedClientMessageRecord = useMemo(
-        () =>
-            selectedMessageHistoryId === null
-                ? null
-                : activeClientMessageHistory.find((record) => record.id === selectedMessageHistoryId) ?? null,
-        [activeClientMessageHistory, selectedMessageHistoryId]
-    );
-
-    const selectedClientMessageDetailRecord = useMemo<MessageHistoryRecord | null>(() => {
-        if (!selectedClientMessageRecord || !activeSelectedClient || activeDetailTab !== "alimtalk") {
-            return null;
-        }
-
-        return normalizeMessageHistoryRecord(selectedClientMessageRecord, {
-            recipientNameFallback: activeSelectedClient.name,
-            recipientListLabelFallback: activeSelectedClient.name,
-        });
-    }, [activeDetailTab, activeSelectedClient, selectedClientMessageRecord]);
 
     const filteredClients = useMemo(() => {
         let result = clients;
         const statusValue = filterValueToStatus(activeFilter);
         if (statusValue) result = result.filter((c) => c.serviceStatus === statusValue);
         if (searchQuery.trim()) {
-            result = result.filter((c) => matchesKoreanSearch(c.name, searchQuery.trim()));
+            result = result.filter((c) =>
+                matchesSearchQuery(searchQuery, [c.name, c.phone, c.address]),
+            );
         }
         return result;
     }, [clients, activeFilter, searchQuery]);
@@ -682,46 +370,6 @@ export default function ClientsPage() {
 
         return { thisMonthCount, nextMonthCount, activeCount, pendingCount, endingSoonCount };
     }, [clients]);
-    useEffect(() => {
-        return () => {
-            if (clearMessageHistorySelectionTimeoutRef.current) {
-                clearTimeout(clearMessageHistorySelectionTimeoutRef.current);
-                clearMessageHistorySelectionTimeoutRef.current = null;
-            }
-        };
-    }, []);
-
-    const clearClientMessageHistoryDetail = () => {
-        if (clearMessageHistorySelectionTimeoutRef.current) {
-            clearTimeout(clearMessageHistorySelectionTimeoutRef.current);
-            clearMessageHistorySelectionTimeoutRef.current = null;
-        }
-
-        setIsMessageHistoryDetailVisible(false);
-        setSelectedMessageHistoryId(null);
-    };
-
-    const handleSelectClientMessageHistoryRecord = (record: MessageLogRecord) => {
-        if (clearMessageHistorySelectionTimeoutRef.current) {
-            clearTimeout(clearMessageHistorySelectionTimeoutRef.current);
-            clearMessageHistorySelectionTimeoutRef.current = null;
-        }
-
-        setSelectedMessageHistoryId(record.id);
-        setIsMessageHistoryDetailVisible(true);
-    };
-
-    const handleClientMessageHistoryDetailBack = () => {
-        if (clearMessageHistorySelectionTimeoutRef.current) {
-            clearTimeout(clearMessageHistorySelectionTimeoutRef.current);
-        }
-
-        setIsMessageHistoryDetailVisible(false);
-        clearMessageHistorySelectionTimeoutRef.current = setTimeout(() => {
-            setSelectedMessageHistoryId(null);
-            clearMessageHistorySelectionTimeoutRef.current = null;
-        }, CLIENT_MESSAGE_DETAIL_SLIDE_DURATION_MS);
-    };
 
     const handleSectionSelect = (sectionId: string) => {
         const nextSection = sectionId as ClientSectionId;
@@ -730,7 +378,6 @@ export default function ClientsPage() {
         if (nextSection === "automation") {
             setIsCreatingClient(false);
             setSelectedClient(null);
-            clearClientMessageHistoryDetail();
             setClientFormActiveStep(0);
 
             if (clientIdParam || shouldOpenClientFormFromUrl) {
@@ -748,8 +395,6 @@ export default function ClientsPage() {
 
         setSelectedClient(null);
         setEditingClient(null);
-        setActiveDetailTab("basic");
-        clearClientMessageHistoryDetail();
         setClientFormActiveStep(0);
         setIsCreatingClient(true);
     };
@@ -762,13 +407,7 @@ export default function ClientsPage() {
         }
 
         setIsCreatingClient(false);
-        clearClientMessageHistoryDetail();
         setSelectedClient(client);
-        if (client.pendingScheduleChange) {
-            setActiveDetailTab("schedule-change", client.id);
-        } else if (activeDetailTab === "schedule-change") {
-            setActiveDetailTab("basic", client.id);
-        }
     };
 
     const handleEdit = (client: Client) => {
@@ -776,16 +415,141 @@ export default function ClientsPage() {
         setFormDialogOpen(true);
     };
 
-    const handleDelete = async (id: number) => {
-        if (window.confirm(t(locale, "clients.delete-confirm"))) {
-            try {
-                await deleteClient.mutateAsync(id);
-                if (activeSelectedClient?.id === id) {
-                    setSelectedClient(null);
-                }
-            } catch (err) {
-                console.error("Failed to delete client:", err);
+    const handleDeleteRequest = (id: number) => {
+        setDeleteTargetClientId(id);
+    };
+
+    const handleResetServiceRecordLinkConfirm = async () => {
+        if (resetLinkTargetClientId === null) return;
+
+        setIsResettingLink(true);
+        try {
+            const overview = await serviceRecordsApi.getClientOverview(resetLinkTargetClientId);
+            const assignments = overview.data.assignments ?? [];
+            const activeAssignment = assignments.find((assignment) => !assignment.replaced)
+                ?? assignments[0]
+                ?? null;
+            if (!activeAssignment) {
+                toast({
+                    description: "관리사 배정이 없어 링크를 재설정할 수 없습니다.",
+                    variant: "destructive",
+                });
+                return;
             }
+
+            const reset = await serviceRecordsApi.resetLink(activeAssignment.scheduleId);
+            setResetLinkTargetClientId(null);
+            setResetServiceRecordUrl(reset.data.serviceRecordUrl);
+        } catch {
+            toast({
+                description: "제공기록지 링크 재설정에 실패했습니다. 잠시 후 다시 시도해 주세요.",
+                variant: "destructive",
+            });
+        } finally {
+            setIsResettingLink(false);
+        }
+    };
+
+    const handleOpenServiceScheduleChange = async (clientId: number) => {
+        setIsPreparingScheduleChange(true);
+        try {
+            const overview = await serviceRecordsApi.getClientOverview(clientId);
+            const assignments = overview.data.assignments ?? [];
+            const activeAssignment = assignments.find((assignment) => !assignment.replaced)
+                ?? assignments[0]
+                ?? null;
+            if (!activeAssignment) {
+                toast({
+                    description: "관리사 배정이 없어 서비스 일정을 변경할 수 없습니다.",
+                    variant: "destructive",
+                });
+                return;
+            }
+
+            const preview = await serviceRecordsApi.previewScheduleChange(activeAssignment.scheduleId);
+            const today = getTodayIsoDate();
+            const minimumDate = preview.data.minimumDate > today
+                ? preview.data.minimumDate
+                : today;
+            setSelectedScheduleChangeDate(minimumDate);
+            setScheduleChangeTarget({
+                scheduleId: activeAssignment.scheduleId,
+                sessionIndex: preview.data.sessionIndex,
+                currentDate: preview.data.fromDate,
+                minimumDate,
+            });
+        } catch {
+            toast({
+                description: "변경할 수 있는 다음 서비스 일정을 불러오지 못했습니다.",
+                variant: "destructive",
+            });
+        } finally {
+            setIsPreparingScheduleChange(false);
+        }
+    };
+
+    const handleApplyServiceScheduleChange = async () => {
+        if (!scheduleChangeTarget) return;
+
+        setIsApplyingScheduleChange(true);
+        try {
+            const changed = await serviceRecordsApi.applyScheduleChange(scheduleChangeTarget.scheduleId, {
+                toDate: selectedScheduleChangeDate,
+            });
+            setSelectedClient((currentClient) => {
+                if (!currentClient || currentClient.id !== changed.data.clientId) return currentClient;
+                return {
+                    ...currentClient,
+                    endDate: changed.data.newEndDate,
+                    pendingScheduleChange: null,
+                };
+            });
+            setScheduleChangeTarget(null);
+            setSelectedScheduleChangeDate("");
+            await queryClient.invalidateQueries({ queryKey: ["clients"] });
+            toast({
+                description: `서비스 일정과 종료일(${changed.data.newEndDate})이 변경되었습니다.`,
+            });
+        } catch (error) {
+            toast({
+                description: getScheduleChangeErrorMessage(error),
+                variant: "destructive",
+            });
+        } finally {
+            setIsApplyingScheduleChange(false);
+        }
+    };
+
+    const handleCopyResetServiceRecordLink = async (serviceRecordUrl: string) => {
+        try {
+            await navigator.clipboard.writeText(serviceRecordUrl);
+            toast({ description: "제공기록지 링크를 복사했습니다." });
+        } catch {
+            toast({
+                description: "링크 복사에 실패했습니다. 링크를 직접 선택해 복사해 주세요.",
+                variant: "destructive",
+            });
+        }
+    };
+
+    const handleDeleteConfirm = async () => {
+        if (deleteTargetClientId === null) return;
+
+        try {
+            await deleteClient.mutateAsync(deleteTargetClientId);
+            if (activeSelectedClient?.id === deleteTargetClientId) {
+                setSelectedClient(null);
+            }
+            setDeleteTargetClientId(null);
+        } catch (err) {
+            console.error("Failed to delete client:", err);
+            setDeleteTargetClientId(null);
+            setDeleteErrorMessage(
+                getApiErrorMessage(
+                    err,
+                    "고객 삭제에 실패했습니다. 다시 시도해 주세요.",
+                ),
+            );
         }
     };
 
@@ -797,49 +561,6 @@ export default function ClientsPage() {
 
             return { ...currentClient, pendingScheduleChange: null };
         });
-    };
-
-    const showScheduleChangeErrorToast = (error: unknown, fallbackMessage: string) => {
-        toast({
-            variant: "destructive",
-            description: getScheduleChangeErrorCode(error) === "REQUEST_STALE"
-                ? "요청이 최신 상태와 달라 만료되었습니다"
-                : fallbackMessage,
-        });
-    };
-
-    const handleApproveScheduleChange = async (client: Client) => {
-        const pendingScheduleChange = client.pendingScheduleChange;
-        if (!pendingScheduleChange) return;
-
-        try {
-            await approveScheduleChange.mutateAsync({
-                requestId: pendingScheduleChange.id,
-                clientId: client.id,
-            });
-            clearSelectedClientScheduleChange(client.id);
-            setActiveDetailTab("basic");
-            toast({ description: "일정 변경 요청을 승인했습니다." });
-        } catch (error) {
-            showScheduleChangeErrorToast(error, "일정 변경 요청 승인 중 오류가 발생했습니다.");
-        }
-    };
-
-    const handleRejectScheduleChange = async (client: Client) => {
-        const pendingScheduleChange = client.pendingScheduleChange;
-        if (!pendingScheduleChange) return;
-
-        try {
-            await rejectScheduleChange.mutateAsync({
-                requestId: pendingScheduleChange.id,
-                clientId: client.id,
-            });
-            clearSelectedClientScheduleChange(client.id);
-            setActiveDetailTab("basic");
-            toast({ description: "일정 변경 요청을 거부했습니다." });
-        } catch (error) {
-            showScheduleChangeErrorToast(error, "일정 변경 요청 거부 중 오류가 발생했습니다.");
-        }
     };
 
     const handleFormDialogClose = () => {
@@ -867,7 +588,6 @@ export default function ClientsPage() {
     const handleClientFormPanelClose = () => {
         setIsCreatingClient(false);
         setClientFormActiveStep(0);
-        clearClientMessageHistoryDetail();
 
         if (shouldOpenClientFormFromUrl) {
             router.replace("/clients");
@@ -877,9 +597,7 @@ export default function ClientsPage() {
     const handleClientFormPanelSuccess = (client: Client) => {
         setIsCreatingClient(false);
         setSelectedClient(client);
-        setActiveDetailTab("basic");
         setClientFormActiveStep(0);
-        clearClientMessageHistoryDetail();
 
         if (shouldOpenClientFormFromUrl) {
             router.replace("/clients");
@@ -890,18 +608,6 @@ export default function ClientsPage() {
         setDetailModalOpen(false);
         if (clientIdParam) {
             router.replace("/clients");
-        }
-    };
-
-    const handleDetailTabChange = (nextTab: string) => {
-        const nextDetailTab = activeClientDetailTabs.find((tab) => tab.key === nextTab)?.key;
-
-        if (!nextDetailTab) return;
-        if (nextDetailTab === activeDetailTab) return;
-
-        setActiveDetailTab(nextDetailTab);
-        if (nextDetailTab !== "alimtalk") {
-            clearClientMessageHistoryDetail();
         }
     };
 
@@ -941,7 +647,6 @@ export default function ClientsPage() {
                                         router.replace("/clients");
                                     }
 
-                                    clearClientMessageHistoryDetail();
                                     setSelectedClient(null);
                                 }}
                             >
@@ -989,14 +694,14 @@ export default function ClientsPage() {
 	                                        if (isLoading) {
 	                                            return (
 	                                                <>
-	                                                    <div data-component="clients-list-item-avatar-skeleton" className="flex h-[calc(44px*var(--v3-ui-scale,1))] w-[calc(44px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[14px] bg-v3-dim-white shadow-md">
-	                                                        <Skeleton className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))] rounded-md bg-white/70" />
+	                                                    <div data-component="clients-list-item-avatar-skeleton" className="flex h-[calc(44px*var(--glint-ui-scale,1))] w-[calc(44px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[14px] bg-v3-dim-white shadow-md">
+	                                                        <Skeleton className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))] rounded-md bg-white/70" />
 	                                                    </div>
 	                                                    <div data-component="clients-list-item-info-skeleton" className="flex-1 min-w-0">
-	                                                        <Skeleton className="h-[calc(16px*var(--v3-ui-scale,1))] w-[calc(112px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
-	                                                        <Skeleton className="mt-[calc(6px*var(--v3-ui-scale,1))] h-[calc(12px*var(--v3-ui-scale,1))] w-[calc(192px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
+	                                                        <Skeleton className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(112px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
+	                                                        <Skeleton className="mt-[calc(6px*var(--glint-ui-scale,1))] h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(192px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
 	                                                    </div>
-	                                                    <Skeleton className="h-[calc(24px*var(--v3-ui-scale,1))] w-[calc(56px*var(--v3-ui-scale,1))] rounded-full bg-v3-dim-white" />
+	                                                    <Skeleton className="h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(56px*var(--glint-ui-scale,1))] rounded-full bg-v3-dim-white" />
 	                                                </>
 	                                            );
 	                                        }
@@ -1014,7 +719,7 @@ export default function ClientsPage() {
 	                                                title={client.name}
 	                                                subtitle={
 	                                                    <>
-	                                                        {client.phone ? <span>{client.phone}</span> : null}
+	                                                        {client.phone ? <span>{formatKoreanPhoneNumber(client.phone)}</span> : null}
 	                                                        {client.address ? (
 	                                                            <span className="truncate">
 	                                                                {client.address.split(" ")[1] || client.address}
@@ -1070,63 +775,18 @@ export default function ClientsPage() {
                         data-component="clients-detail-selection-slide-up"
                         className="h-full min-h-0 animate-v3-slide-up"
                     >
-                        <ClientMessageDetailSlide
-                            isMessageDetailActive={isMessageHistoryDetailVisible && selectedClientMessageDetailRecord !== null}
-                            selectedRecord={selectedClientMessageDetailRecord}
-                            onBack={handleClientMessageHistoryDetailBack}
-                        >
-                            <DetailPanel
+                        <ClientDetailPanel
+                            client={activeSelectedClient}
                             compactBackLabel="고객 목록으로 돌아가기"
-                            avatar={
-                                <div
-                                    data-component="clients-detail-avatar"
-                                    className={cn(
-                                        "w-16 h-16 rounded-[20px] flex items-center justify-center shadow-lg shrink-0",
-                                        getClientBadgeAvatarClassName(getPrimaryClientBadge(activeSelectedClientBadges))
-                                    )}
-                                >
-                                    <Users className="w-7 h-7 shrink-0 transition-colors text-current" aria-hidden="true" />
-                                </div>
-                            }
-                            title={activeSelectedClient.name}
-                            badges={
-                                <>
-                                    {activeSelectedClientBadges
-                                        .filter((badge) => badge.key !== "breast_pump")
-                                        .map((badge) => (
-                                            <StatusBadge
-                                                key={badge.key}
-                                                status={badge.status}
-                                                label={badge.label}
-                                            />
-                                        ))}
-                                </>
-                            }
-                            badgesRight={
-                                <>
-                                    {activeSelectedClientBadges
-                                        .filter((badge) => badge.key === "breast_pump")
-                                        .map((badge) => (
-                                            <StatusBadge
-                                                key={badge.key}
-                                                status={badge.status}
-                                                label={badge.label}
-                                            />
-                                        ))}
-                                </>
-                            }
-                            subtitle={
-                                <>
-                                    {activeSelectedClient.type || "일반"} ·{" "}
-                                    {activeSelectedClient.duration
-                                        ? `${activeSelectedClient.duration}일`
-                                        : "-"}
-                                </>
-                            }
+                            onScheduleChangeDecided={clearSelectedClientScheduleChange}
                             trailing={
                                 <DropdownMenu>
                                     <DropdownMenuTrigger asChild>
-                                        <button type="button" className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors">
+                                        <button
+                                            type="button"
+                                            aria-label="고객 작업 메뉴 열기"
+                                            className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors"
+                                        >
                                             <MoreVertical className="w-5 h-5 text-v3-text-muted" />
                                         </button>
                                     </DropdownMenuTrigger>
@@ -1135,187 +795,35 @@ export default function ClientsPage() {
                                             <Pencil className="w-4 h-4" />
                                             {t(locale, "common.edit")}
                                         </DropdownMenuItem>
-                                        <DropdownMenuItem onClick={() => handleDelete(activeSelectedClient.id)} className="gap-2 text-destructive focus:text-destructive">
+                                        <DropdownMenuItem
+                                            data-component="clients-detail-menu-change-service-schedule"
+                                            disabled={isPreparingScheduleChange}
+                                            onClick={() => void handleOpenServiceScheduleChange(activeSelectedClient.id)}
+                                            className="gap-2"
+                                        >
+                                            <CalendarDays className="w-4 h-4" />
+                                            서비스 일정 변경
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
+                                            data-component="clients-detail-menu-reset-service-record-link"
+                                            onClick={() => setResetLinkTargetClientId(activeSelectedClient.id)}
+                                            className="gap-2"
+                                        >
+                                            <RotateCcw className="w-4 h-4" />
+                                            제공기록지 링크 재설정
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
+                                            data-component="clients-detail-menu-delete"
+                                            onClick={() => handleDeleteRequest(activeSelectedClient.id)}
+                                            className="gap-2 text-destructive focus:text-destructive"
+                                        >
                                             <Trash2 className="w-4 h-4" />
                                             {t(locale, "common.delete")}
                                         </DropdownMenuItem>
                                     </DropdownMenuContent>
                                 </DropdownMenu>
                             }
-                            tabs={
-                                <DetailTabs
-                                    tabs={activeClientDetailTabs}
-                                    activeTab={activeDetailTab}
-                                    onTabChange={handleDetailTabChange}
-                                />
-                            }
-                        >
-                            <DetailTabPanels
-                                activeTab={activeDetailTab}
-                                dataComponent="clients-detail-content"
-                                panelDataComponent="clients-detail-content-panel"
-                                className="shrink-0"
-                                panels={[
-                                    ...(activeScheduleChange
-                                        ? [
-                                            {
-                                                key: "schedule-change",
-                                                children: (
-                                                    <InfoCard
-                                                        title="서비스 일정 변경 요청이 있습니다."
-                                                        data-component="clients-detail-schedule-change-card"
-                                                    >
-                                                        <div
-                                                            data-component="clients-detail-schedule-change-content"
-                                                            className="space-y-[calc(12px*var(--v3-ui-scale,1))]"
-                                                        >
-                                                            <p className="text-[calc(14px*var(--v3-ui-scale,1))] font-semibold text-v3-dark">
-                                                                기존 날짜: {formatScheduleChangeMonthDay(activeScheduleChange.fromDate)} → 변경 날짜: {formatScheduleChangeMonthDay(activeScheduleChange.toDate)}
-                                                            </p>
-                                                            <p className="text-[calc(13px*var(--v3-ui-scale,1))] text-v3-text-muted">
-                                                                회차: {activeScheduleChange.sessionIndex}회차 · 종료일 {activeScheduleChange.oldEndDate} → {activeScheduleChange.newEndDate}
-                                                            </p>
-                                                            <div
-                                                                data-component="clients-detail-schedule-change-actions"
-                                                                className="flex justify-end gap-2"
-                                                            >
-                                                                <Button
-                                                                    type="button"
-                                                                    variant="outline"
-                                                                    size="sm"
-                                                                    disabled={isScheduleChangeActionPending}
-                                                                    onClick={() => void handleRejectScheduleChange(activeSelectedClient)}
-                                                                >
-                                                                    거부
-                                                                </Button>
-                                                                <Button
-                                                                    type="button"
-                                                                    variant="positive"
-                                                                    size="sm"
-                                                                    disabled={isScheduleChangeActionPending}
-                                                                    onClick={() => void handleApproveScheduleChange(activeSelectedClient)}
-                                                                >
-                                                                    승인
-                                                                </Button>
-                                                            </div>
-                                                        </div>
-                                                    </InfoCard>
-                                                ),
-                                            },
-                                        ]
-                                        : []),
-                                    {
-                                        key: "basic",
-                                        children: (
-                                            <div data-component="clients-detail-basic-grid" className="grid grid-cols-2 gap-4">
-                                                <InfoCard title="고객 정보" className="col-start-1 row-start-1 row-end-3">
-                                                    <InfoRow
-                                                        label={t(locale, "clients.form.name")}
-                                                        value={activeSelectedClient.name}
-                                                    />
-                                                    <InfoRow
-                                                        label={t(locale, "clients.form.birthday")}
-                                                        value={activeSelectedClient.birthday || "-"}
-                                                    />
-                                                    <InfoRow
-                                                        label={t(locale, "clients.form.due-date")}
-                                                        value={formatDate(activeSelectedClient.dueDate)}
-                                                    />
-                                                    <InfoRow
-                                                        label={t(locale, "clients.form.phone")}
-                                                        value={activeSelectedClient.phone || "-"}
-                                                    />
-                                                    <InfoRow
-                                                        label={t(locale, "clients.form.address")}
-                                                        value={activeSelectedClient.address || "-"}
-                                                    />
-                                                </InfoCard>
-
-                                                <InfoCard title="담당 관리사" className="col-start-1 row-start-3 row-end-5">
-                                                    <InfoRow
-                                                        label={t(locale, "clients.form.primary-employee")}
-                                                        value={
-                                                            activeSelectedClient.primaryEmployee?.name ??
-                                                            "-"
-                                                        }
-                                                    />
-                                                    <InfoRow
-                                                        label={t(locale, "clients.form.secondary-employee")}
-                                                        value={
-                                                            activeSelectedClient.secondaryEmployee
-                                                                ?.name ?? "-"
-                                                        }
-                                                    />
-                                                </InfoCard>
-
-                                                <InfoCard title="서비스 정보" className="col-start-2 row-start-1 row-end-5">
-                                                    <InfoRow
-                                                        label={t(locale, "clients.form.voucher-type")}
-                                                        value={activeSelectedClient.type || "-"}
-                                                    />
-                                                    <InfoRow
-                                                        label={t(locale, "clients.form.duration")}
-                                                        value={
-                                                            activeSelectedClient.duration
-                                                                ? `${activeSelectedClient.duration}일`
-                                                                : "-"
-                                                        }
-                                                    />
-                                                    <InfoRow
-                                                        label={t(locale, "clients.form.start-date")}
-                                                        value={formatDate(activeSelectedClient.startDate)}
-                                                    />
-                                                    <InfoRow
-                                                        label={t(locale, "clients.form.end-date")}
-                                                        value={formatDate(activeSelectedClient.endDate)}
-                                                    />
-                                                    <InfoRow
-                                                        label={t(locale, "clients.form.full-price")}
-                                                        value={formatPrice(
-                                                            activeSelectedClient.fullPrice
-                                                        )}
-                                                    />
-                                                    <InfoRow
-                                                        label={t(locale, "clients.form.grant")}
-                                                        value={formatPrice(activeSelectedClient.grant)}
-                                                    />
-                                                    <InfoRow
-                                                        label={t(locale, "clients.form.actual-price")}
-                                                        value={formatPrice(
-                                                            activeSelectedClient.actualPrice
-                                                        )}
-                                                    />
-                                                </InfoCard>
-                                            </div>
-                                        ),
-                                    },
-                                    {
-                                        key: "contracts",
-                                        children: (
-                                            <DetailEmptyState
-                                                name="clients-detail-contracts-empty"
-                                                message="계약서 정보가 없습니다"
-                                            />
-                                        ),
-                                    },
-                                    {
-                                        key: "alimtalk",
-                                        children: (
-                                            <ClientMessageHistoryList
-                                                records={activeClientMessageHistory}
-                                                canLookupMessages={activeSelectedClientId !== null || activeSelectedClientPhoneKey.length > 0}
-                                                isLoading={isMessageHistoryLoading}
-                                                isError={isMessageHistoryError}
-                                                clientName={activeSelectedClient.name}
-                                                selectedRecordId={selectedMessageHistoryId}
-                                                onSelectRecord={handleSelectClientMessageHistoryRecord}
-                                            />
-                                        ),
-                                    },
-                                ]}
-                            />
-                            </DetailPanel>
-                        </ClientMessageDetailSlide>
+                        />
                     </div>
                 ) : (
                     <EmptyState name="clients-empty-state" icon={Users} message="고객을 선택하면 상세 정보가 표시됩니다" />
@@ -1333,7 +841,7 @@ export default function ClientsPage() {
                     onClose={handleDetailModalClose}
                     client={activeSelectedClient}
                     onEdit={handleEdit}
-                    onDelete={handleDelete}
+                    onDelete={handleDeleteRequest}
                 />
 
             <ClientFormDialog
@@ -1341,6 +849,72 @@ export default function ClientsPage() {
                 onClose={handleFormDialogClose}
                 client={editingClient ?? null}
                 onSuccess={handleClientFormDialogSuccess}
+            />
+
+            <TwoButtonModal
+                open={resetLinkTargetClientId !== null}
+                onOpenChange={(open) => {
+                    if (!open && !isResettingLink) setResetLinkTargetClientId(null);
+                }}
+                dataComponent="clients-detail-reset-service-record-link-approval"
+                title="제공기록지 링크를 재설정하시겠습니까?"
+                description="기존 링크는 만료되고 새 링크가 생성됩니다. 메시지는 발송되지 않습니다."
+                isDescriptionVisuallyHidden={false}
+                approvalLabel="링크 재설정"
+                pendingLabel="재설정 중..."
+                isPending={isResettingLink}
+                onApprove={() => void handleResetServiceRecordLinkConfirm()}
+            />
+
+            <ServiceRecordLinkResetResultModal
+                open={resetServiceRecordUrl !== null}
+                serviceRecordUrl={resetServiceRecordUrl ?? ""}
+                onClose={() => setResetServiceRecordUrl(null)}
+                onCopy={(serviceRecordUrl) => void handleCopyResetServiceRecordLink(serviceRecordUrl)}
+            />
+
+            {scheduleChangeTarget ? (
+                <ServiceScheduleChangeModal
+                    open
+                    sessionIndex={scheduleChangeTarget.sessionIndex}
+                    currentDate={scheduleChangeTarget.currentDate}
+                    minimumDate={scheduleChangeTarget.minimumDate}
+                    selectedDate={selectedScheduleChangeDate}
+                    isPending={isApplyingScheduleChange}
+                    onDateChange={setSelectedScheduleChangeDate}
+                    onClose={() => {
+                        setScheduleChangeTarget(null);
+                        setSelectedScheduleChangeDate("");
+                    }}
+                    onSubmit={() => void handleApplyServiceScheduleChange()}
+                />
+            ) : null}
+
+            <TwoButtonModal
+                open={deleteTargetClientId !== null}
+                onOpenChange={(open) => {
+                    if (!open) setDeleteTargetClientId(null);
+                }}
+                dataComponent="clients-delete-approval"
+                title={t(locale, "clients.delete-confirm")}
+                description="삭제한 고객 정보는 복구할 수 없습니다."
+                approvalLabel={t(locale, "common.delete")}
+                pendingLabel="삭제 중..."
+                approvalVariant="destructive"
+                isPending={deleteClient.isPending}
+                onApprove={() => void handleDeleteConfirm()}
+            />
+
+            <NotificationOneButtonModal
+                open={deleteErrorMessage !== null}
+                onOpenChange={(open) => {
+                    if (!open) setDeleteErrorMessage(null);
+                }}
+                dataComponent="clients-delete-error-notification"
+                title="고객을 삭제하지 못했습니다."
+                description={deleteErrorMessage ?? ""}
+                isDescriptionVisuallyHidden={false}
+                onAcknowledge={() => setDeleteErrorMessage(null)}
             />
         </PageSection>
     );

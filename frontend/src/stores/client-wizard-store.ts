@@ -20,15 +20,18 @@ interface ClientWizardFormData {
   voucherClient: boolean;
   breastPump: boolean;
   serviceStatus: ServiceStatus;
+  applyMessageAutomation: boolean;
 }
 
 interface ClientWizardStore extends ClientWizardFormData {
   currentStep: number;
   pricesManuallyEdited: boolean;
+  voucherYear: number | null;
 
   setField: <K extends keyof ClientWizardFormData>(key: K, value: ClientWizardFormData[K]) => void;
   setCurrentStep: (step: number) => void;
   setPricesManuallyEdited: (edited: boolean) => void;
+  setVoucherYear: (year: number | null) => void;
   reset: () => void;
 }
 
@@ -48,18 +51,21 @@ const INITIAL_FORM: ClientWizardFormData = {
   startDate: "",
   endDate: "",
   careCenter: false,
-  voucherClient: true,
+  voucherClient: false,
   breastPump: false,
-  serviceStatus: "waiting",
+  serviceStatus: "pre_booking",
+  applyMessageAutomation: true,
 };
 
 export const useClientWizardStore = create<ClientWizardStore>((set) => ({
   ...INITIAL_FORM,
   currentStep: 0,
   pricesManuallyEdited: false,
+  voucherYear: null,
 
   setField: (key, value) => set({ [key]: value }),
   setCurrentStep: (step) => set({ currentStep: step }),
   setPricesManuallyEdited: (edited) => set({ pricesManuallyEdited: edited }),
-  reset: () => set({ ...INITIAL_FORM, currentStep: 0, pricesManuallyEdited: false }),
+  setVoucherYear: (year) => set({ voucherYear: year }),
+  reset: () => set({ ...INITIAL_FORM, currentStep: 0, pricesManuallyEdited: false, voucherYear: null }),
 }));

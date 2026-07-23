@@ -2,7 +2,12 @@
 
 import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, MessageSquareText, Send, UserCheck, UserPlus, type LucideIcon } from "lucide-react";
+import { MessageSquareText, type LucideIcon } from "lucide-react";
+import {
+  MESSAGE_EVENT_LABELS,
+  MESSAGE_RECIPIENT_LABELS,
+  getMessageTemplateLabel,
+} from "@babyjamjam/shared";
 
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -12,9 +17,7 @@ import {
 import type {
   MessageTriggerRule,
   TriggerEventType,
-  TriggerTemplateKey,
 } from "@/features/message-triggers/types";
-import { getTriggerTemplateChannel } from "@/features/message-triggers/types";
 import { fetchAllMessageLogs } from "@/lib/messages/logs";
 import "@/components/app/mobile-redesign/redesign.css";
 
@@ -28,18 +31,12 @@ interface MessageLogRecord {
   eventType: TriggerEventType | null;
 }
 
-interface TriggerEventMeta {
-  label: string;
-  icon: LucideIcon;
-  tone: "primary" | "orange" | "green" | "purple";
-}
-
 interface BaseTriggerDisplayRow {
   title: string;
   timingLabel: string;
-  channelLabel: "알림톡" | "SMS";
+  channelLabel: "SMS";
   icon: LucideIcon;
-  tone: TriggerEventMeta["tone"];
+  tone: "primary" | "orange" | "green" | "purple";
   monthlyCount: number | null;
   failedCount: number | null;
 }
@@ -49,51 +46,7 @@ interface LiveTriggerDisplayRow extends BaseTriggerDisplayRow {
   rule: MessageTriggerRule;
 }
 
-interface UiTriggerDisplayRow extends BaseTriggerDisplayRow {
-  kind: "ui";
-  id: string;
-  isActive: boolean;
-}
-
-type TriggerDisplayRow = LiveTriggerDisplayRow | UiTriggerDisplayRow;
-
-export const UI_ONLY_AUTOMATION_TRIGGER_COUNT = 1;
-
-const CLIENT_GREETING_SMS_TRIGGER: UiTriggerDisplayRow = {
-  kind: "ui",
-  id: "client-greeting-sms",
-  title: "신규 고객 인사 SMS",
-  timingLabel: "고객 등록 즉시 · 고객 번호",
-  channelLabel: "SMS",
-  icon: MessageSquareText,
-  tone: "primary",
-  monthlyCount: 0,
-  failedCount: 0,
-  isActive: true,
-};
-
-const EVENT_META: Record<TriggerEventType, TriggerEventMeta> = {
-  CLIENT_CREATED: {
-    label: "고객 등록",
-    icon: UserPlus,
-    tone: "primary",
-  },
-  SERVICE_START: {
-    label: "서비스 시작",
-    icon: Send,
-    tone: "orange",
-  },
-  SERVICE_END: {
-    label: "서비스 종료",
-    icon: Check,
-    tone: "green",
-  },
-  EMPLOYEE_ASSIGNED: {
-    label: "제공인력 배정",
-    icon: UserCheck,
-    tone: "purple",
-  },
-};
+type TriggerDisplayRow = LiveTriggerDisplayRow;
 
 const EVENT_SORT_ORDER: Record<TriggerEventType, number> = {
   CLIENT_CREATED: 0,
@@ -102,33 +55,12 @@ const EVENT_SORT_ORDER: Record<TriggerEventType, number> = {
   EMPLOYEE_ASSIGNED: 3,
 };
 
-const RECIPIENT_LABEL: Record<MessageTriggerRule["recipientType"], string> = {
-  CLIENT: "고객",
-  PRIMARY_EMPLOYEE: "주 담당 제공인력",
-  SECONDARY_EMPLOYEE: "보조 제공인력",
-};
-
-const TEMPLATE_LABEL: Record<TriggerTemplateKey, string> = {
-  CLIENT_WELCOME: "고객 등록 환영",
-  SERVICE_START_REMINDER: "서비스 시작 안내",
-  SERVICE_INFO: "서비스 안내",
-  SERVICE_END_REMINDER: "서비스 종료 안내",
-  EMPLOYEE_ASSIGNED: "제공인력 배정 안내",
-  SERVICE_FEEDBACK_LINK: "제공기록지 작성 링크",
-  CLIENT_GREETING: "인사(소개)",
-  PRICE_INFO: "비용 안내",
-  REMINDER: "리마인드",
-  THANKS: "예약 완료(입금 확인)",
-  SURVEY: "모니터링 설문",
-  INFO: "정보 요청",
-};
-
 function getRuleTitle(rule: MessageTriggerRule) {
-  return rule.name.trim() || TEMPLATE_LABEL[rule.templateKey];
+  return rule.name.trim() || getMessageTemplateLabel(rule.templateKey);
 }
 
 function getRuleTimingLabel(rule: MessageTriggerRule) {
-  const eventLabel = EVENT_META[rule.eventType].label;
+  const eventLabel = MESSAGE_EVENT_LABELS[rule.eventType];
 
   if (rule.offsetType === "IMMEDIATE") {
     return `${eventLabel} 즉시`;
@@ -144,18 +76,6 @@ function getRuleTimingLabel(rule: MessageTriggerRule) {
   }
 
   return `${eventLabel} ${dayLabel} 후`;
-}
-
-function getRuleChannelLabel(rule: MessageTriggerRule): BaseTriggerDisplayRow["channelLabel"] {
-  return getTriggerTemplateChannel(rule.templateKey) === "sms" ? "SMS" : "알림톡";
-}
-
-function getRuleIcon(rule: MessageTriggerRule, eventMeta: TriggerEventMeta): LucideIcon {
-  return getTriggerTemplateChannel(rule.templateKey) === "sms" ? MessageSquareText : eventMeta.icon;
-}
-
-function getRuleTone(rule: MessageTriggerRule, eventMeta: TriggerEventMeta): TriggerEventMeta["tone"] {
-  return getTriggerTemplateChannel(rule.templateKey) === "sms" ? "primary" : eventMeta.tone;
 }
 
 function isCurrentMonthLog(log: MessageLogRecord) {
@@ -197,7 +117,7 @@ function compareTriggerRules(first: MessageTriggerRule, second: MessageTriggerRu
   return getRuleTitle(first).localeCompare(getRuleTitle(second), "ko-KR");
 }
 
-export function MessageTriggerList() {
+export function MessageTriggerList({ onEdit }: { onEdit?: (rule: MessageTriggerRule) => void } = {}) {
   const {
     data: rulesResponse = [],
     isError: isRulesError,
@@ -226,7 +146,6 @@ export function MessageTriggerList() {
 
   const displayRows = useMemo<TriggerDisplayRow[]>(() => {
     return [...rules].sort(compareTriggerRules).map((rule) => {
-      const eventMeta = EVENT_META[rule.eventType];
       const matchingLogs = logs.filter((log) => (
         isCurrentMonthLog(log) && matchesTriggerLog(log, rule)
       ));
@@ -235,10 +154,10 @@ export function MessageTriggerList() {
         kind: "live",
         rule,
         title: getRuleTitle(rule),
-        timingLabel: `${getRuleTimingLabel(rule)} · ${RECIPIENT_LABEL[rule.recipientType]}`,
-        channelLabel: getRuleChannelLabel(rule),
-        icon: getRuleIcon(rule, eventMeta),
-        tone: getRuleTone(rule, eventMeta),
+        timingLabel: `${getRuleTimingLabel(rule)} · ${MESSAGE_RECIPIENT_LABELS[rule.recipientType]}`,
+        channelLabel: "SMS",
+        icon: MessageSquareText,
+        tone: "primary",
         monthlyCount: isLogsLoading || isLogsError ? null : matchingLogs.length,
         failedCount: isLogsLoading || isLogsError
           ? null
@@ -247,15 +166,7 @@ export function MessageTriggerList() {
     });
   }, [isLogsError, isLogsLoading, logs, rules]);
 
-  const allDisplayRows = useMemo<TriggerDisplayRow[]>(() => (
-    [
-      CLIENT_GREETING_SMS_TRIGGER,
-      ...displayRows,
-    ]
-  ), [displayRows]);
-
   const handleToggle = useCallback((row: TriggerDisplayRow) => {
-    if (row.kind === "ui") return;
     const nextActive = !row.rule.isActive;
 
     updateRuleMutation.mutate({
@@ -265,30 +176,18 @@ export function MessageTriggerList() {
   }, [updateRuleMutation]);
 
   return (
-    <div className="list-card-scroll" data-component="message-trigger-scroll">
-      <div className="section-block" data-component="message-trigger-section">
+    <div className="section-block" data-component="message-trigger-section">
         <div className="section-header" data-component="message-trigger-section-header">자동 전송 트리거</div>
 
-        {allDisplayRows.map((row) => {
+        {displayRows.map((row) => {
           const Icon = row.icon;
-          const rowActive = row.kind === "live" ? row.rule.isActive : row.isActive;
-          const rowKey = row.kind === "live" ? row.rule.id : row.id;
-          const triggerKey = row.kind === "live" ? row.rule.templateKey : row.id;
-          const triggerId = row.kind === "live" ? row.rule.id : row.id;
+          const rowActive = row.rule.isActive;
+          const rowKey = row.rule.id;
+          const triggerKey = row.rule.templateKey;
+          const triggerId = row.rule.id;
 
-          return (
-            <button
-              key={rowKey}
-              type="button"
-              className="list-item message-trigger-row"
-              aria-pressed={rowActive}
-              data-component="message-trigger-row"
-              data-trigger-id={triggerId}
-              data-trigger-key={triggerKey}
-              data-trigger-channel={row.channelLabel}
-              disabled={row.kind === "live" && updateRuleMutation.isPending}
-              onClick={() => handleToggle(row)}
-            >
+          const iconAndInfo = (
+            <>
               <div
                 className={`trigger-icon trigger-icon-${row.tone}`}
                 data-component="message-trigger-icon"
@@ -299,10 +198,10 @@ export function MessageTriggerList() {
               <div className="trigger-info" data-component="message-trigger-info">
                 <div className="trigger-title" data-component="message-trigger-title">{row.title}</div>
                 <div className="trigger-meta" data-component="message-trigger-meta">
-                  <span className={`send-stat ${row.kind === "live" && (isLogsError || (row.failedCount ?? 0) > 0) ? "fail" : ""}`}>
-                    {isLogsLoading && row.kind === "live" ? (
-                      <span className="alimtalk-count-skeleton" aria-label="발송 건수 집계 중" />
-                    ) : isLogsError && row.kind === "live" ? (
+                  <span className={`send-stat ${isLogsError || (row.failedCount ?? 0) > 0 ? "fail" : ""}`}>
+                    {isLogsLoading ? (
+                      <span className="message-count-skeleton" aria-label="발송 건수 집계 중" />
+                    ) : isLogsError ? (
                       "집계 실패"
                     ) : (
                       `${monthLabel} ${row.monthlyCount ?? 0}건`
@@ -314,7 +213,51 @@ export function MessageTriggerList() {
                   <span>{row.channelLabel}</span>
                 </div>
               </div>
+            </>
+          );
 
+          return onEdit ? (
+            <div
+              key={rowKey}
+              className="list-item message-trigger-row"
+              data-component="message-trigger-row"
+              data-trigger-id={triggerId}
+              data-trigger-key={triggerKey}
+              data-trigger-channel={row.channelLabel}
+            >
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                aria-label={`${row.title} 설정`}
+                onClick={() => onEdit(row.rule)}
+              >
+                {iconAndInfo}
+              </button>
+              <button
+                type="button"
+                className="flex min-h-11 min-w-11 items-center justify-end"
+                aria-label={`${row.title} ${rowActive ? "비활성화" : "활성화"}`}
+                aria-pressed={rowActive}
+                disabled={updateRuleMutation.isPending}
+                onClick={() => handleToggle(row)}
+              >
+                <span className={`toggle ${rowActive ? "on" : ""}`} aria-hidden="true" />
+              </button>
+            </div>
+          ) : (
+            <button
+              key={rowKey}
+              type="button"
+              className="list-item message-trigger-row"
+              aria-pressed={rowActive}
+              data-component="message-trigger-row"
+              data-trigger-id={triggerId}
+              data-trigger-key={triggerKey}
+              data-trigger-channel={row.channelLabel}
+              disabled={updateRuleMutation.isPending}
+              onClick={() => handleToggle(row)}
+            >
+              {iconAndInfo}
               <span className={`toggle ${rowActive ? "on" : ""}`} aria-hidden="true" />
             </button>
           );
@@ -339,17 +282,16 @@ export function MessageTriggerList() {
         )}
 
         {!isRulesLoading && isRulesError && (
-          <div className="alimtalk-empty-state" data-component="message-trigger-error">
+          <div className="message-empty-state" data-component="message-trigger-error">
             자동 전송 트리거를 불러오지 못했습니다.
           </div>
         )}
 
-        {!isRulesLoading && !isRulesError && allDisplayRows.length === 0 && (
-          <div className="alimtalk-empty-state" data-component="message-trigger-empty">
+        {!isRulesLoading && !isRulesError && displayRows.length === 0 && (
+          <div className="message-empty-state" data-component="message-trigger-empty">
             등록된 자동 전송 트리거가 없습니다.
           </div>
         )}
-      </div>
     </div>
   );
 }

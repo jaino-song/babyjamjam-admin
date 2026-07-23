@@ -158,6 +158,7 @@ export const mockUserBranches: UserBranch[] = [
 
 export type ServiceStatus =
   | 'active'
+  | 'pre_booking'
   | 'waiting'
   | 'completed'
   | 'terminated'
@@ -1532,8 +1533,6 @@ export const mockChatFeedbacks: ChatFeedback[] = [
 // SYSTEM SETTINGS
 // ============================================================================
 
-export type AlimtalkProvider = 'aligo_alimtalk' | 'none';
-
 export interface SystemSetting {
   key: string;
   value: string;
@@ -1541,11 +1540,6 @@ export interface SystemSetting {
 }
 
 export const mockSystemSettings: SystemSetting[] = [
-  {
-    key: 'alimtalk_provider',
-    value: 'aligo_alimtalk',
-    updatedAt: '2024-06-01T00:00:00.000Z',
-  },
   {
     key: 'default_service_duration',
     value: '20',

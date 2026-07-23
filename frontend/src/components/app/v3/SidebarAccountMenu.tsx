@@ -14,13 +14,13 @@ interface SidebarAccountMenuProps {
 }
 
 const ITEM_BASE =
-  "group flex w-full cursor-pointer items-center gap-[calc(12px*var(--v3-ui-scale,1))] rounded-xl px-[calc(10px*var(--v3-ui-scale,1))] py-[calc(9px*var(--v3-ui-scale,1))] text-left transition-colors";
+  "group flex w-full cursor-pointer items-center gap-[calc(12px*var(--glint-ui-scale,1))] rounded-xl px-[calc(10px*var(--glint-ui-scale,1))] py-[calc(9px*var(--glint-ui-scale,1))] text-left transition-colors";
 const ICON_WRAP =
-  "flex h-[calc(36px*var(--v3-ui-scale,1))] w-[calc(36px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-xl";
-const ICON_SIZE = "h-[calc(18px*var(--v3-ui-scale,1))] w-[calc(18px*var(--v3-ui-scale,1))]";
+  "flex h-[calc(36px*var(--glint-ui-scale,1))] w-[calc(36px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-xl";
+const ICON_SIZE = "h-[calc(18px*var(--glint-ui-scale,1))] w-[calc(18px*var(--glint-ui-scale,1))]";
 const ITEM_LABEL =
-  "truncate text-[calc(13.6px*var(--v3-ui-scale,1))] font-semibold text-gray-900 transition-colors";
-const ITEM_SUB = "truncate text-[calc(11.2px*var(--v3-ui-scale,1))] text-v3-text-muted";
+  "truncate text-[calc(13.6px*var(--glint-ui-scale,1))] font-semibold text-gray-900 transition-colors";
+const ITEM_SUB = "truncate text-[calc(11.2px*var(--glint-ui-scale,1))] text-v3-text-muted";
 
 /**
  * Account menu in the sidebar footer. The profile card is the trigger; the menu
@@ -69,7 +69,7 @@ export function SidebarAccountMenu({
       data-component="sidebar-account-menu"
       data-state={open ? "open" : "closed"}
       className={cn(
-        "flex flex-col gap-[calc(2px*var(--v3-ui-scale,1))] rounded-2xl border transition-all",
+        "flex flex-col gap-[calc(2px*var(--glint-ui-scale,1))] rounded-2xl border transition-all",
         open
           ? "border-v3-border bg-white shadow-v3-hover"
           : "border-v3-border/50 bg-v3-dim-white/50"
@@ -85,7 +85,7 @@ export function SidebarAccountMenu({
           open ? "grid-rows-[1fr] opacity-100" : "pointer-events-none grid-rows-[0fr] opacity-0"
         )}
       >
-        <div className="flex min-h-0 flex-col gap-[calc(2px*var(--v3-ui-scale,1))] overflow-hidden">
+        <div className="flex min-h-0 flex-col gap-[calc(2px*var(--glint-ui-scale,1))] overflow-hidden">
           <button
             type="button"
             role="menuitem"
@@ -120,7 +120,7 @@ export function SidebarAccountMenu({
 
           <div
             aria-hidden="true"
-            className="mx-[calc(8px*var(--v3-ui-scale,1))] mb-[calc(3px*var(--v3-ui-scale,1))] mt-[calc(5px*var(--v3-ui-scale,1))] h-px bg-v3-border"
+            className="mx-[calc(8px*var(--glint-ui-scale,1))] mb-[calc(3px*var(--glint-ui-scale,1))] mt-[calc(5px*var(--glint-ui-scale,1))] h-px bg-v3-border"
           />
         </div>
       </div>
@@ -131,19 +131,19 @@ export function SidebarAccountMenu({
         onClick={() => setOpen((value) => !value)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="group flex w-full cursor-pointer items-center gap-[calc(12px*var(--v3-ui-scale,1))] rounded-xl px-[calc(10px*var(--v3-ui-scale,1))] py-[calc(9px*var(--v3-ui-scale,1))] text-left transition-colors hover:bg-white"
+        className="group flex w-full cursor-pointer items-center gap-[calc(12px*var(--glint-ui-scale,1))] rounded-xl px-[calc(10px*var(--glint-ui-scale,1))] py-[calc(9px*var(--glint-ui-scale,1))] text-left transition-colors hover:bg-white"
       >
-        <Avatar className="h-[calc(40px*var(--v3-ui-scale,1))] w-[calc(40px*var(--v3-ui-scale,1))] shrink-0 rounded-full shadow-inner">
+        <Avatar className="h-[calc(40px*var(--glint-ui-scale,1))] w-[calc(40px*var(--glint-ui-scale,1))] shrink-0 rounded-full shadow-inner">
           <AvatarImage src={profileImage || ""} alt="" />
-          <AvatarFallback className="bg-gradient-to-br from-v3-primary to-blue-600 text-[calc(14px*var(--v3-ui-scale,1))] font-bold text-white">
+          <AvatarFallback className="bg-gradient-to-br from-v3-primary to-blue-600 text-[calc(14px*var(--glint-ui-scale,1))] font-bold text-white">
             {initials}
           </AvatarFallback>
         </Avatar>
         <span className="flex min-w-0 flex-col">
-          <span className="truncate text-[calc(13.6px*var(--v3-ui-scale,1))] font-semibold text-gray-900 transition-colors group-hover:text-v3-primary">
+          <span className="truncate text-[calc(13.6px*var(--glint-ui-scale,1))] font-semibold text-gray-900 transition-colors group-hover:text-v3-primary">
             {name}
           </span>
-          <span className="truncate text-[calc(11.2px*var(--v3-ui-scale,1))] text-v3-text-muted">
+          <span className="truncate text-[calc(11.2px*var(--glint-ui-scale,1))] text-v3-text-muted">
             {roleLabel}
           </span>
         </span>

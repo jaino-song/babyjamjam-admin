@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Logger, MessageEvent, Post, Query, Sse, UseGuards } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { Observable, filter, interval, map, merge } from "rxjs";
 import { EformsignDocService } from "application/services/eformsign-doc.service";
 import { EformsignDocsEventBus } from "application/services/eformsign-docs-event-bus.service";
@@ -6,6 +7,9 @@ import { EformsignHeadlessProgressService } from "application/services/eformsign
 import { ListClientNamesByBranchUsecase } from "application/usecases/eformsign-doc/list-client-names-by-branch.usecase";
 import { DispatchDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/dispatch-document-headless.usecase";
 import { FinalizeDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/finalize-document-headless.usecase";
+import { AdoptEformsignDocUsecase } from "application/usecases/eformsign-doc/adopt-eformsign-doc.usecase";
+import type { CreateEformsignDocResult } from "application/usecases/eformsign-doc/create-eformsign-doc.usecase";
+import { FEEDBACK_TEMPLATE_TIER_ENV_KEYS } from "application/usecases/eformsign-doc/service-record-field-ids";
 import {
     GetAccessTokenDto,
     RefreshAccessTokenDto,
@@ -17,6 +21,7 @@ import {
     DispatchHeadlessResponseDto,
     FinalizeHeadlessRequestDto,
     FinalizeHeadlessResponseDto,
+    AdoptEformsignDocDto,
 } from "interface/dto/eformsign-doc.dto";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
@@ -32,9 +37,28 @@ export class EformsignDocController {
         private readonly listClientNamesByBranchUsecase: ListClientNamesByBranchUsecase,
         private readonly dispatchHeadlessUsecase: DispatchDocumentHeadlessUsecase,
         private readonly finalizeHeadlessUsecase: FinalizeDocumentHeadlessUsecase,
+        private readonly adoptEformsignDocUsecase: AdoptEformsignDocUsecase,
         private readonly eventBus: EformsignDocsEventBus,
         private readonly headlessProgressService: EformsignHeadlessProgressService,
+        private readonly configService: ConfigService,
     ) {}
+
+    /**
+     * GET /eformsign-docs/feedback-template-id
+     * Exposes the 제공기록지 template id(s) so the UI can split feedback documents
+     * from contract documents by template — never by (renamable) template name.
+     * `templateId` stays the base (5회) id for backward compatibility; `templateIds`
+     * lists every configured tier (base, then 10/15/20회 in that order) so the UI can
+     * match documents created on any tier's template (BJJ-multi-tier).
+     */
+    @Get("feedback-template-id")
+    getFeedbackTemplateId(): { templateId: string | null; templateIds: string[] } {
+        const templateId = this.configService.get<string>("EFORMSIGN_FEEDBACK_TEMPLATE_ID")?.trim();
+        const templateIds = FEEDBACK_TEMPLATE_TIER_ENV_KEYS
+            .map(({ envKey }) => this.configService.get<string>(envKey)?.trim())
+            .filter((id): id is string => Boolean(id));
+        return { templateId: templateId || null, templateIds };
+    }
 
     /**
      * GET /eformsign-docs/events
@@ -110,9 +134,16 @@ export class EformsignDocController {
                 stepRecipientSms: dto.stepRecipientSms,
                 expiredDate: new Date(dto.expiredDate),
                 linkToClient: dto.linkToClient,
+                documentKind: dto.documentKind,
+                employeeScheduleId: dto.employeeScheduleId,
+                templateId: dto.templateId,
             });
             this.logger.log(`[POST /eformsign-docs] Successfully created record id=${result.id}`);
-            return result;
+            const resultWithWarnings = result as CreateEformsignDocResult;
+            return {
+                ...result.toJSON(),
+                ...(resultWithWarnings.warnings ? { warnings: resultWithWarnings.warnings } : {}),
+            };
         } catch (error) {
             this.logger.error(`[POST /eformsign-docs] Failed to create record: ${error}`);
             throw error;
@@ -229,6 +260,19 @@ export class EformsignDocController {
         );
     }
 
+    /** 원격 생성에는 성공했지만 로컬 저장에 실패한 문서를 현재 지점으로 복구한다. */
+    @Post("adopt")
+    async adopt(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Body() dto: AdoptEformsignDocDto,
+    ) {
+        const result = await this.adoptEformsignDocUsecase.execute(tenant.branchId ?? "", dto);
+        return {
+            ...result.toJSON(),
+            ...(result.warnings ? { warnings: result.warnings } : {}),
+        };
+    }
+
     /**
      * POST /eformsign-docs/dispatch-headless
      * Run the creation iframe gate sequence (mode:"01") off-screen via Playwright.
@@ -245,6 +289,7 @@ export class EformsignDocController {
             contractData: dto.contractData,
             clientId: dto.clientId,
             progressId: dto.progressId,
+            force: dto.force,
         });
         if (!result.ok) {
             this.logger.warn(`[dispatch-headless] failed: ${result.reason}`);
@@ -253,7 +298,9 @@ export class EformsignDocController {
                 durationMs: result.durationMs,
                 reason: result.reason,
                 failedStep: result.failedStep,
-                fallbackHint: "iframe",
+                fallbackHint: result.fallbackHint,
+                remoteDocumentId: result.remoteDocumentId,
+                existingDocumentId: result.existingDocumentId,
             };
         }
         return {

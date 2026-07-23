@@ -131,7 +131,15 @@ export function SplitLayout({
     viewportWidth: 0,
   });
 
-  const childArray = React.Children.toArray(children);
+  const rawChildArray = React.Children.toArray(children);
+  const childArray = columns === 2 && rawChildArray.length > 2
+    ? [
+        rawChildArray[0],
+        <React.Fragment key="split-layout-detail-group">
+          {rawChildArray.slice(1)}
+        </React.Fragment>,
+      ]
+    : rawChildArray;
   const isDynamicSplit = columns === 2 && childArray.length >= 2;
   const isCompact = mode === "compact";
 
@@ -352,7 +360,7 @@ export function SplitLayout({
         data-mode={mode}
         className={cn(
           "flex-1 h-full min-w-0 min-h-0",
-          "grid gap-[calc(16px*var(--v3-ui-scale,1))]",
+          "grid gap-[calc(16px*var(--glint-ui-scale,1))]",
           getDesktopGridClass(columns),
           "data-[mode=compact]:block data-[mode=compact]:relative data-[mode=compact]:w-full data-[mode=compact]:overflow-hidden data-[mode=compact]:rounded-[28px]",
         )}
@@ -377,6 +385,7 @@ export function SplitLayout({
           {childArray.map((child, index) => {
             const key = (child as React.ReactElement).key ?? `split-panel-${index}`;
             const panelName = index === 0 ? "list" : "detail";
+            const isInactiveCompactPanel = isCompact && index !== mobileOffset;
             const panelStyle = isCompact && columns === 2
               ? {
                   width: index === 0
@@ -390,6 +399,8 @@ export function SplitLayout({
                 key={key}
                 data-component="split-layout-panel"
                 data-panel={panelName}
+                aria-hidden={isInactiveCompactPanel || undefined}
+                inert={isInactiveCompactPanel || undefined}
                 className={cn(
                   "min-w-0 min-h-0 flex flex-col",
                   "data-[mode=compact]:h-full data-[mode=compact]:shrink-0 data-[mode=compact]:overflow-y-auto",

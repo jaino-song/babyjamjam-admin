@@ -27,7 +27,7 @@ export interface ServiceRecordFormSection {
 export const SERVICE_RECORD_FORM_LAYOUT: ServiceRecordFormSection[] = [
     {
         id: "mom",
-        title: "산모 상태",
+        title: "산모 기록",
         tone: "mom",
         fields: [
             {
@@ -70,7 +70,7 @@ export const SERVICE_RECORD_FORM_LAYOUT: ServiceRecordFormSection[] = [
     },
     {
         id: "baby",
-        title: "신생아 상태",
+        title: "신생아 기록",
         tone: "baby",
         fields: [
             {
@@ -119,13 +119,13 @@ export const SERVICE_RECORD_FORM_LAYOUT: ServiceRecordFormSection[] = [
     },
     {
         id: "finish",
-        title: "마무리 · 확인",
+        title: "서비스 기록",
         tone: "finish",
         fields: [
             { key: "etcService", label: "기타 서비스", kind: "text", source: "session" },
             { key: "notes", label: "특이사항", kind: "text", source: "session" },
             { key: "paymentConfirmed", label: "결제 확인", kind: "check", source: "session" },
-            { key: "hasMomSignature", label: "산모 확인서명", kind: "check", source: "session" },
+            { key: "hasMomApproval", label: "산모 서명", kind: "check", source: "session" },
         ],
     },
 ];

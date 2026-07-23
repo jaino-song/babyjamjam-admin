@@ -12,6 +12,296 @@
   --mobile-z-detail: 70;
 }
 
+/* ===== Mobile messages navigation + data pages ===== */
+body:has([data-component="messages"]) [data-component="floating-quick-actions"] {
+  display: none !important;
+}
+
+body:has([data-component="messages"]) [data-component="messages"],
+.message-page-shell {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+body:has([data-component="messages"]) [data-component="messages-content"] {
+  padding: 76px 14px;
+  overflow-y: auto;
+}
+
+.message-navigation-card,
+.message-data-card {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.message-navigation-intro {
+  margin: 2px 16px 10px;
+  color: hsl(var(--v3-text-muted));
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.message-navigation-list,
+.message-data-list {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 4px 8px 12px;
+  scrollbar-width: none;
+}
+
+.message-navigation-list::-webkit-scrollbar,
+.message-data-list::-webkit-scrollbar {
+  display: none;
+}
+
+.message-navigation-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 72px;
+  padding: 12px 10px;
+  border-bottom: 1px solid hsl(var(--v3-border) / 0.65);
+  color: inherit;
+  text-decoration: none;
+}
+
+.message-navigation-row:last-child {
+  border-bottom: 0;
+}
+
+.message-navigation-icon {
+  display: inline-flex;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+}
+
+.message-navigation-icon-primary {
+  color: hsl(var(--v3-primary));
+  background: hsl(var(--v3-primary-light));
+}
+
+.message-navigation-icon-orange {
+  color: #c26720;
+  background: #fff2e8;
+}
+
+.message-navigation-icon-green {
+  color: #27815a;
+  background: #eaf8f1;
+}
+
+.message-navigation-icon-purple {
+  color: #7151a5;
+  background: #f2edfb;
+}
+
+.message-navigation-icon-slate {
+  color: #526173;
+  background: #eef2f6;
+}
+
+.message-navigation-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.message-navigation-copy strong {
+  color: hsl(var(--v3-dark));
+  font-size: 0.86rem;
+}
+
+.message-navigation-copy span {
+  color: hsl(var(--v3-text-muted));
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
+.message-navigation-row > svg {
+  flex: 0 0 auto;
+  color: hsl(var(--v3-text-muted));
+}
+
+.message-data-back {
+  display: inline-flex;
+  min-height: 44px;
+  align-self: flex-start;
+  align-items: center;
+  margin-inline: 12px;
+  padding: 2px 10px;
+  color: hsl(var(--v3-primary));
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.4;
+  text-decoration: none;
+}
+
+.message-data-summary {
+  align-self: flex-start;
+  margin: 0 12px 6px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  color: hsl(var(--v3-primary));
+  background: hsl(var(--v3-primary-light));
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.message-data-row {
+  display: flex;
+  gap: 11px;
+  padding: 13px 0;
+}
+
+.message-data-row-button {
+  width: 100%;
+  border-top: 0;
+  border-right: 0;
+  border-left: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.message-data-row-button:hover {
+  background: hsl(var(--v3-primary-light) / 0.45);
+}
+
+.message-data-row-button:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid hsl(var(--v3-primary));
+  outline-offset: -2px;
+}
+
+.message-data-row-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.message-data-row-copy-split {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.message-data-row-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.message-data-row-copy > .message-data-row-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.message-data-row-copy > .message-data-row-title > strong,
+.message-data-row-info > .message-data-row-title {
+  display: block;
+  overflow: hidden;
+  color: hsl(var(--v3-dark));
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-data-row-copy p,
+.message-data-row-copy small,
+.message-data-row-copy em {
+  display: block;
+  margin: 4px 0 0;
+  color: hsl(var(--v3-text-muted));
+  font-size: 0.69rem;
+  font-style: normal;
+  line-height: 1.4;
+}
+
+.message-data-row-copy em {
+  color: #b42318;
+}
+
+.message-data-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+.message-data-status-pending,
+.message-data-status-processing {
+  color: #9a5b16;
+  background: #fff4df;
+}
+
+.message-data-status-sent {
+  color: #287858;
+  background: #eaf8f1;
+}
+
+.message-data-status-failed,
+.message-data-status-canceled {
+  color: #b42318;
+  background: #feeceb;
+}
+
+.message-data-status-group {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.message-data-schedule-time {
+  color: hsl(var(--v3-text-muted));
+  font-size: 0.66rem;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.message-data-empty {
+  display: flex;
+  min-height: 180px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: hsl(var(--v3-text-muted));
+  text-align: center;
+}
+
+.message-data-empty p {
+  margin: 0;
+  font-size: 0.75rem;
+}
+
+.message-data-spinner {
+  animation: spin 1s linear infinite;
+}
+
 /* ===== Existing top navbar (user identity + bell) ===== */
 .existing-navbar {
   height: 64px;
@@ -308,7 +598,7 @@ main[data-component="main-content"]:has([data-component="dashboard"]) > [data-co
   background: white;
   border-radius: 22px;
   box-shadow: 0 4px 24px hsla(214, 50%, 20%, 0.06);
-  padding: 8px;
+  padding: 20px;
   margin-bottom: 12px;
 }
 .list-title {
@@ -319,7 +609,6 @@ main[data-component="main-content"]:has([data-component="dashboard"]) > [data-co
   font-size: 1rem;
   font-weight: 700;
   color: hsl(var(--v3-dark));
-  padding: 12px 16px 6px;
 }
 .list-title-text {
   flex: 1;
@@ -334,6 +623,8 @@ main[data-component="main-content"]:has([data-component="dashboard"]) > [data-co
   color: hsl(var(--v3-text-muted));
 }
 .list-action {
+  position: relative;
+  min-width: 44px;
   background: transparent;
   border: 0;
   color: hsl(var(--v3-primary));
@@ -341,17 +632,31 @@ main[data-component="main-content"]:has([data-component="dashboard"]) > [data-co
   font-weight: 700;
   cursor: pointer;
   font-family: inherit;
+  min-height: 0;
   padding: 0;
   display: flex;
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
 }
+.list-action::before {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 100%;
+  height: 44px;
+  content: "";
+  transform: translate(-50%, -50%);
+}
 .list-action:hover { opacity: 0.7; }
+.list-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
 .list-card-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 8px 12px;
+  padding: 4px 0 12px;
   scrollbar-width: none;
   display: flex;
   flex-direction: column;
@@ -363,7 +668,7 @@ main[data-component="main-content"]:has([data-component="dashboard"]) > [data-co
 .filter-row {
   display: flex;
   gap: 6px;
-  padding: 6px 12px;
+  padding: 6px 0;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -428,7 +733,7 @@ main[data-component="main-content"]:has([data-component="dashboard"]) > [data-co
   color: hsl(var(--v3-text-muted));
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  padding: 16px 12px 6px;
+  padding: 16px 0 6px;
   background: white;
   position: sticky;
   top: 0;
@@ -445,7 +750,7 @@ main[data-component="main-content"]:has([data-component="dashboard"]) > [data-co
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
+  padding: 8px 0;
   border-radius: 12px;
   cursor: pointer;
   transition: background 0.15s ease;
@@ -588,7 +893,8 @@ main[data-component="main-content"]:has([data-component="dashboard"]) > [data-co
   gap: 8px;
   background: hsl(var(--v3-dim-white));
   border-radius: 12px;
-  padding: 9px 12px;
+  min-height: 44px;
+  padding: 0;
   margin: 0 12px 8px;
   color: hsl(var(--v3-text-muted));
   font-size: 0.8rem;
@@ -598,6 +904,8 @@ main[data-component="main-content"]:has([data-component="dashboard"]) > [data-co
   background: transparent;
   outline: none;
   flex: 1;
+  align-self: stretch;
+  min-height: 44px;
   font-family: inherit;
   font-size: 0.85rem;
   color: hsl(var(--v3-dark));
@@ -1142,6 +1450,11 @@ body.mobile-all-route .notification-radio-dot {
 }
 
 body.mobile-all-route .notification-action-pill {
+  display: inline-flex;
+  min-width: 44px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
   padding: 5px 10px;
   border-radius: 999px;
   background: hsl(var(--v3-primary-light));
@@ -1364,7 +1677,10 @@ body.mobile-all-route .menu-row {
   border: 0;
   color: hsl(var(--v3-text-muted));
   cursor: pointer;
+  width: 44px;
+  height: 44px;
   padding: 4px;
+  border-radius: 12px;
   font-family: inherit;
   line-height: 1;
   display: flex;
@@ -1925,10 +2241,11 @@ body.mobile-all-route .menu-row {
 }
 .message-detail-back {
   display: inline-flex;
+  min-height: 44px;
   align-items: center;
   gap: 4px;
   align-self: flex-start;
-  padding: 0;
+  padding: 0 10px;
   border: 0;
   background: none;
   cursor: pointer;
@@ -2010,13 +2327,6 @@ body.mobile-all-route .menu-row {
 [data-component="files"] [data-component="mobile-files-content"] {
   padding: 76px 26px 100px;
   overflow-y: auto;
-}
-
-[data-component="files"] .list-card {
-  max-width: 338px;
-  margin: 0 auto;
-  border-radius: 22px;
-  padding: 8px;
 }
 
 [data-component="files"] .list-title,
@@ -2187,11 +2497,6 @@ body:has([data-component="files"] .nav-stack.show-detail) [data-component="mobil
   overflow-y: auto;
 }
 
-[data-component="clients"] .list-card {
-  border-radius: 22px;
-  padding: 8px;
-}
-
 [data-component="clients"] .list-title {
   line-height: normal;
 }
@@ -2241,13 +2546,15 @@ body:has([data-component="files"] .nav-stack.show-detail) [data-component="mobil
 }
 
 [data-component="clients"] .badge-mini.muted {
-  border-color: hsl(var(--v3-border));
+  background: hsl(220, 20%, 97%);
+  color: hsl(214, 10%, 55%);
+  border-color: hsl(220, 20%, 90%);
 }
 
 [data-component="clients"] .badge-mini.gray {
-  background: hsl(var(--v3-dim-white));
-  color: hsl(var(--v3-text-muted));
-  border-color: hsl(var(--v3-border));
+  background: hsl(220, 20%, 97%);
+  color: hsl(214, 10%, 55%);
+  border-color: hsl(220, 20%, 90%);
 }
 
 [data-component="clients"] .badge-mini.primary {
@@ -2330,14 +2637,6 @@ body:has([data-component="files"] .nav-stack.show-detail) [data-component="mobil
   padding: 0;
 }
 
-[data-component="mobile-clients-service-records"] .link-note {
-  margin-top: 8px;
-  color: hsl(var(--v3-text-muted));
-  font-size: 0.66rem;
-  line-height: 1.5;
-  text-align: center;
-}
-
 [data-component="mobile-clients-service-records"] .service-record-card-title-row {
   display: flex;
   align-items: center;
@@ -2351,8 +2650,35 @@ body:has([data-component="files"] .nav-stack.show-detail) [data-component="mobil
   margin-bottom: 0;
 }
 
+[data-component="mobile-clients-service-records-assignment"] > .info-card:first-child > .info-card-title {
+  font-size: 0.7rem;
+}
+
 [data-component="mobile-clients-service-records"] .service-record-card-title-row .service-record-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   margin-left: auto;
+}
+
+[data-component="mobile-clients-service-records"] .service-record-refresh-button {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: hsl(var(--v3-text-muted));
+  cursor: pointer;
+}
+
+[data-component="mobile-clients-service-records"] .service-record-refresh-button:disabled {
+  cursor: wait;
+  opacity: 0.5;
 }
 
 [data-component="mobile-clients-service-records"] .service-record-card-title-row .info-row {
@@ -2382,9 +2708,10 @@ body:has([data-component="files"] .nav-stack.show-detail) [data-component="mobil
 }
 
 [data-component="mobile-clients-service-records"] .service-record-snapshot-note {
-  padding: 4px;
-  font-size: 0.62rem;
+  padding: 12px 4px;
+  font-size: 0.6875rem;
   font-weight: 500;
+  line-height: 1.5;
 }
 
 [data-slot="skeleton"].service-record-skeleton-loader {
@@ -2615,11 +2942,6 @@ body:has([data-component="consultations"]) [data-component="mobile-header"] {
 [data-component="consultations"] [data-component="mobile-consultations-content"] {
   padding: 76px 14px 76px;
   overflow-y: auto;
-}
-
-[data-component="consultations"] .list-card {
-  border-radius: 22px;
-  padding: 8px;
 }
 
 [data-component="consultations"] .list-title,
@@ -2860,11 +3182,6 @@ body:has([data-component="employees"]) [data-component="employees"].mobile-detai
 body:has([data-component="employees"]) [data-component="mobile-employees-content"] {
   padding: 12px 14px 76px;
   overflow-y: auto;
-}
-
-body:has([data-component="employees"]) .list-card {
-  border-radius: 22px;
-  padding: 8px;
 }
 
 body:has([data-component="employees"]) .list-title {
@@ -3256,19 +3573,6 @@ body:has([data-component="messages"]) [data-component="mobile-messages-detail-sc
   border-radius: 38px;
 }
 
-body:has([data-component="messages"]) [data-component="mobile-messages-detail-page"] {
-  position: fixed;
-  top: 62px;
-  right: 12px;
-  bottom: 12px;
-  left: 12px;
-  z-index: var(--mobile-z-detail);
-  width: auto;
-  border-radius: 24px 24px 0 0;
-  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.22);
-  overflow: hidden;
-}
-
 body:has([data-component="messages"]):has([data-component="mobile-messages-stack"].show-detail) [data-component="mobile-bottom-nav"] {
   opacity: 0;
   pointer-events: none;
@@ -3315,15 +3619,15 @@ body:has([data-component="messages"]) [data-component="mobile-bottom-nav"] span 
   line-height: 1;
 }
 
-/* ===== /alimtalk pixel shell — scoped to page-alimtalk.html parity ===== */
-body:has([data-component="alimtalk"]) {
+/* ===== Message automation shell ===== */
+body:has([data-component="messages-shell"]) {
   background: hsl(220, 15%, 88%);
   color: hsl(var(--v3-text));
   font-family: "NanumSquare Neo", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, sans-serif;
   line-height: normal;
 }
 
-body:has([data-component="alimtalk"]) [data-component="app-root"] {
+body:has([data-component="messages-shell"]) [data-component="app-root"] {
   position: relative;
   padding: 12px;
   overflow: hidden;
@@ -3334,7 +3638,7 @@ body:has([data-component="alimtalk"]) [data-component="app-root"] {
     0 0 0 1px rgba(0, 0, 0, 0.6) inset;
 }
 
-body:has([data-component="alimtalk"]) [data-component="app-root"]::before {
+body:has([data-component="messages-shell"]) [data-component="app-root"]::before {
   content: "";
   position: absolute;
   top: 12px;
@@ -3348,7 +3652,7 @@ body:has([data-component="alimtalk"]) [data-component="app-root"]::before {
   pointer-events: none;
 }
 
-body:has([data-component="alimtalk"]) [data-component="app-providers"] {
+body:has([data-component="messages-shell"]) [data-component="app-providers"] {
   position: relative;
   height: 100%;
   min-height: 0;
@@ -3359,7 +3663,7 @@ body:has([data-component="alimtalk"]) [data-component="app-providers"] {
   -webkit-font-smoothing: antialiased;
 }
 
-body:has([data-component="alimtalk"]) [data-component="main-content"] {
+body:has([data-component="messages-shell"]) [data-component="main-content"] {
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -3369,7 +3673,7 @@ body:has([data-component="alimtalk"]) [data-component="main-content"] {
   line-height: normal;
 }
 
-body:has([data-component="alimtalk"]) [data-component="mobile-header"] {
+body:has([data-component="messages-shell"]) [data-component="mobile-header"] {
   position: absolute !important;
   top: 0 !important;
   right: 0 !important;
@@ -3382,15 +3686,15 @@ body:has([data-component="alimtalk"]) [data-component="mobile-header"] {
   z-index: 20;
 }
 
-body:has([data-component="alimtalk"]) [data-component="floating-quick-actions"] {
+body:has([data-component="messages-shell"]) [data-component="floating-quick-actions"] {
   display: none !important;
 }
 
-body:has([data-component="alimtalk"]) [data-component="app-providers"] > .fixed.left-4.right-4.z-50 {
+body:has([data-component="messages-shell"]) [data-component="app-providers"] > .fixed.left-4.right-4.z-50 {
   display: none !important;
 }
 
-body:has([data-component="alimtalk"]) [data-component="alimtalk"] {
+body:has([data-component="messages-shell"]) [data-component="messages-shell"] {
   display: flex;
   height: 100%;
   min-height: 0;
@@ -3399,12 +3703,12 @@ body:has([data-component="alimtalk"]) [data-component="alimtalk"] {
   line-height: normal;
 }
 
-body:has([data-component="alimtalk"]) [data-component="alimtalk-content"] {
+body:has([data-component="messages-shell"]) [data-component="messages-content"] {
   padding: 12px 14px 76px;
   overflow-y: auto;
 }
 
-body:has([data-component="alimtalk"]) [data-component="message-trigger-card"] {
+body:has([data-component="messages-shell"]) [data-component="message-trigger-card"] {
   display: flex;
   flex: 1;
   min-height: 0;
@@ -3412,21 +3716,21 @@ body:has([data-component="alimtalk"]) [data-component="message-trigger-card"] {
   overflow: hidden;
 }
 
-body:has([data-component="alimtalk"]) .list-action {
+body:has([data-component="messages-shell"]) .list-action {
   text-decoration: none;
 }
 
-body:has([data-component="alimtalk"]) .list-title,
-body:has([data-component="alimtalk"]) .list-title-text,
-body:has([data-component="alimtalk"]) .list-action,
-body:has([data-component="alimtalk"]) .section-header,
-body:has([data-component="alimtalk"]) .trigger-title,
-body:has([data-component="alimtalk"]) .trigger-meta,
-body:has([data-component="alimtalk"]) .send-stat {
+body:has([data-component="messages-shell"]) .list-title,
+body:has([data-component="messages-shell"]) .list-title-text,
+body:has([data-component="messages-shell"]) .list-action,
+body:has([data-component="messages-shell"]) .section-header,
+body:has([data-component="messages-shell"]) .trigger-title,
+body:has([data-component="messages-shell"]) .trigger-meta,
+body:has([data-component="messages-shell"]) .send-stat {
   line-height: normal;
 }
 
-body:has([data-component="alimtalk"]) button.message-trigger-row {
+body:has([data-component="messages-shell"]) button.message-trigger-row {
   width: 100%;
   appearance: none;
   border: 0;
@@ -3437,16 +3741,16 @@ body:has([data-component="alimtalk"]) button.message-trigger-row {
   text-align: left;
 }
 
-body:has([data-component="alimtalk"]) button.message-trigger-row:disabled {
+body:has([data-component="messages-shell"]) button.message-trigger-row:disabled {
   cursor: wait;
   opacity: 0.72;
 }
 
-body:has([data-component="alimtalk"]) .message-trigger-row-skeleton {
+body:has([data-component="messages-shell"]) .message-trigger-row-skeleton {
   padding: 12px 10px;
 }
 
-body:has([data-component="alimtalk"]) .trigger-icon {
+body:has([data-component="messages-shell"]) .trigger-icon {
   display: flex;
   width: 38px;
   height: 38px;
@@ -3456,38 +3760,38 @@ body:has([data-component="alimtalk"]) .trigger-icon {
   border-radius: 11px;
 }
 
-body:has([data-component="alimtalk"]) .trigger-icon-primary {
+body:has([data-component="messages-shell"]) .trigger-icon-primary {
   color: hsl(var(--v3-primary));
   background: hsl(var(--v3-primary-light));
 }
 
-body:has([data-component="alimtalk"]) .trigger-icon-orange {
+body:has([data-component="messages-shell"]) .trigger-icon-orange {
   color: hsl(var(--v3-orange));
   background: hsl(var(--v3-orange-light));
 }
 
-body:has([data-component="alimtalk"]) .trigger-icon-green {
+body:has([data-component="messages-shell"]) .trigger-icon-green {
   color: hsl(var(--v3-green));
   background: hsl(var(--v3-green-light));
 }
 
-body:has([data-component="alimtalk"]) .trigger-icon-purple {
+body:has([data-component="messages-shell"]) .trigger-icon-purple {
   color: hsl(267, 50%, 46%);
   background: hsl(267, 50%, 92%);
 }
 
-body:has([data-component="alimtalk"]) .trigger-info {
+body:has([data-component="messages-shell"]) .trigger-info {
   flex: 1;
   min-width: 0;
 }
 
-body:has([data-component="alimtalk"]) .trigger-title {
+body:has([data-component="messages-shell"]) .trigger-title {
   color: hsl(var(--v3-dark));
   font-size: 0.86rem;
   font-weight: 700;
 }
 
-body:has([data-component="alimtalk"]) .trigger-meta {
+body:has([data-component="messages-shell"]) .trigger-meta {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -3496,11 +3800,11 @@ body:has([data-component="alimtalk"]) .trigger-meta {
   font-size: 0.66rem;
 }
 
-body:has([data-component="alimtalk"]) .trigger-meta .sep {
+body:has([data-component="messages-shell"]) .trigger-meta .sep {
   color: hsl(var(--v3-border));
 }
 
-body:has([data-component="alimtalk"]) .send-stat {
+body:has([data-component="messages-shell"]) .send-stat {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -3512,7 +3816,7 @@ body:has([data-component="alimtalk"]) .send-stat {
   font-weight: 700;
 }
 
-body:has([data-component="alimtalk"]) .alimtalk-count-skeleton {
+body:has([data-component="messages-shell"]) .message-count-skeleton {
   display: inline-block;
   width: 36px;
   height: 0.6rem;
@@ -3522,12 +3826,12 @@ body:has([data-component="alimtalk"]) .alimtalk-count-skeleton {
   animation: pulse 0.8s ease-in-out infinite;
 }
 
-body:has([data-component="alimtalk"]) .send-stat.fail {
+body:has([data-component="messages-shell"]) .send-stat.fail {
   color: hsl(var(--v3-burgundy));
   background: hsl(var(--v3-burgundy-light));
 }
 
-body:has([data-component="alimtalk"]) .alimtalk-empty-state {
+body:has([data-component="messages-shell"]) .message-empty-state {
   display: flex;
   min-height: 120px;
   align-items: center;
@@ -3540,7 +3844,7 @@ body:has([data-component="alimtalk"]) .alimtalk-empty-state {
   text-align: center;
 }
 
-body:has([data-component="alimtalk"]) .toggle {
+body:has([data-component="messages-shell"]) .toggle {
   position: relative;
   width: 38px;
   height: 22px;
@@ -3551,7 +3855,7 @@ body:has([data-component="alimtalk"]) .toggle {
   transition: background 0.2s ease;
 }
 
-body:has([data-component="alimtalk"]) .toggle::after {
+body:has([data-component="messages-shell"]) .toggle::after {
   content: "";
   position: absolute;
   top: 2px;
@@ -3564,15 +3868,15 @@ body:has([data-component="alimtalk"]) .toggle::after {
   transition: left 0.2s ease;
 }
 
-body:has([data-component="alimtalk"]) .toggle.on {
+body:has([data-component="messages-shell"]) .toggle.on {
   background: hsl(var(--v3-green));
 }
 
-body:has([data-component="alimtalk"]) .toggle.on::after {
+body:has([data-component="messages-shell"]) .toggle.on::after {
   left: 18px;
 }
 
-body:has([data-component="alimtalk"]) [data-component="mobile-bottom-nav"] {
+body:has([data-component="messages-shell"]) [data-component="mobile-bottom-nav"] {
   position: absolute !important;
   right: 14px !important;
   bottom: 12px !important;
@@ -3590,23 +3894,23 @@ body:has([data-component="alimtalk"]) [data-component="mobile-bottom-nav"] {
   transform: none !important;
 }
 
-body:has([data-component="alimtalk"]) [data-component="mobile-bottom-nav"] > div[aria-hidden="true"] {
+body:has([data-component="messages-shell"]) [data-component="mobile-bottom-nav"] > div[aria-hidden="true"] {
   display: none;
 }
 
-body:has([data-component="alimtalk"]) nav[data-component="mobile-bottom-nav"] a {
+body:has([data-component="messages-shell"]) nav[data-component="mobile-bottom-nav"] a {
   gap: 2px !important;
   padding: 5px 4px !important;
   border-radius: 14px !important;
   font-family: "NanumSquare Neo", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, sans-serif;
 }
 
-body:has([data-component="alimtalk"]) [data-component="mobile-bottom-nav"] svg {
+body:has([data-component="messages-shell"]) [data-component="mobile-bottom-nav"] svg {
   width: 18px;
   height: 18px;
 }
 
-body:has([data-component="alimtalk"]) [data-component="mobile-bottom-nav"] span {
+body:has([data-component="messages-shell"]) [data-component="mobile-bottom-nav"] span {
   font-size: 10px;
   font-weight: 500;
   line-height: 1;
@@ -4300,6 +4604,7 @@ main[data-component="main-content"]:has([data-component="select-branch"]) > [dat
   cursor: not-allowed;
 }
 .logout-link {
+  min-height: 44px;
   background: none;
   border: 0;
   text-align: center;
@@ -4923,11 +5228,6 @@ body.mobile-contracts-route [data-component="mobile-contracts-row"] {
   text-align: left;
 }
 
-body.mobile-contracts-route .list-card {
-  border-radius: 22px;
-  padding: 8px;
-}
-
 body.mobile-contracts-route [data-component="mobile-contracts-search"] {
   margin: 4px 12px 8px;
   line-height: normal;
@@ -4937,25 +5237,25 @@ body.mobile-contracts-route [data-component="mobile-contracts-search"] input {
   line-height: normal;
 }
 
-/* 카드 하단에 핀되는 load-more 버튼 슬롯. isInitialLoad === true 인 동안만 mount.
-   .list-card-scroll 의 flex sibling 이라 scroll 영역의 clientHeight 가 자동으로 footer 를
+/* 카드 하단에 핀되는 load-more 컨트롤. isInitialLoad === true 인 동안만 mount.
+   .list-card-scroll 의 flex sibling 이라 scroll 영역의 clientHeight 가 자동으로 load-more 영역을
    제외한 값으로 잡혀, hook 의 fit 계산에서 별도 차감이 필요 없음.
    ::before 는 짧고 진한 fade 로 마지막 row 를 숨겨 "더 있다" 라는 teaser cue 만 남긴다. */
-.list-card-footer {
+.list-card-load-more {
   flex: 0 0 auto;
   display: flex;
   justify-content: center;
-  padding: 8px 0 6px;
+  margin-top: -1rem;
   position: relative;
-  background: transparent;
+  background: white;
 }
-.list-card-footer::before {
+.list-card-load-more::before {
   content: "";
   position: absolute;
   left: 0;
   right: 0;
-  bottom: calc(100% - 10px);
-  height: 58px;
+  bottom: 100%;
+  height: 72px;
   background: linear-gradient(
     to bottom,
     hsla(0, 0%, 100%, 0) 0%,
@@ -4965,11 +5265,11 @@ body.mobile-contracts-route [data-component="mobile-contracts-search"] input {
   );
   pointer-events: none;
 }
-.list-card-footer > button {
+.list-card-load-more > button {
   position: relative;
   z-index: 1;
 }
-.list-card:has(.list-card-footer) .list-card-scroll {
+.list-card:has(.list-card-load-more) .list-card-scroll {
   overflow-y: hidden;
   overscroll-behavior: none;
 }
@@ -5386,7 +5686,7 @@ html:has(body [data-component="files"]),
 html:has(body [data-component="messages"]),
 html:has(body [data-component="messages-new-page"]),
 html:has(body [data-component="messages-templates"]),
-html:has(body [data-component="alimtalk"]),
+html:has(body [data-component="messages-shell"]),
 html:has(body [data-component="auth-login"]),
 html:has(body [data-component="auth-forgot-password"]),
 html:has(body [data-component="auth-register"]),
@@ -5408,7 +5708,7 @@ body:has([data-component="files"]),
 body:has([data-component="messages"]),
 body:has([data-component="messages-new-page"]),
 body:has([data-component="messages-templates"]),
-body:has([data-component="alimtalk"]),
+body:has([data-component="messages-shell"]),
 body:has([data-component="auth-login"]),
 body:has([data-component="auth-forgot-password"]),
 body:has([data-component="auth-register"]),
@@ -5430,7 +5730,7 @@ body:has([data-component="files"]) [data-component="app-root"],
 body:has([data-component="messages"]) [data-component="app-root"],
 body:has([data-component="messages-new-page"]) [data-component="app-root"],
 body:has([data-component="messages-templates"]) [data-component="app-root"],
-body:has([data-component="alimtalk"]) [data-component="app-root"],
+body:has([data-component="messages-shell"]) [data-component="app-root"],
 body:has([data-component="auth-login"]) [data-component="app-root"],
 body:has([data-component="auth-forgot-password"]) [data-component="app-root"],
 body:has([data-component="auth-register"]) [data-component="app-root"],
@@ -5455,7 +5755,7 @@ body:has([data-component="files"]) [data-component="app-root"]::before,
 body:has([data-component="messages"]) [data-component="app-root"]::before,
 body:has([data-component="messages-new-page"]) [data-component="app-root"]::before,
 body:has([data-component="messages-templates"]) [data-component="app-root"]::before,
-body:has([data-component="alimtalk"]) [data-component="app-root"]::before,
+body:has([data-component="messages-shell"]) [data-component="app-root"]::before,
 body:has([data-component="auth-login"]) [data-component="app-root"]::before,
 body:has([data-component="auth-forgot-password"]) [data-component="app-root"]::before,
 body:has([data-component="auth-register"]) [data-component="app-root"]::before,
@@ -5478,7 +5778,7 @@ body:has([data-component="files"]) [data-component="app-providers"],
 body:has([data-component="messages"]) [data-component="app-providers"],
 body:has([data-component="messages-new-page"]) [data-component="app-providers"],
 body:has([data-component="messages-templates"]) [data-component="app-providers"],
-body:has([data-component="alimtalk"]) [data-component="app-providers"],
+body:has([data-component="messages-shell"]) [data-component="app-providers"],
 body:has([data-component="auth-login"]) [data-component="app-providers"],
 body:has([data-component="auth-forgot-password"]) [data-component="app-providers"],
 body:has([data-component="auth-register"]) [data-component="app-providers"],
@@ -5500,7 +5800,7 @@ body:has([data-component="files"]) nextjs-portal,
 body:has([data-component="messages"]) nextjs-portal,
 body:has([data-component="messages-new-page"]) nextjs-portal,
 body:has([data-component="messages-templates"]) nextjs-portal,
-body:has([data-component="alimtalk"]) nextjs-portal,
+body:has([data-component="messages-shell"]) nextjs-portal,
 body:has([data-component="auth-login"]) nextjs-portal,
 body:has([data-component="auth-forgot-password"]) nextjs-portal,
 body:has([data-component="auth-register"]) nextjs-portal,
@@ -6172,11 +6472,6 @@ body:has([data-component="contracts"]) [data-component="mobile-contracts-stack"]
   transform: translateX(0) !important;
 }
 
-body:has([data-component="contracts"]) .list-card {
-  border-radius: 22px;
-  padding: 8px;
-}
-
 body:has([data-component="contracts"]) .list-count {
   display: inline-flex;
   min-width: 4ch;
@@ -6363,7 +6658,7 @@ body:has([data-component="contracts"]) [data-component="app-providers"] {
   body:has([data-component="messages"]) [data-component="app-root"],
   body:has([data-component="messages-new-page"]) [data-component="app-root"],
   body:has([data-component="messages-templates"]) [data-component="app-root"],
-  body:has([data-component="alimtalk"]) [data-component="app-root"],
+  body:has([data-component="messages-shell"]) [data-component="app-root"],
   body:has([data-component="auth-login"]) [data-component="app-root"],
   body:has([data-component="auth-forgot-password"]) [data-component="app-root"],
   body:has([data-component="auth-register"]) [data-component="app-root"],

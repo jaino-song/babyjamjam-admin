@@ -1,5 +1,5 @@
 -- Canonicalize client.service_status and enforce the allowed customer filter set.
--- Allowed values: waiting, replacement_requested, active, completed, terminated.
+-- Allowed values: pre_booking, waiting, replacement_requested, active, completed, terminated.
 
 BEGIN;
 
@@ -19,6 +19,7 @@ ALTER TABLE "client"
   CHECK (
     "service_status" IS NULL OR
     "service_status" IN (
+      'pre_booking',
       'waiting',
       'replacement_requested',
       'active',

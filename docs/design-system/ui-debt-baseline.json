@@ -20,16 +20,6 @@
       "ui-architecture/no-page-local-components": 1,
       "ui-architecture/no-visual-tailwind-in-pages": 46
     },
-    "frontend/src/app/(protected)/alimtalk/page.tsx": {
-      "ui-architecture/no-page-local-components": 5,
-      "ui-architecture/no-page-style-constants": 2,
-      "ui-architecture/no-raw-ui-in-pages": 18,
-      "ui-architecture/no-visual-tailwind-in-pages": 325
-    },
-    "frontend/src/app/(protected)/alimtalk/templates/page.tsx": {
-      "ui-architecture/no-raw-ui-in-pages": 1,
-      "ui-architecture/no-visual-tailwind-in-pages": 50
-    },
     "frontend/src/app/(protected)/all/page.tsx": {
       "ui-architecture/no-visual-tailwind-in-pages": 36
     },
@@ -41,10 +31,15 @@
       "ui-architecture/no-page-local-components": 1,
       "ui-architecture/no-visual-tailwind-in-pages": 11
     },
+    "frontend/src/app/(protected)/clients/new/page.tsx": {
+      "ui-architecture/no-page-style-constants": 4,
+      "ui-architecture/no-raw-ui-in-pages": 7,
+      "ui-architecture/no-visual-tailwind-in-pages": 46
+    },
     "frontend/src/app/(protected)/clients/page.tsx": {
-      "ui-architecture/no-page-local-components": 3,
+      "ui-architecture/no-page-local-components": 1,
       "ui-architecture/no-raw-ui-in-pages": 1,
-      "ui-architecture/no-visual-tailwind-in-pages": 42
+      "ui-architecture/no-visual-tailwind-in-pages": 19
     },
     "frontend/src/app/(protected)/consultations/page.tsx": {
       "ui-architecture/no-visual-tailwind-in-pages": 15
@@ -56,9 +51,8 @@
       "ui-architecture/no-visual-tailwind-in-pages": 64
     },
     "frontend/src/app/(protected)/dashboard/page.tsx": {
-      "ui-architecture/no-page-local-components": 1,
       "ui-architecture/no-raw-ui-in-pages": 1,
-      "ui-architecture/no-visual-tailwind-in-pages": 21
+      "ui-architecture/no-visual-tailwind-in-pages": 3
     },
     "frontend/src/app/(protected)/employees/page.tsx": {
       "ui-architecture/no-page-local-components": 1,
@@ -73,7 +67,7 @@
     "frontend/src/app/(protected)/messages/page.tsx": {
       "ui-architecture/no-page-local-components": 3,
       "ui-architecture/no-raw-ui-in-pages": 1,
-      "ui-architecture/no-visual-tailwind-in-pages": 98
+      "ui-architecture/no-visual-tailwind-in-pages": 96
     },
     "frontend/src/app/(protected)/messages/system-templates/[templateKey]/page.tsx": {
       "ui-architecture/no-page-local-components": 1,
@@ -132,144 +126,147 @@
       "data-component/require-data-component": 25,
       "ui-architecture/no-visual-tailwind-in-pages": 109
     },
-    "frontend/src/app/logout/page.tsx": {
-      "ui-architecture/no-visual-tailwind-in-pages": 4
-    },
-    "frontend/src/app/website-admin/page.tsx": {
-      "data-component/require-data-component": 22,
+    "frontend/src/app/(protected)/website-admin/page.tsx": {
+      "data-component/require-data-component": 19,
       "ui-architecture/no-page-local-components": 1,
       "ui-architecture/no-raw-ui-in-pages": 10,
-      "ui-architecture/no-visual-tailwind-in-pages": 69
+      "ui-architecture/no-visual-tailwind-in-pages": 62
+    },
+    "frontend/src/app/logout/page.tsx": {
+      "ui-architecture/no-visual-tailwind-in-pages": 4
     }
   },
   "mobile": {
-    "mobile/src/app/(auth)/callback/page.tsx": {
+    "mobile/src/app/(public)/service-record/[token]/page.tsx": {
+      "ui-architecture/no-page-local-components": 3,
+      "ui-architecture/no-raw-ui-in-pages": 21,
+      "ui-architecture/no-visual-tailwind-in-pages": 2
+    },
+    "mobile/src/app/(shell)/(auth)/callback/page.tsx": {
       "ui-architecture/no-raw-ui-in-pages": 1,
       "ui-architecture/no-visual-tailwind-in-pages": 4
     },
-    "mobile/src/app/(auth)/forgot-password/page.tsx": {
+    "mobile/src/app/(shell)/(auth)/forgot-password/page.tsx": {
       "ui-architecture/no-raw-ui-in-pages": 3
     },
-    "mobile/src/app/(auth)/login/page.tsx": {
+    "mobile/src/app/(shell)/(auth)/login/page.tsx": {
       "data-component/require-data-component": 10,
       "ui-architecture/no-raw-ui-in-pages": 7
     },
-    "mobile/src/app/(auth)/register/page.tsx": {
-      "ui-architecture/no-raw-ui-in-pages": 14
+    "mobile/src/app/(shell)/(auth)/register/page.tsx": {
+      "ui-architecture/no-raw-ui-in-pages": 13
     },
-    "mobile/src/app/(auth)/reset-password/page.tsx": {
+    "mobile/src/app/(shell)/(auth)/reset-password/page.tsx": {
       "ui-architecture/no-visual-tailwind-in-pages": 22
     },
-    "mobile/src/app/(auth)/verify-email/page.tsx": {
+    "mobile/src/app/(shell)/(auth)/verify-email/page.tsx": {
       "ui-architecture/no-visual-tailwind-in-pages": 17
     },
-    "mobile/src/app/admin/feedback/[id]/page.tsx": {
+    "mobile/src/app/(shell)/admin/feedback/[id]/page.tsx": {
       "data-component/require-data-component": 25,
       "ui-architecture/no-raw-ui-in-pages": 2,
       "ui-architecture/no-visual-tailwind-in-pages": 70
     },
-    "mobile/src/app/admin/feedback/page.tsx": {
+    "mobile/src/app/(shell)/admin/feedback/page.tsx": {
       "ui-architecture/no-visual-tailwind-in-pages": 24
     },
-    "mobile/src/app/chat/page.tsx": {
+    "mobile/src/app/(shell)/chat/page.tsx": {
       "ui-architecture/no-page-local-components": 5,
       "ui-architecture/no-raw-ui-in-pages": 6
     },
-    "mobile/src/app/clients/new/page.tsx": {
+    "mobile/src/app/(shell)/clients/new/page.tsx": {
       "ui-architecture/no-page-local-components": 1,
-      "ui-architecture/no-raw-ui-in-pages": 19,
+      "ui-architecture/no-raw-ui-in-pages": 5,
       "ui-architecture/no-visual-tailwind-in-pages": 7
     },
-    "mobile/src/app/clients/page.tsx": {
+    "mobile/src/app/(shell)/clients/page.tsx": {
       "ui-architecture/no-page-style-constants": 1
     },
-    "mobile/src/app/consultations/page.tsx": {
-      "data-component/require-data-component": 5,
+    "mobile/src/app/(shell)/consultations/page.tsx": {
       "ui-architecture/no-page-local-components": 1
     },
-    "mobile/src/app/contracts/page.tsx": {
+    "mobile/src/app/(shell)/contracts/new/page.tsx": {
+      "data-component/require-data-component": 40,
+      "ui-architecture/no-page-local-components": 1,
+      "ui-architecture/no-raw-ui-in-pages": 21,
+      "ui-architecture/no-visual-tailwind-in-pages": 5
+    },
+    "mobile/src/app/(shell)/contracts/page.tsx": {
       "data-component/require-data-component": 13,
       "ui-architecture/no-page-local-components": 3,
       "ui-architecture/no-page-style-constants": 1,
       "ui-architecture/no-raw-ui-in-pages": 6,
       "ui-architecture/no-visual-tailwind-in-pages": 53
     },
-    "mobile/src/app/dashboard/page.tsx": {
+    "mobile/src/app/(shell)/dashboard/page.tsx": {
       "ui-architecture/no-page-style-constants": 1
     },
-    "mobile/src/app/employees/new/page.tsx": {
+    "mobile/src/app/(shell)/employees/new/page.tsx": {
       "ui-architecture/no-raw-ui-in-pages": 9
     },
-    "mobile/src/app/employees/page.tsx": {
+    "mobile/src/app/(shell)/employees/page.tsx": {
       "ui-architecture/no-page-local-components": 1,
       "ui-architecture/no-raw-ui-in-pages": 1,
-      "ui-architecture/no-visual-tailwind-in-pages": 8
+      "ui-architecture/no-visual-tailwind-in-pages": 10
     },
-    "mobile/src/app/employees/schedule/page.tsx": {
+    "mobile/src/app/(shell)/employees/schedule/page.tsx": {
       "data-component/require-data-component": 8
     },
-    "mobile/src/app/feedback/[token]/page.tsx": {
-      "ui-architecture/no-page-local-components": 1,
-      "ui-architecture/no-raw-ui-in-pages": 19
-    },
-    "mobile/src/app/files/page.tsx": {
+    "mobile/src/app/(shell)/files/page.tsx": {
       "data-component/require-data-component": 52,
       "ui-architecture/no-page-local-components": 6,
       "ui-architecture/no-raw-ui-in-pages": 1
     },
-    "mobile/src/app/files/upload/page.tsx": {
+    "mobile/src/app/(shell)/files/upload/page.tsx": {
       "ui-architecture/no-page-local-components": 1,
       "ui-architecture/no-raw-ui-in-pages": 10
     },
-    "mobile/src/app/logout/page.tsx": {
+    "mobile/src/app/(shell)/logout/page.tsx": {
       "ui-architecture/no-visual-tailwind-in-pages": 4
     },
-    "mobile/src/app/messages/new/page.tsx": {
+    "mobile/src/app/(shell)/messages/new/page.tsx": {
       "ui-architecture/no-page-local-components": 1,
-      "ui-architecture/no-raw-ui-in-pages": 3
+      "ui-architecture/no-raw-ui-in-pages": 2
     },
-    "mobile/src/app/messages/sender-approval/page.tsx": {
-      "ui-architecture/no-page-local-components": 1,
-      "ui-architecture/no-raw-ui-in-pages": 1
+    "mobile/src/app/(shell)/messages/sender-approval/page.tsx": {
+      "ui-architecture/no-page-local-components": 1
     },
-    "mobile/src/app/messages/system-templates/[templateKey]/page.tsx": {
-      "data-component/require-data-component": 6,
-      "ui-architecture/no-visual-tailwind-in-pages": 40
+    "mobile/src/app/(shell)/messages/system-templates/[templateKey]/page.tsx": {
+      "ui-architecture/no-visual-tailwind-in-pages": 14
     },
-    "mobile/src/app/messages/templates/[id]/edit/page.tsx": {
+    "mobile/src/app/(shell)/messages/templates/[id]/edit/page.tsx": {
       "ui-architecture/no-page-local-components": 1,
       "ui-architecture/no-visual-tailwind-in-pages": 17
     },
-    "mobile/src/app/messages/templates/new/page.tsx": {
+    "mobile/src/app/(shell)/messages/templates/new/page.tsx": {
       "data-component/require-data-component": 2,
       "ui-architecture/no-visual-tailwind-in-pages": 12
     },
-    "mobile/src/app/messages/templates/page.tsx": {
+    "mobile/src/app/(shell)/messages/templates/page.tsx": {
       "ui-architecture/no-page-local-components": 3,
-      "ui-architecture/no-raw-ui-in-pages": 3
+      "ui-architecture/no-raw-ui-in-pages": 1
     },
-    "mobile/src/app/notification/page.tsx": {
+    "mobile/src/app/(shell)/notification/page.tsx": {
+      "ui-architecture/no-page-local-components": 1,
+      "ui-architecture/no-page-style-constants": 1,
+      "ui-architecture/no-raw-ui-in-pages": 1
+    },
+    "mobile/src/app/(shell)/page.tsx": {
+      "ui-architecture/no-visual-tailwind-in-pages": 4
+    },
+    "mobile/src/app/(shell)/prices/page.tsx": {
       "ui-architecture/no-page-local-components": 2,
       "ui-architecture/no-page-style-constants": 1,
       "ui-architecture/no-raw-ui-in-pages": 2
     },
-    "mobile/src/app/page.tsx": {
-      "ui-architecture/no-visual-tailwind-in-pages": 4
-    },
-    "mobile/src/app/prices/page.tsx": {
-      "data-component/require-data-component": 16,
-      "ui-architecture/no-page-local-components": 2,
-      "ui-architecture/no-page-style-constants": 1,
-      "ui-architecture/no-raw-ui-in-pages": 6
-    },
-    "mobile/src/app/privacy/page.tsx": {
+    "mobile/src/app/(shell)/privacy/page.tsx": {
       "data-component/require-data-component": 4,
       "ui-architecture/no-visual-tailwind-in-pages": 6
     },
-    "mobile/src/app/select-branch/page.tsx": {
+    "mobile/src/app/(shell)/select-branch/page.tsx": {
       "ui-architecture/no-raw-ui-in-pages": 6
     },
-    "mobile/src/app/terms/page.tsx": {
+    "mobile/src/app/(shell)/terms/page.tsx": {
       "data-component/require-data-component": 4,
       "ui-architecture/no-visual-tailwind-in-pages": 6
     }

@@ -7,6 +7,8 @@ import { TenantGuard } from "infrastructure/tenant";
 import { ScheduleChangeController } from "interface/controllers/schedule-change.controller";
 
 type MockScheduleChangeService = {
+    previewAdminChange: jest.Mock;
+    applyAdminChange: jest.Mock;
     approve: jest.Mock;
     reject: jest.Mock;
 };
@@ -51,6 +53,8 @@ describe("ScheduleChangeController (Integration)", () => {
 
     beforeEach(async () => {
         scheduleChangeService = {
+            previewAdminChange: jest.fn(),
+            applyAdminChange: jest.fn(),
             approve: jest.fn(),
             reject: jest.fn(),
         };
@@ -59,6 +63,12 @@ describe("ScheduleChangeController (Integration)", () => {
             canActivate: (context: ExecutionContext) => {
                 const requestContext = context.switchToHttp().getRequest();
                 requestContext.user = tenant;
+                requestContext.tenant = {
+                    userId: tenant.userId,
+                    branchId: tenant.branchId,
+                    globalRole: tenant.role,
+                    branchRole: tenant.branchRole,
+                };
                 return true;
             },
         };
@@ -83,6 +93,46 @@ describe("ScheduleChangeController (Integration)", () => {
 
     afterEach(async () => {
         await moduleFixture.close();
+    });
+
+    describe("admin direct schedule change", () => {
+        it("should expose a tenant-scoped preview route", async () => {
+            scheduleChangeService.previewAdminChange.mockResolvedValue({
+                sessionIndex: 3,
+                fromDate: "2026-07-20",
+                minimumDate: "2026-07-20",
+            });
+
+            expectRoute(
+                ScheduleChangeController.prototype.previewAdminChange,
+                RequestMethod.GET,
+                "schedules/:scheduleId/preview",
+            );
+
+            await controller.previewAdminChange(tenant, 11);
+
+            expect(scheduleChangeService.previewAdminChange).toHaveBeenCalledWith("org-1", 11);
+        });
+
+        it("should apply the selected date with the current tenant", async () => {
+            scheduleChangeService.applyAdminChange.mockResolvedValue(
+                createSerializedRequest("approved"),
+            );
+
+            expectRoute(
+                ScheduleChangeController.prototype.applyAdminChange,
+                RequestMethod.POST,
+                "schedules/:scheduleId/apply",
+            );
+
+            await controller.applyAdminChange(tenant, 11, { toDate: "2026-07-23" });
+
+            expect(scheduleChangeService.applyAdminChange).toHaveBeenCalledWith(
+                11,
+                "2026-07-23",
+                tenant,
+            );
+        });
     });
 
     describe("POST /schedule-change-requests/:id/approve", () => {

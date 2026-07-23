@@ -17,6 +17,7 @@ import {
     RefreshTokenRequestDto,
     ReRequestOutsiderDocumentRequestDto,
 } from "interface/dto/eformsign.dto";
+import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
 
 function throwHttpOrInternalError(error: unknown): never {
     if (error instanceof HttpException) {
@@ -57,19 +58,225 @@ function parseDownloadFileType(value: string | undefined): DownloadFileType {
     throw new BadRequestException("fileType must be document or audit_trail");
 }
 
-type EformsignListDoc = { id: string; created_date?: unknown; createdDate?: unknown };
+type EformsignListDoc = {
+    id: string;
+    created_date?: unknown;
+    createdDate?: unknown;
+    fields?: unknown;
+    detail_template_info?: unknown;
+} & Record<string, unknown>;
+
+type TemplateMatch = "include" | "exclude";
+
+function parseTemplateMatch(value: string | undefined): TemplateMatch {
+    if (value === undefined || value === "" || value === "include") {
+        return "include";
+    }
+    if (value === "exclude") {
+        return "exclude";
+    }
+
+    throw new BadRequestException("templateMatch must be include or exclude");
+}
+
+function getDocumentTemplateId(document: EformsignListDoc): string | null {
+    const template = isRecord(document["template"]) ? document["template"] : null;
+    const detailTemplate = isRecord(document.detail_template_info)
+        ? document.detail_template_info
+        : null;
+    const candidates = [template?.["id"], detailTemplate?.["id"], document["template_id"]];
+    const templateId = candidates.find(
+        (candidate): candidate is string => typeof candidate === "string" && candidate.length > 0,
+    );
+
+    return templateId ?? null;
+}
+
+/**
+ * `templateId` may be a single id or a comma-separated list (BJJ-multi-tier: the UI passes every
+ * configured 제공기록지 tier so documents created on any tier's template are matched). A single id
+ * is naturally backward-compatible since it round-trips through the same split/trim/Set path.
+ */
+function filterDocumentsByTemplate(
+    documents: EformsignListDoc[],
+    templateId: string | undefined,
+    templateMatch: TemplateMatch,
+): EformsignListDoc[] {
+    if (!templateId) {
+        return documents;
+    }
+    const templateIds = new Set(
+        templateId.split(",").map((id) => id.trim()).filter((id) => id.length > 0),
+    );
+    if (templateIds.size === 0) {
+        return documents;
+    }
+
+    return documents.filter((document) => {
+        const documentTemplateId = getDocumentTemplateId(document);
+        const matches = documentTemplateId !== null && templateIds.has(documentTemplateId);
+        return templateMatch === "include" ? matches : !matches;
+    });
+}
+
+const CUSTOMER_NAME_FIELD_IDS = [
+    "이용자 성명",
+    "이용자성명",
+    "고객 성명",
+    "고객성명",
+    "고객명",
+    "산모 성명",
+    "산모성명",
+    "산모명",
+    "성명",
+    "customerName",
+    "clientName",
+    "userName",
+] as const;
+
+const DETAIL_ENRICHMENT_CONCURRENCY = 4;
+
+type UnknownRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is UnknownRecord {
+    return typeof value === "object" && value !== null;
+}
+
+function collectRecords(value: unknown, depth = 0): UnknownRecord[] {
+    if (depth > 6 || value == null) return [];
+    if (Array.isArray(value)) return value.flatMap((item) => collectRecords(item, depth + 1));
+    if (!isRecord(value)) return [];
+    return [value, ...Object.values(value).flatMap((item) => collectRecords(item, depth + 1))];
+}
+
+function stringFromUnknown(value: unknown): string | null {
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        return trimmed.length > 0 ? trimmed : null;
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return String(value);
+    }
+    return null;
+}
+
+function normalizeFieldId(value: string): string {
+    return value.replace(/[\s_\-:/.()[\]{}]+/g, "").toLowerCase();
+}
+
+function canUseReverseContains(value: string): boolean {
+    return /^[a-z0-9]+$/.test(value) && value.length >= 5;
+}
+
+function isCustomerNameKey(key: string): boolean {
+    const normalizedKey = normalizeFieldId(key);
+    return CUSTOMER_NAME_FIELD_IDS.map(normalizeFieldId).some(
+        (id) =>
+            normalizedKey === id ||
+            normalizedKey.includes(id) ||
+            (canUseReverseContains(normalizedKey) && id.includes(normalizedKey)),
+    );
+}
+
+function valueFromFieldRecord(record: UnknownRecord): string | null {
+    const valueKeys = ["value", "field_value", "fieldValue", "input_value", "inputValue", "data", "text"] as const;
+    for (const key of valueKeys) {
+        const value = stringFromUnknown(record[key]);
+        if (value) return value;
+    }
+    for (const nested of collectRecords(record).slice(1)) {
+        for (const key of valueKeys) {
+            const value = stringFromUnknown(nested[key]);
+            if (value) return value;
+        }
+    }
+    return null;
+}
+
+function documentHasCustomerNameField(doc: EformsignListDoc): boolean {
+    for (const source of [doc.fields, doc.detail_template_info]) {
+        for (const record of collectRecords(source)) {
+            for (const [key, rawValue] of Object.entries(record)) {
+                if (!isCustomerNameKey(key)) continue;
+                if (stringFromUnknown(rawValue) || valueFromFieldRecord({ value: rawValue })) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    for (const record of collectRecords(doc.fields)) {
+        const idTokens = [
+            stringFromUnknown(record["id"]),
+            stringFromUnknown(record["field_id"]),
+            stringFromUnknown(record["fieldId"]),
+            stringFromUnknown(record["name"]),
+            stringFromUnknown(record["label"]),
+            stringFromUnknown(record["field_name"]),
+            stringFromUnknown(record["fieldName"]),
+            stringFromUnknown(record["display_name"]),
+            stringFromUnknown(record["displayName"]),
+            stringFromUnknown(record["input_id"]),
+            stringFromUnknown(record["inputId"]),
+        ].filter((value): value is string => Boolean(value));
+
+        if (idTokens.some(isCustomerNameKey) && valueFromFieldRecord(record)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function hasCollectionValues(value: unknown): boolean {
+    return Array.isArray(value) ? value.length > 0 : value != null;
+}
+
+async function mapWithConcurrency<T, R>(
+    items: T[],
+    concurrency: number,
+    mapper: (item: T) => Promise<R>,
+): Promise<R[]> {
+    const results = new Array<R>(items.length);
+    let nextIndex = 0;
+    const workerCount = Math.min(concurrency, items.length);
+
+    await Promise.all(
+        Array.from({ length: workerCount }, async () => {
+            while (nextIndex < items.length) {
+                const currentIndex = nextIndex;
+                nextIndex += 1;
+                results[currentIndex] = await mapper(items[currentIndex] as T);
+            }
+        }),
+    );
+
+    return results;
+}
 
 // StatsBar 카운터 계산에 필요한 최소 신호만 추린 형태. 버킷 분류(매핑)는
 // 프론트의 status-codes.ts(foldContractStats) 한 곳에서만 수행한다.
-type EformsignStatusSignal = { status_type: string | null; step_recipient_types: Array<string | null> };
+type EformsignStatusSignal = {
+    status_type: string | null;
+    step_type: string | null;
+    step_name: string | null;
+    step_recipient_types: Array<string | null>;
+};
 
 function toStatusSignal(doc: unknown): EformsignStatusSignal {
     const currentStatus = (doc as {
-        current_status?: { status_type?: unknown; step_recipients?: Array<{ recipient_type?: unknown }> };
+        current_status?: {
+            status_type?: unknown;
+            step_type?: unknown;
+            step_name?: unknown;
+            step_recipients?: Array<{ recipient_type?: unknown }>;
+        };
     }).current_status;
     const stepRecipients = Array.isArray(currentStatus?.step_recipients) ? currentStatus.step_recipients : [];
     return {
         status_type: typeof currentStatus?.status_type === "string" ? currentStatus.status_type : null,
+        step_type: typeof currentStatus?.step_type === "string" ? currentStatus.step_type : null,
+        step_name: typeof currentStatus?.step_name === "string" ? currentStatus.step_name : null,
         step_recipient_types: stepRecipients.map((r) => (typeof r?.recipient_type === "string" ? r.recipient_type : null)),
     };
 }
@@ -84,6 +291,7 @@ export class EformsignController {
         private readonly areaTemplateService: AreaTemplateService,
         private readonly eformsignDocService: EformsignDocService,
         private readonly prisma: PrismaService,
+        private readonly assignmentGuard: ContractClientAssignmentGuardService,
     ) { }
 
     /**
@@ -137,6 +345,8 @@ export class EformsignController {
         keep: (doc: EformsignListDoc) => boolean,
         targetCount: number | null,
         branchId: string,
+        fetchPage: (limit: number, skip: number) => Promise<{ documents?: EformsignListDoc[] }> =
+            (limit, skip) => this.eformsignService.getAllDocuments(accessToken, limit, skip),
     ): Promise<EformsignListDoc[]> {
         const PAGE_SIZE = 100;
         const MAX_PAGES = 10;
@@ -144,11 +354,7 @@ export class EformsignController {
         let exhausted = false;
 
         for (let page = 0; page < MAX_PAGES; page++) {
-            const result = await this.eformsignService.getAllDocuments(
-                accessToken,
-                PAGE_SIZE,
-                page * PAGE_SIZE,
-            );
+            const result = await fetchPage(PAGE_SIZE, page * PAGE_SIZE);
             const pageDocs: EformsignListDoc[] = result.documents ?? [];
             if (pageDocs.length === 0) {
                 exhausted = true;
@@ -179,6 +385,58 @@ export class EformsignController {
             }
             return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
         });
+    }
+
+    private async collectBranchScopedDocuments(
+        accessToken: string,
+        branchId: string,
+        fetchPage: (limit: number, skip: number) => Promise<{ documents?: EformsignListDoc[] }>,
+    ): Promise<EformsignListDoc[]> {
+        if (await this.isHeadquartersBranch(branchId)) {
+            const otherBranchIds = new Set(
+                await this.eformsignDocService.findDocumentIdsForOtherBranches(branchId),
+            );
+            return this.scanCompanyDocuments(
+                accessToken,
+                (doc) => !otherBranchIds.has(doc.id),
+                null,
+                branchId,
+                fetchPage,
+            );
+        }
+
+        const localDocs = await this.eformsignDocService.findAll(branchId);
+        const allowedIds = new Set(localDocs.map((doc) => doc.documentId));
+        if (allowedIds.size === 0) {
+            return [];
+        }
+        return this.scanCompanyDocuments(
+            accessToken,
+            (doc) => allowedIds.has(doc.id),
+            allowedIds.size,
+            branchId,
+            fetchPage,
+        );
+    }
+
+    private async getBranchScopedStatusPage(
+        accessToken: string,
+        branchId: string,
+        limit: number,
+        skip: number,
+        fetchPage: (limit: number, skip: number) => Promise<{ documents?: EformsignListDoc[] }>,
+        templateId?: string,
+        templateMatch: TemplateMatch = "include",
+    ) {
+        const documents = await this.collectBranchScopedDocuments(accessToken, branchId, fetchPage);
+        const filteredDocuments = filterDocumentsByTemplate(documents, templateId, templateMatch);
+        const pageDocuments = filteredDocuments.slice(skip, skip + limit);
+        return {
+            documents: await this.enrichDocumentsWithDisplayFields(accessToken, pageDocuments),
+            total_rows: filteredDocuments.length,
+            limit,
+            skip,
+        };
     }
 
     /**
@@ -216,6 +474,32 @@ export class EformsignController {
             null,
             incheonBranchId,
         );
+    }
+
+    private async enrichDocumentsWithDisplayFields(
+        accessToken: string,
+        documents: EformsignListDoc[],
+    ): Promise<EformsignListDoc[]> {
+        return mapWithConcurrency(documents, DETAIL_ENRICHMENT_CONCURRENCY, async (doc) => {
+            if (documentHasCustomerNameField(doc)) {
+                return doc;
+            }
+
+            try {
+                const detail = await this.eformsignService.getDocumentById(accessToken, doc.id);
+                return {
+                    ...doc,
+                    fields: hasCollectionValues(detail?.fields) ? detail.fields : doc.fields,
+                    detail_template_info: hasCollectionValues(detail?.detail_template_info)
+                        ? detail.detail_template_info
+                        : doc.detail_template_info,
+                };
+            } catch (error) {
+                const message = error instanceof Error ? error.message : "Unknown error";
+                this.logger.warn(`Failed to enrich eformsign document ${doc.id}: ${message}`);
+                return doc;
+            }
+        });
     }
 
     @Post("generate-signature")
@@ -272,6 +556,11 @@ export class EformsignController {
         @Body() body: GenerateDocumentRequestDto
     ) {
         try {
+            await this.assignmentGuard.assertAssignedProvider(
+                tenant.branchId ?? "",
+                body.clientId,
+                body.contractData.caretaker1Contact,
+            );
             // Look up templateId based on area
             let templateId: string | undefined;
             if (body.contractData.area) {
@@ -295,11 +584,7 @@ export class EformsignController {
                 clientId: body.clientId,
             };
         } catch (error) {
-            const message = error instanceof Error ? error.message : "Unknown error";
-            throw new HttpException(
-                { error: message },
-                HttpStatus.INTERNAL_SERVER_ERROR
-            );
+            throwHttpOrInternalError(error);
         }
     }
 
@@ -334,6 +619,8 @@ export class EformsignController {
         @Query("accessToken") accessToken: string,
         @Query("limit") limit?: string,
         @Query("skip") skip?: string,
+        @Query("templateId") templateId?: string,
+        @Query("templateMatch") templateMatchValue?: string,
     ) {
         try {
             if (!accessToken) {
@@ -344,15 +631,18 @@ export class EformsignController {
             }
             const parsedLimit = parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 });
             const parsedSkip = parseInteger(skip, "skip", { defaultValue: 0, min: 0 });
+            const templateMatch = parseTemplateMatch(templateMatchValue);
             const branchId = tenant.branchId ?? "";
 
             // 인천점(본사): 회사 전체에서 다른 지점 소유분만 빼고 모은 뒤 요청 구간만 잘라 반환.
             // (필터링 때문에 외부 페이지네이션을 그대로 흘리면 페이지 경계에 빈틈이 생긴다.)
             if (await this.isHeadquartersBranch(branchId)) {
                 const hqDocuments = await this.collectHeadquartersDocuments(accessToken, branchId);
+                const filteredDocuments = filterDocumentsByTemplate(hqDocuments, templateId, templateMatch);
+                const pageDocuments = filteredDocuments.slice(parsedSkip, parsedSkip + parsedLimit);
                 return {
-                    documents: hqDocuments.slice(parsedSkip, parsedSkip + parsedLimit),
-                    total_rows: hqDocuments.length,
+                    documents: await this.enrichDocumentsWithDisplayFields(accessToken, pageDocuments),
+                    total_rows: filteredDocuments.length,
                     limit: parsedLimit,
                     skip: parsedSkip,
                 };
@@ -362,9 +652,11 @@ export class EformsignController {
             // (회사 페이지를 그대로 필터하면 지점 문서가 뒤 페이지에 있을 때 무한스크롤이
             //  빈 페이지에서 멈춰 누락되므로, 지점 단위로 페이지네이션한다.)
             const branchDocuments = await this.collectBranchDocuments(accessToken, branchId);
+            const filteredDocuments = filterDocumentsByTemplate(branchDocuments, templateId, templateMatch);
+            const pageDocuments = filteredDocuments.slice(parsedSkip, parsedSkip + parsedLimit);
             return {
-                documents: branchDocuments.slice(parsedSkip, parsedSkip + parsedLimit),
-                total_rows: branchDocuments.length,
+                documents: await this.enrichDocumentsWithDisplayFields(accessToken, pageDocuments),
+                total_rows: filteredDocuments.length,
                 limit: parsedLimit,
                 skip: parsedSkip,
             };
@@ -375,7 +667,7 @@ export class EformsignController {
 
     /**
      * 전체 탭 StatsBar 카운터용: 현재 지점(인천=다른 지점 제외 전체)의 문서를 한 번
-     * 모아 버킷 계산에 필요한 원시 신호(status_type + 현재 단계 수신자 타입)만 내려준다.
+     * 모아 버킷 계산에 필요한 원시 신호(status_type + 현재 단계 정보)만 내려준다.
      * 분류는 프론트(foldContractStats). status-counts는 documents/:documentId보다
      * 먼저 선언되어야 정적 경로로 매칭된다.
      */
@@ -411,6 +703,8 @@ export class EformsignController {
         @Query("accessToken") accessToken: string,
         @Query("limit") limit?: string,
         @Query("skip") skip?: string,
+        @Query("templateId") templateId?: string,
+        @Query("templateMatch") templateMatchValue?: string,
     ) {
         try {
             if (!accessToken) {
@@ -419,13 +713,22 @@ export class EformsignController {
                     HttpStatus.BAD_REQUEST
                 );
             }
-            const result = await this.eformsignService.getInProgressDocuments(
+            const parsedLimit = parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 });
+            const parsedSkip = parseInteger(skip, "skip", { defaultValue: 0, min: 0 });
+            const templateMatch = parseTemplateMatch(templateMatchValue);
+            return await this.getBranchScopedStatusPage(
                 accessToken,
-                parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 }),
-                parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
+                tenant.branchId ?? "",
+                parsedLimit,
+                parsedSkip,
+                (pageLimit, pageSkip) => this.eformsignService.getInProgressDocuments(
+                    accessToken,
+                    pageLimit,
+                    pageSkip,
+                ),
+                templateId,
+                templateMatch,
             );
-            const documents = await this.filterDocumentsByBranch(tenant.branchId ?? "", result.documents ?? []);
-            return { ...result, documents };
         } catch (error) {
             throwHttpOrInternalError(error);
         }
@@ -440,6 +743,8 @@ export class EformsignController {
         @Query("accessToken") accessToken: string,
         @Query("limit") limit?: string,
         @Query("skip") skip?: string,
+        @Query("templateId") templateId?: string,
+        @Query("templateMatch") templateMatchValue?: string,
     ) {
         try {
             if (!accessToken) {
@@ -448,13 +753,22 @@ export class EformsignController {
                     HttpStatus.BAD_REQUEST
                 );
             }
-            const result = await this.eformsignService.getCompletedDocuments(
+            const parsedLimit = parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 });
+            const parsedSkip = parseInteger(skip, "skip", { defaultValue: 0, min: 0 });
+            const templateMatch = parseTemplateMatch(templateMatchValue);
+            return await this.getBranchScopedStatusPage(
                 accessToken,
-                parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 }),
-                parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
+                tenant.branchId ?? "",
+                parsedLimit,
+                parsedSkip,
+                (pageLimit, pageSkip) => this.eformsignService.getCompletedDocuments(
+                    accessToken,
+                    pageLimit,
+                    pageSkip,
+                ),
+                templateId,
+                templateMatch,
             );
-            const documents = await this.filterDocumentsByBranch(tenant.branchId ?? "", result.documents ?? []);
-            return { ...result, documents };
         } catch (error) {
             throwHttpOrInternalError(error);
         }
@@ -469,6 +783,8 @@ export class EformsignController {
         @Query("accessToken") accessToken: string,
         @Query("limit") limit?: string,
         @Query("skip") skip?: string,
+        @Query("templateId") templateId?: string,
+        @Query("templateMatch") templateMatchValue?: string,
     ) {
         try {
             if (!accessToken) {
@@ -477,13 +793,22 @@ export class EformsignController {
                     HttpStatus.BAD_REQUEST
                 );
             }
-            const result = await this.eformsignService.getRejectedDocuments(
+            const parsedLimit = parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 });
+            const parsedSkip = parseInteger(skip, "skip", { defaultValue: 0, min: 0 });
+            const templateMatch = parseTemplateMatch(templateMatchValue);
+            return await this.getBranchScopedStatusPage(
                 accessToken,
-                parseInteger(limit, "limit", { defaultValue: 100, min: 1, max: 100 }),
-                parseInteger(skip, "skip", { defaultValue: 0, min: 0 }),
+                tenant.branchId ?? "",
+                parsedLimit,
+                parsedSkip,
+                (pageLimit, pageSkip) => this.eformsignService.getRejectedDocuments(
+                    accessToken,
+                    pageLimit,
+                    pageSkip,
+                ),
+                templateId,
+                templateMatch,
             );
-            const documents = await this.filterDocumentsByBranch(tenant.branchId ?? "", result.documents ?? []);
-            return { ...result, documents };
         } catch (error) {
             throwHttpOrInternalError(error);
         }
@@ -561,6 +886,7 @@ export class EformsignController {
      */
     @Get("documents/:documentId/download_files")
     async downloadDocumentFile(
+        @CurrentTenant() tenant: { branchId?: string },
         @Param("documentId") documentId: string,
         @Query("accessToken") accessToken: string,
         @Query("fileType") fileType: string | undefined,
@@ -575,6 +901,16 @@ export class EformsignController {
             }
 
             const parsedFileType = parseDownloadFileType(fileType);
+            const allowedDocuments = await this.filterDocumentsByBranch(
+                tenant.branchId ?? "",
+                [{ id: documentId }],
+            );
+            if (allowedDocuments.length === 0) {
+                throw new HttpException(
+                    { error: "Document access forbidden" },
+                    HttpStatus.FORBIDDEN,
+                );
+            }
             const file = await this.eformsignService.downloadDocumentFile(accessToken, documentId, parsedFileType);
 
             res.status(file.status);

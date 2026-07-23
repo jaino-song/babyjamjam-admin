@@ -1,10 +1,13 @@
 "use client";
 
 import { Pencil, Trash2, X } from "lucide-react";
+import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
 import { Client, SERVICE_STATUS_OPTIONS, DocumentStatus, type ServiceStatus } from "@/lib/client/types";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import type { Locale } from "@/app/actions/locale";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 
 import {
     Dialog,
@@ -33,6 +36,7 @@ const getStatusBadge = (status: ServiceStatus | null) => {
     if (!option) return <Badge variant="outline" className="bg-muted text-muted-foreground border-muted">-</Badge>;
 
     const variantMap: Record<ServiceStatus, "v3-active" | "v3-pending" | "v3-expired" | "outline"> = {
+        pre_booking: "outline",
         waiting: "v3-pending",
         replacement_requested: "v3-expired",
         active: "v3-active",
@@ -50,8 +54,7 @@ const getStatusBadge = (status: ServiceStatus | null) => {
 };
 
 const formatDate = (dateStr: string | null): string => {
-    if (!dateStr) return "-";
-    return new Date(dateStr).toLocaleDateString("ko-KR");
+    return formatDateForDisplay(dateStr);
 };
 
 const formatPrice = (price: string | null): string => {
@@ -166,7 +169,7 @@ export function ClientDetailModal({
                         </h4>
                         <div className="space-y-3">
                             <InfoRow label={t(locale, "clients.form.name")} value={client.name} />
-                            <InfoRow label={t(locale, "clients.form.birthday")} value={client.birthday} />
+                            <InfoRow label={t(locale, "clients.form.birthday")} value={formatBirthdayYYMMDD(client.birthday ?? "") || "-"} />
                             <InfoRow label={t(locale, "clients.form.due-date")} value={formatDate(client.dueDate)} />
                             <InfoRow label={t(locale, "clients.form.phone")} value={client.phone} />
                             <InfoRow label={t(locale, "clients.form.address")} value={client.address} />
@@ -181,7 +184,19 @@ export function ClientDetailModal({
                         </h4>
                         <div className="space-y-3">
                             <InfoRow label={t(locale, "clients.form.primary-employee")} value={client.primaryEmployee?.name ?? "-"} />
+                            <InfoRow
+                                label={t(locale, "clients.form.primary-employee-phone")}
+                                value={client.primaryEmployee?.phone
+                                    ? formatKoreanPhoneNumber(client.primaryEmployee.phone)
+                                    : "-"}
+                            />
                             <InfoRow label={t(locale, "clients.form.secondary-employee")} value={client.secondaryEmployee?.name ?? "-"} />
+                            <InfoRow
+                                label={t(locale, "clients.form.secondary-employee-phone")}
+                                value={client.secondaryEmployee?.phone
+                                    ? formatKoreanPhoneNumber(client.secondaryEmployee.phone)
+                                    : "-"}
+                            />
                         </div>
                     </div>
 

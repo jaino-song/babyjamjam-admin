@@ -1,3 +1,5 @@
+import type { MessageTriggerJobStatus } from "./message";
+
 export type ServiceRecordLinkStatus = "none" | "scheduled" | "sent" | "failed" | "canceled";
 export type ServiceRecordTokenState = "active" | "expired" | "revoked" | null;
 
@@ -37,7 +39,10 @@ export interface ServiceRecordSession {
     etcService: string | null;
     notes: string | null;
     paymentConfirmed: boolean;
-    hasMomSignature: boolean;
+    hasMomApproval: boolean;
+    employeeId?: number | null;
+    employeeName?: string | null;
+    formVersion?: number;
 }
 
 export interface SignatureDocStatus {
@@ -46,6 +51,25 @@ export interface SignatureDocStatus {
     stepName: string;
     createdDate: string;
     updatedDate: string;
+    snapshotVersion?: number | null;
+    snapshotChunkIndex?: number | null;
+    employeeScheduleId?: number | null;
+}
+
+export interface ServiceRecordCase {
+    id: string;
+    status: string;
+    startDate: string | null;
+    endDate: string | null;
+    totalSessions: number;
+    completedAt: string | null;
+    finalizationDueAt: string | null;
+    finalizedAt: string | null;
+    documentsCompletedAt: string | null;
+    lastError: string | null;
+    header: ServiceRecordHeader | null;
+    sessions: ServiceRecordSession[];
+    signatureDocs: SignatureDocStatus[];
 }
 
 export interface ServiceRecordAssignment {
@@ -66,10 +90,55 @@ export interface ServiceRecordAssignment {
 }
 
 export interface ServiceRecordOverview {
+    record?: ServiceRecordCase | null;
     assignments: ServiceRecordAssignment[];
 }
 
 export interface SendServiceRecordLinkResponse {
-    ok: true;
+    ok: boolean;
+    jobId: string;
+    status: MessageTriggerJobStatus;
     scheduledFor: string;
+}
+
+export interface PrepareServiceRecordLinkResponse {
+    serviceRecordUrl: string;
+    preparedLinkToken: string;
+    expiresAt: string;
+}
+
+export interface ResetServiceRecordLinkResponse {
+    serviceRecordUrl: string;
+    expiresAt: string;
+}
+
+export interface ServiceScheduleChangePreviewResponse {
+    sessionIndex: number;
+    fromDate: string;
+    minimumDate: string;
+}
+
+export interface ApplyServiceScheduleChangeRequest {
+    toDate: string;
+}
+
+export interface ApplyServiceScheduleChangeResponse {
+    id: string;
+    scheduleId: number;
+    clientId: number;
+    sessionIndex: number;
+    fromDate: string;
+    toDate: string;
+    oldEndDate: string;
+    newEndDate: string;
+    status: "approved";
+}
+
+export interface PrepareServiceRecordLinkRequest {
+    recipientPhone?: string;
+}
+
+export interface SendServiceRecordLinkRequest {
+    preparedLinkToken?: string;
+    recipientPhone?: string;
 }

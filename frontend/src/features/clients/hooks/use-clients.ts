@@ -3,6 +3,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { clientsApi } from '../api/clients.api';
 import { clientKeys } from './keys';
+import { messageTriggerKeys } from '@/features/message-triggers/hooks/keys';
 import type {
   Client,
   CreateClientDto,
@@ -101,6 +102,7 @@ export function useCreateClient() {
     onSuccess: () => {
       // Invalidate all client queries to refresh lists
       queryClient.invalidateQueries({ queryKey: clientKeys.all });
+      queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
     },
   });
 }
@@ -122,6 +124,7 @@ export function useUpdateClient() {
       queryClient.setQueryData(clientKeys.detail(id), updatedClient);
 
       queryClient.invalidateQueries({ queryKey: clientKeys.all });
+      queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
     },
   });
 }
@@ -136,6 +139,7 @@ export function useDeleteClient() {
     mutationFn: (id: number) => clientsApi.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: clientKeys.all });
+      queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
     },
   });
 }
@@ -153,6 +157,7 @@ export function useTerminateService() {
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: clientKeys.all });
       queryClient.invalidateQueries({ queryKey: clientKeys.detail(id) });
+      queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
     },
   });
 }
@@ -170,6 +175,7 @@ export function useRequestReplacement() {
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: clientKeys.all });
       queryClient.invalidateQueries({ queryKey: clientKeys.detail(id) });
+      queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
     },
   });
 }
@@ -187,6 +193,7 @@ export function useCompleteReplacement() {
     onSuccess: (_, id) => {
       queryClient.invalidateQueries({ queryKey: clientKeys.all });
       queryClient.invalidateQueries({ queryKey: clientKeys.detail(id) });
+      queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
     },
   });
 }
@@ -203,6 +210,7 @@ export function useApproveScheduleChange() {
     onSuccess: (_, { clientId }) => {
       queryClient.invalidateQueries({ queryKey: clientKeys.all });
       queryClient.invalidateQueries({ queryKey: clientKeys.detail(clientId) });
+      queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
     },
   });
 }

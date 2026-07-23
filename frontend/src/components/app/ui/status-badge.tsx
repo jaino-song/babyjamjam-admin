@@ -5,7 +5,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const statusBadgeVariants = cva(
-  "inline-flex items-center justify-center overflow-hidden rounded-[50px] border px-[calc(12px*var(--v3-ui-scale,1))] py-[calc(4px*var(--v3-ui-scale,1))] text-[calc(10.4px*var(--v3-ui-scale,1))] font-semibold leading-none whitespace-nowrap shrink-0 transition-colors gap-[calc(4px*var(--v3-ui-scale,1))] [&>svg]:size-[calc(12px*var(--v3-ui-scale,1))] [&>svg]:pointer-events-none",
+  "inline-flex items-center justify-center overflow-hidden rounded-[50px] border px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(4px*var(--glint-ui-scale,1))] text-[calc(10.4px*var(--glint-ui-scale,1))] font-semibold leading-none whitespace-nowrap shrink-0 transition-colors gap-[calc(4px*var(--glint-ui-scale,1))] [&>svg]:size-[calc(12px*var(--glint-ui-scale,1))] [&>svg]:pointer-events-none",
   {
     variants: {
       variant: {
@@ -19,6 +19,7 @@ const statusBadgeVariants = cva(
         outline: "bg-transparent border-border text-v3-dark",
 
         // Existing semantic aliases
+        pre_booking: "bg-[hsl(220,20%,97%)] border-[hsl(220,20%,90%)] text-v3-text-muted",
         waiting: "bg-[hsl(47,100%,92%)] border-[hsla(38,92%,35%,0.18)] text-[hsl(38,92%,35%)]",
         in_progress: "bg-[hsl(214,80%,95%)] border-[hsl(214,70%,85%)] text-v3-primary",
         completed: "bg-[hsl(137,60%,94%)] border-[hsl(137,34%,84%)] text-v3-green",
@@ -35,9 +36,9 @@ const statusBadgeVariants = cva(
         default: "bg-[hsl(220,20%,97%)] border-[hsl(220,20%,90%)] text-v3-text-muted",
       },
       size: {
-        sm: "px-[calc(12px*var(--v3-ui-scale,1))] py-[calc(4px*var(--v3-ui-scale,1))] text-[calc(10.4px*var(--v3-ui-scale,1))]",
-        default: "px-[calc(12px*var(--v3-ui-scale,1))] py-[calc(4px*var(--v3-ui-scale,1))] text-[calc(10.4px*var(--v3-ui-scale,1))]",
-        lg: "px-[calc(14px*var(--v3-ui-scale,1))] py-[calc(6px*var(--v3-ui-scale,1))] text-[calc(12px*var(--v3-ui-scale,1))]",
+        sm: "px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(4px*var(--glint-ui-scale,1))] text-[calc(10.4px*var(--glint-ui-scale,1))]",
+        default: "px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(4px*var(--glint-ui-scale,1))] text-[calc(10.4px*var(--glint-ui-scale,1))]",
+        lg: "px-[calc(14px*var(--glint-ui-scale,1))] py-[calc(6px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))]",
       },
     },
     defaultVariants: {

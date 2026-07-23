@@ -3,7 +3,7 @@
 import { useState, useMemo } from "react";
 import { Plus } from "lucide-react";
 import { useLocale } from "@/providers/LocaleProvider";
-import { t, Locale } from "@/lib/i18n/translations";
+import { t } from "@/lib/i18n/translations";
 import { ContentPaper } from "../root/content-paper";
 import {
     Employee,
@@ -17,6 +17,10 @@ import { DataTable, type DataTableColumn, type FilterOption } from "@/components
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
+import { EMPLOYEE_STATUS_LABELS } from "@babyjamjam/shared/constants/employee-status";
+import { getApiErrorMessage } from "@babyjamjam/shared";
 
 const formatPhoneNumber = (phone: string | null | undefined): string => {
     if (!phone) return "-";
@@ -26,25 +30,25 @@ const formatPhoneNumber = (phone: string | null | undefined): string => {
     return `${numbers.slice(0, 3)}-${numbers.slice(3, 7)}-${numbers.slice(7, 11)}`;
 };
 
-const getStatusBadge = (status: EmployeeStatus | undefined, locale: Locale) => {
+const getStatusBadge = (status: EmployeeStatus | undefined) => {
     switch (status) {
         case "available":
             return (
                 <Badge variant="success" className="min-w-[65px] justify-center">
-                    {t(locale, "employees.status.available")}
+                    {EMPLOYEE_STATUS_LABELS.available}
                 </Badge>
             );
         case "working":
             return (
                 <Badge variant="warning" className="min-w-[65px] justify-center">
-                    {t(locale, "employees.status.working")}
+                    {EMPLOYEE_STATUS_LABELS.working}
                 </Badge>
             );
         case "unavailable":
         default:
             return (
                 <Badge variant="secondary" className="min-w-[65px] justify-center">
-                    {t(locale, "employees.status.unavailable")}
+                    {EMPLOYEE_STATUS_LABELS.unavailable}
                 </Badge>
             );
     }
@@ -52,9 +56,9 @@ const getStatusBadge = (status: EmployeeStatus | undefined, locale: Locale) => {
 
 const statusFilterOptions: FilterOption[] = [
     { label: "전체", value: null, color: "default" },
-    { label: "근무 가능", value: "available", color: "success" },
-    { label: "근무중", value: "working", color: "warning" },
-    { label: "근무 불가", value: "unavailable", color: "default" },
+    { label: EMPLOYEE_STATUS_LABELS.available, value: "available", color: "success" },
+    { label: EMPLOYEE_STATUS_LABELS.working, value: "working", color: "warning" },
+    { label: EMPLOYEE_STATUS_LABELS.unavailable, value: "unavailable", color: "default" },
 ];
 
 export function EmployeesTable() {
@@ -64,6 +68,8 @@ export function EmployeesTable() {
     const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
     const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
     const [selectedFilter, setSelectedFilter] = useState<string | null>(null);
+    const [deleteTargetEmployeeId, setDeleteTargetEmployeeId] = useState<number | null>(null);
+    const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
 
     const { data: employees, isLoading, error } = useEmployees();
     const deleteEmployee = useDeleteEmployee();
@@ -88,19 +94,25 @@ export function EmployeesTable() {
         setFormDialogOpen(true);
     };
 
-    const handleDelete = async (id: number): Promise<boolean> => {
-        if (window.confirm(t(locale, "employees.delete-confirm.message"))) {
-            try {
-                await deleteEmployee.mutateAsync(id);
-                return true; // Deletion succeeded
-            } catch (err) {
-                console.error("Failed to delete employee:", err);
-                // Show error to user
-                alert(t(locale, "employees.delete-confirm.error"));
-                return false; // Deletion failed
-            }
+    const handleDelete = (id: number) => {
+        setDeleteTargetEmployeeId(id);
+    };
+
+    const handleDeleteConfirm = async () => {
+        if (deleteTargetEmployeeId === null) return;
+
+        try {
+            await deleteEmployee.mutateAsync(deleteTargetEmployeeId);
+            setDeleteTargetEmployeeId(null);
+            handleDetailModalClose();
+        } catch (err) {
+            console.error("Failed to delete employee:", err);
+            setDeleteTargetEmployeeId(null);
+            setDeleteErrorMessage(getApiErrorMessage(
+                err,
+                t(locale, "employees.delete-confirm.error"),
+            ));
         }
-        return false; // User cancelled
     };
 
     const handleFormDialogClose = () => {
@@ -128,7 +140,7 @@ export function EmployeesTable() {
             header: t(locale, "employees.table.open-status"),
             width: "30%",
             align: "center",
-            render: (employee) => getStatusBadge(employee.status as EmployeeStatus | undefined, locale),
+            render: (employee) => getStatusBadge(employee.status as EmployeeStatus | undefined),
         },
         {
             key: "phone",
@@ -207,6 +219,33 @@ export function EmployeesTable() {
                     open={formDialogOpen}
                     onClose={handleFormDialogClose}
                     employee={editingEmployee}
+                />
+
+                <ApprovalTwoButtonModal
+                    open={deleteTargetEmployeeId !== null}
+                    onOpenChange={(open) => {
+                        if (!open) setDeleteTargetEmployeeId(null);
+                    }}
+                    dataComponent="employees-delete-approval"
+                    title={t(locale, "employees.delete-confirm.title")}
+                    description={t(locale, "employees.delete-confirm.message")}
+                    approvalLabel={t(locale, "common.delete")}
+                    pendingLabel="삭제 중..."
+                    approvalVariant="destructive"
+                    isPending={deleteEmployee.isPending}
+                    onApprove={handleDeleteConfirm}
+                />
+
+                <NotificationOneButtonModal
+                    open={deleteErrorMessage !== null}
+                    onOpenChange={(open) => {
+                        if (!open) setDeleteErrorMessage(null);
+                    }}
+                    dataComponent="employees-delete-error-notification"
+                    title="직원을 삭제하지 못했습니다."
+                    description={deleteErrorMessage ?? ""}
+                    isDescriptionVisuallyHidden={false}
+                    onAcknowledge={() => setDeleteErrorMessage(null)}
                 />
             </div>
         </ContentPaper>

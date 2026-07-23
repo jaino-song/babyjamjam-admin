@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getClientConflictPayload } from "@babyjamjam/shared";
 import { serverAPIClient } from "@/lib/api/server";
+import { errorResponse } from "@/lib/api/route-utils";
 
 // Helper to get auth token from request
 function getAuthToken(request: NextRequest): string | null {
@@ -59,11 +61,10 @@ export async function POST(request: NextRequest) {
         });
         return NextResponse.json(response.data, { status: 201 });
     } catch (error) {
-        console.error("[API] Error creating client:", error);
-        return NextResponse.json(
-            { error: "Failed to create client" },
-            { status: 500 }
-        );
+        const conflict = getClientConflictPayload(error);
+        if (conflict) {
+            return NextResponse.json(conflict, { status: 409 });
+        }
+        return errorResponse(error, "create client");
     }
 }
-

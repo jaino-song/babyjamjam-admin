@@ -10,6 +10,7 @@ type EmployeeRow = {
     openToNextWork: boolean;
     companyRegisteredDate: Date | null;
     birthday: string | null;
+    deletedAt?: Date | null;
 };
 
 export class EmployeeMapper {
@@ -23,12 +24,12 @@ export class EmployeeMapper {
             row.openToNextWork,
             row.companyRegisteredDate ?? new Date(),
             row.birthday ?? undefined,
+            row.deletedAt ?? undefined,
         );
     }
 
     static toPrismaCreate(entity: EmployeeEntity) {
         return {
-            id: entity.id,
             name: entity.name,
             workArea: entity.workArea,
             phone: entity.phone,
@@ -50,4 +51,3 @@ export class EmployeeMapper {
         };
     }
 }
-

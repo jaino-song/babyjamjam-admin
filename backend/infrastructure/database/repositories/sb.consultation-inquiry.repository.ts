@@ -100,7 +100,7 @@ export class SbConsultationInquiryRepository implements IConsultationInquiryRepo
         }
 
         return Array.from(new Set([
-            branch.ownerId,
+            ...(branch.ownerId ? [branch.ownerId] : []),
             ...branch.userBranches.map((membership) => membership.userId),
         ]));
     }

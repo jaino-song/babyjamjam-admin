@@ -2,9 +2,11 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { ChevronDown } from "lucide-react";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
+import { cn } from "@/lib/utils";
 import {
     Employee,
     CreateEmployeeDto,
@@ -13,15 +15,23 @@ import {
     useUpdateEmployee,
     employeeQueryKeys,
 } from "@/hooks/useEmployees";
+import { useEmployeePhoneDuplicateCheck } from "@/hooks/useEmployeePhoneDuplicateCheck";
 import { useEmployeeDialogStore } from "@/stores/employee-dialog-store";
 import {
     Dialog,
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
 import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
 import {
+    APP_FORM_CONTROL_CLASS_NAME,
     FormField,
     FormGrid,
     FormHelperText,
@@ -88,8 +98,183 @@ const WORK_AREA_OPTIONS = WORK_AREAS.map((area) => ({
 }));
 
 const PANEL_CONTENT_CLASS_NAME = "h-auto min-h-full";
-const PANEL_FIELDS_CLASS_NAME = "grid w-full grid-cols-1 gap-[calc(16px*var(--v3-ui-scale,1))] pb-[calc(24px*var(--v3-ui-scale,1))] md:grid-cols-2";
-const PANEL_FULL_FIELD_CLASS_NAME = "md:col-span-2";
+const PANEL_FIELDS_CLASS_NAME = "grid w-full grid-cols-1 gap-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(24px*var(--glint-ui-scale,1))] md:grid-cols-2";
+
+interface WorkAreaMultiSelectProps {
+    id: string;
+    value: string[];
+    onChange: (value: string[]) => void;
+    onTouched: () => void;
+    invalid: boolean;
+    errorId?: string;
+    dataComponentPrefix: string;
+}
+
+function summarizeWorkAreas(value: string[]): string {
+    const labels = value.map(formatWorkAreaLabel);
+
+    if (labels.length === 0) return "근무 지역 선택";
+    if (labels.length <= 2) return labels.join(", ");
+    return `${labels[0]} 외 ${labels.length - 1}곳`;
+}
+
+function WorkAreaMultiSelect({
+    id,
+    value,
+    onChange,
+    onTouched,
+    invalid,
+    errorId,
+    dataComponentPrefix,
+}: WorkAreaMultiSelectProps) {
+    const [open, setOpen] = useState(false);
+    const selectedSummary = summarizeWorkAreas(value);
+    const configuredWorkAreas = new Set<string>(WORK_AREAS);
+    const selectableOptions = [
+        ...WORK_AREA_OPTIONS,
+        ...value
+            .filter((area) => !configuredWorkAreas.has(area))
+            .map((area) => ({ value: area, label: formatWorkAreaLabel(area) })),
+    ];
+
+    const handleOpenChange = (nextOpen: boolean) => {
+        setOpen(nextOpen);
+        if (!nextOpen) {
+            onTouched();
+        }
+    };
+
+    const setAreaChecked = (area: string, checked: boolean) => {
+        const selectedAreas = new Set(value);
+
+        if (checked) {
+            selectedAreas.add(area);
+        } else {
+            selectedAreas.delete(area);
+        }
+
+        onChange(
+            selectableOptions
+                .map((option) => option.value)
+                .filter((option) => selectedAreas.has(option)),
+        );
+    };
+
+    return (
+        <Popover open={open} onOpenChange={handleOpenChange}>
+            <div data-component={`${dataComponentPrefix}-select-wrap`}>
+                <PopoverTrigger asChild>
+                    <button
+                        id={id}
+                        type="button"
+                        role="combobox"
+                        aria-expanded={open}
+                        aria-controls={`${id}-options`}
+                        aria-label={`근무 지역 선택: ${selectedSummary}`}
+                        aria-invalid={invalid || undefined}
+                        aria-describedby={errorId}
+                        data-component={`${dataComponentPrefix}-select`}
+                        className={cn(
+                            APP_FORM_CONTROL_CLASS_NAME,
+                            "box-border items-center justify-between gap-2 py-0 text-left",
+                            value.length === 0 && "text-v3-text-muted",
+                            invalid && "border-v3-burgundy focus-visible:border-v3-burgundy",
+                        )}
+                    >
+                        <span className="min-w-0 flex-1 truncate">{selectedSummary}</span>
+                        <ChevronDown
+                            className={cn(
+                                "h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] shrink-0 text-v3-text-muted transition-transform",
+                                open && "rotate-180",
+                            )}
+                            strokeWidth={2.2}
+                            data-component={`${dataComponentPrefix}-select-icon`}
+                            aria-hidden="true"
+                        />
+                    </button>
+                </PopoverTrigger>
+            </div>
+
+            <PopoverContent
+                align="start"
+                sideOffset={6}
+                avoidCollisions
+                data-component={`${dataComponentPrefix}-select-popover`}
+                className="w-[var(--radix-popover-trigger-width)] min-w-[240px] rounded-[13px] border-[1.35px] border-v3-border bg-white p-0 shadow-lg"
+            >
+                <div
+                    data-component={`${dataComponentPrefix}-select-head`}
+                    className="flex items-center justify-between gap-3 border-b border-v3-border px-3.5 py-2.5"
+                >
+                    <span className="text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
+                        {value.length}개 지역 선택
+                    </span>
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => onChange(selectableOptions.map((option) => option.value))}
+                            className="text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-v3-primary hover:text-v3-primary/80"
+                            data-component={`${dataComponentPrefix}-select-all`}
+                        >
+                            전체 선택
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => onChange([])}
+                            disabled={value.length === 0}
+                            className="text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted hover:text-v3-dark disabled:cursor-not-allowed disabled:opacity-45"
+                            data-component={`${dataComponentPrefix}-clear`}
+                        >
+                            선택 해제
+                        </button>
+                    </div>
+                </div>
+
+                <div
+                    id={`${id}-options`}
+                    role="group"
+                    aria-label="근무 지역 목록"
+                    data-component={`${dataComponentPrefix}-options`}
+                    className="grid max-h-[280px] gap-0.5 overflow-y-auto p-2"
+                >
+                    {selectableOptions.map((option, index) => {
+                        const checkboxId = `${id}-option-${index}`;
+                        const isSelected = value.includes(option.value);
+
+                        return (
+                            <label
+                                key={option.value}
+                                htmlFor={checkboxId}
+                                className="flex min-h-[36px] cursor-pointer items-center gap-2.5 rounded-[8px] px-2.5 py-2 text-[calc(12px*var(--glint-ui-scale,1))] font-medium text-v3-dark hover:bg-v3-primary/5"
+                            >
+                                <Checkbox
+                                    id={checkboxId}
+                                    checked={isSelected}
+                                    onCheckedChange={(checked) => setAreaChecked(option.value, checked === true)}
+                                    className="h-4 w-4 rounded-[4px] border-v3-border data-[state=checked]:border-v3-primary data-[state=checked]:bg-v3-primary"
+                                    data-component={`${dataComponentPrefix}-option-${index}`}
+                                />
+                                <span>{option.label}</span>
+                            </label>
+                        );
+                    })}
+                </div>
+
+                <div className="border-t border-v3-border p-2.5">
+                    <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => handleOpenChange(false)}
+                        className="w-full"
+                        data-component={`${dataComponentPrefix}-done`}
+                    >
+                        완료
+                    </Button>
+                </div>
+            </PopoverContent>
+        </Popover>
+    );
+}
 
 function formatPhoneNumber(value: string): string {
     const numbers = value.replace(/[^\d]/g, "");
@@ -101,6 +286,19 @@ function formatPhoneNumber(value: string): string {
 function parsePhoneNumber(value: string): string {
     return value.replace(/[^\d]/g, "");
 }
+
+const getPhoneDuplicateCheckFailedMessage = (locale: "ko" | "en"): string =>
+    locale === "ko"
+        ? "문제가 발생했어요. 새로고침 해주세요."
+        : "Something went wrong. Please refresh and try again.";
+
+const getPhoneDuplicateCheckPendingMessage = (locale: "ko" | "en"): string =>
+    locale === "ko"
+        ? "연락처 중복 확인 중입니다. 잠시만 기다려주세요."
+        : "Checking for duplicate phone number. Please wait.";
+
+const getPhoneAvailableMessage = (locale: "ko" | "en"): string =>
+    locale === "ko" ? "등록 가능한 번호입니다." : "This phone number is available.";
 
 export function EmployeeFormPanel({
     open = true,
@@ -154,9 +352,42 @@ function EmployeeFormContent({
     const updateMutation = useUpdateEmployee();
     const prefillName = useEmployeeDialogStore((state) => state.prefillName);
 
+    const {
+        phoneDigits,
+        isCheckingPhoneDuplicate,
+        isPhoneDuplicate,
+        hasPhoneDuplicateCheckFailed,
+        lastCheckedPhoneDigits,
+        isUsingOriginalPhone,
+        isPhoneCheckReady,
+    } = useEmployeePhoneDuplicateCheck({
+        phone: formData.phone,
+        originalPhone: employee?.phone,
+        enabled: open,
+    });
+
     const isEditMode = !!employee;
     const isLoading = createMutation.isPending || updateMutation.isPending;
-    const isPhoneValid = formData.phone.length > 0;
+    const isPhoneFormatValid = phoneDigits.length === 11;
+    const isPhoneValid = isPhoneFormatValid && isPhoneCheckReady;
+    const phoneInlineMessage = isPhoneFormatValid
+        ? isUsingOriginalPhone || isPhoneCheckReady
+            ? getPhoneAvailableMessage(locale)
+            : isCheckingPhoneDuplicate
+                ? getPhoneDuplicateCheckPendingMessage(locale)
+                : hasPhoneDuplicateCheckFailed
+                    ? getPhoneDuplicateCheckFailedMessage(locale)
+                    : lastCheckedPhoneDigits !== phoneDigits
+                        ? getPhoneDuplicateCheckPendingMessage(locale)
+                        : isPhoneDuplicate
+                            ? t(locale, "employees.form.error-phone-duplicate")
+                            : null
+        : null;
+    const hasPhoneStatusError =
+        isPhoneFormatValid &&
+        !isUsingOriginalPhone &&
+        (hasPhoneDuplicateCheckFailed ||
+            (lastCheckedPhoneDigits === phoneDigits && isPhoneDuplicate));
     const isWorkAreaValid = formData.workArea.length > 0;
     const isFormValid = !!formData.name.trim() && isPhoneValid && isWorkAreaValid;
     const requiredFieldProgressText = `필수 항목 4개 중 ${
@@ -302,7 +533,7 @@ function EmployeeFormContent({
     );
 
     const panelFooter = (
-        <div className="flex w-full flex-wrap items-center justify-between gap-[calc(12px*var(--v3-ui-scale,1))]">
+        <div className="flex w-full flex-wrap items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))]">
             <span className={DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME}>{requiredFieldProgressText}</span>
             <div className={DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME}>
                 <Button
@@ -312,7 +543,7 @@ function EmployeeFormContent({
                     onClick={handleClose}
                     disabled={isLoading}
                     data-component="employees-form-panel-cancel"
-                    className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
+                    className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
                 >
                     {t(locale, "common.cancel")}
                 </Button>
@@ -323,7 +554,7 @@ function EmployeeFormContent({
                     onClick={handleSubmit}
                     disabled={isLoading || !isFormValid}
                     data-component="employees-form-panel-submit"
-                    className="min-w-[calc(132px*var(--v3-ui-scale,1))]"
+                    className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
                 >
                     {isLoading ? (
                         <Spinner className="h-4 w-4" />
@@ -377,18 +608,40 @@ function EmployeeFormContent({
                         htmlFor="phone"
                         label={t(locale, "employees.form.phone")}
                         required
+                        labelAccessory={phoneInlineMessage ? (
+                            <FormHelperText
+                                id="employees-form-dialog-phone-helper"
+                                data-component="employees-form-dialog-phone-helper"
+                                tone={hasPhoneStatusError ? "error" : "default"}
+                                className={cn("m-0 text-right", isPhoneCheckReady && "text-v3-green")}
+                                aria-live="polite"
+                            >
+                                {phoneInlineMessage}
+                            </FormHelperText>
+                        ) : null}
                     >
                         <FormTextInput
                             id="phone"
+                            type="tel"
+                            inputMode="numeric"
                             placeholder="010-1234-5678"
                             value={formatPhoneNumber(formData.phone)}
                             onChange={(e) => handleChange("phone", parsePhoneNumber(e.target.value))}
                             onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
                             maxLength={13}
-                            error={touched.phone && !isPhoneValid}
+                            error={(touched.phone && !isPhoneFormatValid) || hasPhoneStatusError}
+                            aria-describedby={phoneInlineMessage
+                                ? "employees-form-dialog-phone-helper"
+                                : touched.phone && !isPhoneFormatValid
+                                    ? "employees-form-dialog-field-phone-error"
+                                    : undefined}
                         />
-                        {touched.phone && !isPhoneValid && (
-                            <FormHelperText tone="error" data-component="employees-form-dialog-field-phone-error">
+                        {touched.phone && !isPhoneFormatValid && (
+                            <FormHelperText
+                                id="employees-form-dialog-field-phone-error"
+                                tone="error"
+                                data-component="employees-form-dialog-field-phone-error"
+                            >
                                 {t(locale, "employees.form.phone-required")}
                             </FormHelperText>
                         )}
@@ -442,31 +695,30 @@ function EmployeeFormContent({
                         htmlFor="employee-form-work-area"
                         label={t(locale, "employees.form.work-area")}
                         required
-                        onBlurCapture={() => setTouched((prev) => ({ ...prev, workArea: true }))}
-                    >
-                        <FormNativeSelect
-                            id="employee-form-work-area"
-                            value={formData.workArea[0] ?? ""}
-                            options={WORK_AREA_OPTIONS}
-                            placeholder="근무 지역 선택"
-                            onValueChange={(value) => {
-                                handleChange("workArea", value ? [value] : []);
-                                setTouched((prev) => ({ ...prev, workArea: true }));
-                            }}
-                            wrapDataComponent="employees-form-dialog-field-work-area-select-wrap"
-                            selectDataComponent="employees-form-dialog-field-work-area-select"
-                            iconDataComponent="employees-form-dialog-field-work-area-select-icon"
-                        />
-
-                        {touched.workArea && !isWorkAreaValid && (
-                            <FormHelperText tone="error" data-component="employees-form-dialog-field-work-area-error">
+                        labelAccessory={touched.workArea && !isWorkAreaValid ? (
+                            <FormHelperText
+                                id="employee-form-work-area-error"
+                                tone="error"
+                                data-component="employees-form-dialog-field-work-area-error"
+                                className="m-0 text-right"
+                            >
                                 {t(locale, "employees.form.work-area-required")}
                             </FormHelperText>
-                        )}
+                        ) : null}
+                    >
+                        <WorkAreaMultiSelect
+                            id="employee-form-work-area"
+                            value={formData.workArea}
+                            onChange={(value) => handleChange("workArea", value)}
+                            onTouched={() => setTouched((prev) => ({ ...prev, workArea: true }))}
+                            invalid={touched.workArea && !isWorkAreaValid}
+                            errorId={touched.workArea && !isWorkAreaValid ? "employee-form-work-area-error" : undefined}
+                            dataComponentPrefix="employees-form-dialog-field-work-area"
+                        />
                     </FormField>
                 </FormGrid>
 
-                <FormField data-component="employees-form-dialog-field-open-status" label="근무 가능 여부">
+                <FormField data-component="employees-form-dialog-field-open-status" label="다음 배정 가능 여부">
                     <FormSwitchRow
                         data-component="employees-form-dialog-field-open-status-control"
                         title="다음 근무 배정 가능"
@@ -523,19 +775,41 @@ function EmployeeFormContent({
                         <span className="ml-1 text-v3-burgundy">*</span>
                     </>
                 }
+                labelAccessory={phoneInlineMessage ? (
+                    <FormHelperText
+                        id="employees-form-panel-phone-helper"
+                        data-component="employees-form-panel-phone-helper"
+                        tone={hasPhoneStatusError ? "error" : "default"}
+                        className={cn("m-0 text-right", isPhoneCheckReady && "text-v3-green")}
+                        aria-live="polite"
+                    >
+                        {phoneInlineMessage}
+                    </FormHelperText>
+                ) : null}
             >
                 <FormTextInput
                     id="employee-panel-phone"
+                    type="tel"
+                    inputMode="numeric"
                     value={formatPhoneNumber(formData.phone)}
                     onChange={(event) => handleChange("phone", parsePhoneNumber(event.target.value))}
                     onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
                     maxLength={13}
                     placeholder="010-1234-5678"
-                    error={touched.phone && !isPhoneValid}
+                    error={(touched.phone && !isPhoneFormatValid) || hasPhoneStatusError}
+                    aria-describedby={phoneInlineMessage
+                        ? "employees-form-panel-phone-helper"
+                        : touched.phone && !isPhoneFormatValid
+                            ? "employees-form-panel-phone-error"
+                            : undefined}
                     data-component="employees-form-panel-phone-input"
                 />
-                {touched.phone && !isPhoneValid && (
-                    <FormHelperText tone="error" data-component="employees-form-panel-phone-error">
+                {touched.phone && !isPhoneFormatValid && (
+                    <FormHelperText
+                        id="employees-form-panel-phone-error"
+                        tone="error"
+                        data-component="employees-form-panel-phone-error"
+                    >
                         {t(locale, "employees.form.phone-required")}
                     </FormHelperText>
                 )}
@@ -586,30 +860,31 @@ function EmployeeFormContent({
                     <span className="ml-1 text-v3-burgundy">*</span>
                     </>
                 }
-            >
-                <FormNativeSelect
-                    id="employee-panel-work-area"
-                    value={formData.workArea[0] ?? ""}
-                    options={WORK_AREA_OPTIONS}
-                    placeholder="근무 지역 선택"
-                    onValueChange={(value) => {
-                        handleChange("workArea", value ? [value] : []);
-                        setTouched((prev) => ({ ...prev, workArea: true }));
-                    }}
-                    wrapDataComponent="employees-form-panel-work-area-select-wrap"
-                    selectDataComponent="employees-form-panel-work-area-select"
-                    iconDataComponent="employees-form-panel-work-area-select-icon"
-                />
-                {touched.workArea && !isWorkAreaValid && (
-                    <FormHelperText tone="error" data-component="employees-form-panel-work-area-error">
+                labelAccessory={touched.workArea && !isWorkAreaValid ? (
+                    <FormHelperText
+                        id="employee-panel-work-area-error"
+                        tone="error"
+                        data-component="employees-form-panel-work-area-error"
+                        className="m-0 text-right"
+                    >
                         {t(locale, "employees.form.work-area-required")}
                     </FormHelperText>
-                )}
+                ) : null}
+            >
+                <WorkAreaMultiSelect
+                    id="employee-panel-work-area"
+                    value={formData.workArea}
+                    onChange={(value) => handleChange("workArea", value)}
+                    onTouched={() => setTouched((prev) => ({ ...prev, workArea: true }))}
+                    invalid={touched.workArea && !isWorkAreaValid}
+                    errorId={touched.workArea && !isWorkAreaValid ? "employee-panel-work-area-error" : undefined}
+                    dataComponentPrefix="employees-form-panel-work-area"
+                />
             </FormField>
 
             <FormSwitchRow
                 data-component="employees-form-panel-open-status-field"
-                className={PANEL_FULL_FIELD_CLASS_NAME}
+                className="self-end h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] rounded-[13px] border-[1.35px] px-[calc(14px*var(--glint-ui-scale,1))] py-0"
                 title={t(locale, "employees.form.open-to-next-work")}
                 checked={formData.openToNextWork}
                 onToggle={() => handleChange("openToNextWork", !formData.openToNextWork)}

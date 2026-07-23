@@ -13,6 +13,7 @@ import { UserModule } from "module/user.module";
 import { MessageModule } from "module/message.module";
 import { MessageTemplateModule } from "module/message-template.module";
 import { VoucherPriceInfoModule } from "module/voucher-price-info.module";
+import { OutOfPocketPriceInfoModule } from "module/out-of-pocket-price-info.module";
 import { EmployeeModule } from "module/employee.module";
 import { ClientModule } from "module/client.module";
 import { EmployeeScheduleModule } from "module/employee-schedule.module";
@@ -28,8 +29,9 @@ import { MessageDeliveryModule } from "module/message-delivery.module";
 import { CallInboxModule } from "module/call-inbox.module";
 import { ConsultationInquiryModule } from "module/consultation-inquiry.module";
 import { SystemAdminModule } from "module/system-admin.module";
-import { ServiceFeedbackModule } from "module/service-feedback.module";
+import { ServiceRecordEntryModule } from "module/service-record-entry.module";
 import { getJwtSecret } from "./infrastructure/auth/jwt-secret";
+import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
 
 const ENV_FILE_PATHS = [
     resolve(process.cwd(), "backend/.env.local"),
@@ -61,6 +63,7 @@ const ENV_FILE_PATHS = [
         MessageModule,
         MessageTemplateModule,
         VoucherPriceInfoModule,
+        OutOfPocketPriceInfoModule,
         EmployeeModule,
         ClientModule,
         EmployeeScheduleModule,
@@ -75,9 +78,9 @@ const ENV_FILE_PATHS = [
         CallInboxModule,
         ConsultationInquiryModule,
         SystemAdminModule,
-        ServiceFeedbackModule,
+        ServiceRecordEntryModule,
     ],
     controllers: [EformsignController],
-    providers: [EformsignService, JwtStrategy],
+    providers: [EformsignService, JwtStrategy, ContractClientAssignmentGuardService],
 })
 export class AppModule {}

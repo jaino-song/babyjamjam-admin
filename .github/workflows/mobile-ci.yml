@@ -84,18 +84,24 @@ jobs:
     timeout-minutes: 90
     runs-on: ubuntu-latest
     env:
-      BASE_URL: http://localhost:3000
+      BASE_URL: http://localhost:3002
       CI: true
       DATABASE_URL: postgresql://postgres@localhost:5432/postgres
       DEVELOPMENT_API_BASE_URL: http://localhost:3001
       DEVELOPMENT_FRONTEND_URL: http://localhost:3000
+      DEVELOPMENT_MOBILE_FRONTEND_URL: http://localhost:3002
       DIRECT_URL: postgresql://postgres@localhost:5432/postgres
       E2E_VENDOR_STUBS: '1'
       # Webhook guard inputs for the critical-flows spec — e2e-only literals,
       # not real secrets (the CI backend never talks to real eformsign).
       EFORMSIGN_COMPANY_ID: e2e-stub-company
-      EFORMSIGN_WEBHOOK_SECRET: e2e-webhook-secret
+      EFORMSIGN_WEBHOOK_SECRET: e2e-dummy-webhook-${{ github.run_id }}
       JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      AUTH_EMAIL_TOKEN_HMAC_SECRET: e2e-dummy-email-hmac-${{ github.run_id }}
+      EMAIL_TRANSPORT: smtp
+      SMTP_HOST: localhost
+      SMTP_PORT: 1025
+      VALKEY_URL: redis://localhost:6379
       NODE_ENV: development
       STORAGE_BOOTSTRAP_DISABLED: '1'
     services:
@@ -110,6 +116,20 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      valkey:
+        image: valkey/valkey:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      mailpit:
+        image: axllent/mailpit:v1.27
+        ports:
+          - 1025:1025
+          - 8025:8025
 
     steps:
       - uses: actions/checkout@v4
@@ -133,7 +153,9 @@ jobs:
         run: pnpm --filter ./backend run db:migrate:deploy
 
       - name: Seed e2e fixtures
-        run: pnpm --filter ./backend run db:seed:e2e
+        run: |
+          pnpm --filter ./backend run db:seed:e2e
+          pnpm --filter ./backend run db:seed:auth-e2e
 
       - name: Start backend
         run: |

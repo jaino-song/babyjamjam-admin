@@ -1,26 +1,5 @@
-import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString, Matches } from "class-validator";
-import { ALIMTALK_PROVIDERS, AlimtalkProvider, RibbonConfig } from "domain/entities/system-setting.entity";
-
-export class UpdateAlimtalkProviderDto {
-    @IsString()
-    @IsNotEmpty()
-    @IsIn([...ALIMTALK_PROVIDERS])
-    provider!: AlimtalkProvider;
-}
-
-export class AlimtalkProviderResponseDto {
-    provider!: AlimtalkProvider;
-    enabled!: boolean;
-    updatedAt?: string;
-
-    static from(provider: AlimtalkProvider, enabled: boolean, updatedAt?: Date): AlimtalkProviderResponseDto {
-        const dto = new AlimtalkProviderResponseDto();
-        dto.provider = provider;
-        dto.enabled = enabled;
-        dto.updatedAt = updatedAt?.toISOString();
-        return dto;
-    }
-}
+import { IsBoolean, IsOptional, IsString, Matches } from "class-validator";
+import { RibbonConfig } from "domain/entities/system-setting.entity";
 
 export class UpdateNotificationPreferencesDto {
     @IsBoolean()
@@ -67,6 +46,31 @@ export class UpdateRibbonConfigDto {
     @IsString()
     @Matches(HEX_COLOR_REGEX)
     linkColor!: string;
+}
+
+export class UpdateClientRegistrationPolicyDto {
+    @IsBoolean()
+    @IsOptional()
+    clientAutoRegistration?: boolean;
+
+    @IsBoolean()
+    @IsOptional()
+    greetingOnAutoRegistration?: boolean;
+}
+
+export class ClientRegistrationPolicyResponseDto {
+    clientAutoRegistration!: boolean;
+    greetingOnAutoRegistration!: boolean;
+
+    static from(
+        clientAutoRegistration: boolean,
+        greetingOnAutoRegistration: boolean,
+    ): ClientRegistrationPolicyResponseDto {
+        const dto = new ClientRegistrationPolicyResponseDto();
+        dto.clientAutoRegistration = clientAutoRegistration;
+        dto.greetingOnAutoRegistration = greetingOnAutoRegistration;
+        return dto;
+    }
 }
 
 export class RibbonConfigResponseDto {

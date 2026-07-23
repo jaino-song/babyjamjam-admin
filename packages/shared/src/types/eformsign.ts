@@ -180,7 +180,8 @@ export interface EformsignDocumentsResponse {
 
 export interface EformsignApiListResponse {
   documents: EformsignDocument[];
-  total_count: number;
+  total_count?: number;
+  total_rows?: number;
 }
 
 export interface EformsignDeleteFailure {
@@ -207,11 +208,13 @@ export interface EformsignAuthStatusResponse {
 
 export interface EformsignDocClientSummary {
   documentId: string;
-  clientId: number;
+  clientId: number | null;
   clientName: string;
   clientPhone: string | null;
   providerName: string | null;
 }
+
+export type EformsignDocumentKind = "contract" | "service_record_snapshot";
 
 export interface CreateEformsignDocRecordRequest {
   documentId: string;
@@ -226,6 +229,9 @@ export interface CreateEformsignDocRecordRequest {
   stepRecipientSms: string;
   expiredDate: string;
   linkToClient?: boolean;
+  documentKind?: EformsignDocumentKind | null;
+  employeeScheduleId?: number | null;
+  templateId?: string | null;
 }
 
 export interface EformsignRecipientPhone {

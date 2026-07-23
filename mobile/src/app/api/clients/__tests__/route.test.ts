@@ -110,6 +110,38 @@ describe("client API routes", () => {
     expect(mockPost).toHaveBeenCalledWith("/clients", payload, expect.any(Object));
   });
 
+  it("preserves the safe duplicate-client conflict payload", async () => {
+    mockPost.mockRejectedValue({
+      response: {
+        status: 409,
+        data: {
+          message: "이미 같은 전화번호의 고객이 있습니다.",
+          clientId: 73,
+          internal: "discarded",
+        },
+      },
+    });
+
+    const response = await createClient(
+      createRequest("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Baby Kim",
+          careCenter: false,
+          voucherClient: true,
+          breastPump: false,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      message: "이미 같은 전화번호의 고객이 있습니다.",
+      clientId: 73,
+    });
+  });
+
   it("rejects invalid client detail IDs before proxying", async () => {
     const response = await getClient(
       createRequest("/api/clients/not-a-number"),

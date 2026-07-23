@@ -14,6 +14,9 @@ export async function POST(request: NextRequest) {
         }
 
         const body = await request.json();
+        if (!Number.isInteger(body?.clientId) || body.clientId < 1) {
+            return NextResponse.json({ error: "clientId is required" }, { status: 400 });
+        }
 
         const response = await serverAPIClient.post("/eformsign-docs/dispatch-headless", body, {
             headers: { Authorization: `Bearer ${token}` },

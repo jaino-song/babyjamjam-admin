@@ -13,7 +13,6 @@ import type {
     UpcomingMessageTriggerJob,
     UpdateMessageTriggerRuleDto,
 } from "../types";
-import type { AlimtalkProvider } from "@/services/api";
 
 function normalizeArrayPayload<T>(payload: unknown): T[] {
     if (Array.isArray(payload)) {
@@ -65,17 +64,15 @@ export function useMessageTriggerRule(id: string) {
 }
 
 export function useMessageTriggerTemplates(params: {
-    provider: Exclude<AlimtalkProvider, "none">;
     eventType?: TriggerEventType;
     recipientType?: TriggerRecipientType;
 }) {
     return useQuery<TriggerTemplateCatalogItem[]>({
-        queryKey: messageTriggerKeys.templates(params.provider, params.eventType, params.recipientType),
+        queryKey: messageTriggerKeys.templates("sms", params.eventType, params.recipientType),
         queryFn: () =>
             messageTriggersApi
                 .listTemplates(params)
                 .then((response) => normalizeArrayPayload<TriggerTemplateCatalogItem>(response.data)),
-        enabled: !!params.provider,
     });
 }
 
@@ -86,6 +83,10 @@ export function useUpcomingMessageTriggerJobs(limit = 200) {
             messageTriggersApi
                 .listUpcomingJobs(limit)
                 .then((response) => normalizeArrayPayload<UpcomingMessageTriggerJob>(response.data)),
+        staleTime: 0,
+        refetchOnMount: "always",
+        refetchInterval: (query) =>
+            query.state.data?.some((job) => job.status === "processing") ? 1_000 : 5_000,
     });
 }
 
@@ -96,6 +97,21 @@ export function useMessageHistory(limit = 200) {
             messageTriggersApi
                 .listHistory(limit)
                 .then((response) => normalizeArrayPayload<MessageLogRecord>(response.data)),
+        staleTime: 0,
+        refetchOnMount: "always",
+        refetchInterval: 5_000,
+    });
+}
+
+export function useRetryMessageHistory() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (id: number) =>
+            messageTriggersApi.retryHistory(id).then((response) => response.data),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() });
+        },
     });
 }
 
@@ -107,6 +123,7 @@ export function useCreateMessageTriggerRule() {
             messageTriggersApi.create(dto).then((response) => response.data),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: messageTriggerKeys.all });
+            queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
         },
     });
 }
@@ -119,6 +136,7 @@ export function useUpdateMessageTriggerRule() {
             messageTriggersApi.update(id, dto).then((response) => response.data),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: messageTriggerKeys.all });
+            queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
         },
     });
 }

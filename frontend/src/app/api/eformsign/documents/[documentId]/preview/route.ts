@@ -34,7 +34,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       responseType: "arraybuffer",
     });
 
-    const contentType = response.headers["content-type"] || "application/octet-stream";
+    const contentType = String(response.headers["content-type"] ?? "application/octet-stream");
 
     if (contentType.includes("application/json")) {
       const payload = JSON.parse(Buffer.from(response.data).toString("utf-8"));

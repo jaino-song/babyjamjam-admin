@@ -185,8 +185,8 @@ Examples:
             },
             serviceStatus: {
                 type: "string",
-                enum: ["waiting", "replacement_requested", "active", "completed", "terminated"],
-                description: "Client service status: waiting, replacement_requested, active, completed, or terminated",
+                enum: ["pre_booking", "waiting", "replacement_requested", "active", "completed", "terminated"],
+                description: "Client service status: pre_booking, waiting, replacement_requested, active, completed, or terminated",
             },
             confirmed: {
                 type: "boolean",

@@ -5,6 +5,12 @@ import { test, expect } from "@playwright/test";
 // 데이터는 page.route()로 mock하므로 시드 의존 없음.
 
 const CLIENT_ID = 42;
+const OUT_OF_POCKET_PRICES = [
+  { id: 1, duration: 5, fullPrice: "815000" },
+  { id: 2, duration: 10, fullPrice: "1620000" },
+  { id: 3, duration: 15, fullPrice: "2425000" },
+  { id: 4, duration: 20, fullPrice: "3240000" },
+];
 
 const MOCK_CLIENT = {
   id: CLIENT_ID,
@@ -53,6 +59,13 @@ test.describe("clients edit wizard hydration", () => {
     // 2. 바우처 가격 정보 — empty (자동 입력 effect 비활성)
     await page.route("**/api/voucher-price-infos**", async (route) => {
       await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    });
+    await page.route("**/api/out-of-pocket-price-infos**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(OUT_OF_POCKET_PRICES),
+      });
     });
 
     // 3. 제공인력 자동완성 데이터
@@ -138,5 +151,54 @@ test.describe("clients edit wizard hydration", () => {
       path: "tests/screenshots/clients-edit-step3-contract.png",
       fullPage: false,
     });
+  });
+
+  test("new self-pay client selects only a period and receives an editable total price", async ({ page }) => {
+    await page.route("**/api/out-of-pocket-price-infos**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(OUT_OF_POCKET_PRICES),
+      });
+    });
+    await page.route("**/api/voucher-price-infos**", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    });
+    await page.route("**/api/employees**", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    });
+    await page.route("**/api/clients/check-phone**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ exists: false }),
+      });
+    });
+
+    await page.goto("/clients/new");
+    await page.locator('[data-component="clients-new-name-input"]').fill("자부담 신규 고객");
+    const compactDateInputs = page.locator('input[placeholder="YYMMDD"]');
+    await compactDateInputs.nth(0).fill("900101");
+    await compactDateInputs.nth(1).fill("260901");
+    await page.locator('[data-component="clients-new-phone-input"]').fill("01012345678");
+
+    const nextButton = page.locator('[data-component="clients-new-actions"] button').nth(1);
+    await expect(nextButton).toBeEnabled();
+    await nextButton.click();
+
+    await expect(page.locator('[data-component="clients-new-customer-type-toggle-self-pay"]')).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator('[data-component="clients-new-voucher-select"]')).toHaveCount(0);
+    await expect(page.getByText("정부지원금", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("본인부담금", { exact: true })).toHaveCount(0);
+
+    const durationSelect = page.locator('[data-component="clients-new-duration-select"]');
+    await expect(durationSelect).toBeEnabled();
+    await expect(durationSelect.locator('option[value="5"]')).toHaveText("1주 (5일)");
+    await durationSelect.selectOption("5");
+
+    const fullPriceInput = page.locator('[data-component="clients-new-full-price-input"]');
+    await expect(fullPriceInput).toHaveValue("815,000");
+    await fullPriceInput.fill("820000");
+    await expect(fullPriceInput).toHaveValue("820,000");
   });
 });

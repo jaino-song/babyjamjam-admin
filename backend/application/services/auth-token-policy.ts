@@ -5,6 +5,8 @@ export const AUTH_TOKEN_EXPIRES_IN_BY_ROLE = {
     default: "3d",
 } as const;
 
+export const ACCESS_TOKEN_EXPIRES_IN = "15m";
+
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
 
 export const AUTH_TOKEN_MAX_AGE_MS_BY_ROLE = {

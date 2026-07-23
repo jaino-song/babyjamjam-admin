@@ -101,6 +101,19 @@ describe("eformsign generate API routes", () => {
         );
     });
 
+    it("rejects document generation without a persisted client", async () => {
+        const response = await generateDocument(
+            createRequest(
+                "/api/generate-document",
+                JSON.stringify({ contractData: { customerName: "고객" } }),
+                `auth_token=${authToken}; eformsign_access_token=eformsign-token; eformsign_refresh_token=refresh-token`,
+            ),
+        );
+
+        expect(response.status).toBe(400);
+        expect(mockPost).not.toHaveBeenCalled();
+    });
+
     it("rejects malformed JSON bodies as client errors", async () => {
         const response = await generateSignature(
             createRequest("/api/generate-signature", "{bad-json", `auth_token=${authToken}`),

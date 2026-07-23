@@ -1,7 +1,5 @@
 export const SMS_DELIVERY_MAX_ATTEMPTS = 3;
 export const SMS_DELIVERY_RETRY_DELAY_MS = 5 * 60 * 1000;
-export const ALIMTALK_DELIVERY_MAX_ATTEMPTS = 3;
-export const ALIMTALK_DELIVERY_RETRY_DELAY_MS = 5 * 60 * 1000;
 
 export interface MessageDeliveryRetryPolicy {
     maxAttempts: number;
@@ -16,16 +14,9 @@ export function getMessageDeliveryRetryPolicy(provider: string): MessageDelivery
         };
     }
 
-    if (provider === "aligo_alimtalk") {
-        return {
-            maxAttempts: ALIMTALK_DELIVERY_MAX_ATTEMPTS,
-            retryDelayMs: ALIMTALK_DELIVERY_RETRY_DELAY_MS,
-        };
-    }
-
     return {
-        maxAttempts: ALIMTALK_DELIVERY_MAX_ATTEMPTS,
-        retryDelayMs: ALIMTALK_DELIVERY_RETRY_DELAY_MS,
+        maxAttempts: SMS_DELIVERY_MAX_ATTEMPTS,
+        retryDelayMs: SMS_DELIVERY_RETRY_DELAY_MS,
     };
 }
 
@@ -50,11 +41,14 @@ export class MessageLogEntity {
         public nextRetryAt: Date | null,
         public createdAt: Date,
         public updatedAt: Date,
+        public recipientName: string | null = null,
+        public recipientPhone: string | null = null,
     ) {}
 
     markSent(aligoMid?: string): void {
         this.status = "sent";
         this.aligoMid = aligoMid ?? null;
+        this.errorMessage = null;
         this.lastAttemptAt = new Date();
         this.nextRetryAt = null;
         this.attempts += 1;
@@ -95,6 +89,8 @@ export class MessageLogEntity {
         triggerJobId?: string;
         receiver: string;
         clientId?: number;
+        recipientName?: string | null;
+        recipientPhone?: string | null;
         messageBody: string;
         variables: Record<string, string>;
     }): MessageLogEntity {
@@ -117,6 +113,8 @@ export class MessageLogEntity {
             null,
             now,
             now,
+            params.recipientName ?? null,
+            params.recipientPhone ?? params.receiver,
         );
     }
 
@@ -138,11 +136,13 @@ export class MessageLogEntity {
         nextRetryAt: Date | null,
         createdAt: Date,
         updatedAt: Date = createdAt,
+        recipientName: string | null = null,
+        recipientPhone: string | null = null,
     ): MessageLogEntity {
         return new MessageLogEntity(
             id, branchId, provider, templateKey, triggerJobId, receiver, clientId,
             messageBody, variables, status, aligoMid, errorMessage, attempts,
-            lastAttemptAt, nextRetryAt, createdAt, updatedAt,
+            lastAttemptAt, nextRetryAt, createdAt, updatedAt, recipientName, recipientPhone,
         );
     }
 }

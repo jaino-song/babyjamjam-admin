@@ -7,7 +7,7 @@ test.describe("Mobile messages route", () => {
     await page.goto("/messages");
 
     await expect(page).toHaveURL(/\/messages/);
-    await expect(page.locator('[data-component="alimtalk-trigger-card-title"]')).toContainText("메시지");
+    await expect(page.locator('[data-component="message-trigger-card-title"]')).toContainText("메시지");
     await expect(page.locator('[data-component="mobile-messages-new"]')).toBeVisible();
   });
 });

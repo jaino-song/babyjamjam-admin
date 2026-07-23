@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { resendVerificationEmail } from "@/features/auth/shared/auth-api";
+import { useNavigationPending } from "@/lib/hooks/use-navigation-pending";
 import { loginSchema, type LoginFormData } from "@/lib/validations/auth";
 import { safeStorageGetItem, safeStorageRemoveItem, safeStorageSetItem } from "@/lib/safe-storage";
 import { loginWithEmail } from "@/app/(auth)/login/actions";
@@ -21,6 +22,7 @@ export function useLoginPageController() {
   const [isLoading, setIsLoading] = useState(false);
   const [emailVerificationRequired, setEmailVerificationRequired] = useState(false);
   const [isResendingVerification, setIsResendingVerification] = useState(false);
+  const { isPending: isLoginPending, beginNavigation } = useNavigationPending(isLoading);
 
   useEffect(() => {
     const savedAutoLogin = safeStorageGetItem("local", "login:autoLogin") === "true";
@@ -84,15 +86,22 @@ export function useLoginPageController() {
 
       if (response.success) {
         if (response.onboardingRequired) {
+          beginNavigation();
           router.replace(response.onboardingRoute || "/onboarding");
           return;
         }
 
+        beginNavigation();
         if (response.requiresBranchSelection) {
           router.replace("/select-branch");
         } else {
           router.replace("/dashboard");
         }
+        return;
+      }
+
+      if (response.authErrorCode) {
+        router.replace(`/login?authError=${encodeURIComponent(response.authErrorCode)}`);
         return;
       }
 
@@ -148,7 +157,7 @@ export function useLoginPageController() {
     formData,
     errors,
     serverError,
-    isLoading,
+    isLoading: isLoginPending,
     emailVerificationRequired,
     isResendingVerification,
     kakaoLoginUrl,

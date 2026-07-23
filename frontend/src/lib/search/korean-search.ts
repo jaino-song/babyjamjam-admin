@@ -1,3 +1,5 @@
+import { normalizeKoreanPhoneLookupKey } from "@/lib/phone";
+
 /**
  * Korean initial consonant (초성) search utility
  *
@@ -75,7 +77,7 @@ export function getChosungString(str: string): string {
  * - matchesKoreanSearch("테스트", "ㅅ") → false (starts with ㅌ, not ㅅ)
  * - matchesKoreanSearch("테스트 신규", "ㅅ") → false (full chosung ㅌㅅㅌㅅㄱ starts with ㅌ)
  */
-export function matchesKoreanSearch(target: string, query: string): boolean {
+function matchesKoreanSearch(target: string, query: string): boolean {
     const lowerQuery = query.toLowerCase();
 
     let cachedTarget = searchTargetCache.get(target);
@@ -109,4 +111,33 @@ export function matchesKoreanSearch(target: string, query: string): boolean {
     }
 
     return false;
+}
+
+export type SearchableValue = string | number | null | undefined;
+
+/**
+ * Shared matching contract for every list search input.
+ *
+ * Text fields use the same case-insensitive and Korean initial-consonant
+ * matching as the customer autocomplete. Numeric input additionally compares
+ * normalized phone digits so formatted and unformatted phone numbers match.
+ */
+export function matchesSearchQuery(
+    query: string,
+    values: readonly SearchableValue[],
+): boolean {
+    const normalizedQuery = query.normalize("NFC").trim();
+    if (!normalizedQuery) return true;
+
+    const phoneQuery = normalizeKoreanPhoneLookupKey(normalizedQuery);
+
+    return values.some((value) => {
+        if (value == null) return false;
+
+        const target = String(value);
+        if (matchesKoreanSearch(target, normalizedQuery)) return true;
+        if (!phoneQuery) return false;
+
+        return normalizeKoreanPhoneLookupKey(target).includes(phoneQuery);
+    });
 }

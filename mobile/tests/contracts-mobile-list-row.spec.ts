@@ -22,6 +22,26 @@ const MOCK_DOCUMENTS = {
   skip: 0,
 };
 
+const SECTION_DOCUMENTS = {
+  documents: [
+    MOCK_DOCUMENTS.documents[0],
+    {
+      ...MOCK_DOCUMENTS.documents[0],
+      id: "service-record-1",
+      document_number: "RECORD-001",
+      template: { id: "service-record-template", name: "산모신생아 제공기록지" },
+      document_name: "김산모 제공기록지",
+      current_status: {
+        ...MOCK_DOCUMENTS.documents[0].current_status,
+        step_recipients: [{ recipient_type: "signer", name: "김산모" }],
+      },
+    },
+  ],
+  total_rows: 2,
+  limit: 20,
+  skip: 0,
+};
+
 const STAGE_DOCUMENTS = {
   documents: [
     {
@@ -189,6 +209,19 @@ const STAGE_DOCUMENTS = {
   skip: 0,
 };
 
+const SERVICE_RECORD_REVIEW_DOCUMENTS = {
+  documents: STAGE_DOCUMENTS.documents
+    .filter((document) => document.id === "doc-review")
+    .map((document) => ({
+      ...document,
+      template: { id: "service-record-template", name: "산모신생아 제공기록지" },
+      document_name: "검토고객 제공기록지",
+    })),
+  total_rows: 1,
+  limit: 20,
+  skip: 0,
+};
+
 const DOCUMENT_CLIENT_SUMMARIES = [
   { documentId: "doc-1", clientId: 100, clientName: "홍길동", clientPhone: "010-1000-0000", providerName: "박제공" },
   { documentId: "doc-waiting", clientId: 101, clientName: "대기고객", clientPhone: "010-1111-2222", providerName: "김제공" },
@@ -309,6 +342,52 @@ async function routeDocumentPdfPreview(page: Page) {
 
 test.describe("Mobile contracts list rows", () => {
   test.use({ viewport: { width: 390, height: 844 } });
+
+  test("separates maternal contracts and service records with section navigation", async ({ page }) => {
+    await page.route("**/api/access-token", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ success: true }),
+      });
+    });
+    await page.route("**/api/eformsign-docs/feedback-template-id**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ templateId: "service-record-template" }),
+      });
+    });
+    await page.route("**/api/eformsign/documents**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(SECTION_DOCUMENTS),
+      });
+    });
+    await routeDocumentClientSummaries(page, []);
+    await routeNotificationLogs(page);
+
+    await page.goto("/contracts");
+
+    const maternalContractsButton = page.getByRole("button", { name: "산모 계약서" });
+    const serviceRecordsButton = page.getByRole("button", { name: "제공기록지" });
+    await expect(maternalContractsButton).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator('[data-component="mobile-contracts-row"]')).toHaveCount(1);
+    await expect(page.locator('[data-component="mobile-contracts-row"]')).toContainText("홍길동");
+
+    await serviceRecordsButton.click();
+
+    await expect(serviceRecordsButton).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator('[data-component="mobile-redesign-list-title"]')).toContainText("제공기록지");
+    await expect(page.locator('[data-component="mobile-contracts-row"]')).toHaveCount(1);
+    const serviceRecordRow = page.locator('[data-component="mobile-contracts-row"]');
+    await expect(serviceRecordRow.locator(".list-name")).toHaveText("김산모");
+    await expect(serviceRecordRow.locator('[data-component="mobile-contracts-row-subtitle"]')).toHaveText("제공기록지");
+    await expect(serviceRecordRow.locator('[data-component="mobile-contracts-row-sent-date"]')).toContainText("발송 ");
+    await expect(serviceRecordRow.locator('[data-component="mobile-contracts-row-completed-date"]')).toContainText("완료 ");
+    await expect(serviceRecordRow.locator('[data-component="status-badge"]')).toHaveText("완료");
+  });
 
   test("renders contract rows with the shared list item structure", async ({ page }) => {
     await page.route("**/api/access-token", async (route) => {
@@ -622,8 +701,77 @@ test.describe("Mobile contracts list rows", () => {
     const signAction = page.locator('[data-component="mobile-contracts-sign"]');
     await expect(page.locator('[data-component="mobile-contracts-preview"]')).toBeVisible();
     await expect(signAction).toBeVisible();
-    await expect(signAction).toHaveText("지금 서명");
+    await expect(signAction).toHaveText("검토하기");
     await expect(page.locator('[data-component="mobile-contracts-receipt-share"]')).toHaveCount(0);
+  });
+
+  test("confirms a service record review without requesting an end date", async ({ page }) => {
+    await page.route("**/api/access-token", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ success: true }),
+      });
+    });
+    await page.route("**/api/eformsign-docs/feedback-template-id**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ templateId: "service-record-template" }),
+      });
+    });
+    await page.route("**/api/eformsign/documents**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(SERVICE_RECORD_REVIEW_DOCUMENTS),
+      });
+    });
+    await page.route("**/api/eformsign-docs/finalize-headless**", async (route) => {
+      if (route.request().url().includes("/progress")) {
+        await route.fulfill({
+          status: 200,
+          contentType: "text/event-stream",
+          body: 'data: {"step":"sent"}\n\n',
+        });
+        return;
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true }),
+      });
+    });
+    await routeDocumentClientSummaries(page);
+    await routeNotificationLogs(page);
+
+    await page.goto("/contracts");
+    await page.getByRole("button", { name: "제공기록지" }).click();
+    await page.locator('[data-component="mobile-contracts-row"]', { hasText: "검토고객" }).click();
+    await expect(page.locator('[data-component="mobile-contracts-detail-name"]')).toHaveText("제공기록지");
+    const userInfo = page.locator(".info-card", { hasText: "이용자 정보" });
+    await expect(userInfo).toContainText("검토고객");
+    await expect(userInfo).toContainText("010-5555-6666");
+    await expect(userInfo).toContainText("한제공");
+    await page.locator('[data-component="mobile-contracts-sign"]').click();
+
+    const confirmModal = page.locator('[data-component="mobile-two-button-modal"]');
+    await expect(confirmModal).toBeVisible();
+    await expect(confirmModal.locator('[data-component="mobile-two-button-modal-title"]')).toHaveText("완료할까요?");
+    await expect(page.locator('[data-component="mobile-contracts-finalize-dialog"]')).toHaveCount(0);
+
+    const finalizeRequestPromise = page.waitForRequest((request) =>
+      request.url().includes("/api/eformsign-docs/finalize-headless")
+      && !request.url().includes("/progress")
+      && request.method() === "POST",
+    );
+    await confirmModal.getByRole("button", { name: "완료" }).click();
+    const finalizeRequest = await finalizeRequestPromise;
+    const finalizeRequestBody = finalizeRequest.postDataJSON() as Record<string, unknown>;
+
+    expect(finalizeRequestBody.documentId).toBe("doc-review");
+    expect(finalizeRequestBody).not.toHaveProperty("prefillEndDate");
   });
 
   test("shows the PDF preview below contract actions", async ({ page }) => {
@@ -798,7 +946,18 @@ test.describe("Mobile contracts list rows", () => {
         body: JSON.stringify(STAGE_DOCUMENTS),
       });
     });
-    await routeDocumentDetails(page);
+    await routeDocumentDetails(page, [
+      ...MOCK_DOCUMENTS.documents,
+      ...STAGE_DOCUMENTS.documents.map((document) => {
+        if (document.id === "doc-waiting") {
+          return { ...document, fields: [{ id: "이용자 성명", value: "대기고객" }] };
+        }
+        if (document.id === "doc-opened") {
+          return { ...document, fields: [{ id: "이용자 성명", value: "열람고객" }] };
+        }
+        return document;
+      }),
+    ]);
     await routeDocumentClientSummaries(page);
     await routeNotificationLogs(page);
 
@@ -886,7 +1045,7 @@ test.describe("Mobile contracts list rows", () => {
     await expect(timeline).not.toContainText("이용자 문서 열람 대기중입니다");
   });
 
-  test("shows actual provider metadata and document id in related info", async ({ page }) => {
+  test("shows document id in the contract info layout", async ({ page }) => {
     await page.route("**/api/access-token", async (route) => {
       await route.fulfill({
         status: 200,
@@ -902,15 +1061,7 @@ test.describe("Mobile contracts list rows", () => {
         body: JSON.stringify(STAGE_DOCUMENTS),
       });
     });
-    await routeDocumentClientSummaries(page, [
-      {
-        documentId: "doc-waiting",
-        clientId: 101,
-        clientName: "대기고객",
-        clientPhone: "010-1111-2222",
-        providerName: "실제제공인력",
-      },
-    ]);
+    await routeDocumentClientSummaries(page);
     await routeNotificationLogs(page);
 
     await page.goto("/contracts");
@@ -928,11 +1079,8 @@ test.describe("Mobile contracts list rows", () => {
     await expect(contractInfo).not.toContainText("마감일");
     await expect(page.locator(".client-detail-badges")).not.toContainText("DOC-WAITING");
 
-    // The former combined "관련 정보" card no longer exists: provider fields
-    // render in the 이용자 정보 card, document id in the 계약 정보 card.
-    const userInfo = page.locator(".info-card", { hasText: "이용자 정보" });
-    await expect(userInfo).toContainText("제공인력");
-    await expect(userInfo).toContainText("실제제공인력");
+    // The former combined "관련 정보" card no longer exists; document id
+    // renders in the 계약 정보 card.
     await expect(contractInfo).toContainText("문서 ID");
     await expect(contractInfo).toContainText("doc-waiting");
     await expect(contractInfo).not.toContainText("eformsign 코드");
@@ -957,7 +1105,10 @@ test.describe("Mobile contracts list rows", () => {
     await routeDocumentDetails(page, [
       {
         ...STAGE_DOCUMENTS.documents[0],
-        fields: [{ id: "제공인력 1 성명", value: "문서제공인력" }],
+        fields: [
+          { id: "이용자 성명", value: "대기고객" },
+          { id: "제공인력 1 성명", value: "문서제공인력" },
+        ],
       },
     ]);
     await routeDocumentClientSummaries(page, [
@@ -1009,7 +1160,7 @@ test.describe("Mobile contracts list rows", () => {
 
     const notificationInfo = page.locator(".info-card", { hasText: "발송 내역" });
     await expect(notificationInfo.locator(".info-card-title")).toHaveText("발송 내역");
-    await expect(notificationInfo).toContainText("알림톡 · 계약서 발송 안내");
+    await expect(notificationInfo).toContainText("메시지 · 계약서 발송 안내");
     await expect(notificationInfo).toContainText("메시지 · 수동 메시지");
     await expect(notificationInfo).not.toContainText("마감 임박 알림");
     await expect(notificationInfo).not.toContainText("다른 고객");

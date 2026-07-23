@@ -9,6 +9,7 @@ export interface MessageHistoryClientTarget {
 export interface MessageHistoryClientRecord {
   clientId?: number | null;
   receiver: string;
+  recipientPhone?: string | null;
 }
 
 export function matchesMessageHistoryClient(
@@ -25,7 +26,7 @@ export function matchesMessageHistoryClient(
   const clientPhoneKey = normalizeKoreanPhoneLookupKey(client.phone ?? "");
   return (
     clientPhoneKey.length > 0 &&
-    normalizeKoreanPhoneLookupKey(record.receiver) === clientPhoneKey
+    normalizeKoreanPhoneLookupKey(record.recipientPhone ?? record.receiver) === clientPhoneKey
   );
 }
 

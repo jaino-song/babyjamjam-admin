@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { EformsignDocClientSummary } from "@babyjamjam/shared/types/eformsign";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
-import { matchesKoreanSearch } from "@/lib/search/korean-search";
+import { matchesSearchQuery } from "@/lib/search/korean-search";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import {
   FileText,
   FileSignature,
@@ -29,6 +31,8 @@ import { useEformsignAuth } from "@/hooks/useEformsignAuth";
 import { useEformsignDocsLiveStream } from "@/hooks/useEformsignDocsLiveStream";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useInfiniteContracts } from "@/hooks/useInfiniteContracts";
+import { ServiceRecordHeaderCard } from "@/features/service-records/components/ServiceRecordHeaderCard";
+import { useClientServiceRecords } from "@/features/service-records/hooks/use-service-records";
 import type { EformsignDocument, EformsignDocumentOption } from "@/lib/eformsign/types";
 import {
   DocumentFilterType,
@@ -59,6 +63,7 @@ import {
   SectionNav,
 } from "@/components/app/v3";
 import type { StatusType } from "@/components/app/v3";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -90,12 +95,18 @@ import {
   extractOpenEvents,
   extractReRequestEvents,
 } from "@/lib/eformsign/document-details";
+import {
+  UNKNOWN_CUSTOMER_NAME,
+  customerName as getEformsignCustomerName,
+} from "@/lib/eformsign/display-name";
 import { formatIsoDateInput } from "@/lib/date/format-iso-input";
 import { useAllVoucherPriceInfos } from "@/hooks/useVoucherData";
 import { inferVoucherDurationFromAmounts } from "@/lib/voucher/duration";
-import { clientsApi } from "@/features/clients/api/clients.api";
-import type { Client, PaginatedResponse } from "@/lib/client/types";
 import { ContractsListItem } from "@/components/app/contracts/ContractsListItem";
+import {
+  ContractReviewActionButton,
+  type ContractReviewAction,
+} from "@/components/app/contracts/ContractReviewActionButton";
 import {
   ContractCreationForm,
   CONTRACT_CREATION_STEPPER_STEPS,
@@ -117,6 +128,9 @@ const FINALIZE_PROGRESS_STEPS: readonly HeadlessProgressStep[] = [
   { key: "sent", label: "전자문서 처리 완료", errorLabel: "전자문서 처리 실패" },
 ];
 
+const SERVICE_RECORD_FINALIZE_PROGRESS_STEPS: readonly HeadlessProgressStep[] =
+  FINALIZE_PROGRESS_STEPS.filter((step) => step.key !== "info-inserted");
+
 const INITIAL_FINALIZE_PROGRESS: HeadlessProgressState = {
   step: null,
   completed: false,
@@ -125,8 +139,11 @@ const INITIAL_FINALIZE_PROGRESS: HeadlessProgressState = {
 
 type FinalizeProgressEvent = HeadlessProgressEvent;
 
-function isFinalizeProgressStepKey(value: string): value is HeadlessProgressStepKey {
-  return FINALIZE_PROGRESS_STEPS.some((item) => item.key === value);
+function isFinalizeProgressStepKey(
+  value: string,
+  steps: readonly HeadlessProgressStep[] = FINALIZE_PROGRESS_STEPS,
+): value is HeadlessProgressStepKey {
+  return steps.some((item) => item.key === value);
 }
 
 function createFinalizeProgressId(): string {
@@ -172,31 +189,27 @@ type InfoCardRow = {
   value: React.ReactNode;
 };
 
-function getCustomerName(doc: EformsignDocument): string | null {
-  type Recipientish = { recipient_type?: string; name?: string };
-  const buckets: Recipientish[][] = [
-    (doc.recipients as Recipientish[]) ?? [],
-    (doc.current_status?.step_recipients as Recipientish[]) ?? [],
-  ];
-  for (const list of buckets) {
-    const outsider = list.find((r) => r?.recipient_type === "02" && r.name);
-    if (outsider?.name) return outsider.name;
-  }
-  const fallback = (doc.current_status?.step_recipients as Recipientish[] | undefined)?.find(
-    (r) => r?.name && r?.recipient_type !== "01",
-  );
-  if (fallback?.name) return fallback.name;
-  if (doc.last_editor?.name) return doc.last_editor.name;
-  if (doc.creator?.name) return doc.creator.name;
-  return null;
+function displayCustomerName(doc: EformsignDocument | null): string | null {
+  if (!doc) return null;
+  const name = getEformsignCustomerName(doc);
+  return name === UNKNOWN_CUSTOMER_NAME ? null : name;
+}
+
+function matchesDocumentSearch(
+  doc: EformsignDocument,
+  query: string,
+  mappedCustomerName?: string | null,
+): boolean {
+  return matchesSearchQuery(query, [mappedCustomerName ?? displayCustomerName(doc), doc.document_name]);
+}
+
+function matchesDocumentStatusTab(doc: EformsignDocument, tab: string): boolean {
+  if (tab === "all") return true;
+  return getStatusCategory(doc.current_status?.status_type) === tab;
 }
 
 function formatDate(timestamp: number): string {
-  return new Date(timestamp).toLocaleDateString("ko-KR", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
+  return formatDateForDisplay(timestamp);
 }
 
 function formatDateTime(timestamp: number): string {
@@ -442,6 +455,7 @@ export default function ContractsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [serviceRecordActiveTab, setServiceRecordActiveTab] = useState("all");
   const [serviceRecordSearchQuery, setServiceRecordSearchQuery] = useState("");
+  const [selectedServiceRecordDocId, setSelectedServiceRecordDocId] = useState<string | null>(null);
 
   const { isAuthenticated, isLoading: isLoadingAuth, error: authError } = useEformsignAuth({
     syncOnWindowFocus: false,
@@ -449,21 +463,67 @@ export default function ContractsPage() {
   useEformsignDocsLiveStream(isAuthenticated);
   const { toast } = useToast();
   const deleteDocument = useDeleteEformsignDocument();
-  const filterType: DocumentFilterType = activeTab === "all" ? null : (activeTab as DocumentFilterType);
+  const { data: feedbackTemplateConfig, isLoading: isFeedbackTemplateLoading } = useQuery({
+    queryKey: ["eformsign-docs", "feedback-template-id"],
+    queryFn: () => eformsignApi.getFeedbackTemplateId(),
+    enabled: isAuthenticated,
+    staleTime: 1000 * 60 * 60,
+  });
+  const { data: documentClientSummaries = [] } = useQuery({
+    queryKey: ["eformsign-client-names"],
+    queryFn: () => eformsignApi.getDocumentClientNames(),
+    enabled: isAuthenticated,
+    staleTime: 1000 * 60 * 5,
+  });
+  const documentClientSummaryById = useMemo(
+    () => new Map(documentClientSummaries.map((summary) => [summary.documentId, summary])),
+    [documentClientSummaries],
+  );
+  const resolveCustomerName = useCallback(
+    (doc: EformsignDocument | null): string | null => {
+      if (!doc) return null;
+      const mappedName = documentClientSummaryById.get(doc.id)?.clientName.trim();
+      return mappedName || displayCustomerName(doc);
+    },
+    [documentClientSummaryById],
+  );
+  // BJJ-multi-tier: match documents created on ANY configured 제공기록지 tier's template, not
+  // just the base 5회 one. Falls back to the single base id for older backend responses.
+  // Memoized so the array identity is stable for the useMemo deps below.
+  const feedbackTemplateIds = useMemo(
+    () => feedbackTemplateConfig?.templateIds
+      ?? (feedbackTemplateConfig?.templateId ? [feedbackTemplateConfig.templateId] : []),
+    [feedbackTemplateConfig],
+  );
+  const activeListTab = activeSection === "service-records" ? serviceRecordActiveTab : activeTab;
+  const filterType: DocumentFilterType = activeListTab === "all" ? null : (activeListTab as DocumentFilterType);
+  const templateFilter = useMemo(
+    () => feedbackTemplateIds.length > 0
+      ? {
+          templateId: feedbackTemplateIds.join(","),
+          templateMatch: activeSection === "service-records" ? "include" as const : "exclude" as const,
+        }
+      : undefined,
+    [activeSection, feedbackTemplateIds],
+  );
+  const canFetchDocuments =
+    isAuthenticated &&
+    !isFeedbackTemplateLoading &&
+    (activeSection !== "service-records" || feedbackTemplateIds.length > 0);
 
   // Fetch filtered docs with infinite scroll for the current tab
   const {
     documents: infiniteDocuments,
-    allDocuments,
     isLoading: isLoadingInfinite,
     isFetchingNextPage,
     hasNextPage,
     fetchNextPage,
     error,
   } = useInfiniteContracts({
-    enabled: isAuthenticated,
+    enabled: canFetchDocuments,
     filterType,
     excludedNames: EXCLUDED_CUSTOMER_NAMES,
+    templateFilter,
   });
   // 전체 탭 StatsBar 카운터: 서버가 지점(인천=회사 전체) 상태 신호를 한 번 모아 내려주고
   // foldContractStats로 접는다. 무한 스크롤 목록과 분리되어, 스크롤하지 않아도 정확하다.
@@ -473,47 +533,39 @@ export default function ContractsPage() {
     enabled: isAuthenticated,
     staleTime: 1000 * 60 * 5,
   });
-
   const isBootstrappingAuth = isLoadingAuth && !isAuthenticated;
   // Initial loading: first auth bootstrap or first "all" data fetch
-  const isInitialLoading = isBootstrappingAuth || isLoadingInfinite;
+  const isInitialLoading = isBootstrappingAuth || isFeedbackTemplateLoading || isLoadingInfinite;
   // Content loading: fetching filtered data after initial load is complete
   const isContentLoading = !isInitialLoading && isLoadingInfinite;
   // Stats are derived from the "전체" tab's data and are independent of which
   // tab is currently being fetched — only show the skeleton until the very
   // first stats payload lands.
   const isStatsLoading = isBootstrappingAuth || isCountsLoading;
-
-  // documentId → clientName lookup from our DB. Required because eformsign's
-  // list_document response loses outsider info once the doc progresses past
-  // step 1 — we always want the customer's name surfaced in the UI.
-  const { data: clientNamesData = [] } = useQuery({
-    queryKey: ["eformsign-client-names"],
-    queryFn: () => eformsignApi.getDocumentClientNames(),
-    enabled: isAuthenticated,
-  });
-  const clientNamesMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const r of clientNamesData) map.set(r.documentId, r.clientName);
-    return map;
-  }, [clientNamesData]);
-  const resolveCustomerName = useCallback(
-    (doc: EformsignDocument | null): string | null =>
-      doc ? (clientNamesMap.get(doc.id) ?? getCustomerName(doc)) : null,
-    [clientNamesMap],
-  );
+  const isServiceRecordListLoading = isInitialLoading;
 
   // Use infinite scroll documents, with optional local search filter
-  const documents = useMemo(() => {
-    if (!searchQuery.trim()) return infiniteDocuments;
-    return infiniteDocuments.filter((doc) => {
-      const customerName = resolveCustomerName(doc);
-      const q = searchQuery.trim();
-      if (customerName && matchesKoreanSearch(customerName, q)) return true;
-      if (doc.document_name?.toLowerCase().includes(q.toLowerCase())) return true;
-      return false;
-    });
-  }, [infiniteDocuments, searchQuery, resolveCustomerName]);
+  const documents = useMemo(
+    () => infiniteDocuments.filter(
+      (doc) => matchesDocumentSearch(doc, searchQuery, resolveCustomerName(doc)),
+    ),
+    [infiniteDocuments, resolveCustomerName, searchQuery],
+  );
+
+  const serviceRecordDocuments = useMemo(() => {
+    if (feedbackTemplateIds.length === 0) return [];
+    return infiniteDocuments.filter(
+      (doc) =>
+        matchesDocumentStatusTab(doc, serviceRecordActiveTab) &&
+        matchesDocumentSearch(doc, serviceRecordSearchQuery, resolveCustomerName(doc)),
+    );
+  }, [
+    feedbackTemplateIds,
+    infiniteDocuments,
+    resolveCustomerName,
+    serviceRecordActiveTab,
+    serviceRecordSearchQuery,
+  ]);
 
   const stats = useMemo(
     () => foldContractStats(statusCounts?.documents ?? []),
@@ -522,16 +574,22 @@ export default function ContractsPage() {
 
   const selectedDocument = useMemo(() => {
     if (!selectedDocId) return null;
-    return (
-      documents.find((d) => d.id === selectedDocId) ??
-      allDocuments.find((d) => d.id === selectedDocId) ??
-      null
-    );
-  }, [selectedDocId, documents, allDocuments]);
+    return documents.find((d) => d.id === selectedDocId) ?? null;
+  }, [selectedDocId, documents]);
+
+  const selectedServiceRecordDocument = useMemo(() => {
+    if (!selectedServiceRecordDocId) return null;
+    return serviceRecordDocuments.find((d) => d.id === selectedServiceRecordDocId) ?? null;
+  }, [selectedServiceRecordDocId, serviceRecordDocuments]);
 
   const handleTabChange = (value: string) => {
     setActiveTab(value);
     setSelectedDocId(null);
+  };
+
+  const handleServiceRecordTabChange = (value: string) => {
+    setServiceRecordActiveTab(value);
+    setSelectedServiceRecordDocId(null);
   };
 
   const handleStartContractCreation = useCallback(() => {
@@ -582,6 +640,9 @@ export default function ContractsPage() {
       if (selectedDocId === deleteTargetDocumentId) {
         setSelectedDocId(null);
       }
+      if (selectedServiceRecordDocId === deleteTargetDocumentId) {
+        setSelectedServiceRecordDocId(null);
+      }
 
       setDeleteTargetDocumentId(null);
       toast({
@@ -603,8 +664,8 @@ export default function ContractsPage() {
 
   if (authError || error) {
     return (
-      <div data-component="contracts-error-container" className="p-[calc(24px*var(--v3-ui-scale,1))]">
-        <div data-component="contracts-error-banner" className="rounded-[18px] bg-v3-burgundy-light p-[calc(24px*var(--v3-ui-scale,1))] text-center text-v3-burgundy">
+      <div data-component="contracts-error-container" className="p-[calc(24px*var(--glint-ui-scale,1))]">
+        <div data-component="contracts-error-banner" className="rounded-[18px] bg-v3-burgundy-light p-[calc(24px*var(--glint-ui-scale,1))] text-center text-v3-burgundy">
           {authError
             ? "인증에 실패했습니다. 페이지를 새로고침 해주세요."
             : "문서를 불러오는데 실패했습니다."}
@@ -615,6 +676,7 @@ export default function ContractsPage() {
 
   return (
     <PageSection name="contracts">
+      {/* TODO: 통계 카운트는 아직 제공기록지 문서를 포함한다. 후속 작업에서 통계 엔드포인트를 분리한다. */}
       <StatsBar
         name="contracts"
         isLoading={isStatsLoading}
@@ -628,7 +690,7 @@ export default function ContractsPage() {
 
       <div
         data-component="contracts-sections"
-        className="flex flex-1 min-h-0 flex-col gap-[calc(16px*var(--v3-ui-scale,1))] lg:flex-row"
+        className="flex flex-1 min-h-0 flex-col gap-[calc(16px*var(--glint-ui-scale,1))] lg:flex-row"
       >
         <SectionNav
           items={NAV_SECTIONS}
@@ -670,13 +732,15 @@ export default function ContractsPage() {
               />
             }
             emptyState={documents.length === 0 && !isInitialLoading && !isContentLoading ? (
-              <ListEmptyState message="계약 문서가 없습니다" />
+              <ListEmptyState
+                message={searchQuery.trim() ? "검색 결과가 없습니다" : "계약 문서가 없습니다"}
+              />
             ) : undefined}
           >
             <AnimatedSlotList<EformsignDocument>
                 items={documents}
                 isLoading={isInitialLoading || isContentLoading}
-                loadingCount={6}
+                loadingCount={3}
                 className="space-y-2"
                 getItemKey={(doc) => doc.id}
                 itemVariant="card"
@@ -693,10 +757,12 @@ export default function ContractsPage() {
                 onLoadMore={() => fetchNextPage()}
                 isFetchingMore={isFetchingNextPage}
                 render={({ item: doc, isLoading }) => {
+                  const customerName = resolveCustomerName(doc);
+
                   return (
                     <ContractsListItem
                       document={doc}
-                      customerName={resolveCustomerName(doc)}
+                      customerName={customerName}
                       isLoading={isLoading}
                     />
                   );
@@ -721,9 +787,9 @@ export default function ContractsPage() {
                       avatar={
                         <div
                           data-component="contracts-create-avatar"
-                          className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
+                          className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
                         >
-                          <Send className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
+                          <Send className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
                         </div>
                       }
                       stepper={
@@ -734,6 +800,7 @@ export default function ContractsPage() {
                       }
                       footerClassName={footerClassName}
                       footer={footer}
+                      mainAnimationKey={contractCreationActiveStep}
                     >
                       {content}
                     </DetailPanel>
@@ -756,6 +823,7 @@ export default function ContractsPage() {
             <ContractDetail
               key={selectedDocument.id}
               document={selectedDocument}
+              documentClientSummary={documentClientSummaryById.get(selectedDocument.id) ?? null}
               onDeleteRequest={handleDeleteRequest}
             />
           ) : !isCreating && !hasContractCreationSession ? (
@@ -767,20 +835,79 @@ export default function ContractsPage() {
 
           {activeSection === "service-records" ? (
             <section data-component="contracts-service-records" className="flex flex-1 min-h-0 flex-col">
-              <SplitLayout hasSelection={false}>
+              <SplitLayout
+                hasSelection={!!selectedServiceRecordDocument}
+                onBack={() => setSelectedServiceRecordDocId(null)}
+              >
                 <ListPanel
                   title="제공기록지 목록"
                   tabs={SERVICE_RECORD_TAB_ITEMS}
                   activeTab={serviceRecordActiveTab}
-                  onTabChange={setServiceRecordActiveTab}
+                  onTabChange={handleServiceRecordTabChange}
                   searchValue={serviceRecordSearchQuery}
                   onSearchChange={setServiceRecordSearchQuery}
-                  searchPlaceholder="고객명 검색..."
-                  emptyState={<ListEmptyState message="아직 제공기록지가 없습니다" />}
+                  searchPlaceholder="고객명, 문서명 검색..."
+                  isLoading={isServiceRecordListLoading}
+                  isContentLoading={isContentLoading}
+                  emptyState={
+                    serviceRecordDocuments.length === 0 && !isServiceRecordListLoading && !isContentLoading ? (
+                      <ListEmptyState
+                        message={serviceRecordSearchQuery.trim() ? "검색 결과가 없습니다" : "아직 제공기록지가 없습니다"}
+                      />
+                    ) : undefined
+                  }
                 >
-                  {null}
+                  <AnimatedSlotList<EformsignDocument>
+                    items={serviceRecordDocuments}
+                    isLoading={isServiceRecordListLoading || isContentLoading}
+                    loadingCount={3}
+                    className="space-y-2"
+                    getItemKey={(doc) => doc.id}
+                    itemVariant="card"
+                    getSlotState={({ item, isLoading }) => {
+                      const isActive =
+                        !isLoading && item && selectedServiceRecordDocument?.id === item.id;
+                      return {
+                        isActive: Boolean(isActive),
+                        isInteractive: !isLoading && Boolean(item),
+                      };
+                    }}
+                    onSlotClick={(doc) => setSelectedServiceRecordDocId(doc.id)}
+                    hasMore={hasNextPage}
+                    onLoadMore={() => fetchNextPage()}
+                    isFetchingMore={isFetchingNextPage}
+                    render={({ item: doc, isLoading }) => (
+                      <ContractsListItem
+                        document={doc}
+                        customerName={resolveCustomerName(doc)}
+                        subtitle="제공기록지"
+                        isLoading={isLoading}
+                      />
+                    )}
+                  />
                 </ListPanel>
-                <EmptyState icon={ClipboardList} message="제공기록지를 선택하면 상세 정보가 표시됩니다" />
+                {isServiceRecordListLoading ? (
+                  <DetailSkeleton
+                    name="contracts-service-record-detail-skeleton"
+                    headerBadge
+                    headerBanner
+                    sections={[
+                      { titleWidth: "w-16", rows: ["w-1/2", "w-2/3"] },
+                      { titleWidth: "w-16", rows: ["w-3/4", "w-1/2", "w-2/3"] },
+                      { titleWidth: "w-20", rows: ["w-full"] },
+                    ]}
+                  />
+                ) : selectedServiceRecordDocument ? (
+                  <ContractDetail
+                    key={selectedServiceRecordDocument.id}
+                    document={selectedServiceRecordDocument}
+                    documentClientSummary={documentClientSummaryById.get(selectedServiceRecordDocument.id) ?? null}
+                    onDeleteRequest={handleDeleteRequest}
+                    reviewAction="preview"
+                  />
+                ) : (
+                  <EmptyState icon={ClipboardList} message="제공기록지를 선택하면 상세 정보가 표시됩니다" />
+                )}
               </SplitLayout>
             </section>
           ) : null}
@@ -792,8 +919,8 @@ export default function ContractsPage() {
                   title="제공인력 계약 목록"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
-                      <Briefcase className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
+                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <Briefcase className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
                     </div>
                   }
                   emptyState={<ListEmptyState message="아직 준비중입니다" />}
@@ -804,8 +931,8 @@ export default function ContractsPage() {
                   title="제공인력 계약서"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
-                      <Briefcase className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
+                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <Briefcase className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
                     </div>
                   }
                 >
@@ -822,8 +949,8 @@ export default function ContractsPage() {
                   title="전자문서 목록"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
-                      <FileText className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
+                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <FileText className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
                     </div>
                   }
                   emptyState={<ListEmptyState message="아직 준비중입니다" />}
@@ -834,8 +961,8 @@ export default function ContractsPage() {
                   title="전자문서"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
-                      <FileText className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
+                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <FileText className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
                     </div>
                   }
                 >
@@ -852,8 +979,8 @@ export default function ContractsPage() {
                   title="알림 설정"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
-                      <Bell className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
+                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <Bell className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
                     </div>
                   }
                   emptyState={<ListEmptyState message="아직 준비중입니다" />}
@@ -864,8 +991,8 @@ export default function ContractsPage() {
                   title="알림 설정"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-[calc(48px*var(--v3-ui-scale,1))] w-[calc(48px*var(--v3-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
-                      <Bell className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
+                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                      <Bell className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
                     </div>
                   }
                 >
@@ -877,54 +1004,40 @@ export default function ContractsPage() {
         </div>
       </div>
 
-      <Dialog
+      <TwoButtonModal
         open={deleteTargetDocumentId != null}
         onOpenChange={(open) => {
           if (!open && !deleteDocument.isPending) {
             setDeleteTargetDocumentId(null);
           }
         }}
-      >
-        <DialogContent className="sm:max-w-[400px]">
-          <DialogHeader>
-            <DialogTitle>삭제</DialogTitle>
-            <DialogDescription>이 문서를 삭제하시겠습니까?</DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setDeleteTargetDocumentId(null)}
-              disabled={deleteDocument.isPending}
-            >
-              취소
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={() => void handleDeleteConfirm()}
-              disabled={deleteDocument.isPending}
-            >
-              {deleteDocument.isPending ? "삭제 중..." : "삭제"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        dataComponent="contracts-delete-approval"
+        title="문서를 삭제하시겠습니까?"
+        description="삭제한 전자문서는 복구할 수 없습니다."
+        approvalLabel="삭제"
+        pendingLabel="삭제 중..."
+        approvalVariant="destructive"
+        isPending={deleteDocument.isPending}
+        onApprove={() => void handleDeleteConfirm()}
+      />
     </PageSection>
   );
 }
 
 function ContractDetail({
   document: doc,
+  documentClientSummary,
   onDeleteRequest,
+  reviewAction = "finalize",
 }: {
   document: EformsignDocument;
+  documentClientSummary?: EformsignDocClientSummary | null;
   onDeleteRequest?: (documentId: string) => void;
+  reviewAction?: ContractReviewAction;
 }) {
   const isMobile = useIsMobile();
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const customerName = getCustomerName(doc) ?? "–";
   const detailQuery = useQuery<EformsignDocument>({
     queryKey: ["eformsign-documents", "detail", doc.id],
     queryFn: async () => eformsignApi.getDocument(doc.id),
@@ -934,6 +1047,15 @@ function ContractDetail({
   });
   const detailedDocument = detailQuery.data ?? doc;
   const isBaseDetailLoading = detailQuery.isFetching || detailQuery.isPlaceholderData;
+  const mappedCustomerName = documentClientSummary?.clientName.trim();
+  const customerName = mappedCustomerName || displayCustomerName(detailedDocument) || "–";
+  const isServiceRecordDocument = reviewAction === "preview";
+  const serviceRecordQuery = useClientServiceRecords(documentClientSummary?.clientId ?? null, {
+    enabled: isServiceRecordDocument,
+  });
+  const serviceRecordHeader = serviceRecordQuery.data?.record?.header
+    ?? serviceRecordQuery.data?.assignments.find((assignment) => assignment.header)?.header
+    ?? null;
   const category = getStatusCategory(detailedDocument.current_status?.status_type);
   const statusLabel = mapDocStatusLabel(detailedDocument.current_status);
   const statusType: StatusType =
@@ -943,12 +1065,17 @@ function ContractDetail({
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isActivityOpen, setIsActivityOpen] = useState(false);
   const [isFinalizeOpen, setIsFinalizeOpen] = useState(false);
+  const [isServiceRecordFinalizeConfirmOpen, setIsServiceRecordFinalizeConfirmOpen] = useState(false);
   const [finalizeEndDate, setFinalizeEndDate] = useState<string>("");
   const [finalizeProgress, setFinalizeProgress] = useState<HeadlessProgressState>(INITIAL_FINALIZE_PROGRESS);
   const finalizeProgressIdRef = useRef<string | null>(null);
   const finalizeEventSourceRef = useRef<EventSource | null>(null);
   const [isStaffCompletionOpen, setIsStaffCompletionOpen] = useState(false);
   const [staffCompletionOption, setStaffCompletionOption] = useState<EformsignDocumentOption | null>(null);
+  const reviewDocumentLabel = reviewAction === "preview" ? "제공기록지" : "계약서";
+  const finalizeProgressSteps = isServiceRecordDocument
+    ? SERVICE_RECORD_FINALIZE_PROGRESS_STEPS
+    : FINALIZE_PROGRESS_STEPS;
   const canReRequest = canReRequestDocument(detailedDocument);
   const reRequestStepType = detailedDocument.current_status?.step_type ?? "";
   const reRequestStepSeq = detailedDocument.current_status?.step_index ?? "";
@@ -961,40 +1088,9 @@ function ContractDetail({
   const isRecipientPhoneValid =
     !hasEditedRecipientPhone || (recipientPhoneDigits.length >= 10 && recipientPhoneDigits.length <= 11);
   const documentAddress = extractDocumentAddress(detailedDocument);
-  const clientAddressQuery = useQuery<string | null>({
-    queryKey: ["clients", "contract-address", doc.id, customerName],
-    queryFn: async () => {
-      const localDocRecord = await eformsignApi.getLocalDocumentRecord(doc.id).catch(() => null);
-      const linkedClientId = localDocRecord?.clientId;
-
-      if (linkedClientId) {
-        const clientResponse = await clientsApi.getById(linkedClientId);
-        return clientResponse.data.address ?? null;
-      }
-
-      const response = await clientsApi.list({
-        page: 1,
-        limit: 100,
-        search: customerName,
-      });
-      const { data } = response.data as PaginatedResponse<Client>;
-      const matchedClient =
-        data.find((client) => client.eDocId === doc.id) ??
-        data.find(
-          (client) =>
-            client.name === customerName &&
-            normalizePhoneNumber(client.phone) === normalizePhoneNumber(contactInfo.phone)
-        ) ??
-        null;
-
-      return matchedClient?.address ?? null;
-    },
-    enabled: !documentAddress && customerName !== "–",
-    staleTime: 1000 * 60 * 5,
-    refetchOnWindowFocus: false,
-  });
-  const customerAddress = documentAddress ?? clientAddressQuery.data ?? null;
-  const isCustomerInfoLoading = isBaseDetailLoading || (!documentAddress && clientAddressQuery.isLoading);
+  const customerAddress = documentAddress ?? null;
+  const isCustomerInfoLoading = isBaseDetailLoading
+    || (isServiceRecordDocument && serviceRecordQuery.isLoading);
   const customerBirthDate =
     extractDocumentFieldValue(detailedDocument, [
       "이용자 생년월일",
@@ -1160,6 +1256,7 @@ function ContractDetail({
 
   const resetFinalizeState = () => {
     setIsFinalizeOpen(false);
+    setIsServiceRecordFinalizeConfirmOpen(false);
     setFinalizeEndDate("");
     setFinalizeProgress(INITIAL_FINALIZE_PROGRESS);
     closeFinalizeProgressStream();
@@ -1181,7 +1278,7 @@ function ContractDetail({
   const handleFinalizeSuccess = () => {
     toast({
       title: "최종 확인 완료",
-      description: "계약서가 완료 처리되었습니다.",
+      description: `${reviewDocumentLabel}가 완료 처리되었습니다.`,
     });
     resetFinalizeState();
     queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
@@ -1204,7 +1301,6 @@ function ContractDetail({
     onSuccess: () => {
       handleReRequestDialogChange(false);
       queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
-      queryClient.invalidateQueries({ queryKey: ["clients", "contract-address", doc.id] });
       toast({
         description: `${customerName}님에게 전자문서 작성을 재요청했습니다.`,
       });
@@ -1218,7 +1314,7 @@ function ContractDetail({
   });
 
   const openStaffCompletionMutation = useMutation({
-    mutationFn: async (endDate: string): Promise<{ kind: "headless" } | { kind: "iframe"; option: EformsignDocumentOption }> => {
+    mutationFn: async (endDate?: string): Promise<{ kind: "headless" } | { kind: "iframe"; option: EformsignDocumentOption }> => {
       // BJJ-90: try the backend-driven finalize first when the flag is on.
       if (isFeatureEnabled("headlessDispatch")) {
         try {
@@ -1245,11 +1341,12 @@ function ContractDetail({
       closeFinalizeProgressStream();
       setFinalizeProgress(INITIAL_FINALIZE_PROGRESS);
       if (result.kind === "headless") {
+        setIsPreviewOpen(false);
         setIsFinalizeOpen(false);
         setFinalizeEndDate("");
         toast({
           title: "최종 확인 완료",
-          description: "계약서가 완료 처리되었습니다.",
+          description: `${reviewDocumentLabel}가 완료 처리되었습니다.`,
         });
         // Headless finalize completes within ~1s of the SDK success callback,
         // but eformsign's status field (060 → 070) and the matching webhook
@@ -1268,6 +1365,7 @@ function ContractDetail({
         });
         return;
       }
+      setIsPreviewOpen(false);
       setStaffCompletionOption(result.option);
       setIsFinalizeOpen(false);
       setIsStaffCompletionOpen(true);
@@ -1320,7 +1418,11 @@ function ContractDetail({
     closeStaffCompletionModal();
   };
 
-  const handleFinalizeSubmit = () => {
+  const startFinalizeFlow = (endDate?: string) => {
+    if (isFinalizePending) {
+      return;
+    }
+
     const progressId = createFinalizeProgressId();
     finalizeProgressIdRef.current = progressId;
     setFinalizeProgress({ step: "client-started", completed: false, failed: false });
@@ -1340,7 +1442,9 @@ function ContractDetail({
       }
       if (data.step === "failed") {
         const fallbackStep =
-          data.failedStep && isFinalizeProgressStepKey(data.failedStep) ? data.failedStep : null;
+          data.failedStep && isFinalizeProgressStepKey(data.failedStep, finalizeProgressSteps)
+            ? data.failedStep
+            : null;
         setFinalizeProgress((current) => ({
           step: fallbackStep ?? current.step ?? "client-started",
           completed: false,
@@ -1348,7 +1452,7 @@ function ContractDetail({
         }));
         return;
       }
-      if (!isFinalizeProgressStepKey(data.step)) return;
+      if (!isFinalizeProgressStepKey(data.step, finalizeProgressSteps)) return;
       const nextStep = data.step;
       setFinalizeProgress((current) =>
         current.failed
@@ -1361,7 +1465,22 @@ function ContractDetail({
       );
     });
 
-    openStaffCompletionMutation.mutate(finalizeEndDate);
+    openStaffCompletionMutation.mutate(endDate);
+  };
+
+  const handleFinalizeSubmit = () => {
+    startFinalizeFlow(finalizeEndDate);
+  };
+
+  const handleServiceRecordReviewConfirm = () => {
+    setIsPreviewOpen(false);
+    setIsServiceRecordFinalizeConfirmOpen(true);
+  };
+
+  const handleServiceRecordFinalizeApprove = () => {
+    setIsServiceRecordFinalizeConfirmOpen(false);
+    setIsFinalizeOpen(true);
+    startFinalizeFlow();
   };
 
   const activityItems: {
@@ -1452,12 +1571,21 @@ function ContractDetail({
   }
 
   const documentTabCards = [
-    <InfoRowsCard
-      key="document-profile"
-      title="고객 정보"
-      loading={isCustomerInfoLoading}
-      className="self-start"
-      rows={[
+    isServiceRecordDocument ? (
+      <ServiceRecordHeaderCard
+        key="document-profile"
+        header={serviceRecordHeader}
+        isLoading={isCustomerInfoLoading}
+        showStatusBadge={false}
+        dataComponent="contracts-service-records-header-card"
+      />
+    ) : (
+      <InfoRowsCard
+        key="document-profile"
+        title="고객 정보"
+        loading={isCustomerInfoLoading}
+        className="self-start"
+        rows={[
         {
           label: "고객명",
           value: (
@@ -1491,26 +1619,30 @@ function ContractDetail({
             "–"
           ),
         },
-      ]}
-    />,
+        ]}
+      />
+    ),
     <InfoRowsCard
       key="document-contract"
       title="전자문서 정보"
       loading={isBaseDetailLoading}
       rows={[
-        { label: "문서명", value: detailedDocument.document_name },
+        {
+          label: "문서명",
+          value: isServiceRecordDocument ? "제공기록지" : detailedDocument.document_name,
+        },
         { label: "템플릿", value: detailedDocument.template?.name ?? "–" },
         { label: "문서번호", value: detailedDocument.document_number ?? "–" },
         { label: "발송일", value: sentDate },
-        { label: "이용자 서명완료일", value: customerSignedDate ?? "" },
-        { label: "제공기관 최종확인일", value: contractCompletedDate ?? "" },
+        { label: "이용자 서명완료일", value: customerSignedDate ?? "–" },
+        { label: "제공기관 최종확인일", value: contractCompletedDate ?? "–" },
         ...(contractCompletedDate
           ? [{ label: "서명 완료일", value: contractCompletedDate }]
           : []),
         {
           label: "문서 ID",
           value: (
-            <span className="max-w-[calc(224px*var(--v3-ui-scale,1))] break-all font-mono text-[calc(12px*var(--v3-ui-scale,1))]">
+            <span className="max-w-[calc(224px*var(--glint-ui-scale,1))] break-all font-mono text-[calc(12px*var(--glint-ui-scale,1))]">
               {detailedDocument.id}
             </span>
           ),
@@ -1568,11 +1700,11 @@ function ContractDetail({
   ];
 
   const stepperActions = (
-    <div data-component="contracts-stepper-actions" className="flex items-start gap-[calc(8px*var(--v3-ui-scale,1))]">
+    <div data-component="contracts-stepper-actions" className="flex items-start gap-[calc(8px*var(--glint-ui-scale,1))]">
       <button
         type="button"
         data-component="contracts-detail-activity-trigger"
-        className="overflow-visible rounded-[18px] p-[calc(4px*var(--v3-ui-scale,1))] transition-colors duration-200 ease-out hover:bg-black/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary/20"
+        className="overflow-visible rounded-[18px] p-[calc(4px*var(--glint-ui-scale,1))] transition-colors duration-200 ease-out hover:bg-black/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary/20"
         onClick={() => setIsActivityOpen(true)}
         aria-label="계약서 단계 보기"
         title="계약서 단계 보기"
@@ -1590,10 +1722,10 @@ function ContractDetail({
               variant="ghost"
               size="icon"
               data-component="contracts-detail-more-trigger"
-              className="mt-[calc(8px*var(--v3-ui-scale,1))] h-[calc(32px*var(--v3-ui-scale,1))] w-[calc(32px*var(--v3-ui-scale,1))] rounded-full border-0 p-0 text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-primary"
+              className="mt-[calc(8px*var(--glint-ui-scale,1))] h-[calc(32px*var(--glint-ui-scale,1))] w-[calc(32px*var(--glint-ui-scale,1))] rounded-full border-0 p-0 text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-primary"
               aria-label="계약 작업 더보기"
             >
-              <MoreVertical className="h-[calc(20px*var(--v3-ui-scale,1))] w-[calc(20px*var(--v3-ui-scale,1))]" />
+              <MoreVertical className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent
@@ -1628,23 +1760,23 @@ function ContractDetail({
 
   return (
     <DetailPanel
-      title={detailedDocument.document_name}
+      title={isServiceRecordDocument ? "제공기록지" : detailedDocument.document_name}
       badges={<StatusBadge status={statusType} label={statusLabel} />}
       subtitle={
-        <span className="flex flex-nowrap items-center gap-[calc(16px*var(--v3-ui-scale,1))] whitespace-nowrap text-[calc(12px*var(--v3-ui-scale,1))]">
-          <span className="flex shrink-0 items-center gap-[calc(4px*var(--v3-ui-scale,1))]">
-            <Calendar className="h-[calc(14px*var(--v3-ui-scale,1))] w-[calc(14px*var(--v3-ui-scale,1))] shrink-0" />
+        <span className="flex flex-nowrap items-center gap-[calc(16px*var(--glint-ui-scale,1))] whitespace-nowrap text-[calc(12px*var(--glint-ui-scale,1))]">
+          <span className="flex shrink-0 items-center gap-[calc(4px*var(--glint-ui-scale,1))]">
+            <Calendar className="h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(14px*var(--glint-ui-scale,1))] shrink-0" />
             발송일: {sentDateLabel}
           </span>
           {contractCompletedDate && (
-            <span className="flex shrink-0 items-center gap-[calc(4px*var(--v3-ui-scale,1))]">
-              <CheckCircle2 className="h-[calc(14px*var(--v3-ui-scale,1))] w-[calc(14px*var(--v3-ui-scale,1))] shrink-0" />
+            <span className="flex shrink-0 items-center gap-[calc(4px*var(--glint-ui-scale,1))]">
+              <CheckCircle2 className="h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(14px*var(--glint-ui-scale,1))] shrink-0" />
               서명 완료일: {contractCompletedDateLabel}
             </span>
           )}
           {expiredDate != null && expiredDate > 0 && (
-            <span className="flex shrink-0 items-center gap-[calc(4px*var(--v3-ui-scale,1))]">
-              <Clock className="h-[calc(14px*var(--v3-ui-scale,1))] w-[calc(14px*var(--v3-ui-scale,1))] shrink-0" />
+            <span className="flex shrink-0 items-center gap-[calc(4px*var(--glint-ui-scale,1))]">
+              <Clock className="h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(14px*var(--glint-ui-scale,1))] shrink-0" />
               만료일: {formatDate(expiredDate)}
             </span>
           )}
@@ -1655,27 +1787,22 @@ function ContractDetail({
         <>
           {isMobile && stepperActions}
           {isReviewNeeded ? (
-            <Button
-              variant="positive"
-              size="sm"
-              data-component="contracts-detail-finalize-trigger"
-            className="w-[calc(176px*var(--v3-ui-scale,1))]"
-              onClick={() => {
+            <ContractReviewActionButton
+              action={reviewAction}
+              onPreview={handleServiceRecordReviewConfirm}
+              onFinalize={() => {
                 setFinalizeEndDate((current) => current || formatIsoDateInput(contractEndDateIso));
                 setIsFinalizeOpen(true);
               }}
-            >
-              <CheckCircle2 className="h-4 w-4" />
-              확인하기
-            </Button>
+            />
           ) : (
             <button
               type="button"
               data-component="contracts-detail-preview-trigger"
-              className="flex w-[calc(220px*var(--v3-ui-scale,1))] items-center gap-[calc(12px*var(--v3-ui-scale,1))] rounded-xl bg-[hsl(var(--v3-primary))] px-[calc(16px*var(--v3-ui-scale,1))] py-[calc(10px*var(--v3-ui-scale,1))] text-left text-[calc(14px*var(--v3-ui-scale,1))] font-medium text-white transition-all duration-200"
+              className="flex w-[calc(220px*var(--glint-ui-scale,1))] items-center justify-center gap-[calc(12px*var(--glint-ui-scale,1))] rounded-xl bg-[hsl(var(--v3-primary))] px-[calc(16px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))] text-center text-[calc(14px*var(--glint-ui-scale,1))] font-medium text-white transition-all duration-200"
               onClick={() => setIsPreviewOpen(true)}
             >
-              <Eye className="h-[calc(16px*var(--v3-ui-scale,1))] w-[calc(16px*var(--v3-ui-scale,1))] shrink-0" />
+              <Eye className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] shrink-0" />
               문서 보기
             </button>
           )}
@@ -1720,10 +1847,10 @@ function ContractDetail({
               {customerName} 님에게 전자문서 작성을 재요청 할까요?
             </DialogDescription>
           </DialogHeader>
-          <div data-component="contracts-rerequest-phone-field" className="pb-[calc(8px*var(--v3-ui-scale,1))]">
+          <div data-component="contracts-rerequest-phone-field" className="pb-[calc(8px*var(--glint-ui-scale,1))]">
             <Label
               htmlFor={`contract-rerequest-phone-${doc.id}`}
-              className="mb-[calc(8px*var(--v3-ui-scale,1))] block text-[calc(11.52px*var(--v3-ui-scale,1))] font-semibold uppercase tracking-[0.08em] text-v3-text-muted"
+              className="mb-[calc(8px*var(--glint-ui-scale,1))] block text-[calc(11.52px*var(--glint-ui-scale,1))] font-semibold uppercase tracking-[0.08em] text-v3-text-muted"
             >
               전송 전화번호
             </Label>
@@ -1739,14 +1866,14 @@ function ContractDetail({
               }
               maxLength={13}
               className={cn(
-                "h-[calc(48px*var(--v3-ui-scale,1))] rounded-[16px] border-[1.5px] border-v3-border bg-white px-[calc(16px*var(--v3-ui-scale,1))] text-[calc(13.6px*var(--v3-ui-scale,1))] text-v3-dark shadow-none transition-all focus-visible:border-v3-primary focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]",
+                "h-[calc(48px*var(--glint-ui-scale,1))] rounded-[16px] border-[1.5px] border-v3-border bg-white px-[calc(16px*var(--glint-ui-scale,1))] text-[calc(13.6px*var(--glint-ui-scale,1))] text-v3-dark shadow-none transition-all focus-visible:border-v3-primary focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]",
                 hasEditedRecipientPhone &&
                   !isRecipientPhoneValid &&
                   "border-v3-burgundy focus-visible:border-v3-burgundy focus-visible:shadow-[0_0_0_3px_hsla(348,83%,47%,0.08)]"
               )}
             />
             {hasEditedRecipientPhone && !isRecipientPhoneValid && (
-              <p className="mt-[calc(8px*var(--v3-ui-scale,1))] text-[calc(12px*var(--v3-ui-scale,1))] font-medium text-v3-burgundy">
+              <p className="mt-[calc(8px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-medium text-v3-burgundy">
                 전송할 전화번호를 올바르게 입력해 주세요.
               </p>
             )}
@@ -1769,34 +1896,52 @@ function ContractDetail({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <TwoButtonModal
+        open={isServiceRecordFinalizeConfirmOpen}
+        onOpenChange={setIsServiceRecordFinalizeConfirmOpen}
+        dataComponent="contracts-service-record-review-confirm"
+        title="완료할까요?"
+        description="제공기록지를 검토 완료 처리합니다."
+        cancelLabel="취소"
+        approvalLabel="완료"
+        pendingLabel="처리 중..."
+        isPending={isFinalizePending}
+        onApprove={handleServiceRecordFinalizeApprove}
+      />
       <Dialog open={isFinalizeOpen} onOpenChange={handleFinalizeDialogChange}>
         <DialogContent className="sm:max-w-[400px]">
           <DialogHeader>
-            <DialogTitle>최종 확인</DialogTitle>
+            <DialogTitle>{isServiceRecordDocument ? "제공기록지 검토" : "최종 확인"}</DialogTitle>
             <DialogDescription>
-              서비스 완료일을 수정한 뒤 확정해 주세요.
+              {isServiceRecordDocument
+                ? "제공기록지를 완료 처리하고 있습니다."
+                : "서비스 완료일을 수정한 뒤 확정해 주세요."}
             </DialogDescription>
           </DialogHeader>
           {isFinalizePending || finalizeProgress.step !== null ? (
             <div
               data-component="contracts-finalize-progress-section"
-              className="flex justify-center py-[calc(8px*var(--v3-ui-scale,1))]"
+              className="flex justify-center py-[calc(8px*var(--glint-ui-scale,1))]"
             >
               <HeadlessProgressStepper
-                steps={FINALIZE_PROGRESS_STEPS}
+                steps={finalizeProgressSteps}
                 progress={finalizeProgress}
-                ariaLabel="전자계약서 최종 확인 진행 상태"
+                ariaLabel={
+                  isServiceRecordDocument
+                    ? "제공기록지 검토 진행 상태"
+                    : "전자계약서 최종 확인 진행 상태"
+                }
                 dataComponentPrefix="contracts-finalize-progress"
                 testIdPrefix="contracts-finalize-progress"
-                className="w-full max-w-[calc(320px*var(--v3-ui-scale,1))]"
+                className="w-full max-w-[calc(320px*var(--glint-ui-scale,1))]"
               />
             </div>
           ) : (
             <>
-              <div data-component="contracts-finalize-end-date-field" className="pb-[calc(8px*var(--v3-ui-scale,1))]">
+              <div data-component="contracts-finalize-end-date-field" className="pb-[calc(8px*var(--glint-ui-scale,1))]">
                 <Label
                   htmlFor={`contract-finalize-end-date-${doc.id}`}
-                  className="mb-[calc(8px*var(--v3-ui-scale,1))] block text-[calc(11.52px*var(--v3-ui-scale,1))] font-semibold uppercase tracking-[0.08em] text-v3-text-muted"
+                  className="mb-[calc(8px*var(--glint-ui-scale,1))] block text-[calc(11.52px*var(--glint-ui-scale,1))] font-semibold uppercase tracking-[0.08em] text-v3-text-muted"
                 >
                   서비스 완료일
                 </Label>
@@ -1865,10 +2010,20 @@ function ContractDetail({
       </Dialog>
       <ContractDocumentPreviewModal
         open={isPreviewOpen}
-        onClose={() => setIsPreviewOpen(false)}
+        onClose={() => {
+          if (!isFinalizePending) {
+            setIsPreviewOpen(false);
+          }
+        }}
         document={detailedDocument}
         customerName={customerName}
-        canDownloadReceipt={category === "completed"}
+        canDownloadReceipt={category === "completed" && reviewAction !== "preview"}
+        onReviewConfirm={
+          reviewAction === "preview" && isReviewNeeded
+            ? handleServiceRecordReviewConfirm
+            : undefined
+        }
+        isReviewConfirming={isFinalizePending}
       />
     </DetailPanel>
   );

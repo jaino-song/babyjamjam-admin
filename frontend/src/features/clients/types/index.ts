@@ -2,6 +2,7 @@
 export interface EmployeeSummary {
     id: number;
     name: string;
+    phone?: string | null;
 }
 
 // Document status type for eformsign documents
@@ -11,6 +12,7 @@ export type ClientBadgeKey = "contract_required" | "breast_pump" | "service_stat
 export type ClientBadgeTone = "danger" | "success" | "primary" | "warning" | "neutral";
 export type ClientBadgeStatus =
     | "active"
+    | "preBooking"
     | "pending"
     | "review"
     | "scheduleChange"
@@ -88,7 +90,10 @@ export interface CreateClientDto {
     voucherClient: boolean;
     breastPump: boolean;
     serviceStatus?: ServiceStatus | null;
+    applyMessageAutomation?: boolean;
     areaId?: string | null;
+    source?: "contract_auto_registration";
+    reuseExistingClient?: boolean;
 }
 
 // Update client DTO - Frontend sends employeeId, backend converts to scheduleId
@@ -136,6 +141,7 @@ export interface PaginatedResponse<T> {
 
 // Service status options (renamed from Contract status)
 export const SERVICE_STATUS_OPTIONS = [
+    { value: "pre_booking", label: "예약 전", labelEn: "Pre-booking", color: "default" as const },
     { value: "waiting", label: "대기", labelEn: "Waiting", color: "warning" as const },
     { value: "replacement_requested", label: "교체 요청", labelEn: "Replacement Requested", color: "error" as const },
     { value: "active", label: "진행중", labelEn: "Active", color: "info" as const },

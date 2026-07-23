@@ -7,9 +7,10 @@ import { useEformsignAuth } from "@/hooks/useEformsignAuth";
 import { EformsignDocument, EformsignDocumentView } from "@/lib/eformsign/types";
 import {
   DocumentFilterType,
-  mapStatusToLabel,
+  mapDocStatusLabel,
   getStatusColor,
 } from "@/lib/eformsign/status-codes";
+import { UNKNOWN_CUSTOMER_NAME, customerName as getEformsignCustomerName } from "@/lib/eformsign/display-name";
 import { ContentPaper } from "../root/content-paper";
 import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -18,6 +19,7 @@ import { DataTable, type DataTableColumn, type FilterOption } from "@/components
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 
 type DocumentRow = EformsignDocumentView & Record<string, unknown>;
 
@@ -25,7 +27,7 @@ const STATUS_OPTIONS: FilterOption[] = [
   { label: "전체", value: null, color: getStatusColor("전체") },
   { label: "대기", value: "in-progress", color: getStatusColor("대기") },
   { label: "완료", value: "completed", color: getStatusColor("완료") },
-  { label: "만료", value: "rejected", color: getStatusColor("만료") },
+  { label: "기간 만료", value: "expired", color: getStatusColor("기간 만료") },
 ];
 
 // Customer names to filter out (internal/test accounts)
@@ -33,24 +35,10 @@ const EXCLUDED_CUSTOMER_NAMES = ["송진호", "인천 아이미래로"];
 
 // Transform API document to view model
 const transformDocument = (doc: EformsignDocument): EformsignDocumentView | null => {
-  const stepRecipients = doc.current_status?.step_recipients;
-
-  // Get customer name from multiple possible sources:
-  // 1. step_recipients[0].name (when document is in-progress)
-  // 2. last_editor.name (when document is completed/rejected)
-  // 3. creator.name (fallback)
-  let customerName: string | null = null;
-
-  if (stepRecipients && stepRecipients.length > 0 && stepRecipients[0]?.name) {
-    customerName = stepRecipients[0].name;
-  } else if (doc.last_editor?.name) {
-    customerName = doc.last_editor.name;
-  } else if (doc.creator?.name) {
-    customerName = doc.creator.name;
-  }
+  const customerName = getEformsignCustomerName(doc);
 
   // Skip documents without a customer name
-  if (!customerName) {
+  if (customerName === UNKNOWN_CUSTOMER_NAME) {
     return null;
   }
 
@@ -63,17 +51,13 @@ const transformDocument = (doc: EformsignDocument): EformsignDocumentView | null
     doc_id: doc.id,
     customer_name: customerName,
     created_date: doc.created_date,
-    status: mapStatusToLabel(doc.current_status?.status_type),
+    status: mapDocStatusLabel(doc.current_status),
   };
 };
 
 // Date formatting helper
 const formatDate = (timestamp: number): string => {
-  return new Date(timestamp).toLocaleDateString("ko-KR", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
+  return formatDateForDisplay(timestamp);
 };
 
 export function DocumentsList() {

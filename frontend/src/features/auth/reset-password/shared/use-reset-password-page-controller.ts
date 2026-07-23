@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
+import { getResetPasswordErrorMessage } from "@babyjamjam/shared";
 
 import { AUTH_ROUTES } from "@/lib/auth/routes";
 import { checkPasswordStrength, resetPasswordSchema, type ResetPasswordFormData } from "@/lib/validations/auth";
@@ -70,7 +71,13 @@ export function useResetPasswordPageController() {
       }
     } catch (requestError) {
       console.error("Reset password error:", requestError);
-      setError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
+      const errorData = requestError && typeof requestError === "object" && "response" in requestError
+        ? (requestError as { response?: { data?: { code?: unknown } } }).response?.data
+        : undefined;
+      setError(
+        getResetPasswordErrorMessage(errorData?.code)
+        ?? "네트워크 오류가 발생했습니다. 다시 시도해 주세요.",
+      );
     } finally {
       setIsLoading(false);
     }

@@ -24,7 +24,7 @@ export enum MessageTriggerTemplateKey {
     SERVICE_INFO = "SERVICE_INFO",
     SERVICE_END_REMINDER = "SERVICE_END_REMINDER",
     EMPLOYEE_ASSIGNED = "EMPLOYEE_ASSIGNED",
-    SERVICE_FEEDBACK_LINK = "SERVICE_FEEDBACK_LINK",
+    SERVICE_RECORD_LINK = "SERVICE_RECORD_LINK",
     CLIENT_GREETING = "CLIENT_GREETING",
     PRICE_INFO = "PRICE_INFO",
     REMINDER = "REMINDER",
@@ -33,7 +33,7 @@ export enum MessageTriggerTemplateKey {
     INFO = "INFO",
 }
 
-export type SupportedTriggerProvider = "aligo_alimtalk";
+export type SupportedTriggerProvider = "sms";
 
 // Free pairing: every SMS (system-template) trigger may fire on any client lifecycle event.
 const CLIENT_EVENT_TYPES = [
@@ -107,7 +107,7 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "serviceType", label: "서비스 타입" },
         ],
         providers: {
-            aligo_alimtalk: { templateKey: "CLIENT_CREATED" },
+            sms: { templateKey: "CLIENT_WELCOME" },
         },
     },
     [MessageTriggerTemplateKey.SERVICE_START_REMINDER]: {
@@ -122,7 +122,7 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "timingText", label: "발송 기준 문구" },
         ],
         providers: {
-            aligo_alimtalk: { templateKey: "SERVICE_START_REMINDER" },
+            sms: { templateKey: "SERVICE_START_REMINDER" },
         },
     },
     [MessageTriggerTemplateKey.SERVICE_INFO]: {
@@ -135,7 +135,7 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "name", label: "산모님 성함" },
         ],
         providers: {
-            aligo_alimtalk: { templateKey: "SERVICE_INFO" },
+            sms: { templateKey: "SERVICE_INFO" },
         },
     },
     [MessageTriggerTemplateKey.SERVICE_END_REMINDER]: {
@@ -150,7 +150,7 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "timingText", label: "발송 기준 문구" },
         ],
         providers: {
-            aligo_alimtalk: { templateKey: "SERVICE_END_REMINDER" },
+            sms: { templateKey: "SERVICE_END_REMINDER" },
         },
     },
     [MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED]: {
@@ -168,11 +168,11 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "serviceStartDate", label: "서비스 시작일" },
         ],
         providers: {
-            aligo_alimtalk: { templateKey: "EMPLOYEE_ASSIGNED" },
+            sms: { templateKey: "EMPLOYEE_ASSIGNED" },
         },
     },
-    [MessageTriggerTemplateKey.SERVICE_FEEDBACK_LINK]: {
-        key: MessageTriggerTemplateKey.SERVICE_FEEDBACK_LINK,
+    [MessageTriggerTemplateKey.SERVICE_RECORD_LINK]: {
+        key: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
         name: "제공기록지 작성 링크",
         description: "서비스 시작일 오후 3시에 제공인력에게 제공기록지 작성 링크를 SMS로 발송합니다.",
         allowedEventTypes: [MessageTriggerEventType.SERVICE_START],
@@ -181,9 +181,11 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "employeeName", label: "제공인력명" },
             { key: "clientName", label: "고객명" },
             { key: "serviceStartDate", label: "서비스 시작일" },
-            { key: "feedbackUrl", label: "제공기록지 링크" },
+            { key: "serviceRecordUrl", label: "제공기록지 링크" },
         ],
-        providers: {},
+        providers: {
+            sms: { templateKey: "SERVICE_RECORD_LINK" },
+        },
     },
     [MessageTriggerTemplateKey.CLIENT_GREETING]: {
         key: MessageTriggerTemplateKey.CLIENT_GREETING,
@@ -193,7 +195,7 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
         allowedRecipientTypes: [MessageTriggerRecipientType.CLIENT],
         requiredVariables: [],
         providers: {
-            aligo_alimtalk: { templateKey: "CLIENT_GREETING" },
+            sms: { templateKey: "CLIENT_GREETING" },
         },
     },
     [MessageTriggerTemplateKey.PRICE_INFO]: {
@@ -214,7 +216,7 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "accNum", label: "계좌번호" },
         ],
         providers: {
-            aligo_alimtalk: { templateKey: "PRICE_INFO" },
+            sms: { templateKey: "PRICE_INFO" },
         },
     },
     [MessageTriggerTemplateKey.REMINDER]: {
@@ -225,7 +227,7 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
         allowedRecipientTypes: [MessageTriggerRecipientType.CLIENT],
         requiredVariables: [{ key: "name", label: "산모님 성함" }],
         providers: {
-            aligo_alimtalk: { templateKey: "REMINDER" },
+            sms: { templateKey: "REMINDER" },
         },
     },
     [MessageTriggerTemplateKey.THANKS]: {
@@ -236,7 +238,7 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
         allowedRecipientTypes: [MessageTriggerRecipientType.CLIENT],
         requiredVariables: [{ key: "name", label: "산모님 성함" }],
         providers: {
-            aligo_alimtalk: { templateKey: "THANKS" },
+            sms: { templateKey: "THANKS" },
         },
     },
     [MessageTriggerTemplateKey.SURVEY]: {
@@ -247,7 +249,7 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
         allowedRecipientTypes: [MessageTriggerRecipientType.CLIENT],
         requiredVariables: [{ key: "name", label: "산모님 성함" }],
         providers: {
-            aligo_alimtalk: { templateKey: "SURVEY" },
+            sms: { templateKey: "SURVEY" },
         },
     },
     [MessageTriggerTemplateKey.INFO]: {
@@ -258,7 +260,7 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
         allowedRecipientTypes: [MessageTriggerRecipientType.CLIENT],
         requiredVariables: [],
         providers: {
-            aligo_alimtalk: { templateKey: "INFO" },
+            sms: { templateKey: "INFO" },
         },
     },
 };

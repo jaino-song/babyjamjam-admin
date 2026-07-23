@@ -3,12 +3,14 @@ import {
     ExecutionContext,
     ForbiddenException,
     Injectable,
+    Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
-import { TenantContext } from './tenant.context';
+import { TenantContext, VerifiedTenantPrincipal } from './tenant.context';
 
 @Injectable()
 export class TenantGuard implements CanActivate {
+    private readonly logger = new Logger(TenantGuard.name);
     constructor(
         private readonly prisma: PrismaService,
         private readonly tenantContext: TenantContext,
@@ -19,46 +21,79 @@ export class TenantGuard implements CanActivate {
         const user = request.user;
 
         if (!user?.branchId) {
+            this.logDenial(user?.userId, undefined, "branch_not_selected");
             throw new ForbiddenException('Branch selection required');
         }
 
         // Owners have access to all branches without membership check
         if (user.role === 'owner') {
-            // Verify the branch exists
             const org = await this.prisma.branch.findUnique({
                 where: { id: user.branchId },
-                select: { id: true },
+                select: { id: true, isActive: true },
             });
 
-            if (!org) {
+            if (!org?.isActive) {
+                this.logDenial(user.userId, user.branchId, "branch_inactive");
                 throw new ForbiddenException('Branch not found');
             }
 
-            this.tenantContext.userId = user.userId;
-            this.tenantContext.branchId = user.branchId;
-            this.tenantContext.role = user.role;
-            this.tenantContext.branchRole = 'owner';
-
+            this.assignPrincipal(request, {
+                userId: user.userId,
+                branchId: user.branchId,
+                globalRole: user.role,
+                branchRole: 'owner',
+            });
             return true;
         }
 
-        // Regular users must have membership
         const membership = await this.prisma.user_branch.findFirst({
             where: {
                 userId: user.userId,
                 branchId: user.branchId,
             },
+            select: {
+                role: true,
+                branch: {
+                    select: {
+                        isActive: true,
+                    },
+                },
+            },
         });
 
-        if (!membership) {
+        if (!membership?.branch.isActive) {
+            this.logDenial(user.userId, user.branchId, "membership_missing");
             throw new ForbiddenException('Access denied to this branch');
         }
 
-        this.tenantContext.userId = user.userId;
-        this.tenantContext.branchId = user.branchId;
-        this.tenantContext.role = user.role;
-        this.tenantContext.branchRole = membership.role ?? 'member';
+        this.assignPrincipal(request, {
+            userId: user.userId,
+            branchId: user.branchId,
+            globalRole: user.role,
+            branchRole: membership.role ?? 'user',
+        });
 
         return true;
+    }
+
+    private logDenial(
+        userId: string | undefined,
+        branchId: string | undefined,
+        reason: string,
+    ): void {
+        this.logger.warn(JSON.stringify({
+            event: "tenant_denial",
+            reason,
+            userId: userId ?? null,
+            branchId: branchId ?? null,
+        }));
+    }
+
+    private assignPrincipal(
+        request: { tenant?: VerifiedTenantPrincipal },
+        principal: VerifiedTenantPrincipal,
+    ): void {
+        request.tenant = principal;
+        this.tenantContext.assign(principal);
     }
 }

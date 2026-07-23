@@ -24,6 +24,8 @@ import { useFilteredClients, useClient, useDeleteClient } from "@/hooks/useClien
 import { Client, DocumentStatus } from "@/lib/client/types";
 import { ClientDetailModal } from "../clients/ClientDetailModal";
 import { ClientFormDialog } from "../clients/ClientFormDialog";
+import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 
 type FilterType = "starting-soon" | "ending-soon" | "incomplete-contracts" | "no-contract";
 
@@ -56,8 +58,7 @@ const getDocumentStatusBadge = (status: DocumentStatus) => {
 };
 
 const formatDate = (dateStr: string | null): string => {
-    if (!dateStr) return "-";
-    return new Date(dateStr).toLocaleDateString("ko-KR");
+    return formatDateForDisplay(dateStr);
 };
 
 export function FilteredClientsDialog({
@@ -70,6 +71,7 @@ export function FilteredClientsDialog({
     const [detailModalOpen, setDetailModalOpen] = useState(false);
     const [editingClient, setEditingClient] = useState<Client | null>(null);
     const [formDialogOpen, setFormDialogOpen] = useState(false);
+    const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
 
     const { data: filteredClients, isLoading: filteredLoading, error: filteredError } =
         useFilteredClients(filterType || "");
@@ -101,17 +103,23 @@ export function FilteredClientsDialog({
         setDetailModalOpen(false);
     };
 
-    const handleDelete = async (id: number) => {
-        if (window.confirm("정말 삭제하시겠습니까?")) {
-            try {
-                await deleteClient.mutateAsync(id);
-                setDetailModalOpen(false);
-                if (isIndividualClient) {
-                    onClose();
-                }
-            } catch (err) {
-                console.error("Failed to delete client:", err);
+    const handleDelete = (id: number) => {
+        setDeleteTargetClientId(id);
+    };
+
+    const handleDeleteConfirm = async () => {
+        if (deleteTargetClientId === null) return;
+
+        try {
+            await deleteClient.mutateAsync(deleteTargetClientId);
+            setDeleteTargetClientId(null);
+            setDetailModalOpen(false);
+            if (isIndividualClient) {
+                onClose();
             }
+        } catch (err) {
+            console.error("Failed to delete client:", err);
+            setDeleteTargetClientId(null);
         }
     };
 
@@ -195,6 +203,21 @@ export function FilteredClientsDialog({
                 open={formDialogOpen}
                 onClose={handleFormDialogClose}
                 client={editingClient}
+            />
+
+            <ApprovalTwoButtonModal
+                open={deleteTargetClientId !== null}
+                onOpenChange={(nextOpen) => {
+                    if (!nextOpen) setDeleteTargetClientId(null);
+                }}
+                dataComponent="filtered-clients-delete-approval"
+                title="고객을 삭제하시겠습니까?"
+                description="삭제한 고객 정보는 복구할 수 없습니다."
+                approvalLabel="삭제"
+                pendingLabel="삭제 중..."
+                approvalVariant="destructive"
+                isPending={deleteClient.isPending}
+                onApprove={handleDeleteConfirm}
             />
         </>
     );

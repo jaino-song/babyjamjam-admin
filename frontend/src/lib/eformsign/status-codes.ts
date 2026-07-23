@@ -6,32 +6,15 @@
  * These are 3-digit action codes from current_status.status_type
  */
 
-// 완료 (Completed) codes
-export const COMPLETED_CODES = [
-  "003", // doc_complete: 문서 완료
-  "012", // doc_accept_approval: 문서 결재 승인
-  "022", // doc_accept_reception: 문서 내부자 승인
-  "032", // doc_accept_outsider: 문서 외부자 승인
-  "050", // PDF 전송
-  "062", // doc_accept_participant: 참여자 승인
-  "072", // doc_accept_reviewer: 검토자 승인
-  "092", // 대면서명 완료
-] as const;
+export {
+  COMPLETED_STATUS_CODES as COMPLETED_CODES,
+  EXPIRED_STATUS_CODES as EXPIRED_CODES,
+} from "@babyjamjam/shared/constants/eformsign-status-codes";
 
-// 기간 만료/반려/취소 bucket codes
-export const EXPIRED_CODES = [
-  "011", // doc_reject_approval: 문서 결재 반려
-  "021", // doc_reject_reception: 문서 내부자 반려
-  "031", // doc_reject_outsider: 문서 외부자 반려
-  "040", // doc_request_revoke: 문서 취소 요청
-  "042", // doc_revoke: 문서 취소
-  "045", // doc_request_reject: 문서 반려 요청
-  "047", // doc_request_delete: 문서 삭제 요청
-  "049", // doc_delete: 문서 삭제
-  "061", // doc_reject_participant: 참여자 반려
-  "071", // doc_reject_reviewer: 검토자 반려
-  "080", // doc_expired: 문서 만료
-] as const;
+import {
+  COMPLETED_STATUS_CODES as COMPLETED_CODES,
+  EXPIRED_STATUS_CODES as EXPIRED_CODES,
+} from "@babyjamjam/shared/constants/eformsign-status-codes";
 
 // 대기/진행 중 (In-progress) codes - for reference
 export const IN_PROGRESS_CODES = [
@@ -50,21 +33,42 @@ export const IN_PROGRESS_CODES = [
 // Korean status labels
 export type DocumentStatusLabel = "대기" | "검토 필요" | "완료" | "기간 만료";
 
+type EformsignWorkflowStatus = {
+  status_type?: string | null;
+  step_type?: string | null;
+  step_name?: string | null;
+  step_recipients?: Array<{ recipient_type?: string | null }>;
+};
+
+const PROVIDER_REVIEW_STEP_TYPES = new Set(["06"]);
+const PROVIDER_REVIEW_OWNER_KEYWORDS = ["제공기관", "관리자", "담당자"];
+const PROVIDER_REVIEW_ACTION_KEYWORDS = ["확인", "검토"];
+const CUSTOMER_STEP_KEYWORDS = ["이용자", "고객", "산모"];
+
+export function isProviderReviewWorkflowStep(
+  currentStatus: Pick<EformsignWorkflowStatus, "step_type" | "step_name"> | null | undefined,
+): boolean {
+  const stepType = currentStatus?.step_type?.trim() ?? "";
+  const stepName = currentStatus?.step_name?.trim() ?? "";
+
+  if (PROVIDER_REVIEW_STEP_TYPES.has(stepType)) return true;
+  if (!stepName) return false;
+  if (CUSTOMER_STEP_KEYWORDS.some((keyword) => stepName.includes(keyword))) return false;
+
+  const hasProviderOwner = PROVIDER_REVIEW_OWNER_KEYWORDS.some((keyword) => stepName.includes(keyword));
+  const hasReviewAction = PROVIDER_REVIEW_ACTION_KEYWORDS.some((keyword) => stepName.includes(keyword));
+  return hasProviderOwner && hasReviewAction;
+}
+
 /**
- * Step-aware variant: when a doc is in-progress AND the current step's
- * recipient is an internal member (recipient_type "01"), it has progressed
- * past the customer's signature and is now waiting on staff confirmation.
- * That state is surfaced as "검토 필요" instead of "대기".
+ * Step-aware variant: when a doc is in-progress AND the current workflow step
+ * is explicitly the provider review/confirmation step, it has progressed past
+ * the customer's signature and is surfaced as "검토 필요" instead of "대기".
  */
-export function mapDocStatusLabel(currentStatus: {
-  status_type?: string;
-  step_recipients?: Array<{ recipient_type?: string }>;
-} | null | undefined): DocumentStatusLabel {
+export function mapDocStatusLabel(currentStatus: EformsignWorkflowStatus | null | undefined): DocumentStatusLabel {
   const base = mapStatusToLabel(currentStatus?.status_type);
   if (base !== "대기") return base;
-  const recipients = currentStatus?.step_recipients ?? [];
-  const allInternal = recipients.length > 0 && recipients.every((r) => r?.recipient_type === "01");
-  return allInternal ? "검토 필요" : "대기";
+  return isProviderReviewWorkflowStep(currentStatus) ? "검토 필요" : "대기";
 }
 
 // Filter types for API calls
@@ -186,14 +190,18 @@ export interface ContractStatsBuckets {
  *   - completed (003 등)           → counted nowhere
  *   - expired category, only 080   → expired (반려/취소 등은 제외)
  *   - draft (001)                  → drafting
- *   - 그 외 in-progress            → reviewNeeded(현재 단계 수신자가 전원 내부자 "01")
+ *   - 그 외 in-progress            → reviewNeeded(현재 단계가 제공기관 검토/확인)
  *                                     아니면 sendRequired
- * The reviewNeeded test reduces `mapDocStatusLabel === "검토 필요"` to the
- * recipient check, because that branch is only reached for in-progress docs
- * (where mapStatusToLabel already returns "대기").
+ * The reviewNeeded test mirrors `mapDocStatusLabel === "검토 필요"` using the
+ * current workflow step fields returned by the status-counts endpoint.
  */
 export function foldContractStats(
-  docs: ReadonlyArray<{ status_type?: string | null; step_recipient_types?: ReadonlyArray<string | null> }>,
+  docs: ReadonlyArray<{
+    status_type?: string | null;
+    step_type?: string | null;
+    step_name?: string | null;
+    step_recipient_types?: ReadonlyArray<string | null>;
+  }>,
 ): ContractStatsBuckets {
   const buckets: ContractStatsBuckets = { reviewNeeded: 0, sendRequired: 0, drafting: 0, expired: 0 };
   for (const doc of docs) {
@@ -210,9 +218,7 @@ export function foldContractStats(
       continue;
     }
 
-    const recipients = doc.step_recipient_types ?? [];
-    const allInternal = recipients.length > 0 && recipients.every((r) => r === "01");
-    if (allInternal) buckets.reviewNeeded++;
+    if (isProviderReviewWorkflowStep(doc)) buckets.reviewNeeded++;
     else buckets.sendRequired++;
   }
   return buckets;

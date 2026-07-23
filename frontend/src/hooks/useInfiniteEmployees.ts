@@ -3,7 +3,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useEmployees } from "./useEmployees";
 import { formatWorkAreaLabel } from "@/components/app/employees/employee-form.constants";
-import { matchesKoreanSearch } from "@/lib/search/korean-search";
+import { matchesSearchQuery } from "@/lib/search/korean-search";
 
 const INITIAL_VISIBLE_COUNT = 6;
 const PAGE_SIZE = 6;
@@ -27,8 +27,6 @@ export function useInfiniteEmployees({
   const fetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { data: employees = [], isLoading } = useEmployees();
-
-  const normalizePhoneDigits = useCallback((value: string) => value.replace(/\D/g, ""), []);
 
   // Reset visible count when filter/search changes
   useEffect(() => {
@@ -66,25 +64,19 @@ export function useInfiniteEmployees({
     }
 
     if (search.trim()) {
-      const query = search.trim();
-      const lowerQuery = query.toLowerCase();
-      const phoneQuery = normalizePhoneDigits(query);
-
       list = list.filter(
         (employee) =>
-          matchesKoreanSearch(employee.name, query) ||
-          (phoneQuery.length > 0 && normalizePhoneDigits(employee.phone).includes(phoneQuery)) ||
-          employee.workArea.some((area) => {
-            const formattedArea = formatWorkAreaLabel(area).toLowerCase();
-            const rawArea = area.toLowerCase();
-
-            return rawArea.includes(lowerQuery) || formattedArea.includes(lowerQuery);
-          })
+          matchesSearchQuery(search, [
+            employee.name,
+            employee.phone,
+            ...employee.workArea,
+            ...employee.workArea.map(formatWorkAreaLabel),
+          ])
       );
     }
 
     return list;
-  }, [employees, filter, normalizePhoneDigits, search]);
+  }, [employees, filter, search]);
 
   // Slice to visible count
   const visibleEmployees = useMemo(() => {

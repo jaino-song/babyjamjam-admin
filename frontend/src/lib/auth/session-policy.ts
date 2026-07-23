@@ -1,6 +1,7 @@
 import { jwtDecode } from "jwt-decode";
 
 const DAY_IN_SECONDS = 24 * 60 * 60;
+export const ACCESS_TOKEN_MAX_AGE_SECONDS = 15 * 60;
 
 export const AUTH_COOKIE_NAMES = {
     accessToken: "auth_token",

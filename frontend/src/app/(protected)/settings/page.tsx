@@ -26,6 +26,7 @@ import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
 import { Toaster } from "@/components/ui/toaster";
+import { KakaoLinkResultModal } from "@/features/auth/settings/kakao-link-result-modal";
 
 const UserKeyIcon = forwardRef<SVGSVGElement, LucideProps>(function UserKeyIcon(
   { size = 20, className, ...props },
@@ -117,6 +118,7 @@ export default function SettingsPage() {
 
   return (
     <section data-component="settings" className="space-y-6">
+      <KakaoLinkResultModal />
       <div data-component="settings-sections" className="flex flex-col lg:flex-row gap-8">
         <SectionNav
           items={BASE_NAV_SECTIONS}
@@ -235,7 +237,6 @@ export default function SettingsPage() {
                     </p>
                   </div>
                   <Switch
-                    variant="v3"
                     id="notif-email"
                     checked={emailNotificationsEnabled}
                     onCheckedChange={handleEmailNotificationToggle}
@@ -260,7 +261,6 @@ export default function SettingsPage() {
                     <Spinner size="sm" />
                   ) : (
                     <Switch
-                      variant="v3"
                       id="notif-browser"
                       checked={isBrowserNotificationEnabled}
                       onCheckedChange={handleBrowserNotificationToggle}
@@ -410,7 +410,7 @@ export default function SettingsPage() {
                       로그인 시 추가 인증을 요구합니다. (추후 지원 예정)
                     </p>
                   </div>
-                  <Switch variant="v3" id="two-factor" checked={false} disabled />
+                  <Switch id="two-factor" checked={false} disabled />
                 </div>
               </div>
             </ContentPaper>

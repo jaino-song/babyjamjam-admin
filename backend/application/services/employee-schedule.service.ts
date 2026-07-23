@@ -1,4 +1,4 @@
-import { Injectable, Optional } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import {
     CreateEmployeeScheduleUsecase,
     DeleteEmployeeScheduleUsecase,
@@ -10,10 +10,13 @@ import {
 } from "application/usecases/employee-schedule";
 import { EmployeeScheduleEntity } from "domain/entities/employee-schedule.entity";
 import { MessageTriggerService } from "./message-trigger.service";
-import { EmployeeFeedbackLinkService } from "./employee-feedback-link.service";
+import { ServiceRecordLinkService } from "./service-record-link.service";
+import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 
 @Injectable()
 export class EmployeeScheduleService {
+    private readonly logger = new Logger(EmployeeScheduleService.name);
+
     constructor(
         private readonly createEmployeeScheduleUsecase: CreateEmployeeScheduleUsecase,
         private readonly findEmployeeScheduleByIdUsecase: FindEmployeeScheduleByIdUsecase,
@@ -23,7 +26,8 @@ export class EmployeeScheduleService {
         private readonly updateEmployeeScheduleUsecase: UpdateEmployeeScheduleUsecase,
         private readonly deleteEmployeeScheduleUsecase: DeleteEmployeeScheduleUsecase,
         @Optional() private readonly triggerService?: MessageTriggerService,
-        @Optional() private readonly employeeFeedbackLinkService?: EmployeeFeedbackLinkService,
+        @Optional() private readonly serviceRecordLinkService?: ServiceRecordLinkService,
+        @Optional() private readonly serviceRecordLifecycleService?: ServiceRecordLifecycleService,
     ) {}
 
     async create(branchid: string, params: {
@@ -47,7 +51,8 @@ export class EmployeeScheduleService {
         this.triggerService
             ?.syncEmployeeAssignmentRulesForSchedule(branchid, schedule.id, true)
             ?.catch(() => undefined);
-        this.employeeFeedbackLinkService?.scheduleForServiceStart(schedule.id)?.catch(() => undefined);
+        await this.serviceRecordLifecycleService?.ensureForClient(schedule.clientId);
+        this.serviceRecordLinkService?.scheduleForServiceStart(schedule.id)?.catch(() => undefined);
         return schedule;
     }
 
@@ -91,15 +96,25 @@ export class EmployeeScheduleService {
             endDate: params.endDate ? new Date(params.endDate) : undefined,
             replaced: params.replaced,
         });
+        await this.serviceRecordLifecycleService?.ensureForClient(schedule.clientId);
         if (params.endDate) {
-            this.employeeFeedbackLinkService
+            this.serviceRecordLinkService
                 ?.extendExpiryForEndDate(schedule.id, schedule.endDate)
-                ?.catch(() => undefined);
+                ?.catch((error) => {
+                    this.logger.error(
+                        `[SERVICE_RECORD_LINK_EXTEND_FAILED] scheduleId=${schedule.id} — 수동 확인 필요`,
+                        error instanceof Error ? error.stack : String(error),
+                    );
+                });
         }
         return schedule;
     }
 
-    delete(branchid: string, id: number): Promise<void> {
-        return this.deleteEmployeeScheduleUsecase.execute(branchid, id);
+    async delete(branchid: string, id: number): Promise<void> {
+        const schedule = await this.findEmployeeScheduleByIdUsecase.execute(branchid, id);
+        await this.deleteEmployeeScheduleUsecase.execute(branchid, id);
+        if (schedule) {
+            await this.serviceRecordLifecycleService?.ensureForClient(schedule.clientId);
+        }
     }
 }

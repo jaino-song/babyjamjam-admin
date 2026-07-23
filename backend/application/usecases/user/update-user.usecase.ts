@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { IUserRepository, USER_REPOSITORY } from "domain/repositories/user.repository.interface";
 import { UserEntity } from "domain/entities/user.entity";
 
@@ -7,6 +7,9 @@ export type UpdateUserParams = {
     email?: string | null;
     profileImage?: string | null;
     role?: string | null;
+    branchRole?: string;
+    callerRole?: string;
+    branchId?: string;
 };
 
 @Injectable()
@@ -17,9 +20,15 @@ export class UpdateUserUsecase {
     ) {}
 
     async execute(id: string, updates: UpdateUserParams): Promise<UserEntity> {
-        const user = await this.userRepository.findById(id);
+        const user = updates.branchId
+            ? await this.userRepository.findByIdInBranch(id, updates.branchId)
+            : await this.userRepository.findById(id);
         if (!user) {
-            throw new NotFoundException(`User with id ${id} not found`);
+            throw new NotFoundException("User not found");
+        }
+
+        if (updates.branchId && user.role === "owner" && updates.callerRole !== "owner") {
+            throw new NotFoundException("User not found");
         }
 
         if (updates.name !== undefined) {
@@ -32,10 +41,28 @@ export class UpdateUserUsecase {
             user.profileImage = updates.profileImage;
         }
         if (updates.role !== undefined) {
+            if (updates.callerRole !== "owner") {
+                throw new ForbiddenException("역할 변경은 소유자만 가능합니다.");
+            }
+            if (user.role === "owner") {
+                throw new ForbiddenException("오너 계정의 역할은 변경할 수 없습니다.");
+            }
             user.role = updates.role;
+            await this.userRepository.clearBranchOwnerships(user.id);
+        }
+
+        if (updates.branchId) {
+            const updated = await this.userRepository.updateInBranch(
+                user,
+                updates.branchId,
+                updates.branchRole,
+            );
+            if (!updated) {
+                throw new NotFoundException("User not found");
+            }
+            return updated;
         }
 
         return this.userRepository.update(user);
     }
 }
-

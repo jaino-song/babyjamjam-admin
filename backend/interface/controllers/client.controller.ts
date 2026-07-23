@@ -33,7 +33,10 @@ export class ClientController {
             breastPump: dto.breastPump,
             eDocId: dto.eDocId ?? null,
             areaId: dto.areaId ?? null,
-            suppressGreetingSms: dto.suppressGreetingSms ?? false,
+            suppressGreetingSms: dto.suppressGreetingSms,
+            applyMessageAutomation: dto.applyMessageAutomation,
+            reuseExistingClient: dto.reuseExistingClient,
+            source: dto.source,
         });
     }
 

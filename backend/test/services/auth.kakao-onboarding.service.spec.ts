@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { AuthService, type KakaoData } from "application/services/auth.service";
+import { AuthSessionService } from "application/services/auth-session.service";
 import { AuthTokenEntity } from "domain/entities/auth-token.entity";
 import { EmailPort } from "domain/ports/email.port";
 import { IAuthTokenRepository } from "domain/repositories/auth-token.repository.interface";
@@ -30,6 +31,16 @@ describe("AuthService Kakao onboarding", () => {
             updateMany: jest.fn(),
             deleteMany: jest.fn(),
         },
+        auth_token: {
+            create: jest.fn(),
+            deleteMany: jest.fn(),
+        },
+        auth_email_outbox: {
+            create: jest.fn(),
+        },
+        auth_session: {
+            updateMany: jest.fn(),
+        },
         $transaction: jest.fn(),
     });
 
@@ -50,6 +61,7 @@ describe("AuthService Kakao onboarding", () => {
         findByUserIdAndType: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
+        consumeWithinTx: jest.fn(),
         delete: jest.fn(),
         deleteByUserIdAndType: jest.fn(),
         deleteExpiredTokens: jest.fn(),
@@ -58,6 +70,8 @@ describe("AuthService Kakao onboarding", () => {
     const kakaoData: KakaoData = {
         kakaoId: "kakao_12345",
         email: "kakao@example.com",
+        emailValid: true,
+        emailVerified: true,
         name: "Kakao User",
         profileImage: "https://example.com/profile.png",
     };
@@ -70,6 +84,8 @@ describe("AuthService Kakao onboarding", () => {
         profileImage: kakaoData.profileImage,
         role: "user",
         passwordHash: null,
+        approvalStatus: "approved",
+        tokenVersion: 0,
     };
 
     let prisma: ReturnType<typeof createMockPrismaService>;
@@ -92,6 +108,12 @@ describe("AuthService Kakao onboarding", () => {
             jwt as unknown as JwtService,
             emailService,
             authTokenRepository,
+            {
+                issueSession: jest.fn().mockResolvedValue({
+                    accessToken: "mock-access-token",
+                    refreshToken: "mock-refresh-token",
+                }),
+            } as unknown as AuthSessionService,
         );
     });
 
@@ -195,12 +217,14 @@ describe("AuthService Kakao onboarding", () => {
         expect(prisma.auth_flow_state.create).not.toHaveBeenCalled();
     });
 
-    it("completes Kakao onboarding inside a transaction and creates membership", async () => {
+    it("completes Kakao registration without assigning a branch membership", async () => {
         const onboardingUser = {
             ...existingUser,
             phone: "010-1234-5678",
             birthDate: "1990-01-01",
-            role: "manager",
+            role: null,
+            requestedRole: "manager",
+            approvalStatus: "pending",
         };
 
         prisma.auth_flow_state.findUnique.mockResolvedValue({
@@ -219,24 +243,21 @@ describe("AuthService Kakao onboarding", () => {
             consumedAt: null,
         });
         prisma.auth_flow_state.updateMany.mockResolvedValue({ count: 1 });
-        prisma.branch.findUnique.mockResolvedValue({ id: "org-1" });
         prisma.user.findFirst
             .mockResolvedValueOnce(null)
-            .mockResolvedValueOnce(null)
-            .mockResolvedValueOnce(onboardingUser as never);
-        prisma.user.create.mockResolvedValue(onboardingUser as never);
-        prisma.user_branch.findFirst
             .mockResolvedValueOnce(null);
-        prisma.user_branch.findMany.mockResolvedValue([{ branchId: "org-1", role: "manager" }] as never);
-        prisma.user_branch.create.mockResolvedValue({} as never);
+        prisma.user.create.mockResolvedValue(onboardingUser as never);
 
-        const result = await service.completeKakaoOnboarding(
+        await expect(service.completeKakaoOnboarding(
             "pending-token",
             "010-1234-5678",
             "1990-01-01",
-            "org-1",
             "manager",
-        );
+        )).resolves.toEqual({
+            success: true,
+            userId: "user-1",
+            message: "관리자 승인 대기 중입니다.",
+        });
 
         expect(prisma.$transaction).toHaveBeenCalled();
         expect(prisma.auth_flow_state.updateMany).toHaveBeenCalledWith({
@@ -251,30 +272,14 @@ describe("AuthService Kakao onboarding", () => {
                 kakaoId: kakaoData.kakaoId,
                 phone: "010-1234-5678",
                 birthDate: "1990-01-01",
-                role: "manager",
+                role: null,
+                requestedRole: "manager",
+                approvalStatus: "pending",
             }),
         }));
-        expect(prisma.user_branch.create).toHaveBeenCalledWith({
-            data: {
-                userId: "user-1",
-                branchId: "org-1",
-                role: "manager",
-            },
-        });
-        expect(jwt.signAsync).toHaveBeenCalledWith(
-            expect.objectContaining({
-                sub: "user-1",
-                role: "manager",
-                branchId: "org-1",
-                branchRole: "manager",
-                type: "refresh",
-            }),
-            expect.any(Object),
-        );
-        expect(result).toMatchObject({
-            user: "user-1",
-            requiresBranchSelection: undefined,
-        });
+        expect(prisma.branch.findUnique).not.toHaveBeenCalled();
+        expect(prisma.user_branch.create).not.toHaveBeenCalled();
+        expect(jwt.signAsync).not.toHaveBeenCalled();
     });
 
     it("rejects onboarding when the phone number already belongs to another user", async () => {
@@ -294,7 +299,6 @@ describe("AuthService Kakao onboarding", () => {
             consumedAt: null,
         });
         prisma.auth_flow_state.updateMany.mockResolvedValue({ count: 1 });
-        prisma.branch.findUnique.mockResolvedValue({ id: "org-1" });
         prisma.user.findFirst
             .mockResolvedValueOnce(null)
             .mockResolvedValueOnce({ id: "other-user" } as never);
@@ -304,7 +308,6 @@ describe("AuthService Kakao onboarding", () => {
                 "pending-token",
                 "010-1234-5678",
                 "1990-01-01",
-                "org-1",
                 "user",
             ),
         ).rejects.toThrow(BadRequestException);
@@ -331,74 +334,12 @@ describe("AuthService Kakao onboarding", () => {
         await expect(service.validateEmailPassword("legacy@example.com", "Password1!")).rejects.toThrow(ForbiddenException);
     });
 
-    it("completes account onboarding for existing users and updates membership role", async () => {
-        prisma.auth_flow_state.findUnique.mockResolvedValue({
-            id: "pending-account-1",
-            kind: "pending_account_onboarding",
-            tokenHash: "hashed",
-            userId: "user-3",
-            expiresAt: new Date(Date.now() + 60_000),
-            createdAt: new Date(),
-            consumedAt: null,
-        } as never);
-        prisma.auth_flow_state.updateMany.mockResolvedValue({ count: 1 });
-        prisma.user.findUnique
-            .mockResolvedValueOnce({
-                id: "user-3",
-                passwordHash: "hashed-password",
-            } as never)
-            .mockResolvedValueOnce({
-                id: "user-3",
-                email: "legacy@example.com",
-                name: "Legacy User",
-                profileImage: null,
-                phone: "010-1111-2222",
-                birthDate: "1990-01-01",
-                role: "manager",
-            } as never);
-        prisma.branch.findUnique.mockResolvedValue({ id: "org-1" } as never);
-        prisma.user.findFirst.mockResolvedValue(null as never);
-        prisma.user.update.mockResolvedValue({ id: "user-3" } as never);
-        prisma.user_branch.findFirst.mockResolvedValue({
-            id: "membership-1",
-            role: "user",
-        } as never);
-        prisma.user_branch.update.mockResolvedValue({} as never);
-        prisma.user_branch.findMany.mockResolvedValue([{ branchId: "org-1", role: "manager" }] as never);
-
-        const result = await service.completeAccountOnboarding(
-            "pending-token",
-            "010-1111-2222",
-            "1990-01-01",
-            "org-1",
-            "manager",
-        );
-
-        expect(prisma.user.update).toHaveBeenCalledWith({
-            where: { id: "user-3" },
-            data: {
-                phone: "010-1111-2222",
-                birthDate: "1990-01-01",
-                role: "manager",
-            },
-        });
-        expect(prisma.user_branch.update).toHaveBeenCalledWith({
-            where: { id: "membership-1" },
-            data: { role: "manager" },
-        });
-        expect(result).toMatchObject({
-            user: "user-3",
-            requiresBranchSelection: undefined,
-        });
-    });
-
-    it("stores the selected role on branch membership during email registration", async () => {
+    it("stores the requested role without creating a branch membership during email registration", async () => {
         jest.spyOn(service, "hashPassword").mockResolvedValue("hashed-password");
 
         prisma.user.findUnique
             .mockResolvedValueOnce(null)
             .mockResolvedValueOnce({ name: "Manager User" } as never);
-        prisma.branch.findUnique.mockResolvedValue({ id: "org-1" });
         prisma.user.create.mockResolvedValue({
             id: "user-2",
             email: "manager@example.com",
@@ -423,16 +364,8 @@ describe("AuthService Kakao onboarding", () => {
             "Manager User",
             "010-1234-5678",
             "1990-01-01",
-            "org-1",
-            "manager",
         );
 
-        expect(prisma.user_branch.create).toHaveBeenCalledWith({
-            data: {
-                userId: "user-2",
-                branchId: "org-1",
-                role: "manager",
-            },
-        });
+        expect(prisma.user_branch.create).not.toHaveBeenCalled();
     });
 });

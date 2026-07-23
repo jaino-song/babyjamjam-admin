@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { eformsignApi, withEformsignReauth } from "@/services/api";
 import { EformsignDocument, EformsignDocumentsResponse } from "@/lib/eformsign/types";
 import { getStatusCategory, isDeletedStatusCode, DocumentFilterType } from "@/lib/eformsign/status-codes";
+import { UNKNOWN_CUSTOMER_NAME, customerName } from "@/lib/eformsign/display-name";
 
 const INITIAL_VISIBLE_COUNT = 6; // First load: teaser view (4 full + 2 fading)
 const PAGE_SIZE = 6; // How many more to show each time
@@ -16,25 +17,15 @@ function filterByActualStatus(
 ): EformsignDocument[] {
   const visibleDocs = docs.filter((doc) => !isDeletedStatusCode(doc.current_status?.status_type));
   if (type === null) return visibleDocs;
+  const category = type === "rejected" ? "expired" : type;
   return visibleDocs.filter(
-    (doc) => getStatusCategory(doc.current_status?.status_type) === type
+    (doc) => getStatusCategory(doc.current_status?.status_type) === category
   );
 }
 
 // Sort documents by created_date descending (newest first)
 function sortByCreatedDate(docs: EformsignDocument[]): EformsignDocument[] {
   return [...docs].sort((a, b) => b.created_date - a.created_date);
-}
-
-// Helper to extract customer name from document
-function getCustomerName(doc: EformsignDocument): string | null {
-  const recipients = doc.current_status?.step_recipients;
-  if (recipients && recipients.length > 0 && recipients[0]?.name) {
-    return recipients[0].name;
-  }
-  if (doc.last_editor?.name) return doc.last_editor.name;
-  if (doc.creator?.name) return doc.creator.name;
-  return null;
 }
 
 export const infiniteContractsQueryKeys = {
@@ -85,8 +76,8 @@ export function useInfiniteContracts({
     // Filter out excluded names
     if (excludedNames.length > 0) {
       docs = docs.filter((doc) => {
-        const name = getCustomerName(doc);
-        return name && !excludedNames.includes(name);
+        const name = customerName(doc);
+        return name !== UNKNOWN_CUSTOMER_NAME && !excludedNames.includes(name);
       });
     }
 

@@ -12,6 +12,12 @@ import { SbAuthTokenRepository } from "../database/repositories/sb.auth-token.re
 import { EMAIL_PORT } from "../../domain/ports/email.port";
 import { AUTH_TOKEN_REPOSITORY } from "../../domain/repositories/auth-token.repository.interface";
 import { getJwtSecret } from "./jwt-secret";
+import { JwtStrategy } from "./jwt.strategy";
+import { AuthSessionService } from "../../application/services/auth-session.service";
+import { AuthEmailTokenService } from "../../application/services/auth-email-token.service";
+import { AuthEmailOutboxService } from "../../application/services/auth-email-outbox.service";
+import { SmtpEmailAdapter } from "../adapters/smtp-email.adapter";
+import { KakaoAuthGuard } from "./kakao-auth.guard";
 
 @Module({
     imports: [
@@ -25,18 +31,25 @@ import { getJwtSecret } from "./jwt-secret";
     controllers: [AuthController],
     providers: [
         AuthService,
+        AuthSessionService,
+        AuthEmailTokenService,
+        AuthEmailOutboxService,
         KakaoStrategy,
+        KakaoAuthGuard,
         LocalStrategy,
         RateLimitGuard,
+        JwtStrategy,
         {
             provide: EMAIL_PORT,
-            useClass: ResendEmailAdapter,
+            useFactory: () => process.env["EMAIL_TRANSPORT"] === "smtp"
+                ? new SmtpEmailAdapter()
+                : new ResendEmailAdapter(),
         },
         {
             provide: AUTH_TOKEN_REPOSITORY,
             useClass: SbAuthTokenRepository,
         },
     ],
-    exports: [AuthService, RateLimitGuard, EMAIL_PORT],
+    exports: [AuthService, AuthSessionService, RateLimitGuard, EMAIL_PORT],
 })
 export class AuthModule { }

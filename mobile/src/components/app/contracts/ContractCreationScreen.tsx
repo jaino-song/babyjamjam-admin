@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 
-import { ConfirmActionModal } from "@/components/app/ui/ConfirmActionModal";
+import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { Block, SteppedWizard, type WizardStep } from "@/components/app/v3";
 import { HeadlessProgressModal } from "@/components/app/eformsign/HeadlessProgressModal";
 import { CONTRACT_CREATION_PROGRESS_STEPS } from "@/lib/eformsign/headless-progress";
@@ -55,7 +55,7 @@ export function ContractCreationScreen({ flow }: ContractCreationScreenProps) {
         dataComponentPrefix="contracts-new-progress"
       />
 
-      <ConfirmActionModal
+      <MobileTwoButtonModal
         open={flow.state.isExistingContractConfirmOpen}
         title="계약서 재생성 확인"
         description="이전에 전송된 계약서가 있습니다. 그래도 새로 생성하시겠어요?"

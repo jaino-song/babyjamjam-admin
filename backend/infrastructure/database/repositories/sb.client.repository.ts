@@ -1,6 +1,11 @@
 import { Injectable } from "@nestjs/common";
 import { ClientEntity } from "domain/entities/client.entity";
-import { IClientRepository, PaginatedResult } from "domain/repositories/client.repository.interface";
+import {
+    ClientWithInitialSchedule,
+    IClientRepository,
+    InitialClientSchedule,
+    PaginatedResult,
+} from "domain/repositories/client.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { ClientMapper } from "infrastructure/database/mapper/client.mapper";
 import { hasColumn } from "infrastructure/database/schema-capabilities";
@@ -33,6 +38,7 @@ export class SbClientRepository implements IClientRepository {
             serviceStatus: true,
             breastPump: true,
             eDocId: true,
+            suppressGreetingSms: true,
             // Tenant key — every where-clause already relies on this column,
             // and reads must carry it so ClientEntity.branchId is populated.
             branchId: true,
@@ -141,6 +147,49 @@ export class SbClientRepository implements IClientRepository {
         return ClientMapper.toDomain(created as any);
     }
 
+    async createWithInitialSchedule(
+        branchid: string,
+        client: ClientEntity,
+        schedule: InitialClientSchedule,
+    ): Promise<ClientWithInitialSchedule> {
+        const select = await this.getClientSelect();
+        const data = await this.getClientCreateData(client);
+        const created = await this.prismaService.client.create({
+            data: {
+                ...data,
+                branchId: branchid,
+                employeeSchedules: {
+                    create: {
+                        branchId: branchid,
+                        primaryEmployeeId: schedule.primaryEmployeeId,
+                        secondaryEmployeeId: schedule.secondaryEmployeeId,
+                        workAddress: schedule.workAddress,
+                        startDate: schedule.startDate,
+                        endDate: schedule.endDate,
+                        replaced: false,
+                    },
+                },
+            },
+            select: {
+                ...select,
+                employeeSchedules: {
+                    select: { id: true },
+                    orderBy: { id: "desc" },
+                    take: 1,
+                },
+            },
+        });
+        const scheduleId = created.employeeSchedules[0]?.id;
+        if (scheduleId === undefined) {
+            throw new Error("Initial employee schedule was not created");
+        }
+
+        return {
+            client: ClientMapper.toDomain(created),
+            scheduleId,
+        };
+    }
+
     async update(branchid: string, client: ClientEntity): Promise<ClientEntity> {
         const select = await this.getClientSelect();
         const data = await this.getClientUpdateData(client);
@@ -162,6 +211,9 @@ export class SbClientRepository implements IClientRepository {
     }
 
     async delete(branchid: string, id: number): Promise<void> {
+        // service_record_case.clientId and eformsign_doc.clientId are SetNull.
+        // Deleting only the tenant-scoped client preserves completed electronic
+        // documents and their snapshot data while removing live client data.
         const result = await this.prismaService.client.deleteMany({
             where: { id, branchId: branchid },
         });

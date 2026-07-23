@@ -1,31 +1,31 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { MessageSectionNav } from "@/components/app/mobile-redesign/MessageSectionNav";
+import { ListCard } from "@/components/app/mobile-redesign/primitives";
 
-import { MessageTriggerList } from "@/components/app/mobile-redesign/MessageTriggerList";
+export { MESSAGE_NAVIGATION_ITEMS } from "@/components/app/mobile-redesign/MessageSectionNav";
+
 import "@/components/app/mobile-redesign/redesign.css";
 
 export function MessagesAutomationPage() {
-  const router = useRouter();
-
   return (
-    <section data-component="alimtalk" className="alimtalk-page">
-      <div className="shell-content" data-component="alimtalk-content">
-        <div className="list-card pop-up message-trigger-card" data-component="message-trigger-card">
-          <div className="list-title" data-component="message-trigger-card-title">
-            <span className="list-title-text">메시지</span>
-            <button
-              type="button"
-              className="list-action"
-              data-component="mobile-messages-new"
-              onClick={() => router.push("/messages/new")}
-            >
-              + 새 메시지
-            </button>
-          </div>
+    <section data-component="messages" className="messages-page">
+      <div
+        className="shell-content flex-col gap-[calc(8px*var(--glint-ui-scale,1))]"
+        data-component="messages-content"
+      >
+        <MessageSectionNav activeId="send" />
 
-          <MessageTriggerList />
-        </div>
+        <ListCard
+          title="메시지"
+          actionLabel="+ 새 메시지"
+          actionHref="/messages/new"
+          filters={[]}
+        >
+          <p className="message-navigation-intro">
+            메시지 전송과 관리 기능을 한곳에서 이용할 수 있습니다.
+          </p>
+        </ListCard>
       </div>
     </section>
   );

@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { Block } from "@/components/app/v3/Block";
 import { getCurrentUser } from "@/lib/auth/cookies";
 import { ROLES } from "@/lib/constants/roles";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import {
   getTrafficSummary,
   getTrafficTrend,
@@ -91,12 +92,7 @@ export default async function TrafficDetailPage() {
         <StatsHero
           title="사이트 트래픽"
           subtitle="PostHog · 페이지뷰/방문자/소스/디바이스/지역 상세 분석"
-          rightLabel={todayDate.toLocaleDateString("ko-KR", { weekday: "long" })}
-          rightValue={todayDate.toLocaleDateString("ko-KR", {
-            year: "numeric",
-            month: "2-digit",
-            day: "2-digit",
-          })}
+          rightValue={formatDateForDisplay(todayDate)}
           backHref="/stats"
           backLabel="통계 overview로"
           dataComponent="stats-traffic-hero"

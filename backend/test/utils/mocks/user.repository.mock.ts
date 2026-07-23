@@ -8,6 +8,7 @@ import { IUserRepository } from "domain/repositories/user.repository.interface";
 export class MockUserRepository implements IUserRepository {
     private users: Map<string, UserEntity> = new Map();
     private userIdCounter: number = 1;
+    clearBranchOwnershipsCalls: string[] = [];
 
     /**
      * 테스트 데이터 초기화
@@ -15,6 +16,7 @@ export class MockUserRepository implements IUserRepository {
     reset(): void {
         this.users.clear();
         this.userIdCounter = 1;
+        this.clearBranchOwnershipsCalls = [];
     }
 
     /**
@@ -36,6 +38,10 @@ export class MockUserRepository implements IUserRepository {
 
     async findById(id: string): Promise<UserEntity | null> {
         return this.users.get(id) ?? null;
+    }
+
+    async findByIdInBranch(id: string, _branchId: string): Promise<UserEntity | null> {
+        return this.findById(id);
     }
 
     async findByKakaoId(kakaoId: string): Promise<UserEntity | null> {
@@ -82,11 +88,27 @@ export class MockUserRepository implements IUserRepository {
         return user;
     }
 
+    async updateInBranch(
+        user: UserEntity,
+        _branchId: string,
+        _branchRole?: string,
+    ): Promise<UserEntity | null> {
+        return this.update(user);
+    }
+
     async delete(id: string): Promise<void> {
         if (!this.users.has(id)) {
             throw new Error(`User with id ${id} not found`);
         }
         this.users.delete(id);
+    }
+
+    async deleteMembership(id: string, _branchId: string): Promise<boolean> {
+        return this.users.has(id);
+    }
+
+    async clearBranchOwnerships(userId: string): Promise<void> {
+        this.clearBranchOwnershipsCalls.push(userId);
     }
 
     async findByRoles(roles: string[]): Promise<UserEntity[]> {

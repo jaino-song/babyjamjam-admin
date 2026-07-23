@@ -9,10 +9,11 @@ on:
         default: preview
         type: choice
         options:
+          - dev
           - preview
           - production
   push:
-    branches: [ preview, main ]
+    branches: [ dev, preview, main ]
     paths:
       - 'backend/prisma/**'
       - '.github/workflows/database-patches.yml'
@@ -22,6 +23,126 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  apply-dev:
+    name: apply dev database patches
+    if: >-
+      (github.event_name == 'push' && github.ref_name == 'dev') ||
+      (github.event_name == 'workflow_dispatch' && inputs.target == 'dev')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: dev
+    env:
+      DATABASE_URL: ${{ secrets.DEV_DATABASE_URL || secrets.DEVELOPMENT_DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DEV_DIRECT_URL || secrets.DEVELOPMENT_DIRECT_URL || secrets.DEV_DATABASE_URL || secrets.DEVELOPMENT_DATABASE_URL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check database secrets
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "DEV_DATABASE_URL or DEVELOPMENT_DATABASE_URL secret is required."
+            exit 1
+          fi
+
+          if [ -z "$DIRECT_URL" ]; then
+            echo "DEV_DIRECT_URL, DEVELOPMENT_DIRECT_URL, DEV_DATABASE_URL, or DEVELOPMENT_DATABASE_URL secret is required."
+            exit 1
+          fi
+
+      - name: Apply message schema compatibility patches
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713120000_repair_message_table_renames/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260709000000_message_automation_hardening/migration.sql
+
+      - name: Apply eformsign document relation patches
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260709100000_link_eformsign_and_message_relations/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260709110000_add_message_log_recipient_snapshot/migration.sql
+
+      - name: Verify eformsign document relation patches
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-eformsign-document-relations.sql
+
+      - name: Apply client-owned service-record patch
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713000000_add_client_service_record_case/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713110000_align_service_record_case_schema/migration.sql
+
+      - name: Verify client-owned service-record patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-service-record-cases.sql
+
+      - name: Apply user approval + token-version patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713100000_add_user_approval_and_token_version/migration.sql
+
+      - name: Verify user approval + token-version patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-user-approval.sql
+
+      - name: Apply auth session + outbox patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260717090000_add_auth_sessions/migration.sql
+
+      - name: Verify auth session + outbox patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-auth-sessions.sql
+
+      - name: Apply service-record mom signature patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260715140000_add_client_signature_to_service_record_day/migration.sql
+
+      - name: Apply feedback to service-record rename patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260716090000_rename_feedback_to_service_record/migration.sql
+
+      - name: Apply employee/client hardening patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260717000000_employee_client_hardening/migration.sql
+
+      - name: Verify employee/client hardening patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-employee-client-hardening.sql
+
+      - name: Apply client pre-booking status patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260717120000_add_client_pre_booking_status/migration.sql
+
+      - name: Verify client pre-booking status patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-client-pre-booking-status.sql
+
+      - name: Apply branch owner nullable patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260721090000_make_branch_owner_nullable/migration.sql
+
+      - name: Preserve electronic documents on client deletion
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260723090000_preserve_electronic_documents_on_client_delete/migration.sql
+
+      - name: Verify client deletion document preservation
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-client-delete-document-preservation.sql
+
   apply-preview:
     name: apply preview database patches
     if: >-
@@ -64,12 +185,42 @@ jobs:
             exit 1
           fi
 
+      - name: Apply message schema compatibility patches
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713120000_repair_message_table_renames/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260709000000_message_automation_hardening/migration.sql
+
       - name: Apply idempotent database patches
         working-directory: backend
         run: |
           pnpm exec prisma db execute --schema prisma/schema.prisma --stdin <<'SQL'
           ALTER TABLE "client" ALTER COLUMN "care_center" DROP NOT NULL;
           ALTER TABLE "client_draft" ADD COLUMN IF NOT EXISTS "confirming_started_at" TIMESTAMPTZ(6);
+          ALTER TABLE "message_trigger_job"  ADD COLUMN IF NOT EXISTS "attempts" INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE "message_trigger_job"  ADD COLUMN IF NOT EXISTS "next_attempt_at" TIMESTAMPTZ(6);
+          ALTER TABLE "message_trigger_rule" ADD COLUMN IF NOT EXISTS "is_default" BOOLEAN NOT NULL DEFAULT false;
+          ALTER TABLE "message_trigger_rule" ADD COLUMN IF NOT EXISTS "jobs_stale" BOOLEAN NOT NULL DEFAULT false;
+          UPDATE "message_trigger_rule"
+          SET "is_active" = false
+          WHERE "is_active" = true
+            AND "branch_id" IN (SELECT "id" FROM "branch" WHERE "sms_sender_approval_status" IS DISTINCT FROM 'approved');
+          UPDATE "message_trigger_rule" r
+          SET "is_default" = true
+          WHERE r."is_default" = false
+            AND r."template_key" IN ('SERVICE_INFO', 'CLIENT_GREETING')
+            AND r."branch_id" IN (SELECT "id" FROM "branch" WHERE "sms_sender_approval_status" IS DISTINCT FROM 'approved')
+            AND r."id" = (
+              SELECT r2."id" FROM "message_trigger_rule" r2
+              WHERE r2."branch_id" = r."branch_id" AND r2."template_key" = r."template_key"
+              ORDER BY r2."created_at" ASC LIMIT 1
+            );
+          UPDATE "message_trigger_job"
+          SET "status" = 'canceled', "canceled_at" = now(), "cancel_reason" = '메시지 발송 승인 전 자동 생성 취소'
+          WHERE "status" = 'pending'
+            AND "branch_id" IN (SELECT "id" FROM "branch" WHERE "sms_sender_approval_status" IS DISTINCT FROM 'approved');
+          CREATE UNIQUE INDEX IF NOT EXISTS "uniq_message_trigger_rule_default"
+          ON "message_trigger_rule" ("branch_id", "template_key") WHERE "is_default" = true;
           SQL
 
       - name: Verify database patches
@@ -100,14 +251,151 @@ jobs:
             ) THEN
               RAISE EXCEPTION 'client_draft.confirming_started_at is missing or has the wrong shape';
             END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'message_trigger_job'
+                AND column_name = 'attempts'
+                AND data_type = 'integer'
+                AND is_nullable = 'NO'
+                AND column_default = '0'
+            ) THEN
+              RAISE EXCEPTION 'message_trigger_job.attempts is missing or has the wrong shape';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'message_trigger_job'
+                AND column_name = 'next_attempt_at'
+                AND data_type = 'timestamp with time zone'
+                AND is_nullable = 'YES'
+            ) THEN
+              RAISE EXCEPTION 'message_trigger_job.next_attempt_at is missing or has the wrong shape';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'message_trigger_rule'
+                AND column_name = 'is_default'
+                AND data_type = 'boolean'
+                AND is_nullable = 'NO'
+                AND column_default = 'false'
+            ) THEN
+              RAISE EXCEPTION 'message_trigger_rule.is_default is missing or has the wrong shape';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'message_trigger_rule'
+                AND column_name = 'jobs_stale'
+                AND data_type = 'boolean'
+                AND is_nullable = 'NO'
+                AND column_default = 'false'
+            ) THEN
+              RAISE EXCEPTION 'message_trigger_rule.jobs_stale is missing or has the wrong shape';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM pg_indexes
+              WHERE schemaname = 'public'
+                AND tablename = 'message_trigger_rule'
+                AND indexname = 'uniq_message_trigger_rule_default'
+            ) THEN
+              RAISE EXCEPTION 'message_trigger_rule.uniq_message_trigger_rule_default index is missing';
+            END IF;
           END $$;
           SQL
 
+      - name: Apply eformsign document relation patches
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260709100000_link_eformsign_and_message_relations/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260709110000_add_message_log_recipient_snapshot/migration.sql
+
+      - name: Verify eformsign document relation patches
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-eformsign-document-relations.sql
+
+      - name: Apply client-owned service-record patch
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713000000_add_client_service_record_case/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713110000_align_service_record_case_schema/migration.sql
+
+      - name: Verify client-owned service-record patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-service-record-cases.sql
+
+      - name: Apply user approval + token-version patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713100000_add_user_approval_and_token_version/migration.sql
+
+      - name: Verify user approval + token-version patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-user-approval.sql
+
+      - name: Apply auth session + outbox patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260717090000_add_auth_sessions/migration.sql
+
+      - name: Verify auth session + outbox patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-auth-sessions.sql
+
+      - name: Apply service-record mom signature patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260715140000_add_client_signature_to_service_record_day/migration.sql
+
+      - name: Apply feedback to service-record rename patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260716090000_rename_feedback_to_service_record/migration.sql
+
+      - name: Apply employee/client hardening patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260717000000_employee_client_hardening/migration.sql
+
+      - name: Verify employee/client hardening patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-employee-client-hardening.sql
+
+      - name: Apply client pre-booking status patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260717120000_add_client_pre_booking_status/migration.sql
+
+      - name: Verify client pre-booking status patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-client-pre-booking-status.sql
+
+      - name: Apply branch owner nullable patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260721090000_make_branch_owner_nullable/migration.sql
+
+      - name: Preserve electronic documents on client deletion
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260723090000_preserve_electronic_documents_on_client_delete/migration.sql
+
+      - name: Verify client deletion document preservation
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-client-delete-document-preservation.sql
+
   apply-production:
     name: apply production database patches
+    needs: [apply-preview]
     if: >-
-      (github.event_name == 'push' && github.ref_name == 'main') ||
-      (github.event_name == 'workflow_dispatch' && inputs.target == 'production')
+      always() &&
+      (
+        (github.event_name == 'push' && github.ref_name == 'main') ||
+        (github.event_name == 'workflow_dispatch' && inputs.target == 'production')
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: production
@@ -145,12 +433,42 @@ jobs:
             exit 1
           fi
 
+      - name: Apply message schema compatibility patches
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713120000_repair_message_table_renames/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260709000000_message_automation_hardening/migration.sql
+
       - name: Apply idempotent database patches
         working-directory: backend
         run: |
           pnpm exec prisma db execute --schema prisma/schema.prisma --stdin <<'SQL'
           ALTER TABLE "client" ALTER COLUMN "care_center" DROP NOT NULL;
           ALTER TABLE "client_draft" ADD COLUMN IF NOT EXISTS "confirming_started_at" TIMESTAMPTZ(6);
+          ALTER TABLE "message_trigger_job"  ADD COLUMN IF NOT EXISTS "attempts" INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE "message_trigger_job"  ADD COLUMN IF NOT EXISTS "next_attempt_at" TIMESTAMPTZ(6);
+          ALTER TABLE "message_trigger_rule" ADD COLUMN IF NOT EXISTS "is_default" BOOLEAN NOT NULL DEFAULT false;
+          ALTER TABLE "message_trigger_rule" ADD COLUMN IF NOT EXISTS "jobs_stale" BOOLEAN NOT NULL DEFAULT false;
+          UPDATE "message_trigger_rule"
+          SET "is_active" = false
+          WHERE "is_active" = true
+            AND "branch_id" IN (SELECT "id" FROM "branch" WHERE "sms_sender_approval_status" IS DISTINCT FROM 'approved');
+          UPDATE "message_trigger_rule" r
+          SET "is_default" = true
+          WHERE r."is_default" = false
+            AND r."template_key" IN ('SERVICE_INFO', 'CLIENT_GREETING')
+            AND r."branch_id" IN (SELECT "id" FROM "branch" WHERE "sms_sender_approval_status" IS DISTINCT FROM 'approved')
+            AND r."id" = (
+              SELECT r2."id" FROM "message_trigger_rule" r2
+              WHERE r2."branch_id" = r."branch_id" AND r2."template_key" = r."template_key"
+              ORDER BY r2."created_at" ASC LIMIT 1
+            );
+          UPDATE "message_trigger_job"
+          SET "status" = 'canceled', "canceled_at" = now(), "cancel_reason" = '메시지 발송 승인 전 자동 생성 취소'
+          WHERE "status" = 'pending'
+            AND "branch_id" IN (SELECT "id" FROM "branch" WHERE "sms_sender_approval_status" IS DISTINCT FROM 'approved');
+          CREATE UNIQUE INDEX IF NOT EXISTS "uniq_message_trigger_rule_default"
+          ON "message_trigger_rule" ("branch_id", "template_key") WHERE "is_default" = true;
           SQL
 
       - name: Verify database patches
@@ -181,5 +499,138 @@ jobs:
             ) THEN
               RAISE EXCEPTION 'client_draft.confirming_started_at is missing or has the wrong shape';
             END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'message_trigger_job'
+                AND column_name = 'attempts'
+                AND data_type = 'integer'
+                AND is_nullable = 'NO'
+                AND column_default = '0'
+            ) THEN
+              RAISE EXCEPTION 'message_trigger_job.attempts is missing or has the wrong shape';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'message_trigger_job'
+                AND column_name = 'next_attempt_at'
+                AND data_type = 'timestamp with time zone'
+                AND is_nullable = 'YES'
+            ) THEN
+              RAISE EXCEPTION 'message_trigger_job.next_attempt_at is missing or has the wrong shape';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'message_trigger_rule'
+                AND column_name = 'is_default'
+                AND data_type = 'boolean'
+                AND is_nullable = 'NO'
+                AND column_default = 'false'
+            ) THEN
+              RAISE EXCEPTION 'message_trigger_rule.is_default is missing or has the wrong shape';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'message_trigger_rule'
+                AND column_name = 'jobs_stale'
+                AND data_type = 'boolean'
+                AND is_nullable = 'NO'
+                AND column_default = 'false'
+            ) THEN
+              RAISE EXCEPTION 'message_trigger_rule.jobs_stale is missing or has the wrong shape';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM pg_indexes
+              WHERE schemaname = 'public'
+                AND tablename = 'message_trigger_rule'
+                AND indexname = 'uniq_message_trigger_rule_default'
+            ) THEN
+              RAISE EXCEPTION 'message_trigger_rule.uniq_message_trigger_rule_default index is missing';
+            END IF;
           END $$;
           SQL
+
+      - name: Apply eformsign document relation patches
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260709100000_link_eformsign_and_message_relations/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260709110000_add_message_log_recipient_snapshot/migration.sql
+
+      - name: Verify eformsign document relation patches
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-eformsign-document-relations.sql
+
+      - name: Apply client-owned service-record patch
+        working-directory: backend
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713000000_add_client_service_record_case/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713110000_align_service_record_case_schema/migration.sql
+
+      - name: Verify client-owned service-record patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-service-record-cases.sql
+
+      - name: Apply user approval + token-version patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260713100000_add_user_approval_and_token_version/migration.sql
+
+      - name: Verify user approval + token-version patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-user-approval.sql
+
+      - name: Apply auth session + outbox patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260717090000_add_auth_sessions/migration.sql
+
+      - name: Verify auth session + outbox patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-auth-sessions.sql
+
+      - name: Apply service-record mom signature patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260715140000_add_client_signature_to_service_record_day/migration.sql
+
+      - name: Apply feedback to service-record rename patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260716090000_rename_feedback_to_service_record/migration.sql
+
+      - name: Apply employee/client hardening patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260717000000_employee_client_hardening/migration.sql
+
+      - name: Verify employee/client hardening patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-employee-client-hardening.sql
+
+      - name: Apply client pre-booking status patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260717120000_add_client_pre_booking_status/migration.sql
+
+      - name: Verify client pre-booking status patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-client-pre-booking-status.sql
+
+      - name: Apply branch owner nullable patch
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260721090000_make_branch_owner_nullable/migration.sql
+
+      - name: Preserve electronic documents on client deletion
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260723090000_preserve_electronic_documents_on_client_delete/migration.sql
+
+      - name: Verify client deletion document preservation
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-client-delete-document-preservation.sql

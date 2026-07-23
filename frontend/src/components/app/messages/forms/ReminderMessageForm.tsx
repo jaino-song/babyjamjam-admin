@@ -36,8 +36,7 @@ export const ReminderMessageForm = ({
   const generatedMessage = messageOverride ?? templateMessage;
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(generatedMessage);
-    alert(t(locale, "common.copy-success-message"));
+    return navigator.clipboard.writeText(generatedMessage);
   };
 
   const variableItems = [
@@ -68,6 +67,7 @@ export const ReminderMessageForm = ({
     <AutoFillMsgCard
       title={t(locale, "common.generated-message-title")}
       copyButtonText={t(locale, "common.copy-button")}
+      copySuccessMessage={t(locale, "common.copy-success-message")}
       message={generatedMessage}
       bodyDescription={systemTemplate?.description || "리마인더 메시지를 검토하고 개인화된 문구를 조정할 수 있습니다."}
       metaItems={[

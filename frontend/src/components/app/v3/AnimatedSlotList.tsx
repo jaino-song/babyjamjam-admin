@@ -67,12 +67,11 @@ export function AnimatedSlotList<T>({
 
   const itemsLength = items?.length ?? 0;
   const effectiveFetchingMoreCount = fetchingMoreCount ?? 0;
-  const effectiveLoadingCount = itemVariant === "card" ? 1 : loadingCount;
   const slotCount: number =
     count !== undefined
       ? count
       : isLoading
-        ? effectiveLoadingCount
+        ? loadingCount
         : itemsLength + (isFetchingMore ? effectiveFetchingMoreCount : 0);
 
   useEffect(() => {
@@ -128,8 +127,9 @@ export function AnimatedSlotList<T>({
         const variantClassName =
           itemVariant === "card"
             ? cn(
-                "flex h-[calc(94px*var(--v3-ui-scale,1))] items-center gap-[calc(12px*var(--v3-ui-scale,1))] overflow-hidden rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--v3-ui-scale,1))] text-left transition-all duration-200 [&>*:only-child]:w-full",
-                isInteractive && "cursor-pointer",
+                "flex h-[calc(94px*var(--glint-ui-scale,1))] items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--glint-ui-scale,1))] text-left transition-all duration-200 [&>*:only-child]:w-full",
+                isInteractive &&
+                  "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2",
                 slotState.isActive
                   ? "border-v3-primary bg-v3-primary-light"
                   : isInteractive && "hover:border-v3-primary/30 hover:bg-v3-primary-light/50"
@@ -154,17 +154,17 @@ export function AnimatedSlotList<T>({
               data-component={itemDataComponent}
               className={cn(
                 shouldAnimateSlot && "animate-v3-pop-up",
-                "h-[calc(94px*var(--v3-ui-scale,1))] overflow-hidden px-[calc(16px*var(--v3-ui-scale,1))] py-[calc(16px*var(--v3-ui-scale,1))]",
+                "h-[calc(94px*var(--glint-ui-scale,1))] overflow-hidden px-[calc(16px*var(--glint-ui-scale,1))] py-[calc(16px*var(--glint-ui-scale,1))]",
                 computedSlotClassName
               )}
               style={shouldAnimateSlot ? { animationDelay } : undefined}
             >
               <div
                 data-component={`${itemDataComponent}-text-skeleton`}
-                className="ml-[calc(56px*var(--v3-ui-scale,1))] max-w-[calc(220px*var(--v3-ui-scale,1))] space-y-[calc(8px*var(--v3-ui-scale,1))]"
+                className="ml-[calc(56px*var(--glint-ui-scale,1))] max-w-[calc(220px*var(--glint-ui-scale,1))] space-y-[calc(8px*var(--glint-ui-scale,1))]"
               >
-                <Skeleton className="h-[calc(16px*var(--v3-ui-scale,1))] w-[calc(112px*var(--v3-ui-scale,1))] bg-v3-dim-white" />
-                <Skeleton className="h-[calc(12px*var(--v3-ui-scale,1))] w-full bg-v3-dim-white" />
+                <Skeleton className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(112px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
+                <Skeleton className="h-[calc(12px*var(--glint-ui-scale,1))] w-full bg-v3-dim-white" />
               </div>
             </div>
           );
@@ -189,6 +189,8 @@ export function AnimatedSlotList<T>({
               ? {
                   role: "button" as const,
                   tabIndex: 0,
+                  "aria-pressed":
+                    slotState.isActive === undefined ? undefined : Boolean(slotState.isActive),
                   onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => {
                     if (event.key === "Enter" || event.key === " ") {
                       if (event.key === " ") event.preventDefault();

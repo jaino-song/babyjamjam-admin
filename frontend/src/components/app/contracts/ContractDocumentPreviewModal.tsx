@@ -1,7 +1,12 @@
 "use client";
 
+import { CheckCircle2 } from "lucide-react";
+
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import type { EformsignDocument } from "@/lib/eformsign/types";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import {
   SharedDocumentPreviewDialog,
   type PreviewMetaItem,
@@ -14,14 +19,12 @@ interface ContractDocumentPreviewModalProps {
   document: EformsignDocument | null;
   customerName?: string | null;
   canDownloadReceipt?: boolean;
+  onReviewConfirm?: () => void;
+  isReviewConfirming?: boolean;
 }
 
 function formatDate(timestamp: number): string {
-  return new Date(timestamp).toLocaleDateString("ko-KR", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
+  return formatDateForDisplay(timestamp);
 }
 
 function getPreviewUrl(documentId: string, attachment = false): string {
@@ -35,6 +38,8 @@ export function ContractDocumentPreviewModal({
   document,
   customerName,
   canDownloadReceipt = false,
+  onReviewConfirm,
+  isReviewConfirming = false,
 }: ContractDocumentPreviewModalProps) {
   if (!document) {
     return null;
@@ -86,6 +91,23 @@ export function ContractDocumentPreviewModal({
       receiptDownloadFileName={`${document.document_name || document.id} 영수증.pdf`}
       overlayLabel="PDF 미리보기"
       previewKey={document.id}
+      footerAction={onReviewConfirm ? (
+        <Button
+          variant="positive"
+          size="sm"
+          data-component="contracts-document-preview-review-confirm"
+          onClick={onReviewConfirm}
+          disabled={isReviewConfirming}
+          className="min-w-[88px] hover:translate-y-0 hover:shadow-[0_4px_24px_hsla(214,50%,20%,0.06)]"
+        >
+          {isReviewConfirming ? (
+            <Spinner className="mr-2 h-4 w-4" />
+          ) : (
+            <CheckCircle2 className="mr-2 h-4 w-4" />
+          )}
+          {isReviewConfirming ? "확인 중..." : "확인"}
+        </Button>
+      ) : undefined}
     />
   );
 }
