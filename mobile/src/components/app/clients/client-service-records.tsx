@@ -30,6 +30,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useSendServiceRecordLink } from "@/hooks/useServiceRecords";
 import { toast } from "@/hooks/use-toast";
 import type { Client } from "@/lib/client/types";
+import { ServiceRecordErrorBoundary } from "@/lib/observability/service-record-error-boundary";
 import { cn } from "@/lib/utils";
 
 interface ClientServiceRecordsProps {
@@ -68,6 +69,16 @@ const LINK_STATUS_TEXT_CLASS: Record<LinkBadgeTone, string> = {
 const SERVICE_RECORD_SKELETON_CLASS = "service-record-skeleton-loader";
 
 export function ClientServiceRecords({
+    ...props
+}: ClientServiceRecordsProps) {
+    return (
+        <ServiceRecordErrorBoundary>
+            <ClientServiceRecordsContent {...props} />
+        </ServiceRecordErrorBoundary>
+    );
+}
+
+function ClientServiceRecordsContent({
     client,
     activeTab,
     overview,

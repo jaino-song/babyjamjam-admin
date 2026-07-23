@@ -14,6 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { calcEndDateBusinessDays } from "@/lib/date/business-days";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { cn } from "@/lib/utils";
+import { ServiceRecordErrorBoundary } from "@/lib/observability/service-record-error-boundary";
 import {
     SERVICE_RECORD_FORM_LAYOUT,
     SERVICE_RECORD_LAYOUT_ANSWER_KEYS,
@@ -57,6 +58,16 @@ const LINK_STATUS_META: Record<ServiceRecordLinkStatus, {
 };
 
 export function ClientServiceRecordsTab({
+    ...props
+}: ClientServiceRecordsTabProps) {
+    return (
+        <ServiceRecordErrorBoundary>
+            <ClientServiceRecordsTabContent {...props} />
+        </ServiceRecordErrorBoundary>
+    );
+}
+
+function ClientServiceRecordsTabContent({
     overview,
     clientId,
     isLoading,

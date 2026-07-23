@@ -9,6 +9,11 @@ import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneB
 import { SignaturePad } from "@/components/app/service-record/SignaturePad";
 import { DEFAULT_PROVIDER_NAME, ProviderInfo } from "@/components/service-record/provider-info";
 import { isBusinessDayKr, isoDateInKorea, nextBusinessDayKr } from "@/lib/date/business-days";
+import {
+    captureServiceRecordError,
+    captureServiceRecordResponseError,
+    getServiceRecordOperation,
+} from "@/lib/observability/capture-service-record-error";
 
 /* ───────────────────────── form definition (mirrors the 제공기록지) ───────────────────────── */
 
@@ -342,15 +347,41 @@ export default function ServiceRecordPage() {
     }, []);
 
     const api = useCallback(
-        async (path: string, init: RequestInit = {}) => {
-            const res = await fetch(`/api/service-record/${token}${path}`, {
-                ...init,
-                headers: {
-                    "Content-Type": "application/json",
-                    ...(init.headers ?? {}),
-                },
-            });
-            return res;
+        async (
+            path: string,
+            init: RequestInit = {},
+            includeJsonHeaders = true,
+        ) => {
+            const method = init.method ?? "GET";
+            const monitoredPath = `/api/service-record/[Filtered]${path}`;
+            const operation = getServiceRecordOperation(path);
+
+            try {
+                const url = `/api/service-record/${token}${path}`;
+                const response = includeJsonHeaders
+                    ? await fetch(url, {
+                        ...init,
+                        headers: {
+                            "Content-Type": "application/json",
+                            ...(init.headers ?? {}),
+                        },
+                    })
+                    : await fetch(url);
+
+                captureServiceRecordResponseError(response, {
+                    operation,
+                    method,
+                    path: monitoredPath,
+                });
+                return response;
+            } catch (error) {
+                captureServiceRecordError(error, {
+                    operation,
+                    method,
+                    path: monitoredPath,
+                });
+                throw error;
+            }
         },
         [token],
     );
@@ -389,7 +420,7 @@ export default function ServiceRecordPage() {
         let alive = true;
         (async () => {
             try {
-                const res = await fetch(`/api/service-record/${token}/link`);
+                const res = await api("/link", {}, false);
                 const data = await res.json();
                 if (!alive) return;
                 if (!data?.valid) {
@@ -402,7 +433,7 @@ export default function ServiceRecordPage() {
             }
         })();
         return () => { alive = false; };
-    }, [loadContext, navigateTo, token]);
+    }, [api, loadContext, navigateTo, token]);
 
     useEffect(() => {
         const handlePopState = () => {
@@ -489,7 +520,7 @@ export default function ServiceRecordPage() {
         if (phone.replace(/\D/g, "").length < 10) { setPhoneError("휴대폰 번호를 입력해 주세요."); return; }
         setBusy(true); setPhoneError(null);
         try {
-            const res = await fetch(`/api/service-record/${token}/verify`, {
+            const res = await api("/verify", {
                 method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phone }),
             });
             const data = await res.json();
