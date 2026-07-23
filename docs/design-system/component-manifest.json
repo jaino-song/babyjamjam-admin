@@ -9,7 +9,7 @@
     "dataComponentConvention": "mobile/DATA-COMPONENT-CONVENTION.md"
   },
   "conventions": {
-    "dataComponent": "kebab-case {page}-{parent}-{child}-{element}; enforced by data-component/require-data-component",
+    "dataComponent": "{platform}_{route}_{owner}[_{child}...] full-parent path; underscore separates owner layers and dash is allowed only inside a segment",
     "layers": {
       "atom": "direct visual-token consumers (components/ui, shadcn-based)",
       "molecule": "atom compositions: fields, badges, rows, chips",

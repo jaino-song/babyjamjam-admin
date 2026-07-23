@@ -56,7 +56,7 @@ export function ContractCreationReviewStep({ flow }: ContractCreationReviewStepP
         />
       </FormSection>
 
-      <InfoCard title="최종 확인">
+      <InfoCard data-component="mobile_contracts_detail-panel_info-card" title="최종 확인">
         <InfoRow label="고객" value={summary.clientName} />
         <InfoRow label="제공인력" value={summary.employeeName} />
         <InfoRow label="바우처" value={summary.voucherLabel} />

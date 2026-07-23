@@ -17,6 +17,10 @@
 6. `data-component` 속성은 `{platform}_{page}_{organism}_{component}[_{sub}…]` 형식을 사용한다.
    `_`는 논리 세그먼트, `-`는 세그먼트 내부 kebab-case에만 사용한다. 기존 kebab-case 값은
    점진적 마이그레이션 동안만 호환하며, 새 코드에는 사용하지 않는다.
+   모든 자식은 route/page root부터 직계 owner까지의 전체 경로를 유지하고 부모 값에
+   `_child`를 추가한다. depth 제한이나 namespace restart는 없다. 재사용 composite는
+   caller가 완성된 base를 전달하며 `info-card-title` 같은 context-free fallback을 두지 않는다.
+   단순 layout wrapper에는 `_div`/`_span` 같은 기계적 이름을 추가하지 않는다.
 
 ## 금지 목록 (page.tsx 기준, ESLint로 강제)
 

@@ -1,44 +1,36 @@
-const DATA_COMPONENT_ID_PATTERN = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
+export const DATA_COMPONENT_ID_PATTERN =
+  /^(desktop|mobile)_[a-z0-9]+(?:-[a-z0-9]+)*(?:_[a-z0-9]+(?:-[a-z0-9]+)*){1,}$/;
 
-export const DATA_COMPONENT_PAGE_PREFIXES = {
-    home: "home",
-    dashboard: "dashboard",
-    clients: "clients",
-    "clients-filtered": "clients-filtered",
-    employees: "employees",
-    contracts: "contracts",
-    "contracts-creation": "contracts-creation",
-    messages: "messages",
-    "messages-templates": "messages-templates",
-    "messages-templates-new": "messages-templates-new",
-    "messages-template-edit": "messages-template-edit",
-    "messages-system-templates": "messages-system-templates",
-    "messages-system-template-detail": "messages-system-template-detail",
-    settings: "settings",
-    "settings-general": "settings-general",
-    "settings-voucher-price": "settings-voucher-price",
-    admin: "admin",
-    "admin-feedback-detail": "admin-feedback-detail",
-    "auth-register": "auth-register",
-    "auth-forgot-password": "auth-forgot-password",
-    "auth-reset-password": "auth-reset-password",
-    "auth-verify-email": "auth-verify-email",
-    "auth-callback": "auth-callback",
-    chat: "chat",
-    files: "files",
-    "select-org": "select-org",
-    login: "login",
-    logout: "logout",
-    test: "test",
-} as const;
+export type DataComponentPlatform = "desktop" | "mobile";
 
-export type DataComponentPagePrefix =
-    (typeof DATA_COMPONENT_PAGE_PREFIXES)[keyof typeof DATA_COMPONENT_PAGE_PREFIXES];
+const DATA_COMPONENT_SEGMENT_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-export function makeDataComponentId(page: DataComponentPagePrefix, ...parts: string[]): string {
-    return [page, ...parts].join("-");
+function assertSegments(parts: readonly string[]): void {
+  if (parts.length === 0 || parts.some((part) => !DATA_COMPONENT_SEGMENT_PATTERN.test(part))) {
+    throw new Error(`Invalid data-component path segments: ${parts.join(", ")}`);
+  }
+}
+
+export function makeDataComponentId(
+  platform: DataComponentPlatform,
+  ...parts: string[]
+): string {
+  assertSegments(parts);
+  return [platform, ...parts].join("_");
+}
+
+export function extendDataComponentId(parent: string, ...parts: string[]): string {
+  if (!isValidDataComponentId(parent)) {
+    throw new Error(`Invalid data-component parent: ${parent}`);
+  }
+  assertSegments(parts);
+  return [parent, ...parts].join("_");
 }
 
 export function isValidDataComponentId(id: string): boolean {
-    return DATA_COMPONENT_ID_PATTERN.test(id);
+  return DATA_COMPONENT_ID_PATTERN.test(id);
+}
+
+export function isDataComponentDescendant(parent: string, child: string): boolean {
+  return child.startsWith(`${parent}_`) && isValidDataComponentId(child);
 }

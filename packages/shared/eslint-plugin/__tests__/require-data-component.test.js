@@ -32,6 +32,12 @@ ruleTester.run(
       {
         code: '<main data-component="legacy-page-shell" />',
       },
+      {
+        code: '<section data-component="desktop_clients_detail"><div data-component="desktop_clients_detail_header" /></section>',
+      },
+      {
+        code: '<div data-component="desktop_clients_detail" data-source-component="ClientDetailPanel" />',
+      },
     ],
     invalid: [
       {
@@ -41,6 +47,14 @@ ruleTester.run(
       {
         code: '<div data-component="Desktop_clients-new_basic_name-field" />',
         errors: [{ messageId: "invalidFormat" }],
+      },
+      {
+        code: '<section data-component="desktop_clients_detail"><div data-component="desktop_clients_header" /></section>',
+        errors: [{ messageId: "brokenParentPath" }],
+      },
+      {
+        code: '<div data-component="desktop_clients_detail" data-source-component="client-detail-panel" />',
+        errors: [{ messageId: "invalidSourceComponent" }],
       },
     ],
   },

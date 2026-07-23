@@ -22,7 +22,7 @@ export interface FormSectionProps extends Omit<React.HTMLAttributes<HTMLElement>
   titleDataComponent?: string;
   descriptionDataComponent?: string;
   bodyDataComponent?: string;
-  "data-component"?: string;
+  "data-component": string;
 }
 
 function FormSection({

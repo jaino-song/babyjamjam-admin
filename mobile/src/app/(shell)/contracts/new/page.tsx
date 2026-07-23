@@ -960,7 +960,7 @@ export default function ContractCreationPage() {
             exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.95, y: -4 }}
             transition={{ duration: prefersReducedMotion ? 0.16 : 0.28, ease: [0.22, 1, 0.36, 1] }}
           >
-            <span className="relative z-[1]" data-component="mobile_contracts-new_feedback_toast-message">
+            <span className="relative z-[1]" data-component="mobile_contracts-new_feedback_toast_toast-message">
               {floatingError}
             </span>
           </motion.div>
@@ -968,10 +968,10 @@ export default function ContractCreationPage() {
       </AnimatePresence>
 
       <div className={styles.pageRoot} data-component="mobile_contracts-new_screen_root">
-        <div className={styles.navPage} data-component="mobile_contracts-new_screen_page">
-          <header className={styles.navbar} data-component="mobile_contracts-new_header_root">
+        <div className={styles.navPage} data-component="mobile_contracts-new_screen_root_page">
+          <header className={styles.navbar} data-component="mobile_contracts-new_screen_root_page_root">
             <button
-              data-component="mobile_contracts-new_header_back-button"
+              data-component="mobile_contracts-new_screen_root_page_root_back-button"
               type="button"
               onClick={goBack}
               className={styles.navbarIconButton}
@@ -979,9 +979,9 @@ export default function ContractCreationPage() {
             >
               <ChevronLeft aria-hidden="true" size={20} strokeWidth={2.5} />
             </button>
-            <div className={styles.navbarTitle} data-component="mobile_contracts-new_header_title">계약서 생성</div>
+            <div className={styles.navbarTitle} data-component="mobile_contracts-new_screen_root_page_root_title">계약서 생성</div>
             <button
-              data-component="mobile_contracts-new_header_close-button"
+              data-component="mobile_contracts-new_screen_root_page_root_close-button"
               type="button"
               onClick={goBack}
               className={styles.navbarIconButton}
@@ -991,39 +991,39 @@ export default function ContractCreationPage() {
             </button>
           </header>
 
-          <section className={styles.wizardContent} data-component="mobile_contracts-new_wizard_root">
-            <div className={styles.wizardHeader} data-component="mobile_contracts-new_wizard_header">
-              <div className={styles.progressRow} data-component="mobile_contracts-new_wizard_progress-row">
-                <div className={styles.progressTrack} data-component="mobile_contracts-new_wizard_progress-track" aria-hidden="true">
+          <section className={styles.wizardContent} data-component="mobile_contracts-new_screen_root_page_root">
+            <div className={styles.wizardHeader} data-component="mobile_contracts-new_screen_root_page_root_header">
+              <div className={styles.progressRow} data-component="mobile_contracts-new_screen_root_page_root_header_progress-row">
+                <div className={styles.progressTrack} data-component="mobile_contracts-new_screen_root_page_root_header_progress-row_progress-track" aria-hidden="true">
                   <div
                     className={styles.progressFill}
-                    data-component="mobile_contracts-new_wizard_progress-fill"
+                    data-component="mobile_contracts-new_screen_root_page_root_header_progress-row_progress-track_progress-fill"
                     style={{ width: `${progress}%` }}
                   />
                 </div>
-                <div className={styles.stepCount} data-component="mobile_contracts-new_wizard_step-count">
+                <div className={styles.stepCount} data-component="mobile_contracts-new_screen_root_page_root_header_progress-row_step-count">
                   <span>{activeStep + 1}</span> / {WIZARD_STEPS.length} 단계
                 </div>
               </div>
-              <h1 className={styles.stepTitle} data-component="mobile_contracts-new_wizard_step-title">
+              <h1 className={styles.stepTitle} data-component="mobile_contracts-new_screen_root_page_root_header_step-title">
                 {activeStepMeta.title}
               </h1>
-              <p className={styles.stepDesc} data-component="mobile_contracts-new_wizard_step-description">
+              <p className={styles.stepDesc} data-component="mobile_contracts-new_screen_root_page_root_header_step-description">
                 {activeStepMeta.desc}
               </p>
             </div>
 
-            <div className={styles.formScroll} data-component="mobile_contracts-new_wizard_form-scroll">
+            <div className={styles.formScroll} data-component="mobile_contracts-new_screen_root_page_root_form-scroll">
               {activeStep === 0 ? (
                 <>
-                  <div className={styles.formCard} data-component="mobile_contracts-new_client_card">
-                    <div className={styles.formCardTitle} data-component="mobile_contracts-new_client_card-title">
+                  <div className={styles.formCard} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_card">
+                    <div className={styles.formCardTitle} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_card_card-title">
                       이용자 정보
                       <span className={styles.optionalBadge}>기존 고객 또는 직접 입력</span>
                     </div>
                     <Field dataComponent="mobile_contracts-new_client_name-field" label="이름" required>
                       <ClientAutocomplete
-                        data-component="mobile_contracts-new_client_autocomplete"
+                        data-component="mobile_contracts-new_screen_root_page_root_form-scroll_card_autocomplete"
                         value={clientId}
                         onChange={handleClientSelect}
                         inputValue={name}
@@ -1037,7 +1037,7 @@ export default function ContractCreationPage() {
                     </Field>
                     <Field dataComponent="mobile_contracts-new_client_phone-field" label="연락처" required>
                       <input
-                        data-component="mobile_contracts-new_client_phone-input"
+                        data-component="mobile_contracts-new_screen_root_page_root_form-scroll_card_phone-input"
                         className={styles.formInput}
                         value={phone}
                         onChange={(e) => setPhone(formatPhoneNumber(e.target.value))}
@@ -1050,7 +1050,7 @@ export default function ContractCreationPage() {
                     <div className={styles.formGrid2}>
                       <Field dataComponent="mobile_contracts-new_client_birthday-field" label="생년월일">
                         <input
-                          data-component="mobile_contracts-new_client_birthday-input"
+                          data-component="mobile_contracts-new_screen_root_page_root_form-scroll_card_birthday-input"
                           className={styles.formInput}
                           value={birthday}
                           onChange={(e) => setBirthday(e.target.value.replace(/\D/g, "").slice(0, 6))}
@@ -1061,7 +1061,7 @@ export default function ContractCreationPage() {
                       </Field>
                       <Field dataComponent="mobile_contracts-new_client_start-date-field" label="서비스 시작일">
                         <input
-                          data-component="mobile_contracts-new_client_start-date-input"
+                          data-component="mobile_contracts-new_screen_root_page_root_form-scroll_card_start-date-input"
                           className={styles.formInput}
                           value={startDateInput}
                           onChange={(e) => handleDateInputChange(setStartDateInput, setStartDate, e.target.value)}
@@ -1073,7 +1073,7 @@ export default function ContractCreationPage() {
                     </div>
                     <Field dataComponent="mobile_contracts-new_client_address-field" label="주소">
                       <input
-                        data-component="mobile_contracts-new_client_address-input"
+                        data-component="mobile_contracts-new_screen_root_page_root_form-scroll_card_address-input"
                         className={styles.formInput}
                         value={address}
                         onChange={(e) => setAddress(e.target.value)}
@@ -1082,11 +1082,11 @@ export default function ContractCreationPage() {
                     </Field>
                   </div>
 
-                  <div className={styles.formCard} data-component="mobile_contracts-new_client_area-card">
+                  <div className={styles.formCard} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_area-card">
                     <Field dataComponent="mobile_contracts-new_client_area-field" label="계약서 유형" required>
                       <div className={styles.selectWrap}>
                         <select
-                          data-component="mobile_contracts-new_client_area-select"
+                          data-component="mobile_contracts-new_screen_root_page_root_form-scroll_area-card_area-select"
                           className={styles.formInput}
                           value={area}
                           onChange={(e) => setArea(e.target.value)}
@@ -1106,13 +1106,13 @@ export default function ContractCreationPage() {
 
               {activeStep === 1 ? (
                 <>
-                  <div className={styles.formCard} data-component="mobile_contracts-new_employee_primary-card">
-                    <div className={styles.formCardTitle} data-component="mobile_contracts-new_employee_primary-card-title">
+                  <div className={styles.formCard} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_primary-card">
+                    <div className={styles.formCardTitle} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_primary-card_primary-card-title">
                       제공인력 1<span className={styles.requiredMark}>*</span>
                     </div>
-                    <div className={styles.formRow} data-component="mobile_contracts-new_employee_primary-autocomplete-field">
+                    <div className={styles.formRow} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_primary-card_primary-autocomplete-field">
                       <EmployeeAutocomplete
-                        data-component="mobile_contracts-new_employee_primary-autocomplete"
+                        data-component="mobile_contracts-new_screen_root_page_root_form-scroll_primary-card_primary-autocomplete-field_primary-autocomplete"
                         value={employeeId}
                         onChange={handleEmployeeSelect}
                         label=""
@@ -1121,7 +1121,7 @@ export default function ContractCreationPage() {
                     </div>
                     <Field dataComponent="mobile_contracts-new_employee_primary-phone-field" label="연락처" required>
                       <input
-                        data-component="mobile_contracts-new_employee_primary-phone-input"
+                        data-component="mobile_contracts-new_screen_root_page_root_form-scroll_primary-card_primary-phone-input"
                         className={styles.formInput}
                         value={employeePhone}
                         type="tel"
@@ -1133,21 +1133,21 @@ export default function ContractCreationPage() {
                     </Field>
                   </div>
 
-                  <div className={styles.formCard} data-component="mobile_contracts-new_employee_secondary-card">
+                  <div className={styles.formCard} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_secondary-card">
                     <div
                       className={styles.toggleRow}
-                      data-component="mobile_contracts-new_employee_secondary-toggle-row"
+                      data-component="mobile_contracts-new_screen_root_page_root_form-scroll_secondary-card_secondary-toggle-row"
                       onClick={() => handleEmployee2VisibilityChange(!showEmployee2)}
                       role="button"
                       tabIndex={0}
                     >
-                      <div className={styles.toggleText} data-component="mobile_contracts-new_employee_secondary-toggle-copy">
-                        <div className={styles.toggleLabel} data-component="mobile_contracts-new_employee_secondary-toggle-label">
+                      <div className={styles.toggleText} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_secondary-card_secondary-toggle-row_secondary-toggle-copy">
+                        <div className={styles.toggleLabel} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_secondary-card_secondary-toggle-row_secondary-toggle-copy_secondary-toggle-label">
                           제공인력 2 추가
                         </div>
                       </div>
                       <Switch
-                        data-component="mobile_contracts-new_employee_secondary-toggle"
+                        data-component="mobile_contracts-new_screen_root_page_root_form-scroll_secondary-card_secondary-toggle-row_secondary-toggle"
                         aria-label="제공인력 2 토글"
                         checked={showEmployee2}
                         onClick={(event) => event.stopPropagation()}
@@ -1157,12 +1157,12 @@ export default function ContractCreationPage() {
                     {showEmployee2 ? (
                       <>
                         <div className={styles.dashedDivider} />
-                        <div className={styles.formCardTitle} data-component="mobile_contracts-new_employee_secondary-card-title">
+                        <div className={styles.formCardTitle} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_secondary-card_secondary-card-title">
                           제공인력 2<span className={styles.requiredMark}>*</span>
                         </div>
-                        <div className={styles.formRow} data-component="mobile_contracts-new_employee_secondary-autocomplete-field">
+                        <div className={styles.formRow} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_secondary-card_secondary-autocomplete-field">
                           <EmployeeAutocomplete
-                            data-component="mobile_contracts-new_employee_secondary-autocomplete"
+                            data-component="mobile_contracts-new_screen_root_page_root_form-scroll_secondary-card_secondary-autocomplete-field_secondary-autocomplete"
                             value={employee2Id}
                             onChange={handleEmployee2Select}
                             label=""
@@ -1171,7 +1171,7 @@ export default function ContractCreationPage() {
                         </div>
                         <Field dataComponent="mobile_contracts-new_employee_secondary-phone-field" label="연락처" required>
                           <input
-                            data-component="mobile_contracts-new_employee_secondary-phone-input"
+                            data-component="mobile_contracts-new_screen_root_page_root_form-scroll_secondary-card_secondary-phone-input"
                             className={styles.formInput}
                             value={employee2Phone}
                             type="tel"
@@ -1189,15 +1189,15 @@ export default function ContractCreationPage() {
 
               {activeStep === 2 ? (
                 <>
-                  <div className={styles.formCard} data-component="mobile_contracts-new_voucher_selection-card">
-                    <div className={styles.formCardTitle} data-component="mobile_contracts-new_voucher_selection-card-title">
+                  <div className={styles.formCard} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_selection-card">
+                    <div className={styles.formCardTitle} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_selection-card_selection-card-title">
                       바우처 선택
                     </div>
                     <div className={styles.formGrid2}>
                       <Field dataComponent="mobile_contracts-new_voucher_year-field" label="연도" required>
                         <div className={styles.selectWrap}>
                           <select
-                            data-component="mobile_contracts-new_voucher_year-select"
+                            data-component="mobile_contracts-new_screen_root_page_root_form-scroll_selection-card_year-select"
                             className={styles.formInput}
                             value={voucherYear || ""}
                             onChange={(e) => setVoucherYear(Number(e.target.value))}
@@ -1212,7 +1212,7 @@ export default function ContractCreationPage() {
                       <Field dataComponent="mobile_contracts-new_voucher_type-field" label="바우처 유형" required>
                         <div className={styles.selectWrap}>
                           <select
-                            data-component="mobile_contracts-new_voucher_type-select"
+                            data-component="mobile_contracts-new_screen_root_page_root_form-scroll_selection-card_type-select"
                             className={styles.formInput}
                             value={voucherType}
                             onChange={(e) => handleVoucherTypeChange(e.target.value)}
@@ -1234,7 +1234,7 @@ export default function ContractCreationPage() {
                     <Field dataComponent="mobile_contracts-new_voucher_duration-field" label="기간" required>
                       <div className={cn(styles.selectWrap, isPriceLoading ? styles.loadingSelect : !voucherType && styles.disabledSelect)}>
                         <select
-                          data-component="mobile_contracts-new_voucher_duration-select"
+                          data-component="mobile_contracts-new_screen_root_page_root_form-scroll_selection-card_duration-select"
                           className={styles.formInput}
                           value={voucherDuration}
                           onChange={(e) => handleDurationChange(e.target.value)}
@@ -1249,8 +1249,8 @@ export default function ContractCreationPage() {
                     </Field>
                   </div>
 
-                  <div className={styles.formCard} data-component="mobile_contracts-new_voucher_price-card">
-                    <div className={styles.formCardTitle} data-component="mobile_contracts-new_voucher_price-card-title">
+                  <div className={styles.formCard} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_price-card">
+                    <div className={styles.formCardTitle} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_price-card_price-card-title">
                       요금 정보
                       {selectedPriceInfo && !pricesManuallyEdited ? (
                         <span className={styles.autoBadge}>자동입력</span>
@@ -1259,7 +1259,7 @@ export default function ContractCreationPage() {
                     <Field dataComponent="mobile_contracts-new_voucher_full-price-field" label="총 서비스 금액" required>
                       <div className={styles.priceInput}>
                         <input
-                          data-component="mobile_contracts-new_voucher_full-price-input"
+                          data-component="mobile_contracts-new_screen_root_page_root_form-scroll_price-card_full-price-input"
                           className={styles.formInput}
                           value={formatPrice(fullPrice)}
                           onChange={(e) => handlePriceChange("fullPrice", parsePrice(e.target.value))}
@@ -1272,7 +1272,7 @@ export default function ContractCreationPage() {
                     <Field dataComponent="mobile_contracts-new_voucher_grant-field" label="정부지원금" required>
                       <div className={styles.priceInput}>
                         <input
-                          data-component="mobile_contracts-new_voucher_grant-input"
+                          data-component="mobile_contracts-new_screen_root_page_root_form-scroll_price-card_grant-input"
                           className={styles.formInput}
                           value={formatPrice(grant)}
                           onChange={(e) => handlePriceChange("grant", parsePrice(e.target.value))}
@@ -1285,7 +1285,7 @@ export default function ContractCreationPage() {
                     <Field dataComponent="mobile_contracts-new_voucher_actual-price-field" label="본인부담금" required>
                       <div className={styles.priceInput}>
                         <input
-                          data-component="mobile_contracts-new_voucher_actual-price-input"
+                          data-component="mobile_contracts-new_screen_root_page_root_form-scroll_price-card_actual-price-input"
                           className={styles.formInput}
                           value={formatPrice(actualPrice)}
                           onChange={(e) => handlePriceChange("actualPrice", parsePrice(e.target.value))}
@@ -1301,14 +1301,14 @@ export default function ContractCreationPage() {
 
               {activeStep === 3 ? (
                 <>
-                  <div className={styles.formCard} data-component="mobile_contracts-new_review_period-card">
-                    <div className={styles.formCardTitle} data-component="mobile_contracts-new_review_period-card-title">
+                  <div className={styles.formCard} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_period-card">
+                    <div className={styles.formCardTitle} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_period-card_period-card-title">
                       서비스 기간
                     </div>
                     <div className={styles.formGrid2}>
                       <Field dataComponent="mobile_contracts-new_review_start-date-field" label="시작일" required>
                         <input
-                          data-component="mobile_contracts-new_review_start-date-input"
+                          data-component="mobile_contracts-new_screen_root_page_root_form-scroll_period-card_start-date-input"
                           className={styles.formInput}
                           value={startDateInput}
                           onChange={(e) => handleDateInputChange(setStartDateInput, setStartDate, e.target.value)}
@@ -1319,7 +1319,7 @@ export default function ContractCreationPage() {
                       </Field>
                       <Field dataComponent="mobile_contracts-new_review_end-date-field" label="종료일" required>
                         <input
-                          data-component="mobile_contracts-new_review_end-date-input"
+                          data-component="mobile_contracts-new_screen_root_page_root_form-scroll_period-card_end-date-input"
                           className={styles.formInput}
                           value={endDateInput}
                           onChange={(e) => handleDateInputChange(setEndDateInput, setEndDate, e.target.value)}
@@ -1334,13 +1334,13 @@ export default function ContractCreationPage() {
                     </div>
                   </div>
 
-                  <div className={styles.formCard} data-component="mobile_contracts-new_review_payment-card">
-                    <div className={styles.formCardTitle} data-component="mobile_contracts-new_review_payment-card-title">
+                  <div className={styles.formCard} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_payment-card">
+                    <div className={styles.formCardTitle} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_payment-card_payment-card-title">
                       결제 정보
                     </div>
                     <Field dataComponent="mobile_contracts-new_review_payment-date-field" label="본인부담금 수령 날짜" required>
                       <input
-                        data-component="mobile_contracts-new_review_payment-date-input"
+                        data-component="mobile_contracts-new_screen_root_page_root_form-scroll_payment-card_payment-date-input"
                         className={styles.formInput}
                         value={effectivePaymentDateInput}
                         onChange={(e) => handleDateInputChange(setPaymentDateInput, setPaymentDate, e.target.value)}
@@ -1351,11 +1351,11 @@ export default function ContractCreationPage() {
                     </Field>
                   </div>
 
-                  <div className={styles.formCard} data-component="mobile_contracts-new_review_summary-card">
-                    <div className={styles.formCardTitle} data-component="mobile_contracts-new_review_summary-card-title">
+                  <div className={styles.formCard} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_summary-card">
+                    <div className={styles.formCardTitle} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_summary-card_summary-card-title">
                       최종 확인
                     </div>
-                    <div className={styles.priceSummary} data-component="mobile_contracts-new_review_summary-list">
+                    <div className={styles.priceSummary} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_summary-card_summary-list">
                       <div className={styles.priceSummaryRow}>
                         <span>고객</span>
                         <span className={styles.amount}>{name || "-"}</span>
@@ -1389,9 +1389,9 @@ export default function ContractCreationPage() {
               ) : null}
             </div>
 
-            <div className={styles.wizardActions} data-component="mobile_contracts-new_wizard_actions">
+            <div className={styles.wizardActions} data-component="mobile_contracts-new_screen_root_page_root_actions">
               <button
-                data-component="mobile_contracts-new_wizard_previous-button"
+                data-component="mobile_contracts-new_screen_root_page_root_actions_previous-button"
                 type="button"
                 onClick={handlePrev}
                 disabled={isFirstStep}
@@ -1400,7 +1400,7 @@ export default function ContractCreationPage() {
                 이전
               </button>
               <button
-                data-component="mobile_contracts-new_wizard_next-button"
+                data-component="mobile_contracts-new_screen_root_page_root_actions_next-button"
                 type="button"
                 onClick={handleNext}
                 disabled={isPrimaryDisabled}
@@ -1460,10 +1460,10 @@ export default function ContractCreationPage() {
 
       {isEformsignModalOpen ? (
         <div className={styles.eformsignModal} data-component="mobile_contracts-new_signing_modal">
-          <div className={styles.eformsignModalHeader} data-component="mobile_contracts-new_signing_header">
-            <span data-component="mobile_contracts-new_signing_title">계약서 서명</span>
+          <div className={styles.eformsignModalHeader} data-component="mobile_contracts-new_signing_modal_header">
+            <span data-component="mobile_contracts-new_signing_modal_header_title">계약서 서명</span>
             <button
-              data-component="mobile_contracts-new_signing_close-button"
+              data-component="mobile_contracts-new_signing_modal_header_close-button"
               type="button"
               onClick={() => setIsEformsignModalOpen(false)}
               className={styles.navbarIconButton}
@@ -1475,7 +1475,7 @@ export default function ContractCreationPage() {
           <iframe
             id="eformsign_iframe"
             className={styles.eformsignIframe}
-            data-component="mobile_contracts-new_signing_iframe"
+            data-component="mobile_contracts-new_signing_modal_iframe"
             title="eformsign"
           />
         </div>
