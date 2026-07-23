@@ -29,7 +29,7 @@ export function ContractCreationScreen({ flow }: ContractCreationScreenProps) {
   );
 
   return (
-    <Block name="contracts-new-screen" className="h-full min-h-0 overflow-hidden">
+    <Block name="mobile_contracts-new_screen_root" className="h-full min-h-0 overflow-hidden">
       <SteppedWizard
         title="계약서 생성"
         subtitle={flow.activeStepMeta.desc}
@@ -52,10 +52,11 @@ export function ContractCreationScreen({ flow }: ContractCreationScreenProps) {
         steps={CONTRACT_CREATION_PROGRESS_STEPS}
         progress={flow.state.creationProgress}
         errorHint={flow.state.progressErrorHint}
-        dataComponentPrefix="contracts-new-progress"
+        dataComponentPrefix="mobile_contracts-new_progress_modal"
       />
 
       <MobileTwoButtonModal
+        data-component="mobile_contracts-new_confirmation_modal"
         open={flow.state.isExistingContractConfirmOpen}
         title="계약서 재생성 확인"
         description="이전에 전송된 계약서가 있습니다. 그래도 새로 생성하시겠어요?"

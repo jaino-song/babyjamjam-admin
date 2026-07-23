@@ -13,9 +13,9 @@ export function ContractCreationReviewStep({ flow }: ContractCreationReviewStepP
   const { form, state, summary, actions } = flow;
 
   return (
-    <Block name="contracts-new-review-step" className="space-y-4">
-      <FormSection title="서비스 기간" data-component="contracts-new-review-period-section">
-        <Block name="contracts-new-review-period-grid" className="grid grid-cols-2 gap-2.5">
+    <Block name="mobile_contracts-new_review_step" className="space-y-4">
+      <FormSection title="서비스 기간" data-component="mobile_contracts-new_review_period-section">
+        <Block name="mobile_contracts-new_review_period-grid" className="grid grid-cols-2 gap-2.5">
           <InputField
             title="시작일"
             inputProps={{
@@ -70,7 +70,7 @@ export function ContractCreationReviewStep({ flow }: ContractCreationReviewStepP
           description="새로운 고객으로 등록합니다."
           checked={state.shouldRegisterMissingClient}
           onClick={actions.toggleClientRegistration}
-          data-component="contracts-new-client-registration-toggle"
+          data-component="mobile_contracts-new_review_client-registration-toggle"
         />
       ) : null}
     </Block>

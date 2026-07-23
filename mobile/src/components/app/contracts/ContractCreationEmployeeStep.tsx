@@ -27,14 +27,15 @@ export function ContractCreationEmployeeStep({ flow }: ContractCreationEmployeeS
   const { form, actions } = flow;
 
   return (
-    <Block name="contracts-new-employee-step" className="space-y-4">
+    <Block name="mobile_contracts-new_employee_step" className="space-y-4">
       <FormSection
         title="제공인력 1"
         badge={<StatusBadge variant="danger">필수</StatusBadge>}
-        data-component="contracts-new-employee-primary-section"
+        data-component="mobile_contracts-new_employee_primary-section"
       >
         <Autocomplete<Employee>
           name="contracts-new-employee-primary"
+          data-component="mobile_contracts-new_employee_primary-autocomplete"
           value={flow.selectedEmployee}
           onChange={(employee) => actions.selectEmployee(employee?.id ?? null, employee)}
           inputValue={form.employeeName}
@@ -48,7 +49,7 @@ export function ContractCreationEmployeeStep({ flow }: ContractCreationEmployeeS
             </span>
           )}
           getItemMeta={(employee) => (
-            <Block name="contracts-new-employee-area-list" className="flex flex-wrap items-center gap-1">
+            <Block name="mobile_contracts-new_employee_primary-area-list" className="flex flex-wrap items-center gap-1">
               {employee.workArea.map((area) => (
                 <StatusBadge key={area} variant="primary" size="sm">
                   {stripCityPrefix(area)}
@@ -87,17 +88,18 @@ export function ContractCreationEmployeeStep({ flow }: ContractCreationEmployeeS
         />
       </FormSection>
 
-      <FormSection title="추가 제공인력" data-component="contracts-new-employee-secondary-section">
+      <FormSection title="추가 제공인력" data-component="mobile_contracts-new_employee_secondary-section">
         <ToggleRow
           title="제공인력 2 추가"
           checked={form.showEmployee2}
           onClick={actions.toggleEmployee2}
-          data-component="contracts-new-employee-secondary-toggle"
+          data-component="mobile_contracts-new_employee_secondary-toggle"
         />
         {form.showEmployee2 ? (
-          <Block name="contracts-new-employee-secondary-fields" className="space-y-3">
+          <Block name="mobile_contracts-new_employee_secondary-fields" className="space-y-3">
             <Autocomplete<Employee>
               name="contracts-new-employee-secondary"
+              data-component="mobile_contracts-new_employee_secondary-autocomplete"
               value={flow.selectedEmployee2}
               onChange={(employee) => actions.selectEmployee2(employee?.id ?? null, employee)}
               inputValue={form.employee2Name}
@@ -111,7 +113,7 @@ export function ContractCreationEmployeeStep({ flow }: ContractCreationEmployeeS
                 </span>
               )}
               getItemMeta={(employee) => (
-                <Block name="contracts-new-employee-area-list" className="flex flex-wrap items-center gap-1">
+                <Block name="mobile_contracts-new_employee_secondary-area-list" className="flex flex-wrap items-center gap-1">
                   {employee.workArea.map((area) => (
                     <StatusBadge key={area} variant="primary" size="sm">
                       {stripCityPrefix(area)}

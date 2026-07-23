@@ -20,11 +20,12 @@ export function ContractCreationVoucherStep({ flow }: ContractCreationVoucherSte
   const { form, state, actions } = flow;
 
   return (
-    <Block name="contracts-new-voucher-step" className="space-y-4">
-      <FormSection title="바우처 선택" data-component="contracts-new-voucher-selection-section">
-        <Block name="contracts-new-voucher-selection-grid" className="grid grid-cols-2 gap-2.5">
+    <Block name="mobile_contracts-new_voucher_step" className="space-y-4">
+      <FormSection title="바우처 선택" data-component="mobile_contracts-new_voucher_selection-section">
+        <Block name="mobile_contracts-new_voucher_selection-grid" className="grid grid-cols-2 gap-2.5">
           <Autocomplete<ContractCreationOption<number>>
             name="contracts-new-voucher-year"
+            data-component="mobile_contracts-new_voucher_year-autocomplete"
             value={flow.selectedVoucherYearOption}
             onChange={actions.changeVoucherYear}
             items={flow.voucherYearOptions}
@@ -36,6 +37,7 @@ export function ContractCreationVoucherStep({ flow }: ContractCreationVoucherSte
           />
           <Autocomplete<ContractCreationVoucherTypeOption>
             name="contracts-new-voucher-type"
+            data-component="mobile_contracts-new_voucher_type-autocomplete"
             value={flow.selectedVoucherTypeOption}
             onChange={actions.changeVoucherType}
             items={flow.voucherTypeOptions}
@@ -49,6 +51,7 @@ export function ContractCreationVoucherStep({ flow }: ContractCreationVoucherSte
         </Block>
         <Autocomplete<ContractCreationOption>
           name="contracts-new-voucher-duration"
+          data-component="mobile_contracts-new_voucher_duration-autocomplete"
           value={flow.selectedDurationOption}
           onChange={actions.changeDuration}
           items={flow.durationOptions}
@@ -65,7 +68,7 @@ export function ContractCreationVoucherStep({ flow }: ContractCreationVoucherSte
       <FormSection
         title="요금 정보"
         badge={flow.selectedPriceInfo && !state.pricesManuallyEdited ? <StatusBadge variant="success">자동입력</StatusBadge> : undefined}
-        data-component="contracts-new-voucher-price-section"
+        data-component="mobile_contracts-new_voucher_price-section"
       >
         <InputField
           title="총 서비스 금액"

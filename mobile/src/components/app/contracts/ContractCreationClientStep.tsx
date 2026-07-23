@@ -18,14 +18,15 @@ export function ContractCreationClientStep({ flow }: ContractCreationClientStepP
   const { form, actions } = flow;
 
   return (
-    <Block name="contracts-new-client-step" className="space-y-4">
+    <Block name="mobile_contracts-new_client_step" className="space-y-4">
       <FormSection
         title="이용자 정보"
         badge={<StatusBadge variant="neutral">기존 고객 또는 직접 입력</StatusBadge>}
-        data-component="contracts-new-client-section"
+        data-component="mobile_contracts-new_client_details-section"
       >
         <Autocomplete<Client>
           name="contracts-new-client"
+          data-component="mobile_contracts-new_client_autocomplete"
           inputId="contracts-new-client-name"
           value={flow.selectedClient}
           onChange={(client) => actions.selectClient(client?.id ?? null, client)}
@@ -72,7 +73,7 @@ export function ContractCreationClientStep({ flow }: ContractCreationClientStepP
             required: true,
           }}
         />
-        <Block name="contracts-new-client-date-grid" className="grid grid-cols-2 gap-2.5">
+        <Block name="mobile_contracts-new_client_date-grid" className="grid grid-cols-2 gap-2.5">
           <InputField
             title="생년월일"
             inputProps={{
@@ -107,9 +108,10 @@ export function ContractCreationClientStep({ flow }: ContractCreationClientStepP
         />
       </FormSection>
 
-      <FormSection title="계약서 유형" data-component="contracts-new-area-section">
+      <FormSection title="계약서 유형" data-component="mobile_contracts-new_client_area-section">
         <Autocomplete<ContractCreationOption>
           name="contracts-new-area"
+          data-component="mobile_contracts-new_client_area-autocomplete"
           inputId="contracts-new-area"
           value={flow.selectedAreaOption}
           onChange={actions.changeArea}

@@ -348,14 +348,14 @@ export function ClientNewForm() {
       summaryTitle: store.name || undefined,
       content: (
         <FormSection
-          data-component="clients-new-basic-step"
+          data-component="desktop_clients-new_basic_step"
           title="기본 정보"
-          bodyDataComponent="clients-new-basic-step-body"
+          bodyDataComponent="desktop_clients-new_basic_step-body"
         >
-          <FormGrid data-component="clients-new-basic-grid">
-            <FormField data-component="clients-new-basic-name-field" label={t(locale, "clients.form.name")} required>
+          <FormGrid data-component="desktop_clients-new_basic_grid">
+            <FormField data-component="desktop_clients-new_basic_name-field" label={t(locale, "clients.form.name")} required>
               <FormTextInput
-                data-component="clients-new-basic-name-input"
+                data-component="desktop_clients-new_basic_name-input"
                 type="text"
                 value={store.name}
                 onChange={(event) => {
@@ -365,9 +365,9 @@ export function ClientNewForm() {
                 placeholder="홍길동"
               />
             </FormField>
-            <FormField data-component="clients-new-basic-birthday-field" label={t(locale, "clients.form.birthday")}>
+            <FormField data-component="desktop_clients-new_basic_birthday-field" label={t(locale, "clients.form.birthday")}>
               <FormTextInput
-                data-component="clients-new-basic-birthday-input"
+                data-component="desktop_clients-new_basic_birthday-input"
                 type="text"
                 value={store.birthday}
                 onChange={(event) => setField("birthday", event.target.value)}
@@ -376,17 +376,17 @@ export function ClientNewForm() {
                 maxLength={6}
               />
             </FormField>
-            <FormField data-component="clients-new-basic-due-date-field" label={t(locale, "clients.form.due-date")}>
+            <FormField data-component="desktop_clients-new_basic_due-date-field" label={t(locale, "clients.form.due-date")}>
               <FormTextInput
-                data-component="clients-new-basic-due-date-input"
+                data-component="desktop_clients-new_basic_due-date-input"
                 type="date"
                 value={store.dueDate}
                 onChange={(event) => setField("dueDate", event.target.value)}
               />
             </FormField>
-            <FormField data-component="clients-new-basic-phone-field" label={t(locale, "clients.form.phone")} required>
+            <FormField data-component="desktop_clients-new_basic_phone-field" label={t(locale, "clients.form.phone")} required>
               <FormTextInput
-                data-component="clients-new-basic-phone-input"
+                data-component="desktop_clients-new_basic_phone-input"
                 type="tel"
                 value={store.phone}
                 onChange={(event) => {
@@ -399,18 +399,18 @@ export function ClientNewForm() {
                 error={Boolean(phoneInlineMessage)}
               />
               {phoneInlineMessage ? (
-                <FormHelperText data-component="clients-new-basic-phone-error" tone="error">
+                <FormHelperText data-component="desktop_clients-new_basic_phone-error" tone="error">
                   {phoneInlineMessage}
                 </FormHelperText>
               ) : null}
             </FormField>
             <FormField
-              data-component="clients-new-basic-address-field"
+              data-component="desktop_clients-new_basic_address-field"
               className="sm:col-span-2"
               label={t(locale, "clients.form.address")}
             >
               <FormTextInput
-                data-component="clients-new-basic-address-input"
+                data-component="desktop_clients-new_basic_address-input"
                 type="text"
                 value={store.address}
                 onChange={(event) => setField("address", event.target.value)}
@@ -418,8 +418,8 @@ export function ClientNewForm() {
               />
             </FormField>
             {error ? (
-              <div data-component="clients-new-basic-error" className="sm:col-span-2">
-                <FormHelperText data-component="clients-new-basic-error-message" tone="error">
+              <div data-component="desktop_clients-new_basic_error" className="sm:col-span-2">
+                <FormHelperText data-component="desktop_clients-new_basic_error-message" tone="error">
                   {error}
                 </FormHelperText>
               </div>
@@ -431,20 +431,20 @@ export function ClientNewForm() {
     {
       label: "서비스 설정",
       content: (
-        <div data-component="clients-new-service-step" className="space-y-6">
-          <FormSection data-component="clients-new-service-config-section" title="서비스 설정">
-            <FormGrid data-component="clients-new-service-grid">
-              <FormField data-component="clients-new-service-type-field" label={t(locale, "clients.form.voucher-type")}>
+        <div data-component="desktop_clients-new_service_step" className="space-y-6">
+          <FormSection data-component="desktop_clients-new_service_config-section" title="서비스 설정">
+            <FormGrid data-component="desktop_clients-new_service_grid">
+              <FormField data-component="desktop_clients-new_service_type-field" label={t(locale, "clients.form.voucher-type")}>
                 <FormNativeSelect
                   options={voucherTypeOptions}
                   value={store.type}
                   onValueChange={handleTypeChange}
-                  wrapDataComponent="clients-new-service-type-select-wrap"
-                  selectDataComponent="clients-new-service-type-select"
-                  iconDataComponent="clients-new-service-type-select-icon"
+                  wrapDataComponent="desktop_clients-new_service_type-select-wrap"
+                  selectDataComponent="desktop_clients-new_service_type-select"
+                  iconDataComponent="desktop_clients-new_service_type-select-icon"
                 />
               </FormField>
-              <FormField data-component="clients-new-service-duration-field" label={t(locale, "clients.form.duration")}>
+              <FormField data-component="desktop_clients-new_service_duration-field" label={t(locale, "clients.form.duration")}>
                 <FormNativeSelect
                   options={durationOptions}
                   value={store.duration?.toString() || ""}
@@ -453,23 +453,23 @@ export function ClientNewForm() {
                     setPricesManuallyEdited(false);
                   }}
                   disabled={!store.type || isPriceLoading}
-                  wrapDataComponent="clients-new-service-duration-select-wrap"
-                  selectDataComponent="clients-new-service-duration-select"
-                  iconDataComponent="clients-new-service-duration-select-icon"
+                  wrapDataComponent="desktop_clients-new_service_duration-select-wrap"
+                  selectDataComponent="desktop_clients-new_service_duration-select"
+                  iconDataComponent="desktop_clients-new_service_duration-select-icon"
                 />
                 {isPriceLoading ? (
-                  <div data-component="clients-new-service-duration-loading" className="flex items-center gap-2">
-                    <Spinner data-component="clients-new-service-duration-spinner" size="sm" />
+                  <div data-component="desktop_clients-new_service_duration-loading" className="flex items-center gap-2">
+                    <Spinner data-component="desktop_clients-new_service_duration-spinner" size="sm" />
                   </div>
                 ) : null}
               </FormField>
             </FormGrid>
           </FormSection>
 
-          <FormSection data-component="clients-new-service-employee-section" title="제공인력 배정">
-            <FormGrid data-component="clients-new-service-employee-grid">
+          <FormSection data-component="desktop_clients-new_service_employee-section" title="제공인력 배정">
+            <FormGrid data-component="desktop_clients-new_service_employee-grid">
               <FormField
-                data-component="clients-new-service-primary-employee-field"
+                data-component="desktop_clients-new_service_primary-employee-field"
                 label={t(locale, "clients.form.primary-employee")}
               >
                 <EmployeeAutocomplete
@@ -485,7 +485,7 @@ export function ClientNewForm() {
                 />
               </FormField>
               <FormField
-                data-component="clients-new-service-secondary-employee-field"
+                data-component="desktop_clients-new_service_secondary-employee-field"
                 label={t(locale, "clients.form.secondary-employee")}
               >
                 <EmployeeAutocomplete
@@ -504,23 +504,23 @@ export function ClientNewForm() {
           </FormSection>
 
           <FormSection
-            data-component="clients-new-service-pricing-section"
-            headerDataComponent="clients-new-service-pricing-header"
+            data-component="desktop_clients-new_service_pricing-section"
+            headerDataComponent="desktop_clients-new_service_pricing-header"
             title={t(locale, "clients.form.section-pricing")}
             badge={
               selectedPriceInfo && !pricesManuallyEdited ? (
-                <Badge data-component="clients-new-service-pricing-auto-badge" variant="info">
+                <Badge data-component="desktop_clients-new_service_pricing-auto-badge" variant="info">
                   자동입력
                 </Badge>
               ) : undefined
             }
           >
-            <FormGrid data-component="clients-new-service-pricing-grid" className="md:grid-cols-3">
-              <FormField data-component="clients-new-service-full-price-field" label={t(locale, "clients.form.full-price")}>
+            <FormGrid data-component="desktop_clients-new_service_pricing-grid" className="md:grid-cols-3">
+              <FormField data-component="desktop_clients-new_service_full-price-field" label={t(locale, "clients.form.full-price")}>
                 <FormTextInputWithSuffix
-                  data-component="clients-new-service-full-price-input-wrap"
-                  inputDataComponent="clients-new-service-full-price-input"
-                  suffixDataComponent="clients-new-service-full-price-suffix"
+                  data-component="desktop_clients-new_service_full-price-input-wrap"
+                  inputDataComponent="desktop_clients-new_service_full-price-input"
+                  suffixDataComponent="desktop_clients-new_service_full-price-suffix"
                   suffix="원"
                   value={formatPrice(store.fullPrice)}
                   onChange={(event) => handlePriceChange("fullPrice", event.target.value.replace(/,/g, ""))}
@@ -528,11 +528,11 @@ export function ClientNewForm() {
                   inputMode="numeric"
                 />
               </FormField>
-              <FormField data-component="clients-new-service-grant-field" label={t(locale, "clients.form.grant")}>
+              <FormField data-component="desktop_clients-new_service_grant-field" label={t(locale, "clients.form.grant")}>
                 <FormTextInputWithSuffix
-                  data-component="clients-new-service-grant-input-wrap"
-                  inputDataComponent="clients-new-service-grant-input"
-                  suffixDataComponent="clients-new-service-grant-suffix"
+                  data-component="desktop_clients-new_service_grant-input-wrap"
+                  inputDataComponent="desktop_clients-new_service_grant-input"
+                  suffixDataComponent="desktop_clients-new_service_grant-suffix"
                   suffix="원"
                   value={formatPrice(store.grant)}
                   onChange={(event) => handlePriceChange("grant", event.target.value.replace(/,/g, ""))}
@@ -540,11 +540,11 @@ export function ClientNewForm() {
                   inputMode="numeric"
                 />
               </FormField>
-              <FormField data-component="clients-new-service-actual-price-field" label={t(locale, "clients.form.actual-price")}>
+              <FormField data-component="desktop_clients-new_service_actual-price-field" label={t(locale, "clients.form.actual-price")}>
                 <FormTextInputWithSuffix
-                  data-component="clients-new-service-actual-price-input-wrap"
-                  inputDataComponent="clients-new-service-actual-price-input"
-                  suffixDataComponent="clients-new-service-actual-price-suffix"
+                  data-component="desktop_clients-new_service_actual-price-input-wrap"
+                  inputDataComponent="desktop_clients-new_service_actual-price-input"
+                  suffixDataComponent="desktop_clients-new_service_actual-price-suffix"
                   suffix="원"
                   value={formatPrice(store.actualPrice)}
                   onChange={(event) => handlePriceChange("actualPrice", event.target.value.replace(/,/g, ""))}
@@ -555,12 +555,12 @@ export function ClientNewForm() {
             </FormGrid>
           </FormSection>
 
-          <FormSection data-component="clients-new-service-flags-field" title={t(locale, "clients.form.section-flags")}>
-            <div data-component="clients-new-service-flags-options" className="flex flex-wrap gap-3">
+          <FormSection data-component="desktop_clients-new_service_flags-field" title={t(locale, "clients.form.section-flags")}>
+            <div data-component="desktop_clients-new_service_flags-options" className="flex flex-wrap gap-3">
               {flagOptions.map(({ key, label }) => (
                 <FormChip
                   key={key}
-                  data-component={`clients-new-service-flags-${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}-chip`}
+                  data-component={`desktop_clients-new_service_flags-${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}-chip`}
                   selected={store[key]}
                   onClick={() => setField(key, !store[key])}
                 >
@@ -572,28 +572,28 @@ export function ClientNewForm() {
           </FormSection>
 
           {error ? (
-            <FormHelperText data-component="clients-new-service-error" tone="error">
+            <FormHelperText data-component="desktop_clients-new_service_error" tone="error">
               {error}
             </FormHelperText>
           ) : null}
         </div>
       ),
       summary: (
-        <div data-component="clients-new-service-summary" className="flex flex-wrap gap-3">
+        <div data-component="desktop_clients-new_service_summary" className="flex flex-wrap gap-3">
           {store.type ? (
-            <Badge data-component="clients-new-service-summary-type" variant="success">
+            <Badge data-component="desktop_clients-new_service_summary-type" variant="success">
               <Check className="h-4 w-4" strokeWidth={2} />
               {store.type}
             </Badge>
           ) : null}
           {store.duration ? (
-            <Badge data-component="clients-new-service-summary-duration" variant="success">
+            <Badge data-component="desktop_clients-new_service_summary-duration" variant="success">
               <Check className="h-4 w-4" strokeWidth={2} />
               {store.duration}일
             </Badge>
           ) : null}
           {store.actualPrice ? (
-            <Badge data-component="clients-new-service-summary-price" variant="success">
+            <Badge data-component="desktop_clients-new_service_summary-price" variant="success">
               <Check className="h-4 w-4" strokeWidth={2} />
               {formatPrice(store.actualPrice)}원
             </Badge>
@@ -604,38 +604,38 @@ export function ClientNewForm() {
     {
       label: "계약 정보",
       content: (
-        <FormSection data-component="clients-new-contract-step" title="계약 정보">
-          <FormGrid data-component="clients-new-contract-grid">
-            <FormField data-component="clients-new-contract-status-field" label={t(locale, "clients.form.contract-status")}>
+        <FormSection data-component="desktop_clients-new_contract_step" title="계약 정보">
+          <FormGrid data-component="desktop_clients-new_contract_grid">
+            <FormField data-component="desktop_clients-new_contract_status-field" label={t(locale, "clients.form.contract-status")}>
               <FormNativeSelect
                 options={serviceStatusOptions}
                 value={store.serviceStatus}
                 onValueChange={(value) => setField("serviceStatus", value as ServiceStatus)}
-                wrapDataComponent="clients-new-contract-status-select-wrap"
-                selectDataComponent="clients-new-contract-status-select"
-                iconDataComponent="clients-new-contract-status-select-icon"
+                wrapDataComponent="desktop_clients-new_contract_status-select-wrap"
+                selectDataComponent="desktop_clients-new_contract_status-select"
+                iconDataComponent="desktop_clients-new_contract_status-select-icon"
               />
             </FormField>
-            <div data-component="clients-new-contract-spacer" />
-            <FormField data-component="clients-new-contract-start-date-field" label={t(locale, "clients.form.start-date")}>
+            <div data-component="desktop_clients-new_contract_spacer" />
+            <FormField data-component="desktop_clients-new_contract_start-date-field" label={t(locale, "clients.form.start-date")}>
               <FormTextInput
-                data-component="clients-new-contract-start-date-input"
+                data-component="desktop_clients-new_contract_start-date-input"
                 type="date"
                 value={store.startDate}
                 onChange={(event) => setField("startDate", event.target.value)}
               />
             </FormField>
-            <FormField data-component="clients-new-contract-end-date-field" label={t(locale, "clients.form.end-date")}>
+            <FormField data-component="desktop_clients-new_contract_end-date-field" label={t(locale, "clients.form.end-date")}>
               <FormTextInput
-                data-component="clients-new-contract-end-date-input"
+                data-component="desktop_clients-new_contract_end-date-input"
                 type="date"
                 value={store.endDate}
                 onChange={(event) => setField("endDate", event.target.value)}
               />
             </FormField>
             {error ? (
-              <div data-component="clients-new-contract-error" className="sm:col-span-2">
-                <FormHelperText data-component="clients-new-contract-error-message" tone="error">
+              <div data-component="desktop_clients-new_contract_error" className="sm:col-span-2">
+                <FormHelperText data-component="desktop_clients-new_contract_error-message" tone="error">
                   {error}
                 </FormHelperText>
               </div>
@@ -648,10 +648,14 @@ export function ClientNewForm() {
 
   return (
     <>
-      <div data-component="clients-new-main-content" className="flex min-h-[calc(100dvh-6rem)] items-start justify-center py-6 md:py-8">
-        <div data-component="clients-new-main-content-inner" className="flex w-full flex-col">
+      <div
+        data-component="desktop_clients-new_main_content"
+        data-source-component="ClientNewForm"
+        className="flex min-h-[calc(100dvh-6rem)] items-start justify-center py-6 md:py-8"
+      >
+        <div data-component="desktop_clients-new_main_content-inner" className="flex w-full flex-col">
           <Button
-            data-component="clients-new-back-button"
+            data-component="desktop_clients-new_back_button"
             type="button"
             variant="ghost"
             size="sm"
@@ -662,7 +666,7 @@ export function ClientNewForm() {
             고객 목록으로 돌아가기
           </Button>
 
-          <div data-component="clients-new-stepper-shell">
+          <div data-component="desktop_clients-new_stepper_shell">
             <SteppedWizard
               title={t(locale, "clients.form.add-title")}
               subtitle="고객 정보를 단계별로 입력해 주세요"

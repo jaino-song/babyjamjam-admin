@@ -27,6 +27,7 @@ export interface AutocompleteItemContext {
 
 export interface AutocompleteProps<T> {
     name: string;
+    "data-component"?: string;
     inputId?: string;
     value: T | null;
     onChange: (item: T | null) => void;
@@ -52,6 +53,7 @@ export interface AutocompleteProps<T> {
 
 export function Autocomplete<T>({
     name,
+    "data-component": dataComponent,
     inputId,
     value,
     onChange,
@@ -202,28 +204,40 @@ export function Autocomplete<T>({
         }
     };
 
-    const containerDc = `${name}-autocomplete`;
-    const inputDc = `${name}-autocomplete-input`;
-    const toggleDc = `${name}-autocomplete-toggle`;
-    const dropdownDc = `${name}-autocomplete-dropdown`;
-    const addBtnDc = `${name}-autocomplete-add-button`;
-    const clearBtnDc = `${name}-autocomplete-clear`;
+    const legacyBase = `${name}-autocomplete`;
+    const containerDc = dataComponent ?? legacyBase;
+    const sub = (suffix: string) =>
+        dataComponent ? `${dataComponent}_${suffix}` : `${legacyBase}-${suffix}`;
+    const inputDc = sub("input");
+    const toggleDc = sub("toggle");
+    const dropdownDc = sub("dropdown");
+    const addBtnDc = sub("add-button");
+    const clearBtnDc = sub("clear");
     const resolvedInputId = inputId ?? name;
 
     return (
         <div
             data-component={containerDc}
+            data-source-component="Autocomplete"
             data-testid={containerDc}
             data-disabled={disabled ? "true" : undefined}
             className={cn("space-y-2", className)}
         >
             {label && (
-                <Label htmlFor={resolvedInputId} className={cn(error && "text-destructive")}>
+                <Label
+                    htmlFor={resolvedInputId}
+                    data-component={sub("label")}
+                    className={cn(error && "text-destructive")}
+                >
                     {label}
-                    {required && <span className="text-destructive ml-1">*</span>}
+                    {required && (
+                        <span data-component={sub("required")} className="text-destructive ml-1">
+                            *
+                        </span>
+                    )}
                 </Label>
             )}
-            <div ref={containerRef} className="relative">
+            <div ref={containerRef} data-component={sub("control")} className="relative">
                 <Input
                     id={resolvedInputId}
                     ref={inputRef}
@@ -252,7 +266,10 @@ export function Autocomplete<T>({
                         error && "border-destructive"
                     )}
                 />
-                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                <div
+                    data-component={sub("actions")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1"
+                >
                     {value && !isLoading && !disabled && (
                         <button
                             type="button"
@@ -299,15 +316,15 @@ export function Autocomplete<T>({
                         className="absolute top-full left-0 right-0 z-50 overflow-hidden rounded-2xl !rounded-t-none border !border-v3-border bg-white shadow-[0_4px_16px_rgba(0,0,0,0.06)] animate-in fade-in-0 zoom-in-95"
                     >
                         {isLoading ? (
-                            <div className="flex items-center justify-center py-6">
+                            <div data-component={sub("loading")} className="flex items-center justify-center py-6">
                                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                             </div>
                         ) : filteredItems.length === 0 ? (
-                            <div className="py-6 text-center text-sm text-muted-foreground">
+                            <div data-component={sub("empty")} className="py-6 text-center text-sm text-muted-foreground">
                                 {emptyMessage ?? "결과 없음"}
                             </div>
                         ) : (
-                            <div className="max-h-[200px] overflow-y-auto">
+                            <div data-component={sub("options")} className="max-h-[200px] overflow-y-auto">
                                 {filteredItems.map((item, index) => {
                                     const selected =
                                         value != null &&
@@ -319,6 +336,7 @@ export function Autocomplete<T>({
                                     return (
                                         <div
                                             key={getItemKey(item)}
+                                            data-component={sub(`option-${index + 1}`)}
                                             onPointerDown={(e) => {
                                                 e.preventDefault();
                                                 markSuppressedClick(`item:${getItemKey(item)}`);
@@ -338,20 +356,27 @@ export function Autocomplete<T>({
                                                 selected && !highlighted && "bg-v3-primary/10"
                                             )}
                                         >
-                                            <div className="flex items-center gap-2 w-full">
+                                            <div
+                                                data-component={sub(`option-${index + 1}-header`)}
+                                                className="flex items-center gap-2 w-full"
+                                            >
                                                 <Check
                                                     className={cn(
                                                         "h-4 w-4 shrink-0",
                                                         selected ? "opacity-100" : "opacity-0"
                                                     )}
                                                 />
-                                                <span className="font-medium text-sm">
+                                                <span
+                                                    data-component={sub(`option-${index + 1}-label`)}
+                                                    className="font-medium text-sm"
+                                                >
                                                     {getItemLabel(item)}
                                                 </span>
                                                 {headerExtra}
                                             </div>
                                             {meta != null && meta !== "" && (
                                                 <div
+                                                    data-component={sub(`option-${index + 1}-meta`)}
                                                     className={cn(
                                                         "text-xs ml-6 mt-1",
                                                         !highlighted && "text-muted-foreground"
@@ -368,7 +393,7 @@ export function Autocomplete<T>({
 
                         {manualEntry && (
                             <>
-                                <div className="h-px bg-v3-border" />
+                                <div data-component={sub("manual-divider")} className="h-px bg-v3-border" />
                                 <div
                                     onPointerDown={(e) => {
                                         e.preventDefault();
@@ -393,9 +418,10 @@ export function Autocomplete<T>({
                                     data-component={addBtnDc}
                                     data-testid={addBtnDc}
                                 >
-                                    <div className="flex items-center gap-2">
+                                    <div data-component={sub("manual-header")} className="flex items-center gap-2">
                                         {manualEntry.icon}
                                         <span
+                                            data-component={sub("manual-label")}
                                             className={cn(
                                                 "text-sm font-medium",
                                                 activeHighlightedIndex !== filteredItems.length &&
@@ -407,6 +433,7 @@ export function Autocomplete<T>({
                                     </div>
                                     {manualEntry.description && (
                                         <span
+                                            data-component={sub("manual-description")}
                                             className={cn(
                                                 "text-xs mt-1 ml-6",
                                                 activeHighlightedIndex !== filteredItems.length &&
@@ -425,6 +452,7 @@ export function Autocomplete<T>({
 
             {helperText && (
                 <p
+                    data-component={sub("helper")}
                     className={cn(
                         "text-xs",
                         error ? "text-destructive" : "text-muted-foreground"

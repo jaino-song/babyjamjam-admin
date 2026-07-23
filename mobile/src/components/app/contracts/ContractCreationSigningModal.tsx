@@ -14,11 +14,11 @@ export function ContractCreationSigningModal({ open, onClose }: ContractCreation
 
   return (
     <Block
-      name="contracts-new-signing-modal"
+      name="mobile_contracts-new_signing_modal"
       className="fixed inset-0 z-[200] flex flex-col bg-v3-dim-white"
     >
       <Block
-        name="contracts-new-signing-header"
+        name="mobile_contracts-new_signing_header"
         className="flex h-14 items-center justify-between border-b border-v3-border bg-white px-3.5"
       >
         <span className="text-base font-bold text-v3-dark">계약서 서명</span>
@@ -27,12 +27,12 @@ export function ContractCreationSigningModal({ open, onClose }: ContractCreation
           label="닫기"
           onClick={onClose}
           variant="muted"
-          data-component="contracts-new-signing-close"
+          data-component="mobile_contracts-new_signing_close-button"
         />
       </Block>
       <iframe
         id="eformsign_iframe"
-        data-component="contracts-new-signing-iframe"
+        data-component="mobile_contracts-new_signing_iframe"
         className="min-h-0 flex-1 border-0 bg-white"
         title="eformsign"
       />
