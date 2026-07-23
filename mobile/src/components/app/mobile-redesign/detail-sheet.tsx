@@ -512,6 +512,8 @@ export function MobileSearchBar({
     <div className="search-bar" data-component={`mobile-${label}-search`}>
       <Search size={14} strokeWidth={2.5} />
       <input
+        name={`${label}Search`}
+        autoComplete="off"
         aria-label={placeholder}
         placeholder={placeholder}
         value={value ?? ""}

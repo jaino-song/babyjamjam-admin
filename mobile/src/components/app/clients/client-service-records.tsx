@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
-import { ChevronLeft, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 
 import {
     SERVICE_RECORD_FORM_LAYOUT,
@@ -30,6 +30,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useSendServiceRecordLink } from "@/hooks/useServiceRecords";
 import { toast } from "@/hooks/use-toast";
 import type { Client } from "@/lib/client/types";
+import { ServiceRecordErrorBoundary } from "@/lib/observability/service-record-error-boundary";
 import { cn } from "@/lib/utils";
 
 interface ClientServiceRecordsProps {
@@ -68,6 +69,16 @@ const LINK_STATUS_TEXT_CLASS: Record<LinkBadgeTone, string> = {
 const SERVICE_RECORD_SKELETON_CLASS = "service-record-skeleton-loader";
 
 export function ClientServiceRecords({
+    ...props
+}: ClientServiceRecordsProps) {
+    return (
+        <ServiceRecordErrorBoundary>
+            <ClientServiceRecordsContent {...props} />
+        </ServiceRecordErrorBoundary>
+    );
+}
+
+function ClientServiceRecordsContent({
     client,
     activeTab,
     overview,
@@ -369,9 +380,11 @@ function SignatureDocumentCard({ signatureDoc }: { signatureDoc: SignatureDocSta
 }
 
 function formatSignatureStatus(statusDetail: string): string {
-    if (statusDetail.includes("complete") || statusDetail.includes("completed")) return "서명 완료";
-    if (statusDetail.includes("created")) return "발송됨";
-    return statusDetail || "상태 확인";
+    const normalized = statusDetail.trim().toLowerCase();
+    if (!normalized) return "상태 확인";
+    if (normalized.includes("complete")) return "서명 완료";
+    if (normalized.includes("created")) return "발송됨";
+    return statusDetail.trim();
 }
 
 function ServiceHeaderCard({
@@ -542,8 +555,8 @@ function ServiceRecordSessionDetail({
                 data-component="mobile-clients-service-records-session-detail-back"
                 onClick={onBack}
             >
-                <ChevronLeft size={14} aria-hidden="true" />
-                이전
+                <span aria-hidden="true">‹ </span>
+                목록으로
             </button>
 
             <div className="message-detail-head">

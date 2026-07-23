@@ -1,0 +1,9 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "buildCommand": "pnpm run build:sentry"
+  },
+  "deploy": {
+    "startCommand": "pnpm run start"
+  }
+}
