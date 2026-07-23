@@ -3,7 +3,7 @@ import type { Breadcrumb, ErrorEvent, Event, Log } from "@sentry/nextjs";
 type SentryTransactionEvent = Event & { type: "transaction" };
 
 const FILTERED_VALUE = "[Filtered]";
-const SENTRY_APP_TAG = "babyjamjam-admin";
+const SENTRY_APP_TAG = "frontend";
 const MAX_SANITIZE_DEPTH = 3;
 
 export const SERVICE_RECORD_SENTRY_FEATURE = "service-records";
@@ -30,6 +30,17 @@ function readSampleRate(value: string | undefined, fallback: number): number {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : fallback;
+}
+
+export function getSentryEnvironment(): "dev" | "preview" | "production" {
+  const value =
+    process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT
+    ?? process.env.VERCEL_ENV
+    ?? process.env.NODE_ENV;
+
+  if (value === "production") return "production";
+  if (value === "preview") return "preview";
+  return "dev";
 }
 
 export function sanitizeSentryText(value: string): string {
@@ -121,7 +132,7 @@ export function sanitizeSentryBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb {
 export function sanitizeSentryEvent(event: Event): Event {
   return {
     ...event,
-    message: event.message ? sanitizeSentryText(event.message) : event.message,
+    message: event.message ? "Service-record error" : event.message,
     transaction: event.transaction
       ? sanitizeSentryText(event.transaction.replace(/[?#].*$/, ""))
       : event.transaction,
@@ -138,10 +149,8 @@ export function sanitizeSentryEvent(event: Event): Event {
       : event.request,
     logentry: event.logentry
       ? {
-          message: event.logentry.message
-            ? sanitizeSentryText(event.logentry.message)
-            : event.logentry.message,
-          params: event.logentry.params?.map((param) => sanitizeUnknown(param)),
+          message: event.logentry.message ? "Service-record error" : event.logentry.message,
+          params: undefined,
         }
       : event.logentry,
     exception: event.exception
@@ -149,16 +158,16 @@ export function sanitizeSentryEvent(event: Event): Event {
           ...event.exception,
           values: event.exception.values?.map((exception) => ({
             ...exception,
-            value: exception.value ? sanitizeSentryText(exception.value) : exception.value,
+            value: exception.value ? "Service-record error" : exception.value,
           })),
         }
       : event.exception,
-    breadcrumbs: event.breadcrumbs?.map(sanitizeSentryBreadcrumb),
+    breadcrumbs: undefined,
     extra: event.extra ? (sanitizeUnknown(event.extra) as Record<string, unknown>) : event.extra,
     spans: event.spans?.map((span) => ({
       ...span,
-      description: span.description ? sanitizeSentryText(span.description) : span.description,
-      data: span.data ? (sanitizeUnknown(span.data) as typeof span.data) : span.data,
+      description: span.op ?? "service-record span",
+      data: {},
     })),
   };
 }
@@ -221,17 +230,20 @@ export function sanitizeSentryLog(log: Log): Log {
 
 export function getSentryRuntimeOptions() {
   const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
-  const isProduction = process.env.NODE_ENV === "production";
+  const environment = getSentryEnvironment();
   const tracesSampleRate = readSampleRate(
     process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE,
-    isProduction ? 0.2 : 1,
+    environment === "production" ? 0.1 : 1,
   );
 
   return {
     dsn,
     enabled: Boolean(dsn),
-    environment:
-      process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT ?? process.env.VERCEL_ENV ?? process.env.NODE_ENV,
+    environment,
+    release:
+      process.env.NEXT_PUBLIC_SENTRY_RELEASE
+      ?? process.env.SENTRY_RELEASE
+      ?? process.env.VERCEL_GIT_COMMIT_SHA,
     sampleRate: 1,
     tracesSampler: ({
       name,
@@ -249,7 +261,7 @@ export function getSentryRuntimeOptions() {
     initialScope: {
       tags: {
         app: SENTRY_APP_TAG,
-        surface: "frontend",
+        runtime: typeof window === "undefined" ? "server" : "browser",
       },
     },
     beforeBreadcrumb: sanitizeSentryBreadcrumb,

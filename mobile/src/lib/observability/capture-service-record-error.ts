@@ -9,8 +9,19 @@ import {
   SERVICE_RECORD_SENTRY_TAG,
 } from "./sentry-config";
 
+export type ServiceRecordOperation =
+  | "public-link"
+  | "verify"
+  | "context"
+  | "save-header"
+  | "save-session"
+  | "submit-session"
+  | "finalize"
+  | "schedule-change"
+  | "render";
+
 interface ServiceRecordErrorContext {
-  operation: string;
+  operation: ServiceRecordOperation;
   method?: string;
   path?: string;
   status?: number;
@@ -36,6 +47,17 @@ function getRequestPath(url: string | undefined): string {
   } catch {
     return url.split(/[?#]/, 1)[0] || "unknown";
   }
+}
+
+export function getServiceRecordOperation(path: string): ServiceRecordOperation {
+  if (path.includes("/verify")) return "verify";
+  if (path.includes("/context")) return "context";
+  if (path.includes("/header")) return "save-header";
+  if (path.includes("/schedule-change")) return "schedule-change";
+  if (path.includes("/finalize")) return "finalize";
+  if (path.includes("/sessions/") && path.includes("/submit")) return "submit-session";
+  if (path.includes("/sessions/")) return "save-session";
+  return "public-link";
 }
 
 export function captureServiceRecordError(
@@ -79,8 +101,11 @@ export function captureServiceRecordError(
   Sentry.withScope((scope) => {
     scope.setLevel(status && status >= 500 ? "error" : "warning");
     scope.setTag(SERVICE_RECORD_SENTRY_TAG, SERVICE_RECORD_SENTRY_FEATURE);
-    scope.setTag("error.kind", operation);
-    scope.setTag("api.status", statusLabel);
+    scope.setTag("app", "mobile");
+    scope.setTag("runtime", typeof window === "undefined" ? "server" : "browser");
+    scope.setTag("operation", operation);
+    scope.setTag("handled", "true");
+    scope.setTag("status_code", statusLabel);
     scope.setContext("serviceRecord", {
       operation,
       method,
@@ -89,7 +114,21 @@ export function captureServiceRecordError(
       code: context?.code ?? axiosError?.code ?? null,
       runtime: typeof window === "undefined" ? "server" : "browser",
     });
-    scope.setFingerprint(["service-record", operation, method, path, statusLabel]);
+    if (method !== "RENDER") {
+      scope.setFingerprint(["service-record", operation, method, path, statusLabel]);
+    }
     Sentry.captureException(capturedError);
   });
+}
+
+export function captureServiceRecordResponseError(
+  response: Pick<Response, "status">,
+  context: Omit<ServiceRecordErrorContext, "status">,
+): void {
+  if (response.status < 500) return;
+
+  captureServiceRecordError(
+    new Error(`Service-record request returned ${response.status}`),
+    { ...context, status: response.status },
+  );
 }

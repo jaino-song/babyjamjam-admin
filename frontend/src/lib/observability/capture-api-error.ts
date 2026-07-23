@@ -11,6 +11,17 @@ import {
 
 const reportedErrors = new WeakSet<object>();
 
+export type ServiceRecordOperation =
+  | "public-link"
+  | "verify"
+  | "context"
+  | "save-header"
+  | "save-session"
+  | "submit-session"
+  | "finalize"
+  | "schedule-change"
+  | "render";
+
 function getRequestPath(url: string | undefined): string {
   if (!url) return "unknown";
 
@@ -19,6 +30,17 @@ function getRequestPath(url: string | undefined): string {
   } catch {
     return url.split(/[?#]/, 1)[0] || "unknown";
   }
+}
+
+function getServiceRecordOperation(path: string): ServiceRecordOperation {
+  if (path.includes("/verify")) return "verify";
+  if (path.includes("/context")) return "context";
+  if (path.includes("/header")) return "save-header";
+  if (path.includes("/schedule-change")) return "schedule-change";
+  if (path.includes("/finalize")) return "finalize";
+  if (path.includes("/sessions/") && path.includes("/submit")) return "submit-session";
+  if (path.includes("/sessions/")) return "save-session";
+  return "public-link";
 }
 
 function isAxiosErrorLike(error: unknown): error is AxiosError {
@@ -44,6 +66,7 @@ export function captureApiError(error: unknown): void {
 
   const sanitizedPath = sanitizeSentryUrl(path) ?? "unknown";
   const statusLabel = status ? String(status) : "network";
+  const operation = getServiceRecordOperation(path);
   const capturedError = Object.assign(
     new Error(`Service-record API request failed: ${method} ${sanitizedPath} (${statusLabel})`),
     { name: "ServiceRecordApiRequestError" },
@@ -58,17 +81,39 @@ export function captureApiError(error: unknown): void {
   Sentry.withScope((scope) => {
     scope.setLevel(status && status >= 500 ? "error" : "warning");
     scope.setTag(SERVICE_RECORD_SENTRY_TAG, SERVICE_RECORD_SENTRY_FEATURE);
-    scope.setTag("error.kind", "api");
-    scope.setTag("api.method", method);
-    scope.setTag("api.status", statusLabel);
+    scope.setTag("app", "frontend");
+    scope.setTag("runtime", typeof window === "undefined" ? "server" : "browser");
+    scope.setTag("operation", operation);
+    scope.setTag("handled", "true");
+    scope.setTag("status_code", statusLabel);
     scope.setContext("api", {
       method,
       path: sanitizedPath,
+      operation,
       status: status ?? null,
       code: error.code ?? null,
       runtime: typeof window === "undefined" ? "server" : "browser",
     });
     scope.setFingerprint(["api-error", method, sanitizedPath, statusLabel]);
     Sentry.captureException(capturedError);
+  });
+}
+
+export function captureServiceRecordRenderError(error: Error): void {
+  if (reportedErrors.has(error)) return;
+  reportedErrors.add(error);
+
+  Sentry.withScope((scope) => {
+    scope.setLevel("error");
+    scope.setTag(SERVICE_RECORD_SENTRY_TAG, SERVICE_RECORD_SENTRY_FEATURE);
+    scope.setTag("app", "frontend");
+    scope.setTag("runtime", "browser");
+    scope.setTag("operation", "render");
+    scope.setTag("handled", "true");
+    scope.setContext("serviceRecord", {
+      operation: "render",
+      runtime: "browser",
+    });
+    Sentry.captureException(error);
   });
 }

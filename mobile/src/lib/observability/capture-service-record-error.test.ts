@@ -11,7 +11,10 @@ jest.mock("@sentry/nextjs", () => ({
   captureException: (error: unknown) => mockCaptureException(error),
 }));
 
-import { captureServiceRecordError } from "./capture-service-record-error";
+import {
+  captureServiceRecordError,
+  captureServiceRecordResponseError,
+} from "./capture-service-record-error";
 
 function createAxiosError(options: {
   status?: number;
@@ -66,5 +69,28 @@ describe("captureServiceRecordError", () => {
       code: null,
       runtime: "browser",
     });
+  });
+
+  it("captures resolved 5xx responses but ignores resolved 4xx responses", () => {
+    captureServiceRecordResponseError(
+      { status: 503 },
+      {
+        operation: "context",
+        method: "GET",
+        path: "/api/service-record/[Filtered]/context",
+      },
+    );
+    captureServiceRecordResponseError(
+      { status: 401 },
+      {
+        operation: "verify",
+        method: "POST",
+        path: "/api/service-record/[Filtered]/verify",
+      },
+    );
+
+    expect(mockCaptureException).toHaveBeenCalledTimes(1);
+    expect(mockScope.setTag).toHaveBeenCalledWith("status_code", "503");
+    expect(mockScope.setTag).toHaveBeenCalledWith("operation", "context");
   });
 });

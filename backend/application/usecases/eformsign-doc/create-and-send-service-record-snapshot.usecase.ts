@@ -12,6 +12,7 @@ import { createHash } from "crypto";
 import { EFORMSIGN_CLIENT_REPOSITORY, IEformsignClientRepository } from "domain/repositories/eformsign.client.interface";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { captureServiceRecordError } from "infrastructure/observability/service-record-sentry";
 import { GetEformsignAccessTokenUsecase } from "./get-eformsign-access-token.usecase";
 import {
     buildServiceRecordDocumentFields,
@@ -516,6 +517,15 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
                     lastError: message.slice(0, 2000),
                 },
             });
+            if (!definitiveClientError) {
+                captureServiceRecordError(error, {
+                    operation: "snapshot-create",
+                    handled: true,
+                    caseId: params.record.id,
+                    scheduleId: params.chunk.scheduleId ?? undefined,
+                    retryCount: attempts,
+                });
+            }
             throw error;
         }
     }

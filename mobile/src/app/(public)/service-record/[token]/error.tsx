@@ -16,7 +16,7 @@ export default function ServiceRecordErrorPage({
 }: ServiceRecordErrorPageProps) {
   useEffect(() => {
     captureServiceRecordError(error, {
-      operation: "route-render",
+      operation: "render",
       method: "RENDER",
       path: "/service-record/[Filtered]",
     });

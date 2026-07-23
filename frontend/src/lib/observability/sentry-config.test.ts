@@ -1,6 +1,7 @@
 import type { Event, Log } from "@sentry/nextjs";
 
 import {
+  getSentryEnvironment,
   getSentryRuntimeOptions,
   sanitizeSentryEvent,
   sanitizeSentryLog,
@@ -96,6 +97,26 @@ describe("Sentry privacy filters", () => {
 });
 
 describe("service-record Sentry scope", () => {
+  it("uses canonical environments and the production 10 percent trace default", () => {
+    const previousEnvironment = process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT;
+    const previousRate = process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE;
+    process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "production";
+    delete process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE;
+
+    const options = getSentryRuntimeOptions();
+    expect(getSentryEnvironment()).toBe("production");
+    expect(options.environment).toBe("production");
+    expect(options.tracesSampler({
+      name: "GET /service-record/[token]",
+      inheritOrSampleWith: (rate: number) => rate,
+    })).toBe(0.1);
+
+    if (previousEnvironment === undefined) delete process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT;
+    else process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = previousEnvironment;
+    if (previousRate === undefined) delete process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE;
+    else process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE = previousRate;
+  });
+
   it("drops unrelated errors and keeps tagged service-record errors", () => {
     const options = getSentryRuntimeOptions();
 
@@ -107,7 +128,7 @@ describe("service-record Sentry scope", () => {
         tags: { feature: "service-records" },
       }),
     ).toMatchObject({
-      message: "service record failed",
+      message: "Service-record error",
       tags: { feature: "service-records" },
     });
   });
