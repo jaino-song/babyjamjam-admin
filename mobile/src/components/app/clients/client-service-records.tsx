@@ -369,9 +369,10 @@ function SignatureDocumentCard({ signatureDoc }: { signatureDoc: SignatureDocSta
 }
 
 function formatSignatureStatus(statusDetail: string): string {
-    if (statusDetail.includes("complete") || statusDetail.includes("completed")) return "서명 완료";
-    if (statusDetail.includes("created")) return "발송됨";
-    return statusDetail || "상태 확인";
+    const normalized = statusDetail.trim().toLowerCase();
+    if (normalized.includes("complete")) return "서명 완료";
+    if (normalized.includes("created")) return "발송됨";
+    return statusDetail.trim() || "상태 확인";
 }
 
 function ServiceHeaderCard({

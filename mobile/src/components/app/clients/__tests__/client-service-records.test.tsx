@@ -160,6 +160,23 @@ describe("ClientServiceRecords", () => {
         expect(documentCard).toHaveTextContent("service-record-document-1");
     });
 
+    it("normalizes uppercase completed document statuses", () => {
+        const record = createRecord("COMPLETED");
+        record.signatureDocs = [{
+            documentId: "service-record-document-uppercase",
+            statusDetail: "COMPLETED",
+            stepName: "완료",
+            createdDate: "2099-07-30T18:30:00+09:00",
+            updatedDate: "2099-07-30T19:00:00+09:00",
+            snapshotChunkIndex: 1,
+        }];
+
+        renderComponent({ record, assignments: [createAssignment(1, "sent")] });
+
+        expect(screen.getByText("서명 완료")).toBeInTheDocument();
+        expect(screen.queryByText("COMPLETED")).not.toBeInTheDocument();
+    });
+
     it("shows the document lifecycle even when no assignment remains", () => {
         renderComponent({
             record: createRecord("DOCUMENTS_CREATED"),

@@ -117,7 +117,7 @@ function compareTriggerRules(first: MessageTriggerRule, second: MessageTriggerRu
   return getRuleTitle(first).localeCompare(getRuleTitle(second), "ko-KR");
 }
 
-export function MessageTriggerList() {
+export function MessageTriggerList({ onEdit }: { onEdit?: (rule: MessageTriggerRule) => void } = {}) {
   const {
     data: rulesResponse = [],
     isError: isRulesError,
@@ -186,19 +186,8 @@ export function MessageTriggerList() {
           const triggerKey = row.rule.templateKey;
           const triggerId = row.rule.id;
 
-          return (
-            <button
-              key={rowKey}
-              type="button"
-              className="list-item message-trigger-row"
-              aria-pressed={rowActive}
-              data-component="message-trigger-row"
-              data-trigger-id={triggerId}
-              data-trigger-key={triggerKey}
-              data-trigger-channel={row.channelLabel}
-              disabled={updateRuleMutation.isPending}
-              onClick={() => handleToggle(row)}
-            >
+          const iconAndInfo = (
+            <>
               <div
                 className={`trigger-icon trigger-icon-${row.tone}`}
                 data-component="message-trigger-icon"
@@ -224,7 +213,51 @@ export function MessageTriggerList() {
                   <span>{row.channelLabel}</span>
                 </div>
               </div>
+            </>
+          );
 
+          return onEdit ? (
+            <div
+              key={rowKey}
+              className="list-item message-trigger-row"
+              data-component="message-trigger-row"
+              data-trigger-id={triggerId}
+              data-trigger-key={triggerKey}
+              data-trigger-channel={row.channelLabel}
+            >
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                aria-label={`${row.title} 설정`}
+                onClick={() => onEdit(row.rule)}
+              >
+                {iconAndInfo}
+              </button>
+              <button
+                type="button"
+                className="flex min-h-11 min-w-11 items-center justify-end"
+                aria-label={`${row.title} ${rowActive ? "비활성화" : "활성화"}`}
+                aria-pressed={rowActive}
+                disabled={updateRuleMutation.isPending}
+                onClick={() => handleToggle(row)}
+              >
+                <span className={`toggle ${rowActive ? "on" : ""}`} aria-hidden="true" />
+              </button>
+            </div>
+          ) : (
+            <button
+              key={rowKey}
+              type="button"
+              className="list-item message-trigger-row"
+              aria-pressed={rowActive}
+              data-component="message-trigger-row"
+              data-trigger-id={triggerId}
+              data-trigger-key={triggerKey}
+              data-trigger-channel={row.channelLabel}
+              disabled={updateRuleMutation.isPending}
+              onClick={() => handleToggle(row)}
+            >
+              {iconAndInfo}
               <span className={`toggle ${rowActive ? "on" : ""}`} aria-hidden="true" />
             </button>
           );

@@ -913,15 +913,17 @@ function formatUnknownValue(value: unknown): string {
 }
 
 function formatSignatureStatus(statusDetail: string): string {
-    if (statusDetail.includes("complete") || statusDetail.includes("completed")) return "서명 완료";
-    if (statusDetail.includes("created")) return "발송됨";
-    return statusDetail || "상태 확인";
+    const normalized = statusDetail.trim().toLowerCase();
+    if (normalized.includes("complete")) return "서명 완료";
+    if (normalized.includes("created")) return "발송됨";
+    return statusDetail.trim() || "상태 확인";
 }
 
 function getSignatureVariant(statusDetail: string): "neutral" | "primary" | "success" | "warning" | "danger" {
-    if (statusDetail.includes("complete") || statusDetail.includes("completed")) return "success";
-    if (statusDetail.includes("reject") || statusDetail.includes("fail")) return "danger";
-    if (statusDetail.includes("created")) return "primary";
+    const normalized = statusDetail.trim().toLowerCase();
+    if (normalized.includes("complete")) return "success";
+    if (normalized.includes("reject") || normalized.includes("fail")) return "danger";
+    if (normalized.includes("created")) return "primary";
     return "neutral";
 }
 

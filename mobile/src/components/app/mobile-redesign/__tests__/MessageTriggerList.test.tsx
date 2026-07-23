@@ -53,7 +53,7 @@ function monthLabel() {
   return new Intl.DateTimeFormat("ko-KR", { month: "numeric" }).format(new Date());
 }
 
-function renderPage() {
+function renderPage(onEdit?: (rule: MessageTriggerRule) => void) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -63,7 +63,7 @@ function renderPage() {
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <MessageTriggerList />
+      <MessageTriggerList onEdit={onEdit} />
     </QueryClientProvider>,
   );
 }
@@ -161,6 +161,21 @@ describe("MessageTriggerList", () => {
       id: "rule-start",
       dto: { isActive: false },
     });
+  });
+
+  it("separates rule editing from the active toggle in management mode", async () => {
+    const onEdit = jest.fn();
+    const rule = createRule({ isActive: true });
+    mockUseMessageTriggerRules.mockReturnValue({ data: [rule], isError: false, isLoading: false });
+
+    renderPage(onEdit);
+
+    fireEvent.click(await screen.findByRole("button", { name: "실제 서비스 시작 규칙 설정" }));
+    expect(onEdit).toHaveBeenCalledWith(rule);
+    expect(updateMutate).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "실제 서비스 시작 규칙 비활성화" }));
+    expect(updateMutate).toHaveBeenCalledWith({ id: "rule-start", dto: { isActive: false } });
   });
 
   it("renders the service information trigger seven days before service start", async () => {
