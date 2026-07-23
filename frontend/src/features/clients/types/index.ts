@@ -2,6 +2,7 @@
 export interface EmployeeSummary {
     id: number;
     name: string;
+    phone?: string | null;
 }
 
 // Document status type for eformsign documents
@@ -89,6 +90,7 @@ export interface CreateClientDto {
     voucherClient: boolean;
     breastPump: boolean;
     serviceStatus?: ServiceStatus | null;
+    applyMessageAutomation?: boolean;
     areaId?: string | null;
     source?: "contract_auto_registration";
     reuseExistingClient?: boolean;

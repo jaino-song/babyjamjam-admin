@@ -142,7 +142,7 @@ function PdfContractPreview({
       <span className="zoom-hint">두 손가락으로 확대 · 두 번 탭</span>
       <div className="pdf-slider" ref={sliderRef} onScroll={handleScroll}>
         <PdfPreviewPage>
-          <div className="pdf-brand">아가잼잼 인천점</div>
+          <div className="pdf-brand">아가잼잼 인천 아이미래로</div>
           <div className="pdf-title">{categoryLabel} 문서</div>
           <div className="pdf-code">{documentCode}</div>
           <div className="pdf-page-body">
@@ -606,7 +606,7 @@ export default function FilesPage() {
             activeFilter={activeFilter}
             onFilterChange={setActiveFilter}
             scrollRef={scrollContainerRef}
-            loadMoreFooter={
+            loadMore={
               isInitialLoad && hasMore ? (
                 <ListLoadMoreButton
                   onLoadMore={loadMore}

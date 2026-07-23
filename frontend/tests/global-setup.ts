@@ -21,18 +21,22 @@ export default async function globalSetup(config: FullConfig) {
   const branchId = process.env.E2E_BRANCH_ID
     ?? "20000000-0000-4000-8000-000000000001";
   const url = new URL(baseURL);
-  await context.addCookies([{
+  const storageState = await context.storageState();
+  storageState.cookies.push({
     name: "selected_branch_id",
     value: branchId,
     domain: url.hostname,
     path: "/",
+    expires: -1,
     httpOnly: false,
     secure: url.protocol === "https:",
     sameSite: "Lax",
-  }]);
-  await context.storageState({
-    path: path.resolve(process.cwd(), "auth.json"),
   });
+  fs.writeFileSync(
+    path.resolve(process.cwd(), "auth.json"),
+    JSON.stringify(storageState),
+  );
+  await context.close();
   await browser.close();
 
   if (!fs.existsSync(path.resolve(process.cwd(), "auth.json"))) {

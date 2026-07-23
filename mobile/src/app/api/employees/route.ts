@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { getConflictPayload } from "@babyjamjam/shared";
 
 import { serverAPIClient } from "@/lib/api/server";
 import {
@@ -154,6 +155,10 @@ export async function DELETE(request: NextRequest) {
 
         return backendJsonResponse(response);
     } catch (error) {
+        const conflict = getConflictPayload(error);
+        if (conflict) {
+            return NextResponse.json(conflict, { status: 409 });
+        }
         return errorResponse(error, "delete employee");
     }
 }

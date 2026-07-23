@@ -1,8 +1,12 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from "react";
+import {
+    findOutOfPocketPriceInfo,
+    formatOutOfPocketDurationLabel,
+} from "@babyjamjam/shared";
 import { useCreateClient, useUpdateClient } from "@/hooks/useClients";
-import { useVoucherPriceInfos } from "@/hooks/useVoucherData";
+import { useOutOfPocketPriceInfos, useVoucherPriceInfos } from "@/hooks/useVoucherData";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
 import { EmployeeFormDialog } from "../employees/EmployeeFormDialog";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
@@ -40,6 +44,7 @@ import {
     SelectLabel,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { TogglePill } from "@/components/app/ui/toggle-pill";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { StatusBadge } from "@/components/app/ui/status-badge";
@@ -137,6 +142,11 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
 
     // Fetch voucher price info based on selected type
     const { data: voucherPriceInfos, isLoading: isPriceLoading } = useVoucherPriceInfos(formData.type || "");
+    const {
+        data: outOfPocketPriceInfos,
+        isLoading: isOutOfPocketPriceLoading,
+        isError: isOutOfPocketPriceError,
+    } = useOutOfPocketPriceInfos();
 
     // Get available durations for the selected voucher type
     const availableDurations = useMemo(() => {
@@ -148,22 +158,46 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
 
     // Get price info for selected type and duration
     const selectedPriceInfo = useMemo(() => {
+        if (!formData.voucherClient) {
+            return findOutOfPocketPriceInfo(outOfPocketPriceInfos, formData.duration);
+        }
         if (!voucherPriceInfos || !formData.duration) return null;
         return voucherPriceInfos.find(
             info => Number(info.duration) === formData.duration
         );
-    }, [voucherPriceInfos, formData.duration]);
+    }, [formData.duration, formData.voucherClient, outOfPocketPriceInfos, voucherPriceInfos]);
+
+    const durationOptions = useMemo(() => {
+        if (!formData.voucherClient) {
+            return (outOfPocketPriceInfos ?? []).map((priceInfo) => ({
+                value: String(priceInfo.duration),
+                label: formatOutOfPocketDurationLabel(priceInfo.duration),
+            }));
+        }
+        return availableDurations.map((duration) => ({ value: String(duration), label: `${duration}일` }));
+    }, [availableDurations, formData.voucherClient, outOfPocketPriceInfos]);
+
+    const arePriceInputsLocked = formData.voucherClient
+        ? !formData.type || !formData.duration || isPriceLoading
+        : !formData.duration || isOutOfPocketPriceLoading || isOutOfPocketPriceError;
 
     // Auto-fill prices when type and duration are selected (only if not manually edited)
     useEffect(() => {
         if (selectedPriceInfo && !pricesManuallyEdited) {
             queueMicrotask(() => {
-                setFormData(prev => ({
-                    ...prev,
-                    fullPrice: parsePrice(selectedPriceInfo.fullPrice),
-                    grant: parsePrice(selectedPriceInfo.grant),
-                    actualPrice: parsePrice(selectedPriceInfo.actualPrice),
-                }));
+                setFormData(prev => prev.voucherClient
+                    ? {
+                        ...prev,
+                        fullPrice: parsePrice(selectedPriceInfo.fullPrice),
+                        grant: "grant" in selectedPriceInfo ? parsePrice(selectedPriceInfo.grant) : prev.grant,
+                        actualPrice: "actualPrice" in selectedPriceInfo ? parsePrice(selectedPriceInfo.actualPrice) : prev.actualPrice,
+                    }
+                    : {
+                        ...prev,
+                        fullPrice: parsePrice(selectedPriceInfo.fullPrice),
+                        grant: "0",
+                        actualPrice: parsePrice(selectedPriceInfo.fullPrice),
+                    });
             });
         }
     }, [selectedPriceInfo, pricesManuallyEdited]);
@@ -180,6 +214,19 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                 grant: "",
                 actualPrice: "",
             }),
+        }));
+    };
+
+    const handleVoucherClientChange = (voucherClient: boolean) => {
+        setPricesManuallyEdited(false);
+        setFormData(prev => ({
+            ...prev,
+            voucherClient,
+            type: "",
+            duration: null,
+            fullPrice: "",
+            grant: "",
+            actualPrice: "",
         }));
     };
 
@@ -302,11 +349,11 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                     // Only include employee IDs if explicitly selected (not null)
                     ...(formData.primaryEmployeeId !== null && { primaryEmployeeId: formData.primaryEmployeeId }),
                     ...(formData.secondaryEmployeeId !== null && { secondaryEmployeeId: formData.secondaryEmployeeId }),
-                    type: formData.type,
+                    type: formData.voucherClient ? formData.type : null,
                     duration: formData.duration || null,
                     fullPrice: formData.fullPrice,
-                    grant: formData.grant,
-                    actualPrice: formData.actualPrice,
+                    grant: formData.voucherClient ? formData.grant : "0",
+                    actualPrice: formData.voucherClient ? formData.actualPrice : formData.fullPrice,
                     startDate: formData.startDate || null,
                     endDate: formData.endDate || null,
                     careCenter: formData.careCenter,
@@ -325,11 +372,11 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                     phone: formData.phone || null,
                     primaryEmployeeId: formData.primaryEmployeeId,
                     secondaryEmployeeId: formData.secondaryEmployeeId,
-                    type: formData.type || null,
+                    type: formData.voucherClient ? formData.type || null : null,
                     duration: formData.duration || null,
                     fullPrice: formData.fullPrice || null,
-                    grant: formData.grant || null,
-                    actualPrice: formData.actualPrice || null,
+                    grant: formData.voucherClient ? formData.grant || null : "0",
+                    actualPrice: formData.voucherClient ? formData.actualPrice || null : formData.fullPrice || null,
                     startDate: formData.startDate || null,
                     endDate: formData.endDate || null,
                     careCenter: formData.careCenter,
@@ -477,8 +524,19 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                             {t(locale, "clients.form.section-service")}
                         </h4>
 
+                        <div className="flex justify-center" data-component="clients-form-dialog-customer-type-toggle-field">
+                            <TogglePill
+                                data-component="clients-form-dialog-customer-type-toggle"
+                                value={formData.voucherClient}
+                                onValueChange={handleVoucherClientChange}
+                                leftLabel={t(locale, "clients.form.voucher-client")}
+                                rightLabel={t(locale, "clients.form.self-pay-client")}
+                                ariaLabel={t(locale, "clients.form.customer-type")}
+                            />
+                        </div>
+
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <div className="space-y-2">
+                            {formData.voucherClient && <div className="space-y-2">
                                 <Label>{t(locale, "clients.form.voucher-type")}</Label>
                                 <Select
                                     value={formData.type || ""}
@@ -500,7 +558,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                         ))}
                                     </SelectContent>
                                 </Select>
-                            </div>
+                            </div>}
                             <div className="space-y-2">
                                 <Label>{t(locale, "clients.form.duration")}</Label>
                                 <div className="relative">
@@ -511,20 +569,22 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                             // Reset manual edit flag when duration changes to allow auto-fill
                                             setPricesManuallyEdited(false);
                                         }}
-                                        disabled={!formData.type || isPriceLoading}
+                                        disabled={formData.voucherClient
+                                            ? !formData.type || isPriceLoading
+                                            : isOutOfPocketPriceLoading || isOutOfPocketPriceError}
                                     >
                                         <SelectTrigger>
                                             <SelectValue placeholder={t(locale, "clients.form.duration")} />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            {availableDurations.map((duration) => (
-                                                <SelectItem key={duration} value={String(duration)}>
-                                                    {duration}일
+                                            {durationOptions.map((option) => (
+                                                <SelectItem key={option.value} value={option.value}>
+                                                    {option.label}
                                                 </SelectItem>
                                             ))}
                                         </SelectContent>
                                     </Select>
-                                    {isPriceLoading && (
+                                    {(formData.voucherClient ? isPriceLoading : isOutOfPocketPriceLoading) && (
                                         <div className="absolute right-10 top-1/2 -translate-y-1/2">
                                             <Spinner className="h-4 w-4" />
                                         </div>
@@ -532,6 +592,11 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 </div>
                             </div>
                         </div>
+                        {!formData.voucherClient && isOutOfPocketPriceError && (
+                            <p className="text-xs font-medium text-destructive" data-component="clients-form-dialog-out-of-pocket-price-error">
+                                자부담 요금 정보를 불러오지 못했습니다.
+                            </p>
+                        )}
                     </div>
 
                     <Separator />
@@ -549,15 +614,16 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                             )}
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <div className={formData.voucherClient ? "grid grid-cols-1 sm:grid-cols-3 gap-4" : "grid grid-cols-1 gap-4"}>
                             <div className="space-y-2">
                                 <Label htmlFor="fullPrice">{t(locale, "clients.form.full-price")}</Label>
                                 <div className="relative">
                                     <Input
                                         id="fullPrice"
                                         placeholder="0"
-                                        value={formatPrice(formData.fullPrice || "")}
+                                        value={arePriceInputsLocked ? "" : formatPrice(formData.fullPrice || "")}
                                         onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
+                                        disabled={arePriceInputsLocked}
                                         className="pr-8"
                                     />
                                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
@@ -565,7 +631,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                     </span>
                                 </div>
                             </div>
-                            <div className="space-y-2">
+                            {formData.voucherClient && <div className="space-y-2">
                                 <Label htmlFor="grant">{t(locale, "clients.form.grant")}</Label>
                                 <div className="relative">
                                     <Input
@@ -579,8 +645,8 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                         원
                                     </span>
                                 </div>
-                            </div>
-                            <div className="space-y-2">
+                            </div>}
+                            {formData.voucherClient && <div className="space-y-2">
                                 <Label htmlFor="actualPrice">{t(locale, "clients.form.actual-price")}</Label>
                                 <div className="relative">
                                     <Input
@@ -594,7 +660,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                         원
                                     </span>
                                 </div>
-                            </div>
+                            </div>}
                         </div>
                     </div>
 
@@ -655,16 +721,6 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                         </h4>
 
                         <div className="flex flex-wrap gap-6">
-                            <div className="flex items-center gap-2">
-                                <Switch
-                                    id="voucherClient"
-                                    checked={formData.voucherClient}
-                                    onCheckedChange={(checked) => handleChange("voucherClient", checked)}
-                                />
-                                <Label htmlFor="voucherClient" className="cursor-pointer">
-                                    {t(locale, "clients.form.voucher-client")}
-                                </Label>
-                            </div>
                             <div className="flex items-center gap-2">
                                 <Switch
                                     id="careCenter"

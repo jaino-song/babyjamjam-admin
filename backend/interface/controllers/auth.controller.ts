@@ -34,6 +34,7 @@ import {
     KAKAO_OAUTH_ERROR_REQUEST_KEY,
     type KakaoCallbackRequest,
 } from "../../infrastructure/auth/kakao-auth.guard";
+import { normalizePhone } from "application/utils/normalize-phone";
 
 @Controller("auth")
 export class AuthController {
@@ -270,7 +271,6 @@ export class AuthController {
             body.name,
             body.phone,
             body.birthDate,
-            body.role,
         );
 
         // Reset rate limit on successful registration
@@ -292,6 +292,28 @@ export class AuthController {
 
         const user = await this.prisma.user.findUnique({
             where: { email: normalizedEmail },
+            select: { id: true },
+        });
+
+        return { exists: Boolean(user) };
+    }
+
+    @Get("check-phone")
+    @UseGuards(RateLimitGuard)
+    async checkPhone(@Query("phone") phone?: string) {
+        const normalizedPhone = normalizePhone(phone);
+
+        if (!normalizedPhone || normalizedPhone.length !== 11) {
+            return { exists: false };
+        }
+
+        const formattedPhone = [
+            normalizedPhone.slice(0, 3),
+            normalizedPhone.slice(3, 7),
+            normalizedPhone.slice(7),
+        ].join("-");
+        const user = await this.prisma.user.findFirst({
+            where: { phone: { in: [normalizedPhone, formattedPhone] } },
             select: { id: true },
         });
 

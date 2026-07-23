@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getClientConflictPayload } from "@babyjamjam/shared";
 import { serverAPIClient } from "@/lib/api/server";
 import { errorResponse } from "@/lib/api/route-utils";
 
@@ -60,6 +61,10 @@ export async function POST(request: NextRequest) {
         });
         return NextResponse.json(response.data, { status: 201 });
     } catch (error) {
+        const conflict = getClientConflictPayload(error);
+        if (conflict) {
+            return NextResponse.json(conflict, { status: 409 });
+        }
         return errorResponse(error, "create client");
     }
 }

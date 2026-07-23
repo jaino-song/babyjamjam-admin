@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
+import { ChevronLeft, RefreshCw } from "lucide-react";
 
 import {
     SERVICE_RECORD_FORM_LAYOUT,
@@ -9,9 +10,11 @@ import {
 } from "@babyjamjam/shared/constants/service-record-form-layout";
 import type {
     ServiceRecordAssignment,
+    ServiceRecordCase,
     ServiceRecordLinkStatus,
     ServiceRecordOverview,
     ServiceRecordSession,
+    SignatureDocStatus,
 } from "@babyjamjam/shared/types/service-record";
 import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
 import { calcEndDateBusinessDays } from "@babyjamjam/shared/utils/business-days";
@@ -35,6 +38,8 @@ interface ClientServiceRecordsProps {
     overview?: ServiceRecordOverview;
     isLoading: boolean;
     isError: boolean;
+    isRefreshing?: boolean;
+    onRefresh?: () => void;
 }
 
 interface SessionSlot {
@@ -68,7 +73,10 @@ export function ClientServiceRecords({
     overview,
     isLoading,
     isError,
+    isRefreshing = false,
+    onRefresh,
 }: ClientServiceRecordsProps) {
+    const record = overview?.record ?? null;
     const assignments = useMemo(
         () => sortAssignmentsNewestFirst(overview?.assignments ?? []),
         [overview?.assignments],
@@ -99,7 +107,7 @@ export function ClientServiceRecords({
         );
     }
 
-    if (assignments.length === 0) {
+    if (assignments.length === 0 && !record) {
         return (
             <div className="detail-empty-state" data-component="mobile-clients-service-records-empty">
                 제공기록지 배정 정보가 없습니다.
@@ -124,6 +132,7 @@ export function ClientServiceRecords({
 
     return (
         <div className="detail-column" data-component="mobile-clients-service-records">
+            {record ? <RecordStatusCard record={record} /> : null}
             {assignments.map((assignment, assignmentIndex) => (
                 <div
                     key={assignment.scheduleId}
@@ -134,11 +143,14 @@ export function ClientServiceRecords({
                         assignment={assignment}
                         clientId={client.id}
                         delay={assignmentIndex * 180}
+                        showStatus={!record}
                     />
                     <ServiceHeaderCard assignment={assignment} delay={assignmentIndex * 180 + 60} />
                     <ServiceSessionsCard
                         assignment={assignment}
                         delay={assignmentIndex * 180 + 120}
+                        isRefreshing={isRefreshing}
+                        onRefresh={onRefresh}
                         onSelectSession={(sessionIndex, trigger) => {
                             const selectSession = () => setSelectedEntry({
                                 key: detailKey,
@@ -158,18 +170,65 @@ export function ClientServiceRecords({
                     />
                 </div>
             ))}
+            {record?.signatureDocs.map((signatureDoc) => (
+                <SignatureDocumentCard
+                    key={signatureDoc.documentId}
+                    signatureDoc={signatureDoc}
+                />
+            ))}
         </div>
     );
+}
+
+function RecordStatusCard({ record }: { record: ServiceRecordCase }) {
+    const statusLabel = getRecordStatusLabel(record.status);
+    const submitted = record.sessions.filter((session) => session.locked).length;
+
+    return (
+        <div data-component="mobile-clients-service-records-status-card">
+            <InfoCard title="제공기록지 진행 상태">
+                <InfoRow label="상태" value={statusLabel} />
+                <InfoRow
+                    label="서비스 기간"
+                    value={`${formatDateKo(record.startDate)} - ${formatDateKo(record.endDate)}`}
+                />
+                <InfoRow label="작성 현황" value={`${submitted}/${record.totalSessions}회`} />
+                <InfoRow label="기록 완료" value={formatDateTimeKo(record.completedAt)} />
+                <InfoRow label="전자문서 생성" value={formatDateTimeKo(record.finalizedAt)} />
+            </InfoCard>
+        </div>
+    );
+}
+
+function getRecordStatusLabel(status: string): string {
+    switch (status) {
+        case "WAITING_FOR_DETAILS": return "정보 대기";
+        case "WAITING_FOR_ASSIGNMENT": return "배정 대기";
+        case "SCHEDULED": return "시작 전";
+        case "IN_PROGRESS": return "작성 중";
+        case "WAITING_FOR_END": return "종료 대기";
+        case "AWAITING_COMPLETION": return "기록 미완료";
+        case "READY_TO_FINALIZE": return "문서 생성 대기";
+        case "FINALIZING": return "문서 생성 중";
+        case "DOCUMENTS_CREATED": return "기관 검토 중";
+        case "COMPLETED": return "완료";
+        case "FINALIZATION_FAILED": return "문서 생성 실패";
+        case "TERMINATED_REVIEW_REQUIRED": return "중단 확인 필요";
+        case "MIGRATION_REVIEW_REQUIRED": return "데이터 확인 필요";
+        default: return "상태 확인";
+    }
 }
 
 function LinkCard({
     assignment,
     clientId,
     delay,
+    showStatus,
 }: {
     assignment: ServiceRecordAssignment;
     clientId: number;
     delay: number;
+    showStatus: boolean;
 }) {
     const sendLinkMutation = useSendServiceRecordLink();
     const [resendModalOpen, setResendModalOpen] = useState(false);
@@ -215,10 +274,12 @@ function LinkCard({
 
     return (
         <InfoCard title="제공기록지 작성 링크" delay={delay}>
-            <InfoRow
-                label="상태"
-                value={<span className={LINK_STATUS_TEXT_CLASS[statusMeta.tone]}>{statusMeta.label}</span>}
-            />
+            {showStatus ? (
+                <InfoRow
+                    label="상태"
+                    value={<span className={LINK_STATUS_TEXT_CLASS[statusMeta.tone]}>{statusMeta.label}</span>}
+                />
+            ) : null}
             <InfoRow
                 label="제공인력"
                 value={`${assignment.employee.name} · ${formatPhone(assignment.employee.phone)}`}
@@ -269,11 +330,6 @@ function LinkCard({
                     {sendLinkMutation.isPending ? "발송 중..." : isResend ? "메시지 재전송" : "링크 수동 전송"}
                 </button>
             </div>
-            <div className="link-note">
-                {isResend
-                    ? <>메시지 재전송 시 <b>기존 링크가 그대로 전송</b>됩니다.</>
-                    : "서비스 시작일 오후 3시에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요."}
-            </div>
             <ApprovalTwoButtonModal
                 open={resendModalOpen}
                 onOpenChange={(open) => {
@@ -292,6 +348,30 @@ function LinkCard({
             />
         </InfoCard>
     );
+}
+
+function SignatureDocumentCard({ signatureDoc }: { signatureDoc: SignatureDocStatus }) {
+    const title = signatureDoc.snapshotChunkIndex
+        ? `제공기록지 전자문서 ${signatureDoc.snapshotChunkIndex}`
+        : "제공기록지 전자문서";
+
+    return (
+        <div data-component="mobile_clients_service-records_signature-card">
+            <InfoCard title={title}>
+                <InfoRow label="상태" value={formatSignatureStatus(signatureDoc.statusDetail)} />
+                <InfoRow label="문서 발송" value={formatDateTimeKo(signatureDoc.createdDate)} />
+                <InfoRow label="상태 갱신" value={formatDateTimeKo(signatureDoc.updatedDate)} />
+                <InfoRow label="단계" value={signatureDoc.stepName || "-"} />
+                <InfoRow label="문서 ID" value={signatureDoc.documentId} />
+            </InfoCard>
+        </div>
+    );
+}
+
+function formatSignatureStatus(statusDetail: string): string {
+    if (statusDetail.includes("complete") || statusDetail.includes("completed")) return "서명 완료";
+    if (statusDetail.includes("created")) return "발송됨";
+    return statusDetail || "상태 확인";
 }
 
 function ServiceHeaderCard({
@@ -332,10 +412,14 @@ function ServiceHeaderCard({
 function ServiceSessionsCard({
     assignment,
     delay,
+    isRefreshing,
+    onRefresh,
     onSelectSession,
 }: {
     assignment: ServiceRecordAssignment;
     delay: number;
+    isRefreshing: boolean;
+    onRefresh?: () => void;
     onSelectSession: (sessionIndex: number, trigger: HTMLElement) => void;
 }) {
     const slots = buildSessionSlots(assignment);
@@ -353,10 +437,30 @@ function ServiceSessionsCard({
                 data-component="mobile-clients-service-records-session-card-header"
             >
                 <div className="info-card-title">회차별 제공기록</div>
-                <div className="service-record-progress-row">
-                    <InfoRow
-                        value={`${lockedCount}/${slots.length} 제출완료${draftCount > 0 ? ` · 임시저장 ${draftCount}` : ""}`}
-                    />
+                <div
+                    className="service-record-progress-row"
+                    data-component="mobile-clients-service-records-progress"
+                >
+                    {onRefresh ? (
+                        <button
+                            type="button"
+                            className="service-record-refresh-button"
+                            data-component="mobile-clients-service-records-refresh"
+                            aria-label={isRefreshing ? "제공기록 새로고침 중" : "제공기록 새로고침"}
+                            aria-busy={isRefreshing}
+                            disabled={isRefreshing}
+                            onClick={onRefresh}
+                        >
+                            <RefreshCw
+                                size={14}
+                                className={cn(isRefreshing && "animate-spin")}
+                                aria-hidden="true"
+                            />
+                        </button>
+                    ) : null}
+                    <span className="info-row-value">
+                        {`${lockedCount}/${slots.length} 제출완료${draftCount > 0 ? ` · 임시저장 ${draftCount}` : ""}`}
+                    </span>
                 </div>
             </div>
             {slots.map((slot) => (
@@ -438,7 +542,8 @@ function ServiceRecordSessionDetail({
                 data-component="mobile-clients-service-records-session-detail-back"
                 onClick={onBack}
             >
-                ‹ 목록으로
+                <ChevronLeft size={14} aria-hidden="true" />
+                이전
             </button>
 
             <div className="message-detail-head">

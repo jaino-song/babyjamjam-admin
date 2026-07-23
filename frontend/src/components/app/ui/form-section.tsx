@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { AppContentCard } from "@/components/ui/app-surface";
 
 export const APP_FORM_CONTROL_CLASS_NAME =
-  "flex h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] w-full rounded-[13px] border-[1.35px] border-v3-border bg-white px-[calc(14px*var(--glint-ui-scale,1))] py-[calc(8px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-[Pretendard] font-medium text-v3-dark shadow-none outline-none transition-all focus-visible:border-v3-primary focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-v3-primary/10 disabled:cursor-not-allowed disabled:opacity-55";
+  "flex h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] w-full rounded-[13px] border-[1.35px] border-input bg-white px-[calc(14px*var(--glint-ui-scale,1))] py-[calc(8px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-[Pretendard] font-medium text-v3-dark shadow-none outline-none transition-all focus-visible:border-v3-primary focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-v3-primary/10 disabled:cursor-not-allowed disabled:opacity-55";
 
 export interface FormSectionProps extends Omit<React.HTMLAttributes<HTMLElement>, "title"> {
   title: React.ReactNode;
@@ -224,8 +224,9 @@ type FormNativeSelectEntry = FormNativeSelectOption | FormNativeSelectGroup;
 export interface FormNativeSelectProps
   extends Omit<React.SelectHTMLAttributes<HTMLSelectElement>, "onChange"> {
   options: readonly FormNativeSelectEntry[];
-  onValueChange: (value: string) => void;
+  onValueChange?: (value: string) => void;
   placeholder?: string;
+  hideIcon?: boolean;
   wrapDataComponent?: string;
   selectDataComponent?: string;
   iconDataComponent?: string;
@@ -239,6 +240,7 @@ function FormNativeSelect({
   options,
   onValueChange,
   placeholder,
+  hideIcon = false,
   className,
   wrapDataComponent = "form-native-select-wrap",
   selectDataComponent = "form-native-select",
@@ -251,12 +253,12 @@ function FormNativeSelect({
       <select
         data-component={selectDataComponent}
         className={cn(
-          "box-border h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] w-full appearance-none rounded-[13px] border-[1.35px] border-v3-border bg-white px-[calc(14px*var(--glint-ui-scale,1))] pr-[calc(44px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-[Pretendard] font-medium leading-[1.2] text-v3-dark outline-none focus:border-v3-primary focus:ring-[3px] focus:ring-inset focus:ring-v3-primary/10 disabled:cursor-not-allowed disabled:opacity-55",
+          "box-border h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] w-full appearance-none rounded-[13px] border-[1.35px] border-input bg-white px-[calc(14px*var(--glint-ui-scale,1))] pr-[calc(44px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-[Pretendard] font-medium leading-[1.2] text-v3-dark outline-none focus:border-v3-primary focus:ring-[3px] focus:ring-inset focus:ring-v3-primary/10 disabled:cursor-not-allowed disabled:opacity-55",
           value === "" && "text-v3-text-muted",
           className,
         )}
         value={value}
-        onChange={(event) => onValueChange(event.target.value)}
+        onChange={(event) => onValueChange?.(event.target.value)}
         {...props}
       >
         {placeholder ? (
@@ -280,12 +282,14 @@ function FormNativeSelect({
           ),
         )}
       </select>
-      <ChevronDown
-        data-component={iconDataComponent}
-        className="pointer-events-none absolute right-[calc(14px*var(--glint-ui-scale,1))] top-1/2 h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] -translate-y-1/2 text-v3-text-muted"
-        aria-hidden="true"
-        strokeWidth={2.2}
-      />
+      {hideIcon ? null : (
+        <ChevronDown
+          data-component={iconDataComponent}
+          className="pointer-events-none absolute right-[calc(14px*var(--glint-ui-scale,1))] top-1/2 h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] -translate-y-1/2 text-v3-text-muted"
+          aria-hidden="true"
+          strokeWidth={2.2}
+        />
+      )}
     </div>
   );
 }
@@ -320,6 +324,7 @@ function FormChip({
 export interface FormSwitchRowProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "title"> {
   title: React.ReactNode;
   description?: React.ReactNode;
+  size?: "default" | "control";
   checked: boolean;
   onToggle: () => void;
   disabled?: boolean;
@@ -335,6 +340,7 @@ export interface FormSwitchRowProps extends Omit<React.HTMLAttributes<HTMLDivEle
 function FormSwitchRow({
   title,
   description,
+  size = "default",
   checked,
   onToggle,
   disabled = false,
@@ -353,6 +359,7 @@ function FormSwitchRow({
       data-component={dataComponent}
       className={cn(
         "flex min-h-[calc(54px*var(--glint-ui-scale,1))] items-center justify-between gap-[calc(14px*var(--glint-ui-scale,1))] rounded-[14px] border-[1.5px] border-v3-border bg-white px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))]",
+        size === "control" && "h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] border-[1.35px] py-0",
         className,
       )}
       {...props}

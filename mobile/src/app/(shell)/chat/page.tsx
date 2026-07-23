@@ -332,7 +332,7 @@ export default function ChatPage() {
     (lastMessage.content.includes("하시겠습니까?") || lastMessage.content.includes("Would you like"));
 
   const userLabel = user?.name ? `${user.name} 님` : "송진호 님";
-  const branchLabel = user?.branchName ?? "인천점";
+  const branchLabel = user?.branchName ?? "인천 아이미래로";
   const isInputDisabled = state === "streaming" || state === "connecting";
 
   return (

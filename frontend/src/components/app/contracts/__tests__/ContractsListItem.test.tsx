@@ -38,6 +38,10 @@ function title(container: HTMLElement): Element | null {
   return container.querySelector('[data-component="contracts-list-item-title"]');
 }
 
+function subtitle(container: HTMLElement): Element | null {
+  return container.querySelector('[data-component="contracts-list-item-subtitle"]');
+}
+
 describe("ContractsListItem", () => {
   it.each([null, "", "   ", "-"])(
     "shows 이름 없음 when the recipient name is unresolved (%p)",
@@ -64,5 +68,19 @@ describe("ContractsListItem", () => {
     );
 
     expect(title(container)).toHaveTextContent("송진호");
+  });
+
+  it("uses the supplied subtitle label instead of the stored document name", () => {
+    const { container } = render(
+      <ContractsListItem
+        document={documentFixture()}
+        customerName="송진호"
+        subtitle="제공기록지"
+        isLoading={false}
+      />,
+    );
+
+    expect(subtitle(container)).toHaveTextContent("제공기록지");
+    expect(subtitle(container)).not.toHaveTextContent("산모신생아건강관리서비스 계약서");
   });
 });

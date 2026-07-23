@@ -27,6 +27,7 @@ import { useSystemTemplate } from "@/features/system-templates/hooks";
 import type { SystemTemplateKey } from "@/features/system-templates/types";
 import {
   useMessageHistory,
+  useRetryMessageHistory,
   useUpcomingMessageTriggerJobs,
 } from "@/features/message-triggers/hooks/use-message-triggers";
 import {
@@ -41,7 +42,6 @@ import type {
   TriggerRecipientType,
   UpcomingMessageTriggerJob,
 } from "@/features/message-triggers/types";
-import { messageDeliveryApi } from "@/services/api";
 import { CustomTemplateForm } from "@/components/app/messages/forms/custom-template-form";
 import {
   getMessageHistoryEmptyStateCopy,
@@ -1253,9 +1253,9 @@ function MessageHistorySection() {
   const [relativeDateFilter, setRelativeDateFilter] = useState<MessageHistoryRelativeDateFilter>("all");
   const [dateYear, setDateYear] = useState("");
   const [dateMonth, setDateMonth] = useState("");
-  const [isRetrying, setIsRetrying] = useState(false);
   const deferredSearchValue = useDeferredValue(searchValue);
   const { data: historyData = [], isLoading, isError } = useMessageHistory();
+  const { mutateAsync: retryHistory, isPending: isRetrying } = useRetryMessageHistory();
   const { data: clients = [] } = useAllClients();
   const { toast } = useToast();
   const smsHistoryData = useMemo(
@@ -1336,31 +1336,27 @@ function MessageHistorySection() {
   }, [filteredRecords, selectedRecordId]);
 
   const canRetry = !!selectedRecord
-    && selectedRecord.status !== "sent"
-    && selectedRecord.status !== "canceled";
+    && typeof selectedRecord.id === "number"
+    && selectedRecord.status === "failed";
 
   const handleRetry = useCallback(async () => {
-    if (!selectedRecord) return;
+    if (!selectedRecord || typeof selectedRecord.id !== "number") return;
 
-    setIsRetrying(true);
     try {
-      await messageDeliveryApi.sendSms({
-        receiver: selectedRecord.recipientPhone,
-        recipientName: selectedRecord.recipientName,
-        message: selectedRecord.messagePreview,
-        msgType: "AUTO",
-      });
+      const retriedRecord = await retryHistory(selectedRecord.id);
 
-      toast({ description: "재발송 요청을 전송했습니다." });
+      if (retriedRecord.status === "failed") {
+        throw new Error(retriedRecord.errorMessage || "메시지 재발송에 실패했습니다.");
+      }
+
+      toast({ description: "재발송 요청을 등록했습니다." });
     } catch (error) {
       toast({
         variant: "destructive",
         description: error instanceof Error ? error.message : "재발송 요청 중 오류가 발생했습니다.",
       });
-    } finally {
-      setIsRetrying(false);
     }
-  }, [selectedRecord, toast]);
+  }, [retryHistory, selectedRecord, toast]);
 
   return (
     <SplitLayout

@@ -62,8 +62,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
   padding: 0;
   border: 0;
   border-radius: 12px;
@@ -74,9 +75,14 @@
 }
 
 .navbarTitle {
+  min-width: 0;
+  overflow: hidden;
   font-size: 1rem;
   font-weight: 700;
   color: white;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .wizardContent {
@@ -283,6 +289,7 @@
 }
 
 .gradeChip {
+  min-height: 44px;
   padding: 13px 6px;
   border: 1.5px solid hsl(var(--v3-border));
   border-radius: 12px;
@@ -327,6 +334,7 @@
 }
 
 .areaChip {
+  min-height: 44px;
   padding: 10px 4px;
   border: 1.5px solid hsl(var(--v3-border));
   border-radius: 10px;

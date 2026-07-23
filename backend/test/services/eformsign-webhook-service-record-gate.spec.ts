@@ -6,6 +6,9 @@ import { EformsignWebhookService } from "../../application/services/eformsign-we
  * all funnel through handleCompletedDocument(). The gate keys on the document's template_id.
  */
 const FEEDBACK_TPL = "tpl_feedback_123";
+const FEEDBACK_TPL_10 = "tpl_feedback_10";
+const FEEDBACK_TPL_15 = "tpl_feedback_15";
+const FEEDBACK_TPL_20 = "tpl_feedback_20";
 const CONTRACT_TPL = "tpl_contract_999";
 
 function makeService() {
@@ -51,11 +54,25 @@ const pdfEvent = (template_id: string) => ({
 });
 
 describe("EformsignWebhookService — feedback template_id gate", () => {
-    const OLD = process.env["EFORMSIGN_FEEDBACK_TEMPLATE_ID"];
-    beforeAll(() => { process.env["EFORMSIGN_FEEDBACK_TEMPLATE_ID"] = FEEDBACK_TPL; });
+    // BJJ-multi-tier: the gate must match documents created on ANY configured tier's template.
+    const TIER_ENV = {
+        EFORMSIGN_FEEDBACK_TEMPLATE_ID: FEEDBACK_TPL,
+        EFORMSIGN_FEEDBACK_TEMPLATE_ID_10: FEEDBACK_TPL_10,
+        EFORMSIGN_FEEDBACK_TEMPLATE_ID_15: FEEDBACK_TPL_15,
+        EFORMSIGN_FEEDBACK_TEMPLATE_ID_20: FEEDBACK_TPL_20,
+    } as const;
+    const OLD: Record<string, string | undefined> = {};
+    beforeAll(() => {
+        for (const [key, value] of Object.entries(TIER_ENV)) {
+            OLD[key] = process.env[key];
+            process.env[key] = value;
+        }
+    });
     afterAll(() => {
-        if (OLD === undefined) delete process.env["EFORMSIGN_FEEDBACK_TEMPLATE_ID"];
-        else process.env["EFORMSIGN_FEEDBACK_TEMPLATE_ID"] = OLD;
+        for (const key of Object.keys(TIER_ENV)) {
+            if (OLD[key] === undefined) delete process.env[key];
+            else process.env[key] = OLD[key];
+        }
     });
 
     it("document event + contract template → runs contract-completion side effects", async () => {
@@ -79,6 +96,26 @@ describe("EformsignWebhookService — feedback template_id gate", () => {
     it("ready_document_pdf + feedback template → SKIPS contract-completion side effects", async () => {
         const { service, handleCompleted } = makeService();
         await (service as any).handleReadyDocumentPdfEvent("branch1", pdfEvent(FEEDBACK_TPL));
+        expect(handleCompleted).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ["10회", FEEDBACK_TPL_10],
+        ["15회", FEEDBACK_TPL_15],
+        ["20회", FEEDBACK_TPL_20],
+    ])("document event + %s tier template → SKIPS contract-completion side effects", async (_tier, templateId) => {
+        const { service, handleCompleted } = makeService();
+        await (service as any).handleDocumentEvent("branch1", docEvent(templateId));
+        expect(handleCompleted).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ["10회", FEEDBACK_TPL_10],
+        ["15회", FEEDBACK_TPL_15],
+        ["20회", FEEDBACK_TPL_20],
+    ])("ready_document_pdf + %s tier template → SKIPS contract-completion side effects", async (_tier, templateId) => {
+        const { service, handleCompleted } = makeService();
+        await (service as any).handleReadyDocumentPdfEvent("branch1", pdfEvent(templateId));
         expect(handleCompleted).not.toHaveBeenCalled();
     });
 });

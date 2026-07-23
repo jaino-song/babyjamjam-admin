@@ -1,0 +1,27 @@
+/* Babyjamjam Admin — Mobile density layer.
+   useIsMobile()(<1024)일 때 앱 루트에 class="bjj-mobile" 1회. 같은 컴포넌트, 모바일 값으로 전환:
+   히트타겟 ≥44 · 입력 폰트 16px(iOS 자동 줌 방지) · 컨트롤 확대. */
+.bjj-mobile .bjj-btn--size-sm{height:44px;padding:0 16px;}
+.bjj-mobile .bjj-btn--size-default{height:44px;padding:0 20px;}
+.bjj-mobile .bjj-btn--size-lg{height:52px;}
+.bjj-mobile .bjj-btn--size-icon{height:44px;width:44px;}
+.bjj-mobile .bjj-input{height:44px;font-size:1rem;}
+.bjj-mobile .bjj-textarea{min-height:96px;font-size:1rem;}
+.bjj-mobile .bjj-select__trigger{height:44px;font-size:1rem;}
+.bjj-mobile .bjj-select__item{padding:12px;font-size:var(--text-base);}
+.bjj-mobile .bjj-dropdown__item{padding:12px;font-size:var(--text-base);}
+.bjj-mobile .bjj-checkbox{gap:10px;font-size:var(--text-base);min-height:44px;}
+.bjj-mobile .bjj-checkbox__box{width:20px;height:20px;}
+.bjj-mobile .bjj-radio{gap:10px;font-size:var(--text-base);min-height:44px;}
+.bjj-mobile .bjj-radio__dot{width:20px;height:20px;}
+.bjj-mobile .bjj-radio__dot::after{width:12px;height:12px;}
+.bjj-mobile .bjj-switch{width:52px;height:30px;}
+.bjj-mobile .bjj-switch__thumb{width:24px;height:24px;}
+.bjj-mobile .bjj-switch--checked .bjj-switch__thumb{transform:translateX(22px);}
+.bjj-mobile .bjj-tabs--underline .bjj-tabs__tab{min-height:44px;}
+.bjj-mobile .bjj-tabs--pill{height:44px;}
+.bjj-mobile .bjj-tabs--pill .bjj-tabs__tab{padding:8px 14px;}
+.bjj-mobile .bjj-dialog{width:calc(100vw - 32px);}
+.bjj-mobile .bjj-dialog__close{width:40px;height:40px;}
+.bjj-mobile .bjj-table th{height:52px;}
+.bjj-mobile .bjj-table td{padding:18px 8px;}

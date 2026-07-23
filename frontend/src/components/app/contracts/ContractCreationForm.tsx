@@ -4,6 +4,7 @@ import { isAxiosError } from "axios";
 import "dayjs/locale/ko";
 import { useRouter } from "next/navigation";
 import { Check, X } from "lucide-react";
+import { getApiErrorMessage } from "@babyjamjam/shared";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
@@ -26,7 +27,8 @@ import {
 } from "@/components/ui/select";
 import type { WizardStep } from "@/components/app/v3";
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
-import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
+import { FormNativeSelect } from "@/components/app/ui/form-section";
 import {
   Dialog,
   DialogContent,
@@ -248,7 +250,7 @@ const PANEL_THREE_COLUMN_GRID_CLASS_NAME =
 const SELECT_CLS =
   cn(
     V3_INPUT_CONTROL_CLASS_NAME,
-    "w-full appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2216%22%20height%3D%2216%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23888%22%20stroke-width%3D%222%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%2F%3E%3C%2Fsvg%3E')] bg-no-repeat bg-[right_12px_center] pr-10 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+    "w-full focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
   );
 
 export interface ContractCreationFormLayoutParts {
@@ -709,9 +711,9 @@ export const ContractCreationForm = ({
         try {
           newClient = await createClientMutation.mutateAsync(autoRegistrationPayload);
         } catch (error) {
-          if (!isAxiosError<{ message?: string; clientId?: number }>(error) || error.response?.status !== 409) throw error;
+          if (!isAxiosError<{ message?: string; error?: string; clientId?: number }>(error) || error.response?.status !== 409) throw error;
           const conflict = error.response.data;
-          if (!conflict.clientId) throw new Error(conflict.message || "고객 자동 등록에 실패했습니다.");
+          if (!conflict.clientId) throw new Error(getApiErrorMessage(error, "고객 자동 등록에 실패했습니다."));
           const shouldReuse = await requestConfirmation("이미 같은 전화번호의 고객이 있습니다. 기존 고객으로 계약을 진행할까요?");
           if (!shouldReuse) return;
           reusedExistingClient = true;
@@ -971,7 +973,7 @@ export const ContractCreationForm = ({
       if (autoRegisteredClientId) {
         const baseMessage = error instanceof Error ? error.message : "계약서 생성 중 오류가 발생했습니다.";
         setSubmitError(`${baseMessage} 방금 자동 등록된 고객이 남아 있습니다.`);
-        if (window.confirm("방금 자동 등록된 고객이 남아 있습니다. 고객을 삭제할까요?")) {
+        if (await requestConfirmation("방금 자동 등록된 고객이 남아 있습니다. 고객을 삭제할까요?")) {
           try {
             await deleteClientMutation.mutateAsync(autoRegisteredClientId);
             setClientId(null);
@@ -1245,39 +1247,32 @@ export const ContractCreationForm = ({
           <div className={PANEL_THREE_COLUMN_GRID_CLASS_NAME}>
             <div className="space-y-2 flex-1 min-w-0">
               <Label className={LABEL_CLS}>{t(locale, "price-info-msg.voucher-year-label")}</Label>
-              <select
+              <FormNativeSelect
                 className={SELECT_CLS}
                 value={String(voucherYear)}
-                onChange={(e) => handleVoucherYearChange(Number(e.target.value))}
+                onValueChange={(value) => handleVoucherYearChange(Number(value))}
                 disabled={isVoucherYearsLoading}
-              >
-                {voucherYears.map((year) => (
-                  <option key={year} value={String(year)}>
-                    {year}년
-                  </option>
-                ))}
-              </select>
+                options={voucherYears.map((year) => ({ value: String(year), label: `${year}년` }))}
+              />
             </div>
 
             <div className="space-y-2 flex-1 min-w-0">
               <Label className={LABEL_CLS}>{t(locale, "price-info-msg.voucher-type-label")}</Label>
               <div className="relative">
-                <select
-                  className={`${SELECT_CLS} ${isVoucherPriceInfosLoading ? "bg-none pr-11" : ""}`}
+                <FormNativeSelect
+                  className={SELECT_CLS}
                   value={voucherType}
-                  onChange={(e) => handleVoucherTypeChange(e.target.value)}
-                >
-                  <option value="" disabled hidden>{t(locale, "price-info-msg.voucher-type-label")}</option>
-                  {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
-                    <optgroup key={groupName} label={groupName}>
-                      {Object.entries(types).map(([typeValue, typeData]) => (
-                        <option key={typeValue} value={typeValue}>
-                          {typeData.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
+                  onValueChange={handleVoucherTypeChange}
+                  hideIcon={isVoucherPriceInfosLoading}
+                  placeholder={t(locale, "price-info-msg.voucher-type-label")}
+                  options={Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => ({
+                    label: groupName,
+                    options: Object.entries(types).map(([typeValue, typeData]) => ({
+                      value: typeValue,
+                      label: typeData.label,
+                    })),
+                  }))}
+                />
                 {isVoucherPriceInfosLoading && (
                   <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2">
                     <Spinner className="h-4 w-4 text-primary" />
@@ -1288,19 +1283,17 @@ export const ContractCreationForm = ({
 
             <div className="space-y-2 flex-1 min-w-0">
               <Label className={LABEL_CLS}>{t(locale, "price-info-msg.duration-label")}</Label>
-              <select
+              <FormNativeSelect
                 className={SELECT_CLS}
                 value={voucherDuration}
-                onChange={(e) => handleDurationChange(e.target.value)}
+                onValueChange={handleDurationChange}
                 disabled={!canSelectVoucherDuration || isVoucherPriceInfosLoading}
-              >
-                <option value="" disabled hidden>{t(locale, "price-info-msg.duration-label")}</option>
-                {voucherPriceInfos.map((v) => (
-                  <option key={v.duration} value={v.duration}>
-                    {v.duration}일
-                  </option>
-                ))}
-              </select>
+                placeholder={t(locale, "price-info-msg.duration-label")}
+                options={voucherPriceInfos.map((v) => ({
+                  value: String(v.duration),
+                  label: `${v.duration}일`,
+                }))}
+              />
             </div>
           </div>
 
@@ -1637,7 +1630,7 @@ export const ContractCreationForm = ({
         description="전자문서 생성과 전송이 완료되었습니다."
         onAcknowledge={handleCreationSuccessAcknowledged}
       />
-      <ApprovalTwoButtonModal
+      <TwoButtonModal
         open={confirmationMessage !== null}
         onOpenChange={(open) => {
           if (!open) resolveConfirmation(false);

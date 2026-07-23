@@ -17,6 +17,7 @@ import {
     type MessageTriggerTemplateCatalogItem,
 } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
+import { SmsRetryService } from "application/services/sms-retry.service";
 
 describe("MessageTriggerController (Integration)", () => {
     type RuleOverrides = Partial<{
@@ -43,6 +44,9 @@ describe("MessageTriggerController (Integration)", () => {
         updateRule: jest.Mock;
         deleteRule: jest.Mock;
         listTemplates: jest.Mock;
+    };
+    let smsRetryService: {
+        retryById: jest.Mock;
     };
 
     const branchId = "org-1";
@@ -152,6 +156,9 @@ describe("MessageTriggerController (Integration)", () => {
             deleteRule: jest.fn(),
             listTemplates: jest.fn(),
         };
+        smsRetryService = {
+            retryById: jest.fn(),
+        };
 
         const mockAuthGuard = {
             canActivate: (context: ExecutionContext) => {
@@ -178,6 +185,10 @@ describe("MessageTriggerController (Integration)", () => {
                 {
                     provide: MessageTriggerService,
                     useValue: triggerService,
+                },
+                {
+                    provide: SmsRetryService,
+                    useValue: smsRetryService,
                 },
             ],
         })
@@ -252,6 +263,35 @@ describe("MessageTriggerController (Integration)", () => {
 
             expect(response.status).toBe(200);
             expect(triggerService.listHistory).toHaveBeenCalledWith(branchId, 25, 50);
+        });
+    });
+
+    describe("POST /message-logs/:id/retry", () => {
+        it("schedules the branch-owned history log for retry", async () => {
+            smsRetryService.retryById.mockResolvedValue({
+                id: 77,
+                status: "pending",
+                templateKey: "service_record_link_sms",
+            });
+
+            const response = await request(app.getHttpServer())
+                .post("/message-logs/77/retry");
+
+            expect(response.status).toBe(201);
+            expect(response.body).toMatchObject({
+                id: 77,
+                status: "pending",
+                templateKey: "service_record_link_sms",
+            });
+            expect(smsRetryService.retryById).toHaveBeenCalledWith(branchId, 77);
+        });
+
+        it("rejects an invalid log id before retrying", async () => {
+            const response = await request(app.getHttpServer())
+                .post("/message-logs/not-a-number/retry");
+
+            expect(response.status).toBe(400);
+            expect(smsRetryService.retryById).not.toHaveBeenCalled();
         });
     });
 

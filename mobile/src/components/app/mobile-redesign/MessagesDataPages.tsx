@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import {
   AlertCircle,
   CheckCircle2,
@@ -20,6 +19,7 @@ import {
   isSmsHistoryRecord,
   isSmsTriggerTemplate,
   normalizeMessageHistoryPresentation,
+  type MessageSectionId,
 } from "@babyjamjam/shared";
 
 import {
@@ -40,6 +40,8 @@ import {
   MobileDetailPage,
   MobileDetailSheet,
 } from "@/components/app/mobile-redesign/detail-sheet";
+import { MessageSectionNav } from "@/components/app/mobile-redesign/MessageSectionNav";
+import { ListCard } from "@/components/app/mobile-redesign/primitives";
 import "@/components/app/mobile-redesign/redesign.css";
 
 interface StatusMeta {
@@ -72,30 +74,27 @@ const HISTORY_DETAIL_TONE: Record<MessageLogStatus, MessageHistoryDetailTone> = 
 
 function MessagePageShell({
   title,
-  subtitle,
+  count,
+  activeSection,
   children,
   dataComponent = "messages",
 }: {
   title: string;
-  subtitle: string;
+  count: React.ReactNode;
+  activeSection: MessageSectionId;
   children: React.ReactNode;
   dataComponent?: string;
 }) {
   return (
     <section data-component={dataComponent} className="messages-page message-page-shell">
-      <div className="shell-content" data-component="messages-content">
-        <div className="list-card pop-up message-data-card">
-          <Link href="/messages" aria-label="메시지로 돌아가기" className="message-data-back mt-2">
-            돌아가기
-          </Link>
-          <div className="message-data-header">
-            <div>
-              <h1>{title}</h1>
-              <p>{subtitle}</p>
-            </div>
-          </div>
+      <div
+        className="shell-content flex-col gap-[calc(8px*var(--glint-ui-scale,1))]"
+        data-component="messages-content"
+      >
+        <MessageSectionNav activeId={activeSection} />
+        <ListCard title={title} count={count} filters={[]}>
           {children}
-        </div>
+        </ListCard>
       </div>
     </section>
   );
@@ -123,16 +122,18 @@ function ScheduledRow({ job }: { job: UpcomingMessageTriggerJob }) {
   const meta = JOB_STATUS[job.status];
   const StatusIcon = meta.icon;
   const recipientName = job.payload.recipientName || job.payload.clientName || job.payload.employeeName || "수신자";
-  const recipientPhone = job.recipientPhone || job.payload.recipientPhone || "-";
 
   return (
     <article className="message-data-row" data-component="mobile-messages-scheduled-item">
       <span className="message-navigation-icon message-navigation-icon-orange">
         <Clock3 size={18} aria-hidden="true" />
       </span>
-      <div className="message-data-row-copy">
-        <div className="message-data-row-title">
-          <strong>{recipientName}</strong>
+      <div className="message-data-row-copy message-data-row-copy-split">
+        <div className="message-data-row-info">
+          <strong className="message-data-row-title">{recipientName}</strong>
+          <p className="message-data-row-subtitle">{getMessageTemplateLabel(job.templateKey)}</p>
+        </div>
+        <div className="message-data-status-group">
           <span className={`message-data-status message-data-status-${meta.tone}`}>
             <StatusIcon
               size={12}
@@ -141,9 +142,8 @@ function ScheduledRow({ job }: { job: UpcomingMessageTriggerJob }) {
             />
             {meta.label}
           </span>
+          <time className="message-data-schedule-time">{formatMessageDateTimeCompact(job.scheduledFor)}</time>
         </div>
-        <p>{getMessageTemplateLabel(job.templateKey)} · {formatMessageDateTimeCompact(job.scheduledFor)}</p>
-        <small>{recipientPhone}</small>
       </div>
     </article>
   );
@@ -194,19 +194,20 @@ export function MessagesScheduledPage() {
     );
 
   return (
-    <MessagePageShell title="발송 예정" subtitle="예약되어 있는 메시지 발송 일정을 확인할 수 있어요.">
-      <div className="message-data-summary">{jobs.length}건</div>
-      <div className="message-data-list">
-        {isLoading ? (
-          <LoadingState />
-        ) : isError ? (
-          <EmptyState message="발송 예정 내역을 불러오지 못했습니다." />
-        ) : jobs.length === 0 ? (
-          <EmptyState message="발송 예정 항목이 없습니다." />
-        ) : (
-          jobs.map((job) => <ScheduledRow key={job.id} job={job} />)
-        )}
-      </div>
+    <MessagePageShell
+      title="발송 예정"
+      count={`${jobs.length}건`}
+      activeSection="scheduled"
+    >
+      {isLoading ? (
+        <LoadingState />
+      ) : isError ? (
+        <EmptyState message="발송 예정 내역을 불러오지 못했습니다." />
+      ) : jobs.length === 0 ? (
+        <EmptyState message="발송 예정 항목이 없습니다." />
+      ) : (
+        jobs.map((job) => <ScheduledRow key={job.id} job={job} />)
+      )}
     </MessagePageShell>
   );
 }
@@ -234,23 +235,21 @@ export function MessagesHistoryPage() {
       list={
         <MessagePageShell
           title="발송 기록"
-          subtitle="SMS 전송 결과와 실패 사유를 확인할 수 있어요."
+          count={`${records.length}건`}
+          activeSection="history"
           dataComponent="mobile-messages-history-list-content"
         >
-          <div className="message-data-summary">{records.length}건</div>
-          <div className="message-data-list">
-            {isLoading ? (
-              <LoadingState />
-            ) : isError ? (
-              <EmptyState message="발송 기록을 불러오지 못했습니다." />
-            ) : records.length === 0 ? (
-              <EmptyState message="발송 기록이 없습니다." />
-            ) : (
-              records.map((record) => (
-                <HistoryRow key={record.id} record={record} onSelect={setSelectedRecord} />
-              ))
-            )}
-          </div>
+          {isLoading ? (
+            <LoadingState />
+          ) : isError ? (
+            <EmptyState message="발송 기록을 불러오지 못했습니다." />
+          ) : records.length === 0 ? (
+            <EmptyState message="발송 기록이 없습니다." />
+          ) : (
+            records.map((record) => (
+              <HistoryRow key={record.id} record={record} onSelect={setSelectedRecord} />
+            ))
+          )}
         </MessagePageShell>
       }
       detail={

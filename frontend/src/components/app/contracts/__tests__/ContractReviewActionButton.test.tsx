@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { ContractReviewActionButton } from "../ContractReviewActionButton";
 
 describe("ContractReviewActionButton", () => {
-  it("opens the document preview for a service record review", () => {
+  it("runs the service-record review action", () => {
     const onFinalize = jest.fn();
     const onPreview = jest.fn();
 
@@ -15,7 +15,7 @@ describe("ContractReviewActionButton", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "확인하기" }));
+    fireEvent.click(screen.getByRole("button", { name: "검토하기" }));
 
     expect(onPreview).toHaveBeenCalledTimes(1);
     expect(onFinalize).not.toHaveBeenCalled();
@@ -33,7 +33,7 @@ describe("ContractReviewActionButton", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "확인하기" }));
+    fireEvent.click(screen.getByRole("button", { name: "검토하기" }));
 
     expect(onFinalize).toHaveBeenCalledTimes(1);
     expect(onPreview).not.toHaveBeenCalled();

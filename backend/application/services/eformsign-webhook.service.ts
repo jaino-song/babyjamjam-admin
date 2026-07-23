@@ -121,12 +121,21 @@ export class EformsignWebhookService {
     /**
      * BJJ-247 gate: is this document the daily-feedback snapshot template?
      * A feedback document's completion must NOT trigger contract-completion side
-     * effects (link eDocId / sync endDate). No-op (returns false)
-     * when EFORMSIGN_FEEDBACK_TEMPLATE_ID is unset, preserving existing behavior.
+     * effects (link eDocId / sync endDate). Checks all configured 제공기록지 tiers
+     * (BJJ-multi-tier: base 5회 + optional 10/15/20회), not just the base template —
+     * no-op (returns false) when none of the 4 env vars are set, preserving existing behavior.
      */
     private isServiceRecordTemplate(templateId?: string): boolean {
-        const feedbackTemplateId = process.env["EFORMSIGN_FEEDBACK_TEMPLATE_ID"];
-        return Boolean(feedbackTemplateId && templateId && templateId === feedbackTemplateId);
+        if (!templateId) return false;
+        const feedbackTemplateIds = new Set(
+            [
+                process.env["EFORMSIGN_FEEDBACK_TEMPLATE_ID"],
+                process.env["EFORMSIGN_FEEDBACK_TEMPLATE_ID_10"],
+                process.env["EFORMSIGN_FEEDBACK_TEMPLATE_ID_15"],
+                process.env["EFORMSIGN_FEEDBACK_TEMPLATE_ID_20"],
+            ].filter((id): id is string => Boolean(id)),
+        );
+        return feedbackTemplateIds.has(templateId);
     }
 
     async processWebhook(payload: EformsignWebhookPayloadDto): Promise<void> {

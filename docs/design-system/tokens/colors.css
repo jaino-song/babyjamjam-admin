@@ -1,0 +1,150 @@
+/* Babyjamjam Admin — Color tokens
+   Consolidated from babyjamjam-admin@dev (mobile + frontend globals.css).
+   The legacy three-layer system (base / custom-brand / v3-*) is merged into
+   ONE semantic layer. Values preserved 1:1 from the V3 (current) design. */
+
+:root {
+  /* Surfaces */
+  --background: hsl(210 20% 98%);
+  --foreground: hsl(220 20% 10%);
+  --card: hsl(0 0% 100%);
+  --card-foreground: hsl(220 20% 10%);
+  --popover: hsl(0 0% 100%);
+  --popover-foreground: hsl(220 20% 10%);
+  --surface: hsl(220 20% 97%);            /* was --v3-dim-white: inset panels, InfoCard */
+
+  /* Brand */
+  --primary: hsl(214 100% 34%);           /* #004AAD */
+  --primary-foreground: hsl(210 40% 98%);
+  --primary-light: hsl(214 80% 95%);      /* tint fills, active nav hover, icon chips */
+  --primary-medium: hsl(214 70% 88%);
+  --primary-hover: hsl(214 100% 28%);
+  --secondary: hsl(210 40% 96%);
+  --secondary-foreground: hsl(217 71% 24%);
+  --accent: hsl(217 91% 60%);
+  --accent-foreground: hsl(0 0% 100%);
+
+  /* Text */
+  --dark: hsl(214 40% 18%);               /* headings, values (was --v3-dark) */
+  --text: hsl(214 25% 28%);               /* body (was --v3-text) */
+  --text-muted: hsl(214 10% 55%);         /* labels, captions (was --v3-text-muted) */
+  --muted: hsl(210 20% 96%);
+  --muted-foreground: hsl(215 16% 47%);
+
+  /* Lines + focus */
+  --border: hsl(214 20% 92%);             /* was --v3-border */
+  --input: hsl(214 20% 92%);
+  --ring: hsl(214 100% 75%);
+
+  /* Categorical accents (was --v3-*) — each pairs with a -light tint */
+  --green: hsl(137 34% 31%);
+  --green-light: hsl(137 60% 94%);
+  --orange: hsl(34 100% 55%);
+  --orange-light: hsl(34 100% 94%);
+  --burgundy: hsl(355 36% 45%);           /* destructive actions */
+  --burgundy-light: hsl(355 40% 94%);
+  --purple: hsl(270 50% 50%);
+  --purple-light: hsl(270 60% 94%);
+  --teal: hsl(180 50% 40%);
+  --teal-light: hsl(175 60% 93%);
+  --gold: hsl(45 100% 50%);
+  --gold-light: hsl(45 100% 94%);
+
+  /* Semantic states */
+  --success: hsl(142 76% 36%);
+  --warning: hsl(38 92% 50%);
+  --warning-deep: hsl(38 92% 35%);
+  --destructive: hsl(0 84% 60%);
+  --info: hsl(217 91% 60%);
+
+  /* StatusBadge variant triads (bg / border / fg) */
+  --status-neutral-bg: hsl(220 20% 97%);
+  --status-neutral-border: hsl(220 20% 90%);
+  --status-neutral-fg: hsl(214 10% 55%);
+  --status-info-bg: hsl(214 80% 95%);
+  --status-info-border: hsl(214 70% 85%);
+  --status-info-fg: hsl(214 100% 34%);
+  --status-success-bg: hsl(137 60% 94%);
+  --status-success-border: hsl(137 34% 84%);
+  --status-success-fg: hsl(137 34% 31%);
+  --status-warning-bg: hsl(47 100% 92%);
+  --status-warning-border: hsla(38, 92%, 35%, 0.18);
+  --status-warning-fg: hsl(38 92% 35%);
+  --status-danger-bg: hsl(355 40% 94%);
+  --status-danger-border: hsla(355, 36%, 45%, 0.2);
+  --status-danger-fg: hsl(355 36% 45%);
+
+  /* Charts */
+  --chart-1: hsl(217 91% 60%);
+  --chart-2: hsl(142 76% 36%);
+  --chart-3: hsl(38 92% 50%);
+  --chart-4: hsl(280 65% 60%);
+  --chart-5: hsl(0 84% 60%);
+
+  /* OAuth */
+  --kakao: hsl(54 100% 50%);
+  --kakao-foreground: hsl(0 0% 0%);
+  --google: hsl(0 0% 100%);
+  --google-foreground: hsl(0 0% 20%);
+}
+
+.dark {
+  --background: hsl(220 20% 10%);
+  --foreground: hsl(210 40% 98%);
+  --card: hsl(220 20% 14%);
+  --card-foreground: hsl(210 40% 98%);
+  --popover: hsl(220 20% 14%);
+  --popover-foreground: hsl(210 40% 98%);
+  --surface: hsl(220 15% 15%);
+
+  --primary: hsl(214 100% 45%);
+  --primary-foreground: hsl(0 0% 100%);
+  --primary-light: hsl(214 30% 20%);
+  --primary-medium: hsl(214 35% 28%);
+  --primary-hover: hsl(214 100% 52%);
+  --secondary: hsl(217 32% 18%);
+  --secondary-foreground: hsl(210 40% 98%);
+  --accent: hsl(217 71% 24%);
+  --accent-foreground: hsl(210 40% 98%);
+
+  --dark: hsl(210 40% 96%);
+  --text: hsl(214 20% 85%);
+  --text-muted: hsl(214 10% 60%);
+  --muted: hsl(217 32% 18%);
+  --muted-foreground: hsl(215 20% 65%);
+
+  --border: hsl(217 32% 18%);
+  --input: hsl(217 32% 18%);
+  --ring: hsl(217 91% 60%);
+
+  --green: hsl(137 40% 38%);
+  --green-light: hsl(137 30% 16%);
+  --orange: hsl(34 100% 60%);
+  --orange-light: hsl(34 40% 16%);
+  --burgundy: hsl(355 40% 52%);
+  --burgundy-light: hsl(355 30% 18%);
+  --purple: hsl(270 50% 60%);
+  --purple-light: hsl(270 30% 18%);
+  --teal: hsl(180 45% 45%);
+  --teal-light: hsl(180 30% 15%);
+  --gold: hsl(45 100% 55%);
+  --gold-light: hsl(45 40% 15%);
+
+  --destructive: hsl(0 63% 51%);
+
+  --status-neutral-bg: hsl(220 15% 16%);
+  --status-neutral-border: hsl(220 12% 24%);
+  --status-neutral-fg: hsl(214 10% 60%);
+  --status-info-bg: hsl(214 45% 18%);
+  --status-info-border: hsl(214 45% 28%);
+  --status-info-fg: hsl(214 90% 70%);
+  --status-success-bg: hsl(137 30% 15%);
+  --status-success-border: hsl(137 30% 24%);
+  --status-success-fg: hsl(137 45% 60%);
+  --status-warning-bg: hsl(40 45% 14%);
+  --status-warning-border: hsl(40 45% 24%);
+  --status-warning-fg: hsl(42 90% 60%);
+  --status-danger-bg: hsl(355 35% 16%);
+  --status-danger-border: hsl(355 35% 26%);
+  --status-danger-fg: hsl(355 70% 68%);
+}

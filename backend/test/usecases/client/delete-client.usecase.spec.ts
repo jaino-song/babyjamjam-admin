@@ -68,13 +68,9 @@ describe("DeleteClientUsecase", () => {
     });
 
     // ============================================
-    // P1-10: service_record_case FK guard (SbClientRepository + mocked PrismaService)
-    //
-    // client -> service_record_case is onDelete: Restrict (schema.prisma). These
-    // tests exercise the real SbClientRepository.delete() transaction (not the
-    // in-memory mock above) so the completed/submitted-record guard and the
-    // residual P2003 defense-in-depth are actually covered end-to-end through
-    // the usecase.
+    // Physical client deletion preserves completed electronic-document history.
+    // The database owns the SetNull behavior; the repository must not inspect or
+    // delete service_record_case rows before deleting the tenant-scoped client.
     // ============================================
     describe("execute (against SbClientRepository + mocked PrismaService)", () => {
         const branchId = "org-1";
@@ -115,17 +111,11 @@ describe("DeleteClientUsecase", () => {
             clientModel = { findFirst: jest.fn(), deleteMany: jest.fn() };
             serviceRecordCaseModel = { findUnique: jest.fn(), delete: jest.fn() };
             serviceRecordDayModel = { count: jest.fn() };
-
-            const tx = {
+            prisma = {
                 client: clientModel,
                 service_record_case: serviceRecordCaseModel,
                 service_record_day: serviceRecordDayModel,
-            };
-
-            prisma = {
-                client: clientModel,
                 $queryRawUnsafe: jest.fn().mockResolvedValue([{ exists: true }]),
-                $transaction: jest.fn((callback: (tx: unknown) => unknown) => callback(tx)),
             } as unknown as PrismaService;
 
             repository = new SbClientRepository(prisma);
@@ -134,61 +124,30 @@ describe("DeleteClientUsecase", () => {
             clientModel.findFirst.mockResolvedValue(clientRow());
         });
 
-        it("(a) throws 409 and deletes nothing when the case has a submitted day", async () => {
-            serviceRecordCaseModel.findUnique.mockResolvedValue({ id: "case-1", completedAt: null });
-            serviceRecordDayModel.count.mockResolvedValue(1);
+        it("deletes the client without touching its completed service-record case", async () => {
+            clientModel.deleteMany.mockResolvedValue({ count: 1 });
 
-            await expect(usecase.execute(branchId, clientId)).rejects.toThrow(ConflictException);
-            await expect(usecase.execute(branchId, clientId)).rejects.toThrow(
-                "완료된 제공기록지가 있는 고객은 삭제할 수 없습니다. 서비스 종료 처리를 이용해 주세요.",
-            );
+            await usecase.execute(branchId, clientId);
 
-            expect(serviceRecordCaseModel.delete).not.toHaveBeenCalled();
-            expect(clientModel.deleteMany).not.toHaveBeenCalled();
-        });
-
-        it("(a) throws 409 and deletes nothing when the case itself is completed", async () => {
-            serviceRecordCaseModel.findUnique.mockResolvedValue({
-                id: "case-1",
-                completedAt: new Date("2024-05-01T00:00:00.000Z"),
+            expect(clientModel.deleteMany).toHaveBeenCalledWith({
+                where: { id: clientId, branchId },
             });
-
-            await expect(usecase.execute(branchId, clientId)).rejects.toThrow(ConflictException);
-
-            // Short-circuits on completedAt before even counting submitted days.
+            expect(serviceRecordCaseModel.findUnique).not.toHaveBeenCalled();
+            expect(serviceRecordCaseModel.delete).not.toHaveBeenCalled();
             expect(serviceRecordDayModel.count).not.toHaveBeenCalled();
-            expect(serviceRecordCaseModel.delete).not.toHaveBeenCalled();
-            expect(clientModel.deleteMany).not.toHaveBeenCalled();
         });
 
-        it("(b) deletes the empty case and the client when there is no completed/submitted history", async () => {
-            serviceRecordCaseModel.findUnique.mockResolvedValue({ id: "case-1", completedAt: null });
-            serviceRecordDayModel.count.mockResolvedValue(0);
-            serviceRecordCaseModel.delete.mockResolvedValue({ id: "case-1" });
+        it("deletes the client directly when it has no electronic-document history", async () => {
             clientModel.deleteMany.mockResolvedValue({ count: 1 });
 
             await usecase.execute(branchId, clientId);
 
-            expect(serviceRecordCaseModel.delete).toHaveBeenCalledWith({ where: { id: "case-1" } });
             expect(clientModel.deleteMany).toHaveBeenCalledWith({
                 where: { id: clientId, branchId },
             });
         });
 
-        it("(b) deletes the client directly when it has no service_record_case at all", async () => {
-            serviceRecordCaseModel.findUnique.mockResolvedValue(null);
-            clientModel.deleteMany.mockResolvedValue({ count: 1 });
-
-            await usecase.execute(branchId, clientId);
-
-            expect(serviceRecordCaseModel.delete).not.toHaveBeenCalled();
-            expect(clientModel.deleteMany).toHaveBeenCalledWith({
-                where: { id: clientId, branchId },
-            });
-        });
-
-        it("(c) converts a residual P2003 foreign key violation into 409 (defense-in-depth)", async () => {
-            serviceRecordCaseModel.findUnique.mockResolvedValue(null);
+        it("converts a residual P2003 foreign key violation into a coded safe 409", async () => {
             clientModel.deleteMany.mockRejectedValue(
                 new Prisma.PrismaClientKnownRequestError("Foreign key constraint failed", {
                     code: "P2003",
@@ -196,14 +155,16 @@ describe("DeleteClientUsecase", () => {
                 }),
             );
 
-            await expect(usecase.execute(branchId, clientId)).rejects.toThrow(ConflictException);
-            await expect(usecase.execute(branchId, clientId)).rejects.toThrow(
-                "완료된 제공기록지가 있는 고객은 삭제할 수 없습니다. 서비스 종료 처리를 이용해 주세요.",
-            );
+            const error = await usecase.execute(branchId, clientId).catch((caught) => caught);
+
+            expect(error).toBeInstanceOf(ConflictException);
+            expect((error as ConflictException).getResponse()).toEqual({
+                code: "CLIENT_DELETE_CONFLICT",
+                message: "연결된 데이터로 인해 고객을 삭제할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+            });
         });
 
         it("rethrows unrelated errors untouched", async () => {
-            serviceRecordCaseModel.findUnique.mockResolvedValue(null);
             clientModel.deleteMany.mockRejectedValue(new Error("boom"));
 
             await expect(usecase.execute(branchId, clientId)).rejects.toThrow("boom");

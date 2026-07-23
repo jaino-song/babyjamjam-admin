@@ -245,7 +245,9 @@ export function normalizeMessageHistoryPresentation(
     || (record.clientId !== null ? record.recipientName?.trim() : "")
     || fallbackRecipientName
     || "";
-  const failureReason = formatMessageFailureReason(record.errorMessage);
+  const failureReason = record.status === "failed"
+    ? formatMessageFailureReason(record.errorMessage)
+    : "";
 
   return {
     id: record.id,

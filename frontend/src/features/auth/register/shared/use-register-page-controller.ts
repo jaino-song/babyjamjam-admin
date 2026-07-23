@@ -4,30 +4,29 @@ import axios from "axios";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { usePhoneDuplicateCheck } from "@/hooks/usePhoneDuplicateCheck";
 import { AUTH_ROUTES } from "@/lib/auth/routes";
-import { api } from "@/lib/api/client";
-import { REGISTERABLE_ROLE_OPTIONS } from "@/lib/constants/roles";
 import { checkPasswordStrength, getEmailFormatError, registerSchema, sanitizeNameInput, type RegisterFormData } from "@/lib/validations/auth";
 import { authApi } from "@/services/api";
 
 const ACCOUNT_FIELDS = ["email", "name", "password", "confirmPassword"] as const;
 const PERSONAL_FIELDS = ["phone", "birthDate"] as const;
-const APPROVAL_FIELDS = ["role"] as const;
 const PASSWORD_MISMATCH_ERROR = "비밀번호가 일치하지 않습니다.";
 const EMAIL_DUPLICATE_ERROR = "이미 등록된 이메일입니다.";
 const EMAIL_LINKABLE_MESSAGE = "카카오 계정 연결 가능";
 const PHONE_DUPLICATE_ERROR = "이미 존재하는 사용자 입니다.";
+const PHONE_DUPLICATE_CHECK_FAILED_ERROR = "문제가 발생했어요. 새로고침 해주세요.";
+const PHONE_DUPLICATE_CHECK_PENDING_ERROR = "연락처 중복 확인 중입니다. 잠시만 기다려주세요.";
 
 type RegisterField = keyof RegisterFormData;
-export type RegisterStep = 0 | 1 | 2;
+export type RegisterStep = 0 | 1;
 
 const STEP_FIELDS: Record<RegisterStep, readonly RegisterField[]> = {
   0: ACCOUNT_FIELDS,
   1: PERSONAL_FIELDS,
-  2: APPROVAL_FIELDS,
 };
 
-export const REGISTER_STEP_TOTAL = 3;
+export const REGISTER_STEP_TOTAL = 2;
 
 function formatBirthDateInput(value: string) {
   const digits = value.replace(/\D/g, "").slice(0, 8);
@@ -90,7 +89,6 @@ export function useRegisterPageController() {
     name: "",
     phone: "",
     birthDate: "",
-    role: undefined,
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState<string | null>(null);
@@ -101,13 +99,21 @@ export function useRegisterPageController() {
   const [isCheckingEmailDuplicate, setIsCheckingEmailDuplicate] = useState(false);
   const [isEmailDuplicate, setIsEmailDuplicate] = useState(false);
   const [isEmailLinkable, setIsEmailLinkable] = useState(false);
-  const [isCheckingPhoneDuplicate, setIsCheckingPhoneDuplicate] = useState(false);
-  const [isPhoneDuplicate, setIsPhoneDuplicate] = useState(false);
   const [emailTouched, setEmailTouched] = useState(false);
 
   const normalizedEmail = (formData.email ?? "").trim().toLowerCase();
   const phoneDigits = (formData.phone ?? "").replace(/\D/g, "");
   const emailFormatError = getEmailFormatError(formData.email ?? "");
+  const {
+    isCheckingPhoneDuplicate,
+    isPhoneDuplicate,
+    hasPhoneDuplicateCheckFailed,
+    lastCheckedPhoneDigits,
+    isPhoneCheckReady,
+  } = usePhoneDuplicateCheck({
+    endpoint: "/auth/check-phone",
+    phone: formData.phone,
+  });
 
   useEffect(() => {
     if (!normalizedEmail || emailFormatError) {
@@ -179,66 +185,6 @@ export function useRegisterPageController() {
     };
   }, [normalizedEmail, emailFormatError]);
 
-  useEffect(() => {
-    if (phoneDigits.length !== 11) {
-      setIsCheckingPhoneDuplicate(false);
-      setIsPhoneDuplicate(false);
-      setErrors((prev) => {
-        if (prev.phone !== PHONE_DUPLICATE_ERROR) {
-          return prev;
-        }
-
-        const nextErrors = { ...prev };
-        delete nextErrors.phone;
-        return nextErrors;
-      });
-      return;
-    }
-
-    const abortController = new AbortController();
-
-    setIsCheckingPhoneDuplicate(true);
-
-    void api.get("/auth/check-phone", {
-      params: { phone: phoneDigits },
-      signal: abortController.signal,
-    })
-      .then((response) => {
-        if (abortController.signal.aborted) {
-          return;
-        }
-
-        const exists = response.data?.exists === true;
-        setIsPhoneDuplicate(exists);
-        setErrors((prev) => {
-          const nextErrors = { ...prev };
-          if (exists) {
-            nextErrors.phone = PHONE_DUPLICATE_ERROR;
-          } else if (nextErrors.phone === PHONE_DUPLICATE_ERROR) {
-            delete nextErrors.phone;
-          }
-          return nextErrors;
-        });
-      })
-      .catch(() => {
-        if (abortController.signal.aborted) {
-          return;
-        }
-
-        setIsPhoneDuplicate(false);
-      })
-      .finally(() => {
-        if (!abortController.signal.aborted) {
-          setIsCheckingPhoneDuplicate(false);
-        }
-      });
-
-    return () => {
-      abortController.abort();
-      setIsCheckingPhoneDuplicate(false);
-    };
-  }, [phoneDigits]);
-
   const clearFieldErrors = (fields: readonly RegisterField[]) => {
     setErrors((prev) => {
       const nextErrors = { ...prev };
@@ -296,6 +242,10 @@ export function useRegisterPageController() {
 
       if (isPhoneDuplicate) {
         fieldErrors.phone = PHONE_DUPLICATE_ERROR;
+      } else if (hasPhoneDuplicateCheckFailed) {
+        fieldErrors.phone = PHONE_DUPLICATE_CHECK_FAILED_ERROR;
+      } else if (lastCheckedPhoneDigits !== phoneDigits) {
+        fieldErrors.phone = PHONE_DUPLICATE_CHECK_PENDING_ERROR;
       }
     }
 
@@ -363,7 +313,6 @@ export function useRegisterPageController() {
       delete nextErrors.phone;
       return nextErrors;
     });
-    setIsPhoneDuplicate(false);
     setServerError(null);
   };
 
@@ -379,23 +328,6 @@ export function useRegisterPageController() {
       });
     }
 
-    setServerError(null);
-  };
-
-  const handleSelectChange = (field: "role") => (value: string) => {
-    const role = REGISTERABLE_ROLE_OPTIONS.find((option) => option.value === value)?.value;
-    if (!role) {
-      return;
-    }
-
-    setFormData((prev) => ({ ...prev, [field]: role }));
-    if (errors[field]) {
-      setErrors((prev) => {
-        const nextErrors = { ...prev };
-        delete nextErrors[field];
-        return nextErrors;
-      });
-    }
     setServerError(null);
   };
 
@@ -419,10 +351,8 @@ export function useRegisterPageController() {
 
       if (ACCOUNT_FIELDS.some((field) => nextErrors[field])) {
         setCurrentStep(0);
-      } else if (PERSONAL_FIELDS.some((field) => nextErrors[field])) {
-        setCurrentStep(1);
       } else {
-        setCurrentStep(2);
+        setCurrentStep(1);
       }
       return;
     }
@@ -436,7 +366,6 @@ export function useRegisterPageController() {
         name: result.data.name,
         phone: result.data.phone,
         birthDate: result.data.birthDate,
-        role: result.data.role,
       });
 
       if (response.success) {
@@ -480,7 +409,6 @@ export function useRegisterPageController() {
   const showConfirmPasswordMismatch = errors.confirmPassword === PASSWORD_MISMATCH_ERROR;
   const showEmailDuplicateWarning = errors.email === EMAIL_DUPLICATE_ERROR;
   const emailLinkableMessage = isEmailLinkable ? EMAIL_LINKABLE_MESSAGE : undefined;
-  const showPhoneDuplicateWarning = errors.phone === PHONE_DUPLICATE_ERROR;
   const hasStepOneRequirements =
     Boolean(formData.email?.trim()) &&
     Boolean(formData.name?.trim()) &&
@@ -499,11 +427,7 @@ export function useRegisterPageController() {
     phoneDigits.length === 11 &&
     Boolean(formData.birthDate) &&
     !errors.birthDate &&
-    !showPhoneDuplicateWarning &&
-    !isPhoneDuplicate &&
-    !isCheckingPhoneDuplicate;
-  const hasStepThreeRequirements = Boolean(formData.role) && !errors.role;
-
+    isPhoneCheckReady;
   return {
     formData,
     errors,
@@ -514,13 +438,16 @@ export function useRegisterPageController() {
     currentStep,
     isCheckingEmailDuplicate,
     emailLinkableMessage,
+    hasPhoneDuplicateCheckFailed,
+    isPhoneCheckReady,
     isCheckingPhoneDuplicate,
+    isPhoneDuplicate,
+    lastCheckedPhoneDigits,
     passwordStrength,
     handleChange,
     handleEmailBlur,
     handlePhoneChange,
     handleBirthDateChange,
-    handleSelectChange,
     handleSubmit,
     handlePreviousStep,
     clearServerError: () => setServerError(null),
@@ -529,9 +456,6 @@ export function useRegisterPageController() {
     isCurrentStepActionDisabled:
       currentStep === 0
         ? !hasStepOneRequirements
-        : currentStep === 1
-          ? !hasStepTwoRequirements
-          : !hasStepThreeRequirements,
-    roleOptions: REGISTERABLE_ROLE_OPTIONS,
+        : !hasStepTwoRequirements,
   };
 }

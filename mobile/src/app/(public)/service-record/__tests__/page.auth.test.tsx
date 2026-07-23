@@ -13,12 +13,49 @@ jest.mock("@/components/app/ui/ApprovalTwoButtonModal", () => ({
     ApprovalTwoButtonModal: () => null,
 }));
 
-jest.mock("@/components/app/ui/ConfirmActionModal", () => ({
-    ConfirmActionModal: () => null,
+jest.mock("@/components/app/ui/MobileTwoButtonModal", () => ({
+    MobileTwoButtonModal: ({
+        open,
+        title,
+        description,
+        loading,
+        confirmLabel,
+        confirmDisabled,
+    }: {
+        open: boolean;
+        title: string;
+        description?: string;
+        loading?: boolean;
+        confirmLabel: string;
+        confirmDisabled?: boolean;
+    }) => open ? (
+        <div
+            role="dialog"
+            aria-busy={loading}
+            data-component="mobile-two-button-modal"
+        >
+            <h2>{title}</h2>
+            <p>{description}</p>
+            <button disabled={loading || confirmDisabled}>{confirmLabel}</button>
+        </div>
+    ) : null,
 }));
 
 jest.mock("@/components/app/ui/NotificationOneButtonModal", () => ({
-    NotificationOneButtonModal: () => null,
+    NotificationOneButtonModal: ({
+        open,
+        title,
+        description,
+    }: {
+        open: boolean;
+        title: string;
+        description: string;
+    }) => open ? (
+        <div role="alertdialog" data-component="service-record-error-notification">
+            <h2>{title}</h2>
+            <p>{description}</p>
+        </div>
+    ) : null,
 }));
 
 jest.mock("@/components/app/service-record/SignaturePad", () => ({
@@ -27,6 +64,16 @@ jest.mock("@/components/app/service-record/SignaturePad", () => ({
 
 const mockUseParams = useParams as jest.Mock;
 const fetchMock = jest.fn();
+
+function deferredResponse() {
+    let resolve!: (response: Response) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<Response>((resolver, rejecter) => {
+        resolve = resolver;
+        reject = rejecter;
+    });
+    return { promise, resolve, reject };
+}
 
 function jsonResponse(data: unknown, status = 200): Response {
     return {
@@ -115,6 +162,41 @@ describe("ServiceRecordPage authentication restoration", () => {
         expect(screen.getByDisplayValue("작성 중인 기록")).toBeInTheDocument();
     });
 
+    it("allows entry for a different service date while showing a warning", async () => {
+        const user = userEvent.setup();
+        window.sessionStorage.setItem("daily-service-record-draft:link-token", JSON.stringify({
+            header: { momName: "홍길동" },
+            day: 1,
+            pageIdx: 0,
+            draft: {
+                _date: "2026-07-20",
+                perineum: ["이상없음"],
+                breast: ["이상없음"],
+                excretion: ["이상없음"],
+                sitzBath: "실시",
+                meals_meal: "1",
+                meals_snack: "1",
+            },
+        }));
+        fetchMock
+            .mockResolvedValueOnce(jsonResponse({ valid: true }))
+            .mockResolvedValueOnce(jsonResponse({
+                ...serviceRecordContext,
+                totalSessions: 2,
+                header: { momName: "홍길동" },
+            }));
+
+        render(<ServiceRecordPage />);
+
+        expect(await screen.findByText("제공기록표")).toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: "기록 시작" }));
+
+        expect(document.querySelector('[data-component="service-record-date-mismatch-notice"]'))
+            .toHaveTextContent("서비스 제공일자(2026.07.20)가 오늘과 달라요. 한번 더 확인해 주세요.");
+        expect(screen.getAllByRole("button", { name: /이상없음/ })[0]).toBeEnabled();
+        expect(screen.getByRole("button", { name: "다음" })).toBeEnabled();
+    });
+
     it("does not allow navigation back to submitted service information from the overview", async () => {
         fetchMock
             .mockResolvedValueOnce(jsonResponse({ valid: true }))
@@ -127,6 +209,60 @@ describe("ServiceRecordPage authentication restoration", () => {
 
         expect(await screen.findByText("제공기록표")).toBeInTheDocument();
         expect(document.querySelector('[data-component="service-record-overview-back"]')).not.toBeInTheDocument();
+    });
+
+    it("opens a loading schedule-change modal before the preview request resolves", async () => {
+        const user = userEvent.setup();
+        const previewResponse = deferredResponse();
+        fetchMock
+            .mockResolvedValueOnce(jsonResponse({ valid: true }))
+            .mockResolvedValueOnce(jsonResponse({
+                ...serviceRecordContext,
+                header: { momName: "홍길동" },
+            }))
+            .mockReturnValueOnce(previewResponse.promise);
+
+        render(<ServiceRecordPage />);
+
+        await user.click(await screen.findByRole("button", { name: "서비스 일정 변경" }));
+
+        expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
+        expect(screen.getByRole("heading", { name: "서비스 일정 변경" })).toBeInTheDocument();
+        expect(screen.getByText("변경 가능한 일정을 확인하고 있어요.")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "불러오는 중…" })).toBeDisabled();
+
+        previewResponse.resolve(jsonResponse({
+            sessionIndex: 1,
+            fromDate: "2026-07-20",
+            toDate: "2026-07-21",
+        }));
+
+        expect(await screen.findByRole("heading", { name: "1회차 서비스 일정을 조정할까요?" }))
+            .toBeInTheDocument();
+        expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "false");
+        expect(screen.getByRole("button", { name: "승인 요청" })).toBeEnabled();
+    });
+
+    it("closes the loading modal and shows the existing error notice when preview loading fails", async () => {
+        const user = userEvent.setup();
+        const previewResponse = deferredResponse();
+        fetchMock
+            .mockResolvedValueOnce(jsonResponse({ valid: true }))
+            .mockResolvedValueOnce(jsonResponse({
+                ...serviceRecordContext,
+                header: { momName: "홍길동" },
+            }))
+            .mockReturnValueOnce(previewResponse.promise);
+
+        render(<ServiceRecordPage />);
+
+        await user.click(await screen.findByRole("button", { name: "서비스 일정 변경" }));
+        expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
+
+        previewResponse.reject(new Error("network unavailable"));
+
+        expect(await screen.findByRole("alertdialog")).toHaveTextContent("일정 변경 정보를 불러오지 못했습니다.");
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
     it("maps daily pages to browser history so Back restores the previous wizard page", async () => {

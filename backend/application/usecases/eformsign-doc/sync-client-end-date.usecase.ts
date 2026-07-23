@@ -75,6 +75,10 @@ export class SyncClientEndDateUsecase {
                 this.logger.warn(`eformsign_doc not found for ${documentId}; cannot sync client.endDate.`);
                 return;
             }
+            if (doc.clientId === null) {
+                this.logger.log(`Document ${documentId} belongs to a deleted client; skipping endDate sync.`);
+                return;
+            }
 
             const client = await this.clientRepository.findById(branchId, doc.clientId);
             if (!client) {

@@ -69,7 +69,7 @@ export default function AuthCallbackPage() {
 
     if (error) {
         return (
-            <div data-component="auth-callback" className="flex flex-col items-center justify-center h-screen gap-4">
+            <div data-component="auth-callback" className="flex min-h-[100dvh] flex-col items-center justify-center gap-4 px-6 text-center">
                 <p className="text-destructive">{error}</p>
                 <button
                     data-component="auth-callback-login-btn"
@@ -83,7 +83,7 @@ export default function AuthCallbackPage() {
     }
 
     return (
-        <div data-component="auth-callback" className="flex flex-col items-center justify-center h-screen gap-4">
+        <div data-component="auth-callback" className="flex min-h-[100dvh] flex-col items-center justify-center gap-4 px-6 text-center">
             <Spinner size="lg" />
             <p className="text-foreground">로그인 중...</p>
         </div>

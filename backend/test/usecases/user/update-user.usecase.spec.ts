@@ -78,5 +78,43 @@ describe("UpdateUserUsecase", () => {
                 usecase.execute("user_1", { role: null, callerRole: "admin" }),
             ).rejects.toThrow(ForbiddenException);
         });
+
+        it("should throw ForbiddenException when the target user's role is 'owner'", async () => {
+            const existingUser = UserFactory.create({ id: "user_1", role: "owner" });
+            mockRepository.setData([existingUser]);
+
+            await expect(
+                usecase.execute("user_1", { role: "manager", callerRole: "owner" }),
+            ).rejects.toThrow(ForbiddenException);
+
+            expect(mockRepository.clearBranchOwnershipsCalls).toEqual([]);
+        });
+
+        it.each(["manager", "user"])(
+            "should clear branch ownerships when an owner changes role to '%s'",
+            async (role) => {
+                const existingUser = UserFactory.create({ id: "user_1", role: "admin" });
+                mockRepository.setData([existingUser]);
+
+                await usecase.execute("user_1", { role, callerRole: "owner" });
+
+                expect(mockRepository.clearBranchOwnershipsCalls).toEqual([{
+                    userId: "user_1",
+                    membershipRole: role,
+                }]);
+            },
+        );
+
+        it("should NOT call clearBranchOwnerships for non-role updates", async () => {
+            const existingUser = UserFactory.create({ id: "user_1", role: "admin" });
+            mockRepository.setData([existingUser]);
+
+            await usecase.execute("user_1", {
+                name: "Updated Name",
+                callerRole: "owner",
+            });
+
+            expect(mockRepository.clearBranchOwnershipsCalls).toEqual([]);
+        });
     });
 });

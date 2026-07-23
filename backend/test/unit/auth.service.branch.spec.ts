@@ -274,14 +274,14 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
             });
         });
 
-        describe("given user only has a hidden Incheon district branch", () => {
-            it("should reject login because no visible branch is accessible", async () => {
+        describe("given user only has an active Incheon district branch", () => {
+            it("should issue a session scoped to that district branch", async () => {
                 const kakaoData = {
                     kakaoId: "kakao-12345",
                     email: "test@example.com",
                     name: "Test User",
                 };
-                const hiddenIncheonDistrictBranch = {
+                const incheonDistrictBranch = {
                     id: "incheon-bupyeong-id",
                     name: "인천 부평구점",
                     slug: "incheon-bupyeong",
@@ -292,16 +292,18 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 prismaService.user_branch.findMany.mockResolvedValue([
                     {
                         ...mockUserBranch,
-                        branchId: hiddenIncheonDistrictBranch.id,
-                        branch: hiddenIncheonDistrictBranch,
+                        branchId: incheonDistrictBranch.id,
+                        branch: incheonDistrictBranch,
                     },
                 ]);
 
-                const action = () => service.validateKakaoUser(kakaoData);
+                await service.validateKakaoUser(kakaoData);
 
-                await expect(action).rejects.toThrow(ForbiddenException);
-                await expect(action).rejects.toThrow("접근 가능한 지점이 없습니다. 관리자에게 문의해 주세요.");
-                expect(jwtService.signAsync).not.toHaveBeenCalled();
+                const accessCall = jwtService.signAsync.mock.calls.find(
+                    (call: any[]) => call[0]?.type === "access"
+                );
+                expect(accessCall?.[0]).toHaveProperty("branchId", incheonDistrictBranch.id);
+                expect(accessCall?.[0]).toHaveProperty("branchRole", "admin");
             });
         });
     });
@@ -349,27 +351,30 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
             });
         });
 
-        describe("given user belongs to a hidden Incheon district branch", () => {
-            it("should throw ForbiddenException", async () => {
-                const hiddenIncheonDistrictBranch = {
+        describe("given user belongs to an active Incheon district branch", () => {
+            it("should issue JWT scoped to that district branch", async () => {
+                const incheonDistrictBranch = {
                     id: "incheon-bupyeong-id",
                     name: "인천 부평구점",
                     slug: "incheon-bupyeong",
                     isActive: true,
                 };
-                const hiddenMembership = {
+                const membership = {
                     ...mockUserBranch,
-                    branchId: hiddenIncheonDistrictBranch.id,
-                    branch: hiddenIncheonDistrictBranch,
+                    branchId: incheonDistrictBranch.id,
+                    branch: incheonDistrictBranch,
                 };
 
                 prismaService.user.findUnique.mockResolvedValue(mockUser);
-                prismaService.user_branch.findFirst.mockResolvedValue(hiddenMembership);
+                prismaService.user_branch.findFirst.mockResolvedValue(membership);
 
-                const action = () => service.selectBranch(mockUser.id, hiddenIncheonDistrictBranch.id);
+                await service.selectBranch(mockUser.id, incheonDistrictBranch.id);
 
-                await expect(action).rejects.toThrow(ForbiddenException);
-                await expect(action).rejects.toThrow("User does not belong to this branch");
+                const accessCall = jwtService.signAsync.mock.calls.find(
+                    (call: any[]) => call[0]?.type === "access"
+                );
+                expect(accessCall?.[0]).toHaveProperty("branchId", incheonDistrictBranch.id);
+                expect(accessCall?.[0]).toHaveProperty("branchRole", "admin");
             });
         });
 
@@ -501,7 +506,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
             expect(result.errors).toContain("비밀번호에 대문자가 포함되어야 합니다.");
         });
 
-        it("should leave branch membership assignment to the owner", async () => {
+        it("should leave branch assignment to the owner approval flow", async () => {
             prismaService.user.findUnique
                 .mockResolvedValueOnce(null)
                 .mockResolvedValueOnce({ name: "Manager User" });
@@ -521,7 +526,6 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 "Manager User",
                 "010-1234-5678",
                 "1990-01-01",
-                "manager",
             );
 
             expect(prismaService.branch.findUnique).not.toHaveBeenCalled();
@@ -584,9 +588,9 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 });
             });
 
-            it("should hide Incheon district branches from regular user branch list", async () => {
+            it("should include active Incheon district branches in the regular user branch list", async () => {
                 const userId = mockUser.id;
-                const hiddenIncheonDistrictBranch = {
+                const incheonDistrictBranch = {
                     id: "incheon-bupyeong-id",
                     name: "인천 부평구점",
                     slug: "incheon-bupyeong",
@@ -594,20 +598,26 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 };
                 const canonicalIncheonBranch = {
                     id: "incheon-id",
-                    name: "인천점",
+                    name: "인천 아이미래로",
                     slug: "incheon",
                     isActive: true,
                 };
 
                 prismaService.user.findUnique.mockResolvedValue({ role: "user" });
                 prismaService.user_branch.findMany.mockResolvedValue([
-                    { ...mockUserBranch, branch: hiddenIncheonDistrictBranch },
+                    { ...mockUserBranch, branch: incheonDistrictBranch },
                     { ...mockUserBranch2, branch: canonicalIncheonBranch },
                 ]);
 
                 const result = await service.getUserBranches(userId);
 
                 expect(result).toEqual([
+                    {
+                        id: incheonDistrictBranch.id,
+                        name: incheonDistrictBranch.name,
+                        slug: incheonDistrictBranch.slug,
+                        role: "admin",
+                    },
                     {
                         id: canonicalIncheonBranch.id,
                         name: canonicalIncheonBranch.name,
@@ -619,9 +629,9 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
         });
 
         describe("given owner user", () => {
-            it("should hide Incheon district branches from owner branch list", async () => {
+            it("should include active Incheon district branches in the owner branch list", async () => {
                 const userId = mockUser.id;
-                const hiddenIncheonDistrictBranch = {
+                const incheonDistrictBranch = {
                     id: "incheon-yeonsu-id",
                     name: "인천 연수구점",
                     slug: "incheon-yeonsu",
@@ -629,14 +639,14 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 };
                 const canonicalIncheonBranch = {
                     id: "incheon-id",
-                    name: "인천점",
+                    name: "인천 아이미래로",
                     slug: "incheon",
                     isActive: true,
                 };
 
                 prismaService.user.findUnique.mockResolvedValue({ role: "owner" });
                 prismaService.branch.findMany.mockResolvedValue([
-                    hiddenIncheonDistrictBranch,
+                    incheonDistrictBranch,
                     canonicalIncheonBranch,
                     mockBranch,
                 ]);
@@ -644,6 +654,12 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
                 const result = await service.getUserBranches(userId);
 
                 expect(result).toEqual([
+                    {
+                        id: incheonDistrictBranch.id,
+                        name: incheonDistrictBranch.name,
+                        slug: incheonDistrictBranch.slug,
+                        role: "owner",
+                    },
                     {
                         id: canonicalIncheonBranch.id,
                         name: canonicalIncheonBranch.name,

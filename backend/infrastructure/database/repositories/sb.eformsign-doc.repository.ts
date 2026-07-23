@@ -162,27 +162,36 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
     async findClientNamesByBranch(branchid: string): Promise<EformsignDocClientSummary[]> {
         const docs = await this.prismaService.eformsign_doc.findMany({
             where: { branchId: branchid },
-            select: { documentId: true, clientId: true, stepRecipientName: true },
+            select: {
+                documentId: true,
+                clientId: true,
+                stepRecipientName: true,
+                documentKind: true,
+                serviceRecordCase: { select: { momName: true } },
+            },
         });
         const clientIds = Array.from(
             new Set(docs.map((d) => d.clientId).filter((id): id is number => id != null)),
         );
-        if (clientIds.length === 0) return [];
-        const clients = await this.prismaService.client.findMany({
-            where: { id: { in: clientIds } },
-            select: { id: true, name: true, phone: true },
-        });
-        const schedules = await this.prismaService.employee_schedule.findMany({
-            where: {
-                clientId: { in: clientIds },
-                branchId: branchid,
-                replaced: false,
-            },
-            include: {
-                primaryEmployee: true,
-            },
-            orderBy: { id: "desc" },
-        });
+        const clients = clientIds.length > 0
+            ? await this.prismaService.client.findMany({
+                where: { id: { in: clientIds } },
+                select: { id: true, name: true, phone: true },
+            })
+            : [];
+        const schedules = clientIds.length > 0
+            ? await this.prismaService.employee_schedule.findMany({
+                where: {
+                    clientId: { in: clientIds },
+                    branchId: branchid,
+                    replaced: false,
+                },
+                include: {
+                    primaryEmployee: true,
+                },
+                orderBy: { id: "desc" },
+            })
+            : [];
         const clientById = new Map(clients.map((c) => [c.id, c]));
         const providerByClientId = new Map<number, string>();
         for (const schedule of schedules) {
@@ -191,16 +200,22 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             }
         }
         return docs
-            .filter((d) => d.documentId && d.clientId != null && clientById.has(d.clientId))
+            .filter((d) => Boolean(d.documentId))
             .map((d) => {
-                const client = clientById.get(d.clientId!)!;
+                const client = d.clientId == null ? undefined : clientById.get(d.clientId);
                 const contractRecipientName = d.stepRecipientName.trim();
+                const serviceRecordMomName = d.serviceRecordCase?.momName?.trim() ?? "";
+                const clientName = d.documentKind === "service_record_snapshot"
+                    ? serviceRecordMomName || client?.name || contractRecipientName || "삭제된 고객"
+                    : contractRecipientName || client?.name || "삭제된 고객";
                 return {
                     documentId: d.documentId,
-                    clientId: client.id,
-                    clientName: contractRecipientName || client.name,
-                    clientPhone: client.phone ?? null,
-                    providerName: providerByClientId.get(d.clientId!) ?? null,
+                    clientId: d.clientId ?? null,
+                    clientName,
+                    clientPhone: client?.phone ?? null,
+                    providerName: d.clientId == null
+                        ? null
+                        : providerByClientId.get(d.clientId) ?? null,
                 };
             });
     }

@@ -13,7 +13,9 @@ jest.mock("@/hooks/useClients", () => ({
 }));
 
 jest.mock("@/hooks/useVoucherData", () => ({
+  useOutOfPocketPriceInfos: () => ({ data: [], isError: false, isLoading: false }),
   useVoucherPriceInfos: () => ({ data: [], isLoading: false }),
+  useVoucherYears: () => ({ data: [], isLoading: false }),
 }));
 
 jest.mock("@/stores/client-dialog-store", () => {

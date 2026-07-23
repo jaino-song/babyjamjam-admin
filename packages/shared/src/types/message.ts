@@ -377,6 +377,6 @@ export interface SystemAdminBranchRequest {
   isActive: boolean;
   createdAt: string | null;
   updatedAt: string | null;
-  owner: SystemAdminBranchUser;
+  owner: SystemAdminBranchUser | null;
   messageSenderApproval: SystemAdminBranchMessageSenderApproval;
 }

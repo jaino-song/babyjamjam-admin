@@ -205,13 +205,15 @@ export default function NotificationPage() {
                   </>
                 )}
                 rightContent={(
-                  <Switch
-                    id="notif-app"
-                    checked={isAppNotificationEnabled}
-                    onCheckedChange={handleAppNotificationChange}
-                    disabled={appNotificationDisabled}
-                    aria-label="앱 알림 설정"
-                  />
+                  <label className="flex h-[44px] w-[44px] cursor-pointer items-center justify-center" htmlFor="notif-app">
+                    <Switch
+                      id="notif-app"
+                      checked={isAppNotificationEnabled}
+                      onCheckedChange={handleAppNotificationChange}
+                      disabled={appNotificationDisabled}
+                      aria-label="앱 알림 설정"
+                    />
+                  </label>
                 )}
               />
 
@@ -221,13 +223,15 @@ export default function NotificationPage() {
                 tone="orange"
                 description={emailNotificationDescription}
                 rightContent={(
-                  <Switch
-                    id="notif-email"
-                    checked={emailNotifications && Boolean(accountEmail)}
-                    onCheckedChange={handleEmailNotificationChange}
-                    disabled={!accountEmail}
-                    aria-label="이메일 알림 설정"
-                  />
+                  <label className="flex h-[44px] w-[44px] cursor-pointer items-center justify-center" htmlFor="notif-email">
+                    <Switch
+                      id="notif-email"
+                      checked={emailNotifications && Boolean(accountEmail)}
+                      onCheckedChange={handleEmailNotificationChange}
+                      disabled={!accountEmail}
+                      aria-label="이메일 알림 설정"
+                    />
+                  </label>
                 )}
               />
             </div>

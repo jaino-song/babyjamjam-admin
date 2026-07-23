@@ -125,7 +125,7 @@ export function ListPanel({
                   key={tab.value}
                   onClick={() => onTabChange?.(tab.value)}
                   className={cn(
-                    "relative px-3 pb-2 text-[0.8rem] transition-colors",
+                    "relative inline-flex min-h-[44px] items-center px-3 text-[0.8rem] transition-colors",
                     activeTab === tab.value
                       ? "text-primary font-semibold"
                       : "text-v3-text-muted hover:text-v3-text"

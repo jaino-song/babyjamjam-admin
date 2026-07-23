@@ -84,6 +84,19 @@ describe("MobileBottomNav", () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  it("keeps every navigation item at the compact 40px height", () => {
+    mockUsePathname.mockReturnValue("/dashboard");
+
+    const { container } = render(<MobileBottomNav />);
+    const items = container.querySelectorAll('[data-component^="mobile-bottom-nav-"]');
+
+    expect(items).toHaveLength(5);
+    items.forEach((item) => {
+      expect(item).toHaveClass("h-10", "py-[5px]");
+      expect(item).not.toHaveClass("h-[44px]", "py-[7px]");
+    });
+  });
+
   it("moves nav foreground colors with the pressed indicator before route change", async () => {
     mockUsePathname.mockReturnValue("/dashboard");
     const user = userEvent.setup();

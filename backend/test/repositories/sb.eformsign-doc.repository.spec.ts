@@ -109,6 +109,21 @@ describe("SbEformsignDocRepository", () => {
         expect(result?.documentKind).toBeNull();
     });
 
+    it("reconstitutes an orphaned document with a null clientId", async () => {
+        eformsignDocModel.findFirst.mockResolvedValue({
+            ...legacyRow,
+            clientId: null,
+            documentKind: "service_record_snapshot",
+            employeeScheduleId: null,
+            templateId: "template-1",
+        });
+
+        const result = await repository.findByDocumentId("branch-1", "doc-1");
+
+        expect(result?.clientId).toBeNull();
+        expect(result?.documentKind).toBe("service_record_snapshot");
+    });
+
     it("retries status updates without pending classification columns", async () => {
         eformsignDocModel.updateMany
             .mockRejectedValueOnce(pendingColumnError)
@@ -136,5 +151,81 @@ describe("SbEformsignDocRepository", () => {
         expect(retryData).not.toHaveProperty("employeeScheduleId");
         expect(retryData).not.toHaveProperty("templateId");
         expect(result.statusType).toBe("050");
+    });
+
+    it("uses the service record mom name for snapshot document client summaries", async () => {
+        const clientFindMany = jest.fn().mockResolvedValue([
+            { id: 55, name: "고객 원본명", phone: "01066211878" },
+        ]);
+        const scheduleFindMany = jest.fn().mockResolvedValue([]);
+        eformsignDocModel.findMany.mockResolvedValue([
+            {
+                documentId: "service-record-doc-1",
+                clientId: 55,
+                stepRecipientName: "인천 아이미래로",
+                documentKind: "service_record_snapshot",
+                serviceRecordCase: { momName: "송진호" },
+            },
+        ]);
+        repository = new SbEformsignDocRepository({
+            eformsign_doc: eformsignDocModel,
+            client: { findMany: clientFindMany },
+            employee_schedule: { findMany: scheduleFindMany },
+        } as unknown as PrismaService);
+
+        const result = await repository.findClientNamesByBranch("branch-1");
+
+        expect(eformsignDocModel.findMany).toHaveBeenCalledWith({
+            where: { branchId: "branch-1" },
+            select: {
+                documentId: true,
+                clientId: true,
+                stepRecipientName: true,
+                documentKind: true,
+                serviceRecordCase: { select: { momName: true } },
+            },
+        });
+        expect(result).toEqual([
+            {
+                documentId: "service-record-doc-1",
+                clientId: 55,
+                clientName: "송진호",
+                clientPhone: "01066211878",
+                providerName: null,
+            },
+        ]);
+    });
+
+    it("keeps orphaned completed documents visible after their client is deleted", async () => {
+        const clientFindMany = jest.fn().mockResolvedValue([]);
+        const scheduleFindMany = jest.fn().mockResolvedValue([]);
+        eformsignDocModel.findMany.mockResolvedValue([
+            {
+                documentId: "service-record-doc-orphan",
+                clientId: null,
+                stepRecipientName: "전자문서 수신자",
+                documentKind: "service_record_snapshot",
+                serviceRecordCase: { momName: "보존된 산모명" },
+            },
+        ]);
+        repository = new SbEformsignDocRepository({
+            eformsign_doc: eformsignDocModel,
+            client: { findMany: clientFindMany },
+            employee_schedule: { findMany: scheduleFindMany },
+        } as unknown as PrismaService);
+
+        const result = await repository.findClientNamesByBranch("branch-1");
+
+        expect(result).toEqual([
+            {
+                documentId: "service-record-doc-orphan",
+                clientId: null,
+                clientName: "보존된 산모명",
+                clientPhone: null,
+                providerName: null,
+            },
+        ]);
+        expect(clientFindMany).not.toHaveBeenCalled();
+        expect(scheduleFindMany).not.toHaveBeenCalled();
     });
 });

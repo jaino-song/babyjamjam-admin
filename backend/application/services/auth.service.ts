@@ -503,12 +503,14 @@ export class AuthService {
             return [];
         }
 
-        return userOrgs.filter((userOrg) => isVisibleStaffBranchSlug(userOrg.branch.slug)).map(userOrg => ({
-            id: userOrg.branch.id,
-            name: userOrg.branch.name,
-            slug: userOrg.branch.slug,
-            role: userOrg.role ?? 'member',
-        }));
+        return userOrgs
+            .filter((userOrg) => userOrg.branch.isActive === true && isVisibleStaffBranchSlug(userOrg.branch.slug))
+            .map(userOrg => ({
+                id: userOrg.branch.id,
+                name: userOrg.branch.name,
+                slug: userOrg.branch.slug,
+                role: userOrg.role ?? 'member',
+            }));
     }
 
     private async pruneAuthFlowStates(): Promise<void> {
@@ -1036,7 +1038,6 @@ export class AuthService {
         name: string,
         phone: string,
         birthDate: string,
-        role: string,
     ): Promise<RegistrationResult> {
         // Validate password strength
         const passwordValidation = this.validatePasswordStrength(password);
@@ -1076,7 +1077,7 @@ export class AuthService {
                     birthDate,
                     passwordHash,
                     role: null,
-                    requestedRole: role,
+                    requestedRole: 'user',
                     approvalStatus: 'pending',
                     authProvider: 'email',
                     emailVerified: false,

@@ -11,6 +11,7 @@ import {
 import { ClientEntity } from "domain/entities/client.entity";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
+import { normalizeClientPricing } from "domain/services/client-pricing";
 import { diffBusinessDaysKr } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { computeServiceStatus, isServiceStatus, SERVICE_STATUS, SERVICE_STATUS_VALUES, ServiceStatusType } from "domain/value-objects/service-status.vo";
@@ -99,8 +100,8 @@ export interface ClientWithEmployees {
     hasSigned: boolean;
     documentStatus: DocumentStatusType;
     badges: ClientBadge[];
-    primaryEmployee: { id: number; name: string } | null;
-    secondaryEmployee: { id: number; name: string } | null;
+    primaryEmployee: { id: number; name: string; phone: string | null } | null;
+    secondaryEmployee: { id: number; name: string; phone: string | null } | null;
     pendingScheduleChange?: PendingScheduleChange | null;
 }
 
@@ -395,6 +396,7 @@ export class ClientService {
         eDocId?: string | null;
         areaId?: string | null;
         suppressGreetingSms?: boolean;
+        applyMessageAutomation?: boolean;
         reuseExistingClient?: boolean;
         source?: string;
     }): Promise<ClientEntity> {
@@ -406,6 +408,7 @@ export class ClientService {
         await this.assertAllowedClientArea(branchid, params.areaId);
 
         let suppressGreetingSms = params.suppressGreetingSms ?? false;
+        const applyMessageAutomation = params.applyMessageAutomation ?? true;
         if (params.source === CONTRACT_AUTO_REGISTRATION_SOURCE) {
             const autoRegistrationEnabled = await this.systemSettingService
                 .getClientAutoRegistrationEnabled(branchid);
@@ -463,15 +466,23 @@ export class ClientService {
             }
         }
 
+        const normalizedPricing = normalizeClientPricing({
+            voucherClient: params.voucherClient,
+            type: params.type ?? null,
+            fullPrice: params.fullPrice ?? null,
+            grant: params.grant ?? null,
+            actualPrice: params.actualPrice ?? null,
+        });
+
         const createParams = {
             name: params.name,
             address: params.address ?? null,
             phone: params.phone ?? null,
-            type: params.type ?? null,
+            type: normalizedPricing.type,
             duration: params.duration ?? null,
-            fullPrice: params.fullPrice ?? null,
-            grant: params.grant ?? null,
-            actualPrice: params.actualPrice ?? null,
+            fullPrice: normalizedPricing.fullPrice,
+            grant: normalizedPricing.grant,
+            actualPrice: normalizedPricing.actualPrice,
             startDate: startDate,
             endDate: endDate,
             careCenter: params.careCenter,
@@ -507,7 +518,7 @@ export class ClientService {
 
         await this.serviceRecordLifecycleService?.ensureForClient(client.id);
 
-        if (this.triggerService) {
+        if (this.triggerService && applyMessageAutomation) {
             await this.triggerService
                 .ensureDefaultRulesForBranch(branchid)
                 .then(() => this.triggerService!.syncClientRulesForClient(branchid, client.id, true, suppressGreetingSms))
@@ -515,7 +526,7 @@ export class ClientService {
                     this.logger.error(`Failed to sync client trigger rules: ${error}`);
                 });
         }
-        if (createdScheduleId !== null) {
+        if (createdScheduleId !== null && applyMessageAutomation) {
             await this.triggerService
                 ?.syncEmployeeAssignmentRulesForSchedule(branchid, createdScheduleId, true)
                 ?.catch((error) => {
@@ -665,6 +676,7 @@ export class ClientService {
         });
         const latestContractStatusMap = new Map<number, string>();
         for (const doc of contractDocs) {
+            if (doc.clientId === null) continue;
             if (!latestContractStatusMap.has(doc.clientId)) {
                 latestContractStatusMap.set(doc.clientId, doc.statusType);
             }
@@ -722,12 +734,28 @@ export class ClientService {
                     documentStatus,
                     badges,
                     primaryEmployee: schedule?.primaryEmployee
-                        ? { id: schedule.primaryEmployee.id, name: schedule.primaryEmployee.name }
+                        ? {
+                            id: schedule.primaryEmployee.id,
+                            name: schedule.primaryEmployee.name,
+                            phone: schedule.primaryEmployee.phone ?? null,
+                        }
                         : null,
                     secondaryEmployee: schedule?.secondaryEmployee
-                        ? { id: schedule.secondaryEmployee.id, name: schedule.secondaryEmployee.name }
+                        ? {
+                            id: schedule.secondaryEmployee.id,
+                            name: schedule.secondaryEmployee.name,
+                            phone: schedule.secondaryEmployee.phone ?? null,
+                        }
                         : null,
-                    pendingScheduleChange: pendingScheduleChange
+                    // Guard against legacy rows whose date columns are null at the DB
+                    // level even though the schema now types them non-null — calling
+                    // toISOString() on such a null throws and 500s the whole overview.
+                    pendingScheduleChange:
+                        pendingScheduleChange
+                        && pendingScheduleChange.fromDate
+                        && pendingScheduleChange.toDate
+                        && pendingScheduleChange.oldEndDate
+                        && pendingScheduleChange.newEndDate
                         ? {
                             id: pendingScheduleChange.id,
                             sessionIndex: pendingScheduleChange.sessionIndex,
@@ -815,6 +843,21 @@ export class ClientService {
         if (!existingClient) {
             throw new Error(`Client with id ${id} not found`);
         }
+        const hasPricingUpdate = params.voucherClient !== undefined
+            || params.type !== undefined
+            || params.duration !== undefined
+            || params.fullPrice !== undefined
+            || params.grant !== undefined
+            || params.actualPrice !== undefined;
+        const normalizedPricing = hasPricingUpdate
+            ? normalizeClientPricing({
+                voucherClient: params.voucherClient ?? existingClient.voucherClient,
+                type: params.type === undefined ? existingClient.type : params.type,
+                fullPrice: params.fullPrice === undefined ? existingClient.fullPrice : params.fullPrice,
+                grant: params.grant === undefined ? existingClient.grant : params.grant,
+                actualPrice: params.actualPrice === undefined ? existingClient.actualPrice : params.actualPrice,
+            })
+            : null;
         this.assertAllowedServiceStatus(params.serviceStatus);
         await this.assertAllowedClientArea(branchid, params.areaId);
         await this.serviceRecordLifecycleService?.validatePeriodChange({
@@ -902,11 +945,11 @@ export class ClientService {
                     name: params.name,
                     address: params.address ?? undefined,
                     phone: params.phone ?? undefined,
-                    type: params.type ?? undefined,
+                    type: normalizedPricing?.type,
                     duration: params.duration ?? undefined,
-                    fullPrice: params.fullPrice ?? undefined,
-                    grant: params.grant ?? undefined,
-                    actualPrice: params.actualPrice ?? undefined,
+                    fullPrice: normalizedPricing?.fullPrice,
+                    grant: normalizedPricing?.grant,
+                    actualPrice: normalizedPricing?.actualPrice,
                     startDate: params.startDate ? new Date(params.startDate) : undefined,
                     endDate: params.endDate ? new Date(params.endDate) : undefined,
                     careCenter: params.careCenter ?? undefined,

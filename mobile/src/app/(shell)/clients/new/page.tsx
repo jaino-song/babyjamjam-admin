@@ -5,13 +5,16 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
+import {
+  findOutOfPocketPriceInfo,
+  formatOutOfPocketDurationLabel,
+} from "@babyjamjam/shared";
 import { useClient, useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import {
   useAllVoucherPrices,
-  useBankAccountInfos,
+  useOutOfPocketPriceInfos,
   useVoucherPriceInfos,
-  type BankAccountInfo,
   type VoucherPriceInfo,
 } from "@/hooks/useVoucherData";
 import type { CreateClientDto, ServiceStatus, UpdateClientDto } from "@/lib/client/types";
@@ -19,13 +22,15 @@ import { SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
 import { api } from "@/lib/api/client";
 import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
+import { FormNativeSelect } from "@/components/app/ui/form-section";
+import { TogglePill } from "@/components/app/ui/toggle-pill";
+import { Input } from "@/components/app/v3/Input";
 import { useEmployees, type Employee } from "@/hooks/useEmployees";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
 import { useClientWizardStore } from "@/stores/client-wizard-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { getErrorMessage } from "@/lib/errors/api-error-mapper";
-import bankAccountOptions from "@/components/app/messages/templates/json/bank-account.json";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { calcEndDateBusinessDays } from "@/lib/date/business-days";
 import { parsePositiveIntQueryParam } from "@/lib/query-params";
@@ -43,23 +48,16 @@ const WIZARD_STEPS = [
   { title: "서비스 설정", desc: "바우처와 제공인력, 요금 정보를 확인해주세요." },
   { title: "계약 정보", desc: "계약 상태와 서비스 기간을 입력해주세요." },
 ] as const;
-const VOUCHER_TYPE_OPTIONS = Object.values(voucherOptions.voucherOptions).flatMap((types) =>
-  Object.entries(types).map(([value, typeData]) => ({
-    value,
-    label: typeData.label,
-  })),
+const VOUCHER_TYPE_SELECT_OPTIONS = Object.entries(voucherOptions.voucherOptions).map(
+  ([groupName, types]) => ({
+    label: groupName,
+    options: Object.entries(types).map(([value, typeData]) => ({
+      value,
+      label: typeData.label,
+    })),
+  }),
 );
-
-const getBankAccountAreaLabel = (areaId: string): string => (
-  bankAccountOptions[areaId as keyof typeof bankAccountOptions]?.area ?? areaId
-);
-
-const getBankAccountOptionLabel = (account: BankAccountInfo): string => {
-  const areaLabel = getBankAccountAreaLabel(account.area);
-  const accountText = [account.bankName, account.accNum].filter(Boolean).join(" ");
-
-  return accountText ? `${areaLabel} · ${accountText}` : areaLabel;
-};
+const VOUCHER_TYPE_OPTIONS = VOUCHER_TYPE_SELECT_OPTIONS.flatMap((group) => group.options);
 
 type HelperTone = "muted" | "ok" | "err" | "pending";
 
@@ -207,7 +205,6 @@ export default function NewClientPage() {
     isLoading: isAllVoucherPricesLoading,
     isFetching: isAllVoucherPricesFetching,
   } = useAllVoucherPrices(voucherLookupYear);
-  const { data: bankAccountInfos = [], isLoading: isBankAccountInfosLoading } = useBankAccountInfos();
   const prefillName = useClientDialogStore((s) => s.prefillName);
   const prefillClient = useClientDialogStore((s) => s.prefillClient);
   const clearPrefillName = useClientDialogStore((s) => s.clearPrefillName);
@@ -551,16 +548,29 @@ export default function NewClientPage() {
   }, [phoneDigits, isUsingOriginalPhone]);
 
   const { data: voucherPriceInfos, isLoading: isPriceLoading } = useVoucherPriceInfos(store.type || "");
+  const {
+    data: outOfPocketPriceInfos,
+    isLoading: isOutOfPocketPriceLoading,
+    isError: isOutOfPocketPriceError,
+  } = useOutOfPocketPriceInfos();
 
   const availableDurations = useMemo(() => {
     if (!voucherPriceInfos) return [];
     const durations = [...new Set(voucherPriceInfos.map((i) => Number(i.duration)))];
     return durations.sort((a, b) => a - b);
   }, [voucherPriceInfos]);
-  const hasValidStoreDuration = store.duration != null && availableDurations.includes(store.duration);
+  const outOfPocketDurations = useMemo(
+    () => (outOfPocketPriceInfos ?? []).map((priceInfo) => priceInfo.duration),
+    [outOfPocketPriceInfos],
+  );
+  const hasValidStoreDuration = store.duration != null && (
+    store.voucherClient
+      ? availableDurations.includes(store.duration)
+      : outOfPocketDurations.includes(store.duration)
+  );
 
   const inferredDurationFromPrices = useMemo(() => {
-    if (!voucherPriceInfos || hasValidStoreDuration) return null;
+    if (!store.voucherClient || !voucherPriceInfos || hasValidStoreDuration) return null;
 
     const matchedVoucherPrice = findVoucherPriceByAmounts(voucherPriceInfos, {
       fullPrice: store.fullPrice,
@@ -569,24 +579,50 @@ export default function NewClientPage() {
     });
     const matchedDuration = matchedVoucherPrice?.duration ? Number(matchedVoucherPrice.duration) : undefined;
     return matchedDuration !== undefined && Number.isFinite(matchedDuration) ? matchedDuration : null;
-  }, [hasValidStoreDuration, store.actualPrice, store.fullPrice, store.grant, voucherPriceInfos]);
+  }, [hasValidStoreDuration, store.actualPrice, store.fullPrice, store.grant, store.voucherClient, voucherPriceInfos]);
   const effectiveDuration = hasValidStoreDuration ? store.duration : inferredDurationFromPrices;
 
   const selectedPriceInfo = useMemo(() => {
+    if (!store.voucherClient) {
+      return findOutOfPocketPriceInfo(outOfPocketPriceInfos, effectiveDuration);
+    }
     if (!voucherPriceInfos || !effectiveDuration) return null;
     return voucherPriceInfos.find((i) => Number(i.duration) === effectiveDuration);
-  }, [effectiveDuration, voucherPriceInfos]);
+  }, [effectiveDuration, outOfPocketPriceInfos, store.voucherClient, voucherPriceInfos]);
+
+  const durationOptions = useMemo(() => {
+    if (!store.voucherClient) {
+      return (outOfPocketPriceInfos ?? []).map((priceInfo) => ({
+        value: String(priceInfo.duration),
+        label: formatOutOfPocketDurationLabel(priceInfo.duration),
+      }));
+    }
+
+    return availableDurations.map((duration) => ({
+      value: String(duration),
+      label: `${duration}일`,
+    }));
+  }, [availableDurations, outOfPocketPriceInfos, store.voucherClient]);
+
+  const arePriceInputsLocked = store.voucherClient
+    ? !store.type || !effectiveDuration || isPriceLoading
+    : !effectiveDuration || isOutOfPocketPriceLoading || isOutOfPocketPriceError;
 
   useEffect(() => {
     if (selectedPriceInfo && !pricesManuallyEdited) {
       setField("fullPrice", parsePrice(selectedPriceInfo.fullPrice));
-      setField("grant", parsePrice(selectedPriceInfo.grant));
-      setField("actualPrice", parsePrice(selectedPriceInfo.actualPrice));
+      if (store.voucherClient && "grant" in selectedPriceInfo && "actualPrice" in selectedPriceInfo) {
+        setField("grant", parsePrice(selectedPriceInfo.grant));
+        setField("actualPrice", parsePrice(selectedPriceInfo.actualPrice));
+      } else {
+        setField("grant", "0");
+        setField("actualPrice", parsePrice(selectedPriceInfo.fullPrice));
+      }
     }
-  }, [selectedPriceInfo, pricesManuallyEdited, setField]);
+  }, [selectedPriceInfo, pricesManuallyEdited, setField, store.voucherClient]);
 
   useEffect(() => {
-    if (!store.type || hasValidStoreDuration || !voucherPriceInfos) return;
+    if (!store.voucherClient || !store.type || hasValidStoreDuration || !voucherPriceInfos) return;
 
     const matchedVoucherPrice = findVoucherPriceByAmounts(voucherPriceInfos, {
       fullPrice: store.fullPrice,
@@ -605,6 +641,7 @@ export default function NewClientPage() {
     store.fullPrice,
     store.grant,
     store.type,
+    store.voucherClient,
     voucherPriceInfos,
   ]);
 
@@ -633,6 +670,16 @@ export default function NewClientPage() {
   const handlePriceChange = (field: "fullPrice" | "grant" | "actualPrice", value: string) => {
     setPricesManuallyEdited(true);
     setField(field, value);
+  };
+
+  const handleVoucherClientChange = (voucherClient: boolean) => {
+    setPricesManuallyEdited(false);
+    setField("voucherClient", voucherClient);
+    setField("type", "");
+    setField("duration", null);
+    setField("fullPrice", "");
+    setField("grant", "");
+    setField("actualPrice", "");
   };
 
   const isStepSatisfied = (step: number): boolean => {
@@ -709,11 +756,11 @@ export default function NewClientPage() {
         phone: store.phone || null,
         primaryEmployeeId: store.primaryEmployeeId,
         secondaryEmployeeId: store.secondaryEmployeeId,
-        type: store.type || null,
+        type: store.voucherClient ? store.type || null : null,
         duration: effectiveDuration || null,
         fullPrice: store.fullPrice || null,
-        grant: store.grant || null,
-        actualPrice: store.actualPrice || null,
+        grant: store.voucherClient ? store.grant || null : "0",
+        actualPrice: store.voucherClient ? store.actualPrice || null : store.fullPrice || null,
         startDate: yymmddToIso(store.startDate),
         endDate: yymmddToIso(store.endDate),
         careCenter: store.careCenter,
@@ -854,16 +901,16 @@ export default function NewClientPage() {
                 <>
                   <div className={styles.formCard} data-component="clients-new-basic-contact-card">
                     <Field label="이름" required>
-                      <input
-                        className={styles.formInput}
+                      <Input
+                        data-component="clients-new-name-input"
                         value={store.name}
                         onChange={(e) => setField("name", e.target.value)}
                         placeholder="홍길동"
                       />
                     </Field>
                     <Field label="연락처" required helper={phoneInlineMessage} helperTone={phoneHelperTone} helperPlacement="label">
-                      <input
-                        className={styles.formInput}
+                      <Input
+                        data-component="clients-new-phone-input"
                         value={store.phone}
                         onChange={(e) => setField("phone", formatPhoneNumber(e.target.value))}
                         type="tel"
@@ -876,8 +923,8 @@ export default function NewClientPage() {
 
                   <div className={styles.formCard} data-component="clients-new-basic-details-card">
                     <Field label="생년월일">
-                      <input
-                        className={styles.formInput}
+                      <Input
+                        data-component="clients-new-birthday-input"
                         value={store.birthday}
                         onChange={(e) => setField("birthday", e.target.value)}
                         inputMode="numeric"
@@ -886,8 +933,8 @@ export default function NewClientPage() {
                       />
                     </Field>
                     <Field label="출산 예정일">
-                      <input
-                        className={styles.formInput}
+                      <Input
+                        data-component="clients-new-due-date-input"
                         value={store.dueDate}
                         onChange={(e) => setField("dueDate", e.target.value)}
                         inputMode="numeric"
@@ -896,8 +943,8 @@ export default function NewClientPage() {
                       />
                     </Field>
                     <Field label="주소">
-                      <input
-                        className={styles.formInput}
+                      <Input
+                        data-component="clients-new-address-input"
                         value={store.address}
                         onChange={(e) => setField("address", e.target.value)}
                         placeholder="서울시 강남구..."
@@ -910,82 +957,75 @@ export default function NewClientPage() {
               {activeStep === 1 ? (
                 <>
                   <div className={styles.formCard} data-component="clients-new-voucher-card">
-                    <div className={styles.formCardTitle} data-component="clients-new-form-card-title">바우처</div>
-                    <Field label="바우처 유형">
-                      <div className={styles.selectWrap} data-component="clients-new-voucher-select-wrap">
-                        <select
-                          className={styles.formInput}
-                          value={store.type}
-                          onChange={(e) => handleTypeChange(e.target.value)}
-                        >
-                          <option value="">선택하세요</option>
-                          {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
-                            <optgroup key={groupName} label={groupName}>
-                              {Object.entries(types).map(([typeValue, typeData]) => (
-                                <option key={typeValue} value={typeValue}>
-                                  {typeData.label}
-                                </option>
-                              ))}
-                            </optgroup>
-                          ))}
-                        </select>
-                      </div>
+                    <div
+                      data-component="clients-new-customer-type-toggle-field"
+                      className="flex justify-center pb-3"
+                    >
+                      <TogglePill
+                        data-component="clients-new-customer-type-toggle"
+                        value={store.voucherClient}
+                        onValueChange={handleVoucherClientChange}
+                        leftLabel="바우처 고객"
+                        rightLabel="자부담 고객"
+                        ariaLabel="고객 유형"
+                        indicatorDataComponent="clients-new-customer-type-toggle-indicator"
+                        leftButtonDataComponent="clients-new-customer-type-toggle-voucher"
+                        rightButtonDataComponent="clients-new-customer-type-toggle-self-pay"
+                      />
+                    </div>
+                    <div className={styles.formCardTitle} data-component="clients-new-form-card-title">
+                      {store.voucherClient ? "바우처" : "자부담"}
+                    </div>
+                    {store.voucherClient ? <Field label="바우처 유형">
+                      <FormNativeSelect
+                        value={store.type}
+                        onValueChange={handleTypeChange}
+                        options={[
+                          { value: "", label: "선택하세요" },
+                          ...VOUCHER_TYPE_SELECT_OPTIONS,
+                        ]}
+                        wrapDataComponent="clients-new-voucher-select-wrap"
+                        selectDataComponent="clients-new-voucher-select"
+                        iconDataComponent="clients-new-voucher-select-icon"
+                      />
+                    </Field> : null}
+                    <Field
+                      label="기간"
+                      helper={store.voucherClient ? "바우처 유형에 따라 선택 가능한 기간이 달라집니다." : undefined}
+                    >
+                      <FormNativeSelect
+                        value={effectiveDuration?.toString() || ""}
+                        onValueChange={(value) => {
+                          setField("duration", value ? Number(value) : null);
+                          setPricesManuallyEdited(false);
+                        }}
+                        disabled={store.voucherClient
+                          ? !store.type || isPriceLoading
+                          : isOutOfPocketPriceLoading || isOutOfPocketPriceError}
+                        hideIcon={store.voucherClient ? isPriceLoading : isOutOfPocketPriceLoading}
+                        className={(store.voucherClient ? isPriceLoading : isOutOfPocketPriceLoading)
+                          ? "disabled:!bg-transparent disabled:!opacity-100"
+                          : undefined}
+                        wrapClassName={(store.voucherClient ? isPriceLoading : isOutOfPocketPriceLoading)
+                          ? styles.loadingSelect
+                          : undefined}
+                        options={[
+                          { value: "", label: "선택하세요" },
+                          ...durationOptions,
+                        ]}
+                        wrapDataComponent="clients-new-duration-select-wrap"
+                        selectDataComponent="clients-new-duration-select"
+                        iconDataComponent="clients-new-duration-select-icon"
+                      />
                     </Field>
-                    <Field label="기간" helper="바우처 유형에 따라 선택 가능한 기간이 달라집니다.">
-                      <div className={cn(styles.selectWrap, isPriceLoading ? styles.loadingSelect : !store.type && styles.disabledSelect)} data-component="clients-new-duration-select-wrap">
-                        <select
-                          className={styles.formInput}
-                          value={effectiveDuration?.toString() || ""}
-                          onChange={(e) => {
-                            setField("duration", e.target.value ? Number(e.target.value) : null);
-                            setPricesManuallyEdited(false);
-                          }}
-                          disabled={!store.type || isPriceLoading}
-                        >
-                          <option value="">선택하세요</option>
-                          {availableDurations.map((d) => (
-                            <option key={d} value={String(d)}>
-                              {d}일
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </Field>
-                  </div>
-
-                  <div className={styles.formCard} data-component="clients-new-bank-account-card">
-                    <div className={styles.formCardTitle} data-component="clients-new-form-card-title">계좌번호</div>
-                    <Field label="계좌번호">
+                    {!store.voucherClient && isOutOfPocketPriceError ? (
                       <div
-                        className={cn(
-                          styles.selectWrap,
-                          isBankAccountInfosLoading ? styles.loadingSelect : bankAccountInfos.length === 0 && styles.disabledSelect,
-                        )}
-                        data-component="clients-new-bank-account-select-wrap"
+                        className={cn(styles.formHelper, styles.helper_err)}
+                        data-component="clients-new-out-of-pocket-price-error"
                       >
-                        <select
-                          className={styles.formInput}
-                          value={store.areaId}
-                          onChange={(e) => setField("areaId", e.target.value)}
-                          disabled={isBankAccountInfosLoading || bankAccountInfos.length === 0}
-                          data-component="clients-new-bank-account-select"
-                        >
-                          <option value="">
-                            {isBankAccountInfosLoading ? "불러오는 중" : "계좌번호 선택"}
-                          </option>
-                          {store.areaId && !bankAccountInfos.some((account) => account.area === store.areaId) ? (
-                            <option value={store.areaId}>
-                              {getBankAccountAreaLabel(store.areaId)}
-                            </option>
-                          ) : null}
-                          {bankAccountInfos.map((account) => (
-                            <option key={account.area} value={account.area}>
-                              {getBankAccountOptionLabel(account)}
-                            </option>
-                          ))}
-                        </select>
+                        자부담 요금 정보를 불러오지 못했습니다.
                       </div>
-                    </Field>
+                    ) : null}
                   </div>
 
                   <div className={styles.formCard} data-component="clients-new-employee-card">
@@ -1021,26 +1061,27 @@ export default function NewClientPage() {
                   <div className={styles.formCard} data-component="clients-new-pricing-card">
                     <div className={styles.formCardTitle} data-component="clients-new-form-card-title">
                       요금 정보
-                      {selectedPriceInfo ? (
+                      {selectedPriceInfo && !pricesManuallyEdited ? (
                         <span className={styles.autoBadge}>자동입력</span>
                       ) : null}
                     </div>
                     <Field label="총 서비스 금액">
                       <div className={styles.priceInput} data-component="clients-new-full-price-input-wrap">
-                        <input
-                          className={styles.formInput}
-                          value={formatPrice(store.fullPrice)}
+                        <Input
+                          data-component="clients-new-full-price-input"
+                          value={arePriceInputsLocked ? "" : formatPrice(store.fullPrice)}
                           onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
                           inputMode="numeric"
                           placeholder="0"
+                          disabled={arePriceInputsLocked}
                         />
                         <span>원</span>
                       </div>
                     </Field>
-                    <Field label="정부지원금">
+                    {store.voucherClient ? <Field label="정부지원금">
                       <div className={styles.priceInput} data-component="clients-new-grant-input-wrap">
-                        <input
-                          className={styles.formInput}
+                        <Input
+                          data-component="clients-new-grant-input"
                           value={formatPrice(store.grant)}
                           onChange={(e) => handlePriceChange("grant", e.target.value.replace(/,/g, ""))}
                           inputMode="numeric"
@@ -1048,11 +1089,11 @@ export default function NewClientPage() {
                         />
                         <span>원</span>
                       </div>
-                    </Field>
-                    <Field label="본인부담금" helper="총 서비스 금액 - 정부지원금 = 본인부담금. 직접 수정도 가능합니다.">
+                    </Field> : null}
+                    {store.voucherClient ? <Field label="본인부담금">
                       <div className={styles.priceInput} data-component="clients-new-actual-price-input-wrap">
-                        <input
-                          className={styles.formInput}
+                        <Input
+                          data-component="clients-new-actual-price-input"
                           value={formatPrice(store.actualPrice)}
                           onChange={(e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, ""))}
                           inputMode="numeric"
@@ -1060,14 +1101,13 @@ export default function NewClientPage() {
                         />
                         <span>원</span>
                       </div>
-                    </Field>
+                    </Field> : null}
                   </div>
 
                   <div className={styles.formCard} data-component="clients-new-options-card">
                     <div className={styles.formCardTitle} data-component="clients-new-form-card-title">추가 옵션</div>
                     <div className={styles.toggleChipRow} data-component="clients-new-option-chips">
                       {([
-                        { key: "voucherClient" as const, label: "바우처 고객" },
                         { key: "careCenter" as const, label: "조리원 이용" },
                         { key: "breastPump" as const, label: "유축기 대여" },
                       ]).map(({ key, label }) => (
@@ -1089,27 +1129,21 @@ export default function NewClientPage() {
                 <>
                   <div className={styles.formCard} data-component="clients-new-contract-status-card">
                     <div className={styles.formCardTitle} data-component="clients-new-form-card-title">계약 상태</div>
-                    <div className={styles.selectWrap} data-component="clients-new-status-select-wrap">
-                      <select
-                        className={styles.formInput}
-                        value={store.serviceStatus}
-                        onChange={(e) => setField("serviceStatus", e.target.value as ServiceStatus)}
-                        data-component="clients-new-status-select"
-                      >
-                        {SERVICE_STATUS_OPTIONS.map((status) => (
-                          <option key={status.value} value={status.value}>
-                            {status.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    <FormNativeSelect
+                      value={store.serviceStatus}
+                      onValueChange={(value) => setField("serviceStatus", value as ServiceStatus)}
+                      options={SERVICE_STATUS_OPTIONS}
+                      wrapDataComponent="clients-new-status-select-wrap"
+                      selectDataComponent="clients-new-status-select"
+                      iconDataComponent="clients-new-status-select-icon"
+                    />
                   </div>
 
                   <div className={styles.formCard} data-component="clients-new-service-period-card">
                     <div className={styles.formCardTitle} data-component="clients-new-form-card-title">서비스 기간</div>
                     <Field label="시작일">
-                      <input
-                        className={styles.formInput}
+                      <Input
+                        data-component="clients-new-start-date-input"
                         value={store.startDate}
                         onChange={(e) => setField("startDate", e.target.value)}
                         inputMode="numeric"
@@ -1118,8 +1152,8 @@ export default function NewClientPage() {
                       />
                     </Field>
                     <Field label="종료일">
-                      <input
-                        className={styles.formInput}
+                      <Input
+                        data-component="clients-new-end-date-input"
                         value={store.endDate}
                         onChange={(e) => setField("endDate", e.target.value)}
                         inputMode="numeric"

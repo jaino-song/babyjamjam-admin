@@ -42,6 +42,10 @@ export class UpdateClientContractStatusUsecase {
         if (!doc) {
             throw new NotFoundException(`Document ${documentId} not found`);
         }
+        if (doc.clientId === null) {
+            this.logger.log(`Document ${documentId} belongs to a deleted client; skipping contract status sync`);
+            return;
+        }
 
         const client = await this.clientRepository.findById(branchid, doc.clientId);
         if (!client) {

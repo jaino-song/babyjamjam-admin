@@ -21,12 +21,13 @@ describe("UserService", () => {
                 findMany: jest.fn().mockResolvedValue([]),
                 update: jest.fn(),
             },
-            user_branch: {
-                deleteMany: jest.fn(),
-                upsert: jest.fn(),
-            },
             branch: {
                 findUnique: jest.fn().mockResolvedValue({ id: "branch-1" }),
+                update: jest.fn().mockResolvedValue({ id: "branch-1" }),
+            },
+            user_branch: {
+                upsert: jest.fn().mockResolvedValue({ id: "membership-1" }),
+                deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
             },
             auth_session: {
                 updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -168,6 +169,7 @@ describe("UserService", () => {
                 role: "admin",
                 approvedBy: "owner-1",
                 branchId: "branch-1",
+                ownerBranchId: "branch-1",
             });
 
             expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
@@ -188,7 +190,7 @@ describe("UserService", () => {
             expect(result.tokenVersion).toBe(1);
         });
 
-        it("should assign the owner-selected branch and role when approving", async () => {
+        it("should create or update the selected branch membership", async () => {
             prismaService.user.update.mockResolvedValue({
                 id: "u1",
                 approvalStatus: "approved",
@@ -198,6 +200,13 @@ describe("UserService", () => {
 
             await service.approve("u1", { role: "manager", approvedBy: "owner-1", branchId: "branch-9" });
 
+            expect(prismaService.user_branch.upsert).toHaveBeenCalledWith({
+                where: {
+                    userId_branchId: { userId: "u1", branchId: "branch-9" },
+                },
+                update: { role: "manager" },
+                create: { userId: "u1", branchId: "branch-9", role: "manager" },
+            });
             expect(prismaService.user_branch.deleteMany).toHaveBeenCalledWith({
                 where: {
                     userId: "u1",
@@ -205,14 +214,108 @@ describe("UserService", () => {
                     branchId: { not: "branch-9" },
                 },
             });
-            expect(prismaService.user_branch.upsert).toHaveBeenCalledWith({
-                where: {
-                    userId_branchId: { userId: "u1", branchId: "branch-9" },
-                },
-                create: { userId: "u1", branchId: "branch-9", role: "manager" },
-                update: { role: "manager" },
-            });
         });
+
+        it("should reject approval when the selected branch does not exist", async () => {
+            prismaService.branch.findUnique.mockResolvedValue(null);
+
+            await expect(service.approve("u1", {
+                role: "manager",
+                approvedBy: "owner-1",
+                branchId: "missing-branch",
+            })).rejects.toThrow("유효하지 않은 지점입니다.");
+
+            expect(prismaService.user.update).not.toHaveBeenCalled();
+            expect(prismaService.user_branch.upsert).not.toHaveBeenCalled();
+        });
+
+        it("should assign branch ownership when approving role 'admin' with an ownerBranchId on a vacant branch", async () => {
+            prismaService.branch.findUnique.mockImplementation(({ where }: { where: { id: string } }) => {
+                if (where.id === "branch-1") return Promise.resolve({ id: "branch-1" });
+                if (where.id === "owner-branch-1") {
+                    return Promise.resolve({ id: "owner-branch-1", ownerId: null });
+                }
+                return Promise.resolve(null);
+            });
+            prismaService.user.update.mockResolvedValue({
+                id: "u1",
+                approvalStatus: "approved",
+                role: "admin",
+                tokenVersion: 1,
+            });
+
+            await service.approve("u1", {
+                role: "admin",
+                approvedBy: "owner-1",
+                branchId: "branch-1",
+                ownerBranchId: "owner-branch-1",
+            });
+
+            expect(prismaService.branch.update).toHaveBeenCalledWith({
+                where: { id: "owner-branch-1" },
+                data: { ownerId: "u1" },
+            });
+            expect(prismaService.user_branch.upsert).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    where: {
+                        userId_branchId: { userId: "u1", branchId: "owner-branch-1" },
+                    },
+                    update: { role: "admin" },
+                    create: { userId: "u1", branchId: "owner-branch-1", role: "admin" },
+                }),
+            );
+        });
+
+        it("should reject approving role 'admin' when the ownerBranchId already has an owner", async () => {
+            prismaService.branch.findUnique.mockImplementation(({ where }: { where: { id: string } }) => {
+                if (where.id === "branch-1") return Promise.resolve({ id: "branch-1" });
+                if (where.id === "owner-branch-1") {
+                    return Promise.resolve({ id: "owner-branch-1", ownerId: "existing-owner" });
+                }
+                return Promise.resolve(null);
+            });
+
+            await expect(service.approve("u1", {
+                role: "admin",
+                approvedBy: "owner-1",
+                branchId: "branch-1",
+                ownerBranchId: "owner-branch-1",
+            })).rejects.toThrow("이미 지점장이 있는 지점입니다.");
+
+            expect(prismaService.user.update).not.toHaveBeenCalled();
+            expect(prismaService.branch.update).not.toHaveBeenCalled();
+        });
+
+        it("should reject approving role 'admin' without an ownerBranchId", async () => {
+            await expect(service.approve("u1", {
+                role: "admin",
+                approvedBy: "owner-1",
+                branchId: "branch-1",
+            })).rejects.toThrow("지점장 승인은 임명할 지점이 필요합니다.");
+
+            expect(prismaService.user.update).not.toHaveBeenCalled();
+            expect(prismaService.branch.update).not.toHaveBeenCalled();
+        });
+
+        it.each(["manager", "user"])(
+            "should approve role '%s' without an ownerBranchId and without touching branch ownership",
+            async (role) => {
+                prismaService.user.update.mockResolvedValue({
+                    id: "u1",
+                    approvalStatus: "approved",
+                    role,
+                    tokenVersion: 1,
+                });
+
+                await service.approve("u1", {
+                    role,
+                    approvedBy: "owner-1",
+                    branchId: "branch-1",
+                });
+
+                expect(prismaService.branch.update).not.toHaveBeenCalled();
+            },
+        );
     });
 
     // ============================================

@@ -2,6 +2,59 @@ import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/
 
 const dbDate = (day: number) => new Date(`2026-07-${String(day).padStart(2, "0")}T00:00:00.000Z`);
 
+type PreparedChunk = {
+    employeeName: string;
+    days: unknown[];
+    tier: number;
+    templateId: string;
+    sourceHash: string;
+    documentName: string;
+    chunkIndex: number;
+    chunkCount: number;
+    firstSessionIndex: number;
+    lastSessionIndex: number;
+};
+
+type PersistedChunkLayout = {
+    assignmentId: string | null;
+    chunkIndex: number;
+    chunkCount: number;
+    firstSessionIndex: number;
+    lastSessionIndex: number;
+    employeeNameSnapshot: string;
+};
+
+/** base-only env (only EFORMSIGN_FEEDBACK_TEMPLATE_ID set) — preserves the pre-multi-tier 5-only chunking. */
+const BASE_ONLY_TIERS = [5];
+const BASE_ONLY_TEMPLATE_BY_TIER = new Map([[5, "template-1"]]);
+
+/** all 4 tiers configured (BJJ-multi-tier). */
+const ALL_TIERS = [5, 10, 15, 20];
+const ALL_TEMPLATE_BY_TIER = new Map([
+    [5, "template-5"],
+    [10, "template-10"],
+    [15, "template-15"],
+    [20, "template-20"],
+]);
+
+/** Calls the private buildCaseChunks(record, tiers, templateIdByTier) via cast. */
+function callBuildCaseChunks(
+    usecase: CreateAndSendServiceRecordSnapshotUsecase,
+    record: ReturnType<typeof makeRecord>,
+    tiers: number[],
+    templateIdByTier: Map<number, string>,
+    persistedLayout: PersistedChunkLayout[] = [],
+): PreparedChunk[] {
+    return (usecase as unknown as {
+        buildCaseChunks(
+            value: ReturnType<typeof makeRecord>,
+            tiers: number[],
+            templateIdByTier: Map<number, string>,
+            persistedLayout?: PersistedChunkLayout[],
+        ): PreparedChunk[];
+    }).buildCaseChunks(record, tiers, templateIdByTier, persistedLayout);
+}
+
 function makeRecord() {
     return {
         id: "11111111-2222-3333-4444-555555555555",
@@ -112,9 +165,7 @@ function setup() {
     };
     const usecase = new CreateAndSendServiceRecordSnapshotUsecase(
         eformsignClient as never,
-        {} as never,
         prismaWithTransaction as never,
-        {} as never,
         {} as never,
         {} as never,
     );
@@ -122,11 +173,20 @@ function setup() {
 }
 
 describe("client-owned service record snapshot", () => {
+    it("allows a complete record snapshot before the contracted end time", () => {
+        const { usecase } = setup();
+        const record = makeRecord();
+        record.finalizationDueAt = new Date("2099-07-12T11:00:00.000Z");
+        const validator = usecase as unknown as {
+            assertReadyForSnapshot(value: ReturnType<typeof makeRecord>): void;
+        };
+
+        expect(() => validator.assertReadyForSnapshot(record)).not.toThrow();
+    });
+
     it("splits at provider boundaries as well as the five-session template limit", () => {
         const { usecase } = setup();
-        const chunks = (usecase as unknown as {
-            buildCaseChunks(record: ReturnType<typeof makeRecord>): Array<{ employeeName: string; days: unknown[] }>;
-        }).buildCaseChunks(makeRecord());
+        const chunks = callBuildCaseChunks(usecase, makeRecord(), BASE_ONLY_TIERS, BASE_ONLY_TEMPLATE_BY_TIER);
 
         expect(chunks.map((chunk) => [chunk.employeeName, chunk.days.length])).toEqual([
             ["제공A", 5],
@@ -135,11 +195,119 @@ describe("client-owned service record snapshot", () => {
         ]);
     });
 
+    it("uses the preserved mom-name snapshot when the client row has been deleted", () => {
+        const { usecase } = setup();
+        const record = {
+            ...makeRecord(),
+            clientId: null,
+            client: null,
+        } as unknown as ReturnType<typeof makeRecord>;
+
+        const chunks = callBuildCaseChunks(usecase, record, BASE_ONLY_TIERS, BASE_ONLY_TEMPLATE_BY_TIER);
+
+        expect(chunks[0]?.documentName).toContain("김산모");
+    });
+
+    it("throws the not-configured error when the base 5회 template env is missing", () => {
+        const usecase = new CreateAndSendServiceRecordSnapshotUsecase(
+            {} as never,
+            {} as never,
+            {} as never,
+            { get: jest.fn().mockReturnValue(undefined) } as never,
+        );
+        const reader = usecase as unknown as { getConfiguredTiers(): unknown };
+
+        expect(() => reader.getConfiguredTiers()).toThrow(/EFORMSIGN_FEEDBACK_TEMPLATE_ID/);
+    });
+
+    it("sizes each provider segment to the smallest fitting tier and carries that tier's templateId", () => {
+        const { usecase } = setup();
+        // 제공A has 6 days (5회 doesn't fit → 10회), 제공B has 1 day (→ 5회).
+        const chunks = callBuildCaseChunks(usecase, makeRecord(), ALL_TIERS, ALL_TEMPLATE_BY_TIER);
+
+        expect(chunks.map((chunk) => [chunk.employeeName, chunk.days.length, chunk.tier, chunk.templateId])).toEqual([
+            ["제공A", 6, 10, "template-10"],
+            ["제공B", 1, 5, "template-5"],
+        ]);
+    });
+
+    it("preserves durable session boundaries when larger tiers are enabled before a retry", () => {
+        const { usecase } = setup();
+        const record = makeRecord();
+        record.requiredSessionCount = 10;
+        record.assignments = [{ ...record.assignments[0]!, endDate: dbDate(10) }];
+        record.days = Array.from({ length: 10 }, (_, index) => ({
+            ...makeRecord().days[0]!,
+            scheduleId: 101,
+            employeeId: 1,
+            employeeNameSnapshot: "제공A",
+            caseSessionIndex: index + 1,
+            serviceDate: dbDate(index + 1),
+        }));
+        const persistedLayout: PersistedChunkLayout[] = [
+            {
+                assignmentId: "assignment-a",
+                chunkIndex: 1,
+                chunkCount: 2,
+                firstSessionIndex: 1,
+                lastSessionIndex: 5,
+                employeeNameSnapshot: "제공A",
+            },
+            {
+                assignmentId: "assignment-a",
+                chunkIndex: 2,
+                chunkCount: 2,
+                firstSessionIndex: 6,
+                lastSessionIndex: 10,
+                employeeNameSnapshot: "제공A",
+            },
+        ];
+
+        const chunks = callBuildCaseChunks(
+            usecase,
+            record,
+            ALL_TIERS,
+            ALL_TEMPLATE_BY_TIER,
+            persistedLayout,
+        );
+
+        expect(chunks.map((chunk) => [
+            chunk.chunkIndex,
+            chunk.firstSessionIndex,
+            chunk.lastSessionIndex,
+            chunk.tier,
+            chunk.templateId,
+        ])).toEqual([
+            [1, 1, 5, 5, "template-5"],
+            [2, 6, 10, 5, "template-5"],
+        ]);
+    });
+
+    it("splits a segment longer than the max tier into a max-tier document plus a re-tiered remainder", () => {
+        const { usecase } = setup();
+        const record = makeRecord();
+        record.requiredSessionCount = 23;
+        record.assignments = [{ ...record.assignments[0]!, endDate: dbDate(23) }];
+        record.days = Array.from({ length: 23 }, (_, index) => ({
+            ...makeRecord().days[0]!,
+            scheduleId: 101,
+            employeeId: 1,
+            employeeNameSnapshot: "제공A",
+            caseSessionIndex: index + 1,
+            serviceDate: dbDate(index + 1),
+        }));
+        const chunks = callBuildCaseChunks(usecase, record, ALL_TIERS, ALL_TEMPLATE_BY_TIER);
+
+        expect(chunks.map((chunk) => [chunk.days.length, chunk.tier, chunk.templateId])).toEqual([
+            [20, 20, "template-20"],
+            [3, 5, "template-5"],
+        ]);
+    });
+
     it("changes sourceHash when a day's clientSignature changes (legacy session gets a signature)", () => {
         const { usecase } = setup();
-        const buildChunks = (record: ReturnType<typeof makeRecord>) => (usecase as unknown as {
-            buildCaseChunks(value: ReturnType<typeof makeRecord>): Array<{ sourceHash: string }>;
-        }).buildCaseChunks(record);
+        const buildChunks = (record: ReturnType<typeof makeRecord>) =>
+            callBuildCaseChunks(usecase, record, BASE_ONLY_TIERS, BASE_ONLY_TEMPLATE_BY_TIER);
 
         const withoutSignature = makeRecord();
         withoutSignature.requiredSessionCount = 1;
@@ -163,9 +331,7 @@ describe("client-owned service record snapshot", () => {
         record.requiredSessionCount = 1;
         record.days = [record.days[0]!];
         record.assignments = [record.assignments[0]!];
-        const chunk = (usecase as unknown as {
-            buildCaseChunks(value: ReturnType<typeof makeRecord>): Array<Record<string, unknown>>;
-        }).buildCaseChunks(record)[0]!;
+        const chunk = callBuildCaseChunks(usecase, record, BASE_ONLY_TIERS, BASE_ONLY_TEMPLATE_BY_TIER)[0]!;
         const processor = usecase as unknown as {
             processChunk(params: Record<string, unknown>): Promise<string>;
         };

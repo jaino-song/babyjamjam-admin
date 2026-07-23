@@ -31,7 +31,9 @@ export class LinkDocumentToClientUsecase {
         }
 
         const client = await this.resolveClientByRecipientPhone(branchid, doc)
-            ?? await this.clientRepository.findById(branchid, doc.clientId);
+            ?? (doc.clientId === null
+                ? null
+                : await this.clientRepository.findById(branchid, doc.clientId));
         if (!client) {
             throw new NotFoundException(`Client for document ${documentId} not found`);
         }

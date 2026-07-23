@@ -73,26 +73,63 @@ export function chunkSessions<T>(days: T[], size: number = FEEDBACK_TEMPLATE_SES
     return chunks;
 }
 
+/**
+ * Smallest configured template tier that can hold `dayCount` sessions in one document;
+ * falls back to the largest configured tier when `dayCount` exceeds every tier (the caller
+ * must then split the remainder into further chunks — see `chunkSessionsByTier`).
+ */
+export function selectTemplateTier(dayCount: number, tiers: number[]): number {
+    if (tiers.length === 0) throw new Error("selectTemplateTier requires at least one tier");
+    const sorted = [...tiers].sort((a, b) => a - b);
+    return sorted.find((tier) => tier >= dayCount) ?? sorted[sorted.length - 1]!;
+}
+
+/**
+ * Split a segment's sessions into per-document chunks sized to the configured template tiers:
+ * greedily fill the largest tier while more than a tier's worth of sessions remain, then size
+ * the final (possibly partial) chunk to the smallest tier that fits it. With a single configured
+ * tier this reproduces `chunkSessions(days, tier)` exactly (the pre-multi-tier behavior).
+ */
+export function chunkSessionsByTier<T>(days: T[], tiers: number[]): Array<{ days: T[]; tier: number }> {
+    if (days.length === 0) return [];
+    if (tiers.length === 0) throw new Error("chunkSessionsByTier requires at least one tier");
+    const maxTier = Math.max(...tiers);
+
+    const chunks: Array<{ days: T[]; tier: number }> = [];
+    let remaining = days;
+    while (remaining.length > maxTier) {
+        chunks.push({ days: remaining.slice(0, maxTier), tier: maxTier });
+        remaining = remaining.slice(maxTier);
+    }
+    if (remaining.length > 0) {
+        chunks.push({ days: remaining, tier: selectTemplateTier(remaining.length, tiers) });
+    }
+    return chunks;
+}
+
 function asText(value: unknown): string {
     if (value == null) return "";
     return String(value).trim();
 }
 
 /**
- * Build the eformsign prefill field list for ONE document covering up to
- * FEEDBACK_TEMPLATE_SESSIONS_PER_DOCUMENT sessions (`days` is a single chunk).
+ * Build the eformsign prefill field list for ONE document covering up to `slotCount`
+ * sessions (`days` is a single chunk; `slotCount` defaults to the base 5-session tier).
  *
  * Empty text/date values are omitted. The required creation-step marks (결제 확인 N / 산모확인서명 N)
- * are emitted for ALL 5 slots — including unused ones (as unchecked) — or eformsign rejects
- * creation with "Required input value not found".
+ * are emitted for ALL `slotCount` slots — including unused ones (as unchecked) — or eformsign
+ * rejects creation with "Required input value not found".
  */
 export function buildServiceRecordDocumentFields(input: {
     header: ServiceRecordHeaderInput | null;
-    orgName: string;
     employeeName: string;
     days: ServiceRecordDayInput[];
+    slotCount?: number;
 }): EformsignField[] {
-    const { header, orgName, employeeName, days } = input;
+    const { header, employeeName, days, slotCount = FEEDBACK_TEMPLATE_SESSIONS_PER_DOCUMENT } = input;
+    if (days.length > slotCount) {
+        throw new Error(`buildServiceRecordDocumentFields: ${days.length} days exceed slotCount ${slotCount}`);
+    }
     const fields: EformsignField[] = [];
 
     const pushText = (id: string, raw: unknown) => {
@@ -109,7 +146,6 @@ export function buildServiceRecordDocumentFields(input: {
     };
 
     // ── Header (once per document) — every header field is required at creation ──
-    pushRequired(FEEDBACK_HEADER_FIELD_IDS.orgName, orgName);
     pushRequired(FEEDBACK_HEADER_FIELD_IDS.employeeName, employeeName);
     pushRequired(FEEDBACK_HEADER_FIELD_IDS.momName, header?.momName);
     pushRequired(FEEDBACK_HEADER_FIELD_IDS.momBirth, yymmddToIso(header?.momBirth));
@@ -120,8 +156,8 @@ export function buildServiceRecordDocumentFields(input: {
     pushCheck(FEEDBACK_HEADER_FIELD_IDS.deliveryNatural, header?.deliveryType === "자연분만");
     pushCheck(FEEDBACK_HEADER_FIELD_IDS.deliveryCSection, header?.deliveryType === "제왕절개");
 
-    // ── Session slots 1..5 ──
-    for (let slot = 1; slot <= FEEDBACK_TEMPLATE_SESSIONS_PER_DOCUMENT; slot++) {
+    // ── Session slots 1..slotCount ──
+    for (let slot = 1; slot <= slotCount; slot++) {
         const ids = feedbackDayFieldIds(slot);
         const day = days[slot - 1];
 

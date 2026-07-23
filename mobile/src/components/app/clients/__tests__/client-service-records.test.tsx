@@ -5,6 +5,7 @@ import { ClientServiceRecords } from "../client-service-records";
 import type { Client } from "@/lib/client/types";
 import type {
     ServiceRecordAssignment,
+    ServiceRecordCase,
     ServiceRecordOverview,
 } from "@babyjamjam/shared/types/service-record";
 
@@ -60,7 +61,28 @@ function createAssignment(
     };
 }
 
-function renderComponent(overview: ServiceRecordOverview) {
+function createRecord(status: string): ServiceRecordCase {
+    return {
+        id: "record-1",
+        status,
+        startDate: "2099-07-16T00:00:00+09:00",
+        endDate: "2099-07-30T00:00:00+09:00",
+        totalSessions: 1,
+        completedAt: "2099-07-30T18:00:00+09:00",
+        finalizationDueAt: null,
+        finalizedAt: "2099-07-30T18:30:00+09:00",
+        documentsCompletedAt: "2099-07-30T19:00:00+09:00",
+        lastError: null,
+        header: null,
+        sessions: [],
+        signatureDocs: [],
+    };
+}
+
+function renderComponent(
+    overview: ServiceRecordOverview,
+    options: { isRefreshing?: boolean; onRefresh?: () => void } = {},
+) {
     return render(
         <ClientServiceRecords
             client={client}
@@ -68,6 +90,8 @@ function renderComponent(overview: ServiceRecordOverview) {
             overview={overview}
             isLoading={false}
             isError={false}
+            isRefreshing={options.isRefreshing}
+            onRefresh={options.onRefresh}
         />,
     );
 }
@@ -92,6 +116,77 @@ describe("ClientServiceRecords", () => {
         expect(screen.getByText("발송 실패")).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "링크 수동 전송" })).toBeInTheDocument();
         expect(screen.getAllByRole("button", { name: "메시지 재전송" })).toHaveLength(2);
+        expect(screen.queryAllByText(/메시지 재전송 시/)).toHaveLength(0);
+    });
+
+    it("uses the document lifecycle as the visible status once a record exists", () => {
+        const { container } = renderComponent({
+            record: createRecord("COMPLETED"),
+            assignments: [createAssignment(1, "sent")],
+        });
+
+        const statusCard = container.querySelector(
+            '[data-component="mobile-clients-service-records-status-card"]',
+        );
+
+        expect(statusCard).toHaveTextContent("제공기록지 진행 상태");
+        expect(statusCard).toHaveTextContent("완료");
+        expect(statusCard).toHaveTextContent("전자문서 생성");
+        expect(screen.queryByText("발송됨")).not.toBeInTheDocument();
+    });
+
+    it("shows the finalized electronic document status like desktop", () => {
+        const record = createRecord("COMPLETED");
+        record.signatureDocs = [{
+            documentId: "service-record-document-1",
+            statusDetail: "완료",
+            stepName: "완료",
+            createdDate: "2099-07-30T18:30:00+09:00",
+            updatedDate: "2099-07-30T19:00:00+09:00",
+            snapshotChunkIndex: 1,
+        }];
+
+        const { container } = renderComponent({
+            record,
+            assignments: [createAssignment(1, "sent")],
+        });
+
+        const documentCard = container.querySelector(
+            '[data-component="mobile_clients_service-records_signature-card"]',
+        );
+
+        expect(documentCard).toHaveTextContent("제공기록지 전자문서 1");
+        expect(documentCard).toHaveTextContent("완료");
+        expect(documentCard).toHaveTextContent("service-record-document-1");
+    });
+
+    it("shows the document lifecycle even when no assignment remains", () => {
+        renderComponent({
+            record: createRecord("DOCUMENTS_CREATED"),
+            assignments: [],
+        });
+
+        expect(screen.getByText("기관 검토 중")).toBeInTheDocument();
+        expect(screen.queryByText("제공기록지 배정 정보가 없습니다.")).not.toBeInTheDocument();
+    });
+
+    it("places the refresh action before the submission progress and refreshes the data", async () => {
+        const user = userEvent.setup();
+        const onRefresh = jest.fn();
+        renderComponent({
+            assignments: [createAssignment(1, "sent")],
+        }, { onRefresh });
+
+        const refreshButton = screen.getByRole("button", { name: "제공기록 새로고침" });
+        const progress = screen.getByText("0/1 제출완료");
+
+        expect(
+            refreshButton.compareDocumentPosition(progress) & Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
+
+        await user.click(refreshButton);
+
+        expect(onRefresh).toHaveBeenCalledTimes(1);
     });
 
     it("opens a confirmation modal before resending a link", async () => {
@@ -147,7 +242,9 @@ describe("ClientServiceRecords", () => {
         await user.click(screen.getByText(/1회차 ·/));
 
         expect(screen.getByText("1회차 제공기록")).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "‹ 목록으로" })).toBeInTheDocument();
+        const backButton = screen.getByRole("button", { name: "이전" });
+        expect(backButton).toBeInTheDocument();
+        expect(backButton.querySelector("svg")).toBeInTheDocument();
         expect(screen.getByText("완료")).toBeInTheDocument();
         expect(screen.queryByText("✓ 완료")).not.toBeInTheDocument();
     });
@@ -164,7 +261,7 @@ describe("ClientServiceRecords", () => {
 
         expect(screen.getByText("1회차 제공기록")).toBeInTheDocument();
         expect(screen.getAllByText("-").length).toBeGreaterThan(0);
-        expect(screen.getByRole("button", { name: "‹ 목록으로" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "이전" })).toBeInTheDocument();
     });
 
     it("resets the mobile detail scroll before opening a session", async () => {

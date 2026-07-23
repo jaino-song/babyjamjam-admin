@@ -90,6 +90,20 @@ describe("MessageSenderApprovalPage", () => {
     });
   });
 
+  it("shows the settings section navigation without a back button", () => {
+    const { container } = renderPage();
+    const listCard = container.querySelector('[data-component="mobile-redesign-list-card"]');
+
+    expect(screen.getByRole("button", { name: "설정" }))
+      .toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("메시지 설정")).toHaveClass("list-title-text");
+    expect(listCard).toContainElement(
+      container.querySelector('[data-component="mobile-redesign-list-scroll"]'),
+    );
+    expect(screen.queryByRole("button", { name: "메시지 목록으로 돌아가기" }))
+      .not.toBeInTheDocument();
+  });
+
   it("shows a completion toast and routes to /all after agreeing and submitting", async () => {
     renderPage();
 

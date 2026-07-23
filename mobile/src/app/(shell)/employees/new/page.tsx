@@ -264,7 +264,7 @@ export default function NewEmployeePage() {
   const activeStepDescription =
     activeStep === 0
       ? "제공인력님의 기본 정보를 입력해주세요."
-      : "근무 지역과 근무 가능 여부를 선택해주세요.";
+      : "근무 지역과 다음 배정 가능 여부를 선택해주세요.";
   const selectedSummary = [store.name.trim(), store.grade].filter(Boolean);
   const isNextButtonDisabled =
     createEmployee.isPending ||
@@ -534,8 +534,8 @@ export default function NewEmployeePage() {
             </div>
             <div className={styles.openRow} data-component="employees-new-open-status-options">
               {[
-                { value: true, label: "근무 가능", tone: "ok" },
-                { value: false, label: "근무 불가", tone: "no" },
+                { value: true, label: "배정 가능", tone: "ok" },
+                { value: false, label: "배정 불가", tone: "no" },
               ].map((option) => {
                 const isSelected = store.openToNextWork === option.value;
 

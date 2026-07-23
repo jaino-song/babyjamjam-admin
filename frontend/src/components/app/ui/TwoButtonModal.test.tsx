@@ -1,14 +1,14 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 
-import { ApprovalTwoButtonModal } from "./ApprovalTwoButtonModal";
+import { TwoButtonModal } from "./TwoButtonModal";
 
-describe("ApprovalTwoButtonModal", () => {
+describe("TwoButtonModal", () => {
   it("renders the standard compact approval design and actions", () => {
     const handleOpenChange = jest.fn();
     const handleApprove = jest.fn();
 
     render(
-      <ApprovalTwoButtonModal
+      <TwoButtonModal
         open
         onOpenChange={handleOpenChange}
         title="직원을 삭제하시겠습니까?"
@@ -34,7 +34,7 @@ describe("ApprovalTwoButtonModal", () => {
     expect(header).toHaveClass("text-left", "sm:text-left");
     expect(header).not.toHaveClass("text-center", "sm:text-center");
     expect(title).toHaveClass(
-      "text-left",
+      "text-center",
       "text-[calc(16px*var(--v3-ui-scale,1))]",
       "leading-[calc(24px*var(--v3-ui-scale,1))]",
     );
@@ -62,7 +62,7 @@ describe("ApprovalTwoButtonModal", () => {
     const handleApprove = jest.fn();
 
     render(
-      <ApprovalTwoButtonModal
+      <TwoButtonModal
         open
         onOpenChange={handleOpenChange}
         title="문서를 삭제하시겠습니까?"
@@ -84,7 +84,7 @@ describe("ApprovalTwoButtonModal", () => {
 
   it("supports a review body without changing the shared action layout", () => {
     render(
-      <ApprovalTwoButtonModal
+      <TwoButtonModal
         open
         size="detail"
         onOpenChange={jest.fn()}
@@ -95,7 +95,7 @@ describe("ApprovalTwoButtonModal", () => {
         onApprove={jest.fn()}
       >
         <div data-testid="review-body">최근 전송 내역</div>
-      </ApprovalTwoButtonModal>,
+      </TwoButtonModal>,
     );
 
     expect(screen.getByRole("dialog")).toHaveClass("sm:max-w-[420px]");

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { getApiErrorMessage } from "@babyjamjam/shared";
 import {
     Workflow,
     Users,
@@ -45,7 +46,8 @@ import {
     ClientFormPanel,
 } from "@/components/app/clients/ClientFormDialog";
 import { ClientDetailPanel } from "@/components/app/clients/ClientDetailPanel";
-import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
+import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
 import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/ServiceRecordLinkResetResultModal";
 import { ServiceScheduleChangeModal } from "@/components/app/clients/ServiceScheduleChangeModal";
@@ -270,6 +272,7 @@ export default function ClientsPage() {
     const [formDialogOpen, setFormDialogOpen] = useState(false);
     const [editingClient, setEditingClient] = useState<Client | null>(null);
     const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
+    const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
     const [resetLinkTargetClientId, setResetLinkTargetClientId] = useState<number | null>(null);
     const [resetServiceRecordUrl, setResetServiceRecordUrl] = useState<string | null>(null);
     const [isResettingLink, setIsResettingLink] = useState(false);
@@ -540,6 +543,13 @@ export default function ClientsPage() {
             setDeleteTargetClientId(null);
         } catch (err) {
             console.error("Failed to delete client:", err);
+            setDeleteTargetClientId(null);
+            setDeleteErrorMessage(
+                getApiErrorMessage(
+                    err,
+                    "고객 삭제에 실패했습니다. 다시 시도해 주세요.",
+                ),
+            );
         }
     };
 
@@ -841,7 +851,7 @@ export default function ClientsPage() {
                 onSuccess={handleClientFormDialogSuccess}
             />
 
-            <ApprovalTwoButtonModal
+            <TwoButtonModal
                 open={resetLinkTargetClientId !== null}
                 onOpenChange={(open) => {
                     if (!open && !isResettingLink) setResetLinkTargetClientId(null);
@@ -880,7 +890,7 @@ export default function ClientsPage() {
                 />
             ) : null}
 
-            <ApprovalTwoButtonModal
+            <TwoButtonModal
                 open={deleteTargetClientId !== null}
                 onOpenChange={(open) => {
                     if (!open) setDeleteTargetClientId(null);
@@ -893,6 +903,18 @@ export default function ClientsPage() {
                 approvalVariant="destructive"
                 isPending={deleteClient.isPending}
                 onApprove={() => void handleDeleteConfirm()}
+            />
+
+            <NotificationOneButtonModal
+                open={deleteErrorMessage !== null}
+                onOpenChange={(open) => {
+                    if (!open) setDeleteErrorMessage(null);
+                }}
+                dataComponent="clients-delete-error-notification"
+                title="고객을 삭제하지 못했습니다."
+                description={deleteErrorMessage ?? ""}
+                isDescriptionVisuallyHidden={false}
+                onAcknowledge={() => setDeleteErrorMessage(null)}
             />
         </PageSection>
     );
