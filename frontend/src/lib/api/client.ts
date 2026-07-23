@@ -15,9 +15,10 @@ export const api = axios.create({
     withCredentials: true,
 });
 
-// Token refresh state management
+// Keep eformsign token refresh and application-session refresh single-flight independently.
 let isRefreshing = false;
 let isRedirectingToLogin = false;
+let appAuthRefreshPromise: Promise<void> | null = null;
 let failedQueue: Array<{
     resolve: (value?: unknown) => void;
     reject: (reason?: unknown) => void;
@@ -37,6 +38,13 @@ const EFORMSIGN_REQUEST_PATHS = [
     "/api/generate-staff-document",
     "/generate-signature",
     "/api/generate-signature",
+] as const;
+
+const APP_AUTH_NON_RETRY_PATHS = [
+    "/auth/login",
+    "/auth/token",
+    "/auth/refresh",
+    "/auth/logout",
 ] as const;
 
 const processQueue = (error: AxiosError | null = null) => {
@@ -67,6 +75,22 @@ function isEformsignRefreshPath(pathname: string): boolean {
 
 function isEformsignRequestPath(pathname: string): boolean {
     return EFORMSIGN_REQUEST_PATHS.some((path) => pathname === path || pathname.startsWith(path));
+}
+
+function isAppAuthNonRetryPath(pathname: string): boolean {
+    return APP_AUTH_NON_RETRY_PATHS.some((path) => pathname === path || pathname.endsWith(path));
+}
+
+function refreshAppAuthSession(): Promise<void> {
+    if (!appAuthRefreshPromise) {
+        appAuthRefreshPromise = axios
+            .post("/api/auth/refresh", undefined, { withCredentials: true })
+            .then(() => undefined)
+            .finally(() => {
+                appAuthRefreshPromise = null;
+            });
+    }
+    return appAuthRefreshPromise;
 }
 
 function isAppAuthRequiredError(error: AxiosError): boolean {
@@ -109,7 +133,10 @@ api.interceptors.request.use(
 api.interceptors.response.use(
     (res) => res,
     async (err: AxiosError) => {
-        const originalRequest = err.config as AxiosRequestConfig & { _retry?: boolean };
+        const originalRequest = err.config as AxiosRequestConfig & {
+            _retry?: boolean;
+            _appAuthRetry?: boolean;
+        };
         const originalRequestMethod = (originalRequest?.method ?? "get").toLowerCase();
 
         // Network error - single retry
@@ -128,23 +155,20 @@ api.interceptors.response.use(
             }
         }
 
-        // 401 Unauthorized - handle eformsign token refresh only for eformsign-related endpoints
+        // 401 Unauthorized - refresh the relevant session once, then replay the request.
         if (err.response?.status === 401 && originalRequest && !originalRequest._retry) {
             const requestPath = getRequestPath(originalRequest);
             const isEformsignEndpoint = isEformsignRequestPath(requestPath);
+            const isAppAuthFailure = isAppAuthRequiredError(err);
             
-            // Don't retry token refresh endpoints themselves
-            if (isEformsignRefreshPath(requestPath)) {
+            // Don't retry an eformsign refresh failure unless the actual failure
+            // is the application's expired login session.
+            if (isEformsignRefreshPath(requestPath) && !isAppAuthFailure) {
                 return Promise.reject(err);
             }
 
             // For eformsign endpoints, try token refresh
-            if (isEformsignEndpoint) {
-                if (isAppAuthRequiredError(err)) {
-                    redirectToLoginOnce();
-                    return Promise.reject(err);
-                }
-
+            if (isEformsignEndpoint && !isAppAuthFailure) {
                 if (isRefreshing) {
                     return new Promise((resolve, reject) => {
                         failedQueue.push({ resolve, reject });
@@ -176,11 +200,23 @@ api.interceptors.response.use(
                     isRefreshing = false;
                 }
             }
-            
-            // For non-eformsign 401 errors (main auth failure), redirect to login
-            // But don't redirect if already on an auth page (login, register, etc.)
-            redirectToLoginOnce();
-            return Promise.reject(err);
+
+            if (originalRequest._appAuthRetry || isAppAuthNonRetryPath(requestPath)) {
+                redirectToLoginOnce();
+                return Promise.reject(err);
+            }
+
+            originalRequest._appAuthRetry = true;
+            try {
+                await refreshAppAuthSession();
+                return axios(originalRequest);
+            } catch (refreshError) {
+                captureApiError(refreshError);
+                if ((refreshError as AxiosError | undefined)?.response?.status === 401) {
+                    redirectToLoginOnce();
+                }
+                return Promise.reject(refreshError);
+            }
         }
 
         captureApiError(err);

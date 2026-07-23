@@ -673,36 +673,18 @@ describe("SbClientRepository", () => {
     // delete
     // ============================================
     describe("delete", () => {
-        const createTxMock = () => ({
-            service_record_case: {
-                findUnique: jest.fn().mockResolvedValue(null),
-                delete: jest.fn(),
-            },
-            service_record_day: {
-                count: jest.fn().mockResolvedValue(0),
-            },
-            client: {
-                deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
-            },
-        });
-
-        let tx: ReturnType<typeof createTxMock>;
-
         beforeEach(() => {
-            tx = createTxMock();
-            (prisma as unknown as { $transaction: jest.Mock }).$transaction = jest
-                .fn()
-                .mockImplementation(async (cb: (txClient: unknown) => Promise<unknown>) => cb(tx));
+            clientModel.deleteMany.mockResolvedValue({ count: 1 });
         });
 
         describe("given a valid client id", () => {
-            it("should delete the client inside a transaction", async () => {
+            it("should delete only the tenant-scoped client", async () => {
                 // Act
                 await repository.delete(branchId, 4);
 
                 // Assert
-                expect(tx.client.deleteMany).toHaveBeenCalledTimes(1);
-                expect(tx.client.deleteMany).toHaveBeenCalledWith({
+                expect(clientModel.deleteMany).toHaveBeenCalledTimes(1);
+                expect(clientModel.deleteMany).toHaveBeenCalledWith({
                     where: { id: 4, branchId: branchId },
                 });
             });
@@ -714,7 +696,7 @@ describe("SbClientRepository", () => {
                 await repository.delete(branchId, id);
 
                 // Assert
-                expect(tx.client.deleteMany).toHaveBeenCalledWith({
+                expect(clientModel.deleteMany).toHaveBeenCalledWith({
                     where: { id, branchId: branchId },
                 });
             });

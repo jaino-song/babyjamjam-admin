@@ -34,7 +34,7 @@ interface EformsignDocProps {
     // expired example: true
     expired: boolean;
     // FK to client
-    clientId: number;
+    clientId: number | null;
     // document classification. null means an older/unclassified row.
     documentKind?: EformsignDocumentKind | null;
     // FK to employee_schedule for service feedback snapshots.
@@ -91,8 +91,11 @@ export class EformsignDocEntity {
             throw new Error("EformsignDocEntity: expired must be a boolean");
         }
 
-        if (typeof this.props.clientId !== "number" || this.props.clientId <= 0) {
-            throw new Error("EformsignDocEntity: clientId must be a positive number");
+        if (
+            this.props.clientId !== null
+            && (typeof this.props.clientId !== "number" || this.props.clientId <= 0)
+        ) {
+            throw new Error("EformsignDocEntity: clientId must be null or a positive number");
         }
 
         if (
@@ -127,7 +130,7 @@ export class EformsignDocEntity {
     get stepRecipientSms(): string { return this.props.stepRecipientSms; }
     get expiredDate(): Date { return this.props.expiredDate; }
     get expired(): boolean { return this.props.expired; }
-    get clientId(): number { return this.props.clientId; }
+    get clientId(): number | null { return this.props.clientId; }
     get documentKind(): EformsignDocumentKind | null { return this.props.documentKind ?? null; }
     get employeeScheduleId(): number | null { return this.props.employeeScheduleId ?? null; }
     get templateId(): string | null { return this.props.templateId ?? null; }

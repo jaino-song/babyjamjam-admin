@@ -29,7 +29,7 @@ describe("LinkDocumentToClientUsecase", () => {
         );
 
     const createDoc = (overrides: Partial<{
-        clientId: number;
+        clientId: number | null;
         documentKind: EformsignDocEntity["documentKind"];
         stepRecipientSms: string;
     }> = {}): EformsignDocEntity =>
@@ -48,7 +48,7 @@ describe("LinkDocumentToClientUsecase", () => {
             stepRecipientSms: overrides.stepRecipientSms ?? "010-1234-5678",
             expiredDate: new Date("2026-08-01T00:00:00.000Z"),
             expired: false,
-            clientId: overrides.clientId ?? 7,
+            clientId: overrides.clientId === undefined ? 7 : overrides.clientId,
             documentKind: overrides.documentKind ?? EFORMSIGN_DOCUMENT_KIND.CONTRACT,
             employeeScheduleId: null,
             templateId: null,
@@ -102,6 +102,20 @@ describe("LinkDocumentToClientUsecase", () => {
         expect(eformsignDocRepository.update).not.toHaveBeenCalled();
         expect(documentClient.eDocId).toBe(documentId);
         expect(clientRepository.update).toHaveBeenCalledWith(branchId, documentClient);
+    });
+
+    it("can relink an orphaned contract document by its recipient phone", async () => {
+        const phoneMatchedClient = createClient(12, "01012345678");
+        eformsignDocRepository.findByDocumentId.mockResolvedValue(createDoc({ clientId: null }));
+        clientRepository.findByPhone.mockResolvedValue(phoneMatchedClient);
+
+        await expect(usecase.execute(branchId, documentId)).resolves.toBeUndefined();
+
+        expect(eformsignDocRepository.update).toHaveBeenCalledWith(
+            branchId,
+            expect.objectContaining({ clientId: 12, documentId }),
+        );
+        expect(clientRepository.findById).not.toHaveBeenCalled();
     });
 
     it("does not link service feedback snapshot documents to the client contract pointer", async () => {
