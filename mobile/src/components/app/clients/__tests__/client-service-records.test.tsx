@@ -135,11 +135,11 @@ describe("ClientServiceRecords", () => {
         expect(screen.queryByText("발송됨")).not.toBeInTheDocument();
     });
 
-    it("shows the finalized electronic document status like desktop", () => {
+    it("maps completed signature status text to desktop-equivalent label", () => {
         const record = createRecord("COMPLETED");
         record.signatureDocs = [{
             documentId: "service-record-document-1",
-            statusDetail: "완료",
+            statusDetail: "COMPLETED",
             stepName: "완료",
             createdDate: "2099-07-30T18:30:00+09:00",
             updatedDate: "2099-07-30T19:00:00+09:00",
@@ -156,7 +156,7 @@ describe("ClientServiceRecords", () => {
         );
 
         expect(documentCard).toHaveTextContent("제공기록지 전자문서 1");
-        expect(documentCard).toHaveTextContent("완료");
+        expect(documentCard).toHaveTextContent("서명 완료");
         expect(documentCard).toHaveTextContent("service-record-document-1");
     });
 
@@ -259,9 +259,9 @@ describe("ClientServiceRecords", () => {
         await user.click(screen.getByText(/1회차 ·/));
 
         expect(screen.getByText("1회차 제공기록")).toBeInTheDocument();
-        const backButton = screen.getByRole("button", { name: "이전" });
+        const backButton = screen.getByRole("button", { name: "목록으로" });
         expect(backButton).toBeInTheDocument();
-        expect(backButton.querySelector("svg")).toBeInTheDocument();
+        expect(backButton.querySelector("span")).toHaveTextContent("‹");
         expect(screen.getByText("완료")).toBeInTheDocument();
         expect(screen.queryByText("✓ 완료")).not.toBeInTheDocument();
     });
@@ -278,7 +278,7 @@ describe("ClientServiceRecords", () => {
 
         expect(screen.getByText("1회차 제공기록")).toBeInTheDocument();
         expect(screen.getAllByText("-").length).toBeGreaterThan(0);
-        expect(screen.getByRole("button", { name: "이전" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "목록으로" })).toBeInTheDocument();
     });
 
     it("resets the mobile detail scroll before opening a session", async () => {

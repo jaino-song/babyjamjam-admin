@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
-import { ChevronLeft, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 
 import {
     SERVICE_RECORD_FORM_LAYOUT,
@@ -370,9 +370,10 @@ function SignatureDocumentCard({ signatureDoc }: { signatureDoc: SignatureDocSta
 
 function formatSignatureStatus(statusDetail: string): string {
     const normalized = statusDetail.trim().toLowerCase();
+    if (!normalized) return "상태 확인";
     if (normalized.includes("complete")) return "서명 완료";
     if (normalized.includes("created")) return "발송됨";
-    return statusDetail.trim() || "상태 확인";
+    return statusDetail.trim();
 }
 
 function ServiceHeaderCard({
@@ -543,8 +544,8 @@ function ServiceRecordSessionDetail({
                 data-component="mobile-clients-service-records-session-detail-back"
                 onClick={onBack}
             >
-                <ChevronLeft size={14} aria-hidden="true" />
-                이전
+                <span aria-hidden="true">‹ </span>
+                목록으로
             </button>
 
             <div className="message-detail-head">
