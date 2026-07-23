@@ -19,7 +19,13 @@ interface DailyItem {
     type: ItemType;
     opts?: string[];
     counts?: { k: string; label: string; unit: string }[];
+    maxLength?: number;
 }
+
+const SERVICE_RECORD_TEXT_LIMITS = {
+    etcService: 40,
+    notes: 80,
+} as const;
 
 const DAILY_ITEMS: DailyItem[] = [
     { key: "perineum", label: "① 회음절개부위 (또는 수술부위)", type: "multi", opts: ["이상없음", "열상", "혈종", "불편감"] },
@@ -33,8 +39,18 @@ const DAILY_ITEMS: DailyItem[] = [
     { key: "formulaFeeding", label: "⑨ 분유수유", type: "counts", counts: [{ k: "count", label: "횟수", unit: "회" }, { k: "ml", label: "회당", unit: "ml" }] },
     { key: "stool", label: "⑩ 배변양상", type: "stool", opts: ["정상변", "이상변"] },
     { key: "bath", label: "⑪ 목욕·제대관리", type: "radio", opts: ["실시", "미실시"] },
-    { key: "etcService", label: "기타 서비스 (필요 시 기재)", type: "textarea" },
-    { key: "notes", label: "특이사항 (필요 시 기재)", type: "textarea" },
+    {
+        key: "etcService",
+        label: "기타 서비스 (필요 시 기재)",
+        type: "textarea",
+        maxLength: SERVICE_RECORD_TEXT_LIMITS.etcService,
+    },
+    {
+        key: "notes",
+        label: "특이사항 (필요 시 기재)",
+        type: "textarea",
+        maxLength: SERVICE_RECORD_TEXT_LIMITS.notes,
+    },
     { key: "paymentConfirmed", label: "결제 확인", type: "confirm" },
 ];
 interface DayPage {
@@ -686,7 +702,19 @@ export default function ServiceRecordPage() {
             const placeholder = it.key === "etcService"
                 ? "추가사항에 대한 기록 필요 시 기재"
                 : "서비스 제공 관련 특이사항 기록 필요 시 기재";
-            return <textarea className="ta" value={(v as string) ?? ""} onChange={(e) => setField(it.key, e.target.value)} placeholder={placeholder} />;
+            const dataComponent = it.key === "etcService"
+                ? "mobile_service-record_daily-form_etc-service"
+                : "mobile_service-record_daily-form_notes";
+            return (
+                <textarea
+                    data-component={dataComponent}
+                    className="ta"
+                    value={(v as string) ?? ""}
+                    onChange={(e) => setField(it.key, e.target.value)}
+                    placeholder={placeholder}
+                    maxLength={it.maxLength}
+                />
+            );
         }
         if (it.type === "confirm") {
             return (
