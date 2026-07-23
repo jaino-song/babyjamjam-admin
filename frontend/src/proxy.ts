@@ -55,6 +55,8 @@ const AUTH_ONLY_ROUTES = [
   "/select-branch",
 ];
 
+const PENDING_ACCOUNT_ONBOARDING_COOKIE = "pending_account_onboarding";
+
 function isAccessTokenExpiredOrInvalid(token: string): boolean {
   try {
     const decoded = jwtDecode<TokenPayload>(token);
@@ -149,9 +151,22 @@ export async function proxy(request: NextRequest) {
 
   let authToken = request.cookies.get("auth_token")?.value;
 
+  if (
+    pathname === "/onboarding" &&
+    request.cookies.has(PENDING_ACCOUNT_ONBOARDING_COOKIE)
+  ) {
+    return NextResponse.next();
+  }
+
   // Skip public routes ("/" needs exact match — startsWith would match every path)
   if (pathname === "/" || PUBLIC_ROUTES.some((route) => pathname.startsWith(route))) {
-    if (pathname.startsWith("/login") && authToken && isAccessTokenExpiredOrInvalid(authToken)) {
+    const isNavigationRequest = request.method === "GET" || request.method === "HEAD";
+    if (
+      pathname.startsWith("/login") &&
+      isNavigationRequest &&
+      authToken &&
+      isAccessTokenExpiredOrInvalid(authToken)
+    ) {
       const loginRefreshToken = request.cookies.get("refresh_token")?.value;
       if (loginRefreshToken) {
         const refreshAttempt = await tryRefreshAuthSession(loginRefreshToken);
