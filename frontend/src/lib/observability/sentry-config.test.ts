@@ -34,7 +34,15 @@ describe("Sentry privacy filters", () => {
     );
   });
 
-  it("keeps only the internal user id and removes request payloads", () => {
+  it("redacts UUID path segments from URLs", () => {
+    expect(
+      sanitizeSentryUrl(
+        "/api/admin/service-records/client/123e4567-e89b-42d3-a456-426614174000",
+      ),
+    ).toBe("/api/admin/service-records/client/[Filtered]");
+  });
+
+  it("removes user identity and request payloads", () => {
     const event: Event = {
       transaction: "GET /api/clients?phone=01012345678",
       user: {
@@ -59,7 +67,7 @@ describe("Sentry privacy filters", () => {
 
     expect(sanitizeSentryEvent(event)).toMatchObject({
       transaction: "GET /api/clients",
-      user: { id: "user-1" },
+      user: undefined,
       request: {
         url: "https://example.com/api/clients",
         data: undefined,

@@ -20,6 +20,8 @@ const SECRET_ASSIGNMENT_PATTERN =
   /((?:password|token|secret|api[_-]?key|authorization)\s*[:=]\s*)[^\s,;]+/gi;
 const SERVICE_RECORD_ACCESS_TOKEN_PATTERN =
   /(\/(?:api\/)?service-record\/)[^/?#\s]+/gi;
+const UUID_PATH_SEGMENT_PATTERN =
+  /\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?=\/|$)/gi;
 const SERVICE_RECORD_SIGNAL_PATTERN =
   /service-record(?:s)?|service_record(?:s)?|service-feedback|service_feedback/i;
 
@@ -47,7 +49,8 @@ export function sanitizeSentryText(value: string): string {
     .replace(SECRET_ASSIGNMENT_PATTERN, `$1${FILTERED_VALUE}`)
     .replace(EMAIL_PATTERN, "[Email]")
     .replace(PHONE_PATTERN, "[Phone]")
-    .replace(SERVICE_RECORD_ACCESS_TOKEN_PATTERN, `$1${FILTERED_VALUE}`);
+    .replace(SERVICE_RECORD_ACCESS_TOKEN_PATTERN, `$1${FILTERED_VALUE}`)
+    .replace(UUID_PATH_SEGMENT_PATTERN, `/${FILTERED_VALUE}`);
 }
 
 export function sanitizeSentryUrl(value: string | undefined): string | undefined {
@@ -133,7 +136,7 @@ export function sanitizeSentryEvent(event: Event): Event {
     transaction: event.transaction
       ? sanitizeSentryText(event.transaction.replace(/[?#].*$/, ""))
       : event.transaction,
-    user: event.user?.id ? { id: String(event.user.id) } : undefined,
+    user: undefined,
     request: event.request
       ? {
           ...event.request,

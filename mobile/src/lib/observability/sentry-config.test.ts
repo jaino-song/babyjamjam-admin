@@ -13,6 +13,14 @@ describe("mobile service-record Sentry scope", () => {
     );
   });
 
+  it("redacts UUID path segments from URLs", () => {
+    expect(
+      sanitizeSentryUrl(
+        "/api/admin/service-records/client/123e4567-e89b-42d3-a456-426614174000",
+      ),
+    ).toBe("/api/admin/service-records/client/[Filtered]");
+  });
+
   it("drops unrelated errors and keeps service-record route errors", () => {
     const options = getSentryRuntimeOptions();
 
@@ -20,11 +28,13 @@ describe("mobile service-record Sentry scope", () => {
     expect(
       options.beforeSend({
         type: undefined,
+        user: { id: "user-1", email: "person@example.com" },
         request: {
           url: "https://mobile.example.com/api/service-record/efl_secret/context",
         },
       }),
     ).toMatchObject({
+      user: undefined,
       request: {
         url: "https://mobile.example.com/api/service-record/[Filtered]/context",
       },

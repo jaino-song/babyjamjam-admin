@@ -26,6 +26,7 @@ import {
     captureServiceRecordError,
     filterAndSanitizeSentryEvent,
     getSentryOptions,
+    sanitizeSentryUrl,
 } from "./service-record-sentry";
 import { ServiceRecordSentryExceptionFilter } from "./service-record-sentry-exception.filter";
 
@@ -91,6 +92,14 @@ describe("service-record backend Sentry contract", () => {
                 },
             },
         });
+    });
+
+    it("redacts UUID path segments from URLs", () => {
+        expect(
+            sanitizeSentryUrl(
+                "/admin/service-records/client/123e4567-e89b-42d3-a456-426614174000",
+            ),
+        ).toBe("/admin/service-records/client/[Filtered]");
     });
 
     it("captures a handled background failure once with bounded tags and context", () => {
