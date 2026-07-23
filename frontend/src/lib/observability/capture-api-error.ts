@@ -1,6 +1,14 @@
 import * as Sentry from "@sentry/nextjs";
 import type { AxiosError } from "axios";
 
+import {
+  isServiceRecordSentrySignal,
+  sanitizeSentryText,
+  sanitizeSentryUrl,
+  SERVICE_RECORD_SENTRY_FEATURE,
+  SERVICE_RECORD_SENTRY_TAG,
+} from "./sentry-config";
+
 const reportedErrors = new WeakSet<object>();
 
 function getRequestPath(url: string | undefined): string {
@@ -22,48 +30,45 @@ function isAxiosErrorLike(error: unknown): error is AxiosError {
   );
 }
 
-function containsPreparedLinkToken(data: unknown): boolean {
-  if (typeof data === "string") {
-    return data.includes("preparedLinkToken");
-  }
-
-  return typeof data === "object"
-    && data !== null
-    && Object.prototype.hasOwnProperty.call(data, "preparedLinkToken");
-}
-
 export function captureApiError(error: unknown): void {
   if (!isAxiosErrorLike(error) || error.code === "ERR_CANCELED") return;
 
   const status = error.response?.status;
   if (typeof status === "number" && status < 500) return;
+  const method = (error.config?.method ?? "unknown").toUpperCase();
+  const path = getRequestPath(error.config?.url);
+  if (!isServiceRecordSentrySignal(path)) return;
   if (reportedErrors.has(error)) return;
 
   reportedErrors.add(error);
 
-  const method = (error.config?.method ?? "unknown").toUpperCase();
-  const path = getRequestPath(error.config?.url);
+  const sanitizedPath = sanitizeSentryUrl(path) ?? "unknown";
   const statusLabel = status ? String(status) : "network";
-  const capturedError = containsPreparedLinkToken(error.config?.data)
-    ? Object.assign(
-        new Error(`Sensitive API request failed: ${method} ${path} (${statusLabel})`),
-        { name: "ApiRequestError" },
-      )
-    : error;
+  const capturedError = Object.assign(
+    new Error(`Service-record API request failed: ${method} ${sanitizedPath} (${statusLabel})`),
+    { name: "ServiceRecordApiRequestError" },
+  );
+  if (error.stack) {
+    capturedError.stack = [
+      capturedError.toString(),
+      ...sanitizeSentryText(error.stack).split("\n").slice(1),
+    ].join("\n");
+  }
 
   Sentry.withScope((scope) => {
     scope.setLevel(status && status >= 500 ? "error" : "warning");
+    scope.setTag(SERVICE_RECORD_SENTRY_TAG, SERVICE_RECORD_SENTRY_FEATURE);
     scope.setTag("error.kind", "api");
     scope.setTag("api.method", method);
     scope.setTag("api.status", statusLabel);
     scope.setContext("api", {
       method,
-      path,
+      path: sanitizedPath,
       status: status ?? null,
       code: error.code ?? null,
       runtime: typeof window === "undefined" ? "server" : "browser",
     });
-    scope.setFingerprint(["api-error", method, path, statusLabel]);
+    scope.setFingerprint(["api-error", method, sanitizedPath, statusLabel]);
     Sentry.captureException(capturedError);
   });
 }

@@ -45,7 +45,7 @@ describe("captureApiError", () => {
     expect(mockCaptureException).not.toHaveBeenCalled();
   });
 
-  it("reports a server error once with sanitized endpoint context", () => {
+  it("ignores server errors outside the service-record feature", () => {
     const error = createAxiosError({
       status: 503,
       method: "post",
@@ -53,13 +53,26 @@ describe("captureApiError", () => {
     });
 
     captureApiError(error);
+
+    expect(mockCaptureException).not.toHaveBeenCalled();
+  });
+
+  it("reports a service-record server error once with sanitized endpoint context", () => {
+    const error = createAxiosError({
+      status: 503,
+      method: "post",
+      url: "/admin/service-records/schedules/51/send-link?phone=01012345678",
+    });
+
+    captureApiError(error);
     captureApiError(error);
 
     expect(mockCaptureException).toHaveBeenCalledTimes(1);
     expect(mockScope.setLevel).toHaveBeenCalledWith("error");
+    expect(mockScope.setTag).toHaveBeenCalledWith("feature", "service-records");
     expect(mockScope.setContext).toHaveBeenCalledWith("api", {
       method: "POST",
-      path: "/messages/send",
+      path: "/admin/service-records/schedules/51/send-link",
       status: 503,
       code: null,
       runtime: "browser",
@@ -67,13 +80,16 @@ describe("captureApiError", () => {
     expect(mockScope.setFingerprint).toHaveBeenCalledWith([
       "api-error",
       "POST",
-      "/messages/send",
+      "/admin/service-records/schedules/51/send-link",
       "503",
     ]);
   });
 
   it("reports a network failure as a warning", () => {
-    captureApiError(createAxiosError({ code: "ERR_NETWORK" }));
+    captureApiError(createAxiosError({
+      code: "ERR_NETWORK",
+      url: "/admin/service-records/client/7",
+    }));
 
     expect(mockCaptureException).toHaveBeenCalledTimes(1);
     expect(mockScope.setLevel).toHaveBeenCalledWith("warning");

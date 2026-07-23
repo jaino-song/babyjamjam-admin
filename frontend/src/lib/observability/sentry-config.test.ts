@@ -1,6 +1,7 @@
 import type { Event, Log } from "@sentry/nextjs";
 
 import {
+  getSentryRuntimeOptions,
   sanitizeSentryEvent,
   sanitizeSentryLog,
   sanitizeSentryText,
@@ -21,6 +22,15 @@ describe("Sentry privacy filters", () => {
       "https://example.com/clients/7",
     );
     expect(sanitizeSentryUrl("/contracts?clientId=7")).toBe("/contracts");
+  });
+
+  it("redacts service-record access tokens from URLs", () => {
+    expect(sanitizeSentryUrl("https://mobile.example.com/service-record/efl_secret")).toBe(
+      "https://mobile.example.com/service-record/[Filtered]",
+    );
+    expect(sanitizeSentryUrl("/api/service-record/efl_secret/context")).toBe(
+      "/api/service-record/[Filtered]/context",
+    );
   });
 
   it("keeps only the internal user id and removes request payloads", () => {
@@ -82,5 +92,69 @@ describe("Sentry privacy filters", () => {
         phone: "[Filtered]",
       },
     });
+  });
+});
+
+describe("service-record Sentry scope", () => {
+  it("drops unrelated errors and keeps tagged service-record errors", () => {
+    const options = getSentryRuntimeOptions();
+
+    expect(options.beforeSend({ type: undefined, message: "dashboard failed" })).toBeNull();
+    expect(
+      options.beforeSend({
+        type: undefined,
+        message: "service record failed",
+        tags: { feature: "service-records" },
+      }),
+    ).toMatchObject({
+      message: "service record failed",
+      tags: { feature: "service-records" },
+    });
+  });
+
+  it("keeps service-record request errors and drops unrelated transactions", () => {
+    const options = getSentryRuntimeOptions();
+
+    expect(
+      options.beforeSend({
+        type: undefined,
+        request: {
+          url: "https://admin.example.com/api/admin/service-records/client/7",
+        },
+      }),
+    ).not.toBeNull();
+    expect(
+      options.beforeSendTransaction({
+        type: "transaction",
+        transaction: "GET /dashboard",
+      }),
+    ).toBeNull();
+  });
+
+  it("samples only service-record traces", () => {
+    const previousRate = process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE;
+    process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE = "0.4";
+
+    const options = getSentryRuntimeOptions();
+    const inheritOrSampleWith = jest.fn((rate: number) => rate);
+
+    expect(
+      options.tracesSampler({
+        name: "GET /api/admin/service-records/client/:id",
+        inheritOrSampleWith,
+      }),
+    ).toBe(0.4);
+    expect(
+      options.tracesSampler({
+        name: "GET /dashboard",
+        inheritOrSampleWith,
+      }),
+    ).toBe(0);
+
+    if (previousRate === undefined) {
+      delete process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE;
+    } else {
+      process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE = previousRate;
+    }
   });
 });

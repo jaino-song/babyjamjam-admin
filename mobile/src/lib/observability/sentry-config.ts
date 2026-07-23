@@ -1,9 +1,9 @@
-import type { Breadcrumb, ErrorEvent, Event, Log } from "@sentry/nextjs";
+import type { Breadcrumb, ErrorEvent, Event } from "@sentry/nextjs";
 
 type SentryTransactionEvent = Event & { type: "transaction" };
 
 const FILTERED_VALUE = "[Filtered]";
-const SENTRY_APP_TAG = "babyjamjam-admin";
+const SENTRY_APP_TAG = "babyjamjam-admin-mobile";
 const MAX_SANITIZE_DEPTH = 3;
 
 export const SERVICE_RECORD_SENTRY_FEATURE = "service-records";
@@ -22,8 +22,6 @@ const SERVICE_RECORD_ACCESS_TOKEN_PATTERN =
   /(\/(?:api\/)?service-record\/)[^/?#\s]+/gi;
 const SERVICE_RECORD_SIGNAL_PATTERN =
   /service-record(?:s)?|service_record(?:s)?|service-feedback|service_feedback/i;
-const SERVICE_RECORD_SCHEDULE_CHANGE_PATTERN =
-  /\/schedule-change-requests\/schedules\/[^/]+\/(?:preview|apply)(?:\/|$)/i;
 
 function readSampleRate(value: string | undefined, fallback: number): number {
   if (!value) return fallback;
@@ -62,10 +60,7 @@ export function sanitizeSentryUrl(value: string | undefined): string | undefined
 
 export function isServiceRecordSentrySignal(value: string | undefined): boolean {
   if (!value) return false;
-
-  const path = value.split(/[?#]/, 1)[0] ?? value;
-  return SERVICE_RECORD_SIGNAL_PATTERN.test(path)
-    || SERVICE_RECORD_SCHEDULE_CHANGE_PATTERN.test(path);
+  return SERVICE_RECORD_SIGNAL_PATTERN.test(value.split(/[?#]/, 1)[0] ?? value);
 }
 
 function sanitizeUnknown(value: unknown, depth = 0): unknown {
@@ -97,7 +92,9 @@ function sanitizeUnknown(value: unknown, depth = 0): unknown {
   );
 }
 
-function sanitizeHeaders(headers: Record<string, string> | undefined): Record<string, string> | undefined {
+function sanitizeHeaders(
+  headers: Record<string, string> | undefined,
+): Record<string, string> | undefined {
   if (!headers) return headers;
 
   return Object.fromEntries(
@@ -163,14 +160,6 @@ export function sanitizeSentryEvent(event: Event): Event {
   };
 }
 
-function sanitizeSentryErrorEvent(event: ErrorEvent): ErrorEvent {
-  return sanitizeSentryEvent(event) as ErrorEvent;
-}
-
-function sanitizeSentryTransactionEvent(event: SentryTransactionEvent): SentryTransactionEvent {
-  return sanitizeSentryEvent(event) as SentryTransactionEvent;
-}
-
 function hasServiceRecordStackFrame(event: Event): boolean {
   return Boolean(
     event.exception?.values?.some((exception) =>
@@ -199,24 +188,14 @@ export function isServiceRecordSentryEvent(event: Event): boolean {
 
 function filterAndSanitizeSentryErrorEvent(event: ErrorEvent): ErrorEvent | null {
   if (!isServiceRecordSentryEvent(event)) return null;
-  return sanitizeSentryErrorEvent(event);
+  return sanitizeSentryEvent(event) as ErrorEvent;
 }
 
 function filterAndSanitizeSentryTransactionEvent(
   event: SentryTransactionEvent,
 ): SentryTransactionEvent | null {
   if (!isServiceRecordSentryEvent(event)) return null;
-  return sanitizeSentryTransactionEvent(event);
-}
-
-export function sanitizeSentryLog(log: Log): Log {
-  return {
-    ...log,
-    message: sanitizeSentryText(String(log.message)),
-    attributes: log.attributes
-      ? (sanitizeUnknown(log.attributes) as Record<string, unknown>)
-      : log.attributes,
-  };
+  return sanitizeSentryEvent(event) as SentryTransactionEvent;
 }
 
 export function getSentryRuntimeOptions() {
@@ -249,7 +228,7 @@ export function getSentryRuntimeOptions() {
     initialScope: {
       tags: {
         app: SENTRY_APP_TAG,
-        surface: "frontend",
+        surface: "mobile",
       },
     },
     beforeBreadcrumb: sanitizeSentryBreadcrumb,
