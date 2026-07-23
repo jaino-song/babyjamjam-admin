@@ -78,7 +78,7 @@ describe("captureApiError", () => {
     expect(mockScope.setTag).toHaveBeenCalledWith("feature", "service-records");
     expect(mockScope.setContext).toHaveBeenCalledWith("api", {
       method: "POST",
-      path: "/admin/service-records/schedules/51/send-link",
+      path: "/admin/service-records/schedules/[Filtered]/send-link",
       operation: "public-link",
       status: 503,
       code: null,
@@ -90,7 +90,7 @@ describe("captureApiError", () => {
     expect(mockScope.setFingerprint).toHaveBeenCalledWith([
       "api-error",
       "POST",
-      "/admin/service-records/schedules/51/send-link",
+      "/admin/service-records/schedules/[Filtered]/send-link",
       "503",
     ]);
   });

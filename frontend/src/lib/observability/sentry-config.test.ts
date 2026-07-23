@@ -29,8 +29,26 @@ describe("Sentry privacy filters", () => {
     expect(sanitizeSentryUrl("https://mobile.example.com/service-record/efl_secret")).toBe(
       "https://mobile.example.com/service-record/[Filtered]",
     );
+    expect(sanitizeSentryUrl("/service-record/link/efl_secret/context")).toBe(
+      "/service-record/link/[Filtered]/context",
+    );
     expect(sanitizeSentryUrl("/api/service-record/efl_secret/context")).toBe(
       "/api/service-record/[Filtered]/context",
+    );
+  });
+
+  it("redacts service-record resource identifiers from URLs", () => {
+    expect(sanitizeSentryUrl("/api/admin/service-records/client/77")).toBe(
+      "/api/admin/service-records/client/[Filtered]",
+    );
+    expect(sanitizeSentryUrl("/admin/service-records/schedules/431/finalize")).toBe(
+      "/admin/service-records/schedules/[Filtered]/finalize",
+    );
+    expect(
+      sanitizeSentryUrl("/api/schedule-change-requests/schedules/431/preview"),
+    ).toBe("/api/schedule-change-requests/schedules/[Filtered]/preview");
+    expect(sanitizeSentryUrl("/api/service-record/efl_secret/sessions/9/submit")).toBe(
+      "/api/service-record/[Filtered]/sessions/[Filtered]/submit",
     );
   });
 
@@ -151,7 +169,11 @@ describe("service-record Sentry scope", () => {
           url: "https://admin.example.com/api/admin/service-records/client/7",
         },
       }),
-    ).not.toBeNull();
+    ).toMatchObject({
+      request: {
+        url: "https://admin.example.com/api/admin/service-records/client/[Filtered]",
+      },
+    });
     expect(
       options.beforeSendTransaction({
         type: "transaction",
