@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 import { MessagesTriggersPage } from "../MessagesTriggersPage";
 
@@ -11,7 +11,13 @@ jest.mock("@/components/app/mobile-redesign/ClientRegistrationPolicySettings", (
 }));
 
 jest.mock("@/components/app/mobile-redesign/MessageTriggerList", () => ({
-  MessageTriggerList: () => <div data-testid="message-trigger-list" />,
+  MessageTriggerList: ({ onEdit }: { onEdit?: (rule: null) => void }) => (
+    <button type="button" onClick={() => onEdit?.(null)}>규칙 편집 열기</button>
+  ),
+}));
+
+jest.mock("@/components/app/mobile-redesign/MessageTriggerEditor", () => ({
+  MessageTriggerEditor: () => <div data-component="test-message-trigger-editor">규칙 편집 화면</div>,
 }));
 
 describe("MessagesTriggersPage", () => {
@@ -29,5 +35,12 @@ describe("MessagesTriggersPage", () => {
       .toHaveTextContent("자동 전송");
     expect(container.querySelector('[data-component="mobile-redesign-list-card"]'))
       .toContainElement(container.querySelector('[data-component="mobile-redesign-list-scroll"]'));
+  });
+
+  it("opens creation and editing details from mobile automation", () => {
+    render(<MessagesTriggersPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "+ 규칙" }));
+    expect(screen.getByText("규칙 편집 화면")).toBeInTheDocument();
   });
 });

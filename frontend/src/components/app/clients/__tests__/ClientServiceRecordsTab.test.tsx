@@ -153,6 +153,30 @@ describe("ClientServiceRecordsTab", () => {
         expect(screen.getAllByText("제공기록지 작성 링크")).toHaveLength(3);
     });
 
+    it("normalizes uppercase completed document statuses", () => {
+        const assignment = createAssignment(1, "sent");
+        assignment.signatureDoc = {
+            documentId: "service-record-document-uppercase",
+            statusDetail: "COMPLETED",
+            stepName: "완료",
+            createdDate: "2026-07-05T18:30:00+09:00",
+            updatedDate: "2026-07-05T19:00:00+09:00",
+            snapshotChunkIndex: 1,
+        };
+
+        render(
+            <ClientServiceRecordsTab
+                overview={{ assignments: [assignment] }}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+            />,
+        );
+
+        expect(screen.getByText("서명 완료")).toBeInTheDocument();
+        expect(screen.queryByText("COMPLETED")).not.toBeInTheDocument();
+    });
+
     it("uses the Korean business-day calendar for empty session placeholders", () => {
         const assignment = {
             ...createAssignment(1, "none"),
