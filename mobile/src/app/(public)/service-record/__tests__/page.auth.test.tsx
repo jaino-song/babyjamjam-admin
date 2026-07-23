@@ -162,6 +162,44 @@ describe("ServiceRecordPage authentication restoration", () => {
         expect(screen.getByDisplayValue("작성 중인 기록")).toBeInTheDocument();
     });
 
+    it("limits 기타서비스 to 40 characters and 특이사항 to 80 characters", async () => {
+        const user = userEvent.setup();
+        window.sessionStorage.setItem("daily-service-record-draft:link-token", JSON.stringify({
+            header: { momName: "홍길동" },
+            day: 1,
+            pageIdx: 2,
+            draft: {
+                _date: isoDateInKorea(),
+                etcService: "",
+                notes: "",
+            },
+        }));
+        fetchMock
+            .mockResolvedValueOnce(jsonResponse({ valid: true }))
+            .mockResolvedValueOnce(jsonResponse({
+                ...serviceRecordContext,
+                totalSessions: 2,
+                header: { momName: "홍길동" },
+            }));
+
+        render(<ServiceRecordPage />);
+
+        expect(await screen.findByText("제공기록표")).toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: "기록 시작" }));
+
+        const etcService = screen.getByPlaceholderText("추가사항에 대한 기록 필요 시 기재");
+        const notes = screen.getByPlaceholderText("서비스 제공 관련 특이사항 기록 필요 시 기재");
+
+        expect(etcService).toHaveAttribute("maxlength", "40");
+        expect(notes).toHaveAttribute("maxlength", "80");
+
+        await user.type(etcService, ` ${"기".repeat(40)}`);
+        await user.type(notes, ` ${"특".repeat(80)}`);
+
+        expect(etcService).toHaveValue(` ${"기".repeat(39)}`);
+        expect(notes).toHaveValue(` ${"특".repeat(79)}`);
+    });
+
     it("allows entry for a different service date while showing a warning", async () => {
         const user = userEvent.setup();
         window.sessionStorage.setItem("daily-service-record-draft:link-token", JSON.stringify({

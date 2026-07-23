@@ -30,6 +30,7 @@ import {
 } from "domain/repositories/message-log.repository.interface";
 import { ServiceRecordTokenService } from "./service-record-token.service";
 import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
+import { captureServiceRecordError } from "infrastructure/observability/service-record-sentry";
 
 /**
  * Issues / revokes the no-login 제공기록지 link for an assignment (BJJ-247).
@@ -72,6 +73,11 @@ export class ServiceRecordLinkService {
         } catch (error) {
             // Missing/legacy no-branch schedules were a silent no-op before the refactor; keep them log-free.
             if (error instanceof NotFoundException) return;
+            captureServiceRecordError(error, {
+                operation: "link-schedule",
+                handled: true,
+                scheduleId,
+            });
             this.logger.error(`Failed to schedule feedback link for schedule ${scheduleId}: ${error}`);
         }
     }

@@ -189,7 +189,7 @@ describe("mobile message data pages", () => {
 
     expect(closeButton).not.toBeNull();
     expect(screen.getByText("발송 정보")).toBeInTheDocument();
-    expect(screen.getByText("김고객")).toBeInTheDocument();
+    expect(screen.getAllByText("김고객")).not.toHaveLength(0);
     expect(screen.getByText("01012345678")).toBeInTheDocument();
     expect(screen.getAllByText("제공기록지 작성 링크")).not.toHaveLength(0);
     expect(screen.getByText("메시지")).toBeInTheDocument();

@@ -170,15 +170,16 @@ function HistoryRow({
       <span className="message-navigation-icon message-navigation-icon-green">
         <History size={18} aria-hidden="true" />
       </span>
-      <div className="message-data-row-copy">
-        <div className="message-data-row-title">
-          <strong>{normalized.templateLabel}</strong>
-          <span className={`message-data-status message-data-status-${meta.tone}`}>
-            <StatusIcon size={12} aria-hidden="true" />
-            {meta.label}
-          </span>
+        <div className="message-data-row-copy">
+        <div className="message-data-row-info">
+          <strong className="message-data-row-title">{normalized.templateLabel}</strong>
+          <p className="message-data-row-subtitle">{normalized.recipientName}</p>
+          <small className="message-data-row-subtitle">{formatMessageDateTimeCompact(normalized.sentAt)}</small>
         </div>
-        <p>{normalized.recipientName} · {formatMessageDateTimeCompact(normalized.sentAt)}</p>
+        <span className={`message-data-status message-data-status-${meta.tone}`}>
+          <StatusIcon size={12} aria-hidden="true" />
+          {meta.label}
+        </span>
         {normalized.failureReason ? <em>{normalized.failureReason}</em> : null}
       </div>
     </button>

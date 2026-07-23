@@ -415,6 +415,18 @@ jobs:
         working-directory: backend
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-incheon-districts-operational.sql
 
+      # One-shot data/policy patch — runs ONLY when manually dispatched (target=preview),
+      # never on ordinary prisma pushes, so it does not re-assert branch state.
+      - name: Activate Incheon district branches + rename HQ (manual)
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/activate-incheon-districts-and-rename-hq.sql
+
+      - name: Verify Incheon districts operational (manual)
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: backend
+        run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-incheon-districts-operational.sql
+
   apply-production:
     name: apply production database patches
     needs: [apply-preview]
