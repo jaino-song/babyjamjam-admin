@@ -15,7 +15,7 @@ type EformsignDocRow = {
     stepRecipientSms: string;
     expiredDate: Date;
     expired: boolean;
-    clientId: number;
+    clientId: number | null;
     documentKind: string | null;
     employeeScheduleId: number | null;
     templateId: string | null;

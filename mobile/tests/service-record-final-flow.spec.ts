@@ -54,6 +54,40 @@ test("백엔드 서비스 일수만큼 제공기록표를 생성한다", async (
   await expect(page.locator('[data-component="service-record-day-number"]').filter({ hasText: "20" })).toHaveCount(1);
 });
 
+test("서비스 제공일자가 오늘과 달라도 경고만 표시하고 기록을 작성한다", async ({ page }) => {
+  const token = "service-date-mismatch-warning";
+
+  await mockShellRequests(page);
+  await page.route(`**/api/service-record/${token}/link`, (route) => route.fulfill({ json: { valid: true } }));
+  await page.route(`**/api/service-record/${token}/verify`, (route) => route.fulfill({ status: 201, json: { ok: true, accessToken: "access-token" } }));
+  await page.route(`**/api/service-record/${token}/context`, (route) => route.fulfill({
+    json: {
+      org: { name: "테스트 제공기관", hours: "" },
+      employee: { id: 1, name: "김제공" },
+      client: { id: 1, name: "테스트 고객" },
+      totalSessions: 2,
+      startDate: "2026-07-20",
+      header,
+      sessions: [],
+      recordStatus: "IN_PROGRESS",
+    },
+  }));
+
+  await page.goto(`/service-record/${token}`);
+  await expect(page.getByText("서비스 제공 기록은 해당 날짜에만 기록이 가능합니다.", { exact: false })).toHaveCount(0);
+  await page.getByRole("button", { name: "기록 시작" }).click();
+
+  await expect(page.locator('[data-component="service-record-date-mismatch-notice"]'))
+    .toHaveText("서비스 제공일자(2026.07.20)가 오늘과 달라요. 한번 더 확인해 주세요.");
+  await expect(page.getByRole("button", { name: "열상" })).toBeEnabled();
+  await page.getByRole("button", { name: "열상" }).click();
+  await page.getByLabel("식사").fill("3");
+  await page.getByLabel("간식").fill("2");
+  await page.getByRole("button", { name: "다음", exact: true }).click();
+
+  await expect(page.locator('[data-component="service-record-day-title"]')).toHaveText("신생아 기록");
+});
+
 test("마지막 회차 제출 후 별도 버튼 없이 최종 제출을 완료한다", async ({ page }) => {
   const token = "final-service-record";
   let headerSaved = false;

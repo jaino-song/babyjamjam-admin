@@ -180,6 +180,19 @@ describe("client-owned service record snapshot", () => {
         ]);
     });
 
+    it("uses the preserved mom-name snapshot when the client row has been deleted", () => {
+        const { usecase } = setup();
+        const record = {
+            ...makeRecord(),
+            clientId: null,
+            client: null,
+        } as unknown as ReturnType<typeof makeRecord>;
+
+        const chunks = callBuildCaseChunks(usecase, record, BASE_ONLY_TIERS, BASE_ONLY_TEMPLATE_BY_TIER);
+
+        expect(chunks[0]?.documentName).toContain("김산모");
+    });
+
     it("throws the not-configured error when the base 5회 template env is missing", () => {
         const usecase = new CreateAndSendServiceRecordSnapshotUsecase(
             {} as never,

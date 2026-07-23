@@ -2,7 +2,7 @@ import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 
 export interface EformsignDocClientSummary {
     documentId: string;
-    clientId: number;
+    clientId: number | null;
     clientName: string;
     clientPhone: string | null;
     providerName: string | null;

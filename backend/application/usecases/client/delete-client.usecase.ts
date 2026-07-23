@@ -1,10 +1,10 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
-import { ClientHasCompletedServiceRecordError } from "domain/errors/client-has-completed-service-record.error";
 
-const COMPLETED_SERVICE_RECORD_MESSAGE =
-    "완료된 제공기록지가 있는 고객은 삭제할 수 없습니다. 서비스 종료 처리를 이용해 주세요.";
+export const CLIENT_DELETE_CONFLICT_CODE = "CLIENT_DELETE_CONFLICT";
+export const CLIENT_DELETE_CONFLICT_MESSAGE =
+    "연결된 데이터로 인해 고객을 삭제할 수 없습니다. 잠시 후 다시 시도해 주세요.";
 
 function isForeignKeyViolation(error: unknown): boolean {
     return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003";
@@ -26,14 +26,14 @@ export class DeleteClientUsecase {
         try {
             await this.clientRepository.delete(branchid, id);
         } catch (error) {
-            if (error instanceof ClientHasCompletedServiceRecordError) {
-                throw new ConflictException(COMPLETED_SERVICE_RECORD_MESSAGE);
-            }
-            // Defense-in-depth: if some other FK still blocks the delete (e.g. a
-            // race that slipped past the repository's own pre-check), surface it
-            // as the same clear 409 instead of an unexplained 500.
+            // Defense-in-depth for any relation not covered by the document-
+            // preservation migration. The API route only exposes this coded,
+            // allowlisted message and never forwards raw database details.
             if (isForeignKeyViolation(error)) {
-                throw new ConflictException(COMPLETED_SERVICE_RECORD_MESSAGE);
+                throw new ConflictException({
+                    code: CLIENT_DELETE_CONFLICT_CODE,
+                    message: CLIENT_DELETE_CONFLICT_MESSAGE,
+                });
             }
             throw error;
         }
