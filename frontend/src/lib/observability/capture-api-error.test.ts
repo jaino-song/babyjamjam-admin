@@ -5,13 +5,18 @@ const mockScope = {
   setFingerprint: jest.fn(),
 };
 const mockCaptureException = jest.fn();
+const mockFlush = jest.fn().mockResolvedValue(true);
 
 jest.mock("@sentry/nextjs", () => ({
   withScope: (callback: (scope: typeof mockScope) => void) => callback(mockScope),
   captureException: (error: unknown) => mockCaptureException(error),
+  flush: (timeout: number) => mockFlush(timeout),
 }));
 
-import { captureApiError } from "./capture-api-error";
+import {
+  captureAndFlushApiError,
+  captureApiError,
+} from "./capture-api-error";
 
 function createAxiosError(options: {
   status?: number;
@@ -36,6 +41,7 @@ function createAxiosError(options: {
 describe("captureApiError", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockFlush.mockResolvedValue(true);
   });
 
   it("ignores expected client errors and cancelled requests", () => {
@@ -97,6 +103,29 @@ describe("captureApiError", () => {
 
     expect(mockCaptureException).toHaveBeenCalledTimes(1);
     expect(mockScope.setLevel).toHaveBeenCalledWith("warning");
+  });
+
+  it("flushes captured proxy failures before the serverless response finishes", async () => {
+    await captureAndFlushApiError(createAxiosError({
+      code: "ERR_NETWORK",
+      url: "/admin/service-records/client/7",
+    }));
+    await captureAndFlushApiError(createAxiosError({
+      status: 401,
+      url: "/admin/service-records/client/7",
+    }));
+
+    expect(mockFlush).toHaveBeenCalledTimes(1);
+    expect(mockFlush).toHaveBeenCalledWith(2_000);
+  });
+
+  it("does not replace the proxy failure when Sentry flush fails", async () => {
+    mockFlush.mockRejectedValueOnce(new Error("Sentry unavailable"));
+
+    await expect(captureAndFlushApiError(createAxiosError({
+      code: "ERR_NETWORK",
+      url: "/admin/service-records/client/7",
+    }))).resolves.toBeUndefined();
   });
 
   it("does not pass a prepared feedback bearer token to Sentry", () => {

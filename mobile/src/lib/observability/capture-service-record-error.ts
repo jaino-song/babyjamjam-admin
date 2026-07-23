@@ -63,14 +63,14 @@ export function getServiceRecordOperation(path: string): ServiceRecordOperation 
 export function captureServiceRecordError(
   error: unknown,
   context?: ServiceRecordErrorContext,
-): void {
-  if (typeof error === "object" && error !== null && reportedErrors.has(error)) return;
+): boolean {
+  if (typeof error === "object" && error !== null && reportedErrors.has(error)) return false;
 
   const axiosError = isAxiosErrorLike(error) ? error : null;
-  if (axiosError?.code === "ERR_CANCELED") return;
+  if (axiosError?.code === "ERR_CANCELED") return false;
 
   const status = context?.status ?? axiosError?.response?.status;
-  if (typeof status === "number" && status < 500) return;
+  if (typeof status === "number" && status < 500) return false;
 
   const method = (
     context?.method
@@ -78,7 +78,7 @@ export function captureServiceRecordError(
     ?? "unknown"
   ).toUpperCase();
   const rawPath = context?.path ?? getRequestPath(axiosError?.config?.url);
-  if (!context && !isServiceRecordSentrySignal(rawPath)) return;
+  if (!context && !isServiceRecordSentrySignal(rawPath)) return false;
 
   if (typeof error === "object" && error !== null) {
     reportedErrors.add(error);
@@ -86,7 +86,7 @@ export function captureServiceRecordError(
 
   const path = sanitizeSentryUrl(rawPath) ?? "unknown";
   const statusLabel = status ? String(status) : "network";
-  const operation = context?.operation ?? "api";
+  const operation = context?.operation ?? getServiceRecordOperation(rawPath);
   const capturedError = Object.assign(
     new Error(`Service-record ${operation} failed: ${method} ${path} (${statusLabel})`),
     { name: "ServiceRecordError" },
@@ -119,6 +119,17 @@ export function captureServiceRecordError(
     }
     Sentry.captureException(capturedError);
   });
+  return true;
+}
+
+export async function captureAndFlushServiceRecordError(error: unknown): Promise<void> {
+  if (captureServiceRecordError(error)) {
+    try {
+      await Sentry.flush(2_000);
+    } catch {
+      // Observability must never replace the original proxy failure.
+    }
+  }
 }
 
 export function captureServiceRecordResponseError(

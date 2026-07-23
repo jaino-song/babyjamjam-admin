@@ -52,15 +52,15 @@ function isAxiosErrorLike(error: unknown): error is AxiosError {
   );
 }
 
-export function captureApiError(error: unknown): void {
-  if (!isAxiosErrorLike(error) || error.code === "ERR_CANCELED") return;
+export function captureApiError(error: unknown): boolean {
+  if (!isAxiosErrorLike(error) || error.code === "ERR_CANCELED") return false;
 
   const status = error.response?.status;
-  if (typeof status === "number" && status < 500) return;
+  if (typeof status === "number" && status < 500) return false;
   const method = (error.config?.method ?? "unknown").toUpperCase();
   const path = getRequestPath(error.config?.url);
-  if (!isServiceRecordSentrySignal(path)) return;
-  if (reportedErrors.has(error)) return;
+  if (!isServiceRecordSentrySignal(path)) return false;
+  if (reportedErrors.has(error)) return false;
 
   reportedErrors.add(error);
 
@@ -97,6 +97,17 @@ export function captureApiError(error: unknown): void {
     scope.setFingerprint(["api-error", method, sanitizedPath, statusLabel]);
     Sentry.captureException(capturedError);
   });
+  return true;
+}
+
+export async function captureAndFlushApiError(error: unknown): Promise<void> {
+  if (captureApiError(error)) {
+    try {
+      await Sentry.flush(2_000);
+    } catch {
+      // Observability must never replace the original proxy failure.
+    }
+  }
 }
 
 export function captureServiceRecordRenderError(error: Error): void {

@@ -5,13 +5,16 @@ const mockScope = {
   setFingerprint: jest.fn(),
 };
 const mockCaptureException = jest.fn();
+const mockFlush = jest.fn().mockResolvedValue(true);
 
 jest.mock("@sentry/nextjs", () => ({
   withScope: (callback: (scope: typeof mockScope) => void) => callback(mockScope),
   captureException: (error: unknown) => mockCaptureException(error),
+  flush: (timeout: number) => mockFlush(timeout),
 }));
 
 import {
+  captureAndFlushServiceRecordError,
   captureServiceRecordError,
   captureServiceRecordResponseError,
 } from "./capture-service-record-error";
@@ -37,6 +40,7 @@ function createAxiosError(options: {
 describe("captureServiceRecordError", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockFlush.mockResolvedValue(true);
   });
 
   it("ignores expected client errors and unrelated API paths", () => {
@@ -62,13 +66,14 @@ describe("captureServiceRecordError", () => {
     expect(mockCaptureException).toHaveBeenCalledTimes(1);
     expect(mockScope.setTag).toHaveBeenCalledWith("feature", "service-records");
     expect(mockScope.setContext).toHaveBeenCalledWith("serviceRecord", {
-      operation: "api",
+      operation: "submit-session",
       method: "POST",
       path: "/service-record/[Filtered]/sessions/1/submit",
       status: 503,
       code: null,
       runtime: "browser",
     });
+    expect(mockScope.setTag).toHaveBeenCalledWith("operation", "submit-session");
   });
 
   it("captures resolved 5xx responses but ignores resolved 4xx responses", () => {
@@ -92,5 +97,28 @@ describe("captureServiceRecordError", () => {
     expect(mockCaptureException).toHaveBeenCalledTimes(1);
     expect(mockScope.setTag).toHaveBeenCalledWith("status_code", "503");
     expect(mockScope.setTag).toHaveBeenCalledWith("operation", "context");
+  });
+
+  it("flushes captured proxy failures before the serverless response finishes", async () => {
+    await captureAndFlushServiceRecordError(createAxiosError({
+      code: "ERR_NETWORK",
+      url: "/service-record/context",
+    }));
+    await captureAndFlushServiceRecordError(createAxiosError({
+      status: 401,
+      url: "/service-record/context",
+    }));
+
+    expect(mockFlush).toHaveBeenCalledTimes(1);
+    expect(mockFlush).toHaveBeenCalledWith(2_000);
+  });
+
+  it("does not replace the proxy failure when Sentry flush fails", async () => {
+    mockFlush.mockRejectedValueOnce(new Error("Sentry unavailable"));
+
+    await expect(captureAndFlushServiceRecordError(createAxiosError({
+      code: "ERR_NETWORK",
+      url: "/service-record/context",
+    }))).resolves.toBeUndefined();
   });
 });
