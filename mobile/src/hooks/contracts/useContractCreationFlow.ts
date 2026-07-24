@@ -30,6 +30,7 @@ import {
   todayIsoDate,
   yymmddToIso,
 } from "@/lib/contracts/date-input";
+import { buildContractAutoRegistrationPayload } from "@/lib/contracts/contract-auto-registration";
 import { calcEndDateBusinessDays } from "@/lib/date/business-days";
 import { buildInitialSignRequestDocRecord } from "@/lib/eformsign/document-record";
 import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
@@ -833,18 +834,15 @@ export function useContractCreationFlow(): ContractCreationFlow {
     try {
       let finalClientId = clientId ?? storedClientByIdentity?.id ?? storedClientByPhone?.id ?? null;
       if (!finalClientId && isManualEntry && shouldRegisterMissingClient) {
-        const newClient = await createClientMutation.mutateAsync({
+        const newClient = await createClientMutation.mutateAsync(buildContractAutoRegistrationPayload({
           name,
           phone,
           birthday: birthday || undefined,
           address: address || undefined,
           dueDate: dueDate || startDate || undefined,
-          primaryEmployeeId: null,
-          careCenter: false,
-          voucherClient: true,
-          breastPump: false,
-          suppressGreetingSms: true,
-        });
+          primaryEmployeeId: employeeId,
+          secondaryEmployeeId: showEmployee2 ? employee2Id : null,
+        }));
         finalClientId = newClient.id;
         setClientId(newClient.id);
       }
