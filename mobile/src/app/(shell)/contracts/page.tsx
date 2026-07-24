@@ -1237,8 +1237,8 @@ function ContractDetailContent({
   };
 
   return (
-    <MobileDetailPage name="contracts">
-      <MobileDetailHeader
+    <MobileDetailPage data-component="mobile_contracts_detail-sheet_stack_detail-page" name="contracts">
+      <MobileDetailHeader data-component="mobile_contracts_detail-sheet_stack_detail-page_header"
         name="contracts"
         avatar={<FileCheck2 size={24} strokeWidth={2.5} />}
         avatarTone="primary"
@@ -1296,7 +1296,7 @@ function ContractDetailContent({
       />
 
       {!isPreviewOpen || (reviewNeeded && onFinalize) ? (
-        <MobileDetailActions
+        <MobileDetailActions data-component="mobile_contracts_detail-sheet_stack_detail-page_actions"
           name="contracts"
           actions={[
             ...(!isPreviewOpen
@@ -1397,15 +1397,15 @@ function ContractDetailContent({
             onTabChange={(id) => onTabChange(id as DetailTabId)}
           />
 
-          <MobileDetailTabPanel name="contracts" tabId="basic" activeTab={activeTab}>
-            <InfoCard title="이용자 정보">
+          <MobileDetailTabPanel data-component="mobile_contracts_detail-sheet_stack_detail-page_tab-panel" name="contracts" tabId="basic" activeTab={activeTab}>
+            <InfoCard data-component="mobile_contracts_detail-panel_info-card" title="이용자 정보">
               <InfoRow label="이용자" value={resolvedCustomerName} />
               {customerPhone ? (
                 <InfoRow label="연락처" value={formatClientPhone(customerPhone) ?? customerPhone} />
               ) : null}
               <InfoRow label="제공인력" value={resolvedProviderName} />
             </InfoCard>
-            <InfoCard title="계약 정보" delay={60}>
+            <InfoCard data-component="mobile_contracts_detail-panel_info-card-2" title="계약 정보" delay={60}>
               <InfoRow
                 label="계약서 종류"
                 value={<span style={{ fontFamily: "'SF Mono', monospace" }}>{contractNum}</span>}
@@ -1420,14 +1420,14 @@ function ContractDetailContent({
             </InfoCard>
           </MobileDetailTabPanel>
 
-          <MobileDetailTabPanel name="contracts" tabId="signers" activeTab={activeTab}>
-            <InfoCard title="계약서 단계">
+          <MobileDetailTabPanel data-component="mobile_contracts_detail-sheet_stack_detail-page_tab-panel-2" name="contracts" tabId="signers" activeTab={activeTab}>
+            <InfoCard data-component="mobile_contracts_detail-panel_info-card-3" title="계약서 단계">
               <ActivityTimeline items={stageItems} maxHeight="360px" />
             </InfoCard>
           </MobileDetailTabPanel>
 
-          <MobileDetailTabPanel name="contracts" tabId="messages" activeTab={activeTab}>
-            <InfoCard title="발송 내역">
+          <MobileDetailTabPanel data-component="mobile_contracts_detail-sheet_stack_detail-page_tab-panel-3" name="contracts" tabId="messages" activeTab={activeTab}>
+            <InfoCard data-component="mobile_contracts_detail-panel_info-card-4" title="발송 내역">
               {notificationRows.length > 0 ? (
                 notificationRows.map((log) => {
                   const tone = notificationStatusTone(log.status);
@@ -2022,7 +2022,7 @@ export default function ContractsPage() {
   );
 
   const mainSheet = (
-    <MobileDetailSheet
+    <MobileDetailSheet data-component="mobile_contracts_detail-sheet"
       name="contracts"
       isOpen={Boolean(selectedDoc)}
       onClose={() => setSelectedDoc(null)}
