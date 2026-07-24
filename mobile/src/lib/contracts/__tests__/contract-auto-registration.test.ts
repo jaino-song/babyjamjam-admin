@@ -8,6 +8,8 @@ describe("buildContractAutoRegistrationPayload", () => {
       birthday: "900101",
       address: "인천시 남동구",
       dueDate: "2026-08-01",
+      startDate: "2026-08-03",
+      endDate: "2026-08-14",
       primaryEmployeeId: 17,
       secondaryEmployeeId: 23,
     });
@@ -18,6 +20,8 @@ describe("buildContractAutoRegistrationPayload", () => {
       birthday: "900101",
       address: "인천시 남동구",
       dueDate: "2026-08-01",
+      startDate: "2026-08-03",
+      endDate: "2026-08-14",
       primaryEmployeeId: 17,
       secondaryEmployeeId: 23,
       careCenter: false,

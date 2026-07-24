@@ -6,6 +6,8 @@ export interface ContractAutoRegistrationPayloadInput {
   birthday?: string;
   address?: string;
   dueDate?: string;
+  startDate: string;
+  endDate: string;
   primaryEmployeeId: number | null;
   secondaryEmployeeId: number | null;
 }
@@ -19,6 +21,8 @@ export function buildContractAutoRegistrationPayload(
     birthday: input.birthday,
     address: input.address,
     dueDate: input.dueDate,
+    startDate: input.startDate,
+    endDate: input.endDate,
     primaryEmployeeId: input.primaryEmployeeId,
     secondaryEmployeeId: input.secondaryEmployeeId,
     careCenter: false,

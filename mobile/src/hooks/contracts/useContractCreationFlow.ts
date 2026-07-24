@@ -840,6 +840,8 @@ export function useContractCreationFlow(): ContractCreationFlow {
           birthday: birthday || undefined,
           address: address || undefined,
           dueDate: dueDate || startDate || undefined,
+          startDate,
+          endDate,
           primaryEmployeeId: employeeId,
           secondaryEmployeeId: showEmployee2 ? employee2Id : null,
         }));
