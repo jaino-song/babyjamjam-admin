@@ -72,7 +72,8 @@ export interface TemplateContentEditorProps {
     quickInsert?: ReactNode;
     content: string;
     onContentChange: (content: string) => void;
-    variables: TemplateVariable[];       // 칩 후보 + 팝오버 조회 대상
+    variables: TemplateVariable[];            // 칩 에디터의 자동완성 후보
+    popoverVariables?: TemplateVariable[];    // 칩 클릭 시 조회할 목록. 생략하면 variables
     onVariableChange?: (variable: TemplateVariable) => void;  // 생략 → 팝오버 읽기 전용
     placeholder?: string;
     hint?: ReactNode;
@@ -85,7 +86,9 @@ export interface TemplateContentEditorProps {
 
 **`VariableInserter` 확장**(같은 파일 아님, `variable-inserter.tsx`): props에 `variables?: { key: string; label: string }[]`(기본 `PRESET_VARIABLES`), `allowCustom?: boolean`(기본 `true`), `dataComponent?: string`(기본 현재 문자열)을 더한다. 기존 호출부는 인자가 없으므로 동작이 그대로다. 기본 템플릿은 `variables`에 그 템플릿의 레지스트리 변수 + 커스텀 변수만, `allowCustom={false}`로 넘겨 같은 `Badge` 칩 줄을 얻는다.
 
-**`TemplateEditor` 변경분**: 상태(`name`/`content`/`variables`/`detectedKeys`)·감지 `useEffect`·`handleSave`·`handleVariableChange`·`chipVariables` 메모는 **한 줄도 바꾸지 않는다**. render 본문에서 3~4번 블록을 `<TemplateContentEditor …/>` 한 개로 치환하고, ref를 `chipEditorRef`에서 코어 handle로 바꾼다. 팝오버 조회 대상이 `variables`에서 `chipVariables`로 넓어지지만, 본문에 실제로 있는 키는 감지 effect가 항상 `variables`에 넣고 `chipVariables`는 그 앞부분이 `variables`이므로 `find`가 같은 객체를 돌려준다 — 동작 동일.
+**두 목록을 합치면 안 되는 이유 (사전 리뷰에서 잡힌 실제 버그)**: 지점 편집기는 칩 에디터에 `chipVariables`(= `variables` + 본문에 없는 프리셋 10종을 `required: false`로 합성)를 넘기고, 팝오버 조회는 `variables`로 한다. 이 둘을 하나로 합쳐 `chipVariables`만 쓰면 **변수를 지웠을 때 동작이 바뀐다**: 본문에서 `{{phone}}`을 지우면 감지 effect가 `variables`에서 `phone`을 빼지만 `chipVariables`는 프리셋 `phone`을 다시 넣으므로, 열려 있던 팝오버가 닫히지 않고 사라진 변수 위에 계속 떠 있게 된다. 게다가 `required`가 `true`에서 `false`로 뒤집혀 보이고, 거기서 하는 편집은 `setVariables(prev => prev.map(...))`가 없는 키를 못 찾아 전부 조용한 무동작이 된다. 그래서 코어가 `variables`와 `popoverVariables`를 따로 받는다. 기본 템플릿 화면은 `variables` 하나만 넘기므로 영향이 없다.
+
+**`TemplateEditor` 변경분**: `useState` 4개(`name`/`content`/`variables`/`detectedKeys`)·감지 `useEffect`·`handleSave`·`handleVariableChange`·`handleInsertVariable`·`chipVariables` 메모는 **한 줄도 바꾸지 않는다**. 코어로 옮기는 상태는 `activeVariableKey` 하나뿐이다(`handleVariableClick`도 함께 사라진다). render 본문에서 빠른 삽입 줄·본문 라벨·Popover 블록·바이트 푸터를 `<TemplateContentEditor …/>` 한 개로 치환하고, `chipEditorRef`의 타입을 코어 handle로 바꾼다. `variables={chipVariables} popoverVariables={variables}`로 넘겨 위 동작을 유지한다. `isOverBodyLimit`는 저장 버튼의 `disabled`가 쓰므로 `TemplateEditor`에 남는다.
 
 ### 4.3 organism — `frontend/src/components/app/system-admin/SystemTemplatesManager.tsx`
 
@@ -171,7 +174,9 @@ useSystemTemplates ──▶ 목록 행 (9)
 
 ## 7. 테스트
 
-**회귀 먼저**: `template-editor.tsx`에는 지금 테스트가 없다(§2). 코어를 빼내기 **전에** `frontend/src/components/app/my-templates/__tests__/template-editor.test.tsx`를 먼저 쓰고 통과시킨 뒤 리팩터링한다 — 그래야 "동작 변화 없음"이 주장이 아니라 확인이 된다. (1) `initialData`를 주면 이름·본문이 채워지고 빠른 삽입 칩이 프리셋 10종 + "커스텀 변수"로 보인다, (2) 프리셋 칩 클릭 시 칩 에디터 handle의 `insertVariable`이 그 키로 호출된다, (3) 본문에 `{{name}}`이 들어가면 변수 설정 카드가 생기고 카드에서 라벨을 바꾼 값이 저장 payload에 실린다, (4) 저장 클릭 시 `updateTemplate`이 `{ id, request: { name, content, variables } }`로 호출되고 성공 콜백에서 `/messages/templates`로 이동한다.
+**회귀 먼저**: `template-editor.tsx`에는 지금 테스트가 없다(§2). 코어를 빼내기 **전에** `frontend/src/components/app/my-templates/__tests__/template-editor.test.tsx`를 먼저 쓰고 통과시킨 뒤 리팩터링한다 — 그래야 "동작 변화 없음"이 주장이 아니라 확인이 된다. (1) `initialData`를 주면 이름·본문이 채워지고 빠른 삽입 칩이 프리셋 10종 + "커스텀 변수"로 보인다, (2) 프리셋 칩 클릭 시 칩 에디터 handle의 `insertVariable`이 그 키로 호출된다, (3) 본문에 `{{name}}`이 들어가면 변수 설정 카드가 생기고 카드에서 라벨을 바꾼 값이 저장 payload에 실린다, (4) 저장 클릭 시 `updateTemplate`이 `{ id, request: { name, content, variables } }`로 호출되고 성공 콜백에서 `/messages/templates`로 이동한다, (5) 칩을 눌러 팝오버를 연 뒤 본문에서 그 변수를 지우면 팝오버가 닫힌다 — 위 "두 목록을 합치면 안 되는 이유"를 지키는 테스트이며, 픽스처 변수는 프리셋에 있는 키(`phone`)여야 의미가 있다.
+
+픽스처 라벨은 `PRESET_VARIABLES`에 없는 값으로 둔다(예: `"고객명"`). 프리셋과 같은 라벨을 쓰면 프리셋 배지와 미리보기 side 패널에 같은 문자열이 두 번 나와 `getByText`가 실패한다.
 
 - `frontend/src/components/app/my-templates/__tests__/template-content-editor.test.tsx` (신규 코어): (1) `onVariableChange`가 있으면 칩 클릭 시 편집 가능한 `VariableConfigurator`(라벨 입력)가 열린다, (2) `onVariableChange`가 없으면 같은 클릭에 읽기 전용 정보만 뜨고 입력 요소가 없다, (3) 바이트 푸터가 90바이트 경계에서 SMS/LMS 문구를 바꾸고 `MAX_BODY_LENGTH` 초과 시 경고로 바뀐다, (4) `quickInsert` 슬롯이 렌더되고 ref의 `insertVariable`이 칩 에디터 handle로 위임된다.
 - `frontend/src/components/app/system-admin/__tests__/SystemTemplatesManager.test.tsx` (`TriggerRulesManager.test.tsx`의 react-query 모킹 방식): (1) 모킹된 9종이 순서대로 행으로 렌더된다, (2) 행 선택 시 편집 탭에 본문이 로드되고 빠른 삽입 칩이 레지스트리+커스텀만이다(프리셋 "연락처" 없음), (3) 본문 변경 → 저장 활성 → 저장 시 `update`가 `{ key, content, customVariables: 기존값 }`으로 호출된다, (4) 필수 변수를 지우면 누락 힌트가 뜨고 저장이 비활성이다, (5) `initialTemplateKey`가 주어지면 그 템플릿이 선택된 채 열린다.
@@ -213,5 +218,7 @@ useSystemTemplates ──▶ 목록 행 (9)
 1. `OwnerAdminConsole`이 `useSearchParams`를 쓰려면 Suspense 경계가 필요한지(Next App Router 정적 렌더 경고) — 페이지가 이미 클라이언트 컴포넌트를 마운트하므로 필요 시 `page.tsx`에서 `Suspense`로 감싼다.
 2. `VariableChipEditor`가 `variables`에 없는 `{{key}}`를 어떻게 렌더하는지(칩 vs 텍스트) — 검증 힌트가 어차피 잡지만 시각 확인.
 3. `DetailPanel` footer에 `VersionHistory`의 Sheet 트리거 `Button`을 두는 것이 §8.3 "footer는 Button만" 규칙에 부합함을 리뷰에서 확인.
-4. `data-component`를 리터럴이 아닌 prop으로 받는 공용 코어가 `data-component/require-data-component`(`banLegacyFormat: true`) 규칙을 통과하는지 — v3 컴포넌트들이 같은 방식이므로 통과할 것으로 보지만 eslint로 확인한다. 통과하지 못하면 코어가 `dataComponent` prop을 그대로 붙이는 대신 소비처가 래퍼에 다는 형태로 바꾼다.
-5. `VariableChipEditor`의 Tiptap 확장이 `variables` 배열 교체에 반응하는지 — organism은 템플릿을 바꿀 때마다 새 `allowedVariables` 배열을 넘긴다. 반응하지 않으면 선택 키를 `key` prop으로 주어 재마운트한다.
+4. ~~`data-component`를 prop으로 받는 코어가 lint를 통과하는지~~ — **확인 완료(통과).** 규칙의 `getLiteralAttributeValue`가 문자열 `Literal`이 아닌 값에 `null`을 돌려주고 모든 검증이 그 값에 걸려 있어, template literal `data-component`는 검사도 경고도 되지 않는다. `ClientDetailPanel.tsx`가 이미 같은 방식으로 통과한다. 부수 효과 하나는 알고 가야 한다: 지금 리터럴인 `…_content-anchor`·`…_variable-popover`·`…_content-footer` 세 이름이 코어로 옮겨가면서 lint 검증 대상에서 빠진다(철자 오타를 잡아주지 않는다).
+5. ~~`VariableChipEditor`가 `variables` 배열 교체에 반응하는지~~ — **확인 완료(반응함).** Tiptap 확장은 한 번만 만들어지고 `variablesRef.current`를 읽으며, `useEffect`가 매 렌더 그 ref를 갱신한다. 템플릿을 바꿔도 재마운트가 필요 없다.
+6. `getTextByteLength`는 UTF-8이라 **한글 1자가 3바이트**다(`byte-length.test.ts`가 명시). 90바이트 경계는 한글 30자다. 테스트를 쓸 때 2바이트로 계산하지 않는다.
+7. 게이트 명령의 pnpm 필터는 `--filter ./frontend`(경로 형태)여야 한다. 패키지 이름이 `babyjamjam-admin`이라 `--filter frontend`는 아무 패키지도 못 찾고 조용히 아무것도 실행하지 않는다.
