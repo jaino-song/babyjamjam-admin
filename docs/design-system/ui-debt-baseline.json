@@ -298,27 +298,6 @@
         "959:31-959:184|visualTailwindInPage"
       ]
     },
-    "frontend/src/app/(protected)/messages/system-templates/[templateKey]/page.tsx": {
-      "ui-architecture/no-page-local-components": [
-        "14:10-14:38|pageLocalComponent"
-      ],
-      "ui-architecture/no-visual-tailwind-in-pages": [
-        "19:31-19:57|visualTailwindInPage",
-        "20:31-20:70|visualTailwindInPage",
-        "22:29-22:66|visualTailwindInPage",
-        "25:29-25:70|visualTailwindInPage",
-        "26:29-26:70|visualTailwindInPage",
-        "29:29-29:73|visualTailwindInPage",
-        "30:29-30:73|visualTailwindInPage",
-        "32:31-32:73|visualTailwindInPage",
-        "46:88-46:103|visualTailwindInPage",
-        "58:88-58:103|visualTailwindInPage",
-        "61:26-61:49|visualTailwindInPage",
-        "71:23-71:55|visualTailwindInPage",
-        "76:20-76:51|visualTailwindInPage",
-        "83:86-83:101|visualTailwindInPage"
-      ]
-    },
     "frontend/src/app/(protected)/messages/templates/[id]/edit/page.tsx": {
       "ui-architecture/no-page-local-components": [
         "15:10-15:20|pageLocalComponent",
