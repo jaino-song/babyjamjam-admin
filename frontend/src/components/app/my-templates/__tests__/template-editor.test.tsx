@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { ChangeEvent, Ref } from "react";
 
 import { TemplateEditor } from "../template-editor";
+import type { VariableChipEditorHandle } from "../variable-chip-editor";
 
 const mockPush = jest.fn();
 const mockBack = jest.fn();
@@ -8,15 +10,32 @@ const mockInsertVariable = jest.fn();
 const mockCreate = jest.fn();
 const mockUpdate = jest.fn();
 
+interface MockChipEditorProps {
+    id?: string;
+    placeholder?: string;
+    value: string;
+    onChange: (value: string) => void;
+    variables: { key: string }[];
+    onVariableClick?: (key: string) => void;
+}
+
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush, back: mockBack }) }));
 jest.mock("@/hooks/use-message-templates", () => ({
     useCreateMessageTemplate: () => ({ mutate: mockCreate, isPending: false }),
     useUpdateMessageTemplate: () => ({ mutate: mockUpdate, isPending: false }),
 }));
 jest.mock("../variable-chip-editor", () => {
+    // jest.mock factories are hoisted above this file's imports, so the
+    // top-level `react` import isn't in scope here (Jest throws "module
+    // factory ... not allowed to reference any out-of-scope variables" if we
+    // try) -- require() is the only way to reach React inside the factory.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
     return {
-        VariableChipEditor: React.forwardRef(function MockChipEditor(props: any, ref: any) {
+        VariableChipEditor: React.forwardRef(function MockChipEditor(
+            props: MockChipEditorProps,
+            ref: Ref<VariableChipEditorHandle>
+        ) {
             React.useImperativeHandle(ref, () => ({ insertVariable: mockInsertVariable }));
             return React.createElement(
                 "div",
@@ -25,9 +44,9 @@ jest.mock("../variable-chip-editor", () => {
                     id: props.id,
                     placeholder: props.placeholder,
                     value: props.value,
-                    onChange: (e: any) => props.onChange(e.target.value),
+                    onChange: (e: ChangeEvent<HTMLTextAreaElement>) => props.onChange(e.target.value),
                 }),
-                props.variables.map((v: any) =>
+                props.variables.map((v) =>
                     React.createElement(
                         "button",
                         { key: v.key, type: "button", onClick: () => props.onVariableClick?.(v.key) },
