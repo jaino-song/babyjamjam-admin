@@ -1548,6 +1548,16 @@ export default function MessagesPage() {
     activeSection === "send" ? sendTemplateFormLayout : undefined;
   const selectedTemplateHeaderTrailing = activeTemplateId ? (
     <>
+      {activeSection === "templates" && !isBranchTemplate && isOwner && selectedBuiltinSystemKey ? (
+        <HeaderActionButton
+          icon={FilePen}
+          label="관리자 페이지에서 수정"
+          href={`/system-admin?section=templates&template=${selectedBuiltinSystemKey}`}
+          variant="muted"
+          data-component="desktop_messages_sections_templates_split-layout_detail-panel_edit-defaults-link"
+        />
+      ) : null}
+
       {selectedUserTemplate ? (
         <div
           data-component="desktop_messages_sections_template-detail-summary"

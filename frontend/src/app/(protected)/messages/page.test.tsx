@@ -47,6 +47,9 @@ describe("MessagesPage sender approval gating", () => {
     );
   });
 });
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
+import { getMessageTemplateLabel } from "@babyjamjam/shared";
 import {
   useCancelUpcomingMessageTriggerJob,
   useMessageHistory,
@@ -63,15 +66,20 @@ const mockRetryMutateAsync = jest.fn();
 // the render-level gate itself reacts, not just the nav's disabled flag.
 const mockUseMessageSenderApproval = jest.fn();
 const mockUseAllClients = jest.fn();
+// jest.fn()s (rather than the hardcoded returns these mocks used to have) so a
+// single test can change the signed-in role or hand the page a branch template
+// without disturbing every other case's defaults, restored in beforeEach.
+const mockUseInitialUser = jest.fn();
+const mockUseMessageTemplates = jest.fn();
 
 jest.mock("@/providers/LocaleProvider", () => ({
   useLocale: () => "ko",
 }));
 
 jest.mock("@/providers/UserProvider", () => ({
-  // Non-owner role on purpose: history must be reachable for anyone once SMS
-  // sending is approved, not just the branch owner.
-  useInitialUser: () => ({ id: "user-1", role: "manager" }),
+  // Non-owner role by default on purpose: history must be reachable for anyone
+  // once SMS sending is approved, not just the branch owner.
+  useInitialUser: () => mockUseInitialUser(),
 }));
 
 jest.mock("@/components/app/messages/MessageApprovalGate", () => ({
@@ -96,7 +104,7 @@ jest.mock("@/components/app/messages/MessageApprovalGate", () => ({
 }));
 
 jest.mock("@/features/message-templates/hooks/use-message-templates", () => ({
-  useMessageTemplates: () => ({ data: [], isLoading: false }),
+  useMessageTemplates: () => mockUseMessageTemplates(),
 }));
 
 jest.mock("@/features/clients/hooks/use-clients", () => ({
@@ -361,6 +369,10 @@ beforeEach(() => {
     isLoading: false,
   });
   mockUseAllClients.mockReturnValue({ data: [], isLoading: false });
+  mockUseInitialUser.mockReset();
+  mockUseInitialUser.mockReturnValue({ id: "user-1", role: "manager" });
+  mockUseMessageTemplates.mockReset();
+  mockUseMessageTemplates.mockReturnValue({ data: [], isLoading: false });
 
   mockedUseRetryMessageHistory.mockReturnValue({
     mutateAsync: mockRetryMutateAsync,
@@ -633,5 +645,75 @@ describe("messages page — merged 발송 기록 section", () => {
       "data-component",
       "desktop_messages_sections_section-content_history-section_approval-gate",
     );
+  });
+});
+
+describe("messages page — 기본 템플릿 편집 링크", () => {
+  const GREETING_LABEL = getMessageTemplateLabel("GREETING");
+
+  function goToTemplatesSection() {
+    const navButtons = screen.getAllByRole("button", { name: "템플릿" });
+    fireEvent.click(navButtons[0]);
+  }
+
+  // Selecting a template inside 전송하기 mounts the real send form, which calls
+  // useQueryClient; the other suites never reach it, so only this one needs the
+  // provider.
+  function renderWithQueryClient() {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MessagesPage />
+      </QueryClientProvider>,
+    );
+  }
+
+  it("points the owner at the admin console for the selected default template", () => {
+    mockUseInitialUser.mockReturnValue({ id: "user-1", role: "owner" });
+
+    render(<MessagesPage />);
+    goToTemplatesSection();
+    fireEvent.click(screen.getByText(GREETING_LABEL));
+
+    expect(screen.getByRole("link", { name: /관리자 페이지에서 수정/ })).toHaveAttribute(
+      "href",
+      "/system-admin?section=templates&template=GREETING",
+    );
+  });
+
+  it("hides the link for a branch template, which the owner edits in place", () => {
+    mockUseInitialUser.mockReturnValue({ id: "user-1", role: "owner" });
+    mockUseMessageTemplates.mockReturnValue({
+      data: [{ id: "tpl-1", name: "지점 인사말", content: "안녕하세요", variables: [] }],
+      isLoading: false,
+    });
+
+    render(<MessagesPage />);
+    goToTemplatesSection();
+    fireEvent.click(screen.getByRole("button", { name: "지점 템플릿" }));
+    fireEvent.click(screen.getByText("지점 인사말"));
+
+    expect(screen.queryByRole("link", { name: /관리자 페이지에서 수정/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps the link out of the 전송하기 flow, where the same detail header is reused", () => {
+    mockUseInitialUser.mockReturnValue({ id: "user-1", role: "owner" });
+
+    // No navigation: 전송하기 is the landing section and shares this split
+    // layout with 템플릿, so only the section check keeps the link out.
+    renderWithQueryClient();
+    fireEvent.click(screen.getByText(GREETING_LABEL));
+
+    expect(screen.queryByRole("link", { name: /관리자 페이지에서 수정/ })).not.toBeInTheDocument();
+  });
+
+  it("hides the link from a non-owner, who cannot open the admin console at all", () => {
+    renderWithQueryClient();
+    goToTemplatesSection();
+    fireEvent.click(screen.getByText(GREETING_LABEL));
+
+    expect(screen.queryByRole("link", { name: /관리자 페이지에서 수정/ })).not.toBeInTheDocument();
   });
 });
