@@ -156,7 +156,7 @@ Phase2 입력 검토 보정: 저장소 구현은 기존 `backend/infrastructure/
 
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/admin-service-record-edit.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/interface/controllers/admin-service-record.controller.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/frontend/src/features/service-records/`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/frontend/src/app/api/admin/service-records/`  
-  **추가 Paths:** `frontend/src/app/(service-record-admin)/`, `backend/module/service-record-entry.module.ts`, `backend/application/services/service-record-entry.service.ts`, `backend/application/policies/service-record-answer-validation.policy.ts`, `packages/shared/src/types/service-record.ts`, 관련 service/controller/DTO 테스트. 기존 `SERVICE_RECORD_LAYOUT_ANSWER_KEYS`와 일치하는 단일 backend-safe validator를 공용 제출과 초안에 함께 적용한다.
+  **추가 Paths:** `frontend/src/app/(service-record-admin)/`, `frontend/src/components/app/service-record/ServiceRecordAdminWizard.tsx`, 해당 관리자 컴포넌트의 테스트 및 필요한 디자인 시스템 컴포넌트 등록, `backend/module/service-record-entry.module.ts`, `backend/application/services/service-record-entry.service.ts`, `backend/application/policies/service-record-answer-validation.policy.ts`, `packages/shared/src/types/service-record.ts`, 관련 service/controller/DTO 테스트. 기존 `SERVICE_RECORD_LAYOUT_ANSWER_KEYS`와 일치하는 단일 backend-safe validator를 공용 제출과 초안에 함께 적용한다.
   **Depends:** Task 2.1
 
 - **Task 2.A: 단계 독립 감사** (test, high)
@@ -231,6 +231,16 @@ N은 지원하는 달력의 완전한 시작/종료일이 있을 때만 초기�
 
 한쪽만 저장되는 상태와 오래된 확인 창으로 덮어쓰는 일을 막는다.
 
+Phase 4 입력 감사 보정: 확정 결과의 중복 방지와 발송 직전 경쟁을 DB에서 보장한다. 기존 job enqueue가 자체 트랜잭션을 여는 구조를 그대로 확정 안에서 호출하지 않는다. 호출자가 전달한 동일한 `Prisma.TransactionClient`를 사용하는 enqueue/token 변경 경계를 추가한다.
+
+확정 식별자는 case·draft·요청 키에 묶고 DB 고유 제약으로 보장한다. 확정 preview/request fingerprint와 결과를 영구 저장하여 같은 키·같은 내용은 동일 결과를 반환하고, 같은 키·다른 내용은 409로 거부한다. 변경 없는 확정도 결과를 저장하여 재시도가 revision을 만들지 않게 한다. revision 번호는 case 잠금 안에서 할당한다. client/case/N/plannedSessions, schedule/assignment/day, 수정 이력과 고정 snapshot, 초안 종료, 서비스 기록 링크 만료 변경, 메시지 무효화와 재평가 의도, 문서 작업 enqueue를 하나의 트랜잭션에 넣는다. 외부 API·스토리지·문자 호출은 트랜잭션 밖에서만 실행한다.
+
+revision의 확정 payload는 추가만 가능하며 생성 상태만 별도 행에서 변경한다. 생성 작업에는 revisionId, snapshot/document version, 고정 payload fingerprint를 저장한다. 작업자와 재시도는 이 사본만 사용하고 불일치 시 중단하며 현재 case에서 내용을 다시 조립하지 않는다.
+
+확정과 발송 작업자는 같은 잠금 순서를 지키고 관련 작업 행을 잠가 경쟁 결과를 정한다. 확정이 먼저면 pending/processing 작업을 무효화하고 대체 의도를 함께 저장한다. 해당 작업이 이미 되돌릴 수 없는 dispatching 상태라면 확정은 409로 거부하고 초안을 보존한다. 문자와 전자문서 작업자는 발송 권한을 얻는 원자적 상태 전이 직전에 revision, business fingerprint, 날짜/N, 문서 동기화 상태를 다시 검증한다. 전자문서 작업에도 이 발송 전 경계를 명시적으로 추가한다. 영수증은 링크 발급/이미지 준비 전에 동기화 상태를 검사하고 문자 발송 권한을 얻을 때 다시 확인한다. 단순히 API 호출 바로 전에 조회하는 방식으로 경쟁 해결을 주장하지 않는다.
+
+검증은 격리된 PostgreSQL과 가짜 외부 제공자를 사용한다. 각 저장 경계 직후 실패를 주입하여 전체 롤백을 확인하고, 동일 키 동시 요청·다른 내용 재사용·변경 없는 확정·외부 지점 키·오래된 preview를 검증한다. 문자/전자문서의 확정 우선과 발송 우선 양방향 경쟁, 계약 자동 완료와 snapshot 최종화 경쟁, 동기화 대기 중 영수증 준비, 기존 쓰기 경로의 N/plannedSessions 보존을 실제 동시 트랜잭션과 명시적 barrier로 재현한다.
+
 - **Task 4.1: 확정 트랜잭션과 충돌 처리** (feature, high)
   - 모든 관련 쓰기 경로의 잠금 순서를 조사하고 한 가지 순서로 통일한 뒤 구현한다. 원본 기록·client·employee_schedule·assignment·초안 버전을 잠금 안에서 다시 확인한다. 일반 제출·기존 일정 변경·자동 최종화와 충돌해도 교착이나 조용한 덮어쓰기가 없어야 한다. 현재 entry는 case → client → 직원 순서이며 기존 schedule 경로는 client → 직원 → lifecycle/case여서 이미 같은 순서라고 가정하면 안 된다. 공통 쓰기 조정 경계의 권장 순서는 client → 정렬된 직원 → case → 정렬된 세션/배정 → draft/revision이며, 전체 영향 경로가 이 순서를 지키는 테스트를 확정 기능보다 먼저 통과시킨다.
   - 일정·기록·수정 이력·확정 데이터 사본·문서 생성 의도를 하나의 DB 트랜잭션으로 저장한다. 실제 제출/서명 시각·기존 제공인력 귀속은 보존하고 지점 수정자/확정자/시각을 별도로 남긴다. 서비스 제공 링크 만료·finalization 예정일 등 파생 데이터도 같은 변경과 일치시킨다. 영수증 링크의 기존 만료 계약은 유지한다. duration과 본인부담금 수령일·금액은 쓰기 허용 목록에서 제외한다. 계약서와 영수증 기간 갱신 의도 및 기존 예약 작업의 무효화 버전도 함께 저장한다.
@@ -238,6 +248,7 @@ N은 지원하는 달력의 완전한 시작/종료일이 있을 때만 초기�
 
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/admin-service-record-edit.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/infrastructure/database/repositories/service-record-edit.repository.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-entry.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-lifecycle.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/schedule-change.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/policies/employee-schedule-invariants.policy.ts`
+  **추가 Paths:** `backend/prisma/schema.prisma`, `backend/prisma/migrations/**` (이 task의 신규 migration), `backend/interface/controllers/admin-service-record.controller.ts`, `backend/interface/dto/admin-service-record-edit.dto.ts`, `backend/module/service-record-entry.module.ts`, `backend/domain/repositories/service-record-edit.repository.interface.ts`, `backend/domain/entities/eformsign-document-job.entity.ts`, `backend/domain/repositories/eformsign-document-job.repository.interface.ts`, `backend/application/services/eformsign-document-job.service.ts`, `backend/infrastructure/database/repositories/sb.eformsign-document-job.repository.ts`, `backend/module/eformsign-doc.module.ts`, `backend/application/services/service-record-token.service.ts`, `backend/application/services/service-record-link.service.ts`, `backend/domain/repositories/receipt-link-token.repository.interface.ts`, `backend/infrastructure/database/repositories/sb.receipt-link-token.repository.ts`, `backend/application/services/receipt-link-token.service.ts`, `backend/module/receipt-link.module.ts`, 관련 단위 및 격리 DB 테스트. 토큰 변경도 호출자의 TransactionClient를 받아 중첩 트랜잭션을 만들지 않는다.
   **Depends:** Task 3.1, Task 3.A
 
 - **Task 4.2: 기존 일정 변경과 자동 작업도 같은 날짜를 사용** (feature, high)
@@ -247,6 +258,7 @@ N은 지원하는 달력의 완전한 시작/종료일이 있을 때만 초기�
 
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `backend/application/services/schedule-change.service.ts`, `backend/application/services/service-record-lifecycle.service.ts`, `backend/application/services/service-record-entry.service.ts`, `backend/application/services/contract-auto-finalize-scheduler.service.ts`, `backend/application/services/contract-auto-finalize.policy.ts`, `backend/application/services/eformsign-document-job-worker.service.ts`, `backend/application/services/message-trigger*.ts`  
+  **추가 Paths:** `backend/application/services/client.service.ts`, `backend/application/services/employee-schedule.service.ts`, `backend/application/usecases/employee-schedule/create-employee-schedule.usecase.ts`, `backend/application/usecases/employee-schedule/update-employee-schedule.usecase.ts`, `backend/infrastructure/database/repositories/sb.employee-schedule.repository.ts`, `backend/application/services/message-automation-intent.service.ts`, `backend/application/services/message-automation-intent-writer.ts`, `backend/infrastructure/database/repositories/sb.message-trigger-job.repository.ts`, `backend/application/services/service-record-link.service.ts`, `backend/application/services/service-record-token.service.ts`, `backend/application/services/service-record-finalization.service.ts`, `backend/application/services/service-record-finalization-scheduler.service.ts`, `backend/application/services/receipt-link-issue.service.ts`, `backend/application/services/receipt-link-delivery-enricher.service.ts`, Task 4.1의 receipt token 및 eformsign job 소유 경로, `backend/application/services/admin-service-record.service.ts`, `packages/shared/src/utils/service-record-schedule.ts`, 관련 단위 및 격리 DB 테스트. 기존 post-commit 동기화도 확정 N/plannedSessions를 보존하고 오래된 입력은 거부한다. 수정 문서 생성이 진행 중이면 자동 완료를 차단한다.
   **Depends:** Task 4.1
 
 - **Task 4.A: 단계 독립 감사** (test, high)
