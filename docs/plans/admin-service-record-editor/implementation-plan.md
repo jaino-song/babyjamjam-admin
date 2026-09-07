@@ -1,4 +1,6 @@
-TL;DR: 지점의 수정 확정 한 번으로 제공 일수를 유지하면서 일정·기록·계약서·영수증의 서비스 기간을 맞추고, 기존 서명과 본인부담금 수령일을 보존한다.
+TL;DR: 지점의 수정 확정 한 번으로 제공 일수를 유지하면서 일정·기록·계약서·영수증의 서비스 기간을 맞추고, 완료 전 계약의 기존 서명과 본인부담금 수령일을 보존하며 완료 계약은 새 계약 생성·재서명으로 처리한다.
+
+정식 계획 기준일: 2026-09-08. 최신 정책 및 단계 의존성의 Astra(gpt-6-astra/medium) 독립 검토: APPROVE. 제공기관 검토에서 검증된 참여자 수정 단계로 돌아가는 경로 누락을 보완한 뒤 재검토했다. 이는 계획 검토이며 Phase 0 실행 완료 판정은 아니다. 이번 문서는 최신 사용자 결정을 반영한 실행 계획이며, 과거 검증의 성공/실패 기록은 그대로 보존한다.
 
 관련 설계 결정: `docs/adr/ADR-012-admin-service-record-revisions.md` (Proposed).
 
@@ -19,14 +21,26 @@ TL;DR: 지점의 수정 확정 한 번으로 제공 일수를 유지하면서 �
 | 기간 불일치 확인 | 저장 시 입력 기간의 영업일 수와duration이 다르면 기존 취소/확인 모달 사용. 사유·타기관 이용 여부·별도 제공 일수 입력 없음. 취소는 입력 유지·저장 안 함, 확인은 입력 날짜와duration을 그대로 저장 |
 | 이동 | 주말·한국 공휴일 선택 불가, 선택 회차 이후 제출·미작성 회차 모두 동일한 영업일 차이만큼 이동 |
 | 표시 | 지점은 최초 날짜와 수정 날짜, 제공인력과 생성 문서는 확정된 수정 날짜만 표시 |
-| 서명 | 기존 서명 보존·재서명 없음. 기록지의 표시용 서명 날짜는 수정 제공일로 변경, 실제 서명·제출 시각은 보존 |
+| 서명 | 제공기록지와 완료 전 계약은 기존 서명 보존. 완료 계약을 새로 생성할 때는 이용자에게 새 서명을 받음. 기록지의 표시용 서명 날짜는 수정 제공일로 변경, 실제 서명·제출 시각은 보존 |
 | 계약과 영수증 | 계약 기간 필드와 영수증 서비스 기간 필드를 함께 갱신. 본인부담금 수령일·금액은 변경하지 않음 |
-| 전자문서 | 계약 완료 전에는 같은 문서 항목 갱신. 이미 계약 완료면 새 전자문서 생성, 기존 문서 이력 보존 |
+| 전자문서 | 계약 완료 전에는 같은 문서 항목 갱신. 이미 계약 완료면 처음부터 새 계약 생성 → 이용자 새 서명 → 제공기관 확인/검토, 기존 완료 문서 이력 보존 |
 | 관련 기능 | 고객/배정/기록/현황 카드/예약 메시지/서비스 종료 후 계약 자동 완료 시점 연동 |
 
 비목표: 날짜 수정에 따른 확정 제공 일수N·요금·바우처 종류 변경, 본인부담금 수령일 변경, 기존 실제 서명 시각 조작, 일반 제공인력 인증 완화, 지점 간 권한 확대, 제공인력 자동 교체, 산모 기본정보 편집, 수정 확정 때 추가 안내 메시지 자동 발송. 완료 전 계약에 별도 ‘수정 계약서’를 발급하지 않는다. 고객 정보의 기간 불일치 확인은 기존 모달을 재사용하며 별도 사유나 전입 구분을 도입하지 않는다.
 
 검증 근거: `technical-verification-20260907.md`. 남동구 최신 양식으로 생성한 테스트 문서에서 제공기관 확인 단계 임시 저장 후 동일 ID·서명·수령일 유지와 변경 날짜 재조회까지 확인했다. 영수증 서비스 기간은 계약 종료일 변경만으로 자동 갱신되지 않아 별도로 입력했다. 이 증거는 자동 API 저장·공용 다운로드 PDF·영수증 이미지 갱신 증거를 대신하지 않는다.
+
+최신 결정과 실행 경계:
+
+| 구분 | 정식 계획의 처리 |
+|---|---|
+| 실제 일수 예외 | 바우처15일·실제13일이면 가격 기준15일, 확정 회차13개. 이후 중간1일 미제공 시 회차13개를 유지하고 마지막 제공일을 연장 |
+| 최초 날짜 | 첫 지점 수정 전 날짜를 영구 보존. 두 번째 수정에도 최초 날짜를 새 기준으로 덮어쓰지 않음 |
+| 전자문서 확정 | DB의 수정 확정과 외부 문서 반영 완료를 별도 상태로 표시. PDF가 최신인지 확인되기 전 영수증 이미지 참조를 바꾸지 않음 |
+| 완료 계약 | 신규 계약의 새 서명은 이용자가 수행. 생성 요청 응답이 유실되면 기존 요청 결과를 먼저 조회하고 무조건 다시 발급하지 않음 |
+| 현재 검증 완료 | 남동구·서구 완료 전 동일 문서의 수정 날짜를 독립 API/PDF에서 확인. 격리 환경 동일 영수증 URL 이미지 교체와 인증·만료 유지 확인 |
+| 남은 Phase 0 | 완료 계약에서 신규 계약 생성·새 서명 흐름, 응답 유실·부분 반영·오래된 PDF 복구. 실제 운영 링크가 없는 테스트 고객은 격리 링크 증거와 구분하며 운영 링크 검증은 해당 링크가 존재하는 승인된 대상으로만 진행 |
+| 배포 전 확인 | 운영 대상 receipt_link_token 테이블은 존재하지만 예상 migration 기록과 차이가 있었음. 스키마·제약·migration 출처를 대조하고 정상화 방식을 검토한 뒤 배포. 테이블 부재로 단정하거나 무조건 재생성하지 않음 |
 
 현재 코드에서 직접 확인한 출발점:
 
@@ -40,7 +54,7 @@ TL;DR: 지점의 수정 확정 한 번으로 제공 일수를 유지하면서 �
 | 일반 관리자 레이아웃은 사이드바 포함 | [ProtectedLayout](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/frontend/src/app/(protected)/layout.tsx:25) |
 | entry가 case를 먼저 잠금 | [entry의 첫 잠금](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-entry.service.ts:177) |
 
-실행 주석: 사용자의 2026-09-07 실행 지시에 따라 각 구현 task는 gpt-5.6-luna/max로 수행한다. local은 luna_implementer, 승인된 network는 luna_network_implementer를 사용한다. 메인 에이전트는 통합과 검증을 담당한다. 각 Phase의 독립 감사는 default 에이전트에 model=gpt-6-astra, reasoning_effort=medium을 명시하여 수행한다. 구현자와 별도 컨텍스트(fork_turns=none)에서 읽기 전용으로 감사하며, 각 Phase 완료 또는 차단 보고 시 실행한다. 감사 지적은 해당 Luna/max 구현 작업으로 돌려보내고 해소 확인 전 다음 Phase로 진행하지 않는다. 과거 Sol 계획 검토 기록은 그대로 보존한다. 구현 작업은 순차 실행하며 병렬 배치는 없다.
+실행 주석: 사용자의 2026-09-07 실행 지시에 따라 각 구현 task는 gpt-5.6-luna/max로 수행한다. local은 luna_implementer, 승인된 network는 luna_network_implementer를 사용한다. 메인 에이전트는 통합과 검증을 담당한다. 사용자의 최신 지시에 따라 각 Phase의 독립 감사와 최종 검토는 sol_reviewer 에이전트에 model=gpt-5.6-sol, reasoning_effort=high를 명시하여 수행한다. 구현자와 별도 컨텍스트(fork_turns=none)에서 읽기 전용으로 감사하며, 각 Phase 완료 또는 차단 보고 시 실행한다. 감사 지적은 해당 Luna/max 구현 작업으로 돌려보내고 해소 확인 전 다음 Phase로 진행하지 않는다. 과거 Sol 계획 검토 기록은 그대로 보존한다. 구현 작업은 순차 실행하며 병렬 배치는 없다.
 
 추가 Task의 상대 Paths는 동일 task worktree 루트를 기준으로 해석한다.
 
@@ -51,13 +65,22 @@ TL;DR: 지점의 수정 확정 한 번으로 제공 일수를 유지하면서 �
 화면 임시 저장과 앱 자동 연동의 차이를 실제 테스트 문서로 검증한다.
 
 - **Task 0.1: 확인 단계 저장·출력·완료 문서 생성 검증** (test, high)
-  - 기존 eformsign 연동의 공식 지원 API 또는 임베디드 편집 흐름으로 같은 문서의 계약 기간과 영수증 서비스 기간을 갱신한다. 남동구·서구 각각 서명 완료/계약 완료 전 문서를 사용해 저장 후 API 재조회, 별도 미리보기/다운로드 PDF, 영수증 이미지까지 확인한다. UI의 임시 저장만 보이면 최종 출력 반영으로 판정하지 않는다. 계약 완료 후 새 문서 생성도 재서명 없이 가능한지 별도로 확인한다.
-  - 동일 문서 ID·이용자 서명·원래 서명 이력·수령일·금액·확인 단계가 보존되는지 검증한다. 공식 저장 경로가 완료를 강제하거나 재서명을 요구하면 자동화는 통과가 아니다. 브라우저 내부 비공개 요청 재생이나 목록의 ‘수정’으로 작성 단계로 되돌리는 우회는 사용하지 않는다.
+  - 기존 eformsign 연동의 공식 지원 API 또는 임베디드 편집 흐름으로 같은 문서의 계약 기간과 영수증 서비스 기간을 갱신한다. 남동구·서구 각각 서명 완료/계약 완료 전 문서를 사용해 저장 후 API 재조회, 별도 미리보기/다운로드 PDF, 영수증 이미지까지 확인한다. UI의 임시 저장만 보이면 최종 출력 반영으로 판정하지 않는다. 계약 완료 후에는 원본 완료 문서를 수정하지 않고, 수정 날짜로 새 계약을 처음부터 생성해 이용자 새 서명과 제공기관 확인/검토로 이어지는 경로를 별도로 확인한다. 원본 서명 복사나 승계 가능 여부는 이 분기의 검증 조건에서 제외한다.
+  - 동일 문서 ID·이용자 서명·원래 서명 이력·수령일·금액·확인 단계가 보존되는지 검증한다. 완료 전 동일 문서 저장 경로가 완료를 강제하거나 재서명을 요구하면 해당 분기는 통과가 아니다. 완료 후 새 계약의 재서명은 정상 절차다. 브라우저 내부 비공개 요청 재생이나 목록의 ‘수정’으로 작성 단계로 되돌리는 우회는 사용하지 않는다.
   - 외부 저장 성공/응답 유실·부분 갱신·다운로드가 이전 데이터인 경우의 복구 방법을 증거와 함께 기록한다. 통과 전 문서 자동 연동을 구현 가능한 것으로 단정하거나 기능을 운영에 켜지 않는다. 기술적으로 불가능하면 정책을 임의로 바꾸지 않고 제약과 구체적 대안을 사용자에게 제시한다. 이 검증은 기존 본인 테스트 권한 범위만 사용하고 다른 고객에게 발송하지 않는다.
 
   **Tier:** heavy · **Sandbox:** network · **Agent:** luna_network_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `backend/application/services/eformsign.service.ts`, `backend/test/e2e/contract-headless.live.e2e.spec.ts`, `backend/test/e2e/bjj249-service-record-snapshot.live.e2e.spec.ts`, `docs/plans/admin-service-record-editor/technical-verification-20260907.md`  
   **Depends:** none
+
+- **Task 0.A: 단계 독립 감사** (test, high)
+  - 이 단계의 변경과 실제 검증 근거를 읽기 전용으로 검토한다. 요구사항 충돌·권한 누락·날짜 또는 문서 불일치가 남으면 해당 task를 수정한 뒤 재감사한다. 승인 전 다음 단계에 착수하지 않는다.
+
+  **Tier:** standard · **Sandbox:** local · **Agent:** sol_reviewer (읽기 전용 감사) · **Model:** gpt-5.6-sol · **Effort:** high
+
+  **Paths:** 이 단계에 명시한 Paths와 검증 결과 읽기 전용
+
+  **Depends:** Task 0.1
 
 ## Phase 1 — 동일한 화면과 관리자 진입 경계 확보
 
@@ -74,7 +97,7 @@ TL;DR: 지점의 수정 확정 한 번으로 제공 일수를 유지하면서 �
 
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/packages/service-record-ui/`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/mobile/src/app/(public)/service-record/[token]/page.tsx`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/mobile/src/components/app/service-record/`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/frontend/package.json`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/mobile/package.json`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/pnpm-lock.yaml`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/pnpm-workspace.yaml`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/frontend/next.config.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/mobile/next.config.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/docs/design-system/component-manifest.json`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/docs/design-system/ui-debt-baseline.json`  
-  **Depends:** Task 0.1
+  **Depends:** Task 0.1, Task 0.A
 
 - **Task 1.2: 조회 전용 관리자 진입을 먼저 연결** (feature, med)
   - 메뉴는 링크로 새 탭을 열어 팝업 차단을 피한다. 관리자 조회 API가 branch·case 권한을 확인한 뒤 전체 회차를 반환한다. 조회만으로 링크 발급·기록 생성·문자 발송이 일어나지 않는다.
@@ -84,6 +107,15 @@ TL;DR: 지점의 수정 확정 한 번으로 제공 일수를 유지하면서 �
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/frontend/src/app/(protected)/clients/page.tsx`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/frontend/src/app/(service-record-admin)/`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/frontend/src/app/api/admin/service-records/`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/interface/controllers/admin-service-record.controller.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/admin-service-record.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/interface/dto/admin-service-record.dto.ts`  
   **Depends:** Task 1.1
+
+- **Task 1.A: 단계 독립 감사** (test, high)
+  - 이 단계의 변경과 실제 검증 근거를 읽기 전용으로 검토한다. 요구사항 충돌·권한 누락·날짜 또는 문서 불일치가 남으면 해당 task를 수정한 뒤 재감사한다. 승인 전 다음 단계에 착수하지 않는다.
+
+  **Tier:** standard · **Sandbox:** local · **Agent:** sol_reviewer (읽기 전용 감사) · **Model:** gpt-5.6-sol · **Effort:** high
+
+  **Paths:** 이 단계에 명시한 Paths와 검증 결과 읽기 전용
+
+  **Depends:** Task 1.2
 
 ## Phase 2 — 원본과 분리된 수정 초안
 
@@ -108,7 +140,7 @@ TL;DR: 지점의 수정 확정 한 번으로 제공 일수를 유지하면서 �
 
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/prisma/schema.prisma`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/prisma/migrations/`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/infrastructure/repositories/service-record-edit.repository.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/interface/dto/admin-service-record-edit.dto.ts`  
-  **Depends:** Task 1.2
+  **Depends:** Task 1.2, Task 1.A
 
 - **Task 2.2: 임시저장·재개·취소를 화면에 연결** (feature, med)
   - 회차별 저장은 draft만 수정한다. 확정된 일정·공개 제공기록지·문서·현황 카드는 그대로 유지한다. 변경된 회차와 마지막 저장 상태를 표시한다.
@@ -118,6 +150,15 @@ TL;DR: 지점의 수정 확정 한 번으로 제공 일수를 유지하면서 �
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/admin-service-record-edit.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/interface/controllers/admin-service-record.controller.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/frontend/src/features/service-records/`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/frontend/src/app/api/admin/service-records/`  
   **Depends:** Task 2.1
+
+- **Task 2.A: 단계 독립 감사** (test, high)
+  - 이 단계의 변경과 실제 검증 근거를 읽기 전용으로 검토한다. 요구사항 충돌·권한 누락·날짜 또는 문서 불일치가 남으면 해당 task를 수정한 뒤 재감사한다. 승인 전 다음 단계에 착수하지 않는다.
+
+  **Tier:** standard · **Sandbox:** local · **Agent:** sol_reviewer (읽기 전용 감사) · **Model:** gpt-5.6-sol · **Effort:** high
+
+  **Paths:** 이 단계에 명시한 Paths와 검증 결과 읽기 전용
+
+  **Depends:** Task 2.2
 
 ## Phase 3 — 날짜 연동과 최종 확인 내역
 
@@ -137,7 +178,7 @@ TL;DR: 지점의 수정 확정 한 번으로 제공 일수를 유지하면서 �
 
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-entry.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/schedule-change.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-lifecycle.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-finalization.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/policies/employee-schedule-invariants.policy.ts`  
-  **Depends:** Task 2.2
+  **Depends:** Task 2.2, Task 2.A
 
 - **Task 3.1: 날짜 변경 계산과 서버 미리보기** (feature, high)
   - 기존 `schedule-change`의 영업일 계산·배정 충돌 검사·클라이언트/직원 잠금 정책을 재사용한다. 다만 현재 ‘잠금되지 않은 뒤 회차만 이동’과 ‘종료일 연장’ 전용 부분을 그대로 호출하지 않는다.
@@ -161,6 +202,15 @@ TL;DR: 지점의 수정 확정 한 번으로 제공 일수를 유지하면서 �
 | `GET revisions/:revisionId` | 확정 기록과 수정본 생성 상태 조회 |
 | `POST revisions/:revisionId/retry-documents` | 같은 수정본의 실패한 문서 생성만 재시도 |
 
+- **Task 3.A: 단계 독립 감사** (test, high)
+  - 이 단계의 변경과 실제 검증 근거를 읽기 전용으로 검토한다. 요구사항 충돌·권한 누락·날짜 또는 문서 불일치가 남으면 해당 task를 수정한 뒤 재감사한다. 승인 전 다음 단계에 착수하지 않는다.
+
+  **Tier:** standard · **Sandbox:** local · **Agent:** sol_reviewer (읽기 전용 감사) · **Model:** gpt-5.6-sol · **Effort:** high
+
+  **Paths:** 이 단계에 명시한 Paths와 검증 결과 읽기 전용
+
+  **Depends:** Task 3.1
+
 ## Phase 4 — 한 번의 수정 확정으로 최종 반영
 
 한쪽만 저장되는 상태와 오래된 확인 창으로 덮어쓰는 일을 막는다.
@@ -172,7 +222,7 @@ TL;DR: 지점의 수정 확정 한 번으로 제공 일수를 유지하면서 �
 
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/admin-service-record-edit.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/infrastructure/repositories/service-record-edit.repository.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-entry.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-lifecycle.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/schedule-change.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/policies/employee-schedule-invariants.policy.ts`  
-  **Depends:** Task 3.1
+  **Depends:** Task 3.1, Task 3.A
 
 - **Task 4.2: 기존 일정 변경과 자동 작업도 같은 날짜를 사용** (feature, high)
   - 기존 일정 변경·배정·기록 조회·알림 조회자가 확정 날짜 배열과N을 함께 읽게 한다. 공개 제공인력 저장/upsert 역시 잠금 안에서 최신 plannedSessions의 날짜·귀속을 검증하고 서버 값으로 저장한다. 요청의 날짜가 오래된 버전에 해당하면 409와 재조회 요구로 거부한다. 관리자 확정 직후 제공인력이 미작성 회차를 생성하는 동시 실행에서도 이전 계산 날짜가 다시 들어가면 실패다. 날짜 수정으로duration을 다시 계산하거나N을duration으로 덮어쓰지 않는다. 15일 바우처·13일 제공의 가격 유지, 13회차 유지, 휴무 후 종료일 연장과 기존 일반 서비스, 제출/미작성 회차 보존을 통합 검증한다. 신규 관리자 경로에서만 맞고 기존 기능에서 다시 덮어쓰는 구현은 통과시키지 않는다.
@@ -182,6 +232,15 @@ TL;DR: 지점의 수정 확정 한 번으로 제공 일수를 유지하면서 �
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `backend/application/services/schedule-change.service.ts`, `backend/application/services/service-record-lifecycle.service.ts`, `backend/application/services/service-record-entry.service.ts`, `backend/application/services/contract-auto-finalize-scheduler.service.ts`, `backend/application/services/contract-auto-finalize.policy.ts`, `backend/application/services/eformsign-document-job-worker.service.ts`, `backend/application/services/message-trigger*.ts`  
   **Depends:** Task 4.1
+
+- **Task 4.A: 단계 독립 감사** (test, high)
+  - 이 단계의 변경과 실제 검증 근거를 읽기 전용으로 검토한다. 요구사항 충돌·권한 누락·날짜 또는 문서 불일치가 남으면 해당 task를 수정한 뒤 재감사한다. 승인 전 다음 단계에 착수하지 않는다.
+
+  **Tier:** standard · **Sandbox:** local · **Agent:** sol_reviewer (읽기 전용 감사) · **Model:** gpt-5.6-sol · **Effort:** high
+
+  **Paths:** 이 단계에 명시한 Paths와 검증 결과 읽기 전용
+
+  **Depends:** Task 4.2
 
 ## Phase 5 — 계약과 영수증 동기화 및 기록지 재생성
 
@@ -223,22 +282,23 @@ DB 저장과 외부 문서 생성은 하나의 트랜잭션으로 묶을 수 없
 
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-finalization.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-finalization-scheduler.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-lifecycle.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/usecases/eformsign-doc/`  
-  **Depends:** Task 4.2
+  **Depends:** Task 4.2, Task 4.A
 
 계약 외부 단계별 처리 계약:
 
 | 실제 외부 상태 | 작업 규칙 |
 |---|---|
-| 제공기관 확인/수정 가능 참여 단계 | Phase 0에서 검증한 동일 문서 저장 경로로 갱신, 저장 전후 단계와 필드 재조회 |
+| 제공기관 검토 (`070/06`, 검증한 양식의 검토 단계) | 현재 양식·단계·직전 내부 참여자·권한을 검증한 뒤 공식 반려를 한 번 요청. 응답 유실 시 재조회하여 중복 반려 금지. 직전 제공기관 참여 단계로 이동했는지 확인한 뒤 아래 동일 문서 수정 경로 사용 |
+| 검증된 제공기관 참여/반려 상태 (`060/05` 또는 `071/05`, 실제 참여 단계와 수신자 일치 필수) | 최신 상태와 내부 수신자를 재검증하고 공식 SDK 참여자 경로로 날짜 필드를 수정·전송. 현재 SDK가 제공한 동작 코드만 사용하며 검토 단계 복귀와 API/PDF를 확인 |
 | 이용자 서명 대기/서명 진행/전송 중 | 기존 문서를 유지하고 문서 갱신은 대기. 서명 완료 후 제공기관 확인 상태에서 최신 확정 버전을 저장. 대기 중 문서 동기화는 미완료로 표시하고 자동 계약 완료/영수증 전송을 보류 |
-| 완료 | 원본을 유지하고 새 전자문서 생성, 같은 완료 문서 수정 시도 금지 |
-| 반려/취소/삭제/권한 부족/알 수 없음 | 기존 워크플로우 정책에 따라 처리 필요 상태로 표시, 무조건 재발급하거나 작성 단계로 되돌리지 않음 |
+| 완료 | 원본 완료 문서 보존 → 수정 날짜로 새 계약 생성 → 이용자 새 서명 → 제공기관 확인/검토. 같은 완료 문서 수정 시도 금지 |
+| 위에서 검증한 참여자 반려 이외의 반려/취소/삭제/권한 부족/알 수 없음 | 기존 워크플로우 정책에 따라 처리 필요 상태로 표시, 무조건 재발급하거나 작성 단계로 되돌리지 않음 |
 
-상태는 표시 이름이 아니라 외부 단계 타입·문서 상태 및 저장 가능 권한으로 판단한다. 외부에서 서명 중인 동안 값을 덮어쓰지 않는다. 제공기관 확인으로 전환된 후 저장하되 원래 서명 당시 값과 날짜의 근거를 보존하고, 그 서명을 새 변경에 대한 동의로 기록하지 않는다. 저장 직전/직후 완료 경합은 재조회하며 결과 불명 상태에서는 중복 신규 생성하지 않는다. 이 단계 매트릭스의 자동화 가능성도 Phase 0의 통과 조건이다.
+위 코드와 단계 번호는 검증 양식의 관측값이며 모든 양식에 고정 적용하지 않는다. 상태는 표시 이름이 아니라 외부 단계 타입·문서 상태 및 저장 가능 권한으로 판단한다. 외부에서 서명 중인 동안 값을 덮어쓰지 않는다. 제공기관 확인으로 전환된 후 저장하되 원래 서명 당시 값과 날짜의 근거를 보존하고, 그 서명을 새 변경에 대한 동의로 기록하지 않는다. 저장 직전/직후 완료 경합은 재조회하며 결과 불명 상태에서는 중복 신규 생성하지 않는다. 이 단계 매트릭스의 자동화 가능성도 Phase 0의 통과 조건이다.
 
 - **Task 5.3: 계약서와 영수증 기간을 같은 수정 버전으로 갱신** (feature, high)
   - 확정 사본에서 계약 시작/종료일과 영수증 서비스 기간을 모두 만든다. eformsign 문서별 ID·실제 단계·양식 버전·필드 권한을 확인하고, 미완료 계약은 Task 0.1에서 증명한 같은 문서 저장 경로를 사용한다. 변경 전 필드/서명 근거를 보존한다. 수령일·금액·실제 서명 시각을 변경 payload에 넣지 않는다. 오래된 검토 단계 문서에도 동일 이름의 확인 단계 설정이 적용됐다고 가정하지 않는다.
-  - 완료된 계약은 고정 수정 사본·원본 서명을 사용해 새 문서를 생성하고 원본 ID를 이력에 남긴다. 완료/미완료 판단과 저장 사이에 완료된 경우 다시 조회해 분기를 재결정한다. 응답 유실만으로 새 문서를 생성하지 않는다. 문서별 `(revisionId, documentId, operation)` 중복 방지와 전체 필드 재조회로 부분 성공을 감지한다.
+  - 완료된 계약은 고정 수정 사본의 날짜·고객 정보를 사용해 새 계약을 처음부터 생성하고 이용자에게 새 서명을 받는다. 원본 서명을 새 계약에 복사하지 않으며 원본 ID와 신규 계약 ID의 연결을 이력에 남긴다. 신규 계약은 서명 대기 상태부터 기존 워크플로우를 따른다. 신규 계약 ID를 확보한 것만으로 계약 연동 완료나 영수증 최신 전환으로 표시하지 않는다. 완료/미완료 판단과 저장 사이에 완료된 경우 다시 조회해 분기를 재결정한다. 응답 유실만으로 새 문서를 생성하지 않는다. 문서별 `(revisionId, documentId, operation)` 중복 방지와 전체 필드 재조회로 부분 성공을 감지한다.
   - 계약/영수증 연동 완료는 두 필드 저장 및 출력 확인 후 표시한다. 후속 확정은 이전 연동 정리 후 허용하고 초안은 계속 저장할 수 있다. 기록지 청크와 계약 문서의 최신 포인터는 별도로 관리하며 기록지 생성이 고객 계약 eDocId를 덮어쓰면 실패다. 남동구·서구 및 완료 전/후, 저장 도중 완료·응답 유실·오래된 webhook을 검증한다.
 
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
@@ -262,6 +322,15 @@ DB 저장과 외부 문서 생성은 하나의 트랜잭션으로 묶을 수 없
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/frontend/src/features/service-records/`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/frontend/src/components/app/clients/ClientServiceRecordsTab.tsx`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/frontend/src/app/(service-record-admin)/`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/admin-service-record.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/packages/shared/src/types/service-record.ts`  
   **Depends:** Task 5.1, Task 5.3, Task 5.4
+
+- **Task 5.A: 단계 독립 감사** (test, high)
+  - 이 단계의 변경과 실제 검증 근거를 읽기 전용으로 검토한다. 요구사항 충돌·권한 누락·날짜 또는 문서 불일치가 남으면 해당 task를 수정한 뒤 재감사한다. 승인 전 다음 단계에 착수하지 않는다.
+
+  **Tier:** standard · **Sandbox:** local · **Agent:** sol_reviewer (읽기 전용 감사) · **Model:** gpt-5.6-sol · **Effort:** high
+
+  **Paths:** 이 단계에 명시한 Paths와 검증 결과 읽기 전용
+
+  **Depends:** Task 5.2
 
 ## Phase 6 — 오류 상황을 포함한 통합 검증
 
@@ -290,12 +359,12 @@ DB 저장과 외부 문서 생성은 하나의 트랜잭션으로 묶을 수 없
 
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/docs/plans/admin-service-record-editor/verification.md`, 전체 변경 파일은 검사 대상으로 읽기  
-  **Depends:** Task 5.2
+  **Depends:** Task 5.2, Task 5.A
 
 - **Task 6.2: 독립 최종 검토** (test, high)
   - 구현자가 아닌 검토자가 권한·초안 분리·경합·문서 버전·롤백 근거를 읽기 전용으로 검토한다. 수정 요구가 나오면 해당 구현 task로 돌려보내고 필요한 검증을 다시 실행한다.
 
-  **Tier:** standard · **Sandbox:** local · **Agent:** default (읽기 전용 감사) · **Model:** gpt-6-astra · **Effort:** medium
+  **Tier:** standard · **Sandbox:** local · **Agent:** sol_reviewer (읽기 전용 감사) · **Model:** gpt-5.6-sol · **Effort:** high
   **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/`의 task diff와 검증 결과 읽기 전용  
   **Depends:** Task 6.1
 
