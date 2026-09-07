@@ -374,3 +374,6 @@
 - Task1.2 `95f72883c` 통합 HEADbd0b9800e, cleanunit/branch삭제. 메인 통합backend서비스/컨트롤러15개 및 frontendproxy/adapter/menu17개 재실행PASS. Worker보고모바일shared3·양앱타입/빌드·backendproductionbuild·UIgate도PASS. 원본서명은editorGET에서만포함하고기존GET은필드미포함을검증했다.
 - 전체backend tsc는기존Phase0영수증helper/spec5개오류로FAIL(createReplacingActive제거,serviceEndDate필수화). 별도9f00a89e6기준unit에서동일명령(--incremental false)로같은5개오류를재현해Phase1신규오류와분리했고기준unit/branch정리했다. Task5.4의정확한관련검증파일scope에현재계약호환보완을추가했다. 전체tscPASS로보고하지않으며최종게이트전에해소한다.
 - Phase1 Sol/high FINAL SHIP(HIGH), 중대발견없음. SharedUI/14항목·4화면,새탭인증경로,정본N/추가기록보존,editor전용서명,지점읽기범위와GET부작용없음을검토했다. 알려진baseline타입5오류/공식Chrome미검증/마지막narrow브라우저증거구분은유지한다. Phase2입력APPROVE에따라저장기반구현을착수한다.
+
+- Phase4 입력 Sol/high APPROVE: 같은 트랜잭션 enqueue/token, 변경 없는 확정까지 영구 중복 방지, 확정/발송 양방향 경쟁, 고정 revision payload 전달과 실제 소유 경로를 보완했다. 기존 message intent의 transaction 인자를 재사용한다.
+- 통합 ece1ce434에서 관리자 mock 브라우저 전체 24개 재실행 PASS(390/480/1280,1.5분). 마지막 outlier·상단높이 보완을 포함하며 앞선21+3 분리 검증의 공백을 닫았다. 결과 /tmp/bjj-service-record-admin-integrated-results. 실제 외부 API/DB/SMS 및 공식 Chrome 검증을 대신하지 않는다.
