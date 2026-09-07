@@ -6,10 +6,15 @@ export interface ServiceRecordSession {
     sessionIndex: number;
     serviceDate: string;
     locked: boolean;
+    submittedAt?: string | null;
+    updatedAt?: string;
     answers?: Record<string, unknown>;
     etcService?: string | null;
     notes?: string | null;
     paymentConfirmed?: boolean;
+    hasMomApproval?: boolean;
+    employeeId?: number | null;
+    employeeName?: string | null;
     momApproval?: string | null;
     clientSignature?: string | null;
     clientSignedAt?: string | null;
@@ -17,8 +22,8 @@ export interface ServiceRecordSession {
 
 export interface ServiceRecordContext {
     org?: { name: string };
-    employee: { id: number; name: string };
-    client: { id: number; name: string };
+    employee?: { id: number; name: string };
+    client?: { id: number; name: string };
     totalSessions: number;
     startDate: string | null;
     header: Record<string, unknown> | null;
@@ -59,6 +64,7 @@ export interface SignatureSlotProps {
 export interface ServiceRecordWizardSlots {
     provider?: (props: ProviderSlotProps) => ReactNode;
     signature?: (props: SignatureSlotProps) => ReactNode;
+    overviewSupplemental?: ReactNode;
     submitModal?: ReactNode;
     scheduleChangeModal?: ReactNode;
     serviceDateChangeModal?: ReactNode;
@@ -76,6 +82,12 @@ export interface ServiceRecordWizardProps {
     pageIdx: number;
     draft: Record<string, unknown>;
     editing: boolean;
+    /**
+     * Presentation-only mode for authenticated administration.  It keeps
+     * the public wizard defaults unchanged while making every form control
+     * read-only and every recorded session navigable.
+     */
+    readOnly?: boolean;
     clientSignature: string | null;
     busy: boolean;
     isRecordFinalized: boolean;

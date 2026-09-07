@@ -45,12 +45,14 @@ function FieldOptions({
     selected,
     onSelect,
     radio = false,
+    disabled = false,
 }: {
     dataComponent: string;
     options: string[];
     selected: (option: string) => boolean;
     onSelect: (option: string) => void;
     radio?: boolean;
+    disabled?: boolean;
 }) {
     return (
         <div data-component={dataComponent} data-slot="opts" className="opts">
@@ -61,6 +63,7 @@ function FieldOptions({
                     aria-pressed={selected(option)}
                     data-slot="opt"
                     className={`opt ${radio ? "radio " : ""}${selected(option) ? "sel" : ""}`}
+                    disabled={disabled}
                     onClick={() => onSelect(option)}
                 >
                     <span data-slot="box" className="box">{radio ? "●" : "✓"}</span>{option}
@@ -76,12 +79,14 @@ function DailyField({
     draft,
     onFieldChange,
     onToggleMulti,
+    readOnly = false,
 }: {
     dataComponent: string;
     item: (typeof DAILY_ITEMS)[number];
     draft: Record<string, unknown>;
     onFieldChange: (key: string, value: unknown) => void;
     onToggleMulti: (key: string, option: string) => void;
+    readOnly?: boolean;
 }) {
     const value = draft[item.key];
 
@@ -92,6 +97,7 @@ function DailyField({
                 options={item.opts ?? []}
                 selected={(option) => Array.isArray(value) && (value as string[]).includes(option)}
                 onSelect={(option) => onToggleMulti(item.key, option)}
+                disabled={readOnly}
             />
         );
     }
@@ -105,6 +111,7 @@ function DailyField({
                     selected={(option) => value === option}
                     onSelect={(option) => onFieldChange(item.key, option)}
                     radio
+                    disabled={readOnly}
                 />
                 {item.type === "stool" && value === "이상변" && (
                     <input
@@ -113,6 +120,7 @@ function DailyField({
                         style={{ marginTop: 8 }}
                         placeholder="색깔 등 (이상변 시)"
                         value={(draft[`${item.key}_color`] as string) ?? ""}
+                        disabled={readOnly}
                         onChange={(event) => onFieldChange(`${item.key}_color`, event.target.value)}
                     />
                 )}
@@ -134,6 +142,7 @@ function DailyField({
                             min="0"
                             step={count.k === "temp" ? "0.1" : "1"}
                             value={(draft[`${item.key}_${count.k}`] as string) ?? ""}
+                            disabled={readOnly}
                             onChange={(event) => onFieldChange(`${item.key}_${count.k}`, event.target.value)}
                         />
                         <span>{count.unit}</span>
@@ -157,6 +166,7 @@ function DailyField({
                 onChange={(event) => onFieldChange(item.key, event.target.value)}
                 placeholder={placeholder}
                 maxLength={item.maxLength}
+                disabled={readOnly}
             />
         );
     }
@@ -168,6 +178,7 @@ function DailyField({
                 options={["결제 확인 완료"]}
                 selected={() => Boolean(value)}
                 onSelect={() => onFieldChange(item.key, !value)}
+                disabled={readOnly}
             />
         );
     }
@@ -180,11 +191,13 @@ function MomConfirmationReview({
     draft,
     editing,
     onEdit,
+    readOnly = false,
 }: {
     dataComponent: string;
     draft: Record<string, unknown>;
     editing: boolean;
     onEdit: (sectionIndex: number) => void;
+    readOnly?: boolean;
 }) {
     return (
         <div data-component={dataComponent} data-slot="review" className="review">
@@ -192,7 +205,7 @@ function MomConfirmationReview({
                 <section data-component={`${dataComponent}_section`} data-slot="review-section" className="review-section" key={section.id}>
                     <div data-component={`${dataComponent}_section_header`} data-slot="sec-head" className="sec-head">
                         <span data-slot="tag" className={`tag ${section.tone === "finish" ? "etc" : section.tone}`}>{section.title}</span>
-                        {editing && (
+                        {editing && !readOnly && (
                             <button
                                 type="button"
                                 data-slot="sec-edit"
@@ -263,6 +276,7 @@ export function ServiceRecordWizard({
     pageIdx,
     draft,
     editing,
+    readOnly = false,
     clientSignature,
     busy,
     isRecordFinalized,
@@ -367,12 +381,12 @@ export function ServiceRecordWizard({
                     <>
                         <button data-component={child("body_service-back")} data-slot="text-back" className="text-back" type="button" onClick={onBack}>이전</button>
                         <div data-component={child("body_service-title")} data-slot="step-title" className="step-title">서비스 기본정보</div>
-                        <div data-component={child("body_readonly-row")} data-slot="ro" className="ro"><span>제공인력</span><b>{context.employee.name}</b></div>
+                        <div data-component={child("body_readonly-row")} data-slot="ro" className="ro"><span>제공인력</span><b>{context.employee?.name ?? "정보 없음"}</b></div>
                         <div data-component={child("body_readonly-row-2")} data-slot="ro" className="ro"><span>제공기관</span><b>{context.org?.name ?? "인천 아이미래로"}</b></div>
                         {HEADER_FIELDS.slice(0, 4).map((field) => (
                             <div data-component={child("body_field")} data-slot="fld" className="fld" key={field.k}>
                                 <label data-slot="lab" className="lab">{field.label}</label>
-                                <TextInput placeholder={field.ph} value={header[field.k] ?? ""} onChange={(event) => onHeaderChange(field.k, event.target.value)} />
+                                <TextInput placeholder={field.ph} value={header[field.k] ?? ""} disabled={readOnly} onChange={(event) => onHeaderChange(field.k, event.target.value)} />
                             </div>
                         ))}
                         <div data-component={child("body_delivery-field")} data-slot="fld" className="fld">
@@ -383,43 +397,45 @@ export function ServiceRecordWizard({
                                 selected={(option) => header.deliveryType === option}
                                 onSelect={onDeliveryTypeChange}
                                 radio
+                                disabled={readOnly}
                             />
                         </div>
                         <div data-component={child("body_field-2")} data-slot="fld" className="fld">
                             <label data-slot="lab" className="lab">{HEADER_FIELDS[4].label}</label>
-                            <TextInput placeholder={HEADER_FIELDS[4].ph} value={header.babyWeight ?? ""} onChange={(event) => onHeaderChange(HEADER_FIELDS[4].k, event.target.value)} />
+                            <TextInput placeholder={HEADER_FIELDS[4].ph} value={header.babyWeight ?? ""} disabled={readOnly} onChange={(event) => onHeaderChange(HEADER_FIELDS[4].k, event.target.value)} />
                         </div>
-                        <button data-slot="btn" className="btn primary" disabled={busy || !isHeaderComplete} onClick={() => onSaveHeader()}>{busy ? "저장 중…" : "다음"}</button>
+                        <button data-slot="btn" className="btn primary" disabled={readOnly || busy || !isHeaderComplete} onClick={() => onSaveHeader()}>{busy ? "저장 중…" : "다음"}</button>
                     </>
                 )}
 
                 {screen === "overview" && context && (
                     <>
                         <div data-component={child("body_overview-title")} data-slot="step-title" className="step-title">제공기록표</div>
-                        <p data-component={child("body_overview-help")} data-slot="muted" className="muted">제출된 기록은 눌러서 수정할 수 있습니다.</p>
+                        <p data-component={child("body_overview-help")} data-slot="muted" className="muted">{readOnly ? "조회 전용 기록입니다. 회차를 선택해 내용을 확인하세요." : "제출된 기록은 눌러서 수정할 수 있습니다."}</p>
                         <div data-component={child("body_day-grid")} data-slot="days" className="days">
                             {Array.from({ length: context.totalSessions }, (_, index) => index + 1).map((sessionIndex) => {
                                 const session = context.sessions.find((row) => row.sessionIndex === sessionIndex);
                                 const done = lockedDays.has(sessionIndex);
                                 const open = sessionIndex === nextOpenDay();
-                                const className = done ? "day done" : open ? "day current" : "day locked";
+                                const className = done ? "day done" : readOnly ? "day readonly" : open ? "day current" : "day locked";
                                 return (
                                     <button
                                         type="button"
                                         key={sessionIndex}
                                         data-slot="day"
                                         className={className}
-                                        disabled={(!done && !open) || isRecordFinalized}
+                                        disabled={(!readOnly && !done && !open) || (!readOnly && isRecordFinalized)}
                                         onClick={() => onOpenDay(sessionIndex, done)}
                                     >
-                                        <div data-component={child("body_day-grid_day_date")} data-slot="day-date" className="d">{formatShortDate(done ? (session?.serviceDate.slice(0, 10) ?? "") : defaultDate(sessionIndex))}</div>
+                                        <div data-component={child("body_day-grid_day_date")} data-slot="day-date" className="d">{formatShortDate(readOnly ? (session?.serviceDate.slice(0, 10) || defaultDate(sessionIndex)) : (done ? (session?.serviceDate.slice(0, 10) ?? "") : defaultDate(sessionIndex)))}</div>
                                         <div data-component={child("body_day-grid_day_number")} data-slot="day-number" className="n">{sessionIndex}</div>
-                                        <div data-component={child("body_day-grid_day_status")} data-slot="day-status" className="st">{done ? "제출완료" : open ? "입력 가능" : "대기"}</div>
+                                        <div data-component={child("body_day-grid_day_status")} data-slot="day-status" className="st">{done ? "제출완료" : readOnly ? "조회 가능" : open ? "입력 가능" : "대기"}</div>
                                     </button>
                                 );
                             })}
                         </div>
-                        {lockedDays.size < context.totalSessions && (
+                        {readOnly && slots?.overviewSupplemental}
+                        {!readOnly && lockedDays.size < context.totalSessions && (
                             <div data-component={child("body_overview-actions")} data-slot="overview-actions" className="overview-actions">
                                 <button data-slot="btn" className="btn primary" disabled={isRecordFinalized} onClick={() => onOpenDay(nextOpenDay())}>{lockedDays.size ? "다음 회차 입력" : "기록 시작"}</button>
                                 <button
@@ -449,13 +465,13 @@ export function ServiceRecordWizard({
                         <div data-component={child("body_date-chip")} data-slot="datechip" className="datechip">
                             {day}회차{editing ? ` · ${formatMonthDayKo(currentServiceDate)}` : ""}
                         </div>
-                        {!editing && pageIdx === 0 && (
+                        {!readOnly && !editing && pageIdx === 0 && (
                             <div data-component={child("body_service-date-field")} data-slot="fld" className="fld">
                                 <label data-slot="lab" className="lab">제공일자</label>
                                 <TextInput type="date" className="dateinput" value={currentServiceDate} min={day <= 1 ? (context?.startDate?.slice(0, 10) ?? undefined) : defaultDate(day)} onChange={(event) => onServiceDateChange(event.target.value)} />
                             </div>
                         )}
-                        {!editing && hasServiceDateMismatch && (
+                        {!readOnly && !editing && hasServiceDateMismatch && (
                             <div data-component={child("body_date-mismatch-notice")} data-slot="notice" className="notice">
                                 <span>서비스 제공일자({formatMonthDayKo(currentServiceDate)})가 오늘과 달라요. 한번 더 확인해 주세요.</span>
                             </div>
@@ -476,6 +492,7 @@ export function ServiceRecordWizard({
                                     draft={draft}
                                     editing={editing}
                                     onEdit={onEditSection}
+                                    readOnly={readOnly}
                                 />
                                 {renderSignature(slots?.signature, {
                                     "data-component": child("body_mom-sign"),
@@ -499,6 +516,7 @@ export function ServiceRecordWizard({
                                                 draft={draft}
                                                 onFieldChange={onFieldChange}
                                                 onToggleMulti={onToggleMulti}
+                                                readOnly={readOnly}
                                             />
                                         </div>
                                     );
@@ -507,17 +525,17 @@ export function ServiceRecordWizard({
                         )}
                         {isMomConfirmationPage ? (
                             <div data-component={child("body_confirmation-action")} data-slot="nav" className="nav confirmation-nav">
-                                <button data-slot="btn" className="btn submit" disabled={busy || !signatureValue} onClick={onOpenSubmitModal}>확인</button>
+                                <button data-slot="btn" className="btn submit" disabled={readOnly || busy || !signatureValue} onClick={onOpenSubmitModal}>{readOnly ? "조회 전용" : "확인"}</button>
                             </div>
                         ) : (
                             <div data-component={child("body_nav")} data-slot="nav" className="nav">
                                 <button
                                     data-slot="btn"
                                     className="btn primary"
-                                    disabled={!isCurrentPageComplete}
+                                    disabled={!readOnly && !isCurrentPageComplete}
                                     onClick={onNextPage}
                                 >
-                                    {editing ? "저장" : "다음"}
+                                    {readOnly ? "다음" : editing ? "저장" : "다음"}
                                 </button>
                             </div>
                         )}

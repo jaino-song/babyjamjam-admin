@@ -24,6 +24,15 @@ export class AdminServiceRecordController {
         return this.adminServiceRecordService.getClientOverview(tenant.branchId ?? "", clientId);
     }
 
+    @Get("client/:clientId/editor")
+    @UseGuards(OwnerOrAdminGuard)
+    getClientEditor(
+        @CurrentTenant() tenant: VerifiedTenantPrincipal,
+        @Param("clientId", ParseIntPipe) clientId: number,
+    ) {
+        return this.adminServiceRecordService.getClientEditor(tenant.branchId, clientId);
+    }
+
     @Post("schedules/:scheduleId/prepare-link")
     prepareLink(
         @CurrentTenant() tenant: { branchId?: string },

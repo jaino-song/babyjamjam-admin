@@ -86,6 +86,8 @@ export interface AdminServiceRecordSessionDto {
     notes: string | null;
     paymentConfirmed: boolean;
     hasMomApproval: boolean;
+    clientSignature?: string | null;
+    clientSignedAt?: Date | null;
     employeeId: number | null;
     employeeName: string | null;
     formVersion: number;

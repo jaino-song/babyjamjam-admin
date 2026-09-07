@@ -54,8 +54,13 @@
 .srec .day{border:1.5px solid var(--line);border-radius:14px;padding:14px 8px;text-align:center;cursor:pointer;background:#fff;color:var(--ink)}
 .srec .day .d{font-size:12px;color:var(--muted)}.srec .day .n{font-size:20px;font-weight:800;margin-top:2px}.srec .day .st{font-size:11px;margin-top:6px;color:var(--muted)}
 .srec .day.done{background:#eef5ff;border-color:#c7dafa}.srec .day.done .st{color:var(--primary);font-weight:700}
+.srec .day.readonly{border-color:#c7dafa;background:#fbfdff;cursor:pointer}
+.srec .day.readonly .st{color:var(--primary);font-weight:700}
 .srec .day.locked{opacity:.5;cursor:not-allowed}.srec .day.current{border-color:var(--primary);box-shadow:0 0 0 3px #e8f0ff}
 .srec .overview-actions{display:flex;flex-direction:column;gap:10px;margin-top:16px}
+.srec .overview-supplemental{display:flex;flex-direction:column;gap:8px;margin-top:16px;padding-top:14px;border-top:1px dashed var(--line)}
+.srec .supplemental-title{margin:0;color:var(--muted);font-size:12px;font-weight:700}
+.srec .supplemental-item{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);font:inherit;font-size:13px;text-align:left;cursor:pointer}
 .srec .nav{display:flex;gap:10px;margin-top:18px}
 .srec .btn{font-family:inherit;font-size:15px;font-weight:700;border-radius:12px;border:none;padding:14px 16px;cursor:pointer;width:100%;margin-top:16px}
 .srec .nav .btn,.srec .overview-actions .btn{margin-top:0}
@@ -78,6 +83,7 @@
 .srec .pad-hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#b6bfcc;font-size:13.5px;pointer-events:none;transition:opacity .2s}
 .srec .padwrap.inked .pad-hint,.srec .padwrap.locked .pad-hint{opacity:0}
 .srec .padwrap.locked canvas.pad{background:#f6f8fb;border:1.5px solid var(--line);pointer-events:none}
+.srec .admin-signature-image{display:block;width:100%;max-height:150px;object-fit:contain;background:#fff;border:1.5px solid var(--line);border-radius:12px}
 .srec .sign-fld.locked .sign-clear{display:none}
 .srec .sign-note{font-size:12px;color:var(--muted);line-height:1.55;margin:8px 0 0}
 .srec .signed-chip{display:none;font-size:12px;font-weight:700;color:var(--primary);background:#eaf1ff;border-radius:99px;padding:4px 12px;margin-top:10px}
