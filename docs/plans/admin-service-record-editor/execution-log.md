@@ -145,3 +145,4 @@
 - 반려된수신자 route mode=ri/request_type=doc_reject_reviewer에서기존내부검토자1인에게재전송했다. main API동일문서070/06/index3검토자, expired_date0,_expiredfalse 확인. 공식PDF4676bytes/SHA25600b482fbcff5856662160acefdcfe142b2ddf62fed167a81db87b2ddac4e3710.
 - Astra/medium 최종감사APPROVE: 내부제어시험060/05/2→070/06/3→071/05/2→070/06/3 PASS. 검토단계에서보존하며완료하지않았다. 필드/서명이없는시험으로반복날짜수정·이용자서명보존은여전히미검증이다.
 - 원래승인된서명계약서시험을이어서검증하려고격리템플릿27f092d3bdba4777835187facd7468a6의새문서준비만Luna에지시했다. 완료된4f58와d54/운영양식은변경하지않고,사용자최초서명은직접받아야한다. 최종수신자감사전새발송은없다.
+- 새격리계약서작성화면에서기존기관도장을적용해필수1/20까지진행했다. 이름/전화/날짜/금액입력,저장,전송은아직없다. 이어CUA가 The Mac is locked and automatic unlock could not unlock it 오류를반환해중단했다. 기존탭객체로잠금을우회하지않았으며수동잠금해제후현재초안에서재개해야한다. 운영양식/기존문서는변경하지않았다.
