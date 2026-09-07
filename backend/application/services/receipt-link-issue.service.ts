@@ -1,11 +1,10 @@
 import { getReceiptLinkExpiresAt } from "domain/constants/receipt-link-expiry";
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { ClientEntity } from "domain/entities/client.entity";
 import {
     FILE_STORAGE_PORT,
-    FileStorageObjectNotFoundError,
     FileStoragePort,
 } from "domain/ports/file-storage.port";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
@@ -15,9 +14,7 @@ import {
     IEformsignDocumentMirrorRepository,
 } from "domain/repositories/eformsign-document-mirror.repository.interface";
 import {
-    IReceiptLinkTokenRepository,
     IReceiptLinkTokenIssuanceRepository,
-    RECEIPT_LINK_TOKEN_REPOSITORY,
 } from "domain/repositories/receipt-link-token.repository.interface";
 import { PdfPageRasterizerService } from "infrastructure/pdf/pdf-page-rasterizer.service";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
@@ -122,8 +119,6 @@ export class ReceiptLinkIssueService {
         private readonly rasterizer: PdfPageRasterizerService,
         private readonly tokenService: ReceiptLinkTokenService,
         @Inject(FILE_STORAGE_PORT) private readonly storage: FileStoragePort,
-        @Inject(RECEIPT_LINK_TOKEN_REPOSITORY)
-        private readonly receiptLinkTokenRepository: IReceiptLinkTokenRepository,
     ) {}
 
     /** Steps 1-4 of the pipeline: voucher, birthday, contract document, mirrored PDF. No rendering. */
@@ -192,30 +187,14 @@ export class ReceiptLinkIssueService {
         }
 
         const contentSha256 = createHash("sha256").update(png).digest("hex");
-        const storagePath = `receipts/${params.branchId}/${doc.id}/${contentSha256}.png`;
-        const alreadyStored = await this.receiptLinkTokenRepository.existsByStoragePath(storagePath);
-        let shouldUpload = !alreadyStored;
-        if (alreadyStored) {
-            try {
-                await this.storage.download(storagePath);
-            } catch (error) {
-                if (error instanceof FileStorageObjectNotFoundError) {
-                    shouldUpload = true;
-                } else {
-                    this.logger.error(`[ReceiptLink] storage check failed for ${storagePath}: ${describe(error)}`);
-                    throw new ReceiptLinkSkipError("upload_failed");
-                }
-            }
-        }
-        if (shouldUpload) {
-            try {
-                await this.storage.upload(png, storagePath, "image/png");
-            } catch (error) {
-                if (!isAlreadyExistsError(error)) {
-                    this.logger.error(`[ReceiptLink] upload failed for ${storagePath}: ${describe(error)}`);
-                    throw new ReceiptLinkSkipError("upload_failed");
-                }
-            }
+        // Each issuance owns its immutable image. Cleanup may already have captured
+        // the former path; never reuse that object for a newly published stable URL.
+        const storagePath = `receipts/${params.branchId}/${doc.id}/${contentSha256}-${randomUUID()}.png`;
+        try {
+            await this.storage.upload(png, storagePath, "image/png");
+        } catch (error) {
+            this.logger.error(`[ReceiptLink] upload failed for ${storagePath}: ${describe(error)}`);
+            throw new ReceiptLinkSkipError("upload_failed");
         }
 
         return { client, doc, png, storagePath, contentSha256 };
@@ -326,8 +305,4 @@ export class ReceiptLinkIssueService {
 
 function describe(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
-}
-
-function isAlreadyExistsError(error: unknown): boolean {
-    return /already exists|duplicate/i.test(describe(error));
 }
