@@ -142,7 +142,7 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
             data: { expiresAt: data.expiresAt },
         });
         return client.receipt_link_token.upsert({
-            where: { linkTokenHash: data.linkTokenHash },
+            where: { linkTokenHash: data.linkTokenHash, branchId: data.branchId },
             create: data,
             update: {
                 expiresAt: data.expiresAt,

@@ -1,3 +1,5 @@
+import { checkWriteArgs } from "infrastructure/database/tenant-isolation.extension";
+import { tenantContextStore } from "infrastructure/tenant/tenant-context.store";
 import {
     SERVICE_RECORD_PHONE_CHALLENGE_WINDOW_MS,
     ServiceRecordTokenService,
@@ -139,6 +141,26 @@ describe("ServiceRecordTokenService", () => {
         const accessToken = (result as { ok: true; accessToken: string }).accessToken;
         const ctx = await svc.resolveAccess(accessToken);
         expect(ctx).toEqual({ tokenId: expect.any(String), branchId: "b1", scheduleId: 10, employeeId: 7 });
+    });
+
+    it("uses the resolved tenant for public verification and branch-pins every challenge write", async () => {
+        const { prisma, svc } = setup();
+        const { linkToken } = await svc.issueLink({ branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "01011112222", expiresAt: future() });
+        const findUnique = prisma.service_record_token.findUnique;
+        prisma.service_record_token.findUnique = jest.fn(async (args: any) => {
+            expect(tenantContextStore.get()?.systemScope).toBe(true);
+            return findUnique(args);
+        });
+        const update = prisma.service_record_token.update;
+        prisma.service_record_token.update = jest.fn(async (args: any) => {
+            expect(tenantContextStore.get()).toEqual({ origin: "http", branchId: "b1" });
+            expect(checkWriteArgs("update", args, "b1")).toBeNull();
+            return update(args);
+        });
+        await tenantContextStore.run({ origin: "http" }, async () => {
+            expect(await svc.verifyPhoneAndMintAccess(linkToken, "01011112222")).toMatchObject({ ok: true });
+            expect(tenantContextStore.get()).toEqual({ origin: "http" });
+        });
     });
 
     it("allows the correct phone on the final allowed attempt and clears transient failures", async () => {

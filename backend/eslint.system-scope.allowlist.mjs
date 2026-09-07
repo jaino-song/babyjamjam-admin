@@ -24,6 +24,10 @@ export const systemScopeImportAllowlist = [
     // membership during token refresh, before any tenant store branchId
     // exists for the request.
     "application/services/auth-session.service.ts",
+    // Public service-record link/access credentials discover their branch via an exact
+    // token-keyed read. Only those lookups use system scope; current-provider reads
+    // and challenge writes run in the resolved branch scope with branch-pinned writes.
+    "application/services/service-record-token.service.ts",
     // CallIngestGuard resolves the call-transcript webhook's bearer token to
     // its branch. The lookup is on `call_ingest_token` (a tenant model)
     // BEFORE any branchId exists on the request store — resolving it is the

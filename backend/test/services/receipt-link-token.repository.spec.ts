@@ -1,3 +1,4 @@
+import { checkWriteArgs } from "infrastructure/database/tenant-isolation.extension";
 import { SbReceiptLinkTokenRepository } from "infrastructure/database/repositories/sb.receipt-link-token.repository";
 import { runSystemScope } from "infrastructure/tenant/run-system-scope";
 
@@ -113,6 +114,7 @@ describe("SbReceiptLinkTokenRepository", () => {
         );
 
         expect(mockedRunSystemScope).not.toHaveBeenCalled();
+        expect(checkWriteArgs("upsert", prisma.receipt_link_token.upsert.mock.calls[0]?.[0], "11111111-1111-1111-1111-111111111111")).toBeNull();
         expect(prisma.receipt_link_token.updateMany).toHaveBeenCalledWith({
             where: { eformsignDocId: 1, clientId: 7, active: true, branchId: "11111111-1111-1111-1111-111111111111" },
             data: { expiresAt: expect.any(Date) },
