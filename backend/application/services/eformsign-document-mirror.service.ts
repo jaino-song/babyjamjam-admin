@@ -15,7 +15,7 @@ import {
 import { ReconcileCompletedMirroredEformsignDocUsecase } from "application/usecases/eformsign-doc/reconcile-completed-mirrored-eformsign-doc.usecase";
 import {
     EFORMSIGN_COMPLETED_STATUS_CODES,
-    isUnassignedReviewStageStatus,
+    isReviewStageDocumentPdfReadable,
 } from "domain/constants/eformsign-doc-status.constants";
 import {
     EFORMSIGN_DOCUMENT_MIRROR_REPOSITORY,
@@ -251,7 +251,7 @@ export class EformsignDocumentMirrorService {
         const canReadActivePartialDocument = fileType === "document"
             && (
                 normalizedStatus === "060"
-                || isUnassignedReviewStageStatus(normalizedStatus)
+                || isReviewStageDocumentPdfReadable(normalizedStatus)
             );
         if (
             !state?.detailPayload

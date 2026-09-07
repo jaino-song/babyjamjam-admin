@@ -1782,10 +1782,10 @@ describe("EformsignDocumentMirrorService", () => {
         expect(repository.findFile).not.toHaveBeenCalled();
     });
 
-    it("returns current document PDF metadata during the unassigned review stage", async () => {
+    it.each(["062", "070", "071"])("returns current document PDF metadata during review status %s", async (status) => {
         const sourceUpdatedDate = new Date(UPDATED_AT);
         const detail = richDetail();
-        detail.current_status.status_type = "062";
+        detail.current_status.status_type = status;
         const repository = {
             findState: jest.fn().mockResolvedValue({
                 documentId: "doc-1",
