@@ -1,10 +1,12 @@
+import { normalizeContractBirthday } from "@babyjamjam/shared/utils/birthday";
+
 interface DateParts {
   year: number;
   month: number;
   day: number;
 }
 
-const KOREAN_BIRTHDAY_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})/;
+const KOREAN_BIRTHDAY_DATE_PATTERN = /^(\d{4})([-./])(\d{1,2})\2(\d{1,2})(?:$|T)/;
 const CURRENT_YEAR = new Date().getFullYear();
 const CURRENT_YEAR_SUFFIX = CURRENT_YEAR % 100;
 const MIN_REASONABLE_BIRTH_YEAR = 1900;
@@ -87,8 +89,8 @@ function parseClientBirthday(value: string): DateParts | null {
   if (isoMatch) {
     const parts = {
       year: Number(isoMatch[1]),
-      month: Number(isoMatch[2]),
-      day: Number(isoMatch[3]),
+      month: Number(isoMatch[3]),
+      day: Number(isoMatch[4]),
     };
     return isValidDateParts(parts) ? parts : null;
   }
@@ -114,4 +116,9 @@ export function formatClientBirthdayForDisplay(value: string | null | undefined)
   const month = String(parts.month).padStart(2, "0");
   const day = String(parts.day).padStart(2, "0");
   return `${parts.year}.${month}.${day}`;
+}
+
+/** 계약서 생년월일을 YYMMDD로 표시하며 해석할 수 없는 값은 비워 둔다. */
+export function formatClientBirthdayAsYYMMDD(value: string | null | undefined): string | null {
+  return normalizeContractBirthday(value);
 }
