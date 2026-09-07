@@ -1,3 +1,5 @@
+import { normalizeContractBirthday } from "@babyjamjam/shared/utils/birthday";
+
 interface DateParts {
   year: number;
   month: number;
@@ -118,7 +120,5 @@ export function formatClientBirthdayForDisplay(value: string | null | undefined)
 
 /** 계약서 생년월일을 YYMMDD로 표시하며 해석할 수 없는 값은 비워 둔다. */
 export function formatClientBirthdayAsYYMMDD(value: string | null | undefined): string | null {
-  const parts = value?.trim() ? parseClientBirthday(value.trim()) : null;
-  if (!parts) return null;
-  return `${String(parts.year).slice(-2)}${String(parts.month).padStart(2, "0")}${String(parts.day).padStart(2, "0")}`;
+  return normalizeContractBirthday(value);
 }

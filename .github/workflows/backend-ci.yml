@@ -86,13 +86,13 @@ jobs:
       - name: Migration idempotency gate
         run: node --test scripts/ci/migration-idempotency.test.mjs
 
-      - name: Verify vendored agent contracts
+      - name: Verify vendored shared runtime
         run: |
           pnpm --filter @babyjamjam/shared run build:backend-runtime
-          git diff --exit-code -- backend/vendor/shared-agent/agent
-          untracked="$(git ls-files --others --exclude-standard backend/vendor/shared-agent/agent)"
+          git diff --exit-code -- backend/vendor/shared-agent
+          untracked="$(git ls-files --others --exclude-standard backend/vendor/shared-agent)"
           if [ -n "$untracked" ]; then
-            echo "Generated agent contract files are not committed:"
+            echo "Generated shared runtime files are not committed:"
             echo "$untracked"
             exit 1
           fi
