@@ -189,3 +189,48 @@ git diff --check
 실제 CREATE selector는 승인된 명령으로 한 번만 실행했으며 RED로 종료됐다. operation key는 `95723309330e37928b140a5cd38c8fc583fe5c019719753baa96cdd3fe8a03d0`, durable result의 상태는 `ambiguous`, `documentId`는 `null`, acceptance는 `reserved`로 남았다. artifact 디렉터리는 `/Users/jaino/.local/state/babyjamjam/phase0-completed-reissue/artifacts/95723309330e37928b140a5cd38c8fc583fe5c019719753baa96cdd3fe8a03d0`이다. 재실행·삭제·follow-up은 하지 않았다.
 
 이 RED 실행은 진단 metadata artifact를 추가하기 전의 frozen helper로 수행되어 HTTP status, vendor code, raw response/body/message가 durable하게 보존되지 않았다. 따라서 helper catch의 위치만으로 vendor HTTP rejection, `createDocument` 내부 response-shape(문서 ID 누락) 오류, transport/runtime 오류를 구분할 수 없으며, provider가 실제 처리했는지도 판정하지 않는다. 이후 실행에서는 `create-error.json`에 status/vendor code/name/category만 0600으로 저장하도록 했지만 이 RED 결과에는 소급 적용하지 않았다.
+
+## Phase 0 synthetic draft diagnostic probe — 2026-09-08
+
+완료 문서 재발급 시도와 분리된 독립 진단 경로를 추가했다. 이 경로는 실제 고객 연락처를 복사하거나 기존의 `95723309330e37928b140a5cd38c8fc583fe5c019719753baa96cdd3fe8a03d0` 시도를 해석·재생하지 않는다. 변경 파일은 다음 네 경로로 한정했다.
+
+- `backend/test/e2e/helpers/eformsign-draft-diagnostic.live.helper.ts`
+- `backend/test/e2e/helpers/eformsign-draft-diagnostic.live.helper.spec.ts`
+- `backend/test/e2e/eformsign-draft-diagnostic.live.e2e.spec.ts`
+- 이 절
+
+오프라인 검증은 외부 네트워크·DB·Prisma·AppModule·제품 서비스·스케줄러를 호출하지 않는 대역 경계로 수행했다. 고정 원본 `4f58a134b5864ecf9af283607cebba9d`의 `003` 완료 상태, 시작일 `2026-07-09`, 종료일 `2027-01-04`, 본인부담금 수령일 `2026-07-09`, 금액 및 현재 identity fingerprint guard를 확인한 뒤, 고정 양식 `27f092d3bdba4777835187facd7468a6`의 현재 `write → participant → participant → reviewer → complete` 토폴로지를 재사용한다.
+
+토큰 API origin은 `https://api.eformsign.com`, 문서 API origin은 `https://kr-api.eformsign.com`으로 live token/template 호출 전에 exact-match guard를 통과해야 한다. 직접 발급 helper도 문서 origin에 username·query·path·port가 붙은 설정을 거부하고 다음 URL로 한 번만 전송한다.
+
+```text
+POST /v2.0/api/documents?template_id=27f092d3bdba4777835187facd7468a6
+```
+
+본문은 `template_id`와 `document.fields` 15개, 빈 `recipients: []`만 담는다. 입력 필드는 synthetic 이름 `송진호 API 진단`, 시작·종료일 6개, 서비스 비용·정부지원금·본인부담금·서비스 가격, 본인부담금 수령일 3개, 서비스 기간이다. 문서명·reviewer·recipient·알림 설정과 연락처·이메일·생년월일·주소·제공인력·서명·동의 값은 전달하지 않는다. 종료일은 `2027-01-07`, 서비스 기간은 `20260709 ~ 20270107`이며 금액과 수령일은 고정 원본 기준을 유지한다.
+
+`/Users/jaino/.local/state/babyjamjam/phase0-draft-diagnostic`를 단일 operation 디렉터리로 사용한다. 디렉터리는 `0700`, `attempt.json`과 `result.json`은 배타 생성 `0600`으로 만든 뒤 각각 파일과 부모 디렉터리를 `fsync`한다. 모든 파일 쓰기는 short write를 반복 처리하고 `bytesWritten < 1`에서 중단한다. 기존 항목이 하나라도 있으면 GET·POST 전에 중단하며, 예약 이후 모든 실패는 재시도하지 않고 숫자 HTTP 상태·숫자 형식 vendor code·고정 오류 category만 result에 기록한다. source GET/baseline과 POST 전 preflight 거절은 `failed`로 남긴다. POST 진입 후 ID를 얻으면 GET 검증 전까지 `created_unverified`를 durable하게 남긴다. POST 응답의 4xx를 포함해 ID 없이 끝난 모든 post-entry 결과는 `ambiguous`로 남기며, 원본·신규 문서 GET 또는 postcondition이 실패해도 known ID를 보존한 `created_unverified`로 남긴다. 토큰, 원문 오류, 응답 본문, 연락처 또는 기타 개인정보는 artifact와 로그에 남기지 않는다. 성공 응답의 `document.id`/`document_id`/`docid`는 32자리 hex 및 보호 ID가 아닌지 확인하고 ID가 result에 `fsync`된 뒤에만 원본 재조회와 신규 문서 GET을 수행한다. 신규 문서는 정확한 ID와 `001` draft 상태, synthetic 이름, 날짜·수령일·금액을 확인하며 비어 있지 않은 연락처 계열 필드는 거부한다. 전송·서명·완료·삭제·자동 정리·PDF 검증은 수행하지 않는다.
+
+현재 오프라인 명령과 결과:
+
+```text
+pnpm exec jest --config jest.config.ts test/e2e/helpers/eformsign-draft-diagnostic.live.helper.spec.ts test/e2e/eformsign-draft-diagnostic.live.e2e.spec.ts --runInBand --testPathIgnorePatterns=/node_modules/
+1 suite passed / 1 gated suite skipped, 14 tests passed / 1 live test skipped
+
+pnpm exec eslint test/e2e/eformsign-draft-diagnostic.live.e2e.spec.ts test/e2e/helpers/eformsign-draft-diagnostic.live.helper.ts test/e2e/helpers/eformsign-draft-diagnostic.live.helper.spec.ts
+passed
+
+pnpm exec tsc --noEmit
+passed
+
+git diff --check
+passed
+```
+
+정확한 live 실행 명령은 다음과 같다. `LIVE_E2E=1`과 전체 테스트 이름의 단일 anchored selector가 동시에 일치하지 않으면 Nest module bootstrap과 외부 호출을 시작하지 않는다. 이 unit worker는 이 명령을 실행하지 않는다.
+
+```text
+LIVE_E2E=1 pnpm exec jest --config jest.config.ts test/e2e/eformsign-draft-diagnostic.live.e2e.spec.ts --runInBand --testNamePattern='^Phase 0 draft diagnostic creates one synthetic no-notification draft with reduced fields$' --testPathIgnorePatterns=/node_modules/
+```
+
+이 진단은 새 draft 요청의 실제 직렬화·단일 POST·오류 분류·원본 GET 불변성·신규 draft GET 조건을 좁게 확인하는 증거다. PDF 출력, 실제 사용자 알림 부재, 기존 ambiguous 요청의 공급자 처리 여부, 제품 연동·복구·재발급 성공 또는 Phase 0 전체 완료를 주장하지 않는다. live 실행과 결과의 별도 검토는 parent가 수행한다.
