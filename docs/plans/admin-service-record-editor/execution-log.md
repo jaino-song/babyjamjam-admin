@@ -296,3 +296,15 @@
 - 가격 선택·자동 입력은 같은 파일`:498`에서 바우처 가격 목록과duration을 기준으로 하며 날짜 영업일 수를 사용하지 않는다. 기존 수동 금액 편집은 그대로 존중한다.
 - 구현 계획의 기존N=duration 가정을 수정했다. 최초N은 고객 정보에서 저장·확인한 기간의 실제 영업일 수로 정하고, 이후 날짜 이동·휴무로 종료일이 늘어나더라도N을 보존한다. 기존 기록은 변경된 외곽 기간만으로 일괄 재산정하지 않는다. 15일 바우처/13일 제공의 금액15일·회차13개·휴무 후 종료일 연장 사례를 검증 대상으로 명시했다.
 - Astra/medium의 한정된 정책 일관성 검토는APPROVE였다. 이는 전체 계획 재승인이나N을 사용하는 제품의 모든 후속 경로 구현 완료를 뜻하지 않는다. 현재 기록 lifecycle과 일정 계산의duration 의존은 후속 구현에 반영해야 한다.
+
+
+### 2026-09-08 — 정식 계획 승인 후 Phase 0 재개
+
+- 최신 사용자 지시: 구현 Luna/max 유지, 이후 단계 감사와 최종 검토는 Sol/high. 완료 계약은 원본 보존 후 새 계약 생성·새 이용자 서명으로 진행한다.
+- 계획/ADR 정리 커밋: `589e5a7c0`. 실패 복구 검증 전용 `unit/admin-service-record-0-1-recovery` 작업 공간을 해당 HEAD에서 생성했다. frozen offline 설치와 Prisma 생성 완료; 기존 Seogu helper 10개 테스트 PASS. 최초 테스트 경로 오기는 0개 수집으로 실패했고 올바른 `test/e2e/helpers/` 경로로 실행했다.
+- 기존 완료 문서 `4f58a134b5864ecf9af283607cebba9d`를 읽기 전용 재조회: status003, step01/index5, 계약 및 영수증 기간 20260709~20270104, 수령일2026-07-09·금액 보존. 공식 PDF 752385 bytes, SHA256 `40c118c2309a9979e33fbfe9ee922eef4c803c2ca9b2ceb3843761694fef1027`. 안전 보관 경로: `/var/folders/gp/f0m_ydss2n15x64qrwdj_rrh0000gn/T/workflow-proof-KVPQZg/baseline.pdf`. 이 조회는 신규 생성·재서명 분기 실행 증거가 아니다.
+- 이번 재개 시점에는 외부 문서 생성/수정/반려/발송 및 고객 연결 변경을 실행하지 않았다. PDF 재조회 helper의 PDF 형식 검증과 실제 날짜 최신성 검증은 구분한다.
+
+- 신규 생성기 직접 확인: `create-and-send-contract.usecase.ts`의 prefill은 수령일을 생성 시점으로 설정하고 `서비스 기간`에 duration 값을 두 번 전달한다. 완료 계약 재발급에는 그대로 재사용할 수 없다. Task5.3에 원본 수령일·금액 및 확정 실제 기간의 명시 입력과 중복 필드 제거 조건을 구체화했다. 현재 제품 코드는 변경하지 않았다.
+
+- 실패 복구 범위 검증: Luna/max 3개 파일 변경, 메인 재실행 2 suites/27 tests PASS·backend tsc PASS·대상 ESLint PASS. Sol/high 최종 판정 SHIP. 커밋 `d9c7f5684`를 integration에 fast-forward 통합하고 깨끗한 unit worktree/branch를 제거했다. 자동 재조정과 실제 PDF 최신성 증명은 범위 밖으로 남으며 Phase0 전체 완료로 표시하지 않는다.
