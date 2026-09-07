@@ -6,7 +6,7 @@ TL;DR: 지점의 수정 확정 한 번으로 제공 일수를 유지하면서 �
 
 관련 설계 결정: `docs/adr/ADR-012-admin-service-record-revisions.md` (Proposed).
 
-상태: 2026-09-08 사용자 지시로 Phase 1 로컬 구현 진행 중. Phase 0 외부 발급 미검증 사항은 별도로 유지한다. 격리 남동구 문서에서 공식 API 반려와 SDK 날짜 수정·참여자 전송을 실행했고, 독립 API/PDF와 기존 이미지 생성기에서 날짜 갱신 및 서명·수령일·금액 보존을 확인했다. 최초 SDK 라이브 명령은 검사 오류 및 즉시 PDF 확보 실패로 RED이며, 이후 독립 증거와 구분한다. 서구 UI 반복 수정과 서명 PDF 보존은 2026-09-08 확인했다. 서구 SDK의 단일 날짜 수정·전송과 Jan06 공식PDF·서명 보존도 독립 확인했다(원래 라이브 명령은 즉시PDF 조회 실패로 RED). 격리 개발 환경에서 동일 영수증URL 이미지 교체·인증/만료 보존·정리는 실제HTTP로PASS했다. 운영 기존 링크 검증·완료 문서 분기·응답 유실/부분 실패 복구 시험이 남아 외부 연동 전체 검증은 완료되지 않았다. 로컬 구현은 위 실행 경계 갱신에 따라 진행한다. 제품 정책은 확정되었으나 구현·배포 완료나 전체 자동화 검증 완료를 뜻하지 않는다.
+상태: 2026-09-08 사용자 지시로 Phase 1 로컬 구현·Sol 독립 감사 완료, Phase 2 로컬 구현 진행 중. Phase 0 외부 발급 미검증 사항은 별도로 유지한다. 격리 남동구 문서에서 공식 API 반려와 SDK 날짜 수정·참여자 전송을 실행했고, 독립 API/PDF와 기존 이미지 생성기에서 날짜 갱신 및 서명·수령일·금액 보존을 확인했다. 최초 SDK 라이브 명령은 검사 오류 및 즉시 PDF 확보 실패로 RED이며, 이후 독립 증거와 구분한다. 서구 UI 반복 수정과 서명 PDF 보존은 2026-09-08 확인했다. 서구 SDK의 단일 날짜 수정·전송과 Jan06 공식PDF·서명 보존도 독립 확인했다(원래 라이브 명령은 즉시PDF 조회 실패로 RED). 격리 개발 환경에서 동일 영수증URL 이미지 교체·인증/만료 보존·정리는 실제HTTP로PASS했다. 운영 기존 링크 검증·완료 문서 분기·응답 유실/부분 실패 복구 시험이 남아 외부 연동 전체 검증은 완료되지 않았다. 로컬 구현은 위 실행 경계 갱신에 따라 진행한다. 제품 정책은 확정되었으나 구현·배포 완료나 전체 자동화 검증 완료를 뜻하지 않는다.
 
 작업 공간: `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor`, 브랜치 `admin-service-record-editor`, 최초 기준 `dev`의 `110dbbb84`, 실행 기준은 로컬 `dev`의 `f7b35d760`을 통합한 `9f00a89e6`. 기존 전용 작업 공간을 재사용한다.
 
@@ -146,7 +146,7 @@ Phase2 입력 검토 보정: 저장소 구현은 기존 `backend/infrastructure/
 
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/prisma/schema.prisma`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/prisma/migrations/`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/infrastructure/database/repositories/service-record-edit.repository.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/interface/dto/admin-service-record-edit.dto.ts`
-  **추가 Paths:** `backend/domain/repositories/service-record-edit.repository.interface.ts`, `backend/module/service-record-entry.module.ts`, `backend/infrastructure/tenant/tenant-models.generated.ts`, `backend/infrastructure/database/repositories/sb.eformsign-document-mirror.repository.ts`, `backend/test/repositories/`, 새 DTO/저장소와 같은 디렉터리의 테스트
+  **추가 Paths:** `backend/domain/repositories/service-record-edit.repository.interface.ts`, `backend/module/service-record-entry.module.ts`, `backend/infrastructure/tenant/tenant-models.generated.ts`, `backend/infrastructure/database/repositories/sb.eformsign-document-mirror.repository.ts`, `backend/test/repositories/`, 새 DTO/저장소와 같은 디렉터리의 테스트, `backend/test/e2e/admin-service-record-edit-persistence.e2e.spec.ts`, `backend/test/e2e/helpers/service-record-edit-persistence.helper.ts`
   **Depends:** Task 1.2, Task 1.A
 
 - **Task 2.2: 임시저장·재개·취소를 화면에 연결** (feature, med)
@@ -328,6 +328,7 @@ DB 저장과 외부 문서 생성은 하나의 트랜잭션으로 묶을 수 없
 
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `backend/application/services/receipt-link-issue.service.ts`, `backend/application/services/receipt-link-delivery-enricher.service.ts`, `backend/application/services/receipt-link-manual-send.service.ts`, `backend/interface/controllers/receipt-link.controller.ts`, `backend/domain/constants/system-template-registry.ts`, `backend/test/e2e/`  
+  **추가 Paths:** `backend/test/e2e/helpers/receipt-link-refresh.live.helper.ts`, `backend/test/e2e/receipt-link-refresh.live.e2e.spec.ts`, 관련 오프라인 helper 테스트. 최신 `createOrRefreshContractLink`/`serviceEndDate` 계약으로 기존 진단 코드를 맞추고, 확정된 원본 수령일·금액·기존 링크 만료 보존 검증을 유지한다. Phase1 이전 기준9f00a89e6에서도 재현되는 해당5개 타입 오류를 해소한 뒤 전체 backend tsc 통과를 요구한다. 실제 live 검사는 별도 실행 권한 범위를 넘지 않는다.
   **Depends:** Task 5.3
 
 - **Task 5.2: 확정 상태·문서 이력·원래 탭 갱신 연결** (feature, med)
