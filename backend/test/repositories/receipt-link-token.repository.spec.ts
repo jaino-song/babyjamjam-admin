@@ -167,7 +167,7 @@ describe("SbReceiptLinkTokenRepository.withJobIssuanceLock", () => {
         const tx = {
             $queryRaw: queryRaw,
             $executeRaw: executeRaw,
-            receipt_link_token: { findFirst, updateMany, create },
+            receipt_link_token: { findFirst, findUnique: jest.fn().mockResolvedValue(null), updateMany, upsert: create },
         };
         const transaction = jest.fn(async (operation: (client: typeof tx) => Promise<unknown>) => operation(tx));
         const rootFindFirst = jest.fn(() => {
@@ -180,7 +180,7 @@ describe("SbReceiptLinkTokenRepository.withJobIssuanceLock", () => {
         const repository = new SbReceiptLinkTokenRepository(rootPrisma);
         const operation = jest.fn(async (_contended, scopedRepository) => {
             const active = await scopedRepository.findActiveByJobId("job-race");
-            await scopedRepository.createReplacingActive({
+            await scopedRepository.createOrRefreshContractLink({
                 branchId: "branch",
                 clientId: 7,
                 eformsignDocId: 42,
@@ -202,7 +202,7 @@ describe("SbReceiptLinkTokenRepository.withJobIssuanceLock", () => {
 
         expect(operation).toHaveBeenCalledWith(true, expect.any(Object));
         expect(queryRaw).toHaveBeenCalledTimes(1);
-        expect(executeRaw).toHaveBeenCalledTimes(1);
+        expect(executeRaw).toHaveBeenCalledTimes(2);
         expect(getSqlText(queryRaw.mock.calls[0]![0])).toContain("pg_try_advisory_xact_lock");
         expect(getSqlText(executeRaw.mock.calls[0]![0])).toContain("pg_advisory_xact_lock");
         expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { jobId: "job-race", active: true } }));

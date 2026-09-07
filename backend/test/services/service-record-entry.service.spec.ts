@@ -1,3 +1,4 @@
+import { checkWriteArgs } from "infrastructure/database/tenant-isolation.extension";
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { validate } from "class-validator";
 
@@ -95,10 +96,13 @@ function createHarness(options: {
     const aggregate = createRecord();
     const existing = options.existing === undefined ? null : options.existing;
     const transactionRecord = options.transactionRecord ?? aggregate;
-    const upsert = jest.fn().mockImplementation(({ create, update }) => Promise.resolve({
-        ...(existing ?? createDay({ locked: false, submittedAt: null, clientSignature: null, clientSignedAt: null })),
-        ...(existing ? update : create),
-    }));
+    const upsert = jest.fn().mockImplementation((args) => {
+        expect(checkWriteArgs("upsert", args, BRANCH_ID)).toBeNull();
+        return Promise.resolve({
+            ...(existing ?? createDay({ locked: false, submittedAt: null, clientSignature: null, clientSignedAt: null })),
+            ...(existing ? args.update : args.create),
+        });
+    });
     const updateMany = jest.fn(options.updateSignature ?? (() => Promise.resolve({
         count: existing?.clientSignature ? 0 : 1,
     })));
@@ -415,6 +419,7 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         expect(updateMany).toHaveBeenCalledWith({
             where: {
                 serviceRecordCaseId: CASE_ID,
+                branchId: BRANCH_ID,
                 caseSessionIndex: 1,
                 clientSignature: null,
             },
@@ -570,11 +575,11 @@ describe("ServiceRecordEntryService.upsertSession", () => {
 
         expect(result).toEqual(expect.objectContaining({ sessionIndex: 1 }));
         expect(scheduleUpdate).toHaveBeenCalledWith({
-            where: { id: 10 },
+            where: { id: 10, branchId: BRANCH_ID },
             data: { endDate: newEndDate },
         });
         expect(clientUpdate).toHaveBeenCalledWith({
-            where: { id: 100 },
+            where: { id: 100, branchId: BRANCH_ID },
             data: { endDate: newEndDate },
         });
         expect(ensureForClient).toHaveBeenCalledWith(100, expect.anything());
@@ -643,11 +648,11 @@ describe("ServiceRecordEntryService.upsertSession", () => {
 
         expect(result).toEqual(expect.objectContaining({ sessionIndex: 13 }));
         expect(scheduleUpdate).toHaveBeenCalledWith({
-            where: { id: 10 },
+            where: { id: 10, branchId: BRANCH_ID },
             data: { endDate: newEndDate },
         });
         expect(clientUpdate).toHaveBeenCalledWith({
-            where: { id: 100 },
+            where: { id: 100, branchId: BRANCH_ID },
             data: { endDate: newEndDate },
         });
         expect(extendExpiryForCase).toHaveBeenCalledWith(
@@ -893,11 +898,11 @@ describe("ServiceRecordEntryService.upsertSession", () => {
 
         expect(result).toEqual(expect.objectContaining({ sessionIndex: 14 }));
         expect(scheduleUpdate).toHaveBeenCalledWith({
-            where: { id: 10 },
+            where: { id: 10, branchId: BRANCH_ID },
             data: { endDate: newEndDate },
         });
         expect(clientUpdate).toHaveBeenCalledWith({
-            where: { id: 100 },
+            where: { id: 100, branchId: BRANCH_ID },
             data: { endDate: newEndDate },
         });
         expect(extendExpiryForCase).toHaveBeenCalledWith(

@@ -77,14 +77,12 @@ export type ReserveVerificationAttemptResult =
  * Infrastructure supplies a transaction-bound implementation, keeping Prisma out of the
  * domain and application contracts.
  */
+export type RefreshReceiptClientFields = (client: { birthday: string | null; endDate: Date | null }) =>
+    Pick<CreateReceiptLinkTokenData, "expectedBirthdayHash" | "expiresAt">;
+
 export interface IReceiptLinkTokenIssuanceRepository {
-    /**
-     * Replaces a document's active token: whichever token is currently active for
-     * `eformsignDocId` is revoked and the new one is created, as one atomic unit. A failed
-     * create can never leave the document with zero active tokens, and the revoke and the
-     * create can never be observed independently.
-     */
-    createReplacingActive(data: CreateReceiptLinkTokenData, now: Date): Promise<ReceiptLinkTokenRecord>;
+    /** Refreshes the same contract token atomically, preserving earlier URLs and authentication state. */
+    createOrRefreshContractLink(data: CreateReceiptLinkTokenData, now: Date, refreshClient?: RefreshReceiptClientFields): Promise<ReceiptLinkTokenRecord>;
     /** The active token already issued for this job, if any. */
     findActiveByJobId(jobId: string): Promise<ReceiptLinkTokenRecord | null>;
 }
