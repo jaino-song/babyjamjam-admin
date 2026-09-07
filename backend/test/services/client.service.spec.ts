@@ -396,6 +396,18 @@ describe("ClientService", () => {
                 expect(createdDuration()).toBe(10);
             });
 
+            it("preserves a confirmed weekend-service duration and dates on create", async () => {
+                createClientUsecase.execute.mockResolvedValue(createClientEntity());
+                await service.create(branchId, {
+                    ...baseParams, startDate: "2026-08-26", endDate: "2026-09-14",
+                    duration: 15, allowBusinessDayMismatch: true,
+                });
+                expect(createClientUsecase.execute).toHaveBeenCalledWith(branchId, expect.objectContaining({
+                    duration: 15, startDate: new Date("2026-08-26"), endDate: new Date("2026-09-14"),
+                    allowBusinessDayMismatch: true,
+                }), expect.anything());
+            });
+
             it("still rejects a supplied duration that exceeds the business-day count", async () => {
                 await expect(service.create(branchId, {
                     ...baseParams,
@@ -1832,6 +1844,19 @@ describe("ClientService", () => {
                     where: { id: 1, branchId },
                     data: expect.objectContaining({ duration: 1 }),
                 }));
+            });
+
+            it("persists confirmed weekend-service dates and duration unchanged on update", async () => {
+                findClientByIdUsecase.execute.mockResolvedValue(createClientEntity());
+                await service.update(branchId, 1, {
+                    startDate: "2026-08-26", endDate: "2026-09-14",
+                    duration: 15, allowBusinessDayMismatch: true,
+                });
+                const { data } = prismaService.client.updateMany.mock.calls[0][0];
+                expect(data).toEqual(expect.objectContaining({
+                    duration: 15, startDate: new Date("2026-08-26"), endDate: new Date("2026-09-14"),
+                }));
+                expect(data).not.toHaveProperty("allowBusinessDayMismatch");
             });
 
             it("rejects a duration that exceeds the business-day count when the existing service period is complete", async () => {

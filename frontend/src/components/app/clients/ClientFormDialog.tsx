@@ -29,7 +29,7 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
 import { cn } from "@/lib/utils";
-import { calcEndDateBusinessDays } from "@/lib/date/business-days";
+import { calcEndDateBusinessDays, countBusinessDaysKr } from "@/lib/date/business-days";
 import { formatIsoDateInput } from "@/lib/date/format-iso-input";
 import voucherOptions from "../messages/templates/json/voucher.json";
 
@@ -374,6 +374,8 @@ function ClientFormContent({
     const isPhoneCheckBlockingSubmit = phoneDigits.length === 11 && !isPhoneCheckReady;
 
     const [error, setError] = useState<string | null>(null);
+    const [pendingDurationConfirmation, setPendingDurationConfirmation] = useState<string | null>(null);
+    const submissionInFlightRef = useRef(false);
     const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
     const [employeeDialogTarget, setEmployeeDialogTarget] = useState<"primary" | "secondary" | null>(null);
     const contentRef = useRef<HTMLDivElement>(null);
@@ -684,6 +686,7 @@ function ClientFormContent({
                 setPricesManuallyEdited(nextPricesManuallyEdited);
                 setVoucherYear(null); // Reset to default (current year, falling back to latest available)
                 setError(null);
+                setPendingDurationConfirmation(null);
             });
         }
     }, [clearPrefillName, client, open, prefillName]);
@@ -779,10 +782,12 @@ function ClientFormContent({
         setTimeout(scrollToTop, 0);
     };
 
-    const handleSubmit = async () => {
+    const handleSubmit = async (confirmedPeriod?: string) => {
+        if (submissionInFlightRef.current) return;
         setError(null);
 
         if (isLegacyNoopEdit && client) {
+            submissionInFlightRef.current = true;
             try {
                 // Some legacy customers predate the current required form fields. An empty
                 // update preserves that record exactly while still invoking the backend's
@@ -794,6 +799,8 @@ function ClientFormContent({
             } catch (error: unknown) {
                 console.error("Failed to save client:", error);
                 setErrorAndScroll(getErrorMessage(error, locale, "clients.form.error-save-failed"));
+            } finally {
+                submissionInFlightRef.current = false;
             }
             return;
         }
@@ -846,6 +853,25 @@ function ClientFormContent({
             const normalizedBirthDate = formData.birthDate ?? "";
             const normalizedStartDate = normalizeCompactDateForSubmit(formData.startDate ?? "");
             const normalizedEndDate = normalizeCompactDateForSubmit(formData.endDate ?? "");
+            const businessDays = normalizedStartDate && normalizedEndDate
+                ? countBusinessDaysKr(normalizedStartDate, normalizedEndDate)
+                : null;
+            const hasDurationMismatch = businessDays !== null
+                && Number.isSafeInteger(formData.duration)
+                && (formData.duration ?? 0) > 0
+                && formData.duration !== businessDays;
+            // Bind confirmation to these exact values. A changed period or a new
+            // save must be confirmed again; prefill never carries consent.
+            const periodKey = JSON.stringify([normalizedStartDate, normalizedEndDate, formData.duration]);
+            if (hasDurationMismatch && confirmedPeriod !== periodKey) {
+                setPendingDurationConfirmation(periodKey);
+                return;
+            }
+            const durationConfirmation = hasDurationMismatch && confirmedPeriod === periodKey
+                ? { allowBusinessDayMismatch: true }
+                : {};
+            setPendingDurationConfirmation(null);
+            submissionInFlightRef.current = true;
 
             if (isEditMode && client) {
                 // Build update DTO, excluding null employee IDs to avoid validation errors
@@ -862,6 +888,7 @@ function ClientFormContent({
                     ...(formData.secondaryEmployeeId !== null && { secondaryEmployeeId: formData.secondaryEmployeeId }),
                     type: formData.voucherClient ? formData.type : null,
                     duration: formData.duration || null,
+                    ...durationConfirmation,
                     fullPrice: formData.fullPrice,
                     grant: formData.voucherClient ? formData.grant : "0",
                     actualPrice: formData.voucherClient ? formData.actualPrice : formData.fullPrice,
@@ -887,6 +914,7 @@ function ClientFormContent({
                     secondaryEmployeeId: formData.secondaryEmployeeId,
                     type: formData.voucherClient ? formData.type || null : null,
                     duration: formData.duration || null,
+                    ...durationConfirmation,
                     fullPrice: formData.fullPrice || null,
                     grant: formData.voucherClient ? formData.grant || null : "0",
                     actualPrice: formData.voucherClient ? formData.actualPrice || null : formData.fullPrice || null,
@@ -906,6 +934,8 @@ function ClientFormContent({
         } catch (error: unknown) {
             console.error("Failed to save client:", error);
             setErrorAndScroll(getErrorMessage(error, locale, "clients.form.error-save-failed"));
+        } finally {
+            submissionInFlightRef.current = false;
         }
     };
 
@@ -939,6 +969,7 @@ function ClientFormContent({
     }개 입력됨`;
 
     const handleDialogClose = () => {
+        setPendingDurationConfirmation(null);
         if (searchParams.get("openClientForm") === "1") {
             router.replace("/clients");
         }
@@ -964,7 +995,7 @@ function ClientFormContent({
             <Button
                 variant="positive"
                 size="sm"
-                onClick={handleSubmit}
+                onClick={() => void handleSubmit()}
                 disabled={isSubmitting || (!isLegacyNoopEdit && isPhoneCheckBlockingSubmit)}
                 data-component={`${base}_submit`}
                 className="w-full sm:flex-1"
@@ -1022,7 +1053,7 @@ function ClientFormContent({
                     <Button
                         type="button"
                         size="sm"
-                        onClick={handleSubmit}
+                        onClick={() => void handleSubmit()}
                         disabled={isSubmitting || !isFormComplete}
                         data-component={`${base}_submit`}
                         className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
@@ -1884,6 +1915,48 @@ function ClientFormContent({
         </div>
     );
 
+    const durationConfirmationDialog = (
+        <Dialog
+            open={open && pendingDurationConfirmation !== null}
+            onOpenChange={(isOpen) => { if (!isOpen) setPendingDurationConfirmation(null); }}
+        >
+            <FormDialogShell
+                data-component={`${base}_duration-confirmation`}
+                size="compact"
+                title="서비스 기간 확인"
+                description="평일 기준으로 서비스 기간이 맞지 않습니다. 그래도 저장할까요?"
+                footer={(
+                    <>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            data-component={`${base}_duration-confirmation_cancel`}
+                            onClick={() => setPendingDurationConfirmation(null)}
+                        >
+                            취소
+                        </Button>
+                        <Button
+                            type="button"
+                            data-component={`${base}_duration-confirmation_confirm`}
+                            disabled={isSubmitting}
+                            onClick={() => {
+                                if (pendingDurationConfirmation !== null) {
+                                    void handleSubmit(pendingDurationConfirmation);
+                                }
+                            }}
+                        >
+                            확인
+                        </Button>
+                    </>
+                )}
+            >
+                <p data-component={`${base}_duration-confirmation_message`}>
+                    평일 기준으로 서비스 기간이 맞지 않습니다. 그래도 저장할까요?
+                </p>
+            </FormDialogShell>
+        </Dialog>
+    );
+
     const panelFooter = panelFormActions;
     const employeeRegistrationDialog = (
         <EmployeeFormDialog
@@ -1911,6 +1984,7 @@ function ClientFormContent({
             <>
                 {panelLayout}
                 {employeeRegistrationDialog}
+                {durationConfirmationDialog}
             </>
         );
     }
@@ -1933,6 +2007,7 @@ function ClientFormContent({
                 </FormDialogShell>
             </Dialog>
             {employeeRegistrationDialog}
+            {durationConfirmationDialog}
         </>
     );
 }

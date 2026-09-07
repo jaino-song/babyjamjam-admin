@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException } from "@nestjs/common";
 
 import {
     assertAllowedClientArea,
+    assertClientDurationMatchesDates,
     assertAllowedServiceStatus,
     assertPhoneAvailable,
     findClientByNormalizedPhone,
@@ -77,5 +78,17 @@ describe("client write validation", () => {
         expect(parseClientDate("2024-02-29T23:30:00-09:00")).toEqual(new Date("2024-02-29T00:00:00.000Z"));
         expect(parseClientDate(null)).toBeNull();
         expect(parseClientDate(undefined)).toBeUndefined();
+    });
+});
+
+describe("confirmed business-day mismatch", () => {
+    it("only relaxes the business-day ceiling after explicit confirmation", () => {
+        expect(() => assertClientDurationMatchesDates(15, 14)).toThrow();
+        expect(() => assertClientDurationMatchesDates(15, 14, false)).toThrow();
+        expect(() => assertClientDurationMatchesDates(15, 14, true)).not.toThrow();
+        expect(() => assertClientDurationMatchesDates(3, 0, true)).not.toThrow();
+    });
+    it.each([null, 0, -1, 1.5, NaN, Infinity])("still rejects invalid duration %s after confirmation", (duration) => {
+        expect(() => assertClientDurationMatchesDates(duration, 14, true)).toThrow();
     });
 });

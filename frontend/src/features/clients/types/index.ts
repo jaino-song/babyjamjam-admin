@@ -91,6 +91,8 @@ export interface CreateClientDto {
     secondaryEmployeeId?: number | null; // Employee ID (backend converts to schedule)
     type?: string | null;
     duration?: number | null;
+    /** Set only after the service-period confirmation for this save. */
+    allowBusinessDayMismatch?: boolean;
     fullPrice?: string | null;
     grant?: string | null;
     actualPrice?: string | null;
@@ -106,7 +108,7 @@ export interface CreateClientDto {
     reuseExistingClient?: boolean;
 }
 
-export type ClientFormData = Omit<CreateClientDto, "primaryEmployeeId"> & { primaryEmployeeId: number | null };
+export type ClientFormData = Omit<CreateClientDto, "primaryEmployeeId" | "allowBusinessDayMismatch"> & { primaryEmployeeId: number | null };
 
 // Update client DTO - Frontend sends employeeId, backend converts to scheduleId
 export interface UpdateClientDto {
@@ -120,6 +122,8 @@ export interface UpdateClientDto {
     secondaryEmployeeId?: number | null; // Employee ID (backend converts to schedule)
     type?: string | null;
     duration?: number | null;
+    /** Set only after the service-period confirmation for this save. */
+    allowBusinessDayMismatch?: boolean;
     fullPrice?: string | null;
     grant?: string | null;
     actualPrice?: string | null;

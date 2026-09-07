@@ -35,6 +35,7 @@ interface FormDialogShellProps {
   eyebrow?: React.ReactNode;
   children: React.ReactNode;
   footer?: React.ReactNode;
+  size?: "form" | "compact";
   contentClassName?: string;
   footerClassName?: string;
 }
@@ -47,6 +48,7 @@ export function FormDialogShell({
   eyebrow,
   children,
   footer,
+  size = "form",
   contentClassName,
   footerClassName,
 }: FormDialogShellProps) {
@@ -65,6 +67,7 @@ export function FormDialogShell({
       className={cn(
         APP_DIALOG_FLUSH_CONTENT_CLASS_NAME,
         APP_FORM_DIALOG_CONTENT_CLASS_NAME,
+        size === "compact" && "h-auto w-[min(480px,calc(100vw-1.5rem))] max-w-[480px]",
       )}
     >
       <DialogHeader className={APP_DIALOG_HEADER_CLASS_NAME}>

@@ -953,6 +953,7 @@ export class ClientService {
         phone?: string | null;
         type?: string | null;
         duration?: number | null;
+        allowBusinessDayMismatch?: boolean;
         fullPrice?: string | null;
         grant?: string | null;
         actualPrice?: string | null;
@@ -985,7 +986,7 @@ export class ClientService {
         // carries the same "no opinion" as an omitted field and the count is
         // derived from the dates. Only a supplied number is checked against
         // them. Update keeps null's distinct explicit-clear meaning.
-        assertClientDurationMatchesDates(params.duration ?? undefined, derivedDuration);
+        assertClientDurationMatchesDates(params.duration ?? undefined, derivedDuration, params.allowBusinessDayMismatch);
         // A supplied duration is authoritative; the date-derived count is
         // only a fallback when the caller does not supply one.
         const duration = params.duration ?? derivedDuration ?? null;
@@ -1067,6 +1068,7 @@ export class ClientService {
             phone: params.phone ?? null,
             type: normalizedPricing.type,
             duration,
+            allowBusinessDayMismatch: params.allowBusinessDayMismatch,
             fullPrice: normalizedPricing.fullPrice,
             grant: normalizedPricing.grant,
             actualPrice: normalizedPricing.actualPrice,
@@ -1515,6 +1517,7 @@ export class ClientService {
         phone?: string | null;
         type?: string | null;
         duration?: number | null;
+        allowBusinessDayMismatch?: boolean;
         fullPrice?: string | null;
         grant?: string | null;
         actualPrice?: string | null;
@@ -1603,7 +1606,7 @@ export class ClientService {
             mergedServicePeriod.startDate,
             mergedServicePeriod.endDate,
         );
-        assertClientDurationMatchesDates(params.duration, derivedDuration);
+        assertClientDurationMatchesDates(params.duration, derivedDuration, params.allowBusinessDayMismatch);
         if (hasDateUpdate && params.duration === null && derivedDuration !== null) {
             throw new BadRequestException(clientDurationOutOfRangeMessage(derivedDuration));
         }
