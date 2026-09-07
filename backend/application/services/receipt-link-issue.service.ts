@@ -1,3 +1,4 @@
+import { getReceiptLinkExpiresAt } from "domain/constants/receipt-link-expiry";
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { createHash } from "node:crypto";
@@ -17,7 +18,6 @@ import {
     IReceiptLinkTokenRepository,
     IReceiptLinkTokenIssuanceRepository,
     RECEIPT_LINK_TOKEN_REPOSITORY,
-    ReceiptLinkTokenRecord,
 } from "domain/repositories/receipt-link-token.repository.interface";
 import { PdfPageRasterizerService } from "infrastructure/pdf/pdf-page-rasterizer.service";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
@@ -32,6 +32,8 @@ const DEFAULT_RECEIPT_BASE_URL = "https://m.admin.babyjamjam.com";
 export type ReceiptLinkSkipReason =
     | "not_voucher_client"
     | "missing_birthday"
+    | "missing_end_date"
+    | "service_period_expired"
     | "no_contract_document"
     | "pdf_unavailable"
     | "render_failed"
@@ -40,6 +42,8 @@ export type ReceiptLinkSkipReason =
 export const RECEIPT_LINK_SKIP_MESSAGES: Record<ReceiptLinkSkipReason, string> = {
     not_voucher_client: "바우처 이용 산모가 아닙니다",
     missing_birthday: "산모 생년월일이 등록되지 않았습니다",
+    missing_end_date: "서비스 종료일이 등록되지 않았습니다",
+    service_period_expired: "영수증 링크 유효기간(서비스 종료 후 14일)이 지났습니다",
     no_contract_document: "연결된 계약서가 없습니다",
     pdf_unavailable: "계약서 PDF를 아직 불러올 수 없습니다",
     render_failed: "영수증 이미지 생성에 실패했습니다",
@@ -61,7 +65,7 @@ export class ReceiptLinkIssuanceConflictError extends Error {
 }
 
 export interface ReceiptLinkPreflight {
-    client: { id: number; name: string; phone: string | null; birthday: string };
+    client: { id: number; name: string; phone: string | null; birthday: string; endDate: Date };
     doc: { id: number; documentId: string };
     pdf: Buffer;
 }
@@ -72,12 +76,7 @@ export interface IssueReceiptLinkParams {
     source: ReceiptLinkSource;
     jobId?: string | null;
     createdBy?: string | null;
-    /**
-     * The payload's current receipt url, supplied only when the caller already has one (e.g. a
-     * re-run enrichment for a dispatch job). When `jobId` names a job that already has an active
-     * token, this is what `issue` returns as-is instead of minting a second token — see the
-     * idempotence note on `issue` below.
-     */
+    /** Existing delivery URL, retained for compatibility with staged payloads. */
     existingUrl?: string;
     /**
      * The exact contract document the caller already resolved (numeric `eformsign_doc.id`), when
@@ -138,6 +137,9 @@ export class ReceiptLinkIssueService {
         // birthday that would fail there must be caught here instead, not just an empty one.
         const birthday = normalizeBirthdayInput(client.birthday ?? "");
         if (!birthday) throw new ReceiptLinkSkipError("missing_birthday");
+        if (!client.endDate || !Number.isFinite(client.endDate.getTime())) throw new ReceiptLinkSkipError("missing_end_date");
+
+        if (getReceiptLinkExpiresAt(client.endDate) <= new Date()) throw new ReceiptLinkSkipError("service_period_expired");
 
         const doc = params.eformsignDocId !== undefined
             ? await this.findExplicitContractDocument(params.branchId, params.eformsignDocId, client.id)
@@ -147,20 +149,10 @@ export class ReceiptLinkIssueService {
         const pdf = await this.loadContractPdf(params.branchId, doc);
         if (!pdf) throw new ReceiptLinkSkipError("pdf_unavailable");
 
-        return { client: { id: client.id, name: client.name, phone: client.phone, birthday }, doc, pdf };
+        return { client: { id: client.id, name: client.name, phone: client.phone, birthday, endDate: client.endDate }, doc, pdf };
     }
 
-    /**
-     * Idempotent per `jobId`: `SmsTriggerDeliveryService` may invoke this more than once for the
-     * same dispatch job (e.g. a delivery that converges onto an earlier acceptance and never
-     * sends). When an active token already exists for `jobId` and the caller supplies
-     * `existingUrl` (the payload's current url), that url is returned as-is with no render,
-     * upload, or mint. Plaintext link tokens are never stored, so without `existingUrl` there is
-     * nothing to return — a later, non-overlapping retry mints anew, while overlapping attempts
-     * share the in-flight result in this instance. Across instances, the locked re-check compares
-     * the token identity from before preparation so the loser cannot revoke a winner that acquired
-     * and released the lock before the loser reached it.
-     */
+    /** Refresh the contract's stable URL; overlapping retries in this process share preparation. */
     async issue(params: IssueReceiptLinkParams): Promise<IssuedReceiptLink> {
         const jobId = params.jobId;
         if (!jobId) {
@@ -183,44 +175,9 @@ export class ReceiptLinkIssueService {
     }
 
     private async issueForJob(params: IssueReceiptLinkParams & { jobId: string }): Promise<IssuedReceiptLink> {
-        const activeBeforeLock = await this.receiptLinkTokenRepository.findActiveByJobId(params.jobId);
-        const reusable = this.toReusableJobToken(params, activeBeforeLock, new Date());
-        if (reusable) return reusable;
-
-        // Rendering and content-addressed upload are safe to repeat and can be slow, so keep them
-        // outside the database lock. Only the final re-check plus token mint is serialized.
-        const prepared = await this.prepare(params);
-        if (!this.receiptLinkTokenRepository.withJobIssuanceLock) {
-            return this.mint(params, prepared);
-        }
-        return this.receiptLinkTokenRepository.withJobIssuanceLock<IssuedReceiptLink>(
-            params.jobId,
-            async (_contended, transactionRepository) => {
-                const active = await transactionRepository.findActiveByJobId(params.jobId);
-                if (active && active.expiresAt.getTime() > Date.now()) {
-                    // Lock contention only describes the instant pg_try_advisory_xact_lock ran.
-                    // A different row proves another issuer won even if it already released the lock.
-                    if (active.id !== activeBeforeLock?.id) {
-                        throw new ReceiptLinkIssuanceConflictError();
-                    }
-                    if (params.existingUrl) {
-                        return { url: params.existingUrl, tokenId: active.id, expiresAt: active.expiresAt };
-                    }
-                }
-                return this.mint(params, prepared, transactionRepository);
-            },
-        );
-    }
-
-    private toReusableJobToken(
-        params: IssueReceiptLinkParams & { jobId: string },
-        active: ReceiptLinkTokenRecord | null,
-        now: Date,
-    ): IssuedReceiptLink | null {
-        // An "active" row can still be past its expiresAt (nightly cleanup hasn't reaped it
-        // yet) — short-circuiting on that would hand the caller back a dead link.
-        if (!active || active.expiresAt.getTime() <= now.getTime() || !params.existingUrl) return null;
-        return { url: params.existingUrl, tokenId: active.id, expiresAt: active.expiresAt };
+        // Every dispatch refreshes the same contract token and expiry, including stale retries.
+        // No job may replace or revoke a link already delivered by another job.
+        return this.mint(params, await this.prepare(params));
     }
 
     private async prepare(params: IssueReceiptLinkParams): Promise<PreparedReceiptLink> {
@@ -276,6 +233,7 @@ export class ReceiptLinkIssueService {
             eformsignDocId: doc.id,
             jobId: params.jobId ?? null,
             birthday: client.birthday,
+            serviceEndDate: client.endDate,
             storagePath,
             contentSha256,
             byteSize: png.length,

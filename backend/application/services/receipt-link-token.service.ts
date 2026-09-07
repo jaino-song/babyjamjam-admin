@@ -1,6 +1,7 @@
+import { getReceiptLinkExpiresAt } from "domain/constants/receipt-link-expiry";
 import { Inject, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import {
     IReceiptLinkTokenRepository,
     IReceiptLinkTokenIssuanceRepository,
@@ -10,7 +11,6 @@ import {
 } from "domain/repositories/receipt-link-token.repository.interface";
 
 export { RECEIPT_LINK_MAX_FAILED_ATTEMPTS };
-export const RECEIPT_LINK_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const RECEIPT_LINK_LOCK_MS = 30 * 60 * 1000;
 
 export type ReceiptLinkSource = "auto_trigger" | "manual";
@@ -23,6 +23,7 @@ export interface IssueReceiptLinkTokenParams {
     /** 산모 생년월일 — 6자리(YYMMDD) 또는 8자리(YYYYMMDD). normalizeBirthdayInput으로 정규화 후 해시된다;
      *  정규화에 실패하면 issue()가 던진다. */
     birthday: string;
+    serviceEndDate: Date;
     storagePath: string;
     contentSha256: string;
     byteSize: number;
@@ -126,10 +127,14 @@ export class ReceiptLinkTokenService {
         }
 
         const now = params.now ?? new Date();
-        const linkToken = `efr_${randomBytes(32).toString("base64url")}`;
-        const expiresAt = new Date(now.getTime() + RECEIPT_LINK_TTL_MS);
+        // Domain-separated HMAC keeps the contract URL recoverable without storing its secret.
+        const linkToken = `efr_${createHmac("sha256", this.requireSalt())
+            .update(JSON.stringify(["receipt-contract-link:v1", params.branchId, params.clientId, params.eformsignDocId]))
+            .digest("base64url")}`;
+        const expiresAt = getReceiptLinkExpiresAt(params.serviceEndDate);
+        if (expiresAt <= now) throw new Error("Receipt link has expired for this service period");
 
-        const row = await issuanceRepository.createReplacingActive(
+        const row = await issuanceRepository.createOrRefreshContractLink(
             {
                 branchId: params.branchId,
                 clientId: params.clientId,
@@ -146,9 +151,16 @@ export class ReceiptLinkTokenService {
                 createdAt: now,
             },
             now,
+            (client) => {
+                const latestBirthday = normalizeBirthdayInput(client.birthday ?? "");
+                if (!latestBirthday || !client.endDate) throw new Error("Receipt client profile is incomplete");
+                const latestExpiry = getReceiptLinkExpiresAt(client.endDate);
+                if (latestExpiry <= new Date()) throw new Error("Receipt link has expired for this service period");
+                return { expectedBirthdayHash: this.hashBirthday(latestBirthday), expiresAt: latestExpiry };
+            },
         );
 
-        return { id: row.id, linkToken, expiresAt };
+        return { id: row.id, linkToken, expiresAt: row.expiresAt };
     }
 
     private async findRow(linkToken: string): Promise<ReceiptLinkTokenRecord | null> {

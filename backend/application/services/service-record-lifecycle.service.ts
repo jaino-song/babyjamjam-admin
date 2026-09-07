@@ -183,7 +183,7 @@ export class ServiceRecordLifecycleService {
             && typeof db.client.updateMany === "function"
         ) {
             await db.client.updateMany({
-                where: { id: clientId },
+                where: { id: clientId, branchId },
                 data: { duration: sessionCount },
             });
         }
@@ -198,7 +198,7 @@ export class ServiceRecordLifecycleService {
             });
 
         const record = await db.service_record_case.upsert({
-            where: { clientId },
+            where: { clientId, branchId },
             create: {
                 branchId,
                 clientId,
@@ -221,7 +221,7 @@ export class ServiceRecordLifecycleService {
 
         for (const schedule of client.employeeSchedules) {
             await db.service_record_assignment.upsert({
-                where: { scheduleId: schedule.id },
+                where: { scheduleId: schedule.id, branchId: schedule.branchId ?? branchId },
                 create: {
                     branchId: schedule.branchId ?? branchId,
                     serviceRecordCaseId: record.id,
@@ -247,22 +247,23 @@ export class ServiceRecordLifecycleService {
         if (scheduleIds.length > 0) {
             await Promise.all([
                 db.service_record.updateMany({
-                    where: { scheduleId: { in: scheduleIds } },
+                    where: { scheduleId: { in: scheduleIds }, branchId },
                     data: { serviceRecordCaseId: record.id },
                 }),
                 db.service_record_token.updateMany({
-                    where: { scheduleId: { in: scheduleIds } },
+                    where: { scheduleId: { in: scheduleIds }, branchId },
                     data: { serviceRecordCaseId: record.id },
                 }),
                 db.eformsign_doc.updateMany({
                     where: {
+                        branchId,
                         employeeScheduleId: { in: scheduleIds },
                         documentKind: "service_record_snapshot",
                     },
                     data: { serviceRecordCaseId: record.id },
                 }),
             ]);
-            await this.linkLegacyDays(record.id, client.employeeSchedules, db);
+            await this.linkLegacyDays(record.id, client.employeeSchedules, db, branchId);
         }
 
         if (tokenExpiresAt) {
@@ -272,6 +273,7 @@ export class ServiceRecordLifecycleService {
             await db.service_record_token.updateMany({
                 where: {
                     serviceRecordCaseId: record.id,
+                    branchId,
                     active: true,
                     revokedAt: null,
                     expiresAt: { lt: tokenExpiresAt },
@@ -629,7 +631,7 @@ export class ServiceRecordLifecycleService {
         }
 
         return db.service_record_case.update({
-            where: { id: record.id },
+            where: { id: record.id, branchId: record.branchId },
             data: {
                 status,
                 completedAt: complete ? (record.completedAt ?? now) : null,
@@ -676,6 +678,7 @@ export class ServiceRecordLifecycleService {
             primaryEmployee: { name: string };
         }>,
         db: DbClient,
+        branchId: string,
     ): Promise<void> {
         const scheduleById = new Map(schedules.map((schedule) => [schedule.id, schedule]));
         const scheduleIds = schedules.map((schedule) => schedule.id);
@@ -698,14 +701,14 @@ export class ServiceRecordLifecycleService {
         if (rows.length === 0) return;
 
         const currentMax = await db.service_record_day.aggregate({
-            where: { serviceRecordCaseId, caseSessionIndex: { not: null } },
+            where: { serviceRecordCaseId, branchId, caseSessionIndex: { not: null } },
             _max: { caseSessionIndex: true },
         });
         let nextIndex = (currentMax._max.caseSessionIndex ?? 0) + 1;
         for (const row of rows) {
             const schedule = row.scheduleId ? scheduleById.get(row.scheduleId) : undefined;
             await db.service_record_day.update({
-                where: { id: row.id },
+                where: { id: row.id, branchId },
                 data: {
                     serviceRecordCaseId,
                     caseSessionIndex: row.caseSessionIndex ?? nextIndex++,
