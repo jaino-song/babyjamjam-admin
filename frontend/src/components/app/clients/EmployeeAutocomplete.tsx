@@ -49,6 +49,8 @@ interface EmployeeAutocompleteProps {
     placeholder?: string;
     displayValueMode?: "name" | "phone";
     searchMode?: "all" | "phone";
+    /** Refresh the shared list when a form opens, even if its cache is still fresh. */
+    refreshOnMount?: boolean;
 }
 
 export function EmployeeAutocomplete({
@@ -69,10 +71,13 @@ export function EmployeeAutocomplete({
     placeholder,
     displayValueMode = "name",
     searchMode = "all",
+    refreshOnMount = false,
     "data-testid": dataTestId,
 }: EmployeeAutocompleteProps) {
     const locale = useLocale();
-    const { data: employees, isLoading, refetch } = useEmployees();
+    const { data: employees, isLoading, refetch } = useEmployees({
+        refetchOnMount: refreshOnMount ? "always" : true,
+    });
     const setPrefillName = useEmployeeDialogStore((state) => state.setPrefillName);
     const clearPrefillName = useEmployeeDialogStore((state) => state.clearPrefillName);
 
