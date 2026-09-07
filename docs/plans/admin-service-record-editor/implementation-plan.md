@@ -2,7 +2,7 @@ TL;DR: 지점의 수정 확정 한 번으로 제공 일수를 유지하면서 �
 
 관련 설계 결정: `docs/adr/ADR-012-admin-service-record-revisions.md` (Proposed).
 
-상태: 2026-09-07 사용자 정책과 남동구 확인 단계 UI 검증을 반영한 최종 구현 계획. 제품 정책은 확정되었으며, 자동 문서 갱신의 기술 검증은 Phase 0 통과 조건이다. 구현·배포 완료나 API 자동화 검증 완료를 뜻하지 않는다.
+상태: 사용자 실행 승인 후 Phase 0 진행 중이나, 공식 다운로드 PDF가 수정 전 날짜를 반환하는 exported_pdf_stale를 확인해 후속 구현 차단 상태(2026-09-07). 사용자 정책과 남동구 확인 단계 UI 검증을 반영한 최종 구현 계획. 제품 정책은 확정되었으며, 자동 문서 갱신의 기술 검증은 Phase 0 통과 조건이다. 구현·배포 완료나 API 자동화 검증 완료를 뜻하지 않는다.
 
 작업 공간: `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor`, 브랜치 `admin-service-record-editor`, 최초 기준 `dev`의 `110dbbb84`, 실행 기준은 최신 `origin/dev`의 `e72140413`. 기존 전용 작업 공간을 재사용한다.
 
@@ -317,3 +317,5 @@ DB 저장과 외부 문서 생성은 하나의 트랜잭션으로 묶을 수 없
 소유 경로 재확인(2026-09-07): `receipt-link-issue.service.ts`가 영수증 이미지와 토큰 발급, `receipt-link-delivery-enricher.service.ts`가 receiptUrl 주입, `receipt-link.controller.ts`가 공개 조회/검증/이미지를 담당한다. 계약 자동 완료는 `contract-auto-finalize-scheduler.service.ts`와 `contract-auto-finalize.policy.ts`, 실제 작업 실행은 `eformsign-document-job-worker.service.ts`다. 제공기록지 최종화 스케줄러와 계약 자동 완료 스케줄러는 별개이므로 둘 다 최신 수정 버전을 검사해야 한다.
 
 실행 시작: 사용자 Luna max 작업자 실행 승인. 기존 브랜치를 e72140413으로 fast-forward하여 검토 중 PDF 조회와 duration 확인 수정을 포함했다. 정책은 그대로 유지하며 최신 코드 재사용을 우선한다.
+
+Phase 0 현재 판정: UI/API 필드 저장은 확인됐지만 공식 PDF가 구버전이므로 미통과. 실행 기록과 task-0-1-results를 참조한다. 지원되는 동일 문서 PDF 갱신 경로를 확보하거나, 출력 처리 정책 변경을 별도로 합의하기 전 Phase 1 이후를 시작하지 않는다.
