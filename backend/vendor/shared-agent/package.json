@@ -13,6 +13,10 @@
     "./utils/business-days": {
       "types": "./utils/business-days.d.ts",
       "require": "./utils/business-days.js"
+    },
+    "./utils/birthday": {
+      "types": "./utils/birthday.d.ts",
+      "require": "./utils/birthday.js"
     }
   },
   "dependencies": {

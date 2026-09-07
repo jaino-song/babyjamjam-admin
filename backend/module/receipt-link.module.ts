@@ -54,6 +54,6 @@ import { SystemSettingModule } from "./system-setting.module";
         ReceiptLinkManualSendService,
         ReceiptLinkCleanupSchedulerService,
     ],
-    exports: [ReceiptLinkIssueService, ReceiptLinkTokenService],
+    exports: [ReceiptLinkIssueService, ReceiptLinkTokenService, PdfPageRasterizerService],
 })
 export class ReceiptLinkModule {}

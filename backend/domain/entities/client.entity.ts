@@ -13,6 +13,7 @@ interface UpdateClientProps {
     phone?: string | null;
     type?: string | null;
     duration?: number | null;
+    allowBusinessDayMismatch?: boolean;
     fullPrice?: string | null;
     grant?: string | null;
     actualPrice?: string | null;
@@ -35,6 +36,7 @@ interface CreateClientProps {
     phone: string | null;
     type: string | null;
     duration: number | null;
+    allowBusinessDayMismatch?: boolean;
     fullPrice: string | null;
     grant: string | null;
     actualPrice: string | null;
@@ -70,6 +72,7 @@ function deriveCreatedClientDuration(
     startDate: Date | null,
     endDate: Date | null,
     suppliedDuration: number | null | undefined,
+    allowBusinessDayMismatch = false,
 ): number | null {
     if (!startDate || !endDate) {
         // A pre-booking may carry an explicit policy duration before both
@@ -100,14 +103,15 @@ function deriveCreatedClientDuration(
     // stays fixed), so a supplied duration is rejected only when it cannot
     // fit (null, non-integer, or exceeding the derived count). A supplied
     // value that fits is otherwise kept as-is; an omitted one falls back to
-    // the derived count.
+    // the derived count. An explicit confirmation permits weekend/holiday
+    // sessions without changing the supplied duration or either date.
     if (
         suppliedDuration !== undefined
         && (
             suppliedDuration === null
             || !Number.isSafeInteger(suppliedDuration)
             || suppliedDuration < 1
-            || suppliedDuration > derivedDuration
+            || (suppliedDuration > derivedDuration && allowBusinessDayMismatch !== true)
         )
     ) {
         throw new Error(clientDurationOutOfRangeMessage(derivedDuration));
@@ -179,6 +183,7 @@ export class ClientEntity {
             props.startDate,
             props.endDate,
             props.duration,
+            props.allowBusinessDayMismatch,
         );
         return new ClientEntity(
             0,
@@ -227,7 +232,7 @@ export class ClientEntity {
             // deriveCreatedClientDuration validates that and returns it
             // unchanged; an omitted value returns the raw derived count,
             // used below only to fill a still-null duration.
-            derivedDuration = deriveCreatedClientDuration(nextStartDate, nextEndDate, props.duration);
+            derivedDuration = deriveCreatedClientDuration(nextStartDate, nextEndDate, props.duration, props.allowBusinessDayMismatch);
         } else if (hasServiceDateUpdate) {
             // An explicit non-null duration requires a complete service
             // period. An omitted duration is left as-is: it no longer

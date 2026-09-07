@@ -237,10 +237,10 @@ export const eformsignApi = {
         );
         return data as EformsignContractClientCandidateResponse;
     },
-    // Receipt = page 7 of the document PDF, extracted by the download_files BFF route.
+    // Receipt = page 7 rendered by the same backend PNG rasterizer as message receipt links.
     // Browser-navigable BFF URL (full /api path, used as href/download — NOT via the axios client).
     getDocumentReceiptDownloadUrl: (documentId: string): string =>
-        `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document&page=7`,
+        `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document&format=receipt-png`,
     // Queues a "서비스 종료 안내" SMS carrying a fresh receipt link for the document's client.
     sendReceiptLink: async (documentId: string) => {
         const { data } = await api.post(`/receipt-links/send`, { documentId });

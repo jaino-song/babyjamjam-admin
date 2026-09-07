@@ -139,6 +139,41 @@ describe("SbEformsignDocumentMirrorRepository", () => {
         await expect(repository.findFile("doc-1", "document")).resolves.toBeNull();
     });
 
+    it("reads a review-pending PDF without its audit trail while retaining version and purge guards", async () => {
+        const file = {
+            fileType: "document",
+            content: Buffer.from("pdf"),
+            contentType: "application/pdf",
+            contentDisposition: null,
+            byteSize: 3,
+            sha256: "a".repeat(64),
+            sourceUpdatedDate: detailVersion,
+            syncedAt,
+        };
+        const row = {
+            detailPayload: { current_status: { status_type: "070" } },
+            detailSourceUpdatedDate: detailVersion,
+            syncStatus: "partial",
+            permanentPurgeRequestedAt: null,
+            files: [file],
+        };
+        const findUnique = jest.fn().mockResolvedValue(row);
+        const repository = new SbEformsignDocumentMirrorRepository({
+            eformsign_doc: { findUnique },
+        } as never);
+
+        await expect(repository.findFile("doc-1", "document"))
+            .resolves.toMatchObject({ content: Buffer.from("pdf") });
+        findUnique.mockResolvedValue({ ...row, files: [{ ...file, fileType: "audit_trail" }] });
+        await expect(repository.findFile("doc-1", "audit_trail")).resolves.toBeNull();
+        findUnique.mockResolvedValue({ ...row, files: [{ ...file, sourceUpdatedDate: syncedAt }] });
+        await expect(repository.findFile("doc-1", "document")).resolves.toBeNull();
+        findUnique.mockResolvedValue({ ...row, permanentPurgeRequestedAt: syncedAt });
+        await expect(repository.findFile("doc-1", "document")).resolves.toBeNull();
+        findUnique.mockResolvedValue({ ...row, files: [] });
+        await expect(repository.findFile("doc-1", "document")).resolves.toBeNull();
+    });
+
     it("acquires a same-version retry only from its observed non-ready attempt", async () => {
         const prisma = {
             eformsign_doc: {

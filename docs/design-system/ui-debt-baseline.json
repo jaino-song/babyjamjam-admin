@@ -199,34 +199,30 @@
     },
     "frontend/src/app/(protected)/contracts/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "1157:17-1157:31|pageLocalComponent",
-        "419:10-419:22|pageLocalComponent"
+        "1158:17-1158:31|pageLocalComponent",
+        "420:10-420:22|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "1959:7-1966:8|rawUiElement"
+        "1961:7-1968:8|rawUiElement"
       ],
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "1022:36-1022:208|visualTailwindInPage",
-        "1034:36-1034:208|visualTailwindInPage",
-        "1055:36-1055:208|visualTailwindInPage",
-        "1067:36-1067:208|visualTailwindInPage",
-        "1088:36-1088:208|visualTailwindInPage",
-        "1100:36-1100:208|visualTailwindInPage",
-        "1818:31-1818:63|visualTailwindInPage",
-        "1828:33-1828:81|visualTailwindInPage",
-        "1840:31-1840:63|visualTailwindInPage",
-        "1871:29-1871:136|visualTailwindInPage",
-        "1962:19-1962:233|visualTailwindInPage",
-        "1980:25-1980:232|visualTailwindInPage",
-        "2030:25-2030:157|visualTailwindInPage",
-        "2142:25-2142:177|visualTailwindInPage",
-        "2157:25-2162:17|visualTailwindInPage",
-        "2165:28-2165:139|visualTailwindInPage",
-        "2236:29-2236:181|visualTailwindInPage",
-        "444:27-455:19|visualTailwindInPage",
-        "728:72-728:177|visualTailwindInPage",
-        "808:27-812:18|visualTailwindInPage",
-        "878:37-878:209|visualTailwindInPage"
+        "1023:36-1023:208|visualTailwindInPage",
+        "1035:36-1035:208|visualTailwindInPage",
+        "1056:36-1056:208|visualTailwindInPage",
+        "1068:36-1068:208|visualTailwindInPage",
+        "1089:36-1089:208|visualTailwindInPage",
+        "1101:36-1101:208|visualTailwindInPage",
+        "1820:31-1820:63|visualTailwindInPage",
+        "1830:33-1830:81|visualTailwindInPage",
+        "1842:31-1842:63|visualTailwindInPage",
+        "1873:29-1873:136|visualTailwindInPage",
+        "1964:19-1964:233|visualTailwindInPage",
+        "1982:25-1982:232|visualTailwindInPage",
+        "2032:25-2032:157|visualTailwindInPage",
+        "445:27-456:19|visualTailwindInPage",
+        "729:72-729:177|visualTailwindInPage",
+        "809:27-813:18|visualTailwindInPage",
+        "879:37-879:209|visualTailwindInPage"
       ]
     },
     "frontend/src/app/(protected)/dashboard/page.tsx": {
@@ -268,28 +264,30 @@
         "693:10-693:31|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "949:19-960:20|rawUiElement"
+        "959:19-970:20|rawUiElement"
       ],
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "1000:23-1000:87|visualTailwindInPage",
-        "1002:26-1002:62|visualTailwindInPage",
-        "1003:26-1003:59|visualTailwindInPage",
-        "1011:29-1011:117|visualTailwindInPage",
-        "1017:33-1017:149|visualTailwindInPage",
-        "1065:41-1065:88|visualTailwindInPage",
-        "1082:29-1082:117|visualTailwindInPage",
-        "1088:33-1088:148|visualTailwindInPage",
-        "1144:41-1144:94|visualTailwindInPage",
-        "1165:25-1165:129|visualTailwindInPage",
-        "1188:27-1188:147|visualTailwindInPage",
-        "1201:29-1201:43|visualTailwindInPage",
-        "1305:52-1305:84|visualTailwindInPage",
-        "1554:21-1554:141|visualTailwindInPage",
-        "1691:45-1691:127|visualTailwindInPage",
-        "1693:55-1693:87|visualTailwindInPage",
-        "1696:55-1696:81|visualTailwindInPage",
-        "1722:35-1722:139|visualTailwindInPage",
-        "1734:35-1739:27|visualTailwindInPage",
+        "1010:23-1010:87|visualTailwindInPage",
+        "1012:26-1012:62|visualTailwindInPage",
+        "1013:26-1013:59|visualTailwindInPage",
+        "1021:29-1021:117|visualTailwindInPage",
+        "1027:33-1027:76|visualTailwindInPage",
+        "1032:33-1032:149|visualTailwindInPage",
+        "1080:41-1080:88|visualTailwindInPage",
+        "1097:29-1097:117|visualTailwindInPage",
+        "1103:33-1103:76|visualTailwindInPage",
+        "1108:33-1108:148|visualTailwindInPage",
+        "1164:41-1164:94|visualTailwindInPage",
+        "1185:25-1185:129|visualTailwindInPage",
+        "1208:27-1208:147|visualTailwindInPage",
+        "1221:29-1221:43|visualTailwindInPage",
+        "1325:52-1325:84|visualTailwindInPage",
+        "1574:21-1574:141|visualTailwindInPage",
+        "1711:45-1711:127|visualTailwindInPage",
+        "1713:55-1713:87|visualTailwindInPage",
+        "1716:55-1716:81|visualTailwindInPage",
+        "1742:35-1742:139|visualTailwindInPage",
+        "1754:35-1759:27|visualTailwindInPage",
         "540:25-540:166|visualTailwindInPage",
         "575:37-575:154|visualTailwindInPage",
         "591:25-591:129|visualTailwindInPage",
@@ -298,8 +296,9 @@
         "625:33-625:92|visualTailwindInPage",
         "629:35-629:75|visualTailwindInPage",
         "631:36-631:65|visualTailwindInPage",
-        "913:25-913:147|visualTailwindInPage",
-        "959:31-959:184|visualTailwindInPage"
+        "918:25-918:69|visualTailwindInPage",
+        "923:25-923:147|visualTailwindInPage",
+        "969:31-969:184|visualTailwindInPage"
       ]
     },
     "frontend/src/app/(protected)/messages/system-templates/[templateKey]/page.tsx": {
