@@ -6,9 +6,9 @@ TL;DR: 지점의 수정 확정 한 번으로 제공 일수를 유지하면서 �
 
 관련 설계 결정: `docs/adr/ADR-012-admin-service-record-revisions.md` (Proposed).
 
-상태: 사용자 실행 승인 후 Phase 0 진행 중(2026-09-07). 격리 남동구 문서에서 공식 API 반려와 SDK 날짜 수정·참여자 전송을 실행했고, 독립 API/PDF와 기존 이미지 생성기에서 날짜 갱신 및 서명·수령일·금액 보존을 확인했다. 최초 SDK 라이브 명령은 검사 오류 및 즉시 PDF 확보 실패로 RED이며, 이후 독립 증거와 구분한다. 서구 UI 반복 수정과 서명 PDF 보존은 2026-09-08 확인했다. 서구 SDK의 단일 날짜 수정·전송과 Jan06 공식PDF·서명 보존도 독립 확인했다(원래 라이브 명령은 즉시PDF 조회 실패로 RED). 격리 개발 환경에서 동일 영수증URL 이미지 교체·인증/만료 보존·정리는 실제HTTP로PASS했다. 운영 기존 링크 검증·완료 문서 분기·응답 유실/부분 실패 복구 시험이 남아 후속 구현 게이트는 열리지 않았다. 제품 정책은 확정되었으나 구현·배포 완료나 전체 자동화 검증 완료를 뜻하지 않는다.
+상태: 2026-09-08 사용자 지시로 Phase 1 로컬 구현 진행 중. Phase 0 외부 발급 미검증 사항은 별도로 유지한다. 격리 남동구 문서에서 공식 API 반려와 SDK 날짜 수정·참여자 전송을 실행했고, 독립 API/PDF와 기존 이미지 생성기에서 날짜 갱신 및 서명·수령일·금액 보존을 확인했다. 최초 SDK 라이브 명령은 검사 오류 및 즉시 PDF 확보 실패로 RED이며, 이후 독립 증거와 구분한다. 서구 UI 반복 수정과 서명 PDF 보존은 2026-09-08 확인했다. 서구 SDK의 단일 날짜 수정·전송과 Jan06 공식PDF·서명 보존도 독립 확인했다(원래 라이브 명령은 즉시PDF 조회 실패로 RED). 격리 개발 환경에서 동일 영수증URL 이미지 교체·인증/만료 보존·정리는 실제HTTP로PASS했다. 운영 기존 링크 검증·완료 문서 분기·응답 유실/부분 실패 복구 시험이 남아 외부 연동 전체 검증은 완료되지 않았다. 로컬 구현은 위 실행 경계 갱신에 따라 진행한다. 제품 정책은 확정되었으나 구현·배포 완료나 전체 자동화 검증 완료를 뜻하지 않는다.
 
-작업 공간: `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor`, 브랜치 `admin-service-record-editor`, 최초 기준 `dev`의 `110dbbb84`, 실행 기준은 최신 `origin/dev`의 `e72140413`. 기존 전용 작업 공간을 재사용한다.
+작업 공간: `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor`, 브랜치 `admin-service-record-editor`, 최초 기준 `dev`의 `110dbbb84`, 실행 기준은 로컬 `dev`의 `f7b35d760`을 통합한 `9f00a89e6`. 기존 전용 작업 공간을 재사용한다.
 
 확정된 범위:
 
@@ -133,6 +133,10 @@ TL;DR: 지점의 수정 확정 한 번으로 제공 일수를 유지하면서 �
 | case의 `plannedSessions` | 회차별 날짜와 assignmentId·scheduleId·employeeId·귀속 근거 버전을 포함하는 확정 예정 맵 | 기록 제출 행을 만들지 않고 예정일만 보존; legacy는 기존 계산으로 fallback |
 | case의 현재 버전 참조 | 최신 확정 내용 버전 / 최신 사용 가능한 문서 버전 | 기록 확정과 문서 생성 완료를 구분 |
 
+Phase2 입력 검토 보정: 저장소 구현은 기존 `backend/infrastructure/database/repositories/` 아래에 두고 domain repository interface/token 및 `ServiceRecordEntryModule` 등록을 사용한다. branchId를 가진 신규 모델은 tenant-models 생성 목록에 포함한다. 활성 초안은 PostgreSQL 부분 unique index로 하나만 허용하고 생성 경합은 기존 초안 반환으로 처리한다. draft/revision이 있는 case는 기존 전자문서 rollback의 빈 case 정리 대상에서 제외한다. 관련 interface/module/tenant generated/rollback 소유 파일과 회귀 테스트는 Task2.1 허용 경로에 포함하며, Task2.2는 관리자 화면 소유 경로도 수정할 수 있다.
+
+원본 변경 판단은 의미 있는 업무 데이터의 고정 sourceFingerprint를 사용한다. sourceCaseVersion은 생성 당시 근거로 보존하되 lifecycle-only version/updatedAt 증가만으로 초안을 오래된 것으로 판단하지 않는다. 서명·제출 근거, 수정 가능 데이터, 고정 회차 수, 예정일과 배정 귀속·범위는 지문에 포함하고 운영용 재시도/상태 시각은 제외한다. 초안 저장 중 원본 지문을 자동 갱신하지 않는다. 미리보기는 그 시점의 업무 지문과 잠금 버전을 함께 고정하며 확정에서 둘 다 재검사한다.
+
 `case.version`(경합 제어), `formVersion`(양식), 새 내용 수정 버전, `snapshotVersion`(발행 버전)은 서로 다른 의미로 관리한다. 현재 코드에서는 `snapshotVersion = record.formVersion`으로 조회·생성하므로 이 연결을 먼저 분리해야 한다. 새 문서 생성은 revisionId와 고정 payload를 필수로 받는다. case 잠금 안에서 이전 문서 버전 최댓값 다음 번호를 할당한다. 과거 청크는 legacy로 남기고 새 revision에 임의 연결하지 않는다. 과거 PDF의 원본 내용을 현재 DB 값으로 추정해 복원했다고 표시하지 않는다.
 
 - **Task 2.1: 초안·수정 이력 저장 기반 추가** (infra, high)
@@ -141,7 +145,8 @@ TL;DR: 지점의 수정 확정 한 번으로 제공 일수를 유지하면서 �
   - 격리 DB에서 빈 DB와 기존 snapshot 데이터가 있는 DB 양쪽 migration·재실행·구버전 읽기를 검사한다. 기존 데이터 삭제를 롤백 수단으로 사용하지 않는다.
 
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
-  **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/prisma/schema.prisma`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/prisma/migrations/`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/infrastructure/repositories/service-record-edit.repository.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/interface/dto/admin-service-record-edit.dto.ts`  
+  **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/prisma/schema.prisma`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/prisma/migrations/`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/infrastructure/database/repositories/service-record-edit.repository.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/interface/dto/admin-service-record-edit.dto.ts`
+  **추가 Paths:** `backend/domain/repositories/service-record-edit.repository.interface.ts`, `backend/module/service-record-entry.module.ts`, `backend/infrastructure/tenant/tenant-models.generated.ts`, `backend/infrastructure/database/repositories/sb.eformsign-document-mirror.repository.ts`, `backend/test/repositories/`, 새 DTO/저장소와 같은 디렉터리의 테스트
   **Depends:** Task 1.2, Task 1.A
 
 - **Task 2.2: 임시저장·재개·취소를 화면에 연결** (feature, med)
@@ -151,6 +156,7 @@ TL;DR: 지점의 수정 확정 한 번으로 제공 일수를 유지하면서 �
 
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/admin-service-record-edit.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/interface/controllers/admin-service-record.controller.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/frontend/src/features/service-records/`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/frontend/src/app/api/admin/service-records/`  
+  **추가 Paths:** `frontend/src/app/(service-record-admin)/`, `backend/module/service-record-entry.module.ts`, `backend/application/services/service-record-entry.service.ts`, `backend/application/policies/service-record-answer-validation.policy.ts`, `packages/shared/src/types/service-record.ts`, 관련 service/controller/DTO 테스트. 기존 `SERVICE_RECORD_LAYOUT_ANSWER_KEYS`와 일치하는 단일 backend-safe validator를 공용 제출과 초안에 함께 적용한다.
   **Depends:** Task 2.1
 
 - **Task 2.A: 단계 독립 감사** (test, high)
@@ -223,7 +229,7 @@ TL;DR: 지점의 수정 확정 한 번으로 제공 일수를 유지하면서 �
   - 동일 요청 재전송은 같은 revision 결과를 반환한다. 다른 원본 변경이 확인 이후 발생하면 409로 막고 최신 미리보기를 다시 요구한다. 변경 없음은 문서 생성 없이 종료한다. 실패 시 초안을 유지한다.
 
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
-  **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/admin-service-record-edit.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/infrastructure/repositories/service-record-edit.repository.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-entry.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-lifecycle.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/schedule-change.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/policies/employee-schedule-invariants.policy.ts`  
+  **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/admin-service-record-edit.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/infrastructure/database/repositories/service-record-edit.repository.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-entry.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-lifecycle.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/schedule-change.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/policies/employee-schedule-invariants.policy.ts`
   **Depends:** Task 3.1, Task 3.A
 
 - **Task 4.2: 기존 일정 변경과 자동 작업도 같은 날짜를 사용** (feature, high)

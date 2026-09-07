@@ -349,3 +349,14 @@
 - 2026-09-08 06:44:37 KST 별도 임시문서 POST1회 실행: HTTP400, 공급자코드4000001, 새문서ID 없음. 공식 API 가이드는 필수 헤더/파라미터의 누락 또는 잘못된 값으로 설명한다. 실패 항목 이름이나 원래 재발급 실패와 동일 원인인지는 확인되지 않았다. 결과는 별도 `phase0-draft-diagnostic/result.json`에 ambiguous로 보존했으며 재시도하지 않는다. 기존 재발급 ledger3개 SHA256도 그대로다.
 - 직후 두 DB의 신규 기준 대비 고객 연결·업무·모든 관련행 해시 PASS. 보호 문서3개 API/PDF도 기존 값/해시 그대로다. 새ID가 없으므로 새mirror의 ID 기반 확인과 새PDF 검증은 미실행이며, 지연 생성 부재를 확정하지 않는다.
 - 작성 단계 양식의 필수 항목에는 이번 축소 요청에서 제외한 도장/회사도장/제공인력 성명·연락처가 있다. 임시저장 API가 이 필수 설정을 검사하는지는 아직 증명하지 못했으므로 원인 후보로만 기록한다. 이를 채우기 위해 서명·도장을 복사하거나 임의 제공인력을 넣지 않는다. 업체 문의 금지 유지. Phase0 전체 완료 및 제품 적용은 미완료다.
+
+### 2026-09-08 — 사용자 지시에 따른 제품 구현 착수
+
+- 사용자가 진단 실패를 보고받은 뒤 ‘이제 구현해’라고 지시했다. 로컬 구현 착수 경계만 갱신하고 외부 발급/PDF/운영 적용의 미검증 상태는 보존했다. 구현 Luna/max, 독립 감사 Sol/high, unit별 순차 실행을 유지한다.
+- 기존 integration을 재사용하고 최신 dev `f7b35d760`을 병합한 HEAD는 `9f00a89e6`다. 최신 완료된 공용 기록지 접근 제한과 영수증 링크·만료 변경을 포함했다. 환경 브랜치에 작업을 병합한 것이 아니다. 사용자 untracked mockup을 보존했다.
+- Task1.1 unit `admin-service-record-editor-units/task-1-1` / `unit/admin-service-record-1-1` 생성 및 offline frozen 설치 완료. Sol/high 입력 검토는 Task1.1/1.2 APPROVE. 관리자 GET에만 역할 guard를 적용하고 외부지점 clientId를 명시 거절하며 auth/me 전역 role을 지점 권한으로 오인하지 않는 조건을 추가 확인했다.
+- 변경 전 기준: frontend/mobile typecheck PASS, frontend build PASS. mobile build는 API환경 누락으로 최초 실패했으며 명령에만 localhost API주소를 준 재실행은 PASS(로컬 미기동 API 접근 경고는 있음). 운영 런타임 검증을 뜻하지 않는다. 기존 backend 제출/lifecycle/guard60개, mobile 인증/helpers/서명22개 PASS.
+- 변경 전 mock API 브라우저 검증390/480/1280 각4개 총12개 PASS. 별도 임시 config로 기존 globalSetup의 실제 로그인을 실행하지 않았고 모든 브라우저 API요청은 mock처리했다. 스크린샷은 `/tmp/bjj-service-record-baseline-results`에 보관. 공식 Chrome 최종 시각 검수와 구분한다.
+- Task1.1 공통 화면 추출 후 같은 mock API 브라우저 검증12/12 PASS. 캡처12개 중4개는 파일까지 동일했고, 회차 목록390px의 전후 화면을 직접 비교해 동일 배치·내용을 확인했다. 진행 표시 막대의 애니메이션 시점 차이가 있어 전체 픽셀 일치나 공식 Chrome 최종 검수로 선언하지 않는다.
+- Phase2 Sol/high 입력 감사의8개 보완을 계획에 반영한 뒤 재검토 APPROVE. 지점 제한 CAS, 실제 업무 지문과 내부 버전 구분, append-only 수정 이력, tenant 모델 생성, 빈 case 정리의 초안 보존, 공용 입력 검증 재사용을 구현 수용 조건으로 확정했다.
+- 실제 고객 DB와 분리한 loopback PostgreSQL16 임시 클러스터에 기존 Prisma 스키마를 생성하고 schema-only 기준을 보관했다. 새 migration의 기존 스키마 적용·동시성·원자성 검증에 사용하며 운영 데이터는 복사하지 않았다.
