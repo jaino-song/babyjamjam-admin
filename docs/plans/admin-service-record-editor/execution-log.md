@@ -360,3 +360,9 @@
 - Task1.1 공통 화면 추출 후 같은 mock API 브라우저 검증12/12 PASS. 캡처12개 중4개는 파일까지 동일했고, 회차 목록390px의 전후 화면을 직접 비교해 동일 배치·내용을 확인했다. 진행 표시 막대의 애니메이션 시점 차이가 있어 전체 픽셀 일치나 공식 Chrome 최종 검수로 선언하지 않는다.
 - Phase2 Sol/high 입력 감사의8개 보완을 계획에 반영한 뒤 재검토 APPROVE. 지점 제한 CAS, 실제 업무 지문과 내부 버전 구분, append-only 수정 이력, tenant 모델 생성, 빈 case 정리의 초안 보존, 공용 입력 검증 재사용을 구현 수용 조건으로 확정했다.
 - 실제 고객 DB와 분리한 loopback PostgreSQL16 임시 클러스터에 기존 Prisma 스키마를 생성하고 schema-only 기준을 보관했다. 새 migration의 기존 스키마 적용·동시성·원자성 검증에 사용하며 운영 데이터는 복사하지 않았다.
+- Task1.1 `272f8d370` 통합 HEAD `8259704f7`. 공유 패키지/어댑터/폼 정의/CSS20파일, focused Jest25개·양 앱 및 패키지 타입 검사·양 앱 빌드·UI architecture·대상 lint PASS. 메인 모바일 타입 검사와 mock브라우저12개도 PASS. 모든 캡처의 차이는 진행막대5px높이 영역뿐임을 픽셀 차이 범위로 추가 확인했다. 깨끗한1.1 unit/branch를 삭제했다.
+- Task1.2 `admin-service-record-editor-units/task-1-2`, branch `unit/admin-service-record-1-2`, base8259704f7 생성 및 offline frozen1472개/Prisma생성 PASS. Luna/max에 새 지점 권한 GET과 readonly 전체 회차 화면을 지시했다. 기존 공개/prepare/send권한을 넓히거나 제한하지 않는다.
+- 기존 고객메뉴 브라우저 기준검사는 오래된 fixture의 빈 객체 응답 때문에 실패했다(voucherYears.includes, 이어 outOfPocketPriceInfos.map). 제품 코드는 바꾸지 않고 임시 테스트 사본에 연도/가격 배열 응답을 보완해 재검증 중이다. 실패를 새 관리자 기능 결함이나 성공으로 재분류하지 않는다.
+- 고객메뉴 임시 fixture의 연도·가격·지역 배열 응답 및 변경된 결과 dialog 식별자를 보정한 재실행은390/480/1280 총3개 PASS. 현재 DOM에 존재하는 dialog명/URL로 검증했고 제품코드 변경은 없었다. 같은 테스트 fixture의 좁은 보정은 Task1.2 테스트 범위에 포함하도록 전달했다.
+- Phase3 Sol/high PLAN CONCERNS를 반영했다. entry case-first와 schedule client-first의 역순 잠금을 확인했고 client/employee일정/자동배정의 transaction후 lifecycle 동기화도 공통 잠금 또는 업무지문CAS 경계에 포함했다. 실제로 확인된 usecase/repository 및 shared 영업일 소유 경로를 계획에 추가했다. N재계산 금지, signed vector, preview결속, 기존 고객간 직원일정 겹침 허용을 명시했고 재감사를 요청한다.
+- 보완된 Phase3 입력 재감사 Sol/high APPROVE. 실제 PostgreSQL barrier/lock-timeout, 대상집합 변경, N13/duration15, 전후 공휴일 이동, 업무지문/version 및 preview변조를 구현 수용 조건으로 유지한다.
