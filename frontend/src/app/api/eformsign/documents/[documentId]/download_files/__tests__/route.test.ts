@@ -63,6 +63,30 @@ describe("eformsign document download_files route", () => {
     expect(outputPdf.getPageCount()).toBe(1);
   });
 
+  it("forwards receipt PNG bytes without PDF extraction or a filename override", async () => {
+    const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    mockServerGet.mockResolvedValue({ status: 200, headers: { "content-type": "image/png" }, data: png });
+    const response = await GET(
+      createRequest("http://localhost/api/eformsign/documents/doc-1/download_files?fileType=document&format=receipt-png"),
+      { params: Promise.resolve({ documentId: "doc-1" }) },
+    );
+    expect(response.headers.get("Content-Type")).toBe("image/png");
+    expect(response.headers.get("Content-Disposition")).toBe("attachment");
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(png);
+    expect(mockServerGet).toHaveBeenCalledWith("/api/documents/doc-1/download_files", expect.objectContaining({
+      params: { fileType: "document", format: "receipt-png" },
+    }));
+  });
+
+  it("does not mislabel a PDF response as PNG", async () => {
+    mockServerGet.mockResolvedValue({ status: 200, headers: { "content-type": "application/pdf" }, data: await createPdf(8) });
+    const response = await GET(
+      createRequest("http://localhost/api/eformsign/documents/doc-1/download_files?format=receipt-png"),
+      { params: Promise.resolve({ documentId: "doc-1" }) },
+    );
+    expect(response.status).toBe(502);
+  });
+
   it("rejects page requests beyond the PDF page count", async () => {
     const sourcePdf = await createPdf(2);
     mockServerGet.mockResolvedValue({

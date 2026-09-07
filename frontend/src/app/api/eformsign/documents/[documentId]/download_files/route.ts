@@ -49,7 +49,7 @@ async function extractSinglePdfPage(sourcePdf: Uint8Array, pageNumber: number): 
 /**
  * Proxies the eformsign document PDF from the backend. With `?page=N`, extracts that single
  * page (used for the receipt at `page=7`) — mirrors the mobile BFF route. Backend returns the
- * full PDF; page extraction is a BFF concern.
+ * full PDF; page extraction is a BFF concern. Receipt PNG requests are rendered upstream.
  */
 export async function GET(
   request: NextRequest,
@@ -65,13 +65,14 @@ export async function GET(
   const { searchParams } = new URL(request.url);
   const fileType = normalizeFileType(searchParams.get("fileType"));
   const requestedPageParam = searchParams.get("page");
+  const isReceiptPng = searchParams.get("format") === "receipt-png";
 
   try {
     const requestedPage = parsePageNumber(requestedPageParam);
     const response = await serverAPIClient.get(
       `/api/documents/${encodeURIComponent(documentId)}/download_files`,
       {
-        params: { fileType },
+        params: { fileType, ...(isReceiptPng ? { format: "receipt-png" } : {}) },
         headers: getAuthHeaders(authToken),
         responseType: "arraybuffer",
       },
@@ -89,6 +90,21 @@ export async function GET(
       response.data instanceof ArrayBuffer
         ? new Uint8Array(response.data)
         : new Uint8Array(response.data as ArrayLike<number>);
+    if (isReceiptPng) {
+      if (!contentType.startsWith("image/png")) {
+        return NextResponse.json({ error: "영수증 이미지 생성에 실패했습니다." }, { status: 502 });
+      }
+      return new NextResponse(responseBody, {
+        status: response.status,
+        headers: {
+          "Content-Type": "image/png",
+          // The same-origin download attribute supplies the customer-specific filename.
+          "Content-Disposition": "attachment",
+          "Cache-Control": "private, no-store",
+        },
+      });
+    }
+
     const outputBody = requestedPage
       ? await extractSinglePdfPage(responseBody, requestedPage)
       : responseBody;
