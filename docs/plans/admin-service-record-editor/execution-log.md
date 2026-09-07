@@ -214,3 +214,11 @@
 - 따라서 현재 연결된 서구 양식에 남동구의 확인→검토 전송 동작을 그대로 실행하지 않았다. 격리 시험 양식에 별도 검토 단계를 갖춘 뒤 최초 서명 기준을 확보해야 같은 검증을 수행할 수 있다. 운영 양식은 수정하지 않았다.
 - 완료 문서 재작성은 기존 실화면 증거(`technical-verification-20260907.md`의 ‘추가 로그인 후 실제 이폼사인 확인’)에서 서명·회사 도장·손글씨를 가져오지 않는다고 명시했다. 공식 API/SDK 문서 연구에서도 기존 서명과 서명 이력을 신규 문서로 승계하는 지원 동작은 아직 확인하지 못했다. 지원 불가를 확정한 것은 아니지만, 다운로드 PDF 편집이나 서명 이미지 복사를 새 서명 증거로 간주해서는 안 된다.
 - Astra/medium 준비 감사는 격리된 시험 준비 범위를 승인했다. 라이브 변경 전에 서구 단계·수신자·원본, 완료 문서의 공식 승계 방식, 공개 링크의 실제 로컬 소유 관계와 URL·만료값을 확인해야 한다. 전체 Phase 0 및 후속 제품 구현 게이트는 미통과로 유지한다.
+
+### 서구 운영 양식 검토 단계 추가 (2026-09-08)
+
+- 사용자가 ‘그럼 서구 양식도 수정해줘’로 실제 연결된 서구 양식 변경을 명시 승인했다. Luna/max가 공식 관리 UI에서 정확한 `1159de2d31fa444d92db3bd25afadd92`를 열어 기존 제공기관 확인과 완료 사이에 reviewer 타입 ‘제공기관 검토’를 추가했다.
+- Astra/medium 저장 전 감사에서 실제 reviewer 타입, 이전 제공기관 확인(seq3) 수신자 상속, 반려 제한 해제, 이메일 ON/SMS OFF, 7일0시간을 확인하고 저장·게시를 승인했다. 이 기한은 무기한 검토나 서비스 종료일+7일 자동 완료 검증이 아니다.
+- UI 저장·배포 후 목록에 version12, 사용 가능, 사용 시작일2026-09-08이 표시됐다. main 공식 API 독립 조회도 version12와 enabled/release true 및 작성1→이용자 participant2→제공기관 확인 participant3→제공기관 검토 reviewer4→완료5를 확인했다. 새 검토자는 `beforewriter`, `specified_recipient_seq=3`, `use_reject_restrict=false`다.
+- 공식 전체 설정 전후 비교: 기존1~3단계는 deep equality 일치, 완료 단계는 seq4→5 외 일치, `config`에서 `step_settings`를 제외한 모든 항목은 일치했다. 최상위 차이는 version/start_write_date/update_date, file.form_image_id/file.form_files, config.step_settings다. 게시 후 파일 참조가 달라졌으므로 디자인 파일 바이너리 일치까지 입증한 것은 아니다. UI에서 디자인·입력 필드는 편집하지 않았다.
+- 기준/결과 전체 설정은 각각 `seogu-template-baseline-IhVW10`, `seogu-template-baseline-us2llL` 임시 보안 디렉터리의 config.json에 보관했다(디렉터리0700, 파일0600). 문서 발급·고객 알림 발송·기존 문서 수정은 수행하지 않았다. 양식 변경 완료와 서구 서명 계약서의 날짜/API/PDF 실제 시험 완료를 구분한다.
