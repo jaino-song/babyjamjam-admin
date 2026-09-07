@@ -75,6 +75,14 @@ export function isUnassignedReviewStageStatus(
     );
 }
 
+/** A current body PDF is readable while the provider review audit trail is pending. */
+export function isReviewStageDocumentPdfReadable(
+    statusType: string | number | null | undefined,
+): boolean {
+    return normalizeEformsignStatusCode(statusType) === "070"
+        || isUnassignedReviewStageStatus(statusType);
+}
+
 /**
  * Canonical review-stage codes plus raw values written by older vendor-ingestion paths.
  * The repository normally receives normalized codes now, but an equal-generation forward

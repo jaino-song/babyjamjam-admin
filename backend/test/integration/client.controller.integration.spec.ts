@@ -126,6 +126,34 @@ describe("ClientController (Integration)", () => {
         await app.close();
     });
 
+    describe("business-day mismatch confirmation", () => {
+        it.each([true, false])("passes explicit boolean confirmation %s through both write routes", async (confirmed) => {
+            clientService.create.mockResolvedValue(createMockClient());
+            clientService.update.mockResolvedValue(createMockClient());
+            const period = {
+                duration: 20, startDate: "2026-08-26", endDate: "2026-09-14",
+                allowBusinessDayMismatch: confirmed,
+            };
+            await request(app.getHttpServer()).post("/clients").send({
+                name: "Weekend service", careCenter: false, voucherClient: false, breastPump: false,
+                ...period,
+            }).expect(201);
+            expect(clientService.create).toHaveBeenCalledWith("org-1", expect.objectContaining(period));
+            await request(app.getHttpServer()).patch("/clients/1").send(period).expect(200);
+            expect(clientService.update).toHaveBeenCalledWith("org-1", 1, expect.objectContaining(period));
+        });
+        it.each(["true", "false", 1])("rejects non-boolean confirmation %s before writing", async (confirmed) => {
+            await request(app.getHttpServer()).post("/clients").send({
+                name: "Weekend service", careCenter: false, voucherClient: false, breastPump: false,
+                allowBusinessDayMismatch: confirmed,
+            }).expect(400);
+            await request(app.getHttpServer()).patch("/clients/1")
+                .send({ allowBusinessDayMismatch: confirmed }).expect(400);
+            expect(clientService.create).not.toHaveBeenCalled();
+            expect(clientService.update).not.toHaveBeenCalled();
+        });
+    });
+
     // ============================================
     // POST /clients - Create
     // ============================================

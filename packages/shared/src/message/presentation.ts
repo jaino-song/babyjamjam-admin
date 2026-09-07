@@ -46,8 +46,10 @@ export const MESSAGE_TEMPLATE_LABELS: Readonly<Record<string, string>> = {
   SURVEY: "모니터링 설문",
   INFO: "정보 요청",
   GREETING: "인사 메시지",
+  SERVICE_END_NOTICE: "서비스 종료 안내",
   service_record_link_sms: "제공기록지 작성 링크",
   client_greeting_sms: "인사 메시지",
+  service_end_notice_sms: "서비스 종료 안내",
   manual_sms: "수동 메시지",
   "인사(소개)": "인사 메시지",
 };
@@ -99,12 +101,15 @@ export const MESSAGE_RECORD_ZONE_LABELS = {
 
 export type MessageRecordStatusFilter = "all" | "upcoming" | "sent" | "failed" | "canceled";
 
+// The past-status tab labels (sent/failed/canceled) deliberately reuse
+// MESSAGE_HISTORY_STATUS_LABELS above, the same copy shown on each row's
+// status badge, so the tabs and the badges cannot drift apart in wording.
 export const MESSAGE_RECORD_STATUS_FILTER_LABELS: Readonly<Record<MessageRecordStatusFilter, string>> = {
   all: "전체",
   upcoming: "예정",
-  sent: "발송",
-  failed: "실패",
-  canceled: "취소",
+  sent: MESSAGE_HISTORY_STATUS_LABELS.sent,
+  failed: MESSAGE_HISTORY_STATUS_LABELS.failed,
+  canceled: MESSAGE_HISTORY_STATUS_LABELS.canceled,
 };
 
 // A user-pressed cancel is permanent: the backend marks it so the re-sync that
@@ -137,7 +142,7 @@ export const MESSAGE_RECIPIENT_LABELS: Readonly<Record<MessageTriggerRecipientTy
 };
 
 const SMS_HISTORY_PROVIDERS = new Set(["aligo_sms", "sms"]);
-const SMS_DELIVERY_TEMPLATE_KEYS = new Set(["service_record_link_sms", "client_greeting_sms"]);
+const SMS_DELIVERY_TEMPLATE_KEYS = new Set(["service_record_link_sms", "client_greeting_sms", "service_end_notice_sms"]);
 const INTERNAL_KEY_PATTERN = /^[a-z0-9_-]+$/i;
 
 function getVariableValue(variables: Record<string, string> | undefined, key: string): string | null {

@@ -129,7 +129,7 @@ export class ServiceRecordEntryService {
     async saveHeader(ctx: ServiceRecordTokenContext, dto: SaveServiceHeaderDto) {
         const record = await this.resolveCase(ctx);
         const lockedCount = await this.prisma.service_record_day.count({
-            where: { serviceRecordCaseId: record.id, locked: true },
+            where: { serviceRecordCaseId: record.id, branchId: ctx.branchId, locked: true },
         });
         if (lockedCount > 0) {
             throw new ConflictException({ code: "SERVICE_RECORD_HEADER_LOCKED" });
@@ -145,11 +145,11 @@ export class ServiceRecordEntryService {
 
         const updated = await this.prisma.$transaction(async (tx) => {
             const aggregate = await tx.service_record_case.update({
-                where: { id: record.id },
+                where: { id: record.id, branchId: ctx.branchId },
                 data: { ...dto, version: { increment: 1 } },
             });
             await tx.service_record.upsert({
-                where: { scheduleId: ctx.scheduleId },
+                where: { scheduleId: ctx.scheduleId, branchId: ctx.branchId },
                 create: {
                     branchId: ctx.branchId,
                     scheduleId: ctx.scheduleId,
@@ -265,11 +265,11 @@ export class ServiceRecordEntryService {
                     }
                 }
                 await tx.employee_schedule.update({
-                    where: { id: schedule.id },
+                    where: { id: schedule.id, branchId: ctx.branchId },
                     data: { endDate: newEndDate },
                 });
                 await tx.client.update({
-                    where: { id: schedule.clientId },
+                    where: { id: schedule.clientId, branchId: ctx.branchId },
                     data: { endDate: newEndDate },
                 });
                 await this.lifecycleService.ensureForClient(schedule.clientId, tx);
@@ -357,6 +357,7 @@ export class ServiceRecordEntryService {
 
             let row = await tx.service_record_day.upsert({
                 where: {
+                    branchId: ctx.branchId,
                     serviceRecordCaseId_caseSessionIndex: {
                         serviceRecordCaseId: record.id,
                         caseSessionIndex: sessionIndex,
@@ -369,6 +370,7 @@ export class ServiceRecordEntryService {
                 const clientSignedAt = new Date();
                 const signatureWrite = await tx.service_record_day.updateMany({
                     where: {
+                        branchId: ctx.branchId,
                         serviceRecordCaseId: record.id,
                         caseSessionIndex: sessionIndex,
                         clientSignature: null,

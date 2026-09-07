@@ -14,6 +14,7 @@ type CreateClientParams = {
     phone: string | null;
     type: string | null;
     duration: number | null;
+    allowBusinessDayMismatch?: boolean;
     fullPrice: string | null;
     grant: string | null;
     actualPrice: string | null;

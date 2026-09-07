@@ -12,6 +12,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   useMessageTriggerRules,
+  useUpdateMessageTriggerRuleBranchActivation,
   useUpdateMessageTriggerRule,
 } from "@/features/message-triggers/hooks/use-message-triggers";
 import type {
@@ -131,6 +132,7 @@ export function MessageTriggerList({
     isLoading: isRulesLoading,
   } = useMessageTriggerRules();
   const updateRuleMutation = useUpdateMessageTriggerRule();
+  const branchActivationMutation = useUpdateMessageTriggerRuleBranchActivation();
 
   const {
     data: logsResponse = [],
@@ -176,11 +178,21 @@ export function MessageTriggerList({
   const handleToggle = useCallback((row: TriggerDisplayRow) => {
     const nextActive = !row.rule.isActive;
 
+    if (row.rule.branchId === null) {
+      branchActivationMutation.mutate({
+        id: row.rule.id,
+        dto: { isActive: nextActive },
+      });
+      return;
+    }
+
     updateRuleMutation.mutate({
       id: row.rule.id,
       dto: { isActive: nextActive },
     });
-  }, [updateRuleMutation]);
+  }, [branchActivationMutation, updateRuleMutation]);
+
+  const isTogglePending = updateRuleMutation.isPending || branchActivationMutation.isPending;
 
   return (
     <div className="section-block message-trigger-list" data-component={dataComponent}>
@@ -192,6 +204,11 @@ export function MessageTriggerList({
           const rowKey = row.rule.id;
           const triggerKey = row.rule.templateKey;
           const triggerId = row.rule.id;
+          // M5: a branchless rule (branchId === null) is a system rule — the manual-send
+          // synthetic rule is one example — and must not be editable or toggleable here,
+          // mirroring the desktop guard (frontend/src/components/app/messages/
+          // TriggerRulesManager.tsx:525,564,712).
+          const isSystemRule = row.rule.branchId === null;
 
           const iconAndInfo = (
             <>
@@ -232,20 +249,26 @@ export function MessageTriggerList({
               data-trigger-key={triggerKey}
               data-trigger-channel={row.channelLabel}
             >
-              <button
-                type="button"
-                className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                aria-label={`${row.title} 설정`}
-                onClick={() => onEdit(row.rule)}
-              >
-                {iconAndInfo}
-              </button>
+              {isSystemRule ? (
+                <div className="flex min-w-0 flex-1 items-center gap-3 text-left">
+                  {iconAndInfo}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                  aria-label={`${row.title} 설정`}
+                  onClick={() => onEdit(row.rule)}
+                >
+                  {iconAndInfo}
+                </button>
+              )}
               <button
                 type="button"
                 className="flex min-h-11 min-w-11 items-center justify-end"
                 aria-label={`${row.title} ${rowActive ? "비활성화" : "활성화"}`}
                 aria-pressed={rowActive}
-                disabled={updateRuleMutation.isPending}
+                disabled={isTogglePending || row.rule.isLockedByGlobal === true}
                 onClick={() => handleToggle(row)}
               >
                 <span className={`toggle ${rowActive ? "on" : ""}`} aria-hidden="true" />
@@ -261,7 +284,7 @@ export function MessageTriggerList({
               data-trigger-id={triggerId}
               data-trigger-key={triggerKey}
               data-trigger-channel={row.channelLabel}
-              disabled={updateRuleMutation.isPending}
+              disabled={isTogglePending || row.rule.isLockedByGlobal === true}
               onClick={() => handleToggle(row)}
             >
               {iconAndInfo}

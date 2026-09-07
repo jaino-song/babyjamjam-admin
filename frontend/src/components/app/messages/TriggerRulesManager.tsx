@@ -39,6 +39,7 @@ import {
   useMessageTriggerTemplates,
   useCreateMessageTriggerRule,
   useUpdateMessageTriggerRule,
+  useUpdateMessageTriggerRuleBranchActivation,
   useDeleteMessageTriggerRule,
 } from "@/features/message-triggers/hooks/use-message-triggers";
 import {
@@ -222,6 +223,20 @@ const TRIGGER_TEMPLATE_MESSAGE_FALLBACKS: Record<TriggerTemplateKey, string> = {
 #{고객명}님, 모니터링 설문 부탁드립니다.`,
   INFO: `[아이미래 인천]
 안내드립니다.`,
+  SERVICE_END_NOTICE: `[사회서비스 제공자 품질평가 A등급]
+안녕하세요, 인천 아이미래로 입니다 :)
+
+{{name}}산모님~♡
+
+본인부담금 환급신청을 위한 영수증 다운로드 방법 안내 드립니다 :)
+
+아래의 URL로 접속하시면 본인부담금 영수증 다운로드가 가능하십니다. 환급 신청은 관할지 보건소 방문 또는 인터넷 정부24에서 가능하시고, 다운로드 받으신 영수증 이미지를 첨부하시면 환급 신청 가능 하십니다^^
+
+{{receiptUrl}}
+
+추가 문의사항이 있으시면 상세히 답변 드리도록 하겠습니다.
+
+감사합니다 :)`,
 };
 
 function toFormState(rule: MessageTriggerRule | null): RuleFormState {
@@ -284,6 +299,7 @@ export function TriggerRulesManager({
   const { data: rulesData = [], isLoading } = useMessageTriggerRules();
   const createMutation = useCreateMessageTriggerRule();
   const updateMutation = useUpdateMessageTriggerRule();
+  const branchActivationMutation = useUpdateMessageTriggerRuleBranchActivation();
   const deleteMutation = useDeleteMessageTriggerRule();
 
   const rules = useMemo(() => (Array.isArray(rulesData) ? rulesData : []), [rulesData]);
@@ -547,15 +563,18 @@ export function TriggerRulesManager({
   };
 
   const handleRuleActiveToggle = async (rule: MessageTriggerRule, checked: boolean) => {
-    if (isTriggerRulesLocked || rule.branchId === null) return;
-
-    const dto = normalizeDto({
-      ...toFormState(rule),
-      isActive: checked,
-    });
-
     try {
-      await updateMutation.mutateAsync({ id: rule.id, dto });
+      if (isTriggerRulesLocked || rule.isLockedByGlobal) return;
+
+      if (rule.branchId === null) {
+        await branchActivationMutation.mutateAsync({ id: rule.id, dto: { isActive: checked } });
+      } else {
+        const dto = normalizeDto({
+          ...toFormState(rule),
+          isActive: checked,
+        });
+        await updateMutation.mutateAsync({ id: rule.id, dto });
+      }
       if (effectiveSelectedRuleId === rule.id) {
         setFormState((current) => ({ ...current, isActive: checked }));
       }
@@ -695,7 +714,7 @@ export function TriggerRulesManager({
                             <Switch
                               aria-label={`${item.title} 활성화`}
                               checked={item.active}
-                              disabled={isTriggerRulesLocked || item.rule.branchId === null || updateMutation.isPending}
+                              disabled={isTriggerRulesLocked || item.rule.isLockedByGlobal === true || updateMutation.isPending || branchActivationMutation.isPending}
                               onClick={(event) => event.stopPropagation()}
                               onCheckedChange={(checked) => {
                                 void handleRuleActiveToggle(item.rule, checked);
@@ -745,7 +764,7 @@ export function TriggerRulesManager({
               isLoading={isDetailLoading}
               title={effectiveSelectedRuleId === "new" ? "새 발송 규칙" : selectedRule?.name ?? "발송 규칙"}
               subtitle={isSelectedSystemRule
-                ? "서비스 배정 시 제공인력에게 자동 발송되는 읽기 전용 시스템 루틴입니다."
+                ? "내용은 고정되어 있지만 이 지점에서 발송 여부를 켜고 끌 수 있는 시스템 루틴입니다."
                 : copy.detailSubtitle}
               tabs={
                 <DetailTabs

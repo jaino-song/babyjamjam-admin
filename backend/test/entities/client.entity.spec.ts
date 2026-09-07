@@ -83,3 +83,25 @@ describe("ClientEntity canonical phone identity", () => {
         expect(client.phoneNormalized).toBe("01012345678");
     });
 });
+
+describe("ClientEntity confirmed non-business-day service", () => {
+    const period = { startDate: new Date("2026-08-26"), endDate: new Date("2026-09-14"), duration: 15 };
+    it("preserves the confirmed period on create and update without persisting consent", () => {
+        const props = { ...createClient(), ...period };
+        expect(() => ClientEntity.create(props)).toThrow();
+        const client = ClientEntity.create({ ...props, allowBusinessDayMismatch: true });
+        expect(client.duration).toBe(15);
+        expect(client.endDate).toEqual(period.endDate);
+        expect(client).not.toHaveProperty("allowBusinessDayMismatch");
+        expect(() => client.update({ ...period })).toThrow();
+        client.update({ ...period, allowBusinessDayMismatch: true });
+        client.update({ name: "이름 수정" });
+        expect(client.duration).toBe(15);
+    });
+    it("does not bypass reversed dates or invalid session counts", () => {
+        const client = createClient();
+        expect(() => client.update({ ...period, duration: 0, allowBusinessDayMismatch: true })).toThrow();
+        expect(() => client.update({ ...period, startDate: period.endDate, endDate: period.startDate, allowBusinessDayMismatch: true })).toThrow();
+        expect(client.startDate).toBeNull();
+    });
+});

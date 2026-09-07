@@ -24,6 +24,20 @@ const base: EformsignContractClientCandidateResponse = {
 };
 
 describe("contractCandidateToClientPrefill", () => {
+    it.each([
+        ["1986년 7월 9일", "860709"],
+        ["1986. 7. 9.", "860709"],
+        ["1986 07 09", "860709"],
+        ["86.7.9", "860709"],
+        ["１９８６．７．９", "860709"],
+        ["1986-07-09 00:00:00", "860709"],
+        ["198679", ""],
+        ["2099-07-09", ""],
+        ["1986-07-09Tgarbage", ""],
+    ])("normalizes candidate birthday %s before initializing the dialog", (birthday, expected) => {
+        expect(contractCandidateToClientPrefill({ ...base, birthday }).birthday).toBe(expected);
+    });
+
     it("후보의 모든 필드를 폼 프리필로 매핑한다", () => {
         expect(contractCandidateToClientPrefill(
             base,

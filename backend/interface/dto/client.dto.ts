@@ -41,6 +41,10 @@ export class CreateClientDto {
     duration?: number | null;
 
     @IsOptional()
+    @IsBoolean()
+    allowBusinessDayMismatch?: boolean;
+
+    @IsOptional()
     @IsString()
     @Transform(trimKoreanWonInput)
     @Matches(KOREAN_WON_INPUT_PATTERN, { message: KOREAN_WON_VALIDATION_MESSAGE })
@@ -148,6 +152,10 @@ export class UpdateClientDto {
     @IsOptional()
     @IsInt()
     duration?: number | null;
+
+    @IsOptional()
+    @IsBoolean()
+    allowBusinessDayMismatch?: boolean;
 
     @IsOptional()
     @IsString()
