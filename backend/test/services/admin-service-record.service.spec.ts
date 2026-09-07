@@ -11,6 +11,9 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 
 describe("AdminServiceRecordService", () => {
     const createPrisma = () => ({
+        client: {
+            findFirst: jest.fn(),
+        },
         service_record_case: {
             findFirst: jest.fn().mockResolvedValue(null),
         },
@@ -112,6 +115,115 @@ describe("AdminServiceRecordService", () => {
         // authoritative; the 6-business-day span for the current dates is
         // no longer used to override it.
         expect(overview.record?.totalSessions).toBe(15);
+    });
+
+    it("asserts branch-owned client access before reading the editor overview", async () => {
+        const prisma = createPrisma();
+        const service = new AdminServiceRecordService(
+            prisma as unknown as PrismaService,
+            createLinkService() as unknown as ServiceRecordLinkService,
+            createTriggerService() as unknown as MessageTriggerService,
+        );
+        prisma.client.findFirst.mockResolvedValue({ id: 100 });
+        prisma.service_record_case.findFirst.mockResolvedValue(null);
+        prisma.employee_schedule.findMany.mockResolvedValue([]);
+
+        await expect(service.getClientEditor("branch-1", 100)).resolves.toEqual({
+            record: null,
+            assignments: [],
+        });
+
+        expect(prisma.client.findFirst).toHaveBeenCalledWith({
+            where: { id: 100, branchId: "branch-1" },
+            select: { id: true },
+        });
+        expect(prisma.service_record_case.findFirst).toHaveBeenCalled();
+        expect(prisma.employee_schedule.findMany).toHaveBeenCalled();
+    });
+
+    it("returns not found for a foreign or missing client without reading records or invoking mutations", async () => {
+        const prisma = createPrisma();
+        const linkService = createLinkService();
+        const triggerService = createTriggerService();
+        const service = new AdminServiceRecordService(
+            prisma as unknown as PrismaService,
+            linkService as unknown as ServiceRecordLinkService,
+            triggerService as unknown as MessageTriggerService,
+        );
+        prisma.client.findFirst.mockResolvedValue(null);
+
+        await expect(service.getClientEditor("branch-1", 404)).rejects.toBeInstanceOf(NotFoundException);
+
+        expect(prisma.client.findFirst).toHaveBeenCalledWith({
+            where: { id: 404, branchId: "branch-1" },
+            select: { id: true },
+        });
+        expect(prisma.service_record_case.findFirst).not.toHaveBeenCalled();
+        expect(prisma.employee_schedule.findMany).not.toHaveBeenCalled();
+        expect(linkService.prepareLink).not.toHaveBeenCalled();
+        expect(linkService.sendNow).not.toHaveBeenCalled();
+        expect(triggerService.dispatchPendingJobNow).not.toHaveBeenCalled();
+    });
+
+    it("only includes stored signature material on the owner/admin editor projection", async () => {
+        const prisma = createPrisma();
+        const session = {
+            sessionIndex: 1,
+            caseSessionIndex: 1,
+            serviceDate: new Date("2026-07-01T00:00:00.000Z"),
+            locked: true,
+            submittedAt: new Date("2026-07-01T01:00:00.000Z"),
+            updatedAt: new Date("2026-07-01T01:00:00.000Z"),
+            answers: {},
+            etcService: null,
+            notes: null,
+            paymentConfirmed: true,
+            momApproval: "approved",
+            clientSignature: "data:image/png;base64,stored",
+            clientSignedAt: new Date("2026-07-01T01:00:00.000Z"),
+            employeeId: null,
+            employeeNameSnapshot: null,
+            formVersion: 1,
+        };
+        prisma.service_record_case.findFirst.mockResolvedValue({
+            id: "case-1",
+            status: "COMPLETED",
+            startDate: new Date("2026-07-01T00:00:00.000Z"),
+            endDate: new Date("2026-07-01T00:00:00.000Z"),
+            requiredSessionCount: 1,
+            completedAt: null,
+            finalizationDueAt: null,
+            finalizedAt: new Date("2026-07-02T00:00:00.000Z"),
+            documentsCompletedAt: null,
+            lastError: null,
+            momName: null,
+            momBirth: null,
+            babyName: null,
+            babyBirth: null,
+            deliveryType: null,
+            babyWeight: null,
+            createdAt: new Date("2026-07-01T00:00:00.000Z"),
+            updatedAt: new Date("2026-07-01T00:00:00.000Z"),
+            days: [session],
+        } as never);
+        prisma.employee_schedule.findMany.mockResolvedValue([]);
+        prisma.client.findFirst.mockResolvedValue({ id: 100 });
+
+        const service = new AdminServiceRecordService(
+            prisma as unknown as PrismaService,
+            createLinkService() as unknown as ServiceRecordLinkService,
+            createTriggerService() as unknown as MessageTriggerService,
+        );
+
+        const overview = await service.getClientOverview("branch-1", 100);
+        expect(overview.record?.sessions[0]).not.toHaveProperty("clientSignature");
+        expect(overview.record?.sessions[0]).not.toHaveProperty("clientSignedAt");
+
+        const editor = await service.getClientEditor("branch-1", 100);
+        expect(editor.record?.sessions[0]).toEqual(expect.objectContaining({
+            clientSignature: "data:image/png;base64,stored",
+            clientSignedAt: session.clientSignedAt,
+        }));
     });
 
     it("derives link status for none, scheduled, sent, and failed assignments", async () => {

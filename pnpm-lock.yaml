@@ -640,6 +640,10 @@ importers:
       react:
         specifier: ^19.0.0
         version: 19.2.4
+    devDependencies:
+      '@types/react':
+        specifier: ^19.2.7
+        version: 19.2.14
 
   packages/shared:
     dependencies:

@@ -90,7 +90,11 @@ export class AdminServiceRecordService {
         @Optional() private readonly securityEventService?: ServiceRecordSecurityEventService,
     ) {}
 
-    async getClientOverview(branchId: string, clientId: number): Promise<AdminServiceRecordOverviewDto> {
+    async getClientOverview(
+        branchId: string,
+        clientId: number,
+        options: { includeSignatures?: boolean } = {},
+    ): Promise<AdminServiceRecordOverviewDto> {
         const [record, schedules] = await Promise.all([
             this.prisma.service_record_case.findFirst({
                 where: { branchId, clientId },
@@ -146,7 +150,7 @@ export class AdminServiceRecordService {
         const signatureDocByScheduleId = latestSignatureDocByScheduleId(signatureDocs);
 
         return {
-            record: record ? this.mapCase(record, signatureDocs) : null,
+            record: record ? this.mapCase(record, signatureDocs, options.includeSignatures === true) : null,
             assignments: schedules.map((schedule) => this.mapAssignment(
                 schedule,
                 jobs.filter((job) => job.employeeScheduleId === schedule.id),
@@ -155,13 +159,26 @@ export class AdminServiceRecordService {
                     || (log.triggerJobId === null && logScheduleId(log) === schedule.id)
                 )),
                 signatureDocByScheduleId.get(schedule.id) ?? null,
+                options.includeSignatures === true,
             )),
         };
+    }
+
+    /**
+     * Read-only editor access has a stricter not-found contract than the
+     * existing overview endpoint.  The overview is intentionally allowed to
+     * return an empty result for legacy callers, so assert the branch-owned
+     * client before delegating to that existing read path.
+     */
+    async getClientEditor(branchId: string, clientId: number): Promise<AdminServiceRecordOverviewDto> {
+        await this.assertClientBelongsToBranch(branchId, clientId);
+        return this.getClientOverview(branchId, clientId, { includeSignatures: true });
     }
 
     private mapCase(
         record: CaseForOverview,
         signatureDocs: SignatureDocRow[],
+        includeSignatures: boolean,
     ): AdminServiceRecordCaseDto {
         const header = [
             record.momName,
@@ -196,7 +213,7 @@ export class AdminServiceRecordService {
                 createdAt: record.createdAt,
                 updatedAt: record.updatedAt,
             } : null,
-            sessions: record.days.map((session) => this.mapSession(session)),
+            sessions: record.days.map((session) => this.mapSession(session, includeSignatures)),
             signatureDocs: signatureDocs.map((document) => this.mapSignatureDoc(document)),
         };
     }
@@ -263,11 +280,22 @@ export class AdminServiceRecordService {
         }
     }
 
+    private async assertClientBelongsToBranch(branchId: string, clientId: number): Promise<void> {
+        const client = await this.prisma.client.findFirst({
+            where: { id: clientId, branchId },
+            select: { id: true },
+        });
+        if (!client) {
+            throw new NotFoundException("Client not found");
+        }
+    }
+
     private mapAssignment(
         schedule: ScheduleForOverview,
         jobs: ServiceRecordLinkJob[],
         logs: ServiceRecordLinkLog[],
         signatureDoc: AdminServiceRecordSignatureDocDto | null,
+        includeSignatures: boolean,
     ): AdminServiceRecordAssignmentDto {
         return {
             scheduleId: schedule.id,
@@ -286,7 +314,7 @@ export class AdminServiceRecordService {
                 schedule.client.endDate ?? schedule.endDate,
                 schedule.client.duration,
             ),
-            sessions: schedule.serviceRecordDays.map((session) => this.mapSession(session)),
+            sessions: schedule.serviceRecordDays.map((session) => this.mapSession(session, includeSignatures)),
             signatureDoc,
         };
     }
@@ -355,7 +383,10 @@ export class AdminServiceRecordService {
         };
     }
 
-    private mapSession(session: ScheduleForOverview["serviceRecordDays"][number]): AdminServiceRecordSessionDto {
+    private mapSession(
+        session: ScheduleForOverview["serviceRecordDays"][number],
+        includeSignatures: boolean,
+    ): AdminServiceRecordSessionDto {
         return {
             sessionIndex: session.caseSessionIndex ?? session.sessionIndex,
             serviceDate: session.serviceDate,
@@ -367,6 +398,10 @@ export class AdminServiceRecordService {
             notes: session.notes,
             paymentConfirmed: session.paymentConfirmed,
             hasMomApproval: Boolean(session.momApproval),
+            ...(includeSignatures ? {
+                clientSignature: session.clientSignature,
+                clientSignedAt: session.clientSignedAt,
+            } : {}),
             employeeId: session.employeeId,
             employeeName: session.employeeNameSnapshot,
             formVersion: session.formVersion,
