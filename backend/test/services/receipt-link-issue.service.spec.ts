@@ -162,7 +162,6 @@ function makeService(overrides: MakeServiceOverrides = {}) {
         rasterizer,
         tokenService,
         storage,
-        receiptLinkTokenRepository,
     );
 
     return {
@@ -183,7 +182,7 @@ function makeService(overrides: MakeServiceOverrides = {}) {
 }
 
 describe("ReceiptLinkIssueService", () => {
-    it("renders page 7, uploads under a content-addressed path, issues a token and builds the url", async () => {
+    it("renders page 7, uploads under an issuance-specific path, issues a token and builds the url", async () => {
         const { service, rasterizer, storage, tokenService, clientRepository } = makeService();
         const result = await service.issue({ branchId: BRANCH, clientId: 7, source: "auto_trigger", jobId: "job-1" });
 
@@ -192,7 +191,7 @@ describe("ReceiptLinkIssueService", () => {
         // RECEIPT_PAGE_NUMBER/RECEIPT_IMAGE_WIDTH constants the implementation itself imports
         // would make this a tautology — a mutated constant would move both sides together.
         expect(rasterizer.renderPageToPng).toHaveBeenCalledWith(PDF, 7, { width: 1240 });
-        expect(storage.upload).toHaveBeenCalledWith(PNG, `receipts/${BRANCH}/42/${PNG_SHA}.png`, "image/png");
+        expect(storage.upload).toHaveBeenCalledWith(PNG, expect.stringMatching(new RegExp(`^receipts/${BRANCH}/42/${PNG_SHA}-[a-f0-9-]+\\.png$`)), "image/png");
         expect(tokenService.issue).toHaveBeenCalledWith(
             expect.objectContaining({
                 branchId: BRANCH,
@@ -200,7 +199,7 @@ describe("ReceiptLinkIssueService", () => {
                 eformsignDocId: 42,
                 jobId: "job-1",
                 birthday: "940315",
-                storagePath: `receipts/${BRANCH}/42/${PNG_SHA}.png`,
+                storagePath: (storage.upload as jest.Mock).mock.calls[0]?.[1],
                 contentSha256: PNG_SHA,
                 byteSize: PNG.length,
                 source: "auto_trigger",
@@ -332,15 +331,23 @@ describe("ReceiptLinkIssueService", () => {
         await expect(uploadFail.issue({ branchId: BRANCH, clientId: 7, source: "manual" })).rejects.toMatchObject({ skipReason: "upload_failed" });
     });
 
-    it("skips the upload when the same image is already stored, and tolerates an already-exists error", async () => {
-        const { service: stored, storage: storedStorage, tokenService: storedTokenService } = makeService({ storedPath: true });
-        await stored.issue({ branchId: BRANCH, clientId: 7, source: "manual" });
-        expect(storedStorage.upload).not.toHaveBeenCalled();
-        expect(storedTokenService.issue).toHaveBeenCalledTimes(1);
+    it("uploads a separate object even when the same content is already stored", async () => {
+        const { service, storage, storageObjects, issuedTokenStoragePaths } = makeService({ storedPath: true });
+        const result = await service.issue({ branchId: BRANCH, clientId: 7, source: "manual" });
+        const oldPath = `receipts/${BRANCH}/42/${PNG_SHA}.png`;
+        const newPath = issuedTokenStoragePaths.get(ISSUED_TOKEN.linkToken)!;
+        expect(newPath).not.toBe(oldPath);
+        expect(storageObjects.get(oldPath)).toEqual(PNG);
+        expect(storageObjects.get(newPath)).toEqual(PNG);
+        expect(result.url).toBe("https://m.admin.example/receipt/efr_abc");
+        expect(storage.upload).toHaveBeenCalledTimes(1);
+    });
 
-        const { service, storage } = makeService();
+    it("does not publish a link after an upload collision", async () => {
+        const { service, storage, tokenService } = makeService();
         (storage.upload as jest.Mock).mockRejectedValue(new Error("The resource already exists"));
-        await expect(service.issue({ branchId: BRANCH, clientId: 7, source: "manual" })).resolves.toMatchObject({ tokenId: "tok-1" });
+        await expect(service.issue({ branchId: BRANCH, clientId: 7, source: "manual" })).rejects.toMatchObject({ skipReason: "upload_failed" });
+        expect(tokenService.issue).not.toHaveBeenCalled();
     });
 
     it("re-uploads when an expired row references a storage object already deleted", async () => {
@@ -471,5 +478,28 @@ describe("ReceiptLinkIssueService", () => {
         const second = await service.issue({ branchId: BRANCH, clientId: 7, source: "manual", jobId: "job-2" });
         expect(second.url).toBe(first.url);
         expect(tokenService.issue).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe("receipt image cleanup overlap", () => {
+    it.each(["before", "after"])("keeps the new image when a stale cleanup deletion finishes %s token publication", async (order) => {
+        const { service, storageObjects, tokenService, issuedTokenStoragePaths } = makeService();
+        const params = { branchId: BRANCH, clientId: 7, source: "manual" as const };
+        const first = await service.issue(params);
+        const collectedPath = issuedTokenStoragePaths.get(ISSUED_TOKEN.linkToken)!;
+        const originalIssue = tokenService.issue.bind(tokenService);
+        if (order === "before") {
+            (tokenService.issue as jest.Mock).mockImplementationOnce(async (issueParams) => {
+                storageObjects.delete(collectedPath);
+                return originalIssue(issueParams);
+            });
+        }
+        const second = await service.issue(params);
+        if (order === "after") storageObjects.delete(collectedPath);
+        const currentPath = issuedTokenStoragePaths.get(ISSUED_TOKEN.linkToken)!;
+        expect(currentPath).not.toBe(collectedPath);
+        expect(storageObjects.has(collectedPath)).toBe(false);
+        expect(storageObjects.get(currentPath)).toEqual(PNG);
+        expect(second.url).toBe(first.url);
     });
 });
