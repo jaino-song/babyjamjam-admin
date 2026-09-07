@@ -156,6 +156,61 @@ describe("ServiceRecordTokenService", () => {
         expect(prisma.__rows[0]).toEqual(before);
     });
 
+    it.each(["case1", undefined])("blocks a finalized replacement without reactivating its old token (case %s)", async (serviceRecordCaseId) => {
+        const { prisma, svc } = setup();
+        const params = { branchId: "b1", scheduleId: 10, employeeId: 7, serviceRecordCaseId,
+            expectedPhone: "01011112222", expiresAt: future() };
+        const { linkToken } = await svc.issueLink(params);
+        await svc.revokeForSchedule(10);
+        prisma.__schedules[0]!.replaced = true;
+        prisma.__schedules.push({ ...prisma.__schedules[0]!, id: 11, replaced: false, primaryEmployeeId: 8,
+            primaryEmployee: { id: 8, phone: "01033334444", deletedAt: null } });
+        prisma.service_record_case.findFirst.mockResolvedValue({ finalizedAt: new Date() });
+        const before = { ...prisma.__rows[0] };
+        prisma.service_record_token.update.mockClear();
+        expect(await svc.resolveLink(linkToken)).toBeNull();
+        expect(await svc.verifyPhoneAndMintAccess(linkToken, "01033334444")).toMatchObject({ ok: false });
+        expect(prisma.service_record_case.findFirst).toHaveBeenLastCalledWith({
+            where: { branchId: "b1", clientId: 1 }, select: { finalizedAt: true },
+        });
+        expect(prisma.service_record_token.update).not.toHaveBeenCalled();
+        expect(prisma.__rows[0]).toEqual(before);
+    });
+
+    it("rejects an existing session and prepared activation after finalization even if a legacy row remains active", async () => {
+        const { prisma, svc } = setup();
+        const params = { branchId: "b1", scheduleId: 10, employeeId: 7,
+            expectedPhone: "01011112222", expiresAt: future() };
+        const { linkToken } = await svc.issueLink(params);
+        const auth = await svc.verifyPhoneAndMintAccess(linkToken, params.expectedPhone);
+        expect(auth.ok).toBe(true);
+        prisma.service_record_case.findFirst.mockResolvedValue({ finalizedAt: new Date() });
+        prisma.service_record_token.update.mockClear();
+        if (auth.ok) expect(await svc.resolveAccess(auth.accessToken)).toBeNull();
+        expect(await svc.activatePreparedLink({ ...params, linkToken })).toBe(false);
+        expect(await svc.reuseActiveLink(params)).toBeNull();
+        expect(prisma.service_record_token.update).not.toHaveBeenCalled();
+    });
+
+    it("waits for the case lock and rechecks finalization before locking or changing a token", async () => {
+        const { prisma, svc } = setup();
+        const { linkToken } = await svc.issueLink({ branchId: "b1", scheduleId: 10, employeeId: 7,
+            expectedPhone: "01011112222", expiresAt: future() });
+        prisma.$executeRaw.mockImplementationOnce(async () => {
+            // A finalizer commits while verification waits for its case lock.
+            prisma.service_record_case.findFirst.mockResolvedValue({ finalizedAt: new Date() });
+            return 1;
+        });
+        const tokenLock = jest.fn();
+        (prisma as any).$queryRaw = tokenLock;
+        prisma.service_record_token.update.mockClear();
+        expect(await svc.verifyPhoneAndMintAccess(linkToken, "01011112222")).toMatchObject({ ok: false });
+        expect(tokenLock).not.toHaveBeenCalled();
+        expect(prisma.service_record_token.update).not.toHaveBeenCalled();
+        const query = (prisma.$executeRaw.mock.calls.at(-1) as unknown as [{ sql: string }])[0];
+        expect(query.sql).toContain("FOR SHARE");
+    });
+
     it("uses the resolved tenant for public verification and branch-pins every challenge write", async () => {
         const { prisma, svc } = setup();
         const { linkToken } = await svc.issueLink({ branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "01011112222", expiresAt: future() });
