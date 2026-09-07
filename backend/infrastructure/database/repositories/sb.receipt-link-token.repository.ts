@@ -6,6 +6,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { runSystemScope } from "infrastructure/tenant/run-system-scope";
 import {
     CreateReceiptLinkTokenData,
+    RefreshReceiptClientFields,
     ExpiredReceiptLinkToken,
     IReceiptLinkTokenRepository,
     IReceiptLinkTokenIssuanceRepository,
@@ -88,8 +89,8 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
                 `);
             }
             const transactionRepository: IReceiptLinkTokenIssuanceRepository = {
-                createOrRefreshContractLink: async (data) =>
-                    toRecord(await this.createOrRefreshContractLinkWithClient(tx, data)),
+                createOrRefreshContractLink: async (data, _now, refreshClient) =>
+                    toRecord(await this.createOrRefreshContractLinkWithClient(tx, data, refreshClient)),
                 findActiveByJobId: (lockedJobId) => this.findActiveByJobIdWithClient(tx, lockedJobId),
             };
             return operation(!acquired, transactionRepository);
@@ -120,20 +121,32 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
         });
     }
 
-    async createOrRefreshContractLink(data: CreateReceiptLinkTokenData, now: Date): Promise<ReceiptLinkTokenRecord> {
+    async createOrRefreshContractLink(data: CreateReceiptLinkTokenData, now: Date, refreshClient?: RefreshReceiptClientFields): Promise<ReceiptLinkTokenRecord> {
         void now;
-        const row = await this.prisma.$transaction((tx) => this.createOrRefreshContractLinkWithClient(tx, data));
+        const row = await this.prisma.$transaction((tx) => this.createOrRefreshContractLinkWithClient(tx, data, refreshClient));
         return toRecord(row);
     }
 
     private async createOrRefreshContractLinkWithClient(
         client: Prisma.TransactionClient,
         data: CreateReceiptLinkTokenData,
+        refreshClient?: RefreshReceiptClientFields,
     ) {
         // Serialize different jobs for the same contract, including simultaneous first issuance.
         await client.$executeRaw(Prisma.sql`
             SELECT pg_advisory_xact_lock(hashtextextended(${`receipt-contract:${data.branchId}:${data.eformsignDocId}`}, 0))
         `);
+        if (refreshClient) {
+            // Rendering happens before this transaction. Read the latest profile while
+            // holding its row lock so a concurrent correction cannot be overwritten.
+            const rows = await client.$queryRaw<Array<{ birthday: string | null; endDate: Date | null }>>(Prisma.sql`
+                SELECT birthday, end_date AS "endDate" FROM client
+                WHERE id = ${data.clientId} AND branch_id = ${data.branchId}::uuid
+                FOR UPDATE
+            `);
+            if (!rows[0]) throw new Error("Receipt client no longer exists");
+            data = { ...data, ...refreshClient(rows[0]) };
+        }
         // Older URLs remain usable. Refresh their lifetime without clearing challenge state.
         await client.receipt_link_token.updateMany({
             where: { clientId: data.clientId, branchId: data.branchId },

@@ -19,6 +19,7 @@ function makePrismaMock() {
             findFirst: jest.fn(async ({ where }: any) => [...schedules].reverse().find(s => s.clientId === where.clientId && s.branchId === where.branchId && !s.replaced) ?? null),
         },
         __rows: rows,
+        service_record_case: { findFirst: jest.fn().mockResolvedValue(null) },
         service_record_token: {
             create: jest.fn(async ({ data }: any) => {
                 const row = {
@@ -141,6 +142,18 @@ describe("ServiceRecordTokenService", () => {
         const accessToken = (result as { ok: true; accessToken: string }).accessToken;
         const ctx = await svc.resolveAccess(accessToken);
         expect(ctx).toEqual({ tokenId: expect.any(String), branchId: "b1", scheduleId: 10, employeeId: 7 });
+    });
+
+    it("does not reactivate finalized tokens when preparing the composer", async () => {
+        const { prisma, svc } = setup();
+        const params = { branchId: "b1", scheduleId: 10, employeeId: 7,
+            expectedPhone: "01011112222", expiresAt: future() };
+        await svc.issueLink(params);
+        Object.assign(prisma.__rows[0], { active: false, revokedAt: new Date(), accessTokenHash: null });
+        prisma.service_record_case.findFirst.mockResolvedValue({ finalizedAt: new Date() });
+        const before = { ...prisma.__rows[0] };
+        await expect(svc.prepareLink(params)).rejects.toThrow("최종 확정된 제공기록지");
+        expect(prisma.__rows[0]).toEqual(before);
     });
 
     it("uses the resolved tenant for public verification and branch-pins every challenge write", async () => {

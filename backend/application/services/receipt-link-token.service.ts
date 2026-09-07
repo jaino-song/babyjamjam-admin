@@ -151,9 +151,16 @@ export class ReceiptLinkTokenService {
                 createdAt: now,
             },
             now,
+            (client) => {
+                const latestBirthday = normalizeBirthdayInput(client.birthday ?? "");
+                if (!latestBirthday || !client.endDate) throw new Error("Receipt client profile is incomplete");
+                const latestExpiry = getReceiptLinkExpiresAt(client.endDate);
+                if (latestExpiry <= new Date()) throw new Error("Receipt link has expired for this service period");
+                return { expectedBirthdayHash: this.hashBirthday(latestBirthday), expiresAt: latestExpiry };
+            },
         );
 
-        return { id: row.id, linkToken, expiresAt };
+        return { id: row.id, linkToken, expiresAt: row.expiresAt };
     }
 
     private async findRow(linkToken: string): Promise<ReceiptLinkTokenRecord | null> {

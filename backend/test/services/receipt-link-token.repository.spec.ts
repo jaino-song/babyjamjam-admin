@@ -25,6 +25,7 @@ const BASE_ROW = {
 
 interface FakeTx {
     $executeRaw: jest.Mock;
+    $queryRaw: jest.Mock;
     receipt_link_token: {
         findUnique: jest.Mock;
         update: jest.Mock;
@@ -48,7 +49,7 @@ function makeFakePrisma() {
         updateMany: jest.fn(),
         deleteMany: jest.fn(),
     };
-    const tx: FakeTx = { receipt_link_token, $executeRaw: jest.fn() };
+    const tx: FakeTx = { receipt_link_token, $executeRaw: jest.fn(), $queryRaw: jest.fn() };
     const $transaction = jest.fn(async (arg: unknown) => {
         if (typeof arg === "function") {
             return (arg as (tx: FakeTx) => unknown)(tx);
@@ -56,7 +57,7 @@ function makeFakePrisma() {
         return Promise.all(arg as Promise<unknown>[]);
     });
     const $queryRaw = jest.fn();
-    return { receipt_link_token, $transaction, $queryRaw };
+    return { receipt_link_token, $transaction, $queryRaw, __tx: tx };
 }
 
 describe("SbReceiptLinkTokenRepository", () => {
@@ -140,6 +141,32 @@ describe("SbReceiptLinkTokenRepository", () => {
             linkTokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
         }) });
         expect(prisma.receipt_link_token.create.mock.invocationCallOrder[0]).toBeLessThan(prisma.receipt_link_token.upsert.mock.invocationCallOrder[0]!);
+    });
+
+    it("uses locked current client fields instead of the render-time snapshot", async () => {
+        const prisma = makeFakePrisma();
+        const repository = new SbReceiptLinkTokenRepository(prisma as never);
+        prisma.receipt_link_token.upsert.mockResolvedValue(BASE_ROW);
+        const latest = { birthday: "910202", endDate: new Date("2026-10-01T00:00:00Z") };
+        prisma.__tx.$queryRaw.mockResolvedValue([latest]);
+        const expiresAt = new Date("2026-10-15T15:00:00Z");
+        const refresh = jest.fn(() => ({ expectedBirthdayHash: "latest-hash", expiresAt }));
+        await repository.createOrRefreshContractLink({
+            branchId: "11111111-1111-1111-1111-111111111111", clientId: 7, eformsignDocId: 1,
+            jobId: null, linkTokenHash: "stable", expectedBirthdayHash: "stale-hash",
+            expiresAt: BASE_ROW.expiresAt, storagePath: BASE_ROW.storagePath, contentSha256: "sha",
+            byteSize: 10, source: "manual", createdBy: null, createdAt: new Date(),
+        }, new Date(), refresh);
+        expect(refresh).toHaveBeenCalledWith(latest);
+        const sql = prisma.__tx.$queryRaw.mock.calls[0]?.[0];
+        expect(sql.strings.join("")).toContain("FOR UPDATE");
+        expect(sql.values).toEqual([7, "11111111-1111-1111-1111-111111111111"]);
+        expect(prisma.receipt_link_token.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            data: { expectedBirthdayHash: "latest-hash", expiresAt },
+        }));
+        expect(prisma.receipt_link_token.upsert).toHaveBeenCalledWith(expect.objectContaining({
+            update: expect.objectContaining({ expectedBirthdayHash: "latest-hash", expiresAt }),
+        }));
     });
 
     it("restores a legacy reissued URL with the service-end expiry and requires fresh authentication", async () => {

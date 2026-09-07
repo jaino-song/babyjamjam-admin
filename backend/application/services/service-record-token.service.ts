@@ -1,4 +1,4 @@
-import { Injectable, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash, randomBytes } from "crypto";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -92,6 +92,13 @@ export class ServiceRecordTokenService {
             if (!current || current.id !== params.scheduleId || current.primaryEmployeeId !== params.employeeId
                 || !this.normalizePhone(current.primaryEmployee.phone ?? "")) {
                 throw new Error("Service record assignment is no longer current");
+            }
+            const serviceCase = await tx.service_record_case.findFirst({
+                where: { branchId: params.branchId, clientId: current.clientId },
+                select: { finalizedAt: true },
+            });
+            if (serviceCase?.finalizedAt) {
+                throw new BadRequestException("최종 확정된 제공기록지는 링크를 다시 발급할 수 없습니다.");
             }
             const scope = {
                 branchId: params.branchId,
