@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { EformsignDocClientSummary } from "@babyjamjam/shared/types/eformsign";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
+import { formatClientBirthdayAsYYMMDD } from "@/lib/date/format-client-birthday";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import {
   FileText,
@@ -1235,7 +1236,7 @@ export function ContractDetail({
   const customerAddress = documentAddress ?? null;
   const isCustomerInfoLoading = isBaseDetailLoading
     || (isServiceRecordDocument && serviceRecordQuery.isLoading);
-  const customerBirthDate =
+  const customerBirthDate = formatClientBirthdayAsYYMMDD(
     extractDocumentFieldValue(detailedDocument, [
       "이용자 생년월일",
       "이용자생년월일",
@@ -1243,7 +1244,8 @@ export function ContractDetail({
       "고객생년월일",
       "산모 생년월일",
       "산모생년월일",
-    ]) ?? "–";
+    ]),
+  ) ?? "–";
   const provider1Names =
     extractDocumentFieldValues(detailedDocument, [
       "제공인력 1 성명",

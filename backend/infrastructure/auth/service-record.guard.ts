@@ -6,6 +6,7 @@ import {
     Logger,
 } from "@nestjs/common";
 import { Request } from "express";
+import { tenantContextStore } from "infrastructure/tenant/tenant-context.store";
 import {
     ServiceRecordTokenService,
     ServiceRecordTokenContext,
@@ -45,6 +46,7 @@ export class ServiceRecordGuard implements CanActivate {
             throw new UnauthorizedException("Invalid or expired token");
         }
 
+        tenantContextStore.setBranchId(ctx.branchId);
         request.serviceRecordContext = ctx;
         return true;
     }

@@ -53,7 +53,7 @@ export const employeeQueryKeys = {
 };
 
 // Fetch all employees
-export function useEmployees() {
+export function useEmployees({ refetchOnMount = true }: { refetchOnMount?: boolean | "always" } = {}) {
     return useQuery<Employee[]>({
         queryKey: employeeQueryKeys.lists(),
         queryFn: async () => {
@@ -61,6 +61,7 @@ export function useEmployees() {
             return data;
         },
         staleTime: 1000 * 60 * 10, // 10 minutes
+        refetchOnMount,
     });
 }
 

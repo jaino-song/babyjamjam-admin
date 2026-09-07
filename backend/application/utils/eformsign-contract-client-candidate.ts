@@ -1,3 +1,4 @@
+import { normalizeContractBirthday } from "@babyjamjam/shared/utils/birthday";
 import { Prisma } from "@prisma/client";
 
 import {
@@ -324,14 +325,6 @@ function positiveInteger(value: string | null): number | null {
         : null;
 }
 
-function birthday(value: string | null): string | null {
-    const normalized = digits(value);
-    if (!normalized) return null;
-    if (normalized.length === 6) return normalized;
-    if (normalized.length >= 8) return normalized.slice(2, 8);
-    return null;
-}
-
 function validUtcDate(year: number, month: number, day: number): Date | null {
     const date = new Date(Date.UTC(year, month - 1, day));
     if (
@@ -505,7 +498,7 @@ export function extractEformsignContractClientPrefillCandidate(
             "customerAddress",
             "clientAddress",
         ]),
-        birthday: birthday(eformsignDocumentFieldValue(document, [
+        birthday: normalizeContractBirthday(eformsignDocumentFieldValue(document, [
             "이용자 생년월일",
             "이용자생년월일",
             "고객 생년월일",

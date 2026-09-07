@@ -95,7 +95,7 @@ export function ContractDocumentPreviewModal({
       receiptDownloadUrl={
         canDownloadReceipt ? eformsignApi.getDocumentReceiptDownloadUrl(document.id) : undefined
       }
-      receiptDownloadFileName={`${document.document_name || document.id} 영수증.pdf`}
+      receiptDownloadFileName={customerName ? `${customerName} 산모님 영수증.png` : "영수증.png"}
       receiptSendAction={onSendReceiptLink ? (
         <Button
           key="receipt-send"
