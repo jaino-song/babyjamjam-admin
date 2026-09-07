@@ -39,6 +39,7 @@ class FakeReceiptLinkTokenRepository implements IReceiptLinkTokenRepository {
         }
         const existing = this.rows.find((r) => r.linkTokenHash === data.linkTokenHash);
         if (existing) {
+            existing.expectedBirthdayHash = data.expectedBirthdayHash;
             existing.expiresAt = data.expiresAt;
             existing.storagePath = data.storagePath;
             return { ...existing };
@@ -222,6 +223,14 @@ describe("ReceiptLinkTokenService", () => {
         expect(createOrRefreshContractLink).toHaveBeenCalledTimes(1);
         expect(repository.rows).toHaveLength(0);
         expect(result.id).toBe("tx-row");
+    });
+
+    it("authenticates a corrected birthday after reissue without rotating the URL", async () => {
+        const { service } = makeService();
+        const first = await issue(service);
+        expect(await issue(service, { birthday: "950101" })).toMatchObject({ linkToken: first.linkToken });
+        expect(await service.verifyBirthday(first.linkToken, "940315", NOW)).toMatchObject({ ok: false });
+        expect(await service.verifyBirthday(first.linkToken, "950101", NOW)).toMatchObject({ ok: true });
     });
 
     it("derives the same URL across instances and jobs, but separates contracts and branches", async () => {

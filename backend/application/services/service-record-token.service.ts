@@ -495,15 +495,21 @@ export class ServiceRecordTokenService {
     }
 
     async extendExpiryForSchedule(scheduleId: number, newExpiresAt: Date, tx?: Prisma.TransactionClient): Promise<void> {
-        await (tx ?? this.prismaService).service_record_token.updateMany({
-            where: { scheduleId, active: true, revokedAt: null },
+        const db = tx ?? this.prismaService;
+        const schedule = await db.employee_schedule.findUnique({ where: { id: scheduleId }, select: { branchId: true } });
+        if (!schedule?.branchId) return;
+        await db.service_record_token.updateMany({
+            where: { scheduleId, branchId: schedule.branchId, active: true, revokedAt: null },
             data: { expiresAt: newExpiresAt },
         });
     }
 
     async extendExpiryForCase(serviceRecordCaseId: string, newExpiresAt: Date, tx?: Prisma.TransactionClient): Promise<void> {
-        await (tx ?? this.prismaService).service_record_token.updateMany({
-            where: { serviceRecordCaseId, active: true, revokedAt: null },
+        const db = tx ?? this.prismaService;
+        const record = await db.service_record_case.findUnique({ where: { id: serviceRecordCaseId }, select: { branchId: true } });
+        if (!record) return;
+        await db.service_record_token.updateMany({
+            where: { serviceRecordCaseId, branchId: record.branchId, active: true, revokedAt: null },
             data: { expiresAt: newExpiresAt },
         });
     }

@@ -169,7 +169,7 @@ export class ServiceRecordLinkService {
 
         const employee = schedule.primaryEmployee;
         const resolvedRecipientPhone = this.resolveRecipientPhone(employee.phone, recipientPhone);
-        if (!resolvedRecipientPhone) {
+        if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
             throw new BadRequestException("제공인력 전화번호가 없습니다");
         }
 
@@ -208,7 +208,7 @@ export class ServiceRecordLinkService {
 
         const employee = schedule.primaryEmployee;
         const resolvedRecipientPhone = this.resolveRecipientPhone(employee.phone);
-        if (!resolvedRecipientPhone) {
+        if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
             throw new BadRequestException("제공인력 전화번호가 없습니다");
         }
 
@@ -348,7 +348,7 @@ export class ServiceRecordLinkService {
         try {
             const serviceRecordCase = await this.lifecycleService?.ensureForClient(schedule.clientId);
             if (options.preparedLinkToken) {
-                if (!resolvedRecipientPhone) {
+                if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
                     throw new BadRequestException("제공인력 전화번호가 없습니다");
                 }
 
@@ -377,7 +377,7 @@ export class ServiceRecordLinkService {
                 SERVICE_RECORD_LINK_RESCHEDULED_REASON,
             );
 
-            if (!resolvedRecipientPhone) {
+            if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
                 if (!options.recordMissingPhoneFailure) {
                     throw new BadRequestException("제공인력 전화번호가 없습니다");
                 }

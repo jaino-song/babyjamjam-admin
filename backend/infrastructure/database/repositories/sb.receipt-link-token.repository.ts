@@ -1,4 +1,5 @@
 import { getReceiptLinkExpiresAt } from "domain/constants/receipt-link-expiry";
+import { randomBytes } from "node:crypto";
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -138,14 +139,34 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
         `);
         // Older URLs remain usable. Refresh their lifetime without clearing challenge state.
         await client.receipt_link_token.updateMany({
-            where: { eformsignDocId: data.eformsignDocId, clientId: data.clientId, active: true, branchId: data.branchId },
-            data: { expiresAt: data.expiresAt },
+            where: { eformsignDocId: data.eformsignDocId, clientId: data.clientId, branchId: data.branchId },
+            data: { expiresAt: data.expiresAt, expectedBirthdayHash: data.expectedBirthdayHash },
         });
+        const previous = await client.receipt_link_token.findUnique({
+            where: { linkTokenHash: data.linkTokenHash, branchId: data.branchId },
+        });
+        if (previous && previous.storagePath !== data.storagePath) {
+            // Retain an unreachable, inactive snapshot reference for the existing expiry
+            // cleanup. Overwriting the only path reference would leak the former image.
+            await client.receipt_link_token.create({
+                data: {
+                    ...data,
+                    linkTokenHash: randomBytes(32).toString("hex"),
+                    jobId: null,
+                    storagePath: previous.storagePath,
+                    contentSha256: previous.contentSha256,
+                    byteSize: previous.byteSize,
+                    active: false,
+                    revokedAt: null,
+                },
+            });
+        }
         return client.receipt_link_token.upsert({
             where: { linkTokenHash: data.linkTokenHash, branchId: data.branchId },
             create: data,
             update: {
                 expiresAt: data.expiresAt,
+                expectedBirthdayHash: data.expectedBirthdayHash,
                 // Reissuing retains the URL and the authenticated session.
                 storagePath: data.storagePath,
                 contentSha256: data.contentSha256,

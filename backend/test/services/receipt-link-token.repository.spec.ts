@@ -116,9 +116,30 @@ describe("SbReceiptLinkTokenRepository", () => {
         expect(mockedRunSystemScope).not.toHaveBeenCalled();
         expect(checkWriteArgs("upsert", prisma.receipt_link_token.upsert.mock.calls[0]?.[0], "11111111-1111-1111-1111-111111111111")).toBeNull();
         expect(prisma.receipt_link_token.updateMany).toHaveBeenCalledWith({
-            where: { eformsignDocId: 1, clientId: 7, active: true, branchId: "11111111-1111-1111-1111-111111111111" },
-            data: { expiresAt: expect.any(Date) },
+            where: { eformsignDocId: 1, clientId: 7, branchId: "11111111-1111-1111-1111-111111111111" },
+            data: { expiresAt: expect.any(Date), expectedBirthdayHash: "h2" },
         });
+    });
+
+    it("refreshes the birthday and retains changed images for expiry cleanup", async () => {
+        const prisma = makeFakePrisma();
+        const repository = new SbReceiptLinkTokenRepository(prisma as never);
+        prisma.receipt_link_token.findUnique.mockResolvedValue({ ...BASE_ROW, contentSha256: "old-sha", byteSize: 25 });
+        prisma.receipt_link_token.upsert.mockResolvedValue(BASE_ROW);
+        const data = {
+            branchId: "11111111-1111-1111-1111-111111111111", clientId: 7, eformsignDocId: 1, jobId: null,
+            linkTokenHash: "stable-hash", expectedBirthdayHash: "corrected-birthday", expiresAt: new Date("2026-09-24T15:00:00Z"),
+            storagePath: "receipts/b/1/new.png", contentSha256: "new-sha", byteSize: 50,
+            source: "manual" as const, createdBy: null, createdAt: new Date(),
+        };
+        await repository.createOrRefreshContractLink(data, data.createdAt);
+        expect(prisma.receipt_link_token.upsert).toHaveBeenCalledWith(expect.objectContaining({ update: expect.objectContaining({ expectedBirthdayHash: "corrected-birthday" }) }));
+        expect(prisma.receipt_link_token.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+            storagePath: BASE_ROW.storagePath, contentSha256: "old-sha", byteSize: 25,
+            active: false, revokedAt: null, jobId: null, expiresAt: data.expiresAt,
+            linkTokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        }) });
+        expect(prisma.receipt_link_token.create.mock.invocationCallOrder[0]).toBeLessThan(prisma.receipt_link_token.upsert.mock.invocationCallOrder[0]!);
     });
 
     it("restores a legacy reissued URL with the service-end expiry and requires fresh authentication", async () => {

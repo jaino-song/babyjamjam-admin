@@ -167,7 +167,7 @@ describe("SbReceiptLinkTokenRepository.withJobIssuanceLock", () => {
         const tx = {
             $queryRaw: queryRaw,
             $executeRaw: executeRaw,
-            receipt_link_token: { findFirst, updateMany, upsert: create },
+            receipt_link_token: { findFirst, findUnique: jest.fn().mockResolvedValue(null), updateMany, upsert: create },
         };
         const transaction = jest.fn(async (operation: (client: typeof tx) => Promise<unknown>) => operation(tx));
         const rootFindFirst = jest.fn(() => {

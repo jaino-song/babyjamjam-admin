@@ -683,6 +683,22 @@ describe("ServiceRecordLinkService", () => {
         expect(logRepository.save).not.toHaveBeenCalled();
     });
 
+    it("reports missing registered authentication phone even when delivery is overridden", async () => {
+        const prisma = createPrisma();
+        const tokenService = createTokenService();
+        const service = new ServiceRecordLinkService(
+            prisma as unknown as PrismaService, tokenService as never, createConfigService() as unknown as ConfigService,
+            createJobRepository() as unknown as IMessageTriggerJobRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
+            createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+        );
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule({ primaryEmployee: { id: 30, name: "홍제공", phone: "", birthday: "900101" } }));
+        await expect(service.prepareLink(10, "01066211878")).rejects.toBeInstanceOf(BadRequestException);
+        await expect(service.sendNow(10, undefined, "01066211878")).rejects.toBeInstanceOf(BadRequestException);
+        expect(tokenService.prepareLink).not.toHaveBeenCalled();
+        expect(tokenService.issueLink).not.toHaveBeenCalled();
+    });
+
     it("rejects an invalid manual recipient phone instead of falling back to the stored phone", async () => {
         const prisma = createPrisma();
         const jobRepository = createJobRepository();
