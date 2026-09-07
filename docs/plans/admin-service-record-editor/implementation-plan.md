@@ -38,7 +38,7 @@ TL;DR: 지점의 수정 확정 한 번으로 제공 일수를 유지하면서 �
 | 일반 관리자 레이아웃은 사이드바 포함 | [ProtectedLayout](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/frontend/src/app/(protected)/layout.tsx:25) |
 | entry가 case를 먼저 잠금 | [entry의 첫 잠금](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-entry.service.ts:177) |
 
-실행 주석: 사용자의 2026-09-07 실행 지시에 따라 각 구현 task는 gpt-5.6-luna/max로 수행한다. local은 luna_implementer, 승인된 network는 luna_network_implementer를 사용한다. 메인 에이전트는 통합과 검증을 담당한다. 독립 검토자는 지정된 Sol 역할을 사용한다. 구현 작업은 순차 실행하며 병렬 배치는 없다.
+실행 주석: 사용자의 2026-09-07 실행 지시에 따라 각 구현 task는 gpt-5.6-luna/max로 수행한다. local은 luna_implementer, 승인된 network는 luna_network_implementer를 사용한다. 메인 에이전트는 통합과 검증을 담당한다. 각 Phase의 독립 감사는 default 에이전트에 model=gpt-6-astra, reasoning_effort=medium을 명시하여 수행한다. 구현자와 별도 컨텍스트(fork_turns=none)에서 읽기 전용으로 감사하며, 각 Phase 완료 또는 차단 보고 시 실행한다. 감사 지적은 해당 Luna/max 구현 작업으로 돌려보내고 해소 확인 전 다음 Phase로 진행하지 않는다. 과거 Sol 계획 검토 기록은 그대로 보존한다. 구현 작업은 순차 실행하며 병렬 배치는 없다.
 
 추가 Task의 상대 Paths는 동일 task worktree 루트를 기준으로 해석한다.
 
@@ -291,7 +291,7 @@ DB 저장과 외부 문서 생성은 하나의 트랜잭션으로 묶을 수 없
 - **Task 6.2: 독립 최종 검토** (test, high)
   - 구현자가 아닌 검토자가 권한·초안 분리·경합·문서 버전·롤백 근거를 읽기 전용으로 검토한다. 수정 요구가 나오면 해당 구현 task로 돌려보내고 필요한 검증을 다시 실행한다.
 
-  **Tier:** standard · **Sandbox:** local · **Agent:** sol_reviewer · **Model:** gpt-5.6-sol · **Effort:** high  
+  **Tier:** standard · **Sandbox:** local · **Agent:** default (읽기 전용 감사) · **Model:** gpt-6-astra · **Effort:** medium
   **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/`의 task diff와 검증 결과 읽기 전용  
   **Depends:** Task 6.1
 
