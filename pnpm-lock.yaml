@@ -215,6 +215,9 @@ importers:
       '@ai-sdk/react':
         specifier: 3.0.118
         version: 3.0.118(react@19.2.4)(zod@4.3.6)
+      '@babyjamjam/service-record-ui':
+        specifier: workspace:*
+        version: link:../packages/service-record-ui
       '@babyjamjam/shared':
         specifier: workspace:*
         version: link:../packages/shared
@@ -447,6 +450,9 @@ importers:
 
   mobile:
     dependencies:
+      '@babyjamjam/service-record-ui':
+        specifier: workspace:*
+        version: link:../packages/service-record-ui
       '@babyjamjam/shared':
         specifier: workspace:*
         version: link:../packages/shared
@@ -628,6 +634,12 @@ importers:
       typescript:
         specifier: ^5
         version: 5.9.3
+
+  packages/service-record-ui:
+    dependencies:
+      react:
+        specifier: ^19.0.0
+        version: 19.2.4
 
   packages/shared:
     dependencies:

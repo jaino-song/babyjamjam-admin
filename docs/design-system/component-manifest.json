@@ -2110,6 +2110,19 @@
         "requiredFor": [
           "mobile document uploads"
         ]
+      },
+      {
+        "name": "ServiceRecordWizard",
+        "layer": "organism",
+        "import": "@/components/app/service-record/ServiceRecordWizard",
+        "file": "mobile/src/components/app/service-record/ServiceRecordWizard.tsx",
+        "exports": [
+          "MobileServiceRecordWizard",
+          "MobileServiceRecordWizardProps"
+        ],
+        "requiredFor": [
+          "public service-record route assembly"
+        ]
       }
     ]
   }
