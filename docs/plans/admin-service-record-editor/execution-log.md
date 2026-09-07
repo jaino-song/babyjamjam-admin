@@ -308,3 +308,22 @@
 - 신규 생성기 직접 확인: `create-and-send-contract.usecase.ts`의 prefill은 수령일을 생성 시점으로 설정하고 `서비스 기간`에 duration 값을 두 번 전달한다. 완료 계약 재발급에는 그대로 재사용할 수 없다. Task5.3에 원본 수령일·금액 및 확정 실제 기간의 명시 입력과 중복 필드 제거 조건을 구체화했다. 현재 제품 코드는 변경하지 않았다.
 
 - 실패 복구 범위 검증: Luna/max 3개 파일 변경, 메인 재실행 2 suites/27 tests PASS·backend tsc PASS·대상 ESLint PASS. Sol/high 최종 판정 SHIP. 커밋 `d9c7f5684`를 integration에 fast-forward 통합하고 깨끗한 unit worktree/branch를 제거했다. 자동 재조정과 실제 PDF 최신성 증명은 범위 밖으로 남으며 Phase0 전체 완료로 표시하지 않는다.
+
+
+### 2026-09-08 — 완료 계약 신규 발급 검증 준비 및 webhook 범위 보정
+
+- `task-0-1-reissue` / `unit/admin-service-record-0-1-reissue`는 `e2687e8da`에서 생성했다. Luna/max가 테스트 전용 3개 파일과 기술 검증 문서만 작성했다. 메인 재실행: 초기 helper 5 tests PASS, tsc PASS, ESLint PASS. 실제 API/PDF 보관 파일을 사용하는 오프라인 사전 검사도18필드 및 원본 PDF/기간으로 PASS. 이 시점 실제 신규 생성/발송은 하지 않았다.
+- Sol/high FINAL은 FIX_REQUIRED: 표기 변경으로 중복 방지 키가 바뀌는 문제, 결과 파일/아티팩트 충돌 사전 검사, 정확한 실행 선택자, 생성 응답 ID와 조회 본문 ID 일치, 서명 미확인 파일명/문구를 보완하도록 했다. 수정 전 실제 발송은 금지했다.
+- 추가 확인: 이폼사인 자동 알림 처리의 `linkExistingClient`는 새 문서를 같은 전화번호의 기존 고객에게 연결하고 생성일이 더 최신이면 `client.eDocId`를 승격할 수 있다. 검증 도구에서 DB 호출을 하지 않는다는 이유로 고객 연결이 보존된다고 주장하지 않는다. 기존 문서 삭제나 webhook 비활성화/DB 수동 복원은 하지 않는다.
+- 본인 테스트 범위는 main 설정 DB 고객88(기존 d5ad 문서)와 dev 설정 DB 고객155(기존27e3 문서에 연결된 자동발송 테스트)로 고정했다. 전화번호 끝4자리 후보 조회와 실제 normalizePhone 비교를 사용하며 각 DB에서 정확히1개만 일치한다. 이름·생년월일·지점·번호·ID 조합 지문, 현재 연결 문서와 그 생성일을 고정하고 이외 고객 연결은 거부한다. 설정 대상 DB 확인은 배포 환경 변수 자체를 읽은 증거와 구분한다.
+- 명시적 RepeatableRead/READ ONLY 트랜잭션에서 전체 고객 업무 필드(연결 ID/updatedAt 제외), 배정/기록case/day/chunk/메시지작업/전자문서작업/발송의도를 스냅샷으로 저장했다. main은 배정0·case1·메시지0, dev는 배정1·case1·메시지10. 원본 기준 파일은 안전한 `/var/folders/gp/f0m_ydss2n15x64qrwdj_rrh0000gn/T/reissue-readonly-snapshot-jONFcs/snapshot.json` 및 `reissue-readonly-snapshot-Ka3ZU7/snapshot.json`. 후속 비교에서도 동일 지문과 업무/관련행 해시를 확인했다.
+- Sol/high 운영 PLAN 보정은 APPROVE. 실제 생성 직전 같은 검사를 다시 통과해야 하며, 생성 후 두 DB를15초 간격으로 최대120초 읽기 전용 관찰한다. 새 mirror/file 및 위 본인 고객의 연결 ID/updatedAt 외 변경은 사건으로 기록하고 수동으로 원복하지 않는다. 시간 내 webhook을 확인하지 못하면 `webhook outcome pending`이며 이후 연결 가능성을 배제하지 않는다. 스냅샷과 외부 호출 사이 경쟁 조건은 잔여 위험이다. 실제 발송은 별도 코드 FINAL 통과도 필요하다.
+- 첫 보완 후 메인 독립 재실행: helper8/8, tsc, ESLint, diff check 모두 PASS. 실제 보관 자료 사전 검사도18필드/기간3회로 PASS이며 semantic operation key는 `82f4cc325ba84cfef99c1cfeb3ba4c3a3b367477f2146e7aa4df4b023def8b36`이다. 스냅샷 디렉터리0700/파일0600을 별도 확인했다.
+- Sol/high 재검토에서 결과 ledger와 최초 발급 marker의 내용 일치 검사 및 변조 음성 테스트가 빠진 것을 확인했다. 다른 문서로 후속 조회가 바뀌지 않도록 발급 응답 ID와 공유 필드를 별도 영속 기록에 결속하는 보완을 Luna/max에 지시했다. 재검토 통과 전 실제 발급은 계속 보류하며 이 시점까지 신규 계약/SMS/DB 쓰기 없음.
+- marker/result/acceptance 상호 검증, Jest 별칭·반복 실행 차단,429 외 오류의 불확실 분류를 보완했다. 메인 재실행9/9·tsc·ESLint·양쪽diff check·실제 원본 사전 검사PASS, Sol/high FINAL SHIP. 최종 semantic key는 `95723309330e37928b140a5cd38c8fc583fe5c019719753baa96cdd3fe8a03d0`이다.
+- 직전 main88/dev155 스냅샷 및 보호 문서d5ad/27e3의 상태/PDF 해시 동일성을 확인하고 승인된 신규 발급 명령을1회 실행했다. 원래 명령 결과는RED: helper1844의 `api.createDocument` catch에서 `CompletedReissueAmbiguousError`. helper 자체의 응답ID 파싱/결과 저장 지점과는 다르지만 API client 내부의 ID 파싱 오류 가능성은 배제할 수 없다. 원래 HTTP상태·공급자 오류코드를 보존하지 못한 관측 한계가 있다.
+- 고정 ledger 결과는 `ambiguous`, documentId=null, acceptance=reserved다. 원본 PDF와 요청 필드 지문은 `/Users/jaino/.local/state/babyjamjam/phase0-completed-reissue/artifacts/95723309330e37928b140a5cd38c8fc583fe5c019719753baa96cdd3fe8a03d0`에 보존했다. 재발급·ledger 삭제·초기화·서명 후속 검사는 하지 않았다. 실제 생성/문자 발송 여부를 부재로 단정하지 않는다.
+- 이후 읽기 전용 재조회에서 두 고객의 원래 연결·업무 필드·관련 행 해시와 검토 중 두 원격 문서의PDF/상태는 동일했다. 새ID가 없어 정해진 새ID기반 webhook 검사는 실행할 수 없으며, 이 관찰을 webhook 격리 증거로 주장하지 않는다. 공식 읽기 전용 목록을 통한 결과 복구를 조사 중이며 Phase0 게이트는 닫혀 있다.
+- 공식 `findDocumentsByTitle`로 원본과 같은 자동 생성 제목을 조회한 결과 기존27e3/4f58만 반환됐다. 양식의 `doc_default_title` 패턴도 같은 제목으로 확인했다. 이 조회는 당시 목록에 새 문서가 보이지 않았다는 증거이며 공급자 수락/지연 처리 부재를 확정하지 않는다. 고정 marker는 유지하고 재발급하지 않는다.
+- 이후 원본 완료4f58도 독립 API/PDF 재조회해 status003/01/5 및 원래 SHA256 `40c118c2309a9979e33fbfe9ee922eef4c803c2ca9b2ceb3843761694fef1027` 그대로임을 확인했다. 새 요청 문자 도착 여부는 사용자에게 질문했고 아직 응답 근거가 없다.
+- 향후 오류의 민감정보 없는 status/vendorCode/name/category만0600에 기록하는 보완을 추가했다. 기존RED 원인을 소급 복원한 것으로 주장하지 않는다. 메인10/10·tsc·ESLint·diff검사PASS, Sol/high FINAL SHIP(검증 코드 보존에 한정, live 게이트 미해결). 커밋 `4913241e3`를 integration에 fast-forward 통합하고 깨끗한 unit 작업 공간/브랜치를 제거했다. 운영/dev 병합·푸시·배포는 하지 않았다.
