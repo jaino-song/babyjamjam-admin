@@ -63,11 +63,31 @@ export class ServiceRecordTokenService {
     private async currentProvider(
         record: { scheduleId: number; branchId: string },
         db: Prisma.TransactionClient | PrismaService,
+        options: { lockCase?: boolean; throwOnFinalized?: boolean } = {},
     ) {
         // Public token requests have no tenant context; both lookups are pinned to the token's branch.
         return tenantContextStore.run({ origin: "http", branchId: record.branchId }, async () => {
             const original = await db.employee_schedule.findUnique({ where: { id: record.scheduleId }, select: { clientId: true, branchId: true } });
             if (!original || original.branchId !== record.branchId) return null;
+            // Lock the case before token rows, matching the finalizer's write order.
+            // Looking up by client also covers legacy tokens without a case ID.
+            if (options.lockCase) {
+                await db.$executeRaw(Prisma.sql`
+                    SELECT id FROM service_record_case
+                    WHERE branch_id = ${record.branchId}::uuid AND client_id = ${original.clientId}
+                    FOR SHARE
+                `);
+            }
+            const serviceCase = await db.service_record_case.findFirst({
+                where: { branchId: record.branchId, clientId: original.clientId },
+                select: { finalizedAt: true },
+            });
+            if (serviceCase?.finalizedAt) {
+                if (options.throwOnFinalized) {
+                    throw new BadRequestException("최종 확정된 제공기록지는 링크를 다시 발급할 수 없습니다.");
+                }
+                return null;
+            }
             const current = await db.employee_schedule.findFirst({
                 where: { clientId: original.clientId, branchId: record.branchId, replaced: false },
                 orderBy: { id: "desc" },
@@ -88,17 +108,10 @@ export class ServiceRecordTokenService {
             await tx.$executeRaw(Prisma.sql`
                 SELECT pg_advisory_xact_lock(hashtextextended(${`service-record-link:${params.branchId}:${params.serviceRecordCaseId ?? params.scheduleId}`}, 0))
             `);
-            const current = await this.currentProvider(params, tx);
+            const current = await this.currentProvider(params, tx, { lockCase: true, throwOnFinalized: true });
             if (!current || current.id !== params.scheduleId || current.primaryEmployeeId !== params.employeeId
                 || !this.normalizePhone(current.primaryEmployee.phone ?? "")) {
                 throw new Error("Service record assignment is no longer current");
-            }
-            const serviceCase = await tx.service_record_case.findFirst({
-                where: { branchId: params.branchId, clientId: current.clientId },
-                select: { finalizedAt: true },
-            });
-            if (serviceCase?.finalizedAt) {
-                throw new BadRequestException("최종 확정된 제공기록지는 링크를 다시 발급할 수 없습니다.");
             }
             const scope = {
                 branchId: params.branchId,
@@ -211,7 +224,7 @@ export class ServiceRecordTokenService {
                 return false;
             }
 
-            const current = await this.currentProvider(record, tx);
+            const current = await this.currentProvider(record, tx, { lockCase: true });
             if (!current || current.id !== params.scheduleId || current.primaryEmployeeId !== params.employeeId
                 || this.hash(this.normalizePhone(current.primaryEmployee.phone ?? "")) !== expectedPhoneHash) return false;
 
@@ -371,12 +384,15 @@ export class ServiceRecordTokenService {
     async verifyPhoneAndMintAccess(linkToken: string, phone: string): Promise<VerifyPhoneResult> {
         const submittedPhoneHash = this.hash(this.normalizePhone(phone));
         return this.prismaService.$transaction(async (tx) => {
+            const candidate = await this.findByLinkToken(linkToken, tx);
+            if (!candidate) return this.unavailable("invalid_token");
+            const current = await this.currentProvider(candidate, tx, { lockCase: true });
+            if (!current) return this.unavailable("invalid_token");
             const record = await this.findAndLockByLinkToken(linkToken, tx);
             if (!record) return this.unavailable("invalid_token");
             return tenantContextStore.run({ origin: "http", branchId: record.branchId }, async (): Promise<VerifyPhoneResult> => {
                 const now = new Date();
                 if (!record.active && !record.revokedAt) return this.unavailable("invalid_token");
-                const current = await this.currentProvider(record, tx);
                 const currentPhone = this.normalizePhone(current?.primaryEmployee.phone ?? "");
                 if (!current || !currentPhone) return this.unavailable("invalid_token");
                 const currentPhoneHash = this.hash(currentPhone);
