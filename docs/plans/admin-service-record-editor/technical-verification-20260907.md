@@ -145,3 +145,47 @@ passed
 ```
 
 이 결과는 오프라인 characterization 증거이며, 실제 이폼사인 PDF 내용의 최신성·서명 보존·자동 reconciliation·새 관리자 수정 확정 흐름을 검증하지 않는다. Phase 0 및 새 계약/서명 흐름은 계속 열려 있다.
+
+## Phase 0 완료 계약 재작성 capability probe — 2026-09-08
+
+완료된 원본 계약 `4f58a134b5864ecf9af283607cebba9d`를 보존한 채 새 사용자 서명 요청을 한 번 생성하는 별도 capability probe를 추가했다. 구현은 다음 네 경로에 한정한다.
+
+- `backend/test/e2e/helpers/eformsign-completed-reissue.live.helper.ts`
+- `backend/test/e2e/helpers/eformsign-completed-reissue.live.helper.spec.ts`
+- `backend/test/e2e/eformsign-completed-reissue.live.e2e.spec.ts`
+- 이 문서의 본 절
+
+오프라인 테스트는 synthetic fixture와 주입 가능한 API/PDF 경계를 사용한다. 외부 API, DB, 브라우저, SMS, 제품 모듈, Prisma, 스케줄러는 호출하지 않는다. 원본 PDF의 SHA-256 및 바이트 수, 현재 완료 상태, 원본 템플릿 ID, enabled/released/version과 write → 이용자 participant → 내부 제공기관 participant → reviewer inheritance → complete 토폴로지를 먼저 확인한다. 필드는 정확한 18개 allowlist만 사용하며 이용자 서명·도장·동의·제공인력·서명일은 payload에 넣지 않는다. 시작일 2026-07-09, 본인부담금 수령일 2026-07-09, 서비스 비용/정부지원금/본인부담금 1,464,000/1,002,000/462,000과 서비스 가격은 원본 값을 보존하고 종료일만 2027-01-07, 서비스 기간만 20260709~20270107로 바꾼다.
+
+생성 테스트는 `LIVE_E2E=1`과 아래 전체 테스트명 selector가 동시에 일치할 때만 실행된다. selector가 없거나 넓은 정규식이면 Nest module bootstrap과 네트워크가 시작되지 않는다. 생성 결과는 고정된 0700 ledger 디렉터리에서 attempt/result/acceptance/failure/artifact 네임스페이스 충돌과 symlink를 먼저 거부하고, 공유 operation relation을 담은 0600 marker·result·acceptance 파일을 fsync한다. 동일 operation key를 provider idempotency key로 전달하며 marker가 있으면 내용과 관계없이 재실행하지 않는다. 생성 응답은 예약된 result와 accepted receipt에 durable하게 기록한 뒤 원본 재조회/PDF와 새 문서의 이용자 단계 및 새 PDF를 GET-only로 확인한다. 새 user-stage PDF와 API snapshot은 ledger artifact에 남기며 visual inspection은 parent review 대기 상태로 둔다. 빈 서명 필드만으로 서명 부재를 증명하지 않는다. 생성 후 자동 정리·서명·전송·완료·거절·삭제는 수행하지 않는다.
+
+사용자가 실제로 새 문서에 서명한 뒤의 readonly follow-up은 생성과 분리된 selector로 실행한다. ledger result의 새 문서 ID만 읽어 `060/05/3/4` 내부 제공기관 participant 단계, 상속된 내부 recipient, target date/period, 금액 및 수령일, PDF marker를 GET-only로 확인한다. 이 probe는 제품 reissue 구현, recovery engine, receipt/pointer integration, Phase 0 전체 종료를 주장하지 않는다.
+
+이미 실행한 실제 생성 명령 (RED — 재실행 금지):
+
+```text
+LIVE_E2E=1 pnpm exec jest --config jest.config.ts test/e2e/eformsign-completed-reissue.live.e2e.spec.ts --runInBand --testNamePattern='^Phase 0 completed contract reissue creates one fresh user-signature request from the immutable completed source with target dates$' --testPathIgnorePatterns=/node_modules/
+```
+
+사용자 서명 후 readonly 확인 명령 (현재 unavailable — durable result가 `ambiguous`이고 `documentId`가 `null`이므로 실행 금지):
+
+```text
+LIVE_E2E=1 pnpm exec jest --config jest.config.ts test/e2e/eformsign-completed-reissue.live.e2e.spec.ts --runInBand --testNamePattern='^Phase 0 completed contract reissue reads the durable new document after user signature without mutating the vendor document$' --testPathIgnorePatterns=/node_modules/
+```
+
+위 follow-up 명령은 durable한 새 문서 ID와 사용자 서명이 확인될 때까지 실행할 수 없다.
+
+현재 오프라인 검증 명령:
+
+```text
+pnpm exec jest --config jest.config.ts test/e2e/helpers/eformsign-completed-reissue.live.helper.spec.ts --runInBand --testPathIgnorePatterns=/node_modules/
+pnpm exec tsc --noEmit
+pnpm exec eslint test/e2e/eformsign-completed-reissue.live.e2e.spec.ts test/e2e/helpers/eformsign-completed-reissue.live.helper.ts test/e2e/helpers/eformsign-completed-reissue.live.helper.spec.ts
+git diff --check
+```
+
+이 절은 capability probe의 실행 지침과 오프라인 guard 범위만 기록한다. probe 자체는 직접 DB를 호출하지 않지만, 외부 vendor webhook/mirror가 새 문서를 자동으로 mirror·link하거나 client pointer를 승격할 수 있다. 따라서 실제 실행 전후의 client/mirror 상태는 parent가 별도 read-only DB snapshot으로 확인해야 한다. 실제 vendor 실행, 원본 불변성의 최신 live 증거, 새 문서의 사용자 서명 및 PDF 시각 검수는 별도 승인과 parent review 이후의 작업이다.
+
+실제 CREATE selector는 승인된 명령으로 한 번만 실행했으며 RED로 종료됐다. operation key는 `95723309330e37928b140a5cd38c8fc583fe5c019719753baa96cdd3fe8a03d0`, durable result의 상태는 `ambiguous`, `documentId`는 `null`, acceptance는 `reserved`로 남았다. artifact 디렉터리는 `/Users/jaino/.local/state/babyjamjam/phase0-completed-reissue/artifacts/95723309330e37928b140a5cd38c8fc583fe5c019719753baa96cdd3fe8a03d0`이다. 재실행·삭제·follow-up은 하지 않았다.
+
+이 RED 실행은 진단 metadata artifact를 추가하기 전의 frozen helper로 수행되어 HTTP status, vendor code, raw response/body/message가 durable하게 보존되지 않았다. 따라서 helper catch의 위치만으로 vendor HTTP rejection, `createDocument` 내부 response-shape(문서 ID 누락) 오류, transport/runtime 오류를 구분할 수 없으며, provider가 실제 처리했는지도 판정하지 않는다. 이후 실행에서는 `create-error.json`에 status/vendor code/name/category만 0600으로 저장하도록 했지만 이 RED 결과에는 소급 적용하지 않았다.
