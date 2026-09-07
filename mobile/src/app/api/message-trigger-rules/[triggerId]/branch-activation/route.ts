@@ -20,7 +20,7 @@ type RouteContext = {
 };
 
 function isValidTriggerId(triggerId: string): boolean {
-  return /^[A-Za-z0-9_-]+$/.test(triggerId);
+  return /^[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)*$/.test(triggerId);
 }
 
 export async function PUT(request: NextRequest, context: RouteContext) {
