@@ -116,7 +116,7 @@ describe("SbReceiptLinkTokenRepository", () => {
         expect(mockedRunSystemScope).not.toHaveBeenCalled();
         expect(checkWriteArgs("upsert", prisma.receipt_link_token.upsert.mock.calls[0]?.[0], "11111111-1111-1111-1111-111111111111")).toBeNull();
         expect(prisma.receipt_link_token.updateMany).toHaveBeenCalledWith({
-            where: { eformsignDocId: 1, clientId: 7, branchId: "11111111-1111-1111-1111-111111111111" },
+            where: { clientId: 7, branchId: "11111111-1111-1111-1111-111111111111" },
             data: { expiresAt: expect.any(Date), expectedBirthdayHash: "h2" },
         });
     });
@@ -163,6 +163,61 @@ describe("SbReceiptLinkTokenRepository", () => {
             client: { name: "김산모", endDate: new Date("2026-09-10T00:00:00Z") } }]);
         expect(await repository.findExpired(new Date("2026-09-07T00:00:00Z"))).toEqual([]);
         expect(prisma.receipt_link_token.update).toHaveBeenCalledWith({ where: { id: "tok-1" }, data: { expiresAt: new Date("2026-09-24T15:00:00Z") } });
+    });
+
+    it("restores a revoked legacy URL without an end date using its original expiry", async () => {
+        const prisma = makeFakePrisma();
+        const repository = new SbReceiptLinkTokenRepository(prisma as never);
+        prisma.receipt_link_token.findUnique.mockResolvedValue({ ...BASE_ROW, active: false, revokedAt: new Date(),
+            accessTokenHash: "former-session", client: { name: "김산모", endDate: null } });
+        expect(await repository.findByLinkTokenHash("legacy")).toMatchObject({
+            active: true, accessTokenHash: null, expiresAt: BASE_ROW.expiresAt,
+        });
+    });
+
+    it("selects earlier corrected end dates even when the stored expiry is in the future", async () => {
+        const prisma = makeFakePrisma();
+        const repository = new SbReceiptLinkTokenRepository(prisma as never);
+        const cutoff = new Date("2026-09-25T00:00:00Z");
+        prisma.receipt_link_token.findMany.mockResolvedValue([{ ...BASE_ROW,
+            client: { name: "김산모", endDate: new Date("2026-09-10T00:00:00Z") } }]);
+        expect(await repository.findExpired(cutoff)).toEqual([{ id: BASE_ROW.id,
+            storagePath: BASE_ROW.storagePath, eformsignDocId: BASE_ROW.eformsignDocId }]);
+        expect(prisma.receipt_link_token.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {
+            OR: [
+                { client: { endDate: { lt: new Date("2026-09-11T00:00:00Z") } } },
+                { client: { endDate: null }, expiresAt: { lt: cutoff } },
+            ],
+        } }));
+    });
+
+    it.each([
+        ["2026-09-24T15:00:00.000Z", "2026-09-10T00:00:00Z"],
+        ["2026-09-24T15:00:00.001Z", "2026-09-11T00:00:00Z"],
+    ])("keeps the strict KST expiry boundary at %s", async (cutoff, endDateCutoff) => {
+        const prisma = makeFakePrisma();
+        const repository = new SbReceiptLinkTokenRepository(prisma as never);
+        prisma.receipt_link_token.findMany.mockResolvedValue([]);
+        await repository.findExpired(new Date(cutoff));
+        const where = prisma.receipt_link_token.findMany.mock.calls[0]?.[0].where;
+        expect(where.OR[0]).toEqual({ client: { endDate: { lt: new Date(endDateCutoff) } } });
+    });
+
+    it("atomically rechecks stored and authoritative expiry before deleting stale candidate IDs", async () => {
+        jest.useFakeTimers().setSystemTime(new Date("2026-09-25T00:00:00Z"));
+        try {
+            const prisma = makeFakePrisma();
+            const repository = new SbReceiptLinkTokenRepository(prisma as never);
+            prisma.receipt_link_token.deleteMany.mockResolvedValue({ count: 0 });
+            expect(await repository.deleteByIds(["refreshed-row"])).toBe(0);
+            expect(prisma.receipt_link_token.deleteMany).toHaveBeenCalledWith({ where: {
+                id: { in: ["refreshed-row"] }, expiresAt: { lt: new Date() },
+                OR: [
+                    { client: { endDate: { lt: new Date("2026-09-11T00:00:00Z") } } },
+                    { client: { endDate: null }, expiresAt: { lt: new Date() } },
+                ],
+            } });
+        } finally { jest.useRealTimers(); }
     });
 
     it("findActiveByJobId queries by jobId+active, ordered by createdAt desc", async () => {
