@@ -1220,6 +1220,7 @@ function ClientFormContent({
             <FormGrid data-component={`${base}_employee-grid`}>
                 <EmployeeAutocomplete
                     data-component={`${base}_employee-grid_primary-employee-autocomplete`}
+                    refreshOnMount
                     value={formData.primaryEmployeeId}
                     onChange={(id) => handleChange("primaryEmployeeId", id)}
                     label={t(locale, "clients.form.primary-employee")}
@@ -1231,6 +1232,7 @@ function ClientFormContent({
                 />
                 <EmployeeAutocomplete
                     data-component={`${base}_employee-grid_secondary-employee-autocomplete`}
+                    refreshOnMount
                     value={formData.secondaryEmployeeId ?? null}
                     onChange={(id) => handleChange("secondaryEmployeeId", id)}
                     label={t(locale, "clients.form.secondary-employee")}
