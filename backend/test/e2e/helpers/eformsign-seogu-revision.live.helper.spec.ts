@@ -260,6 +260,16 @@ describe("eformsign Seogu revision helper guards", () => {
         expect(() => assertSeoguRevisionHistoryPreserved(before, appendedHistory)).not.toThrow();
     });
 
+    it("rejects an after-query response with only part of the end-date vector updated", () => {
+        const before = documentFixture("participant");
+        const partialAfter = documentFixture("reviewer");
+        const endDay = partialAfter.fields?.find((field) => field.id === EFORMSIGN_END_DATE_FIELD_IDS.day);
+        if (!endDay) throw new Error("fixture end date day is missing");
+        endDay.value = "05";
+
+        expect(() => assertSeoguRevisionOnlyAllowedFieldChanges(before, partialAfter)).toThrow(/target fields were not at Jan06/);
+    });
+
     it("builds only the four approved prefill fields and rejects writer-route options", () => {
         const option = buildSeoguRevisionPrefillOption(baseMode02Option());
         assertSeoguRevisionMode02Option(baseMode02Option());
@@ -364,6 +374,86 @@ describe("eformsign Seogu revision helper guards", () => {
         };
         await expect(downloadSeoguRevisionPdfWithReadonlyRetry(refusal, "token")).rejects.toThrow(/successful PDF/);
         expect(refusalCalls).toBe(3);
+    });
+
+    it("retries transient non-PDF 200 responses, stops on nonretryable status, and enforces the document allowlist", async () => {
+        const body = Buffer.from("%PDF-seogu-revision-ready", "ascii");
+        let transientCalls = 0;
+        const transientReader: SeoguRevisionPdfReader = {
+            downloadDocumentFile: async () => {
+                transientCalls += 1;
+                if (transientCalls < 3) {
+                    return {
+                        status: 200,
+                        contentType: "application/json",
+                        contentDisposition: null,
+                        body: Buffer.from('{"state":"processing"}', "ascii"),
+                    };
+                }
+                return { status: 200, contentType: "application/pdf", contentDisposition: null, body };
+            },
+        };
+        await expect(downloadSeoguRevisionPdfWithReadonlyRetry(transientReader, "offline-token")).resolves.toMatchObject({
+            attempts: 3,
+            statuses: [200, 200, 200],
+            body,
+        });
+        expect(transientCalls).toBe(3);
+
+        let nonPdfExhaustionCalls = 0;
+        const nonPdfExhaustionReader: SeoguRevisionPdfReader = {
+            downloadDocumentFile: async () => {
+                nonPdfExhaustionCalls += 1;
+                return {
+                    status: 200,
+                    contentType: "application/json",
+                    contentDisposition: null,
+                    body: Buffer.from('{"state":"processing"}', "ascii"),
+                };
+            },
+        };
+        await expect(downloadSeoguRevisionPdfWithReadonlyRetry(nonPdfExhaustionReader, "offline-token")).rejects.toThrow(/successful PDF/);
+        expect(nonPdfExhaustionCalls).toBe(3);
+
+        let nonretryableCalls = 0;
+        const nonretryableReader: SeoguRevisionPdfReader = {
+            downloadDocumentFile: async () => {
+                nonretryableCalls += 1;
+                return {
+                    status: 401,
+                    contentType: "application/json",
+                    contentDisposition: null,
+                    body: Buffer.from("unauthorized", "ascii"),
+                };
+            },
+        };
+        await expect(downloadSeoguRevisionPdfWithReadonlyRetry(nonretryableReader, "offline-token")).rejects.toThrow(/successful PDF/);
+        expect(nonretryableCalls).toBe(1);
+
+        const allowlistReader: SeoguRevisionPdfReader = { downloadDocumentFile: jest.fn() };
+        await expect(downloadSeoguRevisionPdfWithReadonlyRetry(allowlistReader, "offline-token", "other-document"))
+            .rejects.toThrow(/outside the exact allowlist/);
+        expect(allowlistReader.downloadDocumentFile).not.toHaveBeenCalled();
+    });
+
+    it("accepts a syntactically valid stale PDF immediately while leaving freshness unproven", async () => {
+        const staleBody = Buffer.from("%PDF-stale-baseline", "ascii");
+        const reader: SeoguRevisionPdfReader = {
+            downloadDocumentFile: jest.fn().mockResolvedValue({
+                status: 200,
+                contentType: "application/pdf",
+                contentDisposition: null,
+                body: staleBody,
+            }),
+        };
+
+        await expect(downloadSeoguRevisionPdfWithReadonlyRetry(reader, "offline-token")).resolves.toEqual({
+            attempts: 1,
+            statuses: [200],
+            body: staleBody,
+        });
+        expect(reader.downloadDocumentFile).toHaveBeenCalledTimes(1);
+        // Format validation does not compare document content or prove that this output is fresh.
     });
 
     it("sanitizes unknown failures without exposing response details", () => {

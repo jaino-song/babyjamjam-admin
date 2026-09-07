@@ -121,3 +121,27 @@ duration/바우처 제공 일수, 금액, 본인부담금 수령일, 실제 최�
 - 임시 저장 후 문서함으로 나갔다 다시 편집(doc_tempsave)으로 열어 변경 계약 종료일, 영수증 기간, 기존 이용자 서명 그림, 금액 1,464,000/1,002,000/462,000 및 본인부담금 수령일 2026-07-09 유지 확인. 문서 ID와 제공기관 확인 단계 유지. 전송/완료하지 않았다.
 - 검증 경계: 제공기관 화면의 저장·재접속 결과다. API 자동 갱신, 일반 미리보기/공용 다운로드 출력, 영수증 URL 이미지 교체, 서구 실문서 저장, 완료 문서의 재서명 없는 신규 생성은 아직 검증되지 않았다. 앱 고객과 연결된 변경이나 duration 유지 검증도 아니다.
 - 이전 문서 `51f2d41e00ed45d79f76bbef406c7d4a`는 이전 실험의 수정 중/제공기관 작성 상태이며 새 워크플로우로 소급 변경되지 않았다. 해당 문서에서 이전 테스트 종료일 저장은 재접속으로 확인했지만 올바른 확인 단계 검증 증거로 사용하지 않는다.
+
+## Phase 0 오프라인 characterization 추가 — 2026-09-08
+
+허용된 테스트 경로에 기존 동작을 확인하는 대역 기반 사례를 추가했다. 제품 코드, DB, 외부 제공자, 브라우저, SMS, 스케줄러는 실행하거나 변경하지 않았다.
+
+- `CreateAndSendContractUsecase`를 같은 idempotency key로 두 번 호출해 첫 제공자 수락 후 호출자 응답이 유실된 경우를 재현했다. durable acceptance의 동일 remote id를 재사용하고 제공자 생성 호출은 1회로 유지하며, 재생 시 기존 mirror projection 보존 플래그와 client link 복구 입력을 확인했다.
+- 제공자 응답 및 문서 ID가 불명확한 오류 뒤 같은 key 재호출은 `uncertain`으로 남고 두 번째 제공자 생성·수락·mirror 기록을 수행하지 않는지 확인했다. 자동 reconciliation이나 전체 복구 성공은 주장하지 않는다.
+- `assertSeoguRevisionOnlyAllowedFieldChanges`에 종료일 벡터 일부만 갱신된 after 응답을 넣어 거부하는지 확인했다. 이는 helper의 allowlist/벡터 검사 범위만 증명한다.
+- `downloadSeoguRevisionPdfWithReadonlyRetry`에 일시적인 HTTP 200 비PDF 응답 반복, 3회 소진, 비재시도 상태(401), 문서 ID allowlist를 넣어 재시도 경계를 확인했다. `%PDF-` 형식만 맞는 stale body는 첫 시도에 반환될 수 있음을 characterization gap으로 기록했으며 freshness 회복을 주장하지 않는다.
+
+실행 결과:
+
+```text
+pnpm exec jest --config jest.config.ts test/usecases/eformsign-doc/create-and-send-contract.usecase.spec.ts test/e2e/helpers/eformsign-seogu-revision.live.helper.spec.ts --runInBand --testPathIgnorePatterns=/node_modules/
+2 suites / 27 tests passed
+pnpm exec tsc --noEmit
+passed
+pnpm exec eslint test/usecases/eformsign-doc/create-and-send-contract.usecase.spec.ts test/e2e/helpers/eformsign-seogu-revision.live.helper.spec.ts
+passed
+git diff --check
+passed
+```
+
+이 결과는 오프라인 characterization 증거이며, 실제 이폼사인 PDF 내용의 최신성·서명 보존·자동 reconciliation·새 관리자 수정 확정 흐름을 검증하지 않는다. Phase 0 및 새 계약/서명 흐름은 계속 열려 있다.
