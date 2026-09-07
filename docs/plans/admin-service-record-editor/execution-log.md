@@ -366,3 +366,8 @@
 - 고객메뉴 임시 fixture의 연도·가격·지역 배열 응답 및 변경된 결과 dialog 식별자를 보정한 재실행은390/480/1280 총3개 PASS. 현재 DOM에 존재하는 dialog명/URL로 검증했고 제품코드 변경은 없었다. 같은 테스트 fixture의 좁은 보정은 Task1.2 테스트 범위에 포함하도록 전달했다.
 - Phase3 Sol/high PLAN CONCERNS를 반영했다. entry case-first와 schedule client-first의 역순 잠금을 확인했고 client/employee일정/자동배정의 transaction후 lifecycle 동기화도 공통 잠금 또는 업무지문CAS 경계에 포함했다. 실제로 확인된 usecase/repository 및 shared 영업일 소유 경로를 계획에 추가했다. N재계산 금지, signed vector, preview결속, 기존 고객간 직원일정 겹침 허용을 명시했고 재감사를 요청한다.
 - 보완된 Phase3 입력 재감사 Sol/high APPROVE. 실제 PostgreSQL barrier/lock-timeout, 대상집합 변경, N13/duration15, 전후 공휴일 이동, 업무지문/version 및 preview변조를 구현 수용 조건으로 유지한다.
+- Task1.2 구현 중 메인 검토에서 같은 sessionIndex의 다른 과거 배정 기록 누락과 기존 overview GET으로의 원본 서명 노출 확대를 발견해 수정 지시했다. 별도 추가 기록 선택 그룹으로 보존하고 원본 서명 필드는 OwnerOrAdmin editor GET에서만 포함하도록 수정했다. 추가 기록 선택 시 공유 화면에 activeContext를 전달해 날짜/서명 근거가 섞이지 않게 했다.
+- 메인 독립 관리자 mock브라우저21개 PASS(390/480/1280): 완료case의 전체/미작성 회차 조회,4개 화면 입력 잠금·기존서명,비로그인 redirect,401/403/404오류 후 기록 미표시, 실제 고객메뉴 anchor새탭/전용경로,동일번호 과거배정의 날짜·서명시각 분리/복귀. API는모두mock이며 서버권한 자체의 실제인증통합시험을 대신하지 않는다.
+- 위 readonly/supplemental 변경 뒤 공용 모바일 mock브라우저12개도 재실행 PASS. 새 타입 연결은 기존 React타입 패키지를 공유 UI의 devDependency로 명시하고 오프라인 lock/link갱신했다. 실제 API/DB/SMS호출 없음.
+- 추가 조회 예외 보완: case.totalSessions가 있는 경우 assignment의duration기반fallback이나최고legacyindex로 확정 회차를 늘리지 않는다. 기간/회차 범위 밖 기록은 별도 보관 항목으로 유지한다. 선택한 추가 회차를N으로 잘라 다른 기록을 표시하는 코드를 메인 source검토에서 찾아 displayDay로 보완했고 관련UI단위시험6개PASS 보고를 받았다.
+- 메인 outlier브라우저3개PASS: canonicalN3/assignment15/과거index5가 동시에 있어도 grid3개,추가항목의실제5회차·2025.12.30표시. 추가정책후기존21개전체재실행은아직하지않았으며앞선결과와분리한다. 관리자기관표시에도기존org스타일을재사용해상단높이를맞췄다.
