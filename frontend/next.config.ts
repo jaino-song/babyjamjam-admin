@@ -22,7 +22,7 @@ const nextConfig: NextConfig = {
     // Keep the exception out of production configuration and CORS behavior.
     ...(process.env.NODE_ENV === "production" ? {} : { allowedDevOrigins: ["127.0.0.1"] }),
     // Workspace package ships TS source; Next transpiles it in-app.
-    transpilePackages: ["@babyjamjam/shared"],
+    transpilePackages: ["@babyjamjam/shared", "@babyjamjam/service-record-ui"],
     turbopack: {
         root: path.resolve(__dirname, ".."),
     },
