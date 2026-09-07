@@ -2,6 +2,7 @@ import { Injectable, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash, randomBytes } from "crypto";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { tenantContextStore } from "infrastructure/tenant/tenant-context.store";
 
 import { ServiceRecordSecurityEventService } from "./service-record-security-event.service";
 
@@ -29,6 +30,7 @@ interface ServiceRecordLinkTokenParams {
     serviceRecordCaseId?: string | null;
     expectedPhone: string;
     expiresAt: Date;
+    resetChallenge?: boolean;
 }
 
 /**
@@ -57,38 +59,80 @@ export class ServiceRecordTokenService {
         return (phone ?? "").replace(/\D/g, "");
     }
 
-    /**
-     * Issue a fresh link for an assignment, revoking any prior active token for the schedule
-     * (so a replaced provider's old link stops working). Returns the plaintext link token once.
-     */
-    async issueLink(params: ServiceRecordLinkTokenParams): Promise<{ linkToken: string }> {
-        const linkToken = `efl_${randomBytes(32).toString("base64url")}`;
-        await this.prismaService.$transaction(async (tx) => {
-            await tx.service_record_token.updateMany({
-                where: {
-                    active: true,
-                    OR: [
-                        { scheduleId: params.scheduleId },
-                        ...(params.serviceRecordCaseId
-                            ? [{ serviceRecordCaseId: params.serviceRecordCaseId }]
-                            : []),
-                    ],
-                },
-                data: { active: false, revokedAt: new Date() },
+    private async currentProvider(
+        record: { scheduleId: number; branchId: string },
+        db: Prisma.TransactionClient | PrismaService,
+    ) {
+        // Public token requests have no tenant context; both lookups are pinned to the token's branch.
+        return tenantContextStore.run({ origin: "http", branchId: record.branchId }, async () => {
+            const original = await db.employee_schedule.findUnique({ where: { id: record.scheduleId }, select: { clientId: true, branchId: true } });
+            if (!original || original.branchId !== record.branchId) return null;
+            const current = await db.employee_schedule.findFirst({
+                where: { clientId: original.clientId, branchId: record.branchId, replaced: false },
+                orderBy: { id: "desc" },
+                include: { primaryEmployee: true, client: { select: { serviceStatus: true } } },
             });
+            if (!current || current.client.serviceStatus === "terminated" || current.primaryEmployee.deletedAt) return null;
+            return current;
+        });
+    }
+
+    /** Reuse the contract URL, changing authentication only when its provider changes. */
+    async issueLink(params: ServiceRecordLinkTokenParams): Promise<{ linkToken: string }> {
+        return this.persistLink(params, true);
+    }
+
+    private async persistLink(params: ServiceRecordLinkTokenParams, activate: boolean): Promise<{ linkToken: string }> {
+        return this.prismaService.$transaction(async (tx) => {
+            await tx.$executeRaw(Prisma.sql`
+                SELECT pg_advisory_xact_lock(hashtextextended(${`service-record-link:${params.branchId}:${params.serviceRecordCaseId ?? params.scheduleId}`}, 0))
+            `);
+            const current = await this.currentProvider(params, tx);
+            if (!current || current.id !== params.scheduleId || current.primaryEmployeeId !== params.employeeId
+                || !this.normalizePhone(current.primaryEmployee.phone ?? "")) {
+                throw new Error("Service record assignment is no longer current");
+            }
+            const scope = {
+                branchId: params.branchId,
+                OR: [
+                    { scheduleId: params.scheduleId },
+                    ...(params.serviceRecordCaseId ? [{ serviceRecordCaseId: params.serviceRecordCaseId }] : []),
+                ],
+            };
+            const previous = await tx.service_record_token.findMany({ where: scope, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+            const expectedPhoneHash = this.hash(this.normalizePhone(current.primaryEmployee.phone ?? ""));
+            for (const row of previous) {
+                const authenticationChanged = row.employeeId !== params.employeeId
+                    || row.scheduleId !== params.scheduleId
+                    || row.expectedPhoneHash !== expectedPhoneHash
+                    || row.revokedAt !== null;
+                await tx.service_record_token.update({
+                    where: { id: row.id },
+                    data: {
+                        scheduleId: params.scheduleId,
+                        employeeId: params.employeeId,
+                        serviceRecordCaseId: params.serviceRecordCaseId,
+                        expectedPhoneHash,
+                        expiresAt: params.expiresAt,
+                        ...(activate || row.active || row.revokedAt ? { active: true, revokedAt: null } : {}),
+                        ...(authenticationChanged || params.resetChallenge ? {
+                            accessTokenHash: null, verifiedAt: null, failedAttempts: 0,
+                            challengeWindowStartedAt: null, lockedAt: null,
+                        } : {}),
+                    },
+                });
+            }
+            if (previous[0]) return { linkToken: previous[0].linkTokenHash };
+            const linkToken = `efl_${randomBytes(32).toString("base64url")}`;
             await tx.service_record_token.create({
                 data: {
-                    branchId: params.branchId,
-                    scheduleId: params.scheduleId,
-                    employeeId: params.employeeId,
-                    serviceRecordCaseId: params.serviceRecordCaseId,
-                    linkTokenHash: linkToken,
-                    expectedPhoneHash: this.hash(this.normalizePhone(params.expectedPhone)),
-                    expiresAt: params.expiresAt,
+                    branchId: params.branchId, scheduleId: params.scheduleId, employeeId: params.employeeId,
+                    serviceRecordCaseId: params.serviceRecordCaseId, linkTokenHash: linkToken,
+                    expectedPhoneHash, expiresAt: params.expiresAt, active: activate,
                 },
             });
+            return { linkToken };
         });
-        return { linkToken };
     }
 
     /**
@@ -100,6 +144,8 @@ export class ServiceRecordTokenService {
         params: ServiceRecordLinkTokenParams,
         options: { includeLocked?: boolean } = {},
     ): Promise<{ linkToken: string } | null> {
+        const current = await this.currentProvider(params, this.prismaService);
+        if (!current || current.id !== params.scheduleId || current.primaryEmployeeId !== params.employeeId) return null;
         const includeLocked = options.includeLocked ?? true;
         const record = await this.prismaService.service_record_token.findFirst({
             where: {
@@ -134,24 +180,10 @@ export class ServiceRecordTokenService {
 
     /**
      * Prepare the exact link shown in the admin preview without making it usable yet.
-     * The plaintext token is returned once and must stay in the authenticated admin's
-     * in-memory form state until send activates this same row.
+     * Repeated previews reuse the same row; send activates it without rotating the URL.
      */
     async prepareLink(params: ServiceRecordLinkTokenParams): Promise<{ linkToken: string }> {
-        const linkToken = `efl_${randomBytes(32).toString("base64url")}`;
-        await this.prismaService.service_record_token.create({
-            data: {
-                branchId: params.branchId,
-                scheduleId: params.scheduleId,
-                employeeId: params.employeeId,
-                serviceRecordCaseId: params.serviceRecordCaseId,
-                linkTokenHash: linkToken,
-                expectedPhoneHash: this.hash(this.normalizePhone(params.expectedPhone)),
-                expiresAt: params.expiresAt,
-                active: false,
-            },
-        });
-        return { linkToken };
+        return this.persistLink(params, false);
     }
 
     /** Activate a prepared link only when it still matches the tenant assignment and phone. */
@@ -162,7 +194,6 @@ export class ServiceRecordTokenService {
             const record = await this.findByLinkToken(params.linkToken, tx);
             if (
                 !record
-                || record.revokedAt
                 || record.expiresAt.getTime() < Date.now()
                 || record.branchId !== params.branchId
                 || record.scheduleId !== params.scheduleId
@@ -172,31 +203,20 @@ export class ServiceRecordTokenService {
                 return false;
             }
 
+            const current = await this.currentProvider(record, tx);
+            if (!current || current.id !== params.scheduleId || current.primaryEmployeeId !== params.employeeId
+                || this.hash(this.normalizePhone(current.primaryEmployee.phone ?? "")) !== expectedPhoneHash) return false;
+
             // A prepared token may have been created before the currently active
             // challenge exhausted its budget. Do not let a later send activate that
             // token and silently replace the locked record; only the explicit
-            // owner/admin reset path may clear a lock and issue a replacement.
+            // owner/admin reset path may clear a lock.
             const activeRows = await this.lockActiveRowsForAssignment(tx, {
                 branchId: params.branchId,
                 scheduleId: params.scheduleId,
                 serviceRecordCaseId: record.serviceRecordCaseId,
             });
             if (activeRows.some((row) => row.lockedAt !== null)) return false;
-
-            if (!record.active) {
-                await tx.service_record_token.updateMany({
-                    where: {
-                        active: true,
-                        OR: [
-                            { scheduleId: params.scheduleId },
-                            ...(record.serviceRecordCaseId
-                                ? [{ serviceRecordCaseId: record.serviceRecordCaseId }]
-                                : []),
-                        ],
-                    },
-                    data: { active: false, revokedAt: new Date() },
-                });
-            }
 
             await tx.service_record_token.update({
                 where: { id: record.id },
@@ -213,16 +233,12 @@ export class ServiceRecordTokenService {
     /** Resolve a usable (active, not revoked, not expired, not locked) link-token row, else null. */
     async resolveLink(linkToken: string) {
         const record = await this.findByLinkToken(linkToken, this.prismaService);
-        if (
-            !record
-            || !record.active
-            || record.revokedAt
-            || record.lockedAt
-            || record.failedAttempts >= SERVICE_RECORD_PHONE_CHALLENGE_MAX_FAILED_ATTEMPTS
-            || record.expiresAt.getTime() < Date.now()
-        ) {
-            return null;
-        }
+        if (!record || (!record.active && !record.revokedAt) || record.expiresAt.getTime() < Date.now()) return null;
+        const current = await this.currentProvider(record, this.prismaService);
+        if (!current || (record.revokedAt && record.scheduleId === current.id)) return null;
+        const changed = record.scheduleId !== current.id || record.employeeId !== current.primaryEmployeeId
+            || record.expectedPhoneHash !== this.hash(this.normalizePhone(current.primaryEmployee.phone ?? ""));
+        if (!changed && (record.lockedAt || record.failedAttempts >= SERVICE_RECORD_PHONE_CHALLENGE_MAX_FAILED_ATTEMPTS)) return null;
         return record;
     }
 
@@ -262,8 +278,7 @@ export class ServiceRecordTokenService {
      * Lock every currently active token for an assignment before checking lockout
      * state. This gives activation the same serialization boundary as the phone
      * challenge: if the fifth failed guess wins the row lock first, activation
-     * waits and observes the committed lock; if activation wins first, the failed
-     * guess observes the revoked row and cannot mint through it.
+     * waits and observes the committed lock. Activation never resets challenge state.
      *
      * The fallback keeps lightweight test doubles compatible; production Prisma
      * always exposes `$queryRaw` on its transaction client.
@@ -342,11 +357,8 @@ export class ServiceRecordTokenService {
      * Wrong phone numbers consume a finite per-link budget in a fifteen-minute window.
      * The fifth failed guess locks the link until an authenticated admin reissues it.
      *
-     * expectedPhoneHash is a snapshot taken at link issuance. If the employee's phone was
-     * corrected in admin after issuance, the snapshot goes stale, so a mismatch falls back to
-     * the live employee record: a phone matching the employee's current number verifies and
-     * heals the snapshot. Links issued to an explicit override phone keep working through the
-     * snapshot compare and are never loosened — the fallback only ever accepts the live phone.
+     * Authentication always uses the current assigned provider's registered phone.
+     * Ownership or phone changes invalidate the old access session, including before SMS reissue.
      */
     async verifyPhoneAndMintAccess(linkToken: string, phone: string): Promise<VerifyPhoneResult> {
         const submittedPhoneHash = this.hash(this.normalizePhone(phone));
@@ -355,6 +367,23 @@ export class ServiceRecordTokenService {
             if (!record) return this.unavailable("invalid_token");
 
             const now = new Date();
+            if (!record.active && !record.revokedAt) return this.unavailable("invalid_token");
+            const current = await this.currentProvider(record, tx);
+            const currentPhone = this.normalizePhone(current?.primaryEmployee.phone ?? "");
+            if (!current || !currentPhone) return this.unavailable("invalid_token");
+            const currentPhoneHash = this.hash(currentPhone);
+            if (record.scheduleId !== current.id || record.employeeId !== current.primaryEmployeeId || record.expectedPhoneHash !== currentPhoneHash) {
+                const rebound = await tx.service_record_token.update({
+                    where: { id: record.id },
+                    data: {
+                        scheduleId: current.id, employeeId: current.primaryEmployeeId,
+                        expectedPhoneHash: currentPhoneHash, active: true, revokedAt: null,
+                        accessTokenHash: null, verifiedAt: null, failedAttempts: 0,
+                        challengeWindowStartedAt: null, lockedAt: null,
+                    },
+                });
+                Object.assign(record, rebound);
+            }
             if (!record.active || record.revokedAt) return this.unavailable("invalid_token");
             if (record.expiresAt.getTime() < now.getTime()) return this.unavailable("expired");
             if (record.lockedAt) return this.unavailable("locked");
@@ -392,38 +421,29 @@ export class ServiceRecordTokenService {
                 });
             }
 
-            let healedPhoneHash: string | null = null;
-            if (submittedPhoneHash !== record.expectedPhoneHash) {
-                const employee = await tx.employee.findFirst({
-                    where: { id: record.employeeId, deletedAt: null },
-                    select: { phone: true },
+            if (submittedPhoneHash !== currentPhoneHash) {
+                const nextFailedAttempts = failedAttempts + 1;
+                const shouldLock = nextFailedAttempts >= SERVICE_RECORD_PHONE_CHALLENGE_MAX_FAILED_ATTEMPTS;
+                await tx.service_record_token.update({
+                    where: { id: record.id },
+                    data: {
+                        failedAttempts: nextFailedAttempts,
+                        challengeWindowStartedAt: challengeWindowStartedAt ?? now,
+                        ...(shouldLock
+                            ? {
+                                lockedAt: now,
+                                accessTokenHash: null,
+                                verifiedAt: null,
+                            }
+                            : {}),
+                    },
                 });
-                const livePhone = this.normalizePhone(employee?.phone ?? "");
-                if (!livePhone || this.hash(livePhone) !== submittedPhoneHash) {
-                    const nextFailedAttempts = failedAttempts + 1;
-                    const shouldLock = nextFailedAttempts >= SERVICE_RECORD_PHONE_CHALLENGE_MAX_FAILED_ATTEMPTS;
-                    await tx.service_record_token.update({
-                        where: { id: record.id },
-                        data: {
-                            failedAttempts: nextFailedAttempts,
-                            challengeWindowStartedAt: challengeWindowStartedAt ?? now,
-                            ...(shouldLock
-                                ? {
-                                    lockedAt: now,
-                                    accessTokenHash: null,
-                                    verifiedAt: null,
-                                }
-                                : {}),
-                        },
-                    });
-                    this.emitChallengeEvent(
-                        record,
-                        shouldLock ? "challenge_locked" : "challenge_failed",
-                        nextFailedAttempts,
-                    );
-                    return { ok: false, reason: "verification_failed" };
-                }
-                healedPhoneHash = submittedPhoneHash;
+                this.emitChallengeEvent(
+                    record,
+                    shouldLock ? "challenge_locked" : "challenge_failed",
+                    nextFailedAttempts,
+                );
+                return { ok: false, reason: "verification_failed" };
             }
 
             const accessToken = `efa_${randomBytes(32).toString("base64url")}`;
@@ -435,7 +455,6 @@ export class ServiceRecordTokenService {
                     failedAttempts: 0,
                     challengeWindowStartedAt: null,
                     lockedAt: null,
-                    ...(healedPhoneHash ? { expectedPhoneHash: healedPhoneHash } : {}),
                 },
             });
             this.emitChallengeEvent(record, "challenge_succeeded", failedAttempts);
@@ -459,6 +478,9 @@ export class ServiceRecordTokenService {
         ) {
             return null;
         }
+        const current = await this.currentProvider(record, this.prismaService);
+        if (!current || current.id !== record.scheduleId || current.primaryEmployeeId !== record.employeeId
+            || this.hash(this.normalizePhone(current.primaryEmployee.phone ?? "")) !== record.expectedPhoneHash) return null;
         return {
             tokenId: record.id,
             branchId: record.branchId,
@@ -488,7 +510,7 @@ export class ServiceRecordTokenService {
     async revokeForSchedule(scheduleId: number): Promise<void> {
         await this.prismaService.service_record_token.updateMany({
             where: { scheduleId, active: true },
-            data: { active: false, revokedAt: new Date() },
+            data: { active: false, revokedAt: new Date(), accessTokenHash: null, verifiedAt: null },
         });
     }
 }

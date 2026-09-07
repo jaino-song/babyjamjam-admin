@@ -15,7 +15,6 @@ import { EformsignDocumentMirrorService } from "application/services/eformsign-d
 import { ReceiptLinkTokenService } from "application/services/receipt-link-token.service";
 import { SmsTriggerDeliverySkipError } from "application/services/sms-trigger-payload-enricher.registry";
 import {
-    ReceiptLinkIssuanceConflictError,
     ReceiptLinkIssueService,
     ReceiptLinkSkipError,
 } from "application/services/receipt-link-issue.service";
@@ -33,6 +32,7 @@ interface ClientFixture {
     voucherClient: boolean;
     birthday: string | null;
     eDocId: string | null;
+    endDate?: Date;
 }
 
 interface DocFixture {
@@ -69,7 +69,7 @@ function makeService(overrides: MakeServiceOverrides = {}) {
             : overrides.doc;
 
     const clientRepository = {
-        findById: jest.fn().mockResolvedValue(client as unknown as ClientEntity | null),
+        findById: jest.fn().mockResolvedValue(client ? { endDate: new Date("2026-09-20"), ...client } as unknown as ClientEntity : null),
     } as unknown as IClientRepository;
 
     const eformsignDocRepository = {
@@ -376,27 +376,12 @@ describe("ReceiptLinkIssueService", () => {
         expect(error).toBeInstanceOf(SmsTriggerDeliverySkipError);
     });
 
-    it("returns the existing token's url without rendering when an active token exists for the job and existingUrl is supplied", async () => {
-        const activeExpiresAt = new Date("2026-10-01T00:00:00Z");
-        const { service, rasterizer, storage, tokenService, receiptLinkTokenRepository, clientRepository } = makeService({
-            activeTokenForJob: { id: "existing-tok", expiresAt: activeExpiresAt },
-        });
-
-        const result = await service.issue({
-            branchId: BRANCH,
-            clientId: 7,
-            source: "auto_trigger",
-            jobId: "job-1",
-            existingUrl: "https://m.admin.example/receipt/efr_existing",
-        });
-
-        expect(receiptLinkTokenRepository.findActiveByJobId).toHaveBeenCalledWith("job-1");
-        expect(result).toEqual({ url: "https://m.admin.example/receipt/efr_existing", tokenId: "existing-tok", expiresAt: activeExpiresAt });
-        // Proves the jobId short-circuit runs before preflight ever touches the client.
-        expect(clientRepository.findById).not.toHaveBeenCalled();
-        expect(rasterizer.renderPageToPng).not.toHaveBeenCalled();
-        expect(storage.upload).not.toHaveBeenCalled();
-        expect(tokenService.issue).not.toHaveBeenCalled();
+    it("refreshes contract expiry even when a staged job already carries a URL", async () => {
+        const { service, tokenService } = makeService();
+        await service.issue({ branchId: BRANCH, clientId: 7, source: "auto_trigger", jobId: "job-1", existingUrl: "https://m.admin.example/receipt/efr_existing" });
+        expect(tokenService.issue).toHaveBeenCalledWith(expect.objectContaining({
+            eformsignDocId: 42, serviceEndDate: new Date("2026-09-20"),
+        }));
     });
 
     it("mints a new token when an active token exists for the job but no existingUrl is supplied", async () => {
@@ -480,57 +465,11 @@ describe("ReceiptLinkIssueService", () => {
         expect(tokenService.issue).toHaveBeenCalledTimes(1);
     });
 
-    it("does not replace a winner committed while waiting on the same job lock", async () => {
-        const { service, tokenService, lockScopedRepository } = makeService({
-            activeTokenForJob: { id: "active-before-lock", expiresAt: new Date("2026-10-01T00:00:00Z") },
-            jobLockContended: true,
-        });
-        (lockScopedRepository.findActiveByJobId as jest.Mock)
-            .mockResolvedValueOnce({ id: "committed-winner", expiresAt: new Date("2026-10-01T00:00:00Z") });
-
-        await expect(service.issue({
-            branchId: BRANCH,
-            clientId: 7,
-            source: "auto_trigger",
-            jobId: "job-race",
-        })).rejects.toBeInstanceOf(ReceiptLinkIssuanceConflictError);
-
-        expect(tokenService.issue).not.toHaveBeenCalled();
-    });
-
-    it("does not replace a token created after the pre-lock read when the lock is no longer contended", async () => {
-        const { service, tokenService, receiptLinkTokenRepository, lockScopedRepository } = makeService({
-            jobLockContended: false,
-        });
-        (lockScopedRepository.findActiveByJobId as jest.Mock)
-            .mockResolvedValueOnce({ id: "winner", expiresAt: new Date("2026-10-01T00:00:00Z") });
-
-        await expect(service.issue({
-            branchId: BRANCH,
-            clientId: 7,
-            source: "auto_trigger",
-            jobId: "job-race",
-        })).rejects.toBeInstanceOf(ReceiptLinkIssuanceConflictError);
-
-        expect(receiptLinkTokenRepository.findActiveByJobId).toHaveBeenCalledTimes(1);
-        expect(lockScopedRepository.findActiveByJobId).toHaveBeenCalledTimes(1);
-        expect(tokenService.issue).not.toHaveBeenCalled();
-    });
-
-    it("uses the lock-scoped repository for the final re-check and token mint", async () => {
-        const { service, tokenService, receiptLinkTokenRepository, lockScopedRepository } = makeService({
-            jobLockContended: false,
-        });
-
-        await service.issue({
-            branchId: BRANCH,
-            clientId: 7,
-            source: "auto_trigger",
-            jobId: "job-race",
-        });
-
-        expect(receiptLinkTokenRepository.findActiveByJobId).toHaveBeenCalledTimes(1);
-        expect(lockScopedRepository.findActiveByJobId).toHaveBeenCalledWith("job-race");
-        expect(tokenService.issue).toHaveBeenCalledWith(expect.any(Object), lockScopedRepository);
+    it("refreshes the same contract for independent dispatch jobs", async () => {
+        const { service, tokenService } = makeService();
+        const first = await service.issue({ branchId: BRANCH, clientId: 7, source: "manual", jobId: "job-1" });
+        const second = await service.issue({ branchId: BRANCH, clientId: 7, source: "manual", jobId: "job-2" });
+        expect(second.url).toBe(first.url);
+        expect(tokenService.issue).toHaveBeenCalledTimes(2);
     });
 });

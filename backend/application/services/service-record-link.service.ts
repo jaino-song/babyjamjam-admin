@@ -173,12 +173,14 @@ export class ServiceRecordLinkService {
             throw new BadRequestException("제공인력 전화번호가 없습니다");
         }
 
-        const expiresAt = this.resolveExpiry(schedule.endDate, true);
+        const serviceRecordCase = await this.lifecycleService?.ensureForClient(schedule.clientId);
+        const expiresAt = this.resolveExpiry(serviceRecordCase?.endDate ?? schedule.endDate, true);
         const tokenParams = {
             branchId: schedule.branchId,
             scheduleId,
+            ...(serviceRecordCase ? { serviceRecordCaseId: serviceRecordCase.id } : {}),
             employeeId: employee.id,
-            expectedPhone: resolvedRecipientPhone,
+            expectedPhone: employee.phone,
             expiresAt,
         };
         const { linkToken } = await this.tokenService.reuseActiveLink(tokenParams, { includeLocked: false })
@@ -191,7 +193,7 @@ export class ServiceRecordLinkService {
         };
     }
 
-    /** Replace the active assignment link without scheduling or dispatching an SMS. */
+    /** Reset the phone challenge without changing the assignment URL or sending an SMS. */
     async resetLink(scheduleId: number): Promise<{
         serviceRecordUrl: string;
         expiresAt: Date;
@@ -220,8 +222,9 @@ export class ServiceRecordLinkService {
             scheduleId,
             employeeId: employee.id,
             ...(serviceRecordCase ? { serviceRecordCaseId: serviceRecordCase.id } : {}),
-            expectedPhone: resolvedRecipientPhone,
+            expectedPhone: employee.phone,
             expiresAt,
+            resetChallenge: true,
         });
 
         return {
@@ -354,7 +357,7 @@ export class ServiceRecordLinkService {
                     branchId: schedule.branchId,
                     scheduleId,
                     employeeId: employee.id,
-                    expectedPhone: resolvedRecipientPhone,
+                    expectedPhone: employee.phone,
                     expiresAt: this.resolveExpiry(
                         serviceRecordCase?.endDate ?? schedule.endDate,
                         options.allowLateReissue === true,
@@ -413,7 +416,7 @@ export class ServiceRecordLinkService {
                     scheduleId,
                     employeeId: employee.id,
                     ...(serviceRecordCase ? { serviceRecordCaseId: serviceRecordCase.id } : {}),
-                    expectedPhone: resolvedRecipientPhone,
+                    expectedPhone: employee.phone,
                     expiresAt,
                 };
                 ({ linkToken } = await this.tokenService.reuseActiveLink(tokenParams)

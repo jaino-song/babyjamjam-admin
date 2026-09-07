@@ -23,12 +23,14 @@ const BASE_ROW = {
 };
 
 interface FakeTx {
+    $executeRaw: jest.Mock;
     receipt_link_token: {
         findUnique: jest.Mock;
         update: jest.Mock;
         findFirst: jest.Mock;
         findMany: jest.Mock;
         create: jest.Mock;
+        upsert: jest.Mock;
         updateMany: jest.Mock;
         deleteMany: jest.Mock;
     };
@@ -41,10 +43,11 @@ function makeFakePrisma() {
         findFirst: jest.fn(),
         findMany: jest.fn(),
         create: jest.fn(),
+        upsert: jest.fn(),
         updateMany: jest.fn(),
         deleteMany: jest.fn(),
     };
-    const tx: FakeTx = { receipt_link_token };
+    const tx: FakeTx = { receipt_link_token, $executeRaw: jest.fn() };
     const $transaction = jest.fn(async (arg: unknown) => {
         if (typeof arg === "function") {
             return (arg as (tx: FakeTx) => unknown)(tx);
@@ -84,13 +87,13 @@ describe("SbReceiptLinkTokenRepository", () => {
         expect(mockedRunSystemScope).toHaveBeenCalledTimes(1);
     });
 
-    it("does NOT wrap createReplacingActive in runSystemScope, and branch-pins the revoke updateMany where", async () => {
+    it("does NOT wrap createOrRefreshContractLink in runSystemScope, and branch-pins the expiry refresh without revoking old URLs", async () => {
         const prisma = makeFakePrisma();
         const repository = new SbReceiptLinkTokenRepository(prisma as never);
-        prisma.receipt_link_token.create.mockResolvedValue(BASE_ROW);
+        prisma.receipt_link_token.upsert.mockResolvedValue(BASE_ROW);
 
         const now = new Date();
-        await repository.createReplacingActive(
+        await repository.createOrRefreshContractLink(
             {
                 branchId: "11111111-1111-1111-1111-111111111111",
                 clientId: 7,
@@ -111,9 +114,32 @@ describe("SbReceiptLinkTokenRepository", () => {
 
         expect(mockedRunSystemScope).not.toHaveBeenCalled();
         expect(prisma.receipt_link_token.updateMany).toHaveBeenCalledWith({
-            where: { eformsignDocId: 1, active: true, branchId: "11111111-1111-1111-1111-111111111111" },
-            data: { active: false, revokedAt: now },
+            where: { eformsignDocId: 1, clientId: 7, active: true, branchId: "11111111-1111-1111-1111-111111111111" },
+            data: { expiresAt: expect.any(Date) },
         });
+    });
+
+    it("restores a legacy reissued URL with the service-end expiry and requires fresh authentication", async () => {
+        const prisma = makeFakePrisma();
+        const repository = new SbReceiptLinkTokenRepository(prisma as never);
+        prisma.receipt_link_token.findUnique.mockResolvedValue({ ...BASE_ROW, active: false, revokedAt: new Date(),
+            accessTokenHash: "old-session", verifiedAt: new Date(), failedAttempts: 3,
+            client: { name: "김산모", endDate: new Date("2026-09-10T00:00:00Z") } });
+        const row = await repository.findByLinkTokenHash("legacy-hash");
+        expect(row).toMatchObject({ active: true, accessTokenHash: null, verifiedAt: null, failedAttempts: 3,
+            expiresAt: new Date("2026-09-24T15:00:00Z") });
+        expect(prisma.receipt_link_token.update).toHaveBeenCalledWith({ where: { id: "tok-1" }, data: {
+            active: true, revokedAt: null, accessTokenHash: null, verifiedAt: null, expiresAt: new Date("2026-09-24T15:00:00Z"),
+        } });
+    });
+
+    it("does not clean up a link whose service end was extended", async () => {
+        const prisma = makeFakePrisma();
+        const repository = new SbReceiptLinkTokenRepository(prisma as never);
+        prisma.receipt_link_token.findMany.mockResolvedValue([{ ...BASE_ROW, expiresAt: new Date("2026-08-01T00:00:00Z"),
+            client: { name: "김산모", endDate: new Date("2026-09-10T00:00:00Z") } }]);
+        expect(await repository.findExpired(new Date("2026-09-07T00:00:00Z"))).toEqual([]);
+        expect(prisma.receipt_link_token.update).toHaveBeenCalledWith({ where: { id: "tok-1" }, data: { expiresAt: new Date("2026-09-24T15:00:00Z") } });
     });
 
     it("findActiveByJobId queries by jobId+active, ordered by createdAt desc", async () => {

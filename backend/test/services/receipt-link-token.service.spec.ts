@@ -1,9 +1,9 @@
+import { getReceiptLinkExpiresAt, RECEIPT_LINK_GRACE_DAYS } from "domain/constants/receipt-link-expiry";
 import { createHash } from "node:crypto";
 import {
     ReceiptLinkTokenService,
     RECEIPT_LINK_LOCK_MS,
     RECEIPT_LINK_MAX_FAILED_ATTEMPTS,
-    RECEIPT_LINK_TTL_MS,
     normalizeBirthdayInput,
 } from "application/services/receipt-link-token.service";
 import {
@@ -33,12 +33,16 @@ class FakeReceiptLinkTokenRepository implements IReceiptLinkTokenRepository {
         return row ? { ...row } : null;
     }
 
-    async createReplacingActive(data: CreateReceiptLinkTokenData, now: Date): Promise<ReceiptLinkTokenRecord> {
-        const hits = this.rows.filter((r) => r.eformsignDocId === data.eformsignDocId && r.active === true);
-        hits.forEach((r) => {
-            r.active = false;
-            r.revokedAt = now;
-        });
+    async createOrRefreshContractLink(data: CreateReceiptLinkTokenData, now: Date): Promise<ReceiptLinkTokenRecord> {
+        for (const row of this.rows.filter((r) => r.eformsignDocId === data.eformsignDocId && r.active)) {
+            row.expiresAt = data.expiresAt;
+        }
+        const existing = this.rows.find((r) => r.linkTokenHash === data.linkTokenHash);
+        if (existing) {
+            existing.expiresAt = data.expiresAt;
+            existing.storagePath = data.storagePath;
+            return { ...existing };
+        }
 
         const row: FakeRow = {
             id: `row-${this.nextId++}`,
@@ -145,6 +149,8 @@ class FakeReceiptLinkTokenRepository implements IReceiptLinkTokenRepository {
 }
 
 const config = { get: (key: string, fallback?: string) => (key === "RECEIPT_LINK_HASH_SALT" ? "test-salt" : fallback) };
+const SERVICE_END = new Date("2026-09-10T00:00:00Z");
+const EXPIRES = new Date("2026-09-24T15:00:00Z");
 const NOW = new Date("2026-09-03T09:00:00+09:00");
 
 function makeService() {
@@ -160,6 +166,7 @@ async function issue(service: ReceiptLinkTokenService, overrides: Partial<Parame
         eformsignDocId: 42,
         jobId: "job-1",
         birthday: "940315",
+        serviceEndDate: SERVICE_END,
         storagePath: "receipts/b/42/abc.png",
         contentSha256: "a".repeat(64),
         byteSize: 1000,
@@ -185,15 +192,16 @@ describe("ReceiptLinkTokenService", () => {
     // values would pass every other test in this file silently.
     it("pins the failed-attempt limit, link TTL and lock duration to their contracted literal values", () => {
         expect(RECEIPT_LINK_MAX_FAILED_ATTEMPTS).toBe(5);
-        expect(RECEIPT_LINK_TTL_MS).toBe(30 * 24 * 60 * 60 * 1000);
+        expect(RECEIPT_LINK_GRACE_DAYS).toBe(14);
+        expect(getReceiptLinkExpiresAt(SERVICE_END)).toEqual(EXPIRES);
         expect(RECEIPT_LINK_LOCK_MS).toBe(30 * 60 * 1000);
     });
 
     it("uses an issuance-scoped repository when one is supplied", async () => {
         const { repository, service } = makeService();
-        const createReplacingActive = jest.fn().mockResolvedValue({ id: "tx-row" });
+        const createOrRefreshContractLink = jest.fn().mockResolvedValue({ id: "tx-row" });
         const transactionRepository = {
-            createReplacingActive,
+            createOrRefreshContractLink,
             findActiveByJobId: jest.fn(),
         } as unknown as IReceiptLinkTokenIssuanceRepository;
 
@@ -203,6 +211,7 @@ describe("ReceiptLinkTokenService", () => {
             eformsignDocId: 42,
             jobId: "job-locked",
             birthday: "940315",
+        serviceEndDate: SERVICE_END,
             storagePath: "receipts/b/42/tx.png",
             contentSha256: "b".repeat(64),
             byteSize: 1000,
@@ -210,9 +219,29 @@ describe("ReceiptLinkTokenService", () => {
             now: NOW,
         }, transactionRepository);
 
-        expect(createReplacingActive).toHaveBeenCalledTimes(1);
+        expect(createOrRefreshContractLink).toHaveBeenCalledTimes(1);
         expect(repository.rows).toHaveLength(0);
         expect(result.id).toBe("tx-row");
+    });
+
+    it("derives the same URL across instances and jobs, but separates contracts and branches", async () => {
+        const a = makeService().service;
+        const b = makeService().service;
+        const [first, second] = await Promise.all([issue(a, { jobId: "a" }), issue(b, { jobId: "b" })]);
+        expect(first.linkToken).toBe(second.linkToken);
+        expect((await issue(a, { eformsignDocId: 43 })).linkToken).not.toBe(first.linkToken);
+        expect((await issue(a, { branchId: "22222222-2222-2222-2222-222222222222" })).linkToken).not.toBe(first.linkToken);
+    });
+
+    it("retains the URL after a service-date change and expires at midnight after the fourteenth KST day", async () => {
+        const { service } = makeService();
+        const first = await issue(service);
+        const second = await issue(service, { serviceEndDate: new Date("2026-09-12T00:00:00Z") });
+        expect(second.linkToken).toBe(first.linkToken);
+        expect(second.expiresAt.toISOString()).toBe("2026-09-26T15:00:00.000Z");
+        expect(await service.getStatus(first.linkToken, new Date("2026-09-26T14:59:59.999Z"))).toMatchObject({ ok: true });
+        expect(await service.getStatus(first.linkToken, second.expiresAt)).toEqual({ ok: false, reason: "expired" });
+        await expect(issue(service, { now: EXPIRES })).rejects.toThrow("expired");
     });
 
     // M1: issue() accepts a jobId and the repository must be able to look the row back up by
@@ -224,17 +253,19 @@ describe("ReceiptLinkTokenService", () => {
         expect(await repository.findActiveByJobId("job-9")).not.toBeNull();
     });
 
-    it("issues an efr_ token, stores only hashes, expires in 30 days, and revokes older tokens for the same document", async () => {
+    it("reuses one contract token across jobs, stores only hashes and expires after service end plus 14 days", async () => {
         const { repository, service } = makeService();
         const first = await issue(service);
         const second = await issue(service, { jobId: "job-2" });
 
         expect(first.linkToken).toMatch(/^efr_[A-Za-z0-9_-]{43}$/);
-        expect(first.expiresAt.getTime()).toBe(NOW.getTime() + RECEIPT_LINK_TTL_MS);
-        expect(repository.rows.map((r) => r.active)).toEqual([false, true]);
-        expect(repository.rows[0]!.revokedAt).toEqual(NOW);
-        expect(repository.rows[1]!.linkTokenHash).toBe(createHash("sha256").update(second.linkToken).digest("hex"));
-        expect(repository.rows[1]!.expectedBirthdayHash).toBe(createHash("sha256").update("test-salt:940315").digest("hex"));
+        expect(first.expiresAt.getTime()).toBe(EXPIRES.getTime());
+        expect(first.linkToken).toBe(second.linkToken);
+        expect(first.id).toBe(second.id);
+        expect(repository.rows.map((r) => r.active)).toEqual([true]);
+        expect(repository.rows[0]!.revokedAt).toBeNull();
+        expect(repository.rows[0]!.linkTokenHash).toBe(createHash("sha256").update(second.linkToken).digest("hex"));
+        expect(repository.rows[0]!.expectedBirthdayHash).toBe(createHash("sha256").update("test-salt:940315").digest("hex"));
         expect(JSON.stringify(repository.rows)).not.toContain(second.linkToken);
     });
 
@@ -271,12 +302,12 @@ describe("ReceiptLinkTokenService", () => {
             state: "pending",
             branchName: "인천 아이미래로",
             storagePath: "receipts/b/42/abc.png",
-            expiresAt: new Date(NOW.getTime() + RECEIPT_LINK_TTL_MS).toISOString(),
+            expiresAt: new Date(EXPIRES.getTime()).toISOString(),
             remainingAttempts: RECEIPT_LINK_MAX_FAILED_ATTEMPTS,
             lockedUntil: null,
         });
         expect(await service.getStatus("efr_nope", NOW)).toEqual({ ok: false, reason: "not_found" });
-        expect(await service.getStatus(linkToken, new Date(NOW.getTime() + RECEIPT_LINK_TTL_MS + 1))).toEqual({ ok: false, reason: "expired" });
+        expect(await service.getStatus(linkToken, new Date(EXPIRES.getTime() + 1))).toEqual({ ok: false, reason: "expired" });
     });
 
     it("reports state: verified after a successful verification", async () => {
@@ -297,7 +328,7 @@ describe("ReceiptLinkTokenService", () => {
         expect(repository.rows[0]!.verifiedAt).toEqual(NOW);
 
         const access = await service.resolveAccess(linkToken, accessToken, NOW);
-        expect(access).toEqual({ id: "row-1", storagePath: "receipts/b/42/abc.png", clientName: "김산모", expiresAt: new Date(NOW.getTime() + RECEIPT_LINK_TTL_MS) });
+        expect(access).toEqual({ id: "row-1", storagePath: "receipts/b/42/abc.png", clientName: "김산모", expiresAt: new Date(EXPIRES.getTime()) });
         expect(await service.resolveAccess(linkToken, "efra_wrong", NOW)).toBeNull();
     });
 
@@ -320,15 +351,15 @@ describe("ReceiptLinkTokenService", () => {
         const result = await service.verifyBirthday(linkToken, "940315", NOW);
         const accessToken = (result as { accessToken: string }).accessToken;
 
-        const afterExpiry = new Date(NOW.getTime() + RECEIPT_LINK_TTL_MS + 1);
+        const afterExpiry = new Date(EXPIRES.getTime() + 1);
         expect(await service.resolveAccess(linkToken, accessToken, afterExpiry)).toBeNull();
     });
 
     it("treats a revoked token as unusable everywhere", async () => {
-        const { service } = makeService();
+        const { service, repository } = makeService();
         const { linkToken: revokedToken } = await issue(service);
-        // Issuing a second token for the same document revokes the first.
-        await issue(service, { jobId: "job-2" });
+        // Explicit administrative revocation remains respected.
+        repository.rows[0]!.active = false;
 
         expect(await service.getStatus(revokedToken, NOW)).toEqual({ ok: false, reason: "revoked" });
         expect(await service.verifyBirthday(revokedToken, "940315", NOW)).toEqual({ ok: false, reason: "revoked" });
@@ -551,7 +582,7 @@ describe("ReceiptLinkTokenService", () => {
     it("the fake's reserveVerificationAttempt returns outcome: unusable for an inactive row, and for an expired-as-of-now row, without writing to it", async () => {
         const { repository, service } = makeService();
         await issue(service);
-        await issue(service, { jobId: "job-2" }); // revokes the first token
+        repository.rows[0]!.active = false; // explicit revocation
         const revokedResult = await repository.reserveVerificationAttempt(
             repository.rows[0]!.id,
             NOW,
@@ -576,8 +607,8 @@ describe("ReceiptLinkTokenService", () => {
 
     it("collects expired tokens and only the storage paths no live token still references", async () => {
         const { repository, service } = makeService();
-        await issue(service, { eformsignDocId: 1, storagePath: "receipts/b/1/old.png", now: new Date("2026-07-01T00:00:00Z") });
-        await issue(service, { eformsignDocId: 2, storagePath: "receipts/b/2/shared.png", now: new Date("2026-07-01T00:00:00Z") });
+        await issue(service, { eformsignDocId: 1, storagePath: "receipts/b/1/old.png", serviceEndDate: new Date("2026-07-01T00:00:00Z"), now: new Date("2026-07-01T00:00:00Z") });
+        await issue(service, { eformsignDocId: 2, storagePath: "receipts/b/2/shared.png", serviceEndDate: new Date("2026-07-01T00:00:00Z"), now: new Date("2026-07-01T00:00:00Z") });
         await issue(service, { eformsignDocId: 3, storagePath: "receipts/b/2/shared.png", now: NOW });
 
         const cutoff = new Date(NOW.getTime() - 24 * 60 * 60 * 1000);
