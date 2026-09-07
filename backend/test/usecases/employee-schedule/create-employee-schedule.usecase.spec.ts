@@ -148,7 +148,7 @@ describe("CreateEmployeeScheduleUsecase assignment eligibility", () => {
         expect(employeeScheduleRepository.create).not.toHaveBeenCalled();
     });
 
-    it("refuses an active overlapping schedule in the same branch", async () => {
+    it("refuses an active overlapping schedule for the same client", async () => {
         const { usecase, transaction, employeeScheduleRepository } = createHarness([eligible()]);
         transaction.employee_schedule.findFirst.mockResolvedValue({ id: 77 });
 
@@ -161,10 +161,7 @@ describe("CreateEmployeeScheduleUsecase assignment eligibility", () => {
                 replaced: false,
                 startDate: { lte: baseParams.endDate },
                 endDate: { gte: baseParams.startDate },
-                OR: expect.arrayContaining([
-                    { clientId: baseParams.clientId },
-                    { primaryEmployeeId: { in: [baseParams.primaryEmployeeId] } },
-                ]),
+                clientId: baseParams.clientId,
             }),
         }));
         expect(employeeScheduleRepository.create).not.toHaveBeenCalled();

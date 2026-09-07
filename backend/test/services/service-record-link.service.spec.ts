@@ -218,7 +218,7 @@ describe("ServiceRecordLinkService", () => {
         expect(tokenService.issueLink).not.toHaveBeenCalled();
     });
 
-    it("prepares an inactive exact URL for a manually overridden verification phone", async () => {
+    it("keeps authentication tied to the provider when the delivery phone is overridden", async () => {
         const prisma = createPrisma();
         const tokenService = createTokenService();
         const jobRepository = createJobRepository();
@@ -239,13 +239,13 @@ describe("ServiceRecordLinkService", () => {
             branchId: "branch-1",
             scheduleId: 10,
             employeeId: 30,
-            expectedPhone: "01066211878",
+            expectedPhone: "010-1111-2222",
         }), { includeLocked: false });
         expect(tokenService.prepareLink).toHaveBeenCalledWith(expect.objectContaining({
             branchId: "branch-1",
             scheduleId: 10,
             employeeId: 30,
-            expectedPhone: "01066211878",
+            expectedPhone: "010-1111-2222",
         }));
         expect(result).toEqual({
             serviceRecordUrl: "https://mobile.test/service-record/efl_prepared",
@@ -318,7 +318,7 @@ describe("ServiceRecordLinkService", () => {
         expect(jobRepository.upsertPending).not.toHaveBeenCalled();
     });
 
-    it("sendNow uses a manual phone override for both link verification and SMS delivery", async () => {
+    it("sendNow overrides SMS delivery while retaining the current provider verification phone", async () => {
         const prisma = createPrisma();
         const tokenService = createTokenService();
         const jobRepository = createJobRepository();
@@ -339,7 +339,7 @@ describe("ServiceRecordLinkService", () => {
             branchId: "branch-1",
             scheduleId: 10,
             employeeId: 30,
-            expectedPhone: "01066211878",
+            expectedPhone: "010-1111-2222",
         }));
         expect(tokenService.issueLink).not.toHaveBeenCalled();
         const job = jobRepository.upsertPending.mock.calls[0]?.[0] as MessageTriggerJobEntity;
@@ -681,6 +681,22 @@ describe("ServiceRecordLinkService", () => {
 
         expect(jobRepository.upsertPending).not.toHaveBeenCalled();
         expect(logRepository.save).not.toHaveBeenCalled();
+    });
+
+    it("reports missing registered authentication phone even when delivery is overridden", async () => {
+        const prisma = createPrisma();
+        const tokenService = createTokenService();
+        const service = new ServiceRecordLinkService(
+            prisma as unknown as PrismaService, tokenService as never, createConfigService() as unknown as ConfigService,
+            createJobRepository() as unknown as IMessageTriggerJobRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
+            createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+        );
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule({ primaryEmployee: { id: 30, name: "홍제공", phone: "", birthday: "900101" } }));
+        await expect(service.prepareLink(10, "01066211878")).rejects.toBeInstanceOf(BadRequestException);
+        await expect(service.sendNow(10, undefined, "01066211878")).rejects.toBeInstanceOf(BadRequestException);
+        expect(tokenService.prepareLink).not.toHaveBeenCalled();
+        expect(tokenService.issueLink).not.toHaveBeenCalled();
     });
 
     it("rejects an invalid manual recipient phone instead of falling back to the stored phone", async () => {

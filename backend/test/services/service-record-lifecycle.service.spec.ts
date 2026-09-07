@@ -167,7 +167,7 @@ describe("ServiceRecordLifecycleService", () => {
         await service.ensureForClient(1);
 
         expect(prisma.client.updateMany).toHaveBeenCalledWith({
-            where: { id: 1 },
+            where: { id: 1, branchId: "branch-1" },
             data: { duration: 6 },
         });
         expect(prisma.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
@@ -224,6 +224,7 @@ describe("ServiceRecordLifecycleService", () => {
         expect(prisma.service_record_token.updateMany).toHaveBeenCalledWith({
             where: {
                 serviceRecordCaseId: record.id,
+                branchId: "branch-1",
                 active: true,
                 revokedAt: null,
                 expiresAt: { lt: tokenExpiresAt },
@@ -275,6 +276,7 @@ describe("ServiceRecordLifecycleService", () => {
         expect(prisma.service_record_token.updateMany).toHaveBeenCalledWith({
             where: {
                 serviceRecordCaseId: record.id,
+                branchId: "branch-1",
                 active: true,
                 revokedAt: null,
                 expiresAt: { lt: tokenExpiresAt },

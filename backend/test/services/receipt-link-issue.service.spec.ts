@@ -15,7 +15,6 @@ import { EformsignDocumentMirrorService } from "application/services/eformsign-d
 import { ReceiptLinkTokenService } from "application/services/receipt-link-token.service";
 import { SmsTriggerDeliverySkipError } from "application/services/sms-trigger-payload-enricher.registry";
 import {
-    ReceiptLinkIssuanceConflictError,
     ReceiptLinkIssueService,
     ReceiptLinkSkipError,
 } from "application/services/receipt-link-issue.service";
@@ -33,6 +32,7 @@ interface ClientFixture {
     voucherClient: boolean;
     birthday: string | null;
     eDocId: string | null;
+    endDate?: Date;
 }
 
 interface DocFixture {
@@ -69,7 +69,7 @@ function makeService(overrides: MakeServiceOverrides = {}) {
             : overrides.doc;
 
     const clientRepository = {
-        findById: jest.fn().mockResolvedValue(client as unknown as ClientEntity | null),
+        findById: jest.fn().mockResolvedValue(client ? { endDate: new Date("2026-09-20"), ...client } as unknown as ClientEntity : null),
     } as unknown as IClientRepository;
 
     const eformsignDocRepository = {
@@ -162,7 +162,6 @@ function makeService(overrides: MakeServiceOverrides = {}) {
         rasterizer,
         tokenService,
         storage,
-        receiptLinkTokenRepository,
     );
 
     return {
@@ -183,7 +182,7 @@ function makeService(overrides: MakeServiceOverrides = {}) {
 }
 
 describe("ReceiptLinkIssueService", () => {
-    it("renders page 7, uploads under a content-addressed path, issues a token and builds the url", async () => {
+    it("renders page 7, uploads under an issuance-specific path, issues a token and builds the url", async () => {
         const { service, rasterizer, storage, tokenService, clientRepository } = makeService();
         const result = await service.issue({ branchId: BRANCH, clientId: 7, source: "auto_trigger", jobId: "job-1" });
 
@@ -192,7 +191,7 @@ describe("ReceiptLinkIssueService", () => {
         // RECEIPT_PAGE_NUMBER/RECEIPT_IMAGE_WIDTH constants the implementation itself imports
         // would make this a tautology — a mutated constant would move both sides together.
         expect(rasterizer.renderPageToPng).toHaveBeenCalledWith(PDF, 7, { width: 1240 });
-        expect(storage.upload).toHaveBeenCalledWith(PNG, `receipts/${BRANCH}/42/${PNG_SHA}.png`, "image/png");
+        expect(storage.upload).toHaveBeenCalledWith(PNG, expect.stringMatching(new RegExp(`^receipts/${BRANCH}/42/${PNG_SHA}-[a-f0-9-]+\\.png$`)), "image/png");
         expect(tokenService.issue).toHaveBeenCalledWith(
             expect.objectContaining({
                 branchId: BRANCH,
@@ -200,7 +199,7 @@ describe("ReceiptLinkIssueService", () => {
                 eformsignDocId: 42,
                 jobId: "job-1",
                 birthday: "940315",
-                storagePath: `receipts/${BRANCH}/42/${PNG_SHA}.png`,
+                storagePath: (storage.upload as jest.Mock).mock.calls[0]?.[1],
                 contentSha256: PNG_SHA,
                 byteSize: PNG.length,
                 source: "auto_trigger",
@@ -332,15 +331,23 @@ describe("ReceiptLinkIssueService", () => {
         await expect(uploadFail.issue({ branchId: BRANCH, clientId: 7, source: "manual" })).rejects.toMatchObject({ skipReason: "upload_failed" });
     });
 
-    it("skips the upload when the same image is already stored, and tolerates an already-exists error", async () => {
-        const { service: stored, storage: storedStorage, tokenService: storedTokenService } = makeService({ storedPath: true });
-        await stored.issue({ branchId: BRANCH, clientId: 7, source: "manual" });
-        expect(storedStorage.upload).not.toHaveBeenCalled();
-        expect(storedTokenService.issue).toHaveBeenCalledTimes(1);
+    it("uploads a separate object even when the same content is already stored", async () => {
+        const { service, storage, storageObjects, issuedTokenStoragePaths } = makeService({ storedPath: true });
+        const result = await service.issue({ branchId: BRANCH, clientId: 7, source: "manual" });
+        const oldPath = `receipts/${BRANCH}/42/${PNG_SHA}.png`;
+        const newPath = issuedTokenStoragePaths.get(ISSUED_TOKEN.linkToken)!;
+        expect(newPath).not.toBe(oldPath);
+        expect(storageObjects.get(oldPath)).toEqual(PNG);
+        expect(storageObjects.get(newPath)).toEqual(PNG);
+        expect(result.url).toBe("https://m.admin.example/receipt/efr_abc");
+        expect(storage.upload).toHaveBeenCalledTimes(1);
+    });
 
-        const { service, storage } = makeService();
+    it("does not publish a link after an upload collision", async () => {
+        const { service, storage, tokenService } = makeService();
         (storage.upload as jest.Mock).mockRejectedValue(new Error("The resource already exists"));
-        await expect(service.issue({ branchId: BRANCH, clientId: 7, source: "manual" })).resolves.toMatchObject({ tokenId: "tok-1" });
+        await expect(service.issue({ branchId: BRANCH, clientId: 7, source: "manual" })).rejects.toMatchObject({ skipReason: "upload_failed" });
+        expect(tokenService.issue).not.toHaveBeenCalled();
     });
 
     it("re-uploads when an expired row references a storage object already deleted", async () => {
@@ -376,27 +383,12 @@ describe("ReceiptLinkIssueService", () => {
         expect(error).toBeInstanceOf(SmsTriggerDeliverySkipError);
     });
 
-    it("returns the existing token's url without rendering when an active token exists for the job and existingUrl is supplied", async () => {
-        const activeExpiresAt = new Date("2026-10-01T00:00:00Z");
-        const { service, rasterizer, storage, tokenService, receiptLinkTokenRepository, clientRepository } = makeService({
-            activeTokenForJob: { id: "existing-tok", expiresAt: activeExpiresAt },
-        });
-
-        const result = await service.issue({
-            branchId: BRANCH,
-            clientId: 7,
-            source: "auto_trigger",
-            jobId: "job-1",
-            existingUrl: "https://m.admin.example/receipt/efr_existing",
-        });
-
-        expect(receiptLinkTokenRepository.findActiveByJobId).toHaveBeenCalledWith("job-1");
-        expect(result).toEqual({ url: "https://m.admin.example/receipt/efr_existing", tokenId: "existing-tok", expiresAt: activeExpiresAt });
-        // Proves the jobId short-circuit runs before preflight ever touches the client.
-        expect(clientRepository.findById).not.toHaveBeenCalled();
-        expect(rasterizer.renderPageToPng).not.toHaveBeenCalled();
-        expect(storage.upload).not.toHaveBeenCalled();
-        expect(tokenService.issue).not.toHaveBeenCalled();
+    it("refreshes contract expiry even when a staged job already carries a URL", async () => {
+        const { service, tokenService } = makeService();
+        await service.issue({ branchId: BRANCH, clientId: 7, source: "auto_trigger", jobId: "job-1", existingUrl: "https://m.admin.example/receipt/efr_existing" });
+        expect(tokenService.issue).toHaveBeenCalledWith(expect.objectContaining({
+            eformsignDocId: 42, serviceEndDate: new Date("2026-09-20"),
+        }));
     });
 
     it("mints a new token when an active token exists for the job but no existingUrl is supplied", async () => {
@@ -480,57 +472,34 @@ describe("ReceiptLinkIssueService", () => {
         expect(tokenService.issue).toHaveBeenCalledTimes(1);
     });
 
-    it("does not replace a winner committed while waiting on the same job lock", async () => {
-        const { service, tokenService, lockScopedRepository } = makeService({
-            activeTokenForJob: { id: "active-before-lock", expiresAt: new Date("2026-10-01T00:00:00Z") },
-            jobLockContended: true,
-        });
-        (lockScopedRepository.findActiveByJobId as jest.Mock)
-            .mockResolvedValueOnce({ id: "committed-winner", expiresAt: new Date("2026-10-01T00:00:00Z") });
-
-        await expect(service.issue({
-            branchId: BRANCH,
-            clientId: 7,
-            source: "auto_trigger",
-            jobId: "job-race",
-        })).rejects.toBeInstanceOf(ReceiptLinkIssuanceConflictError);
-
-        expect(tokenService.issue).not.toHaveBeenCalled();
+    it("refreshes the same contract for independent dispatch jobs", async () => {
+        const { service, tokenService } = makeService();
+        const first = await service.issue({ branchId: BRANCH, clientId: 7, source: "manual", jobId: "job-1" });
+        const second = await service.issue({ branchId: BRANCH, clientId: 7, source: "manual", jobId: "job-2" });
+        expect(second.url).toBe(first.url);
+        expect(tokenService.issue).toHaveBeenCalledTimes(2);
     });
+});
 
-    it("does not replace a token created after the pre-lock read when the lock is no longer contended", async () => {
-        const { service, tokenService, receiptLinkTokenRepository, lockScopedRepository } = makeService({
-            jobLockContended: false,
-        });
-        (lockScopedRepository.findActiveByJobId as jest.Mock)
-            .mockResolvedValueOnce({ id: "winner", expiresAt: new Date("2026-10-01T00:00:00Z") });
-
-        await expect(service.issue({
-            branchId: BRANCH,
-            clientId: 7,
-            source: "auto_trigger",
-            jobId: "job-race",
-        })).rejects.toBeInstanceOf(ReceiptLinkIssuanceConflictError);
-
-        expect(receiptLinkTokenRepository.findActiveByJobId).toHaveBeenCalledTimes(1);
-        expect(lockScopedRepository.findActiveByJobId).toHaveBeenCalledTimes(1);
-        expect(tokenService.issue).not.toHaveBeenCalled();
-    });
-
-    it("uses the lock-scoped repository for the final re-check and token mint", async () => {
-        const { service, tokenService, receiptLinkTokenRepository, lockScopedRepository } = makeService({
-            jobLockContended: false,
-        });
-
-        await service.issue({
-            branchId: BRANCH,
-            clientId: 7,
-            source: "auto_trigger",
-            jobId: "job-race",
-        });
-
-        expect(receiptLinkTokenRepository.findActiveByJobId).toHaveBeenCalledTimes(1);
-        expect(lockScopedRepository.findActiveByJobId).toHaveBeenCalledWith("job-race");
-        expect(tokenService.issue).toHaveBeenCalledWith(expect.any(Object), lockScopedRepository);
+describe("receipt image cleanup overlap", () => {
+    it.each(["before", "after"])("keeps the new image when a stale cleanup deletion finishes %s token publication", async (order) => {
+        const { service, storageObjects, tokenService, issuedTokenStoragePaths } = makeService();
+        const params = { branchId: BRANCH, clientId: 7, source: "manual" as const };
+        const first = await service.issue(params);
+        const collectedPath = issuedTokenStoragePaths.get(ISSUED_TOKEN.linkToken)!;
+        const originalIssue = tokenService.issue.bind(tokenService);
+        if (order === "before") {
+            (tokenService.issue as jest.Mock).mockImplementationOnce(async (issueParams) => {
+                storageObjects.delete(collectedPath);
+                return originalIssue(issueParams);
+            });
+        }
+        const second = await service.issue(params);
+        if (order === "after") storageObjects.delete(collectedPath);
+        const currentPath = issuedTokenStoragePaths.get(ISSUED_TOKEN.linkToken)!;
+        expect(currentPath).not.toBe(collectedPath);
+        expect(storageObjects.has(collectedPath)).toBe(false);
+        expect(storageObjects.get(currentPath)).toEqual(PNG);
+        expect(second.url).toBe(first.url);
     });
 });

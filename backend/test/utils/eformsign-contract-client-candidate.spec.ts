@@ -56,6 +56,40 @@ function documentDetail(
 }
 
 describe("extractEformsignContractClientCandidate", () => {
+    it.each([
+        ["1986.7.9", "860709"],
+        ["1986년 7월 9일", "860709"],
+        ["1986. 7. 9.", "860709"],
+        ["1986 07 09", "860709"],
+        ["86.07.09", "860709"],
+        ["86.7.9", "860709"],
+        ["１９８６．７．９", "860709"],
+        ["1986-07-09 00:00:00", "860709"],
+        ["1986-07-09T23:00:00-09:00", "860709"],
+        ["1986-07-09Tgarbage", null],
+        ["860709abc", null],
+        ["1986111", null],
+        ["07/09/1986", null],
+        ["860709-2******", null],
+        ["2099-07-09", null],
+        ["1986.07/09", null],
+        ["1986.07.09", "860709"],
+        ["1986-7-9", "860709"],
+        ["1986/7/9", "860709"],
+        ["19860709", "860709"],
+        ["860709", "860709"],
+        ["2000.2.29", "000229"],
+        ["1986.2.30", null],
+        ["1986.02.30", null],
+        ["198679", null],
+    ])("normalizes document birthday %s for registration", (raw, expected) => {
+        const detail = documentDetail();
+        detail.fields = detail.fields?.map((field) => field.id === "이용자 생년월일"
+            ? { ...field, value: raw }
+            : field);
+        expect(extractEformsignContractClientPrefillCandidate(detail)?.birthday).toBe(expected);
+    });
+
     it("maps the final contract detail and prefers the named customer recipient phone", () => {
         const candidate = extractEformsignContractClientCandidate(documentDetail());
 

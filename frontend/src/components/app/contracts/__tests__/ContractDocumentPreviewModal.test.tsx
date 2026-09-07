@@ -97,6 +97,19 @@ describe("ContractDocumentPreviewModal receipt send action", () => {
     expect(onSendReceiptLink).toHaveBeenCalledTimes(1);
   });
 
+  it("downloads the receipt with the mother name and PNG extension", async () => {
+    const click = jest.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      expect(this.download).toBe("홍길동 산모님 영수증.png");
+      expect(this.getAttribute("href")).toBe("/api/receipt/doc-1");
+    });
+    render(<ContractDocumentPreviewModal data-component="desktop_contracts_preview" document={document}
+      customerName="홍길동" open onClose={() => {}} canDownloadReceipt />);
+    await screen.findByTestId("pdf-document");
+    fireEvent.click(screen.getByRole("button", { name: "영수증" }));
+    expect(click).toHaveBeenCalledTimes(1);
+    click.mockRestore();
+  });
+
   it("hides the button without a handler and disables it while sending", async () => {
     const { rerender } = render(
       <ContractDocumentPreviewModal data-component="desktop_contracts_preview" document={document} open onClose={() => {}} />,
