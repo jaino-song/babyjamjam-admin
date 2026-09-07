@@ -193,6 +193,20 @@ describe("ContractDetail manual receipt-send interaction", () => {
     jest.restoreAllMocks();
   });
 
+  it("renders a document birthday with single-digit month and day as YYMMDD", async () => {
+    const doc = receiptDetailDocumentFixture();
+    doc.fields = [{ id: "이용자 생년월일", value: "1986.7.9", type: "text" }];
+    jest.spyOn(eformsignApi, "getDocument").mockResolvedValue(doc as never);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ContractDetail data-component="desktop_contracts_detail" document={doc} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("860709")).toBeInTheDocument();
+    expect(screen.queryByText("1986.7.9")).not.toBeInTheDocument();
+  });
+
   it("replaces detail actions with a non-interactive skeleton while loading", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const doc = receiptDetailDocumentFixture();

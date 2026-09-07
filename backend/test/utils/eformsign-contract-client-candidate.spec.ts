@@ -56,6 +56,25 @@ function documentDetail(
 }
 
 describe("extractEformsignContractClientCandidate", () => {
+    it.each([
+        ["1986.7.9", "860709"],
+        ["1986.07.09", "860709"],
+        ["1986-7-9", "860709"],
+        ["1986/7/9", "860709"],
+        ["19860709", "860709"],
+        ["860709", "860709"],
+        ["2000.2.29", "000229"],
+        ["1986.2.30", null],
+        ["1986.02.30", null],
+        ["198679", null],
+    ])("normalizes document birthday %s for registration", (raw, expected) => {
+        const detail = documentDetail();
+        detail.fields = detail.fields?.map((field) => field.id === "이용자 생년월일"
+            ? { ...field, value: raw }
+            : field);
+        expect(extractEformsignContractClientPrefillCandidate(detail)?.birthday).toBe(expected);
+    });
+
     it("maps the final contract detail and prefers the named customer recipient phone", () => {
         const candidate = extractEformsignContractClientCandidate(documentDetail());
 

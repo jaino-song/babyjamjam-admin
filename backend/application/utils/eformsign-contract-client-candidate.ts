@@ -325,11 +325,22 @@ function positiveInteger(value: string | null): number | null {
 }
 
 function birthday(value: string | null): string | null {
-    const normalized = digits(value);
-    if (!normalized) return null;
-    if (normalized.length === 6) return normalized;
-    if (normalized.length >= 8) return normalized.slice(2, 8);
-    return null;
+    const raw = value?.trim();
+    if (!raw) return null;
+    // 구분자를 지우기 전에 월·일을 읽어 한 자리 월·일의 위치를 보존한다.
+    const separated = raw.match(/^(\d{4})([-./])(\d{1,2})\2(\d{1,2})(?:$|T)/);
+    const compact = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (separated || compact) {
+        const year = Number(separated?.[1] ?? compact?.[1]);
+        const month = Number(separated?.[3] ?? compact?.[2]);
+        const day = Number(separated?.[4] ?? compact?.[3]);
+        if (!validUtcDate(year, month, day)) return null;
+        return `${String(year).slice(-2)}${String(month).padStart(2, "0")}${String(day).padStart(2, "0")}`;
+    }
+    if (!/^\d{6}$/.test(raw)) return null;
+    return validUtcDate(2000 + Number(raw.slice(0, 2)), Number(raw.slice(2, 4)), Number(raw.slice(4, 6)))
+        ? raw
+        : null;
 }
 
 function validUtcDate(year: number, month: number, day: number): Date | null {

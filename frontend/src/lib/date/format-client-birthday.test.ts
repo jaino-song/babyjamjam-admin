@@ -1,4 +1,4 @@
-import { formatClientBirthdayForDisplay } from "./format-client-birthday";
+import { formatClientBirthdayAsYYMMDD, formatClientBirthdayForDisplay } from "./format-client-birthday";
 
 describe("formatClientBirthdayForDisplay", () => {
   it("formats six-digit YYMMDD client birthdays", () => {
@@ -30,5 +30,22 @@ describe("formatClientBirthdayForDisplay", () => {
     expect(formatClientBirthdayForDisplay("")).toBe("-");
     expect(formatClientBirthdayForDisplay("991332")).toBe("991332");
     expect(formatClientBirthdayForDisplay("not-a-date")).toBe("not-a-date");
+  });
+});
+
+describe("formatClientBirthdayAsYYMMDD", () => {
+  it.each([
+    ["1986.7.9", "860709"],
+    ["1986.07.09", "860709"],
+    ["1986-7-9", "860709"],
+    ["1986/7/9", "860709"],
+    ["19860709", "860709"],
+    ["860709", "860709"],
+    ["2000.2.29", "000229"],
+    ["1986.02.30", null],
+    ["198679", null],
+    [null, null],
+  ])("formats %s without losing month and day boundaries", (raw, expected) => {
+    expect(formatClientBirthdayAsYYMMDD(raw)).toBe(expected);
   });
 });
