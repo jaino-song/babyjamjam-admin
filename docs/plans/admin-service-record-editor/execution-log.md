@@ -474,3 +474,10 @@ worker443473b23를 통합4b366b5c1로 병합하고 깨끗한 phase3-parser-corre
 ### Phase3 완료, Phase4 병렬 착수
 
 61a672cab의 한 조건 보정에 대한 Sol/high 잔여 최종 판정은 SHIP이다. 원래6건을 모두 해소했으며 phase3-final-audit.md에 원문을 보존한다. 통합207 및 보완54/36, 마지막 parser15 PASS를 각각 구분해 유지한다. 실제PG preview/PATCH는 여전히 미실행이며 구조적 RepeatableRead 단위 증거만 있다. Phase4는 phase4-execution-contract.md의 고정 API/소유권에 따라 CORE/ADAPTERS/UI Luna/max3단위를 병렬 실행한다. 메인이 공통 checkpoint와 격리DB 통합 검증을 담당하고 단계별 Sol/high 감사만 수행한다. dev/main/preview, 외부 이폼사인·문자·Phase0 ledger는 변경하지 않는다.
+
+
+### Phase4 공통 계약과 격리 검증 준비
+
+전용 unit은 /Users/jaino/Development/babyjamjam-admin/phase4-confirm-core (unit/admin-service-record-4-core), phase4-confirm-adapters (unit/admin-service-record-4-adapters), phase4-confirm-ui (unit/admin-service-record-4-ui)이며 모두 integration2e6adba74에서 분기했다. 메인이 세 곳의 env-bootstrap과 offline frozen 의존성 설치(다운로드0)를 완료하고 backend 두 곳 Prisma client를 생성했다. CORE checkpoint c1290c2b8의 confirm/dispatch 공유 타입을 통합하고 형제 worker에 즉시 전달했다.
+
+메인이 기존 전용 PostgreSQL127.0.0.1:62295의 bjj_revision_task3를 template으로 새 bjj_revision_task4를 만들었다. 외부/기존 환경DB는 접근하지 않았다. 두 URL을 정확한 task4 리터럴로 제한하는 생성 전 guard7/7 PASS, N13/duration15 가격 보존·미확정 날짜 보존 실제PG 검사 및 draft/source RepeatableRead 동시읽기 검사2/2 PASS. 동시읽기는 draft 첫 조회 뒤 명시적 barrier를 두고 별도 실제DB 트랜잭션으로 draft와 case를 함께 바꿔 일관된 이전 사본과 다음 조회의 새 사본을 확인한다. 생산 제공인력/confirm/발송 경쟁의 증거는 아니며 해당 Phase4 검사는 이후 추가한다. helper/테스트3파일 ESLint 및 diff-check PASS. append-only 이력을 삭제하거나 trigger를 끄지 않고 전용DB fixture를 보존한다. 로그: /tmp/bjj-phase4-target-guard.log, /tmp/bjj-phase4-draft-source-race.log, /tmp/bjj-phase4-parent-test-lint.log. PG lease는 메인이 보유한다.
