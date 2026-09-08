@@ -96,6 +96,7 @@ export interface CreateClientDto {
     breastPump: boolean;
     serviceStatus?: ServiceStatus | null;
     areaId?: string | null;
+    allowBusinessDayMismatch?: boolean;
     suppressGreetingSms?: boolean;
     source?: "contract_auto_registration";
     reuseExistingClient?: boolean;
@@ -123,6 +124,7 @@ export interface UpdateClientDto {
     breastPump?: boolean;
     serviceStatus?: ServiceStatus | null;
     areaId?: string | null;
+    allowBusinessDayMismatch?: boolean;
 }
 
 // DTO for terminating service
