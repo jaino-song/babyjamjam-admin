@@ -125,5 +125,11 @@ export async function createServiceRecordConfirmFixture(prisma: PrismaClient) {
             },
         }));
     }
-    return { branch, employee, client, schedule, record, assignment, days, actorUserId: randomUUID() };
+    const actor = await prisma.user.create({
+        data: { name: "Task 4 Test Admin", role: "admin", approvalStatus: "approved" },
+    });
+    await prisma.user_branch.create({
+        data: { userId: actor.id, branchId: branch.id, role: "admin" },
+    });
+    return { branch, employee, client, schedule, record, assignment, days, actorUserId: actor.id };
 }
