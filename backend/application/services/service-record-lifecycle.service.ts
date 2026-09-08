@@ -564,66 +564,13 @@ export class ServiceRecordLifecycleService {
                 return false;
             }
 
-            const clients = await tx.$queryRaw<Array<{
-                id: number;
-                eDocId: string | null;
-                branchId: string | null;
-            }>>(Prisma.sql`
-                SELECT id,
-                       e_doc_id AS "eDocId",
-                       branch_id AS "branchId"
-                FROM client
-                WHERE id = ${params.clientId}
-                  AND branch_id = ${params.branchId}::uuid
-                FOR UPDATE
-            `);
-            if (clients[0]?.eDocId !== params.documentId) return false;
-
-            const revisionCases = await tx.$queryRaw<Array<{
-                id: string;
-                branchId: string;
-                clientId: number | null;
-                currentRevisionId: string | null;
-                currentUsableRevisionId: string | null;
-                currentUsableDocumentVersion: number | null;
-            }>>(Prisma.sql`
-                SELECT id,
-                       branch_id AS "branchId",
-                       client_id AS "clientId",
-                       current_revision_id AS "currentRevisionId",
-                       current_usable_revision_id AS "currentUsableRevisionId",
-                       current_usable_document_version AS "currentUsableDocumentVersion"
-                FROM service_record_case
-                WHERE branch_id = ${params.branchId}::uuid
-                  AND client_id = ${params.clientId}
-                  ${currentDocument.serviceRecordCaseId
-                    ? Prisma.sql`AND id = ${currentDocument.serviceRecordCaseId}::uuid`
-                    : Prisma.empty}
-                FOR UPDATE
-            `);
-            if (revisionCases.length > 1) return false;
-            const ownerCase = revisionCases[0];
-            if (ownerCase) {
-                if (
-                    ownerCase.branchId !== params.branchId
-                    || ownerCase.clientId !== params.clientId
-                    || (
-                        currentDocument.serviceRecordCaseId !== null
-                        && ownerCase.id !== currentDocument.serviceRecordCaseId
-                    )
-                ) return false;
-                if (currentDocument.revisionId === null) {
-                    if (
-                        ownerCase.currentRevisionId !== null
-                        || ownerCase.currentUsableRevisionId !== null
-                        || ownerCase.currentUsableDocumentVersion !== null
-                    ) return false;
-                } else if (ownerCase.currentRevisionId !== currentDocument.revisionId) {
-                    return false;
-                }
-            } else if (currentDocument.revisionId !== null || currentDocument.serviceRecordCaseId !== null) {
-                return false;
-            }
+            if (!await this.isCurrentContractWriteTarget(tx, {
+                branchId: params.branchId,
+                clientId: params.clientId,
+                documentId: params.documentId,
+                currentDocument,
+                caseId: lockedWriteSet.caseId,
+            })) return false;
 
             await this.syncEndDateFromContractInTransaction(params, tx);
             return true;
@@ -668,11 +615,13 @@ export class ServiceRecordLifecycleService {
                 clientId?: number | null;
                 branchId?: string | null;
                 serviceRecordCaseId?: string | null;
+                revisionId?: string | null;
             }>>(Prisma.sql`
                 SELECT id,
                        client_id AS "clientId",
                        branch_id AS "branchId",
-                       service_record_case_id AS "serviceRecordCaseId"
+                       service_record_case_id AS "serviceRecordCaseId",
+                       revision_id AS "revisionId"
                 FROM eformsign_doc
                 WHERE document_id = ${params.documentId}
                   AND branch_id = ${params.branchId}::uuid
@@ -699,27 +648,135 @@ export class ServiceRecordLifecycleService {
                 FOR UPDATE
             `);
             const currentDocument = current[0];
+            if (current.length !== 1 || !currentDocument) {
+                return false;
+            }
             if (
-                current.length !== 1
-                || (
-                    completeLockSurface
-                    && currentDocument
-                    && (
-                        currentDocument.clientId !== params.clientId
-                        || currentDocument.branchId !== params.branchId
-                        || (
-                            currentDocument.serviceRecordCaseId !== null
-                            && currentDocument.serviceRecordCaseId !== lockedWriteSet?.caseId
-                        )
+                completeLockSurface
+                && (
+                    currentDocument.clientId !== params.clientId
+                    || currentDocument.branchId !== params.branchId
+                    || (
+                        (currentDocument.serviceRecordCaseId ?? null) !== null
+                        && (currentDocument.serviceRecordCaseId ?? null) !== lockedWriteSet?.caseId
                     )
                 )
             ) {
                 return false;
             }
 
+            if (
+                completeLockSurface
+                && !await this.isCurrentContractWriteTarget(tx, {
+                    branchId: params.branchId,
+                    clientId: params.clientId,
+                    documentId: params.documentId,
+                    currentDocument: {
+                        id: currentDocument.id,
+                        clientId: currentDocument.clientId ?? null,
+                        branchId: currentDocument.branchId ?? null,
+                        serviceRecordCaseId: currentDocument.serviceRecordCaseId ?? null,
+                        revisionId: currentDocument.revisionId ?? null,
+                    },
+                    caseId: lockedWriteSet?.caseId ?? null,
+                })
+            ) return false;
+
             await this.syncEndDateFromContractInTransaction(params, tx);
             return true;
         });
+    }
+
+    /**
+     * Validate the mirrored contract's live pointer and revision identity after
+     * the common client/case/document lock set has been acquired. A mirror may
+     * still be fully ready while it is an older document, so mirror generation
+     * freshness alone is not sufficient to authorize a client or period write.
+     */
+    private async isCurrentContractWriteTarget(
+        tx: Prisma.TransactionClient,
+        params: {
+            branchId: string;
+            clientId: number;
+            documentId: string;
+            currentDocument: {
+                id: number;
+                clientId: number | null;
+                branchId: string | null;
+                serviceRecordCaseId: string | null;
+                revisionId: string | null;
+            };
+            caseId: string | null;
+        },
+    ): Promise<boolean> {
+        const clients = await tx.$queryRaw<Array<{
+            id: number;
+            eDocId: string | null;
+            branchId: string | null;
+        }>>(Prisma.sql`
+            SELECT id,
+                   e_doc_id AS "eDocId",
+                   branch_id AS "branchId"
+            FROM client
+            WHERE id = ${params.clientId}
+              AND branch_id = ${params.branchId}::uuid
+            FOR UPDATE
+        `);
+        if (
+            clients.length !== 1
+            || clients[0]?.id !== params.clientId
+            || clients[0].branchId !== params.branchId
+            || clients[0].eDocId !== params.documentId
+        ) return false;
+
+        const revisionCases = await tx.$queryRaw<Array<{
+            id: string;
+            branchId: string;
+            clientId: number | null;
+            currentRevisionId: string | null;
+            currentUsableRevisionId: string | null;
+            currentUsableDocumentVersion: number | null;
+        }>>(Prisma.sql`
+            SELECT id,
+                   branch_id AS "branchId",
+                   client_id AS "clientId",
+                   current_revision_id AS "currentRevisionId",
+                   current_usable_revision_id AS "currentUsableRevisionId",
+                   current_usable_document_version AS "currentUsableDocumentVersion"
+            FROM service_record_case
+            WHERE branch_id = ${params.branchId}::uuid
+              AND client_id = ${params.clientId}
+              ${params.currentDocument.serviceRecordCaseId
+                ? Prisma.sql`AND id = ${params.currentDocument.serviceRecordCaseId}::uuid`
+                : Prisma.empty}
+            FOR UPDATE
+        `);
+        if (revisionCases.length > 1) return false;
+        const ownerCase = revisionCases[0];
+        if (ownerCase) {
+            if (
+                ownerCase.branchId !== params.branchId
+                || ownerCase.clientId !== params.clientId
+                || (
+                    params.currentDocument.serviceRecordCaseId !== null
+                    && ownerCase.id !== params.currentDocument.serviceRecordCaseId
+                )
+                || (
+                    params.caseId !== null
+                    && ownerCase.id !== params.caseId
+                )
+            ) return false;
+            if (params.currentDocument.revisionId === null) {
+                return ownerCase.currentRevisionId === null
+                    && ownerCase.currentUsableRevisionId === null
+                    && ownerCase.currentUsableDocumentVersion === null;
+            }
+            return ownerCase.id === params.currentDocument.serviceRecordCaseId
+                && ownerCase.currentRevisionId === params.currentDocument.revisionId;
+        }
+        return params.currentDocument.revisionId === null
+            && params.currentDocument.serviceRecordCaseId === null
+            && params.caseId === null;
     }
 
     async completeServiceRecordSnapshotIfReady(params: {

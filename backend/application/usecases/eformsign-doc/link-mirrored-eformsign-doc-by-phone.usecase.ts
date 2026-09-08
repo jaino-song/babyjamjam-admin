@@ -190,6 +190,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                 documentId: true,
                 documentKind: true,
                 serviceRecordCaseId: true,
+                revisionId: true,
                 templateId: true,
                 templateName: true,
                 stepRecipientSms: true,
@@ -232,6 +233,8 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                 documentId: document.documentId,
                 branchId: document.branchId,
                 clientId: assignedClientId,
+                serviceRecordCaseId: document.serviceRecordCaseId,
+                revisionId: document.revisionId,
                 createdDate: document.createdDate,
             }, expectedMirrorGeneration, !options.linkExistingOnly);
             if (result !== "mirror_not_ready" && !options.linkExistingOnly) {
@@ -524,6 +527,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                 documentId: true,
                                 documentKind: true,
                                 serviceRecordCaseId: true,
+                                revisionId: true,
                                 templateId: true,
                                 templateName: true,
                                 stepRecipientSms: true,
@@ -633,6 +637,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                         documentId: true,
                                         documentKind: true,
                                         serviceRecordCaseId: true,
+                                        revisionId: true,
                                         branchId: true,
                                         clientId: true,
                                         createdDate: true,
@@ -1174,6 +1179,8 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         documentId: string;
         branchId: string | null;
         clientId: number;
+        serviceRecordCaseId: string | null;
+        revisionId: string | null;
         createdDate: Date;
     }, expectedMirrorGeneration?: ExpectedEformsignMirrorGeneration, initializeLifecycle = true): Promise<LinkMirroredEformsignDocResult> {
         return this.prisma.$transaction(async (transaction) => {
@@ -1200,6 +1207,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                         documentId: true,
                         documentKind: true,
                         serviceRecordCaseId: true,
+                        revisionId: true,
                         branchId: true,
                         clientId: true,
                         createdDate: true,
@@ -1312,6 +1320,8 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             documentId: string;
             branchId: string | null;
             clientId: number | null;
+            serviceRecordCaseId: string | null;
+            revisionId: string | null;
             createdDate: Date;
         },
         client: {
@@ -1324,6 +1334,18 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         if (!clientBranchId) {
             return "ambiguous";
         }
+
+        // A ready mirror is not automatically the current contract. The
+        // complete production transaction has already acquired the common
+        // client/case/document locks; reread the pointer and revision state
+        // here before assigning the row or replacing client.eDocId.
+        if (
+            this.hasCompleteServiceRecordWriteLockSurface(transaction)
+            && !await this.isCurrentContractWriteTarget(transaction, document, client)
+        ) {
+            return "ambiguous";
+        }
+
         const wasAlreadyLinked =
             document.branchId === clientBranchId
             && document.clientId === client.id
@@ -1361,10 +1383,22 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         if (!shouldPointToMirroredDocument && client.eDocId) {
             const currentDocument = await transaction.eformsign_doc.findUnique({
                 where: { documentId: client.eDocId },
-                select: { createdDate: true },
+                select: {
+                    createdDate: true,
+                    revisionId: true,
+                    serviceRecordCaseId: true,
+                    branchId: true,
+                    clientId: true,
+                },
             });
+            const candidateRevisionId = document.revisionId;
+            const pointedRevisionId = currentDocument?.revisionId ?? null;
+            const revisionSupersedesCreatedDate = candidateRevisionId !== null
+                && candidateRevisionId !== undefined
+                && pointedRevisionId !== candidateRevisionId;
             shouldPointToMirroredDocument =
                 currentDocument === null
+                || revisionSupersedesCreatedDate
                 || document.createdDate >= currentDocument.createdDate;
         }
         if (shouldPointToMirroredDocument) {
@@ -1378,6 +1412,80 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             });
         }
         return wasAlreadyLinked ? "already_linked" : "linked";
+    }
+
+    private async isCurrentContractWriteTarget(
+        transaction: Prisma.TransactionClient,
+        document: {
+            id: number;
+            documentId: string;
+            branchId: string | null;
+            clientId: number | null;
+            serviceRecordCaseId: string | null;
+            revisionId: string | null;
+        },
+        client: {
+            id: number;
+            branchId: string | null;
+            eDocId: string | null;
+        },
+    ): Promise<boolean> {
+        const currentDocument = await transaction.eformsign_doc.findUnique({
+            where: { documentId: document.documentId },
+            select: {
+                id: true,
+                documentId: true,
+                branchId: true,
+                clientId: true,
+                serviceRecordCaseId: true,
+                revisionId: true,
+            },
+        });
+        if (
+            !currentDocument
+            || currentDocument.id !== document.id
+            || currentDocument.documentId !== document.documentId
+            || (
+                currentDocument.branchId !== null
+                && currentDocument.branchId !== client.branchId
+            )
+            || (
+                currentDocument.clientId !== null
+                && currentDocument.clientId !== client.id
+            )
+        ) return false;
+
+        const ownerCase = await transaction.service_record_case.findUnique({
+            where: { clientId: client.id },
+            select: {
+                id: true,
+                branchId: true,
+                clientId: true,
+                currentRevisionId: true,
+                currentUsableRevisionId: true,
+                currentUsableDocumentVersion: true,
+            },
+        });
+        if (!ownerCase) {
+            return (currentDocument.revisionId ?? null) === null
+                && (currentDocument.serviceRecordCaseId ?? null) === null;
+        }
+        if (
+            ownerCase.branchId !== client.branchId
+            || ownerCase.clientId !== client.id
+            || (
+                currentDocument.serviceRecordCaseId !== null
+                && ownerCase.id !== currentDocument.serviceRecordCaseId
+            )
+        ) return false;
+        const currentRevisionId = currentDocument.revisionId ?? null;
+        if (currentRevisionId === null) {
+            return (ownerCase.currentRevisionId ?? null) === null
+                && (ownerCase.currentUsableRevisionId ?? null) === null
+                && (ownerCase.currentUsableDocumentVersion ?? null) === null;
+        }
+        return ownerCase.id === currentDocument.serviceRecordCaseId
+            && ownerCase.currentRevisionId === currentRevisionId;
     }
 
     private isServiceRecord(document: {
