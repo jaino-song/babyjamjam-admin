@@ -14,6 +14,7 @@ import {
 import {
     CreateServiceRecordEditDraftDto,
     DiscardServiceRecordEditDraftDto,
+    PreviewServiceRecordEditDraftDto,
     UpdateServiceRecordEditDraftDto,
 } from "interface/dto/admin-service-record-edit.dto";
 
@@ -79,6 +80,16 @@ export class AdminServiceRecordController {
         @Body() body: DiscardServiceRecordEditDraftDto,
     ) {
         return this.adminServiceRecordEditService.discardDraft(tenant.branchId, draftId, tenant.userId, body);
+    }
+
+    @Post("drafts/:draftId/preview")
+    @UseGuards(OwnerOrAdminGuard)
+    previewDraft(
+        @CurrentTenant() tenant: VerifiedTenantPrincipal,
+        @Param("draftId") draftId: string,
+        @Body() body: PreviewServiceRecordEditDraftDto,
+    ) {
+        return this.adminServiceRecordEditService.previewDraft(tenant.branchId, draftId, tenant.userId, body);
     }
 
     @Post("schedules/:scheduleId/prepare-link")

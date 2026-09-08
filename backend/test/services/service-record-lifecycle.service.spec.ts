@@ -95,15 +95,10 @@ describe("ServiceRecordLifecycleService", () => {
         expect(prisma.service_record_day.deleteMany).not.toHaveBeenCalled();
     });
 
-    it("keeps the stored client duration as the required session count even when the period is longer", async () => {
-        // Regression test for the incident: an earlier "repair" path
-        // rewrote client.duration to match the date-derived count whenever
-        // it disagreed with the stored value, silently shrinking a
-        // 15-session contract to whatever the (postponed) period implied.
-        // duration is the contracted session count and is authoritative
-        // once set: a longer period (2026-08-10 -> 2026-09-03 is 18 Korean
-        // business days) must not shrink or grow the persisted count, and
-        // must never trigger a client.updateMany repair write.
+    it("derives a new case N from the complete business-day period without changing nominal duration", async () => {
+        // A brand-new case has no authoritative N yet. Its actual provided
+        // session count is derived from the complete supported client period;
+        // the nominal voucher duration remains a separate client field.
         const record = { id: "case-1" };
         const prisma = {
             client: {
@@ -133,8 +128,82 @@ describe("ServiceRecordLifecycleService", () => {
 
         expect(prisma.client.updateMany).not.toHaveBeenCalled();
         expect(prisma.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
-            create: expect.objectContaining({ requiredSessionCount: 15 }),
-            update: expect.objectContaining({ requiredSessionCount: 15 }),
+            create: expect.objectContaining({ requiredSessionCount: 18 }),
+            update: expect.objectContaining({ requiredSessionCount: 18 }),
+        }));
+    });
+
+    it("preserves an initialized actual N when a nominal 15-session voucher period is stretched", async () => {
+        const record = {
+            id: "case-1",
+            status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
+            requiredSessionCount: 13,
+        };
+        const prisma = {
+            client: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 1,
+                    branchId: "branch-1",
+                    startDate: date("2026-08-10"),
+                    endDate: date("2026-09-03"),
+                    duration: 15,
+                    serviceStatus: "in_progress",
+                    employeeSchedules: [],
+                }),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(record),
+                upsert: jest.fn().mockResolvedValue(record),
+            },
+            service_record_token: {
+                updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+            },
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        jest.spyOn(service, "recompute").mockResolvedValue(record as never);
+
+        await service.ensureForClient(1);
+
+        expect(prisma.client.updateMany).not.toHaveBeenCalled();
+        expect(prisma.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
+            create: expect.objectContaining({ requiredSessionCount: 13 }),
+            update: expect.objectContaining({ requiredSessionCount: 13 }),
+        }));
+    });
+
+    it("does not initialize N from a zero-business-day period", async () => {
+        const record = { id: "case-weekend", requiredSessionCount: null };
+        const prisma = {
+            client: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 1,
+                    branchId: "branch-1",
+                    startDate: date("2026-09-26"),
+                    endDate: date("2026-09-27"),
+                    duration: null,
+                    serviceStatus: "in_progress",
+                    employeeSchedules: [],
+                }),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(null),
+                upsert: jest.fn().mockResolvedValue(record),
+            },
+            service_record_token: {
+                updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+            },
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        jest.spyOn(service, "recompute").mockResolvedValue(record as never);
+
+        await service.ensureForClient(1);
+
+        expect(prisma.client.updateMany).not.toHaveBeenCalled();
+        expect(prisma.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
+            create: expect.objectContaining({ requiredSessionCount: null }),
+            update: expect.objectContaining({ requiredSessionCount: null }),
         }));
     });
 
@@ -406,6 +475,51 @@ describe("ServiceRecordLifecycleService", () => {
         expect(transactionClient.client.updateMany).toHaveBeenCalledWith(expect.objectContaining({
             data: { endDate: date("2026-08-10"), duration: 6 },
         }));
+    });
+
+    it("does not backfill a nominal duration for an existing case with legacy null duration", async () => {
+        const transactionClient = {
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: "case-13",
+                    status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
+                    startDate: date("2026-08-10"),
+                    endDate: date("2026-08-20"),
+                    requiredSessionCount: 13,
+                    days: [],
+                }),
+            },
+            client: {
+                findUnique: jest.fn().mockResolvedValue({
+                    startDate: date("2026-08-10"),
+                    duration: null,
+                }),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+                callback(transactionClient)),
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        jest.spyOn(service, "ensureForClient").mockResolvedValue(null);
+
+        await service.syncEndDateFromContract({
+            branchId: rawQueryBranchId,
+            clientId: 1,
+            endDate: date("2026-09-03"),
+        });
+
+        expect(transactionClient.client.updateMany).toHaveBeenCalledWith({
+            where: {
+                id: 1,
+                OR: [
+                    { branchId: rawQueryBranchId },
+                    { branchId: null },
+                ],
+            },
+            data: { endDate: date("2026-09-03") },
+        });
     });
 
     it("leaves duration untouched when syncing a contract end date and the client already has a stored duration", async () => {
