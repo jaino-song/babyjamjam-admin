@@ -1,4 +1,5 @@
 import {
+    buildServiceRecordRevisionTargetFieldMap,
     captureServiceRecordRevisionFacts,
     type ServiceRecordRevisionFactsDocument,
     type ServiceRecordRevisionFactsInput,
@@ -263,5 +264,170 @@ describe("service-record revision facts policy", () => {
         expect(result.facts).not.toBeNull();
         expect(result.receiptInput).toBeNull();
         expect(result.missingFacts).toEqual([]);
+    });
+
+    it("maps only observed provider field ids for separate date and period fields", () => {
+        const row = documentRow();
+        const result = buildServiceRecordRevisionTargetFieldMap(
+            row,
+            "2026-07-10",
+            "2027-01-05",
+        );
+
+        expect(result).toEqual({
+            fields: {
+                "계약 시작일": "2026-07-10",
+                "계약 종료일": "2027-01-05",
+                "서비스 기간": "20260710 ~ 20270105",
+            },
+            missingFacts: [],
+        });
+    });
+
+    it("uses one observed combined period field for both dates without inventing ids", () => {
+        const row = documentRow({
+            detailPayload: detail({
+                fields: [
+                    { id: "이용자 성명", value: "김고객", type: "text" },
+                    { id: "서비스 기간", value: "20260709 ~ 20270104", type: "text" },
+                    { id: "본인부담금 수령일", value: "2026-07-09", type: "date" },
+                    { id: "본인부담금", value: "462000", type: "number" },
+                ],
+            }),
+        });
+
+        const result = buildServiceRecordRevisionTargetFieldMap(row, "2026-07-11", "2027-01-08");
+
+        expect(result).toEqual({
+            fields: { "서비스 기간": "20260711 ~ 20270108" },
+            missingFacts: [],
+        });
+    });
+
+    it("fails closed when observed period/date fields are missing or contradictory", () => {
+        const missing = buildServiceRecordRevisionTargetFieldMap(
+            documentRow({
+                detailPayload: detail({
+                    fields: [
+                        { id: "이용자 성명", value: "김고객", type: "text" },
+                        { id: "계약 시작일", value: "2026-07-09", type: "date" },
+                    ],
+                }),
+            }),
+            "2026-07-11",
+            "2027-01-08",
+        );
+        const conflicting = buildServiceRecordRevisionTargetFieldMap(
+            documentRow({
+                detailPayload: detail({
+                    fields: [
+                        ...((detail()["fields"] ?? []) as unknown[]),
+                        { id: "서비스 기간", value: "20260710 ~ 20270105", type: "text" },
+                    ],
+                }),
+            }),
+            "2026-07-11",
+            "2027-01-08",
+        );
+
+        expect(missing.fields).toBeNull();
+        expect(missing.missingFacts).toEqual(expect.arrayContaining([
+            "targetPeriod.fields.endDate",
+            "targetPeriod.fields.receiptPeriod",
+        ]));
+        expect(conflicting.fields).toBeNull();
+        expect(conflicting.missingFacts).toEqual(expect.arrayContaining(["sourceDocument.fields.ambiguous"]));
+    });
+
+    it("does not infer workflow authority from a renamed display label", () => {
+        const row = documentRow({
+            statusType: "060",
+            stepType: "05",
+            stepName: "관리자 승인처럼 보이는 이름",
+            workflowScope: {
+                statusType: "060",
+                stepType: "05",
+                stepIndex: "3",
+                stepName: "관리자 승인처럼 보이는 이름",
+            },
+            detailPayload: detail({
+                current_status: {
+                    status_type: "060",
+                    step_type: "05",
+                    step_index: "3",
+                    step_name: "관리자 승인처럼 보이는 이름",
+                    step_recipients: [],
+                },
+            }),
+        });
+        delete row.stage;
+        delete row.stepRecipientType;
+
+        const result = captureServiceRecordRevisionFacts(input(row, []));
+
+        expect(result.facts).toBeNull();
+        expect(result.missingFacts).toContain("sourceDocument.stage");
+    });
+
+    it("accepts structured recipient and save-permission evidence for workflow stage", () => {
+        const row = documentRow({
+            statusType: "070",
+            stepType: "06",
+            stepName: "임의의 표시명",
+            stepRecipientType: "05",
+            workflowScope: {
+                statusType: "070",
+                stepType: "06",
+                stepIndex: "3",
+                stepName: "임의의 표시명",
+            },
+            detailPayload: detail({
+                current_status: {
+                    status_type: "070",
+                    step_type: "06",
+                    step_index: "3",
+                    step_name: "임의의 표시명",
+                    step_recipients: [],
+                    save_permission: true,
+                },
+            }),
+        });
+        delete row.stage;
+
+        const result = captureServiceRecordRevisionFacts(input(row, []));
+
+        expect(result.facts?.sourceDocument.stage).toBe("provider_review");
+        expect(result.missingFacts).toEqual([]);
+    });
+
+    it("keeps structured workflow evidence manual-review when saving is not permitted", () => {
+        const row = documentRow({
+            statusType: "070",
+            stepType: "06",
+            stepName: "임의의 표시명",
+            stepRecipientType: "05",
+            workflowScope: {
+                statusType: "070",
+                stepType: "06",
+                stepIndex: "3",
+                stepName: "임의의 표시명",
+            },
+            detailPayload: detail({
+                current_status: {
+                    status_type: "070",
+                    step_type: "06",
+                    step_index: "3",
+                    step_name: "임의의 표시명",
+                    step_recipients: [],
+                    save_permission: false,
+                },
+            }),
+        });
+        delete row.stage;
+
+        const result = captureServiceRecordRevisionFacts(input(row, []));
+
+        expect(result.facts).toBeNull();
+        expect(result.missingFacts).toContain("sourceDocument.stage");
     });
 });
