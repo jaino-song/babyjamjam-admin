@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import {
     validateServiceRecordAnswers,
@@ -21,10 +21,12 @@ import {
     type IServiceRecordEditRepository,
     type ServiceRecordEditDraft,
     type ServiceRecordEditConfirmPlan,
+    type ServiceRecordEditConfirmNewSession,
     type ServiceRecordEditConfirmSessionUpdate,
     type ServiceRecordEditJsonObject,
     type ServiceRecordEditJsonValue,
     type ServiceRecordEditSource,
+    type ServiceRecordEditSourceDay,
 } from "domain/repositories/service-record-edit.repository.interface";
 import type {
     ServiceRecordEditConfirmDocumentStatus,
@@ -159,6 +161,116 @@ function sessionChangeMap(value: ServiceRecordEditJsonValue | undefined): Map<nu
             result.set(index, patch);
         }
     return result;
+}
+
+function hasEffectiveFutureContent(patch: ConfirmSessionPatch): boolean {
+    let hasAnswers = false;
+    if (patch.answers !== undefined) {
+        if (Array.isArray(patch.answers)) hasAnswers = patch.answers.length > 0;
+        else if (isPlainRecord(patch.answers)) hasAnswers = Object.keys(patch.answers).length > 0;
+        else hasAnswers = patch.answers !== null;
+    }
+    return hasAnswers
+        || (typeof patch.etcService === "string" && patch.etcService.trim().length > 0)
+        || (typeof patch.notes === "string" && patch.notes.trim().length > 0)
+        || patch.paymentConfirmed === true;
+}
+
+function sameJsonValue(left: unknown, right: unknown): boolean {
+    if (left === undefined || right === undefined) return left === right;
+    try {
+        return stableStringify(jsonValue(left)) === stableStringify(jsonValue(right));
+    } catch {
+        return false;
+    }
+}
+
+function hasExistingContentDifference(
+    source: ServiceRecordEditSourceDay,
+    patch: ConfirmSessionPatch,
+): boolean {
+    return (
+        patch.answers !== undefined && !sameJsonValue(patch.answers, source.answers)
+        || patch.etcService !== undefined && !sameJsonValue(patch.etcService, source.etcService)
+        || patch.notes !== undefined && !sameJsonValue(patch.notes, source.notes)
+        || patch.paymentConfirmed !== undefined && !sameJsonValue(patch.paymentConfirmed, source.paymentConfirmed)
+    );
+}
+
+function hasPlannedDateDifference(
+    before: Array<{ sessionIndex: number; serviceDate: string }>,
+    after: Array<{ sessionIndex: number; serviceDate: string }>,
+): boolean {
+    return after.some((entry) => before.find((candidate) => candidate.sessionIndex === entry.sessionIndex)?.serviceDate !== entry.serviceDate);
+}
+
+function buildFutureContentSession(
+    source: ServiceRecordEditSource,
+    projected: {
+        sessionIndex: number;
+        serviceDate: string;
+        originalDate: string;
+        assignmentId: string;
+        scheduleId: number;
+        employeeId: number;
+        provenanceVersion: string;
+    },
+    beforeOriginalDate: string | undefined,
+    patch: ConfirmSessionPatch,
+): ServiceRecordEditConfirmNewSession {
+    const assignment = source.assignments.find((candidate) => candidate.id === projected.assignmentId);
+    const employeeName = assignment?.employeeName ?? assignment?.primaryEmployeeName;
+    const canonicalBranchId = source.client.branchId;
+    if (
+        !canonicalBranchId
+        || !assignment
+        || !assignment.id
+        || assignment.branchId !== canonicalBranchId
+        || assignment.serviceRecordCaseId !== source.caseId
+        || assignment.scheduleId !== projected.scheduleId
+        || assignment.employeeId !== projected.employeeId
+        || !Number.isInteger(projected.scheduleId)
+        || projected.scheduleId < 1
+        || !Number.isInteger(projected.employeeId)
+        || projected.employeeId < 1
+        || typeof employeeName !== "string"
+        || employeeName.trim().length === 0
+        || !Number.isInteger(source.formVersion)
+        || source.formVersion < 1
+        || typeof beforeOriginalDate !== "string"
+        || beforeOriginalDate.length === 0
+        || typeof projected.assignmentId !== "string"
+        || projected.assignmentId.length === 0
+        || typeof projected.provenanceVersion !== "string"
+        || projected.provenanceVersion.length === 0
+    ) {
+        throw new ConflictException({
+            code: "SERVICE_RECORD_FUTURE_SESSION_PROVENANCE_UNAVAILABLE",
+            sessionIndex: projected.sessionIndex,
+        });
+    }
+
+    return {
+        sourceRowId: randomUUID(),
+        sessionIndex: projected.sessionIndex,
+        serviceDate: projected.serviceDate,
+        originalDate: beforeOriginalDate,
+        assignmentId: projected.assignmentId,
+        provenanceVersion: projected.provenanceVersion,
+        answers: patch.answers ?? {},
+        etcService: patch.etcService ?? null,
+        notes: patch.notes ?? null,
+        paymentConfirmed: patch.paymentConfirmed ?? false,
+        momApproval: null,
+        clientSignature: null,
+        clientSignedAt: null,
+        locked: false,
+        submittedAt: null,
+        scheduleId: projected.scheduleId,
+        employeeId: projected.employeeId,
+        employeeNameSnapshot: employeeName,
+        formVersion: source.formVersion,
+    };
 }
 
 function documentStatusForSource(source: ServiceRecordEditSource): ServiceRecordEditConfirmDocumentStatus {
@@ -512,8 +624,28 @@ export class AdminServiceRecordEditService {
             };
         });
 
-        const plannedSessions = jsonValue(provisional.after.sessions);
         const beforeByIndex = new Map(provisional.before.sessions.map((entry) => [entry.sessionIndex, entry]));
+        const newSessions: ServiceRecordEditConfirmNewSession[] = [];
+        for (const patch of bySession.values()) {
+            if (source.sessions.some((day) => day.sessionIndex === patch.sessionIndex)) continue;
+            if (!hasEffectiveFutureContent(patch)) continue;
+            const projected = afterByIndex.get(patch.sessionIndex);
+            if (!projected) {
+                throw new ConflictException({
+                    code: "SERVICE_RECORD_FUTURE_SESSION_PROVENANCE_UNAVAILABLE",
+                    sessionIndex: patch.sessionIndex,
+                });
+            }
+            newSessions.push(buildFutureContentSession(
+                source,
+                projected,
+                beforeByIndex.get(patch.sessionIndex)?.originalDate,
+                patch,
+            ));
+        }
+        newSessions.sort((left, right) => left.sessionIndex - right.sessionIndex);
+
+        const plannedSessions = jsonValue(provisional.after.sessions);
         const effectiveRows = source.sessions.map((day) => {
             const update = sessions.find((session) => session.sourceRowId === day.sourceRowId);
             const original = beforeByIndex.get(day.sessionIndex)?.originalDate ?? day.serviceDate;
@@ -523,8 +655,8 @@ export class AdminServiceRecordEditService {
                 serviceDate: update?.serviceDate ?? day.serviceDate,
                 originalDate: original,
                 answers: update?.answers ?? day.answers,
-                etcService: update?.etcService ?? day.etcService,
-                notes: update?.notes ?? day.notes,
+                etcService: update ? update.etcService : day.etcService,
+                notes: update ? update.notes : day.notes,
                 paymentConfirmed: update?.paymentConfirmed ?? day.paymentConfirmed,
                 locked: day.locked,
                 momApproval: day.momApproval,
@@ -537,6 +669,29 @@ export class AdminServiceRecordEditService {
                 clientSignedAt: day.clientSignedAt,
             };
         });
+        const futureRows = newSessions.map((session) => ({
+            sourceRowId: session.sourceRowId,
+            sessionIndex: session.sessionIndex,
+            serviceDate: session.serviceDate,
+            originalDate: session.originalDate,
+            assignmentId: session.assignmentId,
+            provenanceVersion: session.provenanceVersion,
+            answers: session.answers,
+            etcService: session.etcService,
+            notes: session.notes,
+            paymentConfirmed: session.paymentConfirmed,
+            locked: session.locked,
+            momApproval: session.momApproval,
+            employeeId: session.employeeId,
+            employeeNameSnapshot: session.employeeNameSnapshot,
+            scheduleId: session.scheduleId,
+            formVersion: session.formVersion,
+            clientSignature: session.clientSignature,
+            submittedAt: session.submittedAt,
+            clientSignedAt: session.clientSignedAt,
+        }));
+        const revisionSessions = [...effectiveRows, ...futureRows]
+            .sort((left, right) => left.sessionIndex - right.sessionIndex);
         const completeness = revisionCompleteness(source);
         const revisionPayload = jsonValue({
             caseId: source.caseId,
@@ -548,7 +703,8 @@ export class AdminServiceRecordEditService {
             caseLifecycle: source.caseLifecycle,
             header,
             plannedSessions,
-            sessions: effectiveRows,
+            sessions: revisionSessions,
+            newSessions: futureRows,
             signatureMetadata: provisional.signatureMetadata,
             documentScope: provisional.documentScope,
             completeness,
@@ -556,8 +712,15 @@ export class AdminServiceRecordEditService {
         const revisionFingerprint = createHash("sha256")
             .update(stableStringify(revisionPayload))
             .digest("hex");
+        const contentChanged = [...bySession.values()].some((patch) => {
+            const sourceDay = source.sessions.find((day) => day.sessionIndex === patch.sessionIndex);
+            return sourceDay
+                ? hasExistingContentDifference(sourceDay, patch)
+                : hasEffectiveFutureContent(patch);
+        });
         const changed = provisional.contentChanges.headerChanged
-            || provisional.contentChanges.changedSessionIndexes.length > 0;
+            || contentChanged
+            || hasPlannedDateDifference(provisional.before.sessions, provisional.after.sessions);
         const documentStatus = completeness === "partial"
             ? "waiting_for_completion"
             : documentStatusForSource(source);
@@ -612,6 +775,7 @@ export class AdminServiceRecordEditService {
             header,
             plannedSessions,
             sessions,
+            newSessions,
             assignments: provisional.provenance.map((range) => ({
                 assignmentId: range.assignmentId,
                 scheduleId: range.scheduleId,

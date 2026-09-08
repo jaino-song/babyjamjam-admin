@@ -13,6 +13,7 @@ import {
     type AppendServiceRecordRevisionInput,
     type ServiceRecordEditConfirmInput,
     type ServiceRecordEditConfirmPlan,
+    type ServiceRecordEditConfirmNewSession,
     type ServiceRecordEditConfirmSnapshot,
     type CreateServiceRecordEditDraftInput,
     type DiscardServiceRecordEditDraftInput,
@@ -362,6 +363,9 @@ type OptionalQueryTransaction = Prisma.TransactionClient & {
     $queryRaw?: <T = unknown>(query: Prisma.Sql) => Promise<T>;
 };
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
 async function lockRowsByBranchAndIds(
     tx: Prisma.TransactionClient,
     table: string,
@@ -419,6 +423,76 @@ async function lockCaseChildren(
             where: { branchId, [caseColumn === "service_record_case_id" ? "serviceRecordCaseId" : caseColumn]: caseId },
             select: { id: true },
         });
+    }
+}
+
+function isNonEmptyFutureContent(session: ServiceRecordEditConfirmNewSession): boolean {
+    const hasAnswers = Array.isArray(session.answers)
+        ? session.answers.length > 0
+        : Boolean(session.answers && typeof session.answers === "object" && Object.keys(session.answers).length > 0);
+    return hasAnswers
+        || (typeof session.etcService === "string" && session.etcService.trim().length > 0)
+        || (typeof session.notes === "string" && session.notes.trim().length > 0)
+        || session.paymentConfirmed === true;
+}
+
+function assertFutureSessionPlan(
+    plan: ServiceRecordEditConfirmPlan,
+    source: ServiceRecordEditSource,
+): void {
+    if (plan.newSessions.length === 0) return;
+    if (plan.status !== "confirmed") {
+        throw new ServiceRecordEditConflictError("Future sessions require a confirmed plan");
+    }
+    const required = source.requiredSessionCount;
+    if (typeof required !== "number" || !Number.isInteger(required) || required < 1 || !source.client.branchId) {
+        throw new ServiceRecordEditConflictError("Future session provenance is unavailable");
+    }
+
+    const existingIndexes = new Set(source.sessions.map((session) => session.sessionIndex));
+    const seenIndexes = new Set<number>();
+    for (const session of plan.newSessions) {
+        const assignment = source.assignments.find((candidate) => candidate.id === session.assignmentId);
+        const canonicalEmployeeName = assignment?.employeeName ?? assignment?.primaryEmployeeName;
+        const date = dateValue(session.serviceDate);
+        const originalDate = dateValue(session.originalDate);
+        if (
+            !UUID_PATTERN.test(session.sourceRowId)
+            || !Number.isInteger(session.sessionIndex)
+            || session.sessionIndex < 1
+            || session.sessionIndex > required
+            || existingIndexes.has(session.sessionIndex)
+            || seenIndexes.has(session.sessionIndex)
+            || !DATE_ONLY_PATTERN.test(session.serviceDate)
+            || !date
+            || !DATE_ONLY_PATTERN.test(session.originalDate)
+            || !originalDate
+            || !assignment
+            || assignment.branchId !== source.client.branchId
+            || assignment.serviceRecordCaseId !== source.caseId
+            || assignment.id !== session.assignmentId
+            || assignment.scheduleId !== session.scheduleId
+            || assignment.employeeId !== session.employeeId
+            || !Number.isInteger(session.scheduleId)
+            || session.scheduleId < 1
+            || !Number.isInteger(session.employeeId)
+            || session.employeeId < 1
+            || !canonicalEmployeeName
+            || session.employeeNameSnapshot !== canonicalEmployeeName
+            || typeof session.provenanceVersion !== "string"
+            || session.provenanceVersion.length === 0
+            || !Number.isInteger(session.formVersion)
+            || session.formVersion < 1
+            || session.locked !== false
+            || session.momApproval !== null
+            || session.clientSignature !== null
+            || session.clientSignedAt !== null
+            || session.submittedAt !== null
+            || !isNonEmptyFutureContent(session)
+        ) {
+            throw new ServiceRecordEditConflictError("Future session provenance is unavailable");
+        }
+        seenIndexes.add(session.sessionIndex);
     }
 }
 
@@ -1129,6 +1203,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         if (!/^[0-9a-f]{64}$/i.test(plan.sourceFingerprint)) {
             throw new ServiceRecordEditConflictError("Confirmation plan source fingerprint is invalid");
         }
+        assertFutureSessionPlan(plan, source);
 
         const now = new Date();
         let revision: ServiceRecordRevision | null = null;
@@ -1174,6 +1249,35 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                         etcService: session.etcService,
                         notes: session.notes,
                         paymentConfirmed: session.paymentConfirmed,
+                    },
+                });
+            }
+            for (const session of plan.newSessions) {
+                const serviceDate = dateValue(session.serviceDate);
+                if (!serviceDate) {
+                    throw new ServiceRecordEditConflictError("Future session service date is invalid");
+                }
+                await tx.service_record_day.create({
+                    data: {
+                        id: session.sourceRowId,
+                        branchId: input.branchId,
+                        scheduleId: session.scheduleId,
+                        serviceRecordCaseId: source.caseId,
+                        caseSessionIndex: session.sessionIndex,
+                        employeeId: session.employeeId,
+                        employeeNameSnapshot: session.employeeNameSnapshot,
+                        formVersion: session.formVersion,
+                        sessionIndex: session.sessionIndex,
+                        serviceDate,
+                        answers: toPrismaJson(session.answers),
+                        etcService: session.etcService,
+                        notes: session.notes,
+                        paymentConfirmed: session.paymentConfirmed,
+                        momApproval: null,
+                        clientSignature: null,
+                        clientSignedAt: null,
+                        locked: false,
+                        submittedAt: null,
                     },
                 });
             }
