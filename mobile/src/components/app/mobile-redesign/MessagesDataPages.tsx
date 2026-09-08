@@ -66,6 +66,8 @@ interface StatusMeta {
 
 type MessageFilterItem = { label: string; count: React.ReactNode; active?: boolean; skeleton?: boolean };
 
+const MESSAGE_COUNT_UNAVAILABLE_LABEL = "집계 실패";
+
 const STATUS_FILTER_ORDER: MessageRecordStatusFilter[] = ["all", "upcoming", "sent", "failed", "canceled"];
 
 const JOB_STATUS: Record<MessageTriggerJobStatus, StatusMeta> = {
@@ -190,6 +192,19 @@ function EmptyState({ message }: { message: string }) {
       <MessageSquareText size={26} aria-hidden="true" />
       <p>{message}</p>
     </div>
+  );
+}
+
+function UnavailableCount({ dataComponent }: { dataComponent?: string }) {
+  return (
+    <span
+      aria-label={MESSAGE_COUNT_UNAVAILABLE_LABEL}
+      className="messages-count-unavailable"
+      data-count-state="unavailable"
+      data-component={dataComponent}
+    >
+      {MESSAGE_COUNT_UNAVAILABLE_LABEL}
+    </span>
   );
 }
 
@@ -400,20 +415,32 @@ export function MessagesHistoryPage() {
     canceled: historyRecords.filter((record) => record.status === "canceled").length,
   };
 
+  const filterCountAvailability: Record<MessageRecordStatusFilter, boolean> = {
+    all: !isUpcomingError && !isHistoryError,
+    upcoming: !isUpcomingError,
+    sent: !isHistoryError,
+    failed: !isHistoryError,
+    canceled: !isHistoryError,
+  };
+
   // While either query is in flight every filterCounts entry is the empty-array
   // default standing in for a number nobody has fetched, so the pills would
   // publish confident zeros right beside the skeletoned counts. Skeleton them
   // too, the way the sibling list screens do.
-  const filterItems: MessageFilterItem[] = STATUS_FILTER_ORDER.map((filter) => ({
-    label: MESSAGE_RECORD_STATUS_FILTER_LABELS[filter],
-    count: isPanelLoading
-      ? ""
+  const filterItems: MessageFilterItem[] = STATUS_FILTER_ORDER.map((filter) => {
+    const count = !filterCountAvailability[filter]
+      ? <UnavailableCount />
       : filter === "failed"
         ? <span className="messages-filter-count-danger">{filterCounts[filter]}</span>
-        : filterCounts[filter],
-    active: filter === statusFilter,
-    skeleton: isPanelLoading,
-  }));
+        : filterCounts[filter];
+
+    return {
+      label: MESSAGE_RECORD_STATUS_FILTER_LABELS[filter],
+      count: isPanelLoading ? "" : count,
+      active: filter === statusFilter,
+      skeleton: isPanelLoading,
+    };
+  });
 
   const handleFilterChange = (label: string) => {
     const nextFilter = STATUS_FILTER_ORDER.find((filter) => MESSAGE_RECORD_STATUS_FILTER_LABELS[filter] === label);
@@ -442,6 +469,9 @@ export function MessagesHistoryPage() {
   };
 
   const totalVisibleCount = visibleUpcomingJobs.length + visibleHistoryRecords.length;
+  const isVisibleUpcomingCountUnavailable = showUpcomingZone && isUpcomingError;
+  const isVisibleHistoryCountUnavailable = showHistoryZone && isHistoryError;
+  const isTotalCountUnavailable = isVisibleUpcomingCountUnavailable || isVisibleHistoryCountUnavailable;
   // A zone stays visible at zero so its "예정 0건" label still reads; only a
   // settled, error-free, entirely empty list collapses to the empty state. An
   // error counts only while its own zone is on screen — a filtered-away zone
@@ -482,6 +512,10 @@ export function MessagesHistoryPage() {
                 />
                 <span role="status" className="sr-only">발송 기록을 불러오고 있습니다.</span>
               </>
+            ) : isTotalCountUnavailable ? (
+              <UnavailableCount
+                dataComponent={`${HISTORY_LIST_BASE}_content_list-card_header_count`}
+              />
             ) : (
               <span data-component={`${HISTORY_LIST_BASE}_content_list-card_header_count`}>
                 {`${totalVisibleCount}건`}

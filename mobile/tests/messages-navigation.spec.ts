@@ -6,7 +6,7 @@ const UPCOMING_ZONE_HEADER = `${LIST_SHELL}_zone-upcoming_header`;
 const PAST_ZONE_HEADER = `${LIST_SHELL}_zone-past_header`;
 
 async function mockMessagesApproval(page: Page) {
-  await page.route("**/api/settings/message-sender-approval", async (route: Route) => {
+  await page.route("**/api/settings/message-sender-approval*", async (route: Route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -21,6 +21,52 @@ async function mockMessagesApproval(page: Page) {
   });
 }
 
+async function mockShellApiFallback(page: Page) {
+  await page.route("**/api/**", async (route: Route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: "{}",
+    });
+  });
+  await page.route("**/api/clients*", async (route: Route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/api/clients/analytics*", async (route: Route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        activeClients: 0,
+        contractsNotSent: 0,
+        contractsPendingSignature: 0,
+        upcomingThisMonth: 0,
+        upcomingNextMonth: 0,
+      }),
+    });
+  });
+  await page.route("**/api/out-of-pocket-price-infos*", async (route: Route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/api/notifications*", async (route: Route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/api/notifications/unread/count*", async (route: Route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ count: 0 }),
+    });
+  });
+  await page.route("**/api/eformsign/auth-status*", async (route: Route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ hasAppAuthToken: false }),
+    });
+  });
+}
+
 // The 출시 예정 sections are owner-only, so the navigation test runs as the owner.
 async function mockOwnerUser(page: Page) {
   const body = JSON.stringify({
@@ -30,10 +76,10 @@ async function mockOwnerUser(page: Page) {
     branchName: "테스트 지점",
   });
 
-  await page.route("**/api/auth/me", async (route: Route) => {
+  await page.route("**/api/auth/me*", async (route: Route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body });
   });
-  await page.route("**/auth/me", async (route: Route) => {
+  await page.route("**/auth/me*", async (route: Route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body });
   });
 }
@@ -197,5 +243,68 @@ test.describe("mobile messages navigation", () => {
     // no element's text is exactly 예정 — select the header itself.
     await expect(page.locator(`[data-component="${UPCOMING_ZONE_HEADER}"]`)).toContainText("예정");
     await expect(page.getByText("예정 고객")).toBeVisible();
+  });
+
+  test("marks counts that depend on a failed query while preserving delayed history counts", async ({ page }) => {
+    test.setTimeout(60_000);
+    await mockShellApiFallback(page);
+    await page.route("**/api/message-trigger-jobs/upcoming**", async (route: Route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ message: "upcoming fixture failure" }),
+      });
+    });
+    await page.route("**/api/message-logs**", async (route: Route) => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          {
+            id: 102,
+            provider: "aligo_sms",
+            templateKey: "CLIENT_GREETING",
+            triggerJobId: null,
+            receiver: "01012345678",
+            clientId: 1,
+            recipientPhone: "01012345678",
+            messageBody: "안녕하세요",
+            variables: {},
+            status: "sent",
+            aligoMid: null,
+            errorMessage: null,
+            attempts: 1,
+            lastAttemptAt: "2026-07-16T01:00:00.000Z",
+            nextRetryAt: null,
+            createdAt: "2026-07-16T01:00:00.000Z",
+            updatedAt: "2026-07-16T01:00:00.000Z",
+            ruleId: null,
+            ruleName: null,
+            eventType: "CLIENT_CREATED",
+            offsetType: "IMMEDIATE",
+            offsetDays: 0,
+            scheduledFor: null,
+            recipientType: "CLIENT",
+            recipientName: "부분 실패 고객",
+            clientName: "부분 실패 고객",
+            employeeName: null,
+          },
+        ]),
+      });
+    });
+
+    await page.goto("/messages/history");
+
+    await expect(
+      page.locator('[data-component$="_content_list-card_header_count"][data-count-state="unavailable"]'),
+    ).toHaveText("집계 실패", { timeout: 30_000 });
+    await expect(page.locator(`[data-component="${UPCOMING_ZONE_HEADER}"]`)).toContainText("예정");
+    await expect(page.locator(`[data-component="${UPCOMING_ZONE_HEADER}"] [data-component$="_count"]`)).toHaveCount(0);
+    await expect(page.locator(`[data-component="${PAST_ZONE_HEADER}"]`)).toContainText("1건");
+    await expect(page.getByText("부분 실패 고객")).toBeVisible();
+    await expect(
+      page.locator('[data-component$="_filters"] [data-count-state="unavailable"]'),
+    ).toHaveCount(2);
   });
 });
