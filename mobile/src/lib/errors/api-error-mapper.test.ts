@@ -31,6 +31,20 @@ describe("getErrorMessage", () => {
         expect(message).not.toBe("Conflict");
     });
 
+    it("resolves the established dotted key for a phone-specific Prisma message", () => {
+        expect(
+            getErrorMessage(
+                axiosError(409, {
+                    code: "P2002",
+                    error: "Conflict",
+                    field: "phone",
+                }),
+                "ko",
+                FALLBACK_KEY,
+            ),
+        ).toBe("이미 등록된 연락처입니다. 다른 연락처를 입력해주세요.");
+    });
+
     it("surfaces an actionable business validation message from the proxy error field", () => {
         const message = getErrorMessage(
             axiosError(400, {

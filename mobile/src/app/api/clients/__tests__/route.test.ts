@@ -171,6 +171,43 @@ describe("client API routes", () => {
     });
   });
 
+  it("preserves Prisma metadata for a message-less phone conflict", async () => {
+    mockPost.mockRejectedValue({
+      response: {
+        status: 409,
+        data: {
+          code: "P2002",
+          error: "Conflict",
+          field: "phone",
+        },
+      },
+    });
+
+    const response = await createClient(
+      createRequest("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Baby Kim",
+          careCenter: false,
+          voucherClient: true,
+          breastPump: false,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body).toEqual({
+      error: "Failed to create client",
+      code: "P2002",
+      field: "phone",
+    });
+    expect(getErrorMessage({ response: { status: 409, data: body } }, "ko")).toBe(
+      "이미 등록된 연락처입니다. 다른 연락처를 입력해주세요.",
+    );
+  });
+
   it("rejects invalid client detail IDs before proxying", async () => {
     const response = await getClient(
       createRequest("/api/clients/not-a-number"),

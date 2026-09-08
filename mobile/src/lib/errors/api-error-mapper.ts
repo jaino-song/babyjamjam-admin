@@ -57,6 +57,28 @@ function isPrismaErrorResponse(error: unknown): error is PrismaErrorResponse {
     );
 }
 
+function getFieldSpecificPrismaMessage(
+    locale: Locale,
+    code: string,
+    field: string,
+): string | null {
+    const fieldSpecificKey = `errors.prisma.${code}.${field}`;
+    const pathMessage = t(locale, fieldSpecificKey);
+    if (typeof pathMessage === 'string' && pathMessage !== fieldSpecificKey) {
+        return pathMessage;
+    }
+
+    // The existing locale files keep field-specific Prisma entries as literal
+    // dotted keys (for example, `P2002.phone`) beside the base code entry.
+    const prismaMessages = t(locale, 'errors.prisma') as unknown;
+    if (!prismaMessages || typeof prismaMessages !== 'object' || Array.isArray(prismaMessages)) {
+        return null;
+    }
+
+    const literalMessage = (prismaMessages as Record<string, unknown>)[`${code}.${field}`];
+    return typeof literalMessage === 'string' ? literalMessage : null;
+}
+
 /**
  * Map Prisma error code to user-friendly message using i18n
  *
@@ -77,10 +99,9 @@ export function mapPrismaError(error: unknown, locale: Locale): string | null {
 
     // Try field-specific translation first (e.g., errors.prisma.P2002.phone)
     if (field) {
-        const fieldSpecificKey = `errors.prisma.${code}.${field}`;
-        const fieldSpecificMsg = t(locale, fieldSpecificKey);
-        if (fieldSpecificMsg !== fieldSpecificKey) {
-            return fieldSpecificMsg;
+        const fieldSpecificMessage = getFieldSpecificPrismaMessage(locale, code, field);
+        if (fieldSpecificMessage) {
+            return fieldSpecificMessage;
         }
     }
 

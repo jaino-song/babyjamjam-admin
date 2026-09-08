@@ -25,6 +25,20 @@ const createClientSchema = z
     })
     .passthrough();
 
+function hasPrismaErrorCode(error: unknown): boolean {
+    if (!error || typeof error !== "object") {
+        return false;
+    }
+
+    const payload = (error as { response?: { data?: unknown } }).response?.data;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        return false;
+    }
+
+    const code = (payload as { code?: unknown }).code;
+    return typeof code === "string" && /^P\d{4}$/.test(code);
+}
+
 // GET /api/clients - Get all clients (with optional pagination)
 export async function GET(request: NextRequest) {
     try {
@@ -71,7 +85,9 @@ export async function POST(request: NextRequest) {
         });
         return backendJsonResponse(backendResponse);
     } catch (error) {
-        const conflict = getClientConflictPayload(error);
+        const conflict = hasPrismaErrorCode(error)
+            ? null
+            : getClientConflictPayload(error);
         if (conflict) {
             return NextResponse.json(conflict, { status: 409 });
         }

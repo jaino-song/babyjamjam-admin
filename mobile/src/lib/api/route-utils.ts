@@ -59,7 +59,7 @@ function getSafePrismaMetadata(payload: Record<string, unknown> | null): {
     const code = typeof payload?.code === "string" && /^P\d{4}$/.test(payload.code)
         ? payload.code
         : undefined;
-    const field = typeof payload?.field === "string" && /^[A-Za-z][\w.-]{0,63}$/.test(payload.field)
+    const field = code && typeof payload?.field === "string" && /^[A-Za-z][\w.-]{0,63}$/.test(payload.field)
         ? payload.field
         : undefined;
 
@@ -72,12 +72,22 @@ function errorResponse(error: unknown, context: string): NextResponse {
         return sanitizedErrorResponse(error, context);
     }
 
+    const metadata = getSafePrismaMetadata(getUpstreamPayload(error));
     const message = getSafeApiDisplayMessage(error);
     if (!message) {
+        if (metadata.code) {
+            return NextResponse.json(
+                {
+                    error: `Failed to ${context}`,
+                    code: metadata.code,
+                    ...(metadata.field ? { field: metadata.field } : {}),
+                },
+                { status },
+            );
+        }
         return sanitizedErrorResponse(error, context);
     }
 
-    const metadata = getSafePrismaMetadata(getUpstreamPayload(error));
     return NextResponse.json(
         {
             error: sanitizeApiDisplayMessage(message),

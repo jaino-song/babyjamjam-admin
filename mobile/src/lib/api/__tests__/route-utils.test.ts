@@ -167,6 +167,32 @@ describe("route-utils proxy body parsing", () => {
         expect(getErrorMessage({ response: { status: 409, data: body } }, "ko")).not.toBe(body.error);
     });
 
+    it("keeps Prisma metadata when the upstream only sends a bare conflict label", async () => {
+        const response = errorResponse(
+            {
+                response: {
+                    status: 409,
+                    data: {
+                        code: "P2002",
+                        field: "phone",
+                        error: "Conflict",
+                    },
+                },
+            },
+            "create employee",
+        );
+
+        const body = await response.json();
+        expect(body).toEqual({
+            error: "Failed to create employee",
+            code: "P2002",
+            field: "phone",
+        });
+        expect(getErrorMessage({ response: { status: 409, data: body } }, "ko")).toBe(
+            "이미 등록된 연락처입니다. 다른 연락처를 입력해주세요.",
+        );
+    });
+
     it.each([
         [400, "SELECT * FROM Client"],
         [400, "Invalid API key: sk_test_secret"],

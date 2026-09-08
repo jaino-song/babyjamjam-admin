@@ -121,6 +121,38 @@ describe("employee API routes", () => {
     expect(getErrorMessage({ response: { status: 400, data: body } }, "ko")).toBe(message);
   });
 
+  it("preserves message-less Prisma metadata for localized phone conflicts", async () => {
+    mockPost.mockRejectedValue({
+      response: {
+        status: 409,
+        data: {
+          code: "P2002",
+          error: "Conflict",
+          field: "phone",
+        },
+      },
+    });
+
+    const response = await createEmployee(
+      createRequest("/api/employees", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(validCreatePayload),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body).toEqual({
+      error: "Failed to create employee",
+      code: "P2002",
+      field: "phone",
+    });
+    expect(getErrorMessage({ response: { status: 409, data: body } }, "ko")).toBe(
+      "이미 등록된 연락처입니다. 다른 연락처를 입력해주세요.",
+    );
+  });
+
   it("rejects a create body missing required fields before proxying", async () => {
     const response = await createEmployee(
       createRequest("/api/employees", {
