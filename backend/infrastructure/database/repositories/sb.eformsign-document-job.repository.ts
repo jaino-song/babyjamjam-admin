@@ -10,10 +10,15 @@ import {
 import {
     EformsignDocumentJobList,
     EformsignDocumentJobSummary,
+    AuthorizeEformsignDocumentJobForDispatchInput,
     EnqueueEformsignDocumentJobInput,
     IEformsignDocumentJobRepository,
 } from "domain/repositories/eformsign-document-job.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import {
+    authorizeServiceRecordDispatch,
+} from "application/policies/service-record-revision-state.policy";
+import type { ServiceRecordRevisionDispatchContext } from "@babyjamjam/shared/types/service-record";
 
 type RawJob = {
     id: string; branch_id: string; client_id: number | null; document_id: string | null;
@@ -27,6 +32,22 @@ type RawJob = {
 
 const ACTIVE_STATUSES = Prisma.sql`('queued', 'processing', 'reconciling')`;
 const TERMINAL_STATUSES = Prisma.sql`('completed', 'failed')`;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function payloadContext(value: RawJob["payload"]): ServiceRecordRevisionDispatchContext | null {
+    let parsed: unknown = value;
+    if (typeof value === "string") {
+        try {
+            parsed = JSON.parse(value) as unknown;
+        } catch {
+            return null;
+        }
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+    const context = (parsed as Record<string, unknown>)["context"];
+    if (typeof context !== "object" || context === null || Array.isArray(context)) return null;
+    return context as ServiceRecordRevisionDispatchContext;
+}
 
 @Injectable()
 export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRepository {
@@ -72,6 +93,68 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
             throw new Error("EFORMSIGN_DOCUMENT_JOB_IDEMPOTENCY_MISMATCH");
         }
         return { job: this.toDomain(existing[0]), existing: true };
+    }
+
+    /**
+     * Lock a claimed job and commit the irreversible provider marker before
+     * the worker leaves the caller-owned transaction. No transaction is
+     * opened here; callers must already hold the service-record common lock
+     * order (client -> employees -> case -> children -> jobs).
+     */
+    async authorizeForDispatchInTransaction(
+        tx: Prisma.TransactionClient,
+        input: AuthorizeEformsignDocumentJobForDispatchInput,
+    ) {
+        if (!UUID_PATTERN.test(input.jobId) || !UUID_PATTERN.test(input.leaseToken)) {
+            return { kind: "lost", reason: "invalid_job_claim" } as const;
+        }
+
+        const rows = await tx.$queryRaw<RawJob[]>(Prisma.sql`
+            SELECT *
+            FROM "eformsign_document_job"
+            WHERE id = ${input.jobId}::uuid
+            FOR UPDATE
+        `);
+        const current = rows[0];
+        if (!current) return { kind: "lost", reason: "job_not_found" } as const;
+        if (
+            current.status !== "processing"
+            && current.status !== "reconciling"
+        ) {
+            return { kind: "lost", reason: "job_not_active" } as const;
+        }
+        if (current.lease_token !== input.leaseToken) {
+            return { kind: "lost", reason: "lease_lost" } as const;
+        }
+        if (current.progress_step === "creating" || current.progress_step === "sent") {
+            return { kind: "lost", reason: "dispatch_already_claimed" } as const;
+        }
+
+        if (input.expectedContext) {
+            const observed = payloadContext(current.payload);
+            if (
+                !observed
+                || current.branch_id !== input.expectedContext.branchId
+                || current.client_id !== input.expectedContext.clientId
+            ) {
+                return { kind: "lost", reason: "ownership_changed" } as const;
+            }
+            const authorization = authorizeServiceRecordDispatch(input.expectedContext, observed);
+            if (authorization.kind !== "allow") return authorization;
+        }
+
+        const claimed = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            UPDATE "eformsign_document_job"
+            SET progress_step = 'creating', heartbeat_at = now(), updated_at = now()
+            WHERE id = ${input.jobId}::uuid
+              AND lease_token = ${input.leaseToken}::uuid
+              AND status IN ('processing', 'reconciling')
+              AND COALESCE(progress_step, '') NOT IN ('creating', 'sent')
+            RETURNING id
+        `);
+        return claimed.length > 0
+            ? { kind: "allow" as const }
+            : { kind: "lost" as const, reason: "lease_lost" };
     }
 
     async claimDue(limit = 1): Promise<EformsignDocumentJobEntity[]> {

@@ -11,11 +11,13 @@ import {
     EFORMSIGN_DOCUMENT_JOB_REPOSITORY,
     EformsignDocumentJobList,
     EformsignDocumentJobSummary,
+    AuthorizeEformsignDocumentJobForDispatchInput,
     IEformsignDocumentJobRepository,
 } from "domain/repositories/eformsign-document-job.repository.interface";
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import { assertRequiredPhone, invalidPhoneFieldMessage, InvalidPhoneError } from "application/utils/normalize-phone";
+import type { ServiceRecordDispatchAuthorizationResult } from "@babyjamjam/shared/types/service-record";
 
 export interface EnqueueCreateDocumentParams {
     branchId: string;
@@ -144,6 +146,7 @@ export class EformsignDocumentJobService {
 
         return this.repository.enqueue({
             branchId: params.branchId,
+            clientId: document.clientId ?? null,
             documentId: params.documentId,
             jobType: "finalize_document",
             source: params.source,
@@ -176,6 +179,19 @@ export class EformsignDocumentJobService {
             payloadFingerprint: params.payloadFingerprint,
             createdByUserId: params.createdByUserId,
         });
+    }
+
+    /**
+     * Authorize the irreversible provider boundary inside the transaction
+     * owned by the caller. The repository locks and rereads the job, verifies
+     * the lease/context, and commits the durable `creating` marker before a
+     * worker is allowed to invoke a provider.
+     */
+    async authorizeForDispatchInTransaction(
+        tx: Prisma.TransactionClient,
+        input: AuthorizeEformsignDocumentJobForDispatchInput,
+    ): Promise<ServiceRecordDispatchAuthorizationResult> {
+        return this.repository.authorizeForDispatchInTransaction(tx, input);
     }
 
     async getSummary(branchId: string): Promise<EformsignDocumentJobSummary> {

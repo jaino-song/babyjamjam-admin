@@ -35,6 +35,25 @@ const row = (overrides: Record<string, unknown> = {}) => ({
     ...overrides,
 });
 
+const dispatchJobId = "00000000-0000-4000-8000-000000000001";
+const dispatchLeaseToken = "00000000-0000-4000-8000-000000000099";
+const dispatchBranchId = "00000000-0000-4000-8000-000000000010";
+const dispatchCaseId = "00000000-0000-4000-8000-000000000020";
+
+const dispatchContext = {
+    branchId: dispatchBranchId,
+    clientId: 7,
+    serviceRecordCaseId: dispatchCaseId,
+    revisionId: null,
+    revisionNumber: null,
+    businessFingerprint: "a".repeat(64),
+    plannedSessionCount: 1,
+    plannedSessionDates: [{ sessionIndex: 1, serviceDate: "2026-09-01" }],
+    documentSyncStatus: "pending" as const,
+    lifecycleStatus: "IN_PROGRESS",
+    formVersion: 3,
+};
+
 describe("SbEformsignDocumentJobRepository", () => {
     let queryRaw: jest.Mock;
     let executeRaw: jest.Mock;
@@ -100,6 +119,69 @@ describe("SbEformsignDocumentJobRepository", () => {
             payload: {},
             payloadFingerprint: "b".repeat(64),
         })).rejects.toThrow("EFORMSIGN_DOCUMENT_JOB_IDEMPOTENCY_MISMATCH");
+    });
+
+    it("authorizes a live lease and commits the creating marker in the caller transaction", async () => {
+        queryRaw
+            .mockResolvedValueOnce([row({
+                id: dispatchJobId,
+                branch_id: dispatchBranchId,
+                status: "processing",
+                progress_step: "preparing",
+                lease_token: dispatchLeaseToken,
+                payload: { context: dispatchContext },
+            })])
+            .mockResolvedValueOnce([{ id: dispatchJobId }]);
+
+        const tx = { $queryRaw: queryRaw } as never;
+        await expect(repository.authorizeForDispatchInTransaction(tx, {
+            jobId: dispatchJobId,
+            leaseToken: dispatchLeaseToken,
+            expectedContext: dispatchContext,
+        })).resolves.toEqual({ kind: "allow" });
+
+        expect(queryRaw).toHaveBeenCalledTimes(2);
+        expect(sqlText(queryRaw.mock.calls[0][0])).toContain("FOR UPDATE");
+        expect(sqlText(queryRaw.mock.calls[1][0])).toContain("progress_step = 'creating'");
+        expect(sqlText(queryRaw.mock.calls[1][0])).toContain("status IN ('processing', 'reconciling')");
+    });
+
+    it("returns stale without claiming when the locked revision context changed", async () => {
+        queryRaw.mockResolvedValueOnce([row({
+            id: dispatchJobId,
+            branch_id: dispatchBranchId,
+            status: "processing",
+            progress_step: "preparing",
+            lease_token: dispatchLeaseToken,
+            payload: { context: dispatchContext },
+        })]);
+
+        await expect(repository.authorizeForDispatchInTransaction({ $queryRaw: queryRaw } as never, {
+            jobId: dispatchJobId,
+            leaseToken: dispatchLeaseToken,
+            expectedContext: { ...dispatchContext, businessFingerprint: "b".repeat(64) },
+        })).resolves.toEqual({ kind: "stale", reason: "revision_or_business_state_changed" });
+        expect(queryRaw).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        { status: "failed", lease_token: dispatchLeaseToken, progress_step: "preparing" },
+        { status: "processing", lease_token: "00000000-0000-4000-8000-000000000098", progress_step: "preparing" },
+        { status: "processing", lease_token: dispatchLeaseToken, progress_step: "creating" },
+    ])("fails closed for a non-dispatchable job state %#", async (state) => {
+        queryRaw.mockResolvedValueOnce([row({
+            id: dispatchJobId,
+            branch_id: dispatchBranchId,
+            payload: { context: dispatchContext },
+            ...state,
+        })]);
+
+        await expect(repository.authorizeForDispatchInTransaction({ $queryRaw: queryRaw } as never, {
+            jobId: dispatchJobId,
+            leaseToken: dispatchLeaseToken,
+            expectedContext: dispatchContext,
+        })).resolves.toMatchObject({ kind: "lost" });
+        expect(queryRaw).toHaveBeenCalledTimes(1);
     });
 
     it("serializes replicas and refuses a fourth global active job", async () => {
