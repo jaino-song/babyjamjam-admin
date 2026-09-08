@@ -1,3 +1,4 @@
+import { ConflictException } from "@nestjs/common";
 import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 
@@ -19,7 +20,15 @@ function source() {
         requiredSessionCount: 1,
         startDate: date,
         endDate: date,
-        plannedSessions: [{ sessionIndex: 1, serviceDate: "2026-09-07" }],
+        plannedSessions: [{
+            sessionIndex: 1,
+            serviceDate: "2026-09-07",
+            originalDate: "2026-09-07",
+            assignmentId: "00000000-0000-4000-8000-000000000040",
+            scheduleId: 100,
+            employeeId: 11,
+            provenanceVersion: "revision-1",
+        }],
         currentRevisionId: revisionId,
         currentUsableRevisionId: null,
         currentUsableDocumentVersion: null,
@@ -70,6 +79,10 @@ function source() {
             submittedAt: new Date("2026-09-07T08:00:00.000Z"),
         }],
     };
+}
+
+function sourceWith(overrides: Record<string, unknown>) {
+    return { ...source(), ...overrides };
 }
 
 function buildService(jobService: Record<string, jest.Mock>) {
@@ -142,6 +155,47 @@ describe("ServiceRecordFinalizationService revised generation", () => {
             },
         });
         expect(input.payloadFingerprint).toBe(sha256CanonicalJson(input.payload.immutablePayload));
+    });
+
+    it.each([
+        ["absent vector", { plannedSessions: null }],
+        ["malformed vector", { plannedSessions: [{ sessionIndex: 1, serviceDate: "2026-09-07" }] }],
+        ["current row mismatch", {
+            plannedSessions: [{
+                sessionIndex: 1,
+                serviceDate: "2026-09-08",
+                originalDate: "2026-09-07",
+                assignmentId: "00000000-0000-4000-8000-000000000040",
+                scheduleId: 100,
+                employeeId: 11,
+                provenanceVersion: "revision-1",
+            }],
+        }],
+    ])("fails closed for a %s", async (_label, overrides) => {
+        const jobService = {
+            findByRequestKeyInTransaction: jest.fn(),
+            enqueueInTransaction: jest.fn(),
+        };
+        const service = buildService(jobService);
+        const tx = {
+            service_record_revision: {
+                findUnique: jest.fn(),
+            },
+        };
+
+        try {
+            await (service as unknown as {
+                freezeInitialFinalizationGeneration: (tx: unknown, source: unknown) => Promise<void>;
+            }).freezeInitialFinalizationGeneration(tx, sourceWith(overrides));
+            throw new Error("Expected revised source validation to fail");
+        } catch (error) {
+            expect(error).toBeInstanceOf(ConflictException);
+            expect((error as ConflictException).getResponse()).toEqual({
+                code: "SERVICE_RECORD_REVISION_SOURCE_UNAVAILABLE",
+            });
+        }
+        expect(jobService.findByRequestKeyInTransaction).not.toHaveBeenCalled();
+        expect(jobService.enqueueInTransaction).not.toHaveBeenCalled();
     });
 
     it("reuses an existing request payload without rebuilding it", async () => {
