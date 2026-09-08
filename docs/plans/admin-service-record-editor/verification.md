@@ -1,6 +1,8 @@
 # 구현 검증 현황
 
-2026-09-08 로컬 통합 기준. Phase1·2 구현/통합 검사와 Sol 최종 감사를 완료했다. Task3.0 저장 경계 변경을 통합했고 Task3.0 좁은 Sol 최종 감사도 통과했다. Phase3 통합 집중 검사207개와 보완 backend54/frontend36 및 최종 parser15개가 통과했고 Sol 잔여 감사는61a672cab에서 SHIP으로 종료됐다. Phase3~6 전체 구현 또는 외부 연동 완료를 뜻하지 않는다. 과거 화면 초안 기록은 아래에 별도 보존한다.
+2026-09-09 로컬 통합 기준. Phase4는 `1913ef766`, Phase5는 `535a7f2db`에서 Sol/high 독립 감사 SHIP으로 종료했다. Phase6 실제 HTTP 권한·로컬 mock 화면 통합 검증은 진행 중이다. 아래 과거 단계별 결과는 당시 증거이며 최신 판정은 각 phase 감사 문서를 따른다.
+
+과거 단계 기록: 2026-09-08 로컬 통합 기준. Phase1·2 구현/통합 검사와 Sol 최종 감사를 완료했다. Task3.0 저장 경계 변경을 통합했고 Task3.0 좁은 Sol 최종 감사도 통과했다. Phase3 통합 집중 검사207개와 보완 backend54/frontend36 및 최종 parser15개가 통과했고 Sol 잔여 감사는61a672cab에서 SHIP으로 종료됐다. Phase3~6 전체 구현 또는 외부 연동 완료를 뜻하지 않는다. 과거 화면 초안 기록은 아래에 별도 보존한다.
 
 | 확인 대상 | 현재 증거 | 상태/한계 |
 |---|---|---|
@@ -12,11 +14,11 @@
 | 기존 제공인력 제출/최종 제출/실패 보존 | `/tmp/bjj-service-record-draft-public.config.cjs`, mobile/tests/service-record-final-flow.spec.ts, `/tmp/bjj-service-record-draft-public-results` 총12개 | PASS, API 모의 응답. 첫 다른 worktree runner 호출은 미실행 오류 후 수정 |
 | frontend 회귀/타입/빌드/UI architecture gate | worker 전체209 suites1294 tests 및 각 검사 | PASS |
 | mobile 생산 빌드 | 명령 범위 `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:3999 pnpm build` | PASS, 최초 값 누락 실패 별도. 실제API 없는 정적 렌더 로그는 외부 검증 아님 |
-| backend 전체 TypeScript | 기존 receipt helper/spec의5개 오류를 별도 baseline에서 재현 | FAIL, Task5.4에서 수정 필요 |
+| backend 전체 TypeScript | Task5.4에서 기존 receipt helper 오류 해소; `/tmp/bjj-phase6-backend-types.log` | PASS, 2026-09-09 `pnpm exec tsc --noEmit` |
 | 공통 쓰기 잠금/owning transaction, 삭제·교체·mirror generation 재검증 | 통합1fcbb6f75: backend12 suites483 tests, guarded PG3 suites19 tests; worker build/lint PASS | PASS, Sol/high FINAL SHIP (1fcbb6f75), 차단 지적 없음 |
 | 초기 N/duration 분리, 영업일 뒤 회차 이동, 관리자 날짜/미리보기 | 통합 c8c7dd60e: backend86/shared44/PG19/frontend55/mobile3, 총207 PASS | SHIP: 최초6건 단계적 해소, 최종61a672cab. 보완 backend54/frontend36/parser15 PASS. PG19는 기존 쓰기 경합 회귀이며 새 preview 경합 증거는 아님 |
-| 확정 트랜잭션/미리보기 결속/중복 확정/동시 발송 차단 | 승인된 Phase4 수락 조건 | NOT RUN |
-| 계약·영수증 동일기간/수령일·금액 보존/완료계약 신규서명 문서/실제PDF 검증 후 pointer CAS | 승인된 Phase5 수락 조건 | NOT RUN, 외부 capability 미검증 상태 유지 |
+| 확정 트랜잭션/미리보기 결속/중복 확정/동시 발송 차단 | `phase4-final-audit.md`, `1913ef766` | local SHIP; 외부 활성화와 구분 |
+| 계약·영수증 동일기간/수령일·금액 보존/완료계약 새 문서·pointer CAS | `phase5-verification.md`, `phase5-final-audit.md`, `535a7f2db` | local SHIP; PDF는 합성 로컬 자료이며 실제 외부 capability 미검증·차단 유지 |
 | 실제 JWT/session/tenant 권한 HTTP+격리PG, 구 writer들과 경합 | 승인된 Phase6 수락 조건 | NOT RUN |
 
 승인된 검사는 격리 로컬 DB와 모의 외부 제공자를 사용한다. 별도 테스트 worker의 잘못 지정된 Jest 명령이 한 차례 넓은 범위를 실행해 중단됐다. 확인된 출력은 모의 테스트 및 실행 전 오류이며 실제 DB 작업은 확인되지 않았지만, 해당 프로세스 전체의 외부 접속 부재는 증명하지 못했다. 이 실행은 통과 근거에서 제외하고 후속 검사는 정확한 파일과 두 loopback DB URL을 명시한다. 과거 Phase0 진단 원장과 불확실한 요청 결과를 재시도하지 않았다. 공식 Chrome 검증과 API 모의응답 브라우저 검증을 동일한 증거로 취급하지 않는다.
@@ -79,3 +81,51 @@
 - 초안의 날짜 계산은 평일 전용 예시다. 주말·공휴일 정책은 사용자 답변으로 확정하고 실제 구현에서 검증한다.
 - 저장소 전체 test/lint/type-check/build는 제품 코드를 변경하지 않은 이번 문서·초안 작업에서 실행하지 않았다. 실제 구현 완료 게이트는 계획 Phase 6에 명시했다.
 - 변경한 파일의 입력 값 출력은 HTML escape를 사용하며, 실제 개인정보나 인증 토큰을 포함하지 않는다.
+
+
+## Phase6 진행 중 — 통합 정적 검사
+
+2026-09-09, 제품 checkpoint `82c76f113`. 아래 검사는 부모가 integration에서 실행했다. 넓은 Jest 탐색과 live 테스트 flag는 사용하지 않았다.
+
+| 검사 | 정확한 명령 (해당 디렉터리) | 결과 artifact | 판정 |
+|---|---|---|---|
+| Backend 타입 | backend: `pnpm exec tsc --noEmit` | `/tmp/bjj-phase6-backend-types.log` | PASS |
+| Frontend 타입 | frontend: `pnpm exec tsc --noEmit` | `/tmp/bjj-phase6-frontend-types.log` | PASS |
+| Mobile 타입 | mobile: `pnpm exec tsc --noEmit` | `/tmp/bjj-phase6-mobile-types.log` | PASS |
+| Shared 타입 | packages/shared: `pnpm exec tsc --noEmit` | `/tmp/bjj-phase6-shared-types.log` | PASS |
+| Workspace lint | root: `pnpm lint` | `/tmp/bjj-phase6-workspace-lint.log` | PASS (기존 warnings 포함) |
+| UI 구조 baseline gate | root: `pnpm lint:ui-architecture` | `/tmp/bjj-phase6-ui-architecture.log` | PASS; 기존 baseline의 위반 수가 0이라는 뜻은 아님 |
+
+HTTP fixture와 mock 브라우저는 별도 unit에서 병렬 구현 중. 실제 제공자·SMS·운영 DB·공식 Chrome 수락 검증은 실행하지 않았다.
+
+### Phase6 backend regression checkpoint
+
+`/tmp/bjj-phase6-backend-unit-paths.json` freezes 48 exact changed non-e2e/non-live/non-HTTP test paths selected from `e72140413..82c76f113`. Parent ran `pnpm exec jest --runInBand --runTestsByPath <those paths>` from backend under `sandbox-exec` network denial. Initial result: 47 suites PASS, one PDF extractor test FAIL (`1311 PASS / 1 FAIL`, `/tmp/bjj-phase6-backend-unit-matrix.log`). This was a missing Jest ESM runtime option, not accepted as product PASS. The exact failing `test/services/receipt-pdf-verifier.service.spec.ts` then passed all12 with `NODE_OPTIONS=--experimental-vm-modules` under the same network denial (`/tmp/bjj-phase6-pdf-verifier-vm.log`). The installed PDF extractor path uses local synthetic AcroForm bytes; it is not vendor proof. Counts overlap and are not additive.
+
+Root build first failed on external dependency symlinks in the fresh unit; after local APFS dependency clones, it failed because the network-deny sandbox also prevented Turbopack's local IPC port. Both are retained as harness failures (`/tmp/bjj-phase6-hermetic-build.log`, `/tmp/bjj-phase6-hermetic-build-local-deps.log`). The follow-up permits loopback only and continues to deny external networking.
+
+HTTP preparation found forged query fields are currently ignored by the controller. Expected400 remains an acceptance criterion; separate `unit/phase6-query-boundary` owns the narrow controller/DTO correction while HTTP/browser test implementation proceeds.
+
+Root `pnpm build` at `82c76f113` PASS with locally cloned dependencies and loopback-only sandbox (`/tmp/bjj-phase6-hermetic-build-loopback.log`). Backend/Nest, frontend/Next, and mobile/Next production builds completed. Static rendering logs include expected unavailable synthetic API `127.0.0.1:3999` and dynamic-cookie routes; this is compilation/packaging evidence only, not API/runtime success. No external networking was permitted.
+
+### Phase6 frontend/mobile/shared regression checkpoint
+
+Exact changed test manifests are `/tmp/bjj-phase6-frontend-unit-paths.json`, `/tmp/bjj-phase6-mobile-unit-paths.json`, `/tmp/bjj-phase6-packages-shared-unit-paths.json`. Parent invoked `pnpm exec jest --runInBand --runTestsByPath <manifest paths>` in each package with external/network denial. Frontend18suites192PASS, mobile2suites25PASS, shared3suites93PASS. Logs: `/tmp/bjj-phase6-frontend-unit-matrix.log`, `/tmp/bjj-phase6-mobile-unit-matrix.log`, `/tmp/bjj-phase6-packages-shared-unit-matrix.log`. These are selected changed-file regressions, not a claim that unrestricted root `pnpm test` ran. Root test discovery remains prohibited because the repository includes live e2e suites.
+
+### Invariant-to-test map (existing actual PostgreSQL evidence)
+
+Paths below are under `backend/test/e2e/`. Phase4/5 logs and independent audits remain the execution evidence; these names identify what each test proves.
+
+| Invariant | Exact test file / test name | Boundary |
+|---|---|---|
+| duration15 / N13 / nominal prices / signatures | `service-record-confirm-atomic.e2e.spec.ts` — `commits dates/content once for concurrent retries and preserves signatures, N and prices` | Actual confirm persistence, duplicate concurrent requests; original signature bytes/timestamps retained |
+| Consecutive revision immutability | same file — `allows a second revision while keeping first dates and earlier confirmation replay immutable` | Prior revision and original dates remain immutable |
+| Future content does not fabricate submission | same file — `persists explicitly edited future content without inventing a submission or signature` | Explicit content only; no invented submit/lock/signature |
+| Replayable no-op | same file — `persists a replayable no-change result without a revision or document job` | No new revision/job |
+| Stale preview and foreign branch | same file — `rejects a foreign branch and a stale preview while preserving the active draft` | Draft preserved on rejection |
+| Scheduled message race | `service-record-confirm-message-races.e2e.spec.ts` — `%s wins the common client lock` (confirm/dispatch) | Both lock winners, current revision fence |
+| Provider vs admin | `service-record-confirm-provider-races.e2e.spec.ts` — `lets admin confirmation win, rejects stale provider input, then accepts refreshed input`; `lets a provider write win, then rejects the stale admin confirmation without period damage` | Both winners plus refreshed provider positive path |
+| Queued document dispatch race | `service-record-confirm-document-races.e2e.spec.ts` — `%s wins against %s` (confirm/dispatch × create_document/finalize_document) | Authorization owning lock, no stale dispatch |
+| Atomic rollback | `service-record-confirm-rollback.e2e.spec.ts` — `rolls back every owning write when the %s boundary fails` | Parameterized write faults; entire owning state equals original |
+
+The five files above do not prove receipt receivedDate directly. Receipt date/amount preservation must use the separate receipt-promotion/operation-input/PDF semantic tests recorded in Phase5; billing assertions are not substituted for receipt assertions.
