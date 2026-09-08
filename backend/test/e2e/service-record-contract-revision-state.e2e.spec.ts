@@ -156,7 +156,6 @@ async function waitForBarrier(barrier: Promise<void>, label: string, timeoutMs =
 describeE2E("contract revision operation state (real disposable PostgreSQL)", () => {
     let prisma: ReturnType<typeof createApprovedServiceRecordConfirmClient>;
     let repository: ServiceRecordEditRepository;
-    const stateIds = new Set<string>();
 
     beforeAll(async () => {
         assertApprovedServiceRecordConfirmDatabaseTarget();
@@ -165,13 +164,7 @@ describeE2E("contract revision operation state (real disposable PostgreSQL)", ()
         repository = new ServiceRecordEditRepository(prisma as unknown as PrismaService);
     });
 
-    afterEach(async () => {
-        const ids = [...stateIds];
-        stateIds.clear();
-        if (ids.length > 0) {
-            await prisma.service_record_revision_document_state.deleteMany({ where: { id: { in: ids } } });
-        }
-    });
+    // Retain synthetic operation history with its revision evidence in the disposable DB.
 
     afterAll(async () => {
         await prisma?.$disconnect();
@@ -214,7 +207,6 @@ describeE2E("contract revision operation state (real disposable PostgreSQL)", ()
             status: overrides.status ?? "pending",
             step: overrides.step ?? "prepared",
         });
-        stateIds.add(state.id);
         return { revision, generation, state };
     }
 
@@ -255,7 +247,6 @@ describeE2E("contract revision operation state (real disposable PostgreSQL)", ()
             generation,
             snapshot: current,
         });
-        if (result.state) stateIds.add(result.state.id);
 
         expect(result.status).toBe("capability_unverified");
         expect(provider.inspectDocument).not.toHaveBeenCalled();

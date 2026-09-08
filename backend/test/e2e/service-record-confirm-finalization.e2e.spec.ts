@@ -86,6 +86,7 @@ function createFinalizer(prisma: PrismaClient) {
         lifecycle,
         snapshot,
         documentJobs,
+        new ServiceRecordEditRepository(prisma as unknown as PrismaService),
     );
     return { finalizer, lifecycle, executeCase };
 }
