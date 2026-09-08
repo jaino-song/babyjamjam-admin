@@ -295,6 +295,7 @@ export function ServiceRecordWizard({
     onSaveHeader,
     onOpenDay,
     onOpenScheduleChangePreview,
+    onOpenServiceDateEditor,
     onServiceDateChange,
     onFieldChange,
     onToggleMulti,
@@ -318,6 +319,16 @@ export function ServiceRecordWizard({
         const item = DAILY_ITEMS[index];
         return item ? isDailyItemComplete(item, draft) : false;
     });
+    const renderServiceDateDisplay = (
+        sessionIndex: number,
+        serviceDate: string,
+        suffix: string,
+        fallback = formatShortDate(serviceDate),
+    ): ReactNode => slots?.serviceDateDisplay?.({
+        "data-component": child(suffix),
+        sessionIndex,
+        serviceDate,
+    }) ?? fallback;
     const progress = screen === "done"
         ? 100
         : screen === "day"
@@ -438,7 +449,20 @@ export function ServiceRecordWizard({
                                         disabled={adminEditing ? false : ((!readOnly && !done && !open) || (!readOnly && isRecordFinalized))}
                                         onClick={() => onOpenDay(sessionIndex, done)}
                                     >
-                                        <div data-component={child("body_day-grid_day_date")} data-slot="day-date" className="d">{formatShortDate(readOnly ? (session?.serviceDate.slice(0, 10) || defaultDate(sessionIndex)) : (done ? (session?.serviceDate.slice(0, 10) ?? "") : defaultDate(sessionIndex)))}</div>
+                                        <div data-component={child("body_day-grid_day_date")} data-slot="day-date" className="d">
+                                            {renderServiceDateDisplay(
+                                                sessionIndex,
+                                                readOnly
+                                                    ? (session?.serviceDate.slice(0, 10) || defaultDate(sessionIndex))
+                                                : (done ? (session?.serviceDate.slice(0, 10) ?? "") : defaultDate(sessionIndex)),
+                                                "body_day-grid_day_date-display",
+                                                formatShortDate(
+                                                    readOnly
+                                                        ? (session?.serviceDate.slice(0, 10) || defaultDate(sessionIndex))
+                                                        : (done ? (session?.serviceDate.slice(0, 10) ?? "") : defaultDate(sessionIndex)),
+                                                ),
+                                            )}
+                                        </div>
                                         <div data-component={child("body_day-grid_day_number")} data-slot="day-number" className="n">{sessionIndex}</div>
                                         <div data-component={child("body_day-grid_day_status")} data-slot="day-status" className="st">
                                             {adminEditing ? (changed ? "초안 변경" : done ? "제출완료" : "편집 가능") : done ? "제출완료" : readOnly ? "조회 가능" : open ? "입력 가능" : "대기"}
@@ -476,12 +500,30 @@ export function ServiceRecordWizard({
                             이전
                         </button>
                         <div data-component={child("body_date-chip")} data-slot="datechip" className="datechip">
-                            {day}회차{editing ? ` · ${formatMonthDayKo(currentServiceDate)}` : ""}
+                            {day}회차{editing ? " · " : ""}
+                            {editing
+                                ? renderServiceDateDisplay(
+                                    day,
+                                    currentServiceDate,
+                                    "body_date-chip_date-display",
+                                    formatMonthDayKo(currentServiceDate),
+                                )
+                                : null}
                         </div>
                         {!readOnly && (!editing || adminMode) && pageIdx === 0 && (
                             <div data-component={child("body_service-date-field")} data-slot="fld" className="fld">
                                 <label data-slot="lab" className="lab">제공일자</label>
-                                <TextInput type="date" className="dateinput" value={currentServiceDate} min={day <= 1 ? (context?.startDate?.slice(0, 10) ?? undefined) : defaultDate(day)} onChange={(event) => onServiceDateChange(event.target.value)} />
+                                {adminEditing && slots?.serviceDateEditor ? (
+                                    slots.serviceDateEditor({
+                                        "data-component": child("body_service-date-editor"),
+                                        sessionIndex: day,
+                                        serviceDate: currentServiceDate,
+                                        disabled: busy,
+                                        onOpen: () => onOpenServiceDateEditor?.(day),
+                                    })
+                                ) : (
+                                    <TextInput type="date" className="dateinput" value={currentServiceDate} min={day <= 1 ? (context?.startDate?.slice(0, 10) ?? undefined) : defaultDate(day)} onChange={(event) => onServiceDateChange(event.target.value)} />
+                                )}
                             </div>
                         )}
                         {!readOnly && (!editing || adminMode) && hasServiceDateMismatch && (

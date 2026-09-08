@@ -23,9 +23,14 @@ import {
 import {
     AdminServiceRecordEditApiError,
     type AdminServiceRecordEditChanges,
+    type AdminServiceRecordEditDateMove,
     type AdminServiceRecordEditSessionChanges,
     type AdminServiceRecordEditState,
+    type ServiceRecordEditPreviewResponse,
 } from "@/features/service-records/types";
+
+import { ServiceRecordDateSelectionDialog } from "./ServiceRecordDateSelectionDialog";
+import { ServiceRecordEditPreviewDialog } from "./ServiceRecordEditPreviewDialog";
 
 import type {
     ServiceRecordAssignment,
@@ -318,6 +323,22 @@ function cloneAdminServiceRecordEditChanges(
     };
 }
 
+function stripServiceDateSnapshots(
+    changes: AdminServiceRecordEditChanges,
+): AdminServiceRecordEditChanges {
+    if (!changes.sessions) return cloneAdminServiceRecordEditChanges(changes);
+    return {
+        ...(changes.header ? { header: { ...changes.header } } : {}),
+        sessions: changes.sessions.map((session) => ({
+            sessionIndex: session.sessionIndex,
+            ...(session.answers ? { answers: { ...session.answers } } : {}),
+            ...(session.etcService !== undefined ? { etcService: session.etcService } : {}),
+            ...(session.notes !== undefined ? { notes: session.notes } : {}),
+            ...(session.paymentConfirmed !== undefined ? { paymentConfirmed: session.paymentConfirmed } : {}),
+        })),
+    };
+}
+
 function applyAdminServiceRecordEditChanges(
     context: ServiceRecordContext,
     changes: AdminServiceRecordEditChanges,
@@ -434,6 +455,22 @@ function draftErrorMessage(status: number): string {
     return "초안을 저장하지 못했습니다. 입력은 유지됩니다.";
 }
 
+function dateMoveErrorMessage(status: number): string {
+    if (status === 401) return "로그인이 필요합니다. 제공일 입력은 유지됩니다.";
+    if (status === 400) return "선택한 제공일을 적용할 수 없습니다. 현재 입력은 유지됩니다.";
+    if (status === 403) return "제공일 변경 권한이 없습니다. 현재 입력은 유지됩니다.";
+    if (status === 409) return "다른 관리자의 변경으로 제공일을 적용하지 못했습니다. 입력은 유지되었습니다. 최신 초안을 불러오거나 내 입력을 유지하세요.";
+    return "제공일을 저장하지 못했습니다. 현재 입력은 유지됩니다.";
+}
+
+function previewErrorMessage(status: number): string {
+    if (status === 401) return "로그인이 필요합니다. 초안 미리보기를 불러오지 못했습니다.";
+    if (status === 403) return "초안 미리보기 권한이 없습니다.";
+    if (status === 404) return "초안을 찾을 수 없어 미리보기를 불러오지 못했습니다.";
+    if (status === 409) return "초안 버전이 변경되어 미리보기를 불러오지 못했습니다. 최신 초안을 확인해 주세요.";
+    return "초안 미리보기를 불러오지 못했습니다.";
+}
+
 export interface ServiceRecordAdminWizardProps {
     clientId: string;
     overview: AdminServiceRecordEditorOverview;
@@ -465,6 +502,12 @@ export function ServiceRecordAdminWizard({
     const [pageIdx, setPageIdx] = useState(0);
     const [draft, setDraft] = useState<Record<string, unknown>>({});
     const [selectedSupplementalKey, setSelectedSupplementalKey] = useState<string | null>(null);
+    const [dateDialogOpen, setDateDialogOpen] = useState(false);
+    const [dateMoveBusy, setDateMoveBusy] = useState(false);
+    const [previewDialogOpen, setPreviewDialogOpen] = useState(false);
+    const [previewBusy, setPreviewBusy] = useState(false);
+    const [preview, setPreview] = useState<ServiceRecordEditPreviewResponse | null>(null);
+    const [previewError, setPreviewError] = useState<string | null>(null);
 
     const activeDraft = draftState?.draft?.status === "ACTIVE" ? draftState.draft : null;
     const context = useMemo(
@@ -500,7 +543,7 @@ export function ServiceRecordAdminWizard({
         [workingChanges.sessions],
     );
     const isSaving = saveState === "saving";
-    const formReadOnly = !activeDraft || Boolean(selectedSupplemental) || isSaving;
+    const formReadOnly = !activeDraft || Boolean(selectedSupplemental) || isSaving || dateMoveBusy;
 
     const markLocalChange = useCallback(() => {
         setDirty(true);
@@ -513,12 +556,16 @@ export function ServiceRecordAdminWizard({
         markLocalChange();
     }, [markLocalChange]);
 
-    const persistDraft = useCallback(async (): Promise<boolean> => {
+    const persistDraft = useCallback(async (): Promise<AdminServiceRecordEditState | null> => {
         setSaveState("saving");
         setDraftError(null);
         try {
             const response = activeDraft
-                ? await adminServiceRecordEditApi.updateDraft(activeDraft.id, activeDraft.draftVersion, workingChanges)
+                ? await adminServiceRecordEditApi.updateDraft(
+                    activeDraft.id,
+                    activeDraft.draftVersion,
+                    stripServiceDateSnapshots(workingChanges),
+                )
                 : await adminServiceRecordEditApi.startDraft(clientId);
             if (!response.draft || response.draft.status !== "ACTIVE") {
                 throw new Error("Draft start did not return an active draft");
@@ -533,7 +580,7 @@ export function ServiceRecordAdminWizard({
             setDraft(draftForSession(nextSession));
             setDirty(false);
             setSaveState("saved");
-            return true;
+            return response;
         } catch (error) {
             const apiError = error instanceof AdminServiceRecordEditApiError ? error : null;
             const status = apiError?.status ?? 500;
@@ -543,9 +590,75 @@ export function ServiceRecordAdminWizard({
                 latestState: status === 409 && apiError ? latestStateFromDraftConflict(apiError) : null,
             });
             setSaveState("error");
-            return false;
+            return null;
         }
     }, [activeDraft, baseView.context, clientId, displayDay, selectedSupplemental, workingChanges]);
+
+    const applyDateMove = useCallback(async (toDate: string) => {
+        if (!activeDraft || selectedSupplemental || dateMoveBusy) return;
+        setDateMoveBusy(true);
+        setDraftError(null);
+        try {
+            const dateMove: AdminServiceRecordEditDateMove = {
+                sessionIndex: displayDay,
+                toDate,
+            };
+            const response = await adminServiceRecordEditApi.updateDraft(
+                activeDraft.id,
+                activeDraft.draftVersion,
+                stripServiceDateSnapshots(workingChanges),
+                dateMove,
+            );
+            if (!response.draft || response.draft.status !== "ACTIVE") {
+                throw new Error("Date move did not return an active draft");
+            }
+            const nextChanges = cloneAdminServiceRecordEditChanges(response.draft.changes);
+            const nextContext = applyAdminServiceRecordEditChanges(baseView.context, nextChanges);
+            const nextSession = nextContext.sessions.find((session) => session.sessionIndex === displayDay);
+            setDraftState(response);
+            setWorkingChanges(nextChanges);
+            setDraft(draftForSession(nextSession));
+            setDirty(false);
+            setSaveState("saved");
+            setDateDialogOpen(false);
+            setPreview(null);
+            setPreviewError(null);
+        } catch (error) {
+            const apiError = error instanceof AdminServiceRecordEditApiError ? error : null;
+            const status = apiError?.status ?? 500;
+            setDateDialogOpen(false);
+            setDraftError({
+                status,
+                message: dateMoveErrorMessage(status),
+                latestState: status === 409 && apiError ? latestStateFromDraftConflict(apiError) : null,
+            });
+            setSaveState("error");
+        } finally {
+            setDateMoveBusy(false);
+        }
+    }, [activeDraft, baseView.context, dateMoveBusy, displayDay, selectedSupplemental, workingChanges]);
+
+    const openPreview = useCallback(async () => {
+        if (!activeDraft || dateMoveBusy || previewBusy) return;
+        const target = dirty ? await persistDraft() : draftState;
+        if (!target?.draft || target.draft.status !== "ACTIVE") return;
+        setPreviewDialogOpen(true);
+        setPreviewBusy(true);
+        setPreviewError(null);
+        try {
+            const nextPreview = await adminServiceRecordEditApi.previewDraft(
+                target.draft.id,
+                target.draft.draftVersion,
+            );
+            setPreview(nextPreview);
+        } catch (error) {
+            const apiError = error instanceof AdminServiceRecordEditApiError ? error : null;
+            setPreviewError(previewErrorMessage(apiError?.status ?? 500));
+            setPreview(null);
+        } finally {
+            setPreviewBusy(false);
+        }
+    }, [activeDraft, dateMoveBusy, draftState, dirty, persistDraft, previewBusy]);
 
     const discardCurrentDraft = useCallback(async () => {
         if (!activeDraft) return;
@@ -561,6 +674,10 @@ export function ServiceRecordAdminWizard({
             setSelectedSupplementalKey(null);
             setScreen("overview");
             setDiscardModalOpen(false);
+            setDateDialogOpen(false);
+            setPreviewDialogOpen(false);
+            setPreview(null);
+            setPreviewError(null);
         } catch (error) {
             const apiError = error instanceof AdminServiceRecordEditApiError ? error : null;
             const status = apiError?.status ?? 500;
@@ -644,9 +761,7 @@ export function ServiceRecordAdminWizard({
     }, [draft, onFieldChange]);
     const onServiceDateChange = useCallback((next: string) => {
         setDraft((current) => ({ ...current, _date: next }));
-        if (!activeDraft || selectedSupplemental) return;
-        updateWorkingChanges((current) => updateAdminServiceRecordEditField(current, displayDay, "_date", next));
-    }, [activeDraft, displayDay, selectedSupplemental, updateWorkingChanges]);
+    }, []);
     const onHeaderChange = useCallback((key: string, value: string) => {
         if (!activeDraft) return;
         updateWorkingChanges((current) => ({
@@ -658,6 +773,35 @@ export function ServiceRecordAdminWizard({
         const saved = await persistDraft();
         if (saved) setScreen("overview");
     }, [persistDraft]);
+
+    const originalDateForSession = useCallback((sessionIndex: number) => (
+        dateOnly(baseView.context.sessions.find((session) => session.sessionIndex === sessionIndex)?.serviceDate)
+    ), [baseView.context.sessions]);
+
+    const renderAdminDateDisplay = useCallback(({
+        "data-component": dataComponent,
+        sessionIndex,
+        serviceDate,
+    }: {
+        "data-component": string;
+        sessionIndex: number;
+        serviceDate: string;
+    }) => {
+        const revisedDate = dateOnly(serviceDate) || serviceDate;
+        const originalDate = originalDateForSession(sessionIndex);
+        const changed = Boolean(originalDate && revisedDate && originalDate !== revisedDate);
+        return (
+            <span data-component={dataComponent} data-slot="date-display">
+                <span data-slot="revised-date">{formatShortDate(revisedDate)}</span>
+                {changed ? <span data-slot="original-date">원본 {formatShortDate(originalDate)}</span> : null}
+            </span>
+        );
+    }, [originalDateForSession]);
+
+    const openDateDialog = useCallback((sessionIndex: number) => {
+        if (!activeDraft || selectedSupplemental || sessionIndex !== displayDay || dateMoveBusy) return;
+        setDateDialogOpen(true);
+    }, [activeDraft, dateMoveBusy, displayDay, selectedSupplemental]);
 
     const statusLabel = saveState === "saving"
             ? "저장 중…"
@@ -692,6 +836,18 @@ export function ServiceRecordAdminWizard({
                         onClick={() => setDiscardModalOpen(true)}
                     >
                         초안 취소
+                    </Button>
+                ) : null}
+                {activeDraft ? (
+                    <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        data-component={`${ADMIN_WIZARD_COMPONENT}_top-bar_admin-toolbar_preview`}
+                        disabled={isSaving || dateMoveBusy || discarding || previewBusy}
+                        onClick={() => { void openPreview(); }}
+                    >
+                        변경 미리보기
                     </Button>
                 ) : null}
                 {activeDraft && screen !== "service" ? (
@@ -747,7 +903,7 @@ export function ServiceRecordAdminWizard({
                 adminMode
                 changedSessionIndexes={changedSessionIndexes}
                 clientSignature={currentSession?.clientSignature ?? null}
-                busy={isSaving}
+                busy={isSaving || dateMoveBusy}
                 isRecordFinalized={false}
                 lockedDays={lockedDays}
                 nextOpenDay={nextOpenDay}
@@ -762,6 +918,7 @@ export function ServiceRecordAdminWizard({
                 onSaveHeader={onSaveHeader}
                 onOpenDay={openDay}
                 onOpenScheduleChangePreview={() => undefined}
+                onOpenServiceDateEditor={openDateDialog}
                 onServiceDateChange={onServiceDateChange}
                 onFieldChange={onFieldChange}
                 onToggleMulti={onToggleMulti}
@@ -776,6 +933,27 @@ export function ServiceRecordAdminWizard({
                         </span>
                     ),
                     signature: (signatureProps) => <ReadOnlySignature {...signatureProps} />,
+                    serviceDateDisplay: renderAdminDateDisplay,
+                    serviceDateEditor: ({
+                        "data-component": dataComponent,
+                        serviceDate,
+                        disabled,
+                        onOpen,
+                    }) => (
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            data-component={dataComponent}
+                            data-slot="date-editor"
+                            disabled={disabled || dateMoveBusy}
+                            onClick={onOpen}
+                        >
+                            {dateOnly(serviceDate)
+                                ? `${formatShortDate(dateOnly(serviceDate))} · 제공일 변경`
+                                : "제공일 선택"}
+                        </Button>
+                    ),
                     adminToolbar,
                     overviewSupplemental: supplementalSessions.length > 0 ? (
                         <div
@@ -812,6 +990,24 @@ export function ServiceRecordAdminWizard({
                 isPending={discarding}
                 onApprove={() => { void discardCurrentDraft(); }}
                 data-component={`${ADMIN_WIZARD_COMPONENT}_discard-modal`}
+            />
+            <ServiceRecordDateSelectionDialog
+                open={dateDialogOpen}
+                onOpenChange={setDateDialogOpen}
+                currentServiceDate={dateOnly(currentSession?.serviceDate) || ""}
+                sessionLabel={`${displayDay}회차`}
+                onApply={(nextDate) => { void applyDateMove(nextDate); }}
+                busy={dateMoveBusy}
+                disabled={!activeDraft || Boolean(selectedSupplemental)}
+                data-component={`${ADMIN_WIZARD_COMPONENT}_date-selection-dialog`}
+            />
+            <ServiceRecordEditPreviewDialog
+                open={previewDialogOpen}
+                onOpenChange={setPreviewDialogOpen}
+                preview={preview}
+                busy={previewBusy}
+                error={previewError}
+                data-component={`${ADMIN_WIZARD_COMPONENT}_preview-dialog`}
             />
         </>
     );

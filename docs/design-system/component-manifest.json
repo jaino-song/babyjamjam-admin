@@ -1401,6 +1401,19 @@
         "requiredFor": [
           "service-record admin provisional business-date selection"
         ]
+      },
+      {
+        "name": "ServiceRecordEditPreviewDialog",
+        "layer": "organism",
+        "import": "@/components/app/service-record/ServiceRecordEditPreviewDialog",
+        "file": "frontend/src/components/app/service-record/ServiceRecordEditPreviewDialog.tsx",
+        "exports": [
+          "ServiceRecordEditPreviewDialog",
+          "ServiceRecordEditPreviewDialogProps"
+        ],
+        "requiredFor": [
+          "service-record admin read-only draft preview"
+        ]
       }
     ],
     "mobile": [

@@ -285,6 +285,150 @@ describe("administrator draft editing", () => {
         expect(container.querySelectorAll("input:not([disabled]), textarea:not([disabled])").length).toBeGreaterThan(0);
     });
 
+    it("applies explicit business-date moves and preserves prior draft content on later saves", async () => {
+        const afterDateMove = makeDraftState({
+            sessions: [{ sessionIndex: 3, serviceDate: "2026-07-15" }],
+        }, 2);
+        const afterContentSave = makeDraftState({
+            sessions: [{ sessionIndex: 3, serviceDate: "2026-07-15", notes: "후속 메모" }],
+        }, 3);
+        const afterSecondDateMove = makeDraftState({
+            sessions: [{ sessionIndex: 3, serviceDate: "2026-07-16", notes: "후속 메모" }],
+        }, 4);
+        const fetchMock = jest.fn()
+            .mockResolvedValueOnce({ ok: true, status: 200, json: async () => afterDateMove })
+            .mockResolvedValueOnce({ ok: true, status: 200, json: async () => afterContentSave })
+            .mockResolvedValueOnce({ ok: true, status: 200, json: async () => afterSecondDateMove });
+        global.fetch = fetchMock;
+
+        const { container } = render(
+            <ServiceRecordAdminWizard clientId="42" overview={overview} initialDraftState={makeDraftState()} />,
+        );
+
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[2]);
+        fireEvent.click(screen.getByRole("button", { name: /제공일 변경/ }));
+        fireEvent.click(screen.getByRole("combobox", { name: "일" }));
+        fireEvent.click(screen.getByRole("option", { name: "15일" }));
+        fireEvent.click(screen.getByRole("button", { name: "날짜 적용" }));
+
+        await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: "서비스 제공일 변경" })).not.toBeInTheDocument());
+        expect(fetchMock).toHaveBeenNthCalledWith(
+            1,
+            "/api/admin/service-records/drafts/draft-1",
+            expect.objectContaining({
+                method: "PATCH",
+                body: JSON.stringify({
+                    expectedDraftVersion: 1,
+                    changes: {},
+                    dateMove: { sessionIndex: 3, toDate: "2026-07-15" },
+                }),
+            }),
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+        fireEvent.change(screen.getByPlaceholderText("서비스 제공 관련 특이사항 기록 필요 시 기재"), {
+            target: { value: "후속 메모" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: "초안 저장" }));
+        await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+        expect(fetchMock).toHaveBeenNthCalledWith(
+            2,
+            "/api/admin/service-records/drafts/draft-1",
+            expect.objectContaining({
+                method: "PATCH",
+                body: JSON.stringify({
+                    expectedDraftVersion: 2,
+                    changes: { sessions: [{ sessionIndex: 3, notes: "후속 메모" }] },
+                }),
+            }),
+        );
+
+        fireEvent.click(container.querySelector('[data-component$="_body_day-back"]')!);
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[2]);
+        fireEvent.click(screen.getByRole("button", { name: /제공일 변경/ }));
+        fireEvent.click(screen.getByRole("combobox", { name: "일" }));
+        fireEvent.click(screen.getByRole("option", { name: "16일" }));
+        fireEvent.click(screen.getByRole("button", { name: "날짜 적용" }));
+        await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+
+        expect(fetchMock).toHaveBeenNthCalledWith(
+            3,
+            "/api/admin/service-records/drafts/draft-1",
+            expect.objectContaining({
+                method: "PATCH",
+                body: JSON.stringify({
+                    expectedDraftVersion: 3,
+                    changes: { sessions: [{ sessionIndex: 3, notes: "후속 메모" }] },
+                    dateMove: { sessionIndex: 3, toDate: "2026-07-16" },
+                }),
+            }),
+        );
+        expect(container).toHaveTextContent("2026.07.16");
+    });
+
+    it("opens a read-only backend preview using the active draft version", async () => {
+        const previewResponse = {
+            previewId: "preview-1",
+            draftId: "draft-1",
+            draftVersion: 1,
+            sourceCaseVersion: 1,
+            sourceFingerprint: "source-1",
+            requiredSessionCount: 3,
+            calendarVersion: "kr-2026",
+            before: { startDate: "2026-07-10", endDate: "2026-07-14", sessions: [] },
+            after: { startDate: "2026-07-10", endDate: "2026-07-14", sessions: [] },
+            provenance: [],
+            contentChanges: { headerChanged: false, changedSessionIndexes: [] },
+            impactedAssignments: [],
+            blockingReasons: [],
+        };
+        const fetchMock = jest.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: async () => previewResponse,
+        });
+        global.fetch = fetchMock;
+
+        render(
+            <ServiceRecordAdminWizard clientId="42" overview={overview} initialDraftState={makeDraftState()} />,
+        );
+        fireEvent.click(screen.getByRole("button", { name: "변경 미리보기" }));
+
+        await waitFor(() => expect(screen.getByRole("dialog", { name: "초안 변경 미리보기" })).toBeInTheDocument());
+        expect(fetchMock).toHaveBeenCalledWith(
+            "/api/admin/service-records/drafts/draft-1/preview",
+            expect.objectContaining({
+                method: "POST",
+                body: JSON.stringify({ expectedDraftVersion: 1 }),
+            }),
+        );
+        expect(screen.getByText("변경 전")).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /확정|완료/ })).not.toBeInTheDocument();
+    });
+
+    it("closes the date dialog and keeps the current draft date on a permission failure", async () => {
+        global.fetch = jest.fn().mockResolvedValue({
+            ok: false,
+            status: 403,
+            json: async () => ({ code: "FORBIDDEN" }),
+        });
+        const { container } = render(
+            <ServiceRecordAdminWizard clientId="42" overview={overview} initialDraftState={makeDraftState()} />,
+        );
+
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[2]);
+        fireEvent.click(screen.getByRole("button", { name: /제공일 변경/ }));
+        fireEvent.click(screen.getByRole("combobox", { name: "일" }));
+        fireEvent.click(screen.getByRole("option", { name: "15일" }));
+        fireEvent.click(screen.getByRole("button", { name: "날짜 적용" }));
+
+        await waitFor(() => expect(screen.getByText("제공일 변경 권한이 없습니다. 현재 입력은 유지됩니다.")).toBeInTheDocument());
+        expect(screen.queryByRole("dialog", { name: "서비스 제공일 변경" })).not.toBeInTheDocument();
+        expect(container).toHaveTextContent("2026.07.13");
+    });
+
     it("resumes changed sessions and lets admins navigate incomplete submitted pages", () => {
         const resumed = makeDraftState({ sessions: [{ sessionIndex: 1, answers: { perineum: [] } }] });
         const { container } = render(
@@ -300,15 +444,17 @@ describe("administrator draft editing", () => {
 
     it("saves only draft changes with the current CAS version and keeps source data immutable", async () => {
         const initial = makeDraftState();
-        const saved = makeDraftState({ sessions: [{ sessionIndex: 1, serviceDate: "2026-07-16" }] }, 2);
+        const saved = makeDraftState({ sessions: [{ sessionIndex: 1, notes: "관리자 메모" }] }, 2);
         global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => saved });
         const { container } = render(
             <ServiceRecordAdminWizard clientId="42" overview={overview} initialDraftState={initial} />,
         );
 
         fireEvent.click(container.querySelectorAll('[data-slot="day"]')[0]);
-        const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
-        fireEvent.change(dateInput, { target: { value: "2026-07-16" } });
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+        const notesInput = screen.getByPlaceholderText("서비스 제공 관련 특이사항 기록 필요 시 기재");
+        fireEvent.change(notesInput, { target: { value: "관리자 메모" } });
         fireEvent.click(screen.getByRole("button", { name: "초안 저장" }));
 
         await waitFor(() => expect(screen.getByText("저장됨")).toBeInTheDocument());
@@ -318,7 +464,7 @@ describe("administrator draft editing", () => {
                 method: "PATCH",
                 body: JSON.stringify({
                     expectedDraftVersion: 1,
-                    changes: { sessions: [{ sessionIndex: 1, serviceDate: "2026-07-16" }] },
+                    changes: { sessions: [{ sessionIndex: 1, notes: "관리자 메모" }] },
                 }),
             }),
         );
@@ -326,7 +472,7 @@ describe("administrator draft editing", () => {
     });
 
     it("keeps the active-day input on 409 until an explicit latest-draft reload", async () => {
-        const latest = makeDraftState({ sessions: [{ sessionIndex: 1, serviceDate: "2026-07-18" }] }, 3);
+        const latest = makeDraftState({ sessions: [{ sessionIndex: 1, notes: "서버 최신 메모" }] }, 3);
         global.fetch = jest.fn().mockResolvedValue({
             ok: false,
             status: 409,
@@ -343,14 +489,16 @@ describe("administrator draft editing", () => {
         );
 
         fireEvent.click(container.querySelectorAll('[data-slot="day"]')[0]);
-        const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
-        fireEvent.change(dateInput, { target: { value: "2026-07-17" } });
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+        const notesInput = screen.getByPlaceholderText("서비스 제공 관련 특이사항 기록 필요 시 기재");
+        fireEvent.change(notesInput, { target: { value: "내 로컬 메모" } });
         fireEvent.click(screen.getByRole("button", { name: "초안 저장" }));
 
         await waitFor(() => expect(screen.getByText(/다른 관리자의 변경으로 저장되지 않았습니다/)).toBeInTheDocument());
-        expect(dateInput).toHaveValue("2026-07-17");
+        expect(notesInput).toHaveValue("내 로컬 메모");
         fireEvent.click(screen.getByRole("button", { name: "최신 초안 불러오기" }));
-        expect(container.querySelector('input[type="date"]')).toHaveValue("2026-07-18");
+        expect(screen.getByPlaceholderText("서비스 제공 관련 특이사항 기록 필요 시 기재")).toHaveValue("서버 최신 메모");
         expect(screen.getByText("저장됨")).toBeInTheDocument();
     });
 
@@ -371,11 +519,13 @@ describe("administrator draft editing", () => {
             <ServiceRecordAdminWizard clientId="42" overview={overview} initialDraftState={makeDraftState()} />,
         );
         fireEvent.click(container.querySelectorAll('[data-slot="day"]')[0]);
-        const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
-        fireEvent.change(dateInput, { target: { value: "2026-07-17" } });
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+        const notesInput = screen.getByPlaceholderText("서비스 제공 관련 특이사항 기록 필요 시 기재");
+        fireEvent.change(notesInput, { target: { value: "권한 확인 메모" } });
         fireEvent.click(screen.getByRole("button", { name: "초안 저장" }));
         await waitFor(() => expect(screen.getByText("초안 접근 권한이 없습니다. 현재 입력은 유지됩니다.")).toBeInTheDocument());
-        expect(container.querySelector('input[type="date"]')).toHaveValue("2026-07-17");
+        expect(notesInput).toHaveValue("권한 확인 메모");
 
         fireEvent.click(screen.getByRole("button", { name: "초안 취소" }));
         const modalButtons = screen.getAllByRole("button", { name: "초안 취소" });
