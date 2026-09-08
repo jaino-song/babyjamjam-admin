@@ -54,6 +54,15 @@ export interface IEformsignDocumentJobRepository {
         tx: Prisma.TransactionClient,
         input: EnqueueEformsignDocumentJobInput,
     ): Promise<{ job: EformsignDocumentJobEntity; existing: boolean }>;
+    /**
+     * Authorize a claimed provider job through the repository-owned
+     * transaction. The repository discovers the durable job owner, acquires
+     * the service-record lock set, rereads authoritative source rows, and
+     * commits the irreversible marker through the caller-Tx seam.
+     */
+    authorizeForDispatch(
+        input: AuthorizeEformsignDocumentJobForDispatchInput,
+    ): Promise<ServiceRecordDispatchAuthorizationResult>;
     authorizeForDispatchInTransaction(
         tx: Prisma.TransactionClient,
         input: AuthorizeEformsignDocumentJobForDispatchInput,
