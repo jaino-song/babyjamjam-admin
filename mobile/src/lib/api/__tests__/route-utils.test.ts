@@ -5,6 +5,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 
 import { serverAPIClient } from "@/lib/api/server";
+import { getErrorMessage } from "@/lib/errors/api-error-mapper";
 import {
     errorResponse,
     proxyDeleteRequest,
@@ -114,6 +115,75 @@ describe("route-utils proxy body parsing", () => {
             .join(" ");
         expect(logged).not.toContain("/tmp/route-utils");
         expect(logged).not.toContain("api.internal");
+    });
+
+    it.each([
+        ["create client", "duration must equal the Korean business-day count (15) for the submitted service period"],
+        ["create employee", "전화번호 형식이 올바르지 않습니다."],
+    ])("passes a controlled 400 validation message through to the mapper (%s)", async (context, message) => {
+        const response = errorResponse(
+            {
+                response: {
+                    status: 400,
+                    data: {
+                        message,
+                        error: "Bad Request",
+                        diagnostics: { host: "api.internal" },
+                    },
+                },
+            },
+            context,
+        );
+
+        expect(response.status).toBe(400);
+        const body = await response.json();
+        expect(body).toEqual({ error: message });
+        expect(getErrorMessage({ response: { status: response.status, data: body } }, "ko")).toBe(message);
+        expect(JSON.stringify(body)).not.toContain("api.internal");
+    });
+
+    it("keeps safe Prisma metadata available for localized mapping", async () => {
+        const response = errorResponse(
+            {
+                response: {
+                    status: 409,
+                    data: {
+                        code: "P2002",
+                        field: "phone",
+                        message: "이미 등록된 전화번호입니다.",
+                        error: "Conflict",
+                    },
+                },
+            },
+            "create client",
+        );
+
+        const body = await response.json();
+        expect(body).toEqual({
+            error: "이미 등록된 전화번호입니다.",
+            code: "P2002",
+            field: "phone",
+        });
+        expect(getErrorMessage({ response: { status: 409, data: body } }, "ko")).not.toBe(body.error);
+    });
+
+    it.each([
+        [400, "SELECT * FROM Client"],
+        [400, "Invalid API key: sk_test_secret"],
+        [401, "Invalid access token: eyJ.secret"],
+        [500, "PrismaClientKnownRequestError: SELECT * FROM Client"],
+    ])("suppresses unsafe upstream details at the mobile proxy (%i)", async (status, message) => {
+        const response = errorResponse(
+            { response: { status, data: { message, error: "Bad Request" } } },
+            "create client",
+        );
+
+        expect(response.status).toBe(status);
+        const body = await response.json();
+        expect(body).toEqual({ error: "Failed to create client" });
+        expect(JSON.stringify(body)).not.toContain(message);
+        expect(JSON.stringify(body)).not.toContain("sk_test_secret");
+        expect(JSON.stringify(body)).not.toContain("eyJ.secret");
     });
 
     it("sanitizes raw upstream payloads from non-throwing proxy GET errors", async () => {

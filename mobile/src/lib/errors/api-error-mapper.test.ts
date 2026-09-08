@@ -113,6 +113,27 @@ describe("getErrorMessage", () => {
     });
 
     it.each([
+        "Select a provider from the list.",
+        "Password must contain at least 8 characters.",
+    ])("keeps legitimate validation near-miss %p", (serverMessage) => {
+        expect(getApiDisplayMessage(axiosError(400, { message: serverMessage }))).toBe(serverMessage);
+        expect(getErrorMessage(axiosError(400, { message: serverMessage }), "ko", FALLBACK_KEY)).toBe(
+            serverMessage,
+        );
+    });
+
+    it.each([
+        [400, "Invalid API key: sk_test_secret"],
+        [401, "Invalid access token: eyJ.secret"],
+        [400, "password: hunter2"],
+    ] as const)("rejects value-bearing credential %p payloads", (status, serverMessage) => {
+        const error = axiosError(status, { message: serverMessage });
+
+        expect(getApiDisplayMessage(error)).toBeNull();
+        expect(getErrorMessage(error, "ko", FALLBACK_KEY)).toBe(fallback);
+    });
+
+    it.each([
         "PrismaClientKnownRequestError: Invalid prisma invocation SELECT * FROM Client",
         "Error: database connection failed at /app/src/clients.service.ts:42",
         "upstream rejected Bearer abc.def.ghi",

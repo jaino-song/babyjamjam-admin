@@ -4,6 +4,7 @@
 import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
+import { getErrorMessage } from "@/lib/errors/api-error-mapper";
 import {
   DELETE as deleteEmployee,
   GET as listEmployees,
@@ -95,6 +96,29 @@ describe("employee API routes", () => {
       validCreatePayload,
       expect.anything(),
     );
+  });
+
+  it("surfaces a safe backend validation message through the employee error mapper", async () => {
+    const message = "전화번호 형식이 올바르지 않습니다.";
+    mockPost.mockRejectedValue({
+      response: {
+        status: 400,
+        data: { message, error: "Bad Request" },
+      },
+    });
+
+    const response = await createEmployee(
+      createRequest("/api/employees", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(validCreatePayload),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body).toEqual({ error: message });
+    expect(getErrorMessage({ response: { status: 400, data: body } }, "ko")).toBe(message);
   });
 
   it("rejects a create body missing required fields before proxying", async () => {

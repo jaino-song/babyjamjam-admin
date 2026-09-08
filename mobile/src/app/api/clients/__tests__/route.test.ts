@@ -4,6 +4,7 @@
 import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
+import { getErrorMessage } from "@/lib/errors/api-error-mapper";
 import { GET as getClients, POST as createClient } from "../route";
 import { GET as getClient, PATCH as updateClient, DELETE as deleteClient } from "../[id]/route";
 import { PATCH as terminateClient } from "../[id]/terminate/route";
@@ -108,6 +109,34 @@ describe("client API routes", () => {
     expect(response.status).toBe(201);
     await expect(response.json()).resolves.toEqual({ id: 7 });
     expect(mockPost).toHaveBeenCalledWith("/clients", payload, expect.any(Object));
+  });
+
+  it("surfaces a safe backend validation message through the client error mapper", async () => {
+    const message = "duration must equal the Korean business-day count (15) for the submitted service period";
+    mockPost.mockRejectedValue({
+      response: {
+        status: 400,
+        data: { message, error: "Bad Request" },
+      },
+    });
+
+    const response = await createClient(
+      createRequest("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Baby Kim",
+          careCenter: false,
+          voucherClient: true,
+          breastPump: false,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body).toEqual({ error: message });
+    expect(getErrorMessage({ response: { status: 400, data: body } }, "ko")).toBe(message);
   });
 
   it("preserves the safe duplicate-client conflict payload", async () => {
