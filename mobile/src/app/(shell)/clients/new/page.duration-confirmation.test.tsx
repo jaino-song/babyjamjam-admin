@@ -11,6 +11,8 @@ const mockUpdateClient = jest.fn();
 const mockPush = jest.fn();
 let mockSearchParams = new URLSearchParams();
 let mockEditingClient: Client | undefined;
+let mockEditingContractDocument: object | undefined;
+let mockLatePrefill: Record<string, unknown> = {};
 const mockOutOfPocketPrices = [{ id: 1, duration: 15, fullPrice: "1" }];
 const mockEmptyPrices: never[] = [];
 
@@ -20,7 +22,7 @@ jest.mock("next/navigation", () => ({
 }));
 
 jest.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ data: undefined }),
+  useQuery: () => ({ data: mockEditingContractDocument }),
 }));
 
 jest.mock("@/hooks/useClients", () => ({
@@ -78,6 +80,10 @@ jest.mock("@/lib/api/client", () => ({
 
 jest.mock("@/services/api", () => ({
   eformsignApi: { getDocument: jest.fn() },
+}));
+
+jest.mock("@/lib/eformsign/client-prefill", () => ({
+  buildClientEditPrefillFromEformsignDocument: () => mockLatePrefill,
 }));
 
 const initialForm = {
@@ -155,6 +161,8 @@ describe("mobile client service date confirmation", () => {
     mockPush.mockReset();
     mockSearchParams = new URLSearchParams();
     mockEditingClient = undefined;
+    mockEditingContractDocument = undefined;
+    mockLatePrefill = {};
     useClientWizardStore.getState().reset();
   });
 
@@ -225,6 +233,21 @@ describe("mobile client service date confirmation", () => {
 
     fireEvent.change(screen.getByDisplayValue("2026-09-03"), { target: { value: "2026-09-04" } });
     await waitFor(() => expect(endDateInput).toHaveValue(calcEndDateBusinessDays("2026-09-04", 15)));
+  });
+
+  it("keeps a manual end-date clear after late contract-document hydration", async () => {
+    mockSearchParams = new URLSearchParams("clientId=7");
+    mockEditingClient = { ...editingClient(), eDocId: "late-contract-document" };
+    const view = render(<NewClientPage />);
+
+    await waitFor(() => expect(useClientWizardStore.getState().endDate).toBe("2026-09-08"));
+    act(() => useClientWizardStore.getState().setCurrentStep(2));
+    mockEditingContractDocument = {};
+    view.rerender(<NewClientPage />);
+
+    const endDateInput = screen.getByDisplayValue("2026-09-08");
+    fireEvent.change(endDateInput, { target: { value: "" } });
+    expect(endDateInput).toHaveValue("");
   });
 
   it("requires edit confirmation and prevents duplicate confirmed submissions", async () => {

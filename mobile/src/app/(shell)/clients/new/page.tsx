@@ -429,7 +429,6 @@ export default function NewClientPage() {
 
     lastHydratedContractDocIdRef.current = editingClient.eDocId;
     hasUserEditedServicePeriodRef.current = false;
-    previousServicePeriodRef.current = null;
 
     const matchedVoucherPrice = hasPricePrefill
       ? findVoucherPriceByAmounts(allVoucherPrices, prefill)
