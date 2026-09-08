@@ -308,6 +308,39 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         jest.useRealTimers();
     });
 
+    it("returns four provider sessions for a legacy case with a 15-day voucher count", async () => {
+        const record = createRecord({
+            requiredSessionCount: 15, days: [],
+            startDate: new Date("2026-09-03"), endDate: new Date("2026-09-08"),
+        });
+        const prisma = {
+            service_record_case: {
+                findFirst: jest.fn().mockResolvedValue(record),
+                findUnique: jest.fn().mockResolvedValue(record),
+            },
+            employee_schedule: { findUnique: jest.fn().mockResolvedValue({
+                primaryEmployee: { id: 20, name: "제공자" },
+                client: { id: 100, name: "산모", duration: 15 },
+            }) },
+            schedule_change_request: { findFirst: jest.fn().mockResolvedValue(null) },
+        };
+        const service = new ServiceRecordEntryService(
+            prisma as unknown as PrismaService,
+            {} as ServiceRecordTokenService,
+            {} as ServiceRecordLifecycleService,
+        );
+        expect((await service.getContext(context)).totalSessions).toBe(4);
+    });
+
+    it("rejects a fifth session for a transferred four-day service period", async () => {
+        const { service, upsert } = createHarness({ transactionRecord: createRecord({
+            requiredSessionCount: 15,
+            startDate: new Date("2026-09-03"), endDate: new Date("2026-09-08"),
+        }) });
+        await expect(service.upsertSession(context, 5, createDto({ serviceDate: "2026-09-09" }), false)).rejects.toThrow("1..4");
+        expect(upsert).not.toHaveBeenCalled();
+    });
+
     it("allows an unlocked session to be edited and submitted", async () => {
         const existing = createDay({ locked: false, clientSignature: null, clientSignedAt: null });
         const { service, upsert } = createHarness({ existing });

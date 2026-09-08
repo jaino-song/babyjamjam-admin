@@ -75,14 +75,18 @@ describe("AdminServiceRecordService", () => {
         serviceRecordTokens: [],
     });
 
-    it("keeps the stored session count as the total even when the period is longer than its business-day span", async () => {
+    it.each([
+        ["2026-09-03", "2026-09-08", 15, 4],
+        ["2026-08-10", "2026-09-03", 15, 15],
+        ["2026-09-03", "2026-09-09", 4, 4],
+    ])("bounds the stored count by the service period %s to %s", async (start, end, stored, expected) => {
         const prisma = createPrisma();
         prisma.service_record_case.findFirst.mockResolvedValue({
             id: "case-1",
             status: "IN_PROGRESS",
-            startDate: new Date("2026-08-03T00:00:00.000Z"),
-            endDate: new Date("2026-08-10T00:00:00.000Z"),
-            requiredSessionCount: 15,
+            startDate: new Date(start),
+            endDate: new Date(end),
+            requiredSessionCount: stored,
             completedAt: null,
             finalizationDueAt: new Date("2026-08-10T11:00:00.000Z"),
             finalizedAt: null,
@@ -108,10 +112,27 @@ describe("AdminServiceRecordService", () => {
 
         const overview = await service.getClientOverview("branch-1", 100);
 
-        // requiredSessionCount (15) is the contracted count and is
-        // authoritative; the 6-business-day span for the current dates is
-        // no longer used to override it.
-        expect(overview.record?.totalSessions).toBe(15);
+        expect(overview.record?.totalSessions).toBe(expected);
+    });
+
+    it("uses four actual days for assignments while preserving the 15-day voucher", async () => {
+        const prisma = createPrisma();
+        const schedule = createSchedule(1, "2026-09-03");
+        schedule.endDate = new Date("2026-09-08");
+        Object.assign(schedule.client, {
+            startDate: schedule.startDate, endDate: schedule.endDate, duration: 15,
+        });
+        prisma.employee_schedule.findMany.mockResolvedValue([schedule]);
+        prisma.message_trigger_job.findMany.mockResolvedValue([]);
+        prisma.message_log.findMany.mockResolvedValue([]);
+        const service = new AdminServiceRecordService(
+            prisma as unknown as PrismaService,
+            createLinkService() as unknown as ServiceRecordLinkService,
+            createTriggerService() as unknown as MessageTriggerService,
+        );
+        const overview = await service.getClientOverview("branch-1", 100);
+        expect(overview.assignments[0]?.totalSessions).toBe(4);
+        expect(schedule.client.duration).toBe(15);
     });
 
     it("derives link status for none, scheduled, sent, and failed assignments", async () => {

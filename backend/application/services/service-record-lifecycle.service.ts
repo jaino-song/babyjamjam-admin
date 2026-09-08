@@ -7,6 +7,7 @@ import {
 import { EFORMSIGN_COMPLETED_STATUS_CODES } from "domain/constants/eformsign-doc-status.constants";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { countBusinessDaysKr } from "domain/utils/business-days";
+import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 export const SERVICE_RECORD_CASE_STATUS = {
@@ -64,14 +65,7 @@ function requiredSessionCount(params: {
     endDate: Date | null;
     fallback: number | null;
 }): number | null {
-    // The stored count (fallback) is authoritative once set; the
-    // date-derived business-day count is only used when no count is
-    // stored yet.
-    if (params.fallback !== null) return params.fallback;
-    const startDate = isoDate(params.startDate);
-    const endDate = isoDate(params.endDate);
-    if (!startDate || !endDate) return params.fallback;
-    return countBusinessDaysKr(startDate, endDate) ?? params.fallback;
+    return serviceRecordSessionCount(params.startDate, params.endDate, params.fallback);
 }
 
 function isWithinServicePeriod(serviceDate: Date, startDate: Date | null, endDate: Date | null): boolean {
@@ -167,10 +161,13 @@ export class ServiceRecordLifecycleService {
         const tokenExpiresAt = client.endDate
             ? getServiceRecordTokenExpiresAt(client.endDate)
             : null;
+        // 이관 건은 바우처 일수와 실제 회차가 다르며, 연기 전의 실제 회차를 유지한다.
         const sessionCount = requiredSessionCount({
             startDate: client.startDate,
             endDate: client.endDate,
-            fallback: client.duration,
+            fallback: existing
+                ? serviceRecordSessionCount(existing.startDate, existing.endDate, existing.requiredSessionCount) ?? client.duration
+                : client.duration,
         });
         // duration is the contracted session count and is authoritative
         // once set; it must never be rewritten to match a later end-date
