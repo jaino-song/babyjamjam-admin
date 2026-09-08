@@ -31,6 +31,7 @@ import {
     type ServiceRecordEditPreviewBlockingReason,
     type ServiceRecordPlannedSession,
 } from "@/features/service-records/types";
+import { publishServiceRecordRevisionSync } from "@/features/service-records/revision-sync";
 
 import { ServiceRecordDateSelectionDialog } from "./ServiceRecordDateSelectionDialog";
 import { ServiceRecordEditPreviewDialog } from "./ServiceRecordEditPreviewDialog";
@@ -783,6 +784,10 @@ export function ServiceRecordAdminWizard({
             );
             setConfirmResult(result);
             setSaveState("saved");
+            publishServiceRecordRevisionSync({
+                caseId: result.caseId,
+                caseVersion: result.caseVersion,
+            });
         } catch (error) {
             const apiError = error instanceof AdminServiceRecordEditApiError ? error : null;
             const status = apiError?.status ?? 0;

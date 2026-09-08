@@ -45,3 +45,20 @@ export type {
     AdminServiceRecordEditState,
 } from "./admin-edit";
 export { AdminServiceRecordEditApiError } from "./admin-edit";
+
+export type {
+    RetryServiceRecordDocumentInput,
+    ServiceRecordRevisionDocumentOperation,
+    ServiceRecordRevisionDocumentStatus,
+    ServiceRecordRevisionDocumentSummary,
+    ServiceRecordRevisionHistoryEntry,
+    ServiceRecordRevisionHistoryResponse,
+} from "./revisions";
+export {
+    SERVICE_RECORD_REVISION_DOCUMENT_OPERATIONS,
+    SERVICE_RECORD_REVISION_DOCUMENT_STATUSES,
+    SERVICE_RECORD_DOCUMENT_OPERATIONS,
+    SERVICE_RECORD_DOCUMENT_STATUSES,
+    normalizeServiceRecordRevisionDocumentSummary,
+    normalizeServiceRecordRevisionHistory,
+} from "./revisions";

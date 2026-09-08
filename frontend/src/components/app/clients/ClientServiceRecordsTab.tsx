@@ -33,6 +33,10 @@ import type {
     ServiceRecordCase,
     ServiceRecordLinkStatus,
     ServiceRecordOverview,
+    ServiceRecordRevisionDocumentSummary,
+    ServiceRecordRevisionHistoryResponse,
+    ServiceRecordRevisionDocumentOperation,
+    ServiceRecordRevisionDocumentStatus,
     ServiceRecordSession,
     SignatureDocStatus,
 } from "@/features/service-records/types";
@@ -46,6 +50,17 @@ interface ClientServiceRecordsTabProps {
     isRefreshing?: boolean;
     isTextRefreshing?: boolean;
     onRefresh?: () => void;
+    revisionHistory?: ServiceRecordRevisionHistoryResponse;
+    isRevisionHistoryLoading?: boolean;
+    isRevisionHistoryError?: boolean;
+    isRevisionHistoryRefreshing?: boolean;
+    onRefreshRevisionHistory?: () => void;
+    onRetryRevisionDocument?: (
+        revisionId: string,
+        documentStateId: string,
+        expectedGeneration: string,
+    ) => Promise<void>;
+    retryingDocumentKey?: string | null;
 }
 
 const ClientServiceRecordsDataComponentContext = createContext<string | null>(null);
@@ -101,6 +116,13 @@ function ClientServiceRecordsTabContent({
     isRefreshing = false,
     isTextRefreshing = false,
     onRefresh,
+    revisionHistory,
+    isRevisionHistoryLoading = false,
+    isRevisionHistoryError = false,
+    isRevisionHistoryRefreshing = false,
+    onRefreshRevisionHistory,
+    onRetryRevisionDocument,
+    retryingDocumentKey = null,
 }: Omit<ClientServiceRecordsTabProps, "data-component">) {
     const dataComponent = useClientServiceRecordsDataComponent();
     const { toast } = useToast();
@@ -190,7 +212,10 @@ function ClientServiceRecordsTabContent({
         );
     }
 
-    if (assignments.length === 0 && !record) {
+    const hasRevisionHistoryState = revisionHistory !== undefined
+        || isRevisionHistoryLoading
+        || isRevisionHistoryError;
+    if (assignments.length === 0 && !record && !hasRevisionHistoryState) {
         return (
             <DetailEmptyState
                 message="제공기록지 배정 정보가 없습니다"
@@ -304,6 +329,15 @@ function ClientServiceRecordsTabContent({
                         {index < assignments.length - 1 && <div className="h-px bg-v3-border" />}
                     </div>
                 ))}
+                <RevisionHistoryCard
+                    history={revisionHistory}
+                    isLoading={isRevisionHistoryLoading}
+                    isError={isRevisionHistoryError}
+                    isRefreshing={isRevisionHistoryRefreshing}
+                    onRefresh={onRefreshRevisionHistory}
+                    onRetry={onRetryRevisionDocument}
+                    retryingDocumentKey={retryingDocumentKey}
+                />
             </div>
 
             <TwoButtonModal
@@ -401,6 +435,20 @@ function ClientServiceRecordsSkeleton() {
                         </div>
                     ))}
                 </div>
+            </InfoCard>
+
+            <InfoCard
+                title="수정본·문서 이력"
+                data-component={`${dataComponent}_revision-history`}
+                titleTrailing={<Skeleton className="h-8 w-20 bg-white/70" />}
+            >
+                {[
+                    "현재 확정본",
+                    "사용 가능 문서",
+                    "문서 작업",
+                ].map((label) => (
+                    <ServiceRecordInfoRowSkeleton key={label} label={label} />
+                ))}
             </InfoCard>
         </div>
     );
@@ -522,6 +570,221 @@ function AssignmentHistoryCard({
                 ))}
             </div>
         </InfoCard>
+    );
+}
+
+const REVISION_DOCUMENT_STATUS_META: Record<ServiceRecordRevisionDocumentStatus, {
+    label: string;
+    variant: "neutral" | "primary" | "success" | "warning" | "danger";
+}> = {
+    not_required: { label: "처리 불필요", variant: "neutral" },
+    waiting_for_completion: { label: "기록 완료 대기", variant: "warning" },
+    waiting_for_signature: { label: "서명 대기", variant: "warning" },
+    capability_unverified: { label: "기능 확인 필요", variant: "warning" },
+    manual_review: { label: "수동 확인 필요", variant: "danger" },
+    pending: { label: "처리 대기", variant: "primary" },
+    processing: { label: "처리 중", variant: "primary" },
+    unknown: { label: "확인 필요", variant: "danger" },
+    failed: { label: "실패", variant: "danger" },
+    completed: { label: "완료", variant: "success" },
+};
+
+const REVISION_DOCUMENT_OPERATION_LABELS: Record<ServiceRecordRevisionDocumentOperation, string> = {
+    record_snapshot: "제공기록지 문서",
+    contract_period: "계약 기간 문서",
+    receipt_refresh: "영수증 연결",
+};
+
+function RevisionHistoryCard({
+    history,
+    isLoading,
+    isError,
+    isRefreshing,
+    onRefresh,
+    onRetry,
+    retryingDocumentKey,
+}: {
+    history?: ServiceRecordRevisionHistoryResponse;
+    isLoading: boolean;
+    isError: boolean;
+    isRefreshing: boolean;
+    onRefresh?: () => void;
+    onRetry?: (
+        revisionId: string,
+        documentStateId: string,
+        expectedGeneration: string,
+    ) => Promise<void>;
+    retryingDocumentKey?: string | null;
+}) {
+    const dataComponent = useClientServiceRecordsDataComponent("revision-history");
+    const { toast } = useToast();
+
+    if (isLoading) {
+        return (
+            <InfoCard
+                data-component={dataComponent}
+                title="수정본·문서 이력"
+                titleTrailing={<Skeleton className="h-8 w-20 bg-white/70" />}
+            >
+                {["현재 확정본", "사용 가능 문서", "문서 작업"].map((label) => (
+                    <ServiceRecordInfoRowSkeleton key={label} label={label} />
+                ))}
+            </InfoCard>
+        );
+    }
+
+    if (isError) {
+        return (
+            <InfoCard data-component={dataComponent} title="수정본·문서 이력">
+                <Alert variant="warning">
+                    <AlertTitle>문서 이력을 확인할 수 없습니다</AlertTitle>
+                    <AlertDescription>잠시 후 다시 조회해 주세요.</AlertDescription>
+                </Alert>
+            </InfoCard>
+        );
+    }
+
+    const revisions = history?.revisions ?? [];
+    return (
+        <InfoCard
+            data-component={dataComponent}
+            title="수정본·문서 이력"
+            description="수정 확정 결과와 문서 작업 상태는 서버 기록을 기준으로 표시됩니다"
+            titleTrailing={onRefresh ? (
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={onRefresh}
+                    disabled={isRefreshing}
+                    aria-busy={isRefreshing}
+                >
+                    {isRefreshing ? "조회 중" : "새로고침"}
+                </Button>
+            ) : undefined}
+        >
+            <div data-component={`${dataComponent}_pointers`} className="mb-[calc(12px*var(--glint-ui-scale,1))]">
+                <ServiceRecordInfoRow
+                    label="현재 확정본"
+                    value={history?.currentRevisionId ? "현재 확정본 있음" : "없음"}
+                />
+                <ServiceRecordInfoRow
+                    label="사용 가능 문서"
+                    value={history?.currentUsableRevisionId ? "검증된 문서 있음" : "검증 전 또는 없음"}
+                />
+            </div>
+            {revisions.length === 0 ? (
+                <div
+                    data-component={`${dataComponent}_empty`}
+                    className="py-[calc(12px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted"
+                >
+                    확정된 수정본이 없습니다.
+                </div>
+            ) : (
+                <div data-component={`${dataComponent}_list`} className="space-y-[calc(10px*var(--glint-ui-scale,1))]">
+                    {revisions.map((revision) => (
+                        <div
+                            key={revision.id}
+                            data-component={`${dataComponent}_revision`}
+                            className="rounded-[calc(12px*var(--glint-ui-scale,1))] border border-v3-border bg-white/50 p-[calc(12px*var(--glint-ui-scale,1))]"
+                        >
+                            <div className="flex items-center gap-[calc(8px*var(--glint-ui-scale,1))]">
+                                <span className="text-[calc(12.5px*var(--glint-ui-scale,1))] font-semibold text-v3-dark">
+                                    수정본 #{revision.revisionNumber}
+                                </span>
+                                {revision.isCurrent && <StatusPill variant="primary">현재 확정본</StatusPill>}
+                                <span className="ml-auto text-[calc(11px*var(--glint-ui-scale,1))] text-v3-text-muted">
+                                    {formatDateTimeKo(revision.confirmedAt)}
+                                </span>
+                            </div>
+                            {revision.documents.length === 0 ? (
+                                <div className="mt-[calc(8px*var(--glint-ui-scale,1))] text-[calc(11.5px*var(--glint-ui-scale,1))] text-v3-text-muted">
+                                    연결된 문서 작업이 없습니다.
+                                </div>
+                            ) : (
+                                <div className="mt-[calc(8px*var(--glint-ui-scale,1))] space-y-[calc(8px*var(--glint-ui-scale,1))]">
+                                    {revision.documents.map((document) => (
+                                        <RevisionDocumentRow
+                                            key={document.id}
+                                            revisionId={revision.id}
+                                            document={document}
+                                            onRetry={onRetry}
+                                            retryingDocumentKey={retryingDocumentKey}
+                                            onRetryError={() => {
+                                                toast({
+                                                    variant: "destructive",
+                                                    description: "문서 작업을 다시 시작하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+                                                });
+                                            }}
+                                        />
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
+        </InfoCard>
+    );
+}
+
+function RevisionDocumentRow({
+    revisionId,
+    document,
+    onRetry,
+    retryingDocumentKey,
+    onRetryError,
+}: {
+    revisionId: string;
+    document: ServiceRecordRevisionDocumentSummary;
+    onRetry?: (
+        revisionId: string,
+        documentStateId: string,
+        expectedGeneration: string,
+    ) => Promise<void>;
+    retryingDocumentKey?: string | null;
+    onRetryError: () => void;
+}) {
+    const statusMeta = REVISION_DOCUMENT_STATUS_META[document.status];
+    const documentKey = `${revisionId}:${document.id}`;
+    const isRetrying = retryingDocumentKey === documentKey;
+    const retryable = document.canRetry && document.generation !== "unknown" && Boolean(onRetry);
+
+    const handleRetry = () => {
+        if (!onRetry || !retryable || isRetrying) return;
+        void onRetry(revisionId, document.id, document.generation).catch(onRetryError);
+    };
+
+    return (
+        <div
+            data-component={`${useClientServiceRecordsDataComponent("revision-history")}_document`}
+            className="flex items-center gap-[calc(8px*var(--glint-ui-scale,1))] border-t border-v3-border pt-[calc(8px*var(--glint-ui-scale,1))] first:border-t-0 first:pt-0"
+        >
+            <div className="min-w-0 flex-1">
+                <div className="truncate text-[calc(11.8px*var(--glint-ui-scale,1))] font-medium text-v3-dark">
+                    {REVISION_DOCUMENT_OPERATION_LABELS[document.operation]}
+                    {document.documentVersion ? ` · v${document.documentVersion}` : ""}
+                </div>
+                {document.reasonCode && (
+                    <div className="mt-0.5 text-[calc(10.8px*var(--glint-ui-scale,1))] text-v3-text-muted">
+                        {document.reasonCode}
+                    </div>
+                )}
+            </div>
+            <StatusPill variant={statusMeta.variant}>{statusMeta.label}</StatusPill>
+            {retryable && (
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleRetry}
+                    disabled={isRetrying}
+                    aria-busy={isRetrying}
+                >
+                    {isRetrying ? "재시도 중" : "다시 시도"}
+                </Button>
+            )}
+        </div>
     );
 }
 

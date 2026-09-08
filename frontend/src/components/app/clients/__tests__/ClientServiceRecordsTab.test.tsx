@@ -222,6 +222,49 @@ describe("ClientServiceRecordsTab", () => {
         expect(screen.getAllByText("제공기록지 작성 링크")).toHaveLength(3);
     });
 
+    it("renders server-owned revision statuses and retries the pinned generation", async () => {
+        const onRetry = jest.fn().mockResolvedValue(undefined);
+        render(
+            <ClientServiceRecordsTab
+                data-component={TEST_COMPONENT}
+                overview={{ assignments: [createAssignment(1, "none")] }}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+                revisionHistory={{
+                    caseId: "case-1",
+                    caseVersion: 4,
+                    currentRevisionId: "revision-1",
+                    currentUsableRevisionId: null,
+                    revisions: [{
+                        id: "revision-1",
+                        revisionNumber: 1,
+                        confirmedAt: "2026-09-08T01:02:03.000Z",
+                        isCurrent: true,
+                        documents: [{
+                            id: "state-1",
+                            operation: "record_snapshot",
+                            generation: "generation-1",
+                            status: "failed",
+                            documentVersion: 2,
+                            canRetry: true,
+                            reasonCode: "PROVIDER_TIMEOUT",
+                        }],
+                    }],
+                }}
+                onRetryRevisionDocument={onRetry}
+            />,
+        );
+
+        expect(screen.queryByText("문서 이력을 확인할 수 없습니다")).not.toBeInTheDocument();
+        expect(screen.queryByText("기록 완료 대기")).not.toBeInTheDocument();
+        expect(screen.getByText("실패")).toBeInTheDocument();
+        expect(screen.getByText("PROVIDER_TIMEOUT")).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+        await waitFor(() => expect(onRetry).toHaveBeenCalledWith("revision-1", "state-1", "generation-1"));
+    });
+
     it("shows a failure toast when manual sending resolves without a sent job", async () => {
         mutateAsync.mockResolvedValue({
             ok: false,
@@ -384,7 +427,7 @@ describe("ClientServiceRecordsTab", () => {
         );
 
         expect(screen.getByText("예정일 2026.09.23")).toBeInTheDocument();
-        expect(screen.getByText("예정일 2026.09.29")).toBeInTheDocument();
+        expect(screen.getAllByText(/^예정일 /).map((node) => node.textContent)).toEqual(["예정일 2026.09.23", "예정일 2026.09.28"]);
         expect(screen.queryByText("예정일 2026.09.24")).not.toBeInTheDocument();
     });
 

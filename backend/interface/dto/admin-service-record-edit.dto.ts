@@ -10,6 +10,7 @@ import {
     IsUUID,
     Matches,
     Min,
+    MinLength,
     MaxLength,
     ValidateNested,
 } from "class-validator";
@@ -137,6 +138,22 @@ export interface AdminServiceRecordEditStateDto {
     sourceChanged: boolean;
     sourceCaseVersion: number;
     sourceFingerprint: string;
+}
+
+export type {
+    ServiceRecordRevisionDocumentOperation,
+    ServiceRecordRevisionDocumentStatus,
+    ServiceRecordRevisionDocumentSummary,
+    ServiceRecordRevisionHistoryResponse,
+} from "@babyjamjam/shared/types/service-record";
+
+/** Exact retry body. Branch and actor authority are always server-derived. */
+export class RetryServiceRecordDocumentDto {
+    @IsString()
+    @MinLength(1)
+    @MaxLength(128)
+    @Matches(/\S/)
+    expectedGeneration!: string;
 }
 
 // Explicit aliases make the adapter naming clear without introducing a second

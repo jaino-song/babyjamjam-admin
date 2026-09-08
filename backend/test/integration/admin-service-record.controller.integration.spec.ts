@@ -20,6 +20,8 @@ describe("AdminServiceRecordController (Integration)", () => {
     let controller: AdminServiceRecordController;
     let adminServiceRecordService: {
         getClientEditor: jest.Mock;
+        getRevisionHistory: jest.Mock;
+        retryRevisionDocument: jest.Mock;
     };
     let adminServiceRecordEditService: {
         startDraft: jest.Mock;
@@ -32,6 +34,8 @@ describe("AdminServiceRecordController (Integration)", () => {
     beforeEach(async () => {
         adminServiceRecordService = {
             getClientEditor: jest.fn(),
+            getRevisionHistory: jest.fn(),
+            retryRevisionDocument: jest.fn(),
         };
         adminServiceRecordEditService = {
             startDraft: jest.fn(),
@@ -89,6 +93,39 @@ describe("AdminServiceRecordController (Integration)", () => {
 
         await expect(controller.getClientEditor(tenant, 42)).resolves.toBe(overview);
         expect(adminServiceRecordService.getClientEditor).toHaveBeenCalledWith("branch-1", 42);
+    });
+
+    it("protects and scopes revision history and retry routes", async () => {
+        const historyHandler = AdminServiceRecordController.prototype.getRevisionHistory;
+        const retryHandler = AdminServiceRecordController.prototype.retryRevisionDocument;
+        expect(Reflect.getMetadata(GUARDS_METADATA, historyHandler) ?? []).toContain(OwnerOrAdminGuard);
+        expect(Reflect.getMetadata(METHOD_METADATA, historyHandler)).toBe(RequestMethod.GET);
+        expect(Reflect.getMetadata(PATH_METADATA, historyHandler)).toBe("clients/:clientId/revisions");
+        expect(Reflect.getMetadata(GUARDS_METADATA, retryHandler) ?? []).toContain(OwnerOrAdminGuard);
+        expect(Reflect.getMetadata(METHOD_METADATA, retryHandler)).toBe(RequestMethod.POST);
+        expect(Reflect.getMetadata(PATH_METADATA, retryHandler)).toBe("revisions/:revisionId/documents/:documentStateId/retry");
+
+        const history = { caseId: "case-1", caseVersion: 2, revisions: [] };
+        const retry = { id: "state-1", status: "pending" };
+        adminServiceRecordService.getRevisionHistory.mockResolvedValue(history);
+        adminServiceRecordService.retryRevisionDocument.mockResolvedValue(retry);
+
+        await expect(controller.getRevisionHistory(tenant, 42)).resolves.toBe(history);
+        await expect(controller.retryRevisionDocument(
+            tenant,
+            "revision-1",
+            "state-1",
+            { expectedGeneration: "generation-1" },
+        )).resolves.toBe(retry);
+
+        expect(adminServiceRecordService.getRevisionHistory).toHaveBeenCalledWith("branch-1", 42);
+        expect(adminServiceRecordService.retryRevisionDocument).toHaveBeenCalledWith(
+            "branch-1",
+            "revision-1",
+            "state-1",
+            "generation-1",
+            "admin-1",
+        );
     });
 
     it.each([
