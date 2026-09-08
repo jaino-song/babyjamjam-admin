@@ -30,7 +30,7 @@ const describeE2E = E2E_ENABLED ? describe : describe.skip;
 
 describe("admin service-record HTTP target guard", () => {
     it("requires both URLs to name the approved loopback database", () => {
-        expect(() => assertApprovedServiceRecordEditHttpDatabaseTarget(undefined, undefined)).toThrow(
+        expect(() => assertApprovedServiceRecordEditHttpDatabaseTarget("", "")).toThrow(
             /exact disposable task-4 database/,
         );
     });
