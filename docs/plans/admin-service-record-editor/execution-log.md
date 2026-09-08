@@ -390,3 +390,5 @@
 - Task2.2 canonical validator 연결에서 backend가 사용하는 tracked vendor runtime에 양식 정의 export가 빠진 것을 확인했다. 기존 TypeScript runtime build include와 수동 관리 manifest export만 서버 worker scope에 추가하고 생성 산출물 및 실제 backend import를 검증한다. 별도 항목 사전이나 생성기 체계를 추가하지 않는다.
 
 - Task2.2 UI 메인 mock 브라우저9/9 PASS(390/480/1280): GET 무생성, 명시적 초안 시작, 제출된 불완전 과거 기록의 페이지 이동/내용 수정, CAS 저장, 새로고침 복원, 취소 후 원본 복귀,409/403 입력 보존, 명시적 최신 초안 불러오기. 검토 중 발견한 활성 입력란 갱신 누락과 제공인력용 페이지 완성 조건의 관리자 적용을 보완했다. /tmp/bjj-admin-draft-results. 공용 모바일 회귀12/12 PASS; 첫 명령은 다른 worktree Playwright 중복으로 미실행, 해당 unit runner로 수정 후 실제 통과했다. 실제 DB/외부 API 시험을 대신하지 않는다.
+
+- Task2.2 backend fcf7a6079 → UI af482394c/db4a79260 순서로 통합했다. 서버 DB읽기를 domain port/repository에 두고 RepeatableRead와 원본 ID 정렬을 적용했다. Worker backend72/72·빌드·runtime import·Prisma/tenant generate·lint PASS, frontend1294/1294·빌드·UI gate PASS. 메인 통합 backend72/72 + frontend33/33 재실행 PASS. 잘못된 JSON/null/array가 초안 생성으로 이어지지 않도록 proxy에서400 처리한다. 알려진 receipt baseline5타입오류는 Task5.4에서 처리하며 전체tscPASS로 보고하지 않는다. clean unit들은 통합 후 제거한다.
