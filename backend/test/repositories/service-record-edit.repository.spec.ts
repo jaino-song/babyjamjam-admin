@@ -55,6 +55,18 @@ const sqlText = (value: unknown): string => {
     return String(value);
 };
 
+const sqlTextWithValues = (value: unknown): string => {
+    if (value && typeof value === "object" && "strings" in value && "values" in value) {
+        const sql = value as { strings?: unknown; values?: unknown };
+        const strings = Array.isArray(sql.strings) ? sql.strings : [];
+        const values = Array.isArray(sql.values) ? sql.values : [];
+        return strings.map((part, index) => (
+            `${String(part)}${index < values.length ? sqlTextWithValues(values[index]) : ""}`
+        )).join("");
+    }
+    return sqlText(value);
+};
+
 function transactionalPrisma<T extends Record<string, unknown>>(transactionClient: T) {
     return {
         $transaction: jest.fn(async (callback: (client: T) => Promise<unknown>) => callback(transactionClient)),
@@ -687,5 +699,31 @@ describe("ServiceRecordEditRepository", () => {
         expect(documentUpdate).not.toContain("payload->'context'");
         const messageUpdate = sqlText(tx.$queryRaw.mock.calls[3]?.[0]);
         expect(messageUpdate).toContain("claim_token = NULL");
+    });
+
+    it("uses the same-branch canonical document owner for null-client eform jobs", async () => {
+        const tx = {
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([]),
+        };
+        const repository = new ServiceRecordEditRepository({} as never);
+
+        await expect((repository as unknown as {
+            invalidateSupersededJobs: (client: unknown, branch: string, serviceCase: string, clientId: number) => Promise<void>;
+        }).invalidateSupersededJobs(tx, branchId, caseId, 101)).resolves.toBeUndefined();
+
+        const inFlight = sqlTextWithValues(tx.$queryRaw.mock.calls[0]?.[0]);
+        const documentUpdate = sqlTextWithValues(tx.$queryRaw.mock.calls[2]?.[0]);
+        for (const statement of [inFlight, documentUpdate]) {
+            expect(statement).toContain('job.client_id IS NULL');
+            expect(statement).toContain('"eformsign_doc" AS owner_doc');
+            expect(statement).toContain('owner_doc.branch_id');
+            expect(statement).toContain('owner_doc.client_id');
+            expect(statement).toContain('owner_client.e_doc_id');
+            expect(statement).toContain('owner_client.branch_id');
+        }
     });
 });

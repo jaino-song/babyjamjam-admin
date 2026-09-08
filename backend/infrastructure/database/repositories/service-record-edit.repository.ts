@@ -422,6 +422,131 @@ async function lockCaseChildren(
     }
 }
 
+/**
+ * A historical eformsign job may have lost its client_id when the provider
+ * finalization path was enqueued.  Such a row is owned only when its document
+ * still proves the same branch/client pair and the client's canonical e_doc_id
+ * points at that exact document.  Keeping the pointer check in this predicate
+ * prevents a stale document owner (or a document from another branch) from
+ * broadening confirmation's job fence.
+ *
+ * Queries using this fragment must alias eformsign_document_job as `job`.
+ */
+function eformsignDocumentJobOwnershipPredicate(
+    branchId: string,
+    clientId: number,
+): Prisma.Sql {
+    return Prisma.sql`
+        (
+            (
+                job.branch_id = ${branchId}::uuid
+                AND job.client_id = ${clientId}
+            )
+            OR (
+                job.branch_id = ${branchId}::uuid
+                AND job.client_id IS NULL
+                AND job.document_id IS NOT NULL
+                AND EXISTS (
+                    SELECT 1
+                    FROM "eformsign_doc" AS owner_doc
+                    INNER JOIN "client" AS owner_client
+                        ON owner_client.id = ${clientId}
+                       AND owner_client.branch_id = ${branchId}::uuid
+                       AND owner_client.e_doc_id = owner_doc.document_id
+                    WHERE owner_doc.document_id = job.document_id
+                      AND owner_doc.branch_id = ${branchId}::uuid
+                      AND owner_doc.client_id = ${clientId}
+                )
+            )
+        )
+    `;
+}
+
+/**
+ * Lock contract documents proven by the currently locked client's canonical
+ * e_doc_id before locking document jobs.  Case-linked service-record snapshot
+ * documents are locked by lockCaseChildren; this closes the historical
+ * contract-document gap without locking arbitrary branch documents.
+ */
+async function lockClientOwnedContractDocuments(
+    tx: Prisma.TransactionClient,
+    branchId: string,
+    clientId: number,
+): Promise<void> {
+    const transaction = tx as OptionalQueryTransaction;
+    if (typeof transaction.$queryRaw === "function") {
+        await transaction.$queryRaw(Prisma.sql`
+            SELECT owner_doc.id
+            FROM "eformsign_doc" AS owner_doc
+            INNER JOIN "client" AS owner_client
+                ON owner_client.id = ${clientId}
+               AND owner_client.branch_id = ${branchId}::uuid
+               AND owner_client.e_doc_id = owner_doc.document_id
+            WHERE owner_doc.branch_id = ${branchId}::uuid
+              AND owner_doc.client_id = ${clientId}
+            FOR UPDATE OF owner_doc
+        `);
+        return;
+    }
+
+    // The production transaction always exposes $queryRaw.  Keep the
+    // delegate fallback narrow for repository unit doubles and non-raw test
+    // clients; no client/document row is treated as owned when its pointer is
+    // unavailable.
+    const delegates = tx as unknown as {
+        client?: { findFirst?: (args: unknown) => Promise<{ eDocId?: string | null } | null> };
+        eformsign_doc?: { findMany?: (args: unknown) => Promise<unknown> };
+    };
+    if (typeof delegates.client?.findFirst !== "function"
+        || typeof delegates.eformsign_doc?.findMany !== "function") {
+        return;
+    }
+    const owner = await delegates.client.findFirst({
+        where: { id: clientId, branchId },
+        select: { eDocId: true },
+    });
+    if (!owner?.eDocId) return;
+    await delegates.eformsign_doc.findMany({
+        where: {
+            branchId,
+            clientId,
+            documentId: owner.eDocId,
+        },
+        select: { id: true },
+    });
+}
+
+async function findClientOwnedLegacyDocumentIds(
+    tx: Prisma.TransactionClient,
+    branchId: string,
+    clientId: number,
+): Promise<string[]> {
+    const delegates = tx as unknown as {
+        client?: { findFirst?: (args: unknown) => Promise<{ eDocId?: string | null } | null> };
+        eformsign_doc?: { findMany?: (args: unknown) => Promise<Array<{ documentId?: string }>> };
+    };
+    if (typeof delegates.client?.findFirst !== "function"
+        || typeof delegates.eformsign_doc?.findMany !== "function") {
+        return [];
+    }
+    const owner = await delegates.client.findFirst({
+        where: { id: clientId, branchId },
+        select: { eDocId: true },
+    });
+    if (!owner?.eDocId) return [];
+    const documents = await delegates.eformsign_doc.findMany({
+        where: {
+            branchId,
+            clientId,
+            documentId: owner.eDocId,
+        },
+        select: { documentId: true },
+    });
+    return documents
+        .map((document) => document.documentId)
+        .filter((documentId): documentId is string => typeof documentId === "string");
+}
+
 function jsonValueForConfirmation(response: ServiceRecordEditConfirmResponse): ServiceRecordEditJsonValue {
     return response as unknown as ServiceRecordEditJsonValue;
 }
@@ -1144,6 +1269,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         await lockCaseChildren(tx, branchId, source.caseId, "service_record_assignment", "service_record_assignment", "service_record_case_id");
         await lockCaseChildren(tx, branchId, source.caseId, "service_record_day", "service_record_day", "service_record_case_id");
         await lockCaseChildren(tx, branchId, source.caseId, "eformsign_doc", "eformsign_doc", "service_record_case_id");
+        await lockClientOwnedContractDocuments(tx, branchId, source.client.id);
 
         await lockRowsByBranchAndIds(tx, "service_record_edit_draft", "service_record_edit_draft", branchId, [draftId], true);
         await lockCaseChildren(tx, branchId, source.caseId, "service_record_revision", "service_record_revision", "service_record_case_id");
@@ -1151,10 +1277,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         const transaction = tx as OptionalQueryTransaction;
         if (typeof transaction.$queryRaw === "function") {
             await transaction.$queryRaw(Prisma.sql`
-                SELECT id
-                FROM "eformsign_document_job"
-                WHERE branch_id = ${branchId}::uuid
-                  AND client_id = ${source.client.id}
+                SELECT job.id
+                FROM "eformsign_document_job" AS job
+                WHERE ${eformsignDocumentJobOwnershipPredicate(branchId, source.client.id)}
                 FOR UPDATE
             `);
             await transaction.$queryRaw(Prisma.sql`
@@ -1169,8 +1294,16 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 eformsign_document_job?: { findMany?: (args: unknown) => Promise<unknown> };
                 message_trigger_job?: { findMany?: (args: unknown) => Promise<unknown> };
             };
+            const ownedDocumentIds = await findClientOwnedLegacyDocumentIds(tx, branchId, source.client.id);
             await jobs.eformsign_document_job?.findMany?.({
-                where: { branchId, clientId: source.client.id },
+                where: {
+                    OR: [
+                        { branchId, clientId: source.client.id },
+                        ...(ownedDocumentIds.length > 0
+                            ? [{ branchId, clientId: null, documentId: { in: ownedDocumentIds } }]
+                            : []),
+                    ],
+                },
                 select: { id: true },
             });
             await jobs.message_trigger_job?.findMany?.({
@@ -1201,14 +1334,13 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             // against a worker that is claiming at the same time; the caller
             // receives a conflict and the draft/case writes roll back.
             const inFlightDocuments = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-                SELECT id
-                FROM "eformsign_document_job"
-                WHERE branch_id = ${branchId}::uuid
-                  AND client_id = ${clientId}
-                  AND job_type IN ('create_document', 'finalize_document')
-                  AND status IN ('processing', 'reconciling')
-                  AND progress_step IN ('creating', 'sent')
-                FOR UPDATE
+                SELECT job.id
+                FROM "eformsign_document_job" AS job
+                WHERE ${eformsignDocumentJobOwnershipPredicate(branchId, clientId)}
+                  AND job.job_type IN ('create_document', 'finalize_document')
+                  AND job.status IN ('processing', 'reconciling')
+                  AND job.progress_step IN ('creating', 'sent')
+                FOR UPDATE OF job
             `);
             if (inFlightDocuments.length > 0) {
                 throw new ServiceRecordEditConflictError(
@@ -1229,7 +1361,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 );
             }
             await transaction.$queryRaw(Prisma.sql`
-                UPDATE "eformsign_document_job"
+                UPDATE "eformsign_document_job" AS job
                 SET status = 'failed',
                     last_error_code = 'SERVICE_RECORD_REVISION_SUPERSEDED',
                     active_key = NULL,
@@ -1238,10 +1370,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     lease_token = NULL,
                     completed_at = now(),
                     updated_at = now()
-                WHERE branch_id = ${branchId}::uuid
-                  AND client_id = ${clientId}
-                  AND job_type IN ('create_document', 'finalize_document')
-                  AND status IN ('queued', 'processing', 'reconciling')
+                WHERE ${eformsignDocumentJobOwnershipPredicate(branchId, clientId)}
+                  AND job.job_type IN ('create_document', 'finalize_document')
+                  AND job.status IN ('queued', 'processing', 'reconciling')
             `);
             await transaction.$queryRaw(Prisma.sql`
                 UPDATE "message_trigger_job"
@@ -1267,10 +1398,16 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 updateMany?: (args: unknown) => Promise<unknown>;
             };
         };
+        const ownedDocumentIds = await findClientOwnedLegacyDocumentIds(tx, branchId, clientId);
+        const ownedDocumentPredicate = [
+            { branchId, clientId },
+            ...(ownedDocumentIds.length > 0
+                ? [{ branchId, clientId: null, documentId: { in: ownedDocumentIds } }]
+                : []),
+        ];
         const inFlightDocuments = await fallback.eformsign_document_job?.findMany?.({
             where: {
-                branchId,
-                clientId,
+                OR: ownedDocumentPredicate,
                 jobType: { in: ["create_document", "finalize_document"] },
                 status: { in: ["processing", "reconciling"] },
                 progressStep: { in: ["creating", "sent"] },
@@ -1292,7 +1429,10 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             );
         }
         await fallback.eformsign_document_job?.updateMany?.({
-            where: { branchId, clientId, status: { in: ["queued", "processing", "reconciling"] } },
+            where: {
+                OR: ownedDocumentPredicate,
+                status: { in: ["queued", "processing", "reconciling"] },
+            },
             data: {
                 status: "failed",
                 lastErrorCode: "SERVICE_RECORD_REVISION_SUPERSEDED",
