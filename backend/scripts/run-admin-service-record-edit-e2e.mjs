@@ -19,6 +19,7 @@ assertApprovedUrl("DIRECT_URL");
 const env = {
     ...process.env,
     NODE_ENV: "test",
+    JWT_SECRET: "phase6-service-record-http-e2e-secret",
     SERVICE_RECORD_EDIT_HTTP_E2E: "1",
 };
 
