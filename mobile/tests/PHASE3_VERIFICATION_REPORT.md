@@ -57,8 +57,9 @@ is intentionally synthetic and read-only.
   all/upcoming/past counts were 69/0/69, and selecting upcoming zero rendered
   zero cards plus the empty-state copy.
 - The finalized existing contract rendered nine PDF canvases and exposed the
-  receipt-PNG link at the mobile viewport. The actual saved download name was
-  not inspected because Chrome blocked the downloads page.
+  receipt-PNG link at the restored normal Chrome viewport (measured 2133 CSS
+  px). The actual saved download name was not inspected because Chrome blocked
+  the downloads page.
 - Safari/iOS native hardware was not available; no native Web Share or SMS
   delivery result is represented here.
 
