@@ -241,6 +241,100 @@ export interface ServiceRecordRevisionGenerationInput extends ServiceRecordRevis
     completeness: "complete";
 }
 
+/** The three independently progressing document operations for a revision. */
+export const SERVICE_RECORD_REVISION_DOCUMENT_OPERATIONS = [
+    "record_snapshot",
+    "contract_period",
+    "receipt_refresh",
+] as const;
+
+export type ServiceRecordRevisionDocumentOperation =
+    (typeof SERVICE_RECORD_REVISION_DOCUMENT_OPERATIONS)[number];
+
+/** Public state vocabulary shared by history, retry, and worker consumers. */
+export const SERVICE_RECORD_REVISION_DOCUMENT_STATUSES = [
+    "not_required",
+    "waiting_for_completion",
+    "waiting_for_signature",
+    "capability_unverified",
+    "manual_review",
+    "pending",
+    "processing",
+    "unknown",
+    "failed",
+    "completed",
+] as const;
+
+export type ServiceRecordRevisionDocumentStatus =
+    (typeof SERVICE_RECORD_REVISION_DOCUMENT_STATUSES)[number];
+
+/**
+ * Safe document state presented by the revision history endpoint. Immutable
+ * input, fingerprints, provider responses, and credentials stay behind the
+ * server repository boundary.
+ */
+export interface ServiceRecordRevisionDocumentSummary {
+    id: string;
+    operation: ServiceRecordRevisionDocumentOperation;
+    generation: string;
+    status: ServiceRecordRevisionDocumentStatus;
+    documentVersion: number | null;
+    canRetry: boolean;
+    reasonCode: string | null;
+}
+
+export interface ServiceRecordRevisionHistoryEntry {
+    id: string;
+    revisionNumber: number;
+    confirmedAt: string;
+    isCurrent: boolean;
+    documents: ServiceRecordRevisionDocumentSummary[];
+}
+
+export interface ServiceRecordRevisionHistoryResponse {
+    caseId: string;
+    caseVersion: number;
+    currentRevisionId: string | null;
+    currentUsableRevisionId: string | null;
+    revisions: ServiceRecordRevisionHistoryEntry[];
+}
+
+export interface ServiceRecordRevisionDocumentRetryRequest {
+    expectedGeneration: string;
+}
+
+/**
+ * Branch-scoped durable operation state. This is a storage-facing shape used
+ * by backend adapters as well as a serializable reference for focused tests;
+ * `immutableInput` is never returned by the public history DTO.
+ */
+export interface ServiceRecordRevisionDocumentState {
+    id: string;
+    branchId: string;
+    clientId: number;
+    serviceRecordCaseId: string;
+    revisionId: string;
+    operation: ServiceRecordRevisionDocumentOperation;
+    generation: string;
+    immutableInput: Record<string, unknown>;
+    inputFingerprint: string;
+    documentVersion: number | null;
+    sourceDocumentId: string | null;
+    targetDocumentId: string | null;
+    templateId: string | null;
+    templateVersion: string | null;
+    workflowScope: Record<string, unknown> | null;
+    mirrorGeneration: string | null;
+    step: string;
+    status: ServiceRecordRevisionDocumentStatus;
+    attempts: number;
+    nextAttemptAt: string | null;
+    lastErrorCode: string | null;
+    version: number;
+    createdAt: string;
+    updatedAt: string;
+}
+
 export interface SignatureDocStatus {
     documentId: string;
     statusDetail: string;
