@@ -171,7 +171,7 @@ Task2.2 실행 분리: 위 기능/수락 조건은 유지하고 고정 API 계�
 
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer (기존 phase1_shared_ui worker) · **Model:** gpt-5.6-luna · **Effort:** max
 
-  **Paths:** 위 Task2.2의 backend 경로만. **Depends:** Task2.1 저장 기반 및 감사 보정, 고정 API 계약. **Worktree:** `admin-service-record-editor-units/task-2-2`, branch `unit/admin-service-record-2-2`.
+  **Paths:** 위 Task2.2의 backend 경로와 `packages/shared/tsconfig.backend-runtime.json`, `backend/vendor/shared-agent/package.json`, 기존 `build:backend-runtime`이 생성하는 `backend/vendor/shared-agent/constants/service-record-form-layout.js` 및 `.d.ts`. 공통 양식 정의를 서버 runtime에 노출하기 위한 연결만 허용하며 생성 JS를 직접 편집하지 않는다. canonical descriptor의 실제 저장 leaf/options를 검증하고 backend 경로에서 runtime import를 시험한다. **Depends:** Task2.1 저장 기반 및 감사 보정, 고정 API 계약. **Worktree:** `admin-service-record-editor-units/task-2-2`, branch `unit/admin-service-record-2-2`.
 
 - **Task2.2 화면 연결** (feature, med)
   - 위 Task2.2의 frontend 관리자 adapter·API proxy·초안 UI와 shared admin opt-in·회귀 테스트를 담당한다. backend 소유 파일을 수정하지 않는다.

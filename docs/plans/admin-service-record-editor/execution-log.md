@@ -386,3 +386,5 @@
 - Task2.2 병행 분리 Sol/high PLAN APPROVE. UI unit `admin-service-record-editor-units/task-2-2-ui` / `unit/admin-service-record-2-2-ui`, basee62b73d76를 생성하고 Luna/max draft_ui에 frontend/shared UI만 배정했다. 기존 worker는 backend만 소유한다. UI 의존성 offline frozen1472개 설치 완료, 고정 API 응답 계약으로 서버 먼저/UI 후 통합한다.
 - 후속 격리DB `bjj_revision_task3`를 localhost62295의 무자료 baseline 스키마에서 생성하고 이번2개 migration을 순차 적용했다. Prisma schema diff 차이없음 PASS. 기존고객 모달 duration-confirmation 테스트5/5PASS; 기존 Dialog 설명 경고는 별도 기존 상태다. 모달의0영업일 확인 전달 테스트는 N0 서비스 허용 증거가 아니며3.1 서버 초기화에서는0영업일을 거부한다.
 - Phase6 입력 Sol/high APPROVE. 실제 JWT/session/지점 guard를 통과하는 로컬 HTTP+PG 검사, 각 불변식의 테스트/명령/결과/artifact 목록, guarded DB runner와 기본 login setup 없는 mock 브라우저 config를 추가했다. 실제 bootstrap의 엄격한 GlobalValidationPipe도 좁은 HTTP harness에 적용한다. 외부 capability/공식Chrome 미검증 표시는 유지한다.
+
+- Task2.2 canonical validator 연결에서 backend가 사용하는 tracked vendor runtime에 양식 정의 export가 빠진 것을 확인했다. 기존 TypeScript runtime build include와 수동 관리 manifest export만 서버 worker scope에 추가하고 생성 산출물 및 실제 backend import를 검증한다. 별도 항목 사전이나 생성기 체계를 추가하지 않는다.
