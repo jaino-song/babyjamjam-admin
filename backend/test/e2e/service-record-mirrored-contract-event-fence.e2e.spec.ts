@@ -21,6 +21,7 @@ const describeE2E = process.env["SERVICE_RECORD_CONFIRM_E2E"] === "1" ? describe
 const ORIGINAL_END_DATE = new Date("2026-09-23T00:00:00.000Z");
 const REVISED_END_DATE = new Date("2026-09-29T00:00:00.000Z");
 const STALE_END_DATE = new Date("2026-09-20T00:00:00.000Z");
+const RACE_END_DATE = new Date("2026-09-18T00:00:00.000Z");
 
 type ConfirmFixture = Awaited<ReturnType<typeof createServiceRecordConfirmFixture>>;
 
@@ -28,11 +29,69 @@ type ContractDocumentOverrides = {
     clientId?: number | null;
     customerPhone?: string | null;
     revisionId?: string | null;
+    serviceRecordCaseId?: string | null;
     createdDate?: Date;
     updatedDate?: Date;
     sourceUpdatedDate?: Date;
     syncedAt?: Date;
 };
+
+type QueryBarrier = {
+    entered: Promise<void>;
+    arrive: () => void;
+    released: Promise<void>;
+    release: () => void;
+};
+
+function createQueryBarrier(): QueryBarrier {
+    let arrive!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => { arrive = resolve; });
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    return { entered, arrive, released, release };
+}
+
+async function waitForBarrier(
+    barrier: Promise<void>,
+    label: string,
+    timeoutMs = 5_000,
+): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        await Promise.race([
+            barrier,
+            new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), timeoutMs);
+            }),
+        ]);
+    } finally {
+        if (timer !== undefined) clearTimeout(timer);
+    }
+}
+
+function withClientReadBarrier(
+    client: PrismaClient,
+    clientId: number,
+    barrier: QueryBarrier,
+): PrismaClient {
+    let paused = false;
+    return client.$extends({
+        query: {
+            client: {
+                async findUnique({ args, query }) {
+                    const result = await query(args);
+                    const where = args.where as { id?: number } | undefined;
+                    if (!paused && where?.id === clientId) {
+                        paused = true;
+                        barrier.arrive();
+                        await barrier.released;
+                    }
+                    return result;
+                },
+            },
+        },
+    }) as unknown as PrismaClient;
+}
 
 function contractDetail(documentId: string): EformsignApiDocumentResponse {
     return {
@@ -86,6 +145,9 @@ async function createContractDocument(
     const sourceUpdatedDate = overrides.sourceUpdatedDate ?? new Date("2026-09-01T01:00:00.000Z");
     const syncedAt = overrides.syncedAt ?? new Date("2026-09-01T01:01:00.000Z");
     const detail = contractDetail(documentId);
+    const serviceRecordCaseId = overrides.serviceRecordCaseId === undefined
+        ? (overrides.revisionId ? fixture.record.id : null)
+        : overrides.serviceRecordCaseId;
 
     const document = await prisma.eformsign_doc.create({
         data: {
@@ -108,6 +170,7 @@ async function createContractDocument(
             branchId: fixture.branch.id,
             clientId: overrides.clientId === undefined ? fixture.client.id : overrides.clientId,
             documentKind: "contract",
+            serviceRecordCaseId,
             revisionId: overrides.revisionId ?? null,
             detailPayload: detail as unknown as Prisma.InputJsonValue,
             detailSourceUpdatedDate: sourceUpdatedDate,
@@ -154,6 +217,7 @@ function createReconciler(
     prisma: PrismaClient,
     fixture: ConfirmFixture,
     endDate: Date,
+    lifecyclePrisma: PrismaClient = prisma,
 ) {
     const mirrorRepository = new SbEformsignDocumentMirrorRepository(
         prisma as unknown as PrismaService,
@@ -174,7 +238,7 @@ function createReconciler(
         }),
     };
     const lifecycle = new ServiceRecordLifecycleService(
-        prisma as unknown as PrismaService,
+        lifecyclePrisma as unknown as PrismaService,
     );
     const reconciler = new ReconcileCompletedMirroredEformsignDocUsecase(
         linkMirroredDocumentByPhoneUsecase,
@@ -386,6 +450,85 @@ describeE2E("mirrored contract completion event ownership fence (real disposable
                 revisionId: oldRevision.id,
                 createdDate: new Date("2028-01-01T00:00:00.000Z"),
             });
+    });
+
+    it("rejects a stale mirrored completion when the pointer changes after the linker read", async () => {
+        const fixture = await createServiceRecordConfirmFixture(prisma);
+        const currentRevision = await appendRevision(prisma, fixture, "race-current");
+        const oldDocument = await createContractDocument(prisma, fixture, {
+            revisionId: null,
+            createdDate: new Date("2026-09-01T00:00:00.000Z"),
+            updatedDate: new Date("2026-09-01T00:00:00.000Z"),
+        });
+        const currentDocument = await createContractDocument(prisma, fixture, {
+            revisionId: currentRevision.id,
+            createdDate: new Date("2026-09-02T00:00:00.000Z"),
+            updatedDate: new Date("2026-09-02T00:00:00.000Z"),
+        });
+        await prisma.service_record_case.update({
+            where: { id: fixture.record.id },
+            data: {
+                currentRevisionId: null,
+                currentUsableRevisionId: null,
+                currentUsableDocumentVersion: null,
+                endDate: ORIGINAL_END_DATE,
+            },
+        });
+        await prisma.client.update({
+            where: { id: fixture.client.id },
+            data: { eDocId: oldDocument.documentId, endDate: ORIGINAL_END_DATE },
+        });
+
+        const barrier = createQueryBarrier();
+        const lifecyclePrisma = withClientReadBarrier(prisma, fixture.client.id, barrier);
+        const { reconciler } = createReconciler(
+            prisma,
+            fixture,
+            RACE_END_DATE,
+            lifecyclePrisma,
+        );
+        const reconciliation = reconciler.execute({
+            documentId: oldDocument.documentId,
+            detail: oldDocument.detail,
+            options: { linkExistingOnly: true, suppressOutboundAutomation: true },
+        });
+
+        try {
+            await waitForBarrier(barrier.entered, "mirrored lifecycle client read");
+            await prisma.service_record_case.update({
+                where: { id: fixture.record.id },
+                data: {
+                    currentRevisionId: currentRevision.id,
+                    currentUsableRevisionId: currentRevision.id,
+                    currentUsableDocumentVersion: 2,
+                    endDate: REVISED_END_DATE,
+                },
+            });
+            await prisma.client.update({
+                where: { id: fixture.client.id },
+                data: { eDocId: currentDocument.documentId, endDate: REVISED_END_DATE },
+            });
+            barrier.release();
+            await expect(reconciliation).resolves.toBe("already_linked");
+        } finally {
+            barrier.release();
+            await Promise.allSettled([reconciliation]);
+        }
+
+        await expect(prisma.client.findUniqueOrThrow({ where: { id: fixture.client.id } }))
+            .resolves.toMatchObject({
+                eDocId: currentDocument.documentId,
+                endDate: REVISED_END_DATE,
+            });
+        await expect(prisma.service_record_case.findUniqueOrThrow({ where: { id: fixture.record.id } }))
+            .resolves.toMatchObject({
+                currentRevisionId: currentRevision.id,
+                currentUsableRevisionId: currentRevision.id,
+                currentUsableDocumentVersion: 2,
+                endDate: REVISED_END_DATE,
+            });
+        await expect(prisma.eformsign_doc.findUniqueOrThrow({ where: { id: oldDocument.id } }))
+            .resolves.toMatchObject({ clientId: fixture.client.id, revisionId: null });
     });
 
 });
