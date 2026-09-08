@@ -250,6 +250,24 @@ describe("mobile client service date confirmation", () => {
     expect(endDateInput).toHaveValue("");
   });
 
+  it("keeps a manual end-date clear when the pending contract document resolves afterward", async () => {
+    mockSearchParams = new URLSearchParams("clientId=7");
+    mockEditingClient = { ...editingClient(), eDocId: "pending-contract-document" };
+    const view = render(<NewClientPage />);
+
+    await waitFor(() => expect(useClientWizardStore.getState().endDate).toBe("2026-09-08"));
+    act(() => useClientWizardStore.getState().setCurrentStep(2));
+    const endDateInput = screen.getByDisplayValue("2026-09-08");
+    fireEvent.change(endDateInput, { target: { value: "" } });
+    expect(endDateInput).toHaveValue("");
+
+    mockLatePrefill = { endDate: "2026-09-10" };
+    mockEditingContractDocument = {};
+    view.rerender(<NewClientPage />);
+
+    await waitFor(() => expect(endDateInput).toHaveValue(""));
+  });
+
   it("requires edit confirmation and prevents duplicate confirmed submissions", async () => {
     let finish!: (value: { id: number }) => void;
     mockUpdateClient.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));

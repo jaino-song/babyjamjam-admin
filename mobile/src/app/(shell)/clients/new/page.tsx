@@ -428,7 +428,6 @@ export default function NewClientPage() {
     }
 
     lastHydratedContractDocIdRef.current = editingClient.eDocId;
-    hasUserEditedServicePeriodRef.current = false;
 
     const matchedVoucherPrice = hasPricePrefill
       ? findVoucherPriceByAmounts(allVoucherPrices, prefill)
@@ -457,7 +456,9 @@ export default function NewClientPage() {
     if (!store.grant && prefill.grant) setField("grant", prefill.grant);
     if (!store.actualPrice && prefill.actualPrice) setField("actualPrice", prefill.actualPrice);
     if (!store.startDate && prefill.startDate) setField("startDate", toIsoDate(prefill.startDate));
-    if (!store.endDate && prefill.endDate) setField("endDate", toIsoDate(prefill.endDate));
+    if (!store.endDate && prefill.endDate && !hasUserEditedServicePeriodRef.current) {
+      setField("endDate", toIsoDate(prefill.endDate));
+    }
     if (store.primaryEmployeeId == null && primaryEmployee) setField("primaryEmployeeId", primaryEmployee.id);
     if (store.secondaryEmployeeId == null && secondaryEmployee) setField("secondaryEmployeeId", secondaryEmployee.id);
 
@@ -1231,7 +1232,10 @@ export default function NewClientPage() {
                       <Input
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_end-date-field_end-date-input"
                         value={store.endDate}
-                        onChange={(e) => setField("endDate", formatIsoDateInput(e.target.value))}
+                        onChange={(e) => {
+                          hasUserEditedServicePeriodRef.current = true;
+                          setField("endDate", formatIsoDateInput(e.target.value));
+                        }}
                         inputMode="numeric"
                         maxLength={10}
                         placeholder="YYYY-MM-DD"
