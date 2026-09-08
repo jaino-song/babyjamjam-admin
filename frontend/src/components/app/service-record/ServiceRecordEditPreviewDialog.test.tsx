@@ -63,6 +63,27 @@ const preview: ServiceRecordEditPreviewResponse = {
     blockingReasons: [
         { code: "SOURCE_CHANGED", message: "원본 기록이 변경되어 확인이 필요합니다." },
     ],
+    signatureMetadata: {
+        treatment: "preserve_existing",
+        evidence: "observed",
+        sessions: [{
+            sessionIndex: 1,
+            hasSignature: true,
+            signedAt: "2026-07-11T01:00:00.000Z",
+            submittedAt: "2026-07-11T02:00:00.000Z",
+        }],
+    },
+    documentScope: {
+        evidence: "observed",
+        serviceRecordSnapshot: {
+            documentIds: ["doc-1"],
+            snapshotVersion: 2,
+            chunks: [{ documentId: "doc-1", snapshotVersion: 2, snapshotChunkIndex: 1 }],
+        },
+        currentRevision: { id: null, revisionNumber: null, formVersion: null },
+        form: { version: 3 },
+        contract: { currentDocumentId: "contract-1", stage: "completed" },
+    },
 };
 
 describe("ServiceRecordEditPreviewDialog", () => {
@@ -86,6 +107,9 @@ describe("ServiceRecordEditPreviewDialog", () => {
         expect(screen.getByText("원본 기록이 변경되어 확인이 필요합니다.")).toBeInTheDocument();
         expect(screen.getByText("기본정보: 변경됨")).toBeInTheDocument();
         expect(screen.getByText("기록 회차: 1회차, 2회차")).toBeInTheDocument();
+        expect(screen.getByText(/기존 제공기록지 서명과 실제 서명·제출 시각 보존/)).toBeInTheDocument();
+        expect(screen.getByText(/계약 상태: 완료 계약 · 새 계약과 새 이용자 서명이 필요합니다/)).toBeInTheDocument();
+        expect(screen.getByText(/문서·버전 범위: snapshot 2/)).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: /확정|완료|저장/ })).not.toBeInTheDocument();
         expect(document.querySelector(`[data-component="${DATA_COMPONENT}"]`)).toHaveAttribute(
             "data-source-component",

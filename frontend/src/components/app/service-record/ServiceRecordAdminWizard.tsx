@@ -27,6 +27,8 @@ import {
     type AdminServiceRecordEditSessionChanges,
     type AdminServiceRecordEditState,
     type ServiceRecordEditPreviewResponse,
+    type ServiceRecordEditPreviewBlockingReason,
+    type ServiceRecordPlannedSession,
 } from "@/features/service-records/types";
 
 import { ServiceRecordDateSelectionDialog } from "./ServiceRecordDateSelectionDialog";
@@ -110,6 +112,8 @@ export interface AdminServiceRecordSessionVariant {
 export interface AdminServiceRecordView {
     context: ServiceRecordContext;
     supplementalSessions: AdminServiceRecordSessionVariant[];
+    plannedSessions: ServiceRecordPlannedSession[];
+    scheduleProjectionBlockingReasons: ServiceRecordEditPreviewBlockingReason[];
 }
 
 function sessionFingerprint(session: EditorSession): string {
@@ -156,6 +160,14 @@ export function buildAdminServiceRecordView(
 ): AdminServiceRecordView {
     const record = overview.record ?? null;
     const assignments = overview.assignments ?? [];
+    const scheduleProjection = overview.scheduleProjection;
+    const projectionEntries = scheduleProjection?.entries ?? [];
+    const projectionHasBlockingReasons = (scheduleProjection?.blockingReasons.length ?? 0) > 0;
+    const projectionIndexes = new Set(projectionEntries.map((entry) => entry.sessionIndex));
+    const projectionIsComplete = projectionEntries.length > 0
+        && !projectionHasBlockingReasons
+        && projectionEntries.every((entry, index) => entry.sessionIndex === index + 1)
+        && projectionIndexes.size === projectionEntries.length;
     const recordTotalSessions = typeof record?.totalSessions === "number" ? Math.max(record.totalSessions, 0) : null;
     const assignmentTotalSessions = Math.max(
         ...assignments.map((assignment) => assignment.totalSessions ?? 0),
@@ -168,8 +180,12 @@ export function buildAdminServiceRecordView(
         ].map((session) => session.sessionIndex),
         0,
     );
-    const totalSessions = recordTotalSessions
-        ?? (assignmentTotalSessions > 0 ? assignmentTotalSessions : observedSessionMax);
+    const totalSessions = projectionIsComplete
+        ? projectionEntries.length
+        : recordTotalSessions
+            ?? (scheduleProjection
+                ? 0
+                : assignmentTotalSessions > 0 ? assignmentTotalSessions : observedSessionMax);
     const sessionByIndex = new Map<number, EditorSession>();
     const canonicalSourceKindByIndex = new Map<number, "case" | "assignment">();
     const fingerprintsByIndex = new Map<number, Set<string>>();
@@ -280,6 +296,8 @@ export function buildAdminServiceRecordView(
             pendingScheduleChange: null,
         },
         supplementalSessions,
+        plannedSessions: projectionIsComplete ? [...projectionEntries].sort((left, right) => left.sessionIndex - right.sessionIndex) : [],
+        scheduleProjectionBlockingReasons: scheduleProjection?.blockingReasons ?? [],
     };
 }
 
@@ -504,6 +522,8 @@ export function ServiceRecordAdminWizard({
     const [selectedSupplementalKey, setSelectedSupplementalKey] = useState<string | null>(null);
     const [dateDialogOpen, setDateDialogOpen] = useState(false);
     const [dateMoveBusy, setDateMoveBusy] = useState(false);
+    const [pendingDateMove, setPendingDateMove] = useState<AdminServiceRecordEditDateMove | null>(null);
+    const [dateMoveError, setDateMoveError] = useState<string | null>(null);
     const [previewDialogOpen, setPreviewDialogOpen] = useState(false);
     const [previewBusy, setPreviewBusy] = useState(false);
     const [preview, setPreview] = useState<ServiceRecordEditPreviewResponse | null>(null);
@@ -513,6 +533,10 @@ export function ServiceRecordAdminWizard({
     const context = useMemo(
         () => applyAdminServiceRecordEditChanges(baseView.context, workingChanges),
         [baseView.context, workingChanges],
+    );
+    const plannedSessionByIndex = useMemo(
+        () => new Map(baseView.plannedSessions.map((session) => [session.sessionIndex, session])),
+        [baseView.plannedSessions],
     );
     const header = useMemo(() => headerToInput(context.header), [context.header]);
     const selectedSupplemental = supplementalSessions.find((item) => item.key === selectedSupplementalKey);
@@ -530,6 +554,7 @@ export function ServiceRecordAdminWizard({
         ? day
         : Math.min(day, Math.max(context.totalSessions, 1));
     const currentSession = activeContext.sessions.find((session) => session.sessionIndex === displayDay);
+    const hasPlannedSession = plannedSessionByIndex.has(displayDay);
     const lockedDays = useMemo(
         () => new Set(
             activeContext.sessions
@@ -538,6 +563,13 @@ export function ServiceRecordAdminWizard({
         ),
         [activeContext.sessions],
     );
+    const currentDateForSession = useCallback((sessionIndex: number) => {
+        const changedDate = workingChanges.sessions?.find((session) => session.sessionIndex === sessionIndex)?.serviceDate;
+        if (changedDate) return dateOnly(changedDate);
+        const sessionDate = activeContext.sessions.find((session) => session.sessionIndex === sessionIndex)?.serviceDate;
+        if (sessionDate) return dateOnly(sessionDate);
+        return dateOnly(plannedSessionByIndex.get(sessionIndex)?.serviceDate);
+    }, [activeContext.sessions, plannedSessionByIndex, workingChanges.sessions]);
     const changedSessionIndexes = useMemo(
         () => new Set((workingChanges.sessions ?? []).map((session) => session.sessionIndex)),
         [workingChanges.sessions],
@@ -596,13 +628,15 @@ export function ServiceRecordAdminWizard({
 
     const applyDateMove = useCallback(async (toDate: string) => {
         if (!activeDraft || selectedSupplemental || dateMoveBusy) return;
+        const dateMove: AdminServiceRecordEditDateMove = {
+            sessionIndex: displayDay,
+            toDate,
+        };
+        setPendingDateMove(dateMove);
         setDateMoveBusy(true);
         setDraftError(null);
+        setDateMoveError(null);
         try {
-            const dateMove: AdminServiceRecordEditDateMove = {
-                sessionIndex: displayDay,
-                toDate,
-            };
             const response = await adminServiceRecordEditApi.updateDraft(
                 activeDraft.id,
                 activeDraft.draftVersion,
@@ -620,13 +654,19 @@ export function ServiceRecordAdminWizard({
             setDraft(draftForSession(nextSession));
             setDirty(false);
             setSaveState("saved");
+            setPendingDateMove(null);
+            setDateMoveError(null);
             setDateDialogOpen(false);
             setPreview(null);
             setPreviewError(null);
         } catch (error) {
             const apiError = error instanceof AdminServiceRecordEditApiError ? error : null;
             const status = apiError?.status ?? 500;
-            setDateDialogOpen(false);
+            // Preserve the selected date and keep the dialog recoverable. A
+            // retry is always an explicit user action with the current CAS;
+            // no failed/unknown request is resent automatically.
+            setDateDialogOpen(true);
+            setDateMoveError(dateMoveErrorMessage(status));
             setDraftError({
                 status,
                 message: dateMoveErrorMessage(status),
@@ -674,6 +714,8 @@ export function ServiceRecordAdminWizard({
             setSelectedSupplementalKey(null);
             setScreen("overview");
             setDiscardModalOpen(false);
+            setPendingDateMove(null);
+            setDateMoveError(null);
             setDateDialogOpen(false);
             setPreviewDialogOpen(false);
             setPreview(null);
@@ -705,6 +747,9 @@ export function ServiceRecordAdminWizard({
         setDirty(false);
         setSaveState(latest.draft?.status === "ACTIVE" ? "saved" : "idle");
         setDraftError(null);
+        setPendingDateMove(null);
+        setDateMoveError(null);
+        setDateDialogOpen(false);
     }, [baseView.context, displayDay, draftError, selectedSupplemental]);
 
     const keepLocalInput = useCallback(() => {
@@ -719,8 +764,8 @@ export function ServiceRecordAdminWizard({
         return context.totalSessions || 1;
     }, [context.totalSessions, lockedDays]);
     const defaultDate = useCallback(
-        (sessionIndex: number) => activeContext.sessions.find((session) => session.sessionIndex === sessionIndex)?.serviceDate ?? "",
-        [activeContext.sessions],
+        (sessionIndex: number) => currentDateForSession(sessionIndex),
+        [currentDateForSession],
     );
     const openDay = useCallback((sessionIndex: number) => {
         const bounded = Math.min(Math.max(sessionIndex, 1), Math.max(context.totalSessions, 1));
@@ -775,8 +820,9 @@ export function ServiceRecordAdminWizard({
     }, [persistDraft]);
 
     const originalDateForSession = useCallback((sessionIndex: number) => (
-        dateOnly(baseView.context.sessions.find((session) => session.sessionIndex === sessionIndex)?.serviceDate)
-    ), [baseView.context.sessions]);
+        dateOnly(plannedSessionByIndex.get(sessionIndex)?.originalDate)
+        || dateOnly(baseView.context.sessions.find((session) => session.sessionIndex === sessionIndex)?.serviceDate)
+    ), [baseView.context.sessions, plannedSessionByIndex]);
 
     const renderAdminDateDisplay = useCallback(({
         "data-component": dataComponent,
@@ -800,8 +846,19 @@ export function ServiceRecordAdminWizard({
 
     const openDateDialog = useCallback((sessionIndex: number) => {
         if (!activeDraft || selectedSupplemental || sessionIndex !== displayDay || dateMoveBusy) return;
+        setPendingDateMove(null);
+        setDateMoveError(null);
         setDateDialogOpen(true);
     }, [activeDraft, dateMoveBusy, displayDay, selectedSupplemental]);
+
+    const handleDateDialogOpenChange = useCallback((nextOpen: boolean) => {
+        if (!nextOpen && dateMoveBusy) return;
+        setDateDialogOpen(nextOpen);
+        if (!nextOpen) {
+            setPendingDateMove(null);
+            setDateMoveError(null);
+        }
+    }, [dateMoveBusy]);
 
     const statusLabel = saveState === "saving"
             ? "저장 중…"
@@ -869,7 +926,19 @@ export function ServiceRecordAdminWizard({
                     <AlertDescription>원본 기록이 변경되었습니다. 초안 입력은 유지됩니다.</AlertDescription>
                 </Alert>
             ) : null}
-            {draftError ? (
+            {baseView.scheduleProjectionBlockingReasons.length > 0 ? (
+                <Alert className="admin-schedule-projection-alert" data-component={`${ADMIN_WIZARD_COMPONENT}_top-bar_admin-toolbar_schedule-projection-blocked`} variant="warning">
+                    <AlertTitle>예정 회차를 확인할 수 없습니다.</AlertTitle>
+                    <AlertDescription>
+                        <ul className="list-disc space-y-1 pl-5">
+                            {baseView.scheduleProjectionBlockingReasons.map((reason, index) => (
+                                <li key={`${reason.code}-${reason.sessionIndex ?? "all"}-${index}`}>{reason.message}</li>
+                            ))}
+                        </ul>
+                    </AlertDescription>
+                </Alert>
+            ) : null}
+            {draftError && !dateDialogOpen ? (
                 <Alert className="admin-draft-alert" data-component={`${ADMIN_WIZARD_COMPONENT}_top-bar_admin-toolbar_error`} variant="destructive">
                     <AlertTitle>초안 저장 실패</AlertTitle>
                     <AlertDescription>
@@ -898,7 +967,7 @@ export function ServiceRecordAdminWizard({
                 day={displayDay}
                 pageIdx={pageIdx}
                 draft={draft}
-                editing={Boolean(currentSession)}
+                editing={Boolean(currentSession || hasPlannedSession)}
                 readOnly={formReadOnly}
                 adminMode
                 changedSessionIndexes={changedSessionIndexes}
@@ -993,10 +1062,13 @@ export function ServiceRecordAdminWizard({
             />
             <ServiceRecordDateSelectionDialog
                 open={dateDialogOpen}
-                onOpenChange={setDateDialogOpen}
-                currentServiceDate={dateOnly(currentSession?.serviceDate) || ""}
+                onOpenChange={handleDateDialogOpenChange}
+                currentServiceDate={currentDateForSession(displayDay)}
+                selectedServiceDate={pendingDateMove?.sessionIndex === displayDay ? pendingDateMove.toDate : null}
                 sessionLabel={`${displayDay}회차`}
                 onApply={(nextDate) => { void applyDateMove(nextDate); }}
+                error={dateMoveError}
+                onReloadLatest={draftError?.latestState ? reloadLatestDraft : undefined}
                 busy={dateMoveBusy}
                 disabled={!activeDraft || Boolean(selectedSupplemental)}
                 data-component={`${ADMIN_WIZARD_COMPONENT}_date-selection-dialog`}

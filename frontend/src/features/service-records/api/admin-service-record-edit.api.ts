@@ -4,8 +4,12 @@ import {
     type AdminServiceRecordEditDateMove,
     type AdminServiceRecordEditDraft,
     type AdminServiceRecordEditState,
+    type ServiceRecordEditDocumentChunk,
+    type ServiceRecordEditDocumentScope,
     type ServiceRecordEditPreviewResponse,
     type ServiceRecordPlannedSession,
+    type ServiceRecordEditSignatureMetadata,
+    type ServiceRecordEditSignatureSessionMetadata,
 } from "../types";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -18,6 +22,25 @@ function asString(value: unknown): string {
 
 function asNumber(value: unknown): number {
     return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function isValidDateOnly(value: unknown): value is string {
+    if (typeof value !== "string") return false;
+    const match = ISO_DATE_PATTERN.exec(value);
+    if (!match) return false;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    return parsed.getUTCFullYear() === year
+        && parsed.getUTCMonth() === month - 1
+        && parsed.getUTCDate() === day;
+}
+
+function positiveInteger(value: unknown): number | null {
+    return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
 function normalizeDraft(value: unknown): AdminServiceRecordEditDraft | null {
@@ -45,19 +68,19 @@ function normalizeDraft(value: unknown): AdminServiceRecordEditDraft | null {
 
 function normalizePreviewSession(value: unknown): ServiceRecordPlannedSession | null {
     if (!isRecord(value)) return null;
-    const sessionIndex = asNumber(value.sessionIndex);
-    const scheduleId = asNumber(value.scheduleId);
-    const employeeId = asNumber(value.employeeId);
+    const sessionIndex = positiveInteger(value.sessionIndex);
+    const scheduleId = positiveInteger(value.scheduleId);
+    const employeeId = positiveInteger(value.employeeId);
     const serviceDate = asString(value.serviceDate);
     const originalDate = asString(value.originalDate);
     const assignmentId = asString(value.assignmentId);
     const provenanceVersion = asString(value.provenanceVersion);
     if (
-        sessionIndex < 1
-        || scheduleId < 1
-        || employeeId < 1
-        || !serviceDate
-        || !originalDate
+        sessionIndex === null
+        || scheduleId === null
+        || employeeId === null
+        || !isValidDateOnly(serviceDate)
+        || !isValidDateOnly(originalDate)
         || !assignmentId
         || !provenanceVersion
     ) return null;
@@ -72,17 +95,277 @@ function normalizePreviewSession(value: unknown): ServiceRecordPlannedSession | 
     };
 }
 
-function normalizePreviewVector(value: unknown): ServiceRecordEditPreviewResponse["before"] {
-    const record = isRecord(value) ? value : {};
+interface NormalizedPreviewVector {
+    vector: ServiceRecordEditPreviewResponse["before"];
+    valid: boolean;
+    hasEntries: boolean;
+    hadRawEntries: boolean;
+}
+
+function normalizePreviewVectorStrict(value: unknown, expectedCount: number | null): NormalizedPreviewVector {
+    if (!isRecord(value) || !Array.isArray(value.sessions)) {
+        return {
+            vector: { startDate: null, endDate: null, sessions: [] },
+            valid: false,
+            hasEntries: false,
+            hadRawEntries: false,
+        };
+    }
+
+    let valid = true;
+    const startDate = value.startDate === null || value.startDate === undefined
+        ? null
+        : isValidDateOnly(value.startDate) ? value.startDate : null;
+    const endDate = value.endDate === null || value.endDate === undefined
+        ? null
+        : isValidDateOnly(value.endDate) ? value.endDate : null;
+    if ((value.startDate !== null && value.startDate !== undefined && startDate === null)
+        || (value.endDate !== null && value.endDate !== undefined && endDate === null)) {
+        valid = false;
+    }
+    if (startDate && endDate && startDate > endDate) valid = false;
+
+    const seenIndexes = new Set<number>();
+    const sessions: ServiceRecordPlannedSession[] = [];
+    for (const rawSession of value.sessions) {
+        const normalized = normalizePreviewSession(rawSession);
+        if (!normalized || seenIndexes.has(normalized.sessionIndex)) {
+            valid = false;
+            continue;
+        }
+        seenIndexes.add(normalized.sessionIndex);
+        sessions.push(normalized);
+    }
+    sessions.sort((left, right) => left.sessionIndex - right.sessionIndex);
+    if (expectedCount !== null) {
+        if (sessions.length !== expectedCount
+            || sessions.some((session, index) => session.sessionIndex !== index + 1)) {
+            valid = false;
+        }
+    }
+    if (sessions.length > 0 && (!startDate || !endDate)) valid = false;
+    if (startDate && endDate) {
+        for (const session of sessions) {
+            if (session.serviceDate < startDate || session.serviceDate > endDate
+                || session.originalDate < startDate || session.originalDate > endDate) {
+                valid = false;
+            }
+        }
+    }
     return {
-        startDate: typeof record.startDate === "string" ? record.startDate : null,
-        endDate: typeof record.endDate === "string" ? record.endDate : null,
-        sessions: Array.isArray(record.sessions)
-            ? record.sessions.flatMap((session) => {
-                const normalized = normalizePreviewSession(session);
-                return normalized ? [normalized] : [];
-            })
-            : [],
+        vector: { startDate, endDate, sessions },
+        valid,
+        hasEntries: sessions.length > 0,
+        hadRawEntries: value.sessions.length > 0,
+    };
+}
+
+interface NormalizedPreviewProvenance {
+    items: ServiceRecordEditPreviewResponse["provenance"];
+    valid: boolean;
+}
+
+function normalizePreviewProvenance(value: unknown): NormalizedPreviewProvenance {
+    if (!Array.isArray(value)) return { items: [], valid: false };
+    let valid = true;
+    const items: ServiceRecordEditPreviewResponse["provenance"] = [];
+    const seen = new Set<string>();
+    for (const rawItem of value) {
+        if (!isRecord(rawItem)) {
+            valid = false;
+            continue;
+        }
+        const assignmentId = asString(rawItem.assignmentId);
+        const scheduleId = positiveInteger(rawItem.scheduleId);
+        const employeeId = positiveInteger(rawItem.employeeId);
+        const startDate = asString(rawItem.startDate);
+        const endDate = asString(rawItem.endDate);
+        const provenanceVersion = asString(rawItem.provenanceVersion);
+        const key = `${assignmentId}:${scheduleId ?? ""}:${employeeId ?? ""}:${provenanceVersion}`;
+        if (!assignmentId || scheduleId === null || employeeId === null
+            || !isValidDateOnly(startDate) || !isValidDateOnly(endDate)
+            || startDate > endDate || !provenanceVersion || seen.has(key)) {
+            valid = false;
+            continue;
+        }
+        seen.add(key);
+        items.push({ assignmentId, scheduleId, employeeId, startDate, endDate, provenanceVersion });
+    }
+    return { items, valid };
+}
+
+function hasCompleteProvenance(
+    sessions: ServiceRecordPlannedSession[],
+    provenance: ServiceRecordEditPreviewResponse["provenance"],
+): boolean {
+    return sessions.every((session) => provenance.some((range) => (
+        range.assignmentId === session.assignmentId
+        && range.scheduleId === session.scheduleId
+        && range.employeeId === session.employeeId
+        && range.provenanceVersion === session.provenanceVersion
+        && session.serviceDate >= range.startDate
+        && session.serviceDate <= range.endDate
+        && session.originalDate >= range.startDate
+        && session.originalDate <= range.endDate
+    )));
+}
+
+const UNKNOWN_SIGNATURE_METADATA: ServiceRecordEditSignatureMetadata = {
+    treatment: "manual_review",
+    evidence: "unverified",
+    sessions: [],
+};
+
+const UNKNOWN_DOCUMENT_SCOPE: ServiceRecordEditDocumentScope = {
+    evidence: "unverified",
+    serviceRecordSnapshot: {
+        documentIds: [],
+        snapshotVersion: null,
+        chunks: [],
+    },
+    currentRevision: {
+        id: null,
+        revisionNumber: null,
+        formVersion: null,
+    },
+    form: { version: null },
+    contract: {
+        currentDocumentId: null,
+        stage: "unknown",
+    },
+};
+
+function nullablePositiveInteger(value: unknown): { value: number | null; valid: boolean } {
+    if (value === null) return { value: null, valid: true };
+    const normalized = positiveInteger(value);
+    return normalized === null ? { value: null, valid: false } : { value: normalized, valid: true };
+}
+
+function nullableIsoTimestamp(value: unknown): { value: string | null; valid: boolean } {
+    if (value === null) return { value: null, valid: true };
+    if (typeof value !== "string" || Number.isNaN(Date.parse(value))) return { value: null, valid: false };
+    return { value, valid: true };
+}
+
+interface NormalizedSignatureMetadata {
+    metadata: ServiceRecordEditSignatureMetadata;
+    valid: boolean;
+}
+
+function normalizeSignatureMetadata(value: unknown): NormalizedSignatureMetadata {
+    if (!isRecord(value)
+        || (value.treatment !== "preserve_existing" && value.treatment !== "manual_review")
+        || (value.evidence !== "observed" && value.evidence !== "unverified")
+        || !Array.isArray(value.sessions)) {
+        return { metadata: UNKNOWN_SIGNATURE_METADATA, valid: false };
+    }
+    let valid = true;
+    const sessions: ServiceRecordEditSignatureSessionMetadata[] = [];
+    const seen = new Set<number>();
+    for (const rawSession of value.sessions) {
+        if (!isRecord(rawSession)) {
+            valid = false;
+            continue;
+        }
+        const sessionIndex = positiveInteger(rawSession.sessionIndex);
+        const signedAt = nullableIsoTimestamp(rawSession.signedAt);
+        const submittedAt = nullableIsoTimestamp(rawSession.submittedAt);
+        if (sessionIndex === null
+            || typeof rawSession.hasSignature !== "boolean"
+            || !signedAt.valid
+            || !submittedAt.valid
+            || seen.has(sessionIndex)) {
+            valid = false;
+            continue;
+        }
+        seen.add(sessionIndex);
+        sessions.push({
+            sessionIndex,
+            hasSignature: rawSession.hasSignature,
+            signedAt: signedAt.value,
+            submittedAt: submittedAt.value,
+        });
+    }
+    sessions.sort((left, right) => left.sessionIndex - right.sessionIndex);
+    return {
+        metadata: {
+            treatment: value.treatment,
+            evidence: value.evidence,
+            sessions,
+        },
+        valid,
+    };
+}
+
+interface NormalizedDocumentScope {
+    scope: ServiceRecordEditDocumentScope;
+    valid: boolean;
+}
+
+function normalizeDocumentScope(value: unknown): NormalizedDocumentScope {
+    if (!isRecord(value)
+        || (value.evidence !== "observed" && value.evidence !== "unverified")
+        || !isRecord(value.serviceRecordSnapshot)
+        || !isRecord(value.currentRevision)
+        || !isRecord(value.form)
+        || !isRecord(value.contract)
+        || !Array.isArray(value.serviceRecordSnapshot.documentIds)
+        || !Array.isArray(value.serviceRecordSnapshot.chunks)) {
+        return { scope: UNKNOWN_DOCUMENT_SCOPE, valid: false };
+    }
+    let valid = true;
+    const documentIds = value.serviceRecordSnapshot.documentIds.filter((id): id is string => {
+        const validId = typeof id === "string" && id.length > 0;
+        if (!validId) valid = false;
+        return validId;
+    });
+    const snapshotVersion = nullablePositiveInteger(value.serviceRecordSnapshot.snapshotVersion);
+    if (!snapshotVersion.valid) valid = false;
+    const chunks: ServiceRecordEditDocumentChunk[] = [];
+    const seenChunks = new Set<string>();
+    for (const rawChunk of value.serviceRecordSnapshot.chunks) {
+        if (!isRecord(rawChunk)) {
+            valid = false;
+            continue;
+        }
+        const documentId = asString(rawChunk.documentId);
+        const chunkSnapshotVersion = nullablePositiveInteger(rawChunk.snapshotVersion);
+        const snapshotChunkIndex = nullablePositiveInteger(rawChunk.snapshotChunkIndex);
+        const key = `${documentId}:${chunkSnapshotVersion.value ?? ""}:${snapshotChunkIndex.value ?? ""}`;
+        if (!documentId || !chunkSnapshotVersion.valid || !snapshotChunkIndex.valid || seenChunks.has(key)) {
+            valid = false;
+            continue;
+        }
+        seenChunks.add(key);
+        chunks.push({
+            documentId,
+            snapshotVersion: chunkSnapshotVersion.value,
+            snapshotChunkIndex: snapshotChunkIndex.value,
+        });
+    }
+    const revisionId = value.currentRevision.id === null ? null : asString(value.currentRevision.id);
+    const revisionNumber = nullablePositiveInteger(value.currentRevision.revisionNumber);
+    const revisionFormVersion = nullablePositiveInteger(value.currentRevision.formVersion);
+    const formVersion = nullablePositiveInteger(value.form.version);
+    const currentDocumentId = value.contract.currentDocumentId === null ? null : asString(value.contract.currentDocumentId);
+    const stage = value.contract.stage === null ? null : asString(value.contract.stage);
+    if ((value.currentRevision.id !== null && !revisionId)
+        || !revisionNumber.valid
+        || !revisionFormVersion.valid
+        || !formVersion.valid
+        || (value.contract.currentDocumentId !== null && !currentDocumentId)
+        || (value.contract.stage !== null && !stage)) {
+        valid = false;
+    }
+    return {
+        scope: {
+            evidence: value.evidence,
+            serviceRecordSnapshot: { documentIds, snapshotVersion: snapshotVersion.value, chunks },
+            currentRevision: { id: revisionId, revisionNumber: revisionNumber.value, formVersion: revisionFormVersion.value },
+            form: { version: formVersion.value },
+            contract: { currentDocumentId, stage },
+        },
+        valid,
     };
 }
 
@@ -106,6 +389,8 @@ function stripServiceDateSnapshots(changes: AdminServiceRecordEditChanges): Admi
 export function normalizeAdminServiceRecordEditPreview(value: unknown): ServiceRecordEditPreviewResponse {
     const payload = isRecord(value) ? value : {};
     const rawReasons = Array.isArray(payload.blockingReasons) ? payload.blockingReasons : [];
+    const malformedBlockingReason = Array.isArray(payload.blockingReasons)
+        && rawReasons.some((reason) => !isRecord(reason) || !asString(reason.code) || !asString(reason.message));
     const blockingReasons = rawReasons.flatMap((reason): ServiceRecordEditPreviewResponse["blockingReasons"] => {
         if (!isRecord(reason)) return [];
         const code = asString(reason.code);
@@ -119,40 +404,53 @@ export function normalizeAdminServiceRecordEditPreview(value: unknown): ServiceR
         }];
     });
     const contentChanges = isRecord(payload.contentChanges) ? payload.contentChanges : {};
-    const provenance = Array.isArray(payload.provenance)
-        ? payload.provenance.flatMap((item) => {
-            if (!isRecord(item)) return [];
-            const assignmentId = asString(item.assignmentId);
-            const scheduleId = asNumber(item.scheduleId);
-            const employeeId = asNumber(item.employeeId);
-            const startDate = asString(item.startDate);
-            const endDate = asString(item.endDate);
-            const provenanceVersion = asString(item.provenanceVersion);
-            if (!assignmentId || scheduleId < 1 || employeeId < 1 || !startDate || !endDate || !provenanceVersion) return [];
-            return [{ assignmentId, scheduleId, employeeId, startDate, endDate, provenanceVersion }];
-        })
-        : [];
+    const requiredSessionCount = payload.requiredSessionCount === null
+        ? null
+        : positiveInteger(payload.requiredSessionCount);
+    const beforeResult = normalizePreviewVectorStrict(payload.before, requiredSessionCount);
+    const afterResult = normalizePreviewVectorStrict(payload.after, requiredSessionCount);
+    const provenanceResult = normalizePreviewProvenance(payload.provenance);
+    const signatureResult = normalizeSignatureMetadata(payload.signatureMetadata);
+    const documentResult = normalizeDocumentScope(payload.documentScope);
     const hasPreviewEnvelope = isRecord(value)
         && typeof payload.previewId === "string"
         && typeof payload.draftId === "string"
         && isRecord(payload.before)
         && isRecord(payload.after);
-    const normalizedReasons = blockingReasons.length > 0
-        ? blockingReasons
-        : hasPreviewEnvelope
-            ? []
-            : [{ code: "INVALID_PREVIEW_RESPONSE", message: "미리보기 응답을 확인할 수 없습니다." }];
+    const hasLegitimateBlockingProjection = blockingReasons.length > 0
+        && beforeResult.hadRawEntries === false
+        && afterResult.hadRawEntries === false
+        && hasPreviewEnvelope;
+    const vectorsValid = beforeResult.valid
+        && afterResult.valid
+        && provenanceResult.valid
+        && hasCompleteProvenance(
+            [...beforeResult.vector.sessions, ...afterResult.vector.sessions],
+            provenanceResult.items,
+        );
+    const invalidPreview = malformedBlockingReason
+        || !hasPreviewEnvelope
+        || requiredSessionCount === null
+        || !vectorsValid
+        || !signatureResult.valid
+        || !documentResult.valid;
+    const normalizedReasons = [
+        ...blockingReasons,
+        ...(invalidPreview && !hasLegitimateBlockingProjection
+            ? [{ code: "INVALID_PREVIEW_RESPONSE", message: "미리보기 응답을 확인할 수 없습니다." }]
+            : []),
+    ];
     return {
         previewId: asString(payload.previewId),
         draftId: asString(payload.draftId),
         draftVersion: asNumber(payload.draftVersion),
         sourceCaseVersion: asNumber(payload.sourceCaseVersion),
         sourceFingerprint: asString(payload.sourceFingerprint),
-        requiredSessionCount: typeof payload.requiredSessionCount === "number" ? payload.requiredSessionCount : null,
+        requiredSessionCount,
         calendarVersion: asString(payload.calendarVersion),
-        before: normalizePreviewVector(payload.before),
-        after: normalizePreviewVector(payload.after),
-        provenance,
+        before: beforeResult.vector,
+        after: afterResult.vector,
+        provenance: provenanceResult.items,
         contentChanges: {
             headerChanged: contentChanges.headerChanged === true,
             changedSessionIndexes: Array.isArray(contentChanges.changedSessionIndexes)
@@ -163,6 +461,8 @@ export function normalizeAdminServiceRecordEditPreview(value: unknown): ServiceR
             ? payload.impactedAssignments.filter((assignmentId): assignmentId is string => typeof assignmentId === "string")
             : [],
         blockingReasons: normalizedReasons,
+        signatureMetadata: signatureResult.metadata,
+        documentScope: documentResult.scope,
     };
 }
 

@@ -15,6 +15,61 @@ function response(body: unknown, status: number) {
     } as unknown as Response;
 }
 
+const strictMetadata = {
+    signatureMetadata: {
+        treatment: "preserve_existing",
+        evidence: "observed",
+        sessions: [{ sessionIndex: 1, hasSignature: true, signedAt: "2026-07-11T01:00:00.000Z", submittedAt: "2026-07-11T02:00:00.000Z" }],
+    },
+    documentScope: {
+        evidence: "observed",
+        serviceRecordSnapshot: {
+            documentIds: ["doc-1"],
+            snapshotVersion: 2,
+            chunks: [{ documentId: "doc-1", snapshotVersion: 2, snapshotChunkIndex: 1 }],
+        },
+        currentRevision: { id: "revision-1", revisionNumber: 1, formVersion: 1 },
+        form: { version: 1 },
+        contract: { currentDocumentId: "contract-1", stage: "in_progress" },
+    },
+};
+
+function strictPreview(overrides: Record<string, unknown> = {}) {
+    const sessions = Array.from({ length: 13 }, (_, index) => ({
+        sessionIndex: index + 1,
+        serviceDate: `2026-07-${String(index + 1).padStart(2, "0")}`,
+        originalDate: `2026-07-${String(index + 1).padStart(2, "0")}`,
+        assignmentId: "assignment-1",
+        scheduleId: 7,
+        employeeId: 12,
+        provenanceVersion: "case-7",
+    }));
+    return {
+        previewId: "preview-13",
+        draftId: "draft-13",
+        draftVersion: 2,
+        sourceCaseVersion: 7,
+        sourceFingerprint: "source-13",
+        requiredSessionCount: 13,
+        calendarVersion: "kr-2026",
+        before: { startDate: "2026-07-01", endDate: "2026-07-20", sessions },
+        after: { startDate: "2026-07-01", endDate: "2026-07-20", sessions },
+        provenance: [{
+            assignmentId: "assignment-1",
+            scheduleId: 7,
+            employeeId: 12,
+            startDate: "2026-07-01",
+            endDate: "2026-07-20",
+            provenanceVersion: "case-7",
+        }],
+        contentChanges: { headerChanged: false, changedSessionIndexes: [] },
+        impactedAssignments: [],
+        blockingReasons: [],
+        ...strictMetadata,
+        ...overrides,
+    };
+}
+
 afterEach(() => {
     global.fetch = originalFetch;
     jest.restoreAllMocks();
@@ -138,6 +193,69 @@ describe("admin service-record edit API adapter", () => {
         expect(normalizeAdminServiceRecordEditPreview(null).blockingReasons).toEqual([
             { code: "INVALID_PREVIEW_RESPONSE", message: "미리보기 응답을 확인할 수 없습니다." },
         ]);
+    });
+
+    it("fails closed when a required N=13 preview is missing, duplicated, or has bad provenance", () => {
+        const missing = normalizeAdminServiceRecordEditPreview(strictPreview({
+            before: { ...strictPreview().before, sessions: strictPreview().before.sessions.slice(0, 12) },
+        }));
+        expect((missing.blockingReasons as Array<{ code: string }>).map((reason) => reason.code)).toContain("INVALID_PREVIEW_RESPONSE");
+
+        const duplicateSessions = [...strictPreview().before.sessions];
+        duplicateSessions[12] = { ...duplicateSessions[11] };
+        const duplicate = normalizeAdminServiceRecordEditPreview(strictPreview({
+            before: { ...strictPreview().before, sessions: duplicateSessions },
+        }));
+        expect((duplicate.blockingReasons as Array<{ code: string }>).map((reason) => reason.code)).toContain("INVALID_PREVIEW_RESPONSE");
+
+        const badProvenance = normalizeAdminServiceRecordEditPreview(strictPreview({
+            provenance: [{
+                ...strictPreview().provenance[0],
+                employeeId: 0,
+            }],
+        }));
+        expect((badProvenance.blockingReasons as Array<{ code: string }>).map((reason) => reason.code)).toContain("INVALID_PREVIEW_RESPONSE");
+    });
+
+    it("rejects omitted metadata while preserving an explicit unverified response", () => {
+        const { signatureMetadata: omittedSignatureMetadata, ...withoutSignatureMetadata } = strictPreview();
+        expect(omittedSignatureMetadata).toBeDefined();
+        const missing = normalizeAdminServiceRecordEditPreview(withoutSignatureMetadata);
+        expect(missing.blockingReasons.map((reason) => reason.code)).toContain("INVALID_PREVIEW_RESPONSE");
+
+        const explicitUnverified = normalizeAdminServiceRecordEditPreview(strictPreview({
+            signatureMetadata: {
+                treatment: "manual_review",
+                evidence: "unverified",
+                sessions: [],
+            },
+            documentScope: {
+                evidence: "unverified",
+                serviceRecordSnapshot: { documentIds: [], snapshotVersion: null, chunks: [] },
+                currentRevision: { id: null, revisionNumber: null, formVersion: null },
+                form: { version: null },
+                contract: { currentDocumentId: null, stage: "unknown" },
+            },
+        }));
+        expect(explicitUnverified.blockingReasons).toEqual([]);
+        expect(explicitUnverified.signatureMetadata.evidence).toBe("unverified");
+        expect(explicitUnverified.documentScope.contract.stage).toBe("unknown");
+    });
+
+    it("keeps a legitimate blocked projection without replacing its server reasons", () => {
+        const preview = normalizeAdminServiceRecordEditPreview({
+            ...strictPreview(),
+            before: { startDate: null, endDate: null, sessions: [] },
+            after: { startDate: null, endDate: null, sessions: [] },
+            provenance: [],
+            blockingReasons: [{ code: "UNSUPPORTED_SESSION_COUNT", message: "회차 수를 확인할 수 없습니다." }],
+        });
+
+        expect(preview.blockingReasons).toEqual([
+            { code: "UNSUPPORTED_SESSION_COUNT", message: "회차 수를 확인할 수 없습니다." },
+        ]);
+        expect(preview.before.sessions).toEqual([]);
+        expect(preview.after.sessions).toEqual([]);
     });
 
     it("normalizes a discarded draft without applying provenance fields", () => {

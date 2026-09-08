@@ -42,8 +42,12 @@ export interface ServiceRecordDateSelectionDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     currentServiceDate: string;
+    /** Explicitly retained selection after a failed save; never auto-submitted. */
+    selectedServiceDate?: string | null;
     sessionLabel: ReactNode;
     onApply: (serviceDate: string) => void;
+    error?: string | null;
+    onReloadLatest?: () => void;
     busy?: boolean;
     disabled?: boolean;
     "data-component"?: string;
@@ -214,17 +218,21 @@ export function ServiceRecordDateSelectionDialog({
     open,
     onOpenChange,
     currentServiceDate,
+    selectedServiceDate = null,
     sessionLabel,
     onApply,
+    error = null,
+    onReloadLatest,
     busy = false,
     disabled = false,
     "data-component": canonicalDataComponent,
     dataComponent: legacyDataComponent,
 }: ServiceRecordDateSelectionDialogProps) {
     const dataComponent = canonicalDataComponent ?? legacyDataComponent ?? DEFAULT_DATA_COMPONENT;
-    const resetKey = `${open ? "open" : "closed"}:${currentServiceDate}`;
+    const selectionSourceDate = selectedServiceDate ?? currentServiceDate;
+    const resetKey = `${open ? "open" : "closed"}:${currentServiceDate}:${selectionSourceDate}`;
     const [draftState, setDraftState] = useState<DraftSelectionState>(() => ({
-        ...toDraftSelection(currentServiceDate),
+        ...toDraftSelection(selectionSourceDate),
         resetKey,
     }));
     const [validationState, setValidationState] = useState<{ resetKey: string; error: string | null }>(() => ({
@@ -233,12 +241,12 @@ export function ServiceRecordDateSelectionDialog({
     }));
     const selection: DraftSelection = draftState.resetKey === resetKey
         ? draftState
-        : toDraftSelection(currentServiceDate);
+        : toDraftSelection(selectionSourceDate);
     const applyError = validationState.resetKey === resetKey ? validationState.error : null;
 
     const updateSelection = (update: (current: DraftSelection) => DraftSelection) => {
         setDraftState((current) => ({
-            ...update(current.resetKey === resetKey ? current : toDraftSelection(currentServiceDate)),
+            ...update(current.resetKey === resetKey ? current : toDraftSelection(selectionSourceDate)),
             resetKey,
         }));
     };
@@ -447,6 +455,29 @@ export function ServiceRecordDateSelectionDialog({
                             ) : null}
                         </>
                     )}
+                    {error ? (
+                        <Alert
+                            variant="destructive"
+                            data-component={`${dataComponent}_content_date-form_request-error`}
+                            data-slot="request-error"
+                        >
+                            <AlertTitle>제공일을 저장하지 못했습니다.</AlertTitle>
+                            <AlertDescription className="flex flex-col gap-2">
+                                <span>{error}</span>
+                                {onReloadLatest ? (
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="neutral"
+                                        disabled={busy}
+                                        onClick={onReloadLatest}
+                                    >
+                                        최신 초안 불러오기
+                                    </Button>
+                                ) : null}
+                            </AlertDescription>
+                        </Alert>
+                    ) : null}
                 </div>
             </FormDialogShell>
         </Dialog>
