@@ -1493,6 +1493,12 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         serviceRecordCaseId: string | null;
         templateId: string | null;
     }): boolean {
+        // An explicitly classified contract may carry the owning service
+        // record case for revision scope. The explicit kind is authoritative;
+        // retain the broad case-id fallback only for legacy/unknown rows.
+        if (document.documentKind === EFORMSIGN_DOCUMENT_KIND.CONTRACT) {
+            return false;
+        }
         return isServiceRecordEformsignDocument(
             document,
             configuredServiceRecordTemplateIds(this.configService),
