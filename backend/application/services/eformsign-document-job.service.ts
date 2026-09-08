@@ -182,6 +182,18 @@ export class EformsignDocumentJobService {
     }
 
     /**
+     * Resolve a stable request key without opening a nested transaction. The
+     * caller uses this only to replay an immutable generation payload; no
+     * mutable case/client data is read by this seam.
+     */
+    async findByRequestKeyInTransaction(
+        tx: Prisma.TransactionClient,
+        requestKey: string,
+    ) {
+        return this.repository.findByRequestKeyInTransaction(tx, requestKey);
+    }
+
+    /**
      * Authorize the irreversible provider boundary inside the transaction
      * owned by the caller. The repository locks and rereads the job, verifies
      * the lease/context, and commits the durable `creating` marker before a

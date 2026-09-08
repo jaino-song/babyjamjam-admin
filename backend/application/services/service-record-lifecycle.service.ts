@@ -943,6 +943,13 @@ export class ServiceRecordLifecycleService {
             data: {
                 status,
                 completedAt: complete ? (record.completedAt ?? now) : null,
+                // Date edits can move a case's outer period without passing
+                // through ensureForClient. Recompute the existing policy's
+                // due instant from the freshly locked case date so a stale
+                // READY/WAITING transition cannot retain the old deadline.
+                finalizationDueAt: record.endDate
+                    ? getServiceRecordFinalizationDueAt(record.endDate)
+                    : null,
                 requiredSessionCount: required,
                 version: { increment: 1 },
             },

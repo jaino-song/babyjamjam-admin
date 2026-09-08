@@ -62,14 +62,16 @@ interface FinalizeDocumentJobPayload {
 
 type RevisionDocumentJobPayload = {
     kind: "service_record_revision";
+    generationKind?: "INITIAL_FINALIZATION";
     context: ServiceRecordRevisionDispatchContext;
     immutablePayload: Record<string, unknown>;
     payloadFingerprint: string;
     completeness: "complete";
-    revisionId?: string | null;
-    revisionNumber?: number | null;
+    revisionId?: string;
+    revisionNumber?: number;
     snapshotReference?: string | null;
     generation?: string | null;
+    manualReviewRequired?: boolean;
 };
 
 type CreateDispatchAuthorizationResult = {
@@ -86,7 +88,17 @@ function revisionPayload(value: unknown): RevisionDocumentJobPayload | null {
     const context = row["context"];
     if (!context || typeof context !== "object" || Array.isArray(context)) return null;
     const candidate = row as unknown as RevisionDocumentJobPayload;
+    const initialGeneration = row["generationKind"] === "INITIAL_FINALIZATION";
+    const outerRevisionId = row["revisionId"];
+    const outerRevisionNumber = row["revisionNumber"];
     return isValidServiceRecordDispatchContext(candidate.context)
+        && (!initialGeneration || (
+            typeof outerRevisionId === "string"
+            && outerRevisionId.length > 0
+            && candidate.context.revisionId === outerRevisionId
+            && Number.isInteger(outerRevisionNumber)
+            && Number(outerRevisionNumber) > 0
+        ))
         && candidate.completeness === "complete"
         && typeof candidate.payloadFingerprint === "string"
         && candidate.immutablePayload !== null
@@ -318,6 +330,14 @@ export class EformsignDocumentJobWorkerService {
         if (job.jobType === "create_document") {
             const rawPayload = job.payload ?? {};
             const payload = revisionPayload(rawPayload);
+            if (payload?.generationKind === "INITIAL_FINALIZATION") {
+                // Initial revised finalization is a persisted manual-review
+                // generation intent. Phase0 has not proved the provider path,
+                // so this discriminator must never reach a live credential or
+                // document-generation call even if a forged context says it
+                // is pending or complete.
+                return { kind: "stale", reason: "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED" };
+            }
             if (payload && !isRevisionDocumentDispatchAllowed(payload.context)) {
                 return { kind: "stale", reason: "SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED" };
             }
