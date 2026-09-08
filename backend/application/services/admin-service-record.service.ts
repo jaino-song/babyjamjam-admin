@@ -6,7 +6,7 @@ import {
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
 } from "domain/constants/service-record-link-message";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
-import { countBusinessDaysKr } from "domain/utils/business-days";
+import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
 import { ServiceRecordLinkService } from "./service-record-link.service";
 import { MessageTriggerService } from "./message-trigger.service";
 import { ServiceRecordSecurityEventService } from "./service-record-security-event.service";
@@ -57,26 +57,6 @@ export interface ServiceRecordAdminActor {
     userId: string;
     globalRole: string;
     branchRole: string;
-}
-
-function isoDate(date: Date | null | undefined): string | null {
-    return date ? date.toISOString().slice(0, 10) : null;
-}
-
-function servicePeriodSessionCount(
-    startDate: Date | null | undefined,
-    endDate: Date | null | undefined,
-    fallback: number | null,
-): number {
-    // The stored session count is authoritative once set; the period may
-    // be longer than its business-day span (e.g. a postponed session
-    // extended the end date while the count stayed fixed), so only derive
-    // from the dates when no count is stored.
-    if (fallback !== null) return fallback;
-    const startDateIso = isoDate(startDate);
-    const endDateIso = isoDate(endDate);
-    if (!startDateIso || !endDateIso) return fallback ?? 0;
-    return countBusinessDaysKr(startDateIso, endDateIso) ?? fallback ?? 0;
 }
 
 @Injectable()
@@ -176,11 +156,11 @@ export class AdminServiceRecordService {
             status: record.status,
             startDate: record.startDate,
             endDate: record.endDate,
-            totalSessions: servicePeriodSessionCount(
+            totalSessions: serviceRecordSessionCount(
                 record.startDate,
                 record.endDate,
                 record.requiredSessionCount,
-            ),
+            ) ?? 0,
             completedAt: record.completedAt,
             finalizationDueAt: record.finalizationDueAt,
             finalizedAt: record.finalizedAt,
@@ -281,11 +261,11 @@ export class AdminServiceRecordService {
             },
             link: this.deriveLink(jobs, logs, schedule.serviceRecordTokens[0] ?? null),
             header: schedule.serviceRecord ? this.mapHeader(schedule.serviceRecord) : null,
-            totalSessions: servicePeriodSessionCount(
+            totalSessions: serviceRecordSessionCount(
                 schedule.client.startDate ?? schedule.startDate,
                 schedule.client.endDate ?? schedule.endDate,
                 schedule.client.duration,
-            ),
+            ) ?? 0,
             sessions: schedule.serviceRecordDays.map((session) => this.mapSession(session)),
             signatureDoc,
         };
