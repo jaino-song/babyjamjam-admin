@@ -13,6 +13,7 @@ import {
     type AppendServiceRecordRevisionInput,
     type ServiceRecordEditConfirmInput,
     type ServiceRecordEditConfirmPlan,
+    type ServiceRecordEditConfirmOperationPlan,
     type ServiceRecordEditConfirmNewSession,
     type ServiceRecordEditConfirmSnapshot,
     type CreateServiceRecordEditDraftInput,
@@ -120,7 +121,9 @@ type DocumentScopeClient = {
 };
 
 type DocumentScopeRow = {
+    id: number;
     documentId: string;
+    branchId: string | null;
     documentKind: string | null;
     statusType: string;
     clientId: number | null;
@@ -131,6 +134,14 @@ type DocumentScopeRow = {
     stepName: string;
     updatedDate: Date;
     createdDate: Date;
+    receiptLinkTokens?: Array<{
+        id: string;
+        eformsignDocId: number;
+        clientId: number | null;
+        branchId: string;
+        active: boolean;
+        revokedAt: Date | null;
+    }>;
 };
 
 function contractStage(document: DocumentScopeRow): Exclude<ServiceRecordEditContractStage, null> {
@@ -171,6 +182,12 @@ function unverifiedDocumentScope(formVersion: number | null): ServiceRecordEditD
             currentDocumentId: null,
             stage: null,
         },
+        receipt: {
+            evidence: "unverified",
+            eformsignDocId: null,
+            tokenIds: [],
+            sourceDocumentId: null,
+        },
     };
 }
 
@@ -207,7 +224,9 @@ async function loadDocumentScope(
                     ],
                 },
                 select: {
+                    id: true,
                     documentId: true,
+                    branchId: true,
                     documentKind: true,
                     statusType: true,
                     clientId: true,
@@ -218,6 +237,16 @@ async function loadDocumentScope(
                     stepName: true,
                     updatedDate: true,
                     createdDate: true,
+                    receiptLinkTokens: {
+                        select: {
+                            id: true,
+                            eformsignDocId: true,
+                            clientId: true,
+                            branchId: true,
+                            active: true,
+                            revokedAt: true,
+                        },
+                    },
                 },
                 orderBy: [
                     { updatedDate: "desc" },
@@ -278,6 +307,17 @@ async function loadDocumentScope(
         (client.eDocId && !exactContract)
         || (!client.eDocId && contractDocs.length > 1),
     );
+    const receiptTokens = contractDocs
+        .flatMap((document) => document.receiptLinkTokens ?? [])
+        .filter((token) => (
+            token.branchId === branchId
+            && token.clientId === client.id
+            && token.active
+            && token.revokedAt === null
+        ));
+    const receiptDocument = receiptTokens.length > 0
+        ? documents.find((document) => document.id === receiptTokens[0]!.eformsignDocId)
+        : undefined;
 
     return {
         evidence: contractIsUnverified ? "unverified" : "observed",
@@ -295,6 +335,16 @@ async function loadDocumentScope(
         contract: {
             currentDocumentId: currentContract?.documentId ?? null,
             stage: currentContract ? contractStage(currentContract) : null,
+        },
+        receipt: {
+            evidence: receiptTokens.length === 0
+                ? "observed"
+                : receiptDocument?.clientId === client.id && receiptDocument.branchId === branchId
+                    ? "observed"
+                    : "unverified",
+            eformsignDocId: receiptTokens[0]?.eformsignDocId ?? null,
+            tokenIds: [...new Set(receiptTokens.map((token) => token.id))].sort(),
+            sourceDocumentId: receiptDocument?.documentId ?? null,
         },
     };
 }
@@ -1112,6 +1162,64 @@ function eformsignDocumentJobOwnershipPredicate(
             )
         )
     `;
+}
+
+type BlockingRevisionDocumentStateRow = {
+    id: string;
+    operation: string;
+    status: string;
+    step: string;
+    lastErrorCode: string | null;
+};
+
+/** Stable conflict code surfaced when a current revision operation is unresolved. */
+class ServiceRecordRevisionOperationUnresolvedError extends ServiceRecordEditConflictError {
+    readonly code = "SERVICE_RECORD_REVISION_OPERATION_UNRESOLVED";
+}
+
+/**
+ * A new confirmation may proceed only after the current revision's external
+ * operation markers have reached a terminal outcome.  The partial record
+ * state `waiting_for_completion` is deliberately excluded: it represents
+ * retained editor history and has no executable provider job yet.  The case
+ * row is already held by the common confirmation lock sequence, so this
+ * scoped query is both the fresh read and the state-row lock before writes.
+ */
+async function assertNoBlockingRevisionDocumentStates(
+    tx: Prisma.TransactionClient,
+    input: { branchId: string; clientId: number; serviceRecordCaseId: string },
+): Promise<void> {
+    const transaction = tx as OptionalQueryTransaction;
+    if (typeof transaction.$queryRaw !== "function") return;
+    const rows = await transaction.$queryRaw<BlockingRevisionDocumentStateRow[]>(Prisma.sql`
+        SELECT
+            state.id,
+            state.operation,
+            state.status,
+            state.step,
+            state.last_error_code AS "lastErrorCode"
+        FROM "service_record_revision_document_state" AS state
+        INNER JOIN "service_record_case" AS owner_case
+            ON owner_case.branch_id = state.branch_id
+           AND owner_case.client_id = state.client_id
+           AND owner_case.id = state.service_record_case_id
+           AND owner_case.current_revision_id = state.revision_id
+        WHERE owner_case.branch_id = ${input.branchId}::uuid
+          AND owner_case.client_id = ${input.clientId}
+          AND owner_case.id = ${input.serviceRecordCaseId}::uuid
+          AND NOT (
+                state.status IN ('not_required', 'completed')
+                OR (state.operation = 'record_snapshot' AND state.status = 'waiting_for_completion')
+          )
+        ORDER BY state.created_at ASC, state.id ASC
+        FOR UPDATE OF state
+    `);
+    const blocking = rows[0];
+    if (!blocking) return;
+    const detail = blocking.lastErrorCode ?? `${blocking.operation}:${blocking.step}`;
+    throw new ServiceRecordRevisionOperationUnresolvedError(
+        `A revision document operation is unresolved (${blocking.operation}:${blocking.status}:${detail})`,
+    );
 }
 
 /**
@@ -2597,6 +2705,41 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     );
                 }
             }
+
+            // Contract-period and receipt-refresh readiness is independent of
+            // the record renderer.  Persist each operation's server-derived
+            // marker in this same confirmation transaction, including an
+            // explicit `not_required` row when no owned document/token exists.
+            // Provider services consume these rows later; no external work is
+            // started from the confirmation transaction.
+            const auxiliaryOperations = [plan.contractOperation, plan.receiptOperation]
+                .filter((operation): operation is ServiceRecordEditConfirmOperationPlan => operation !== null
+                    && operation !== undefined);
+            for (const operation of auxiliaryOperations) {
+                if (!revision) {
+                    throw new ServiceRecordEditConflictError("Revision operation state requires a persisted revision");
+                }
+                await this.createRevisionDocumentStateInTransaction({ tx }, {
+                    branchId: input.branchId,
+                    clientId: source.client.id,
+                    serviceRecordCaseId: source.caseId,
+                    revisionId: revision.id,
+                    operation: operation.operation,
+                    generation: randomUUID(),
+                    immutableInput: operation.immutableInput,
+                    inputFingerprint: jsonFingerprint(operation.immutableInput),
+                    documentVersion: operation.documentVersion ?? null,
+                    sourceDocumentId: operation.sourceDocumentId ?? null,
+                    targetDocumentId: operation.targetDocumentId ?? null,
+                    templateId: operation.templateId ?? null,
+                    templateVersion: operation.templateVersion ?? null,
+                    workflowScope: operation.workflowScope ?? null,
+                    mirrorGeneration: operation.mirrorGeneration ?? null,
+                    step: operation.step,
+                    status: operation.status,
+                    lastErrorCode: operation.lastErrorCode ?? null,
+                });
+            }
         }
 
         const response: ServiceRecordEditConfirmResponse = {
@@ -2716,6 +2859,14 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
 
         await lockRowsByBranchAndIds(tx, "service_record_edit_draft", "service_record_edit_draft", branchId, [draftId], true);
         await lockCaseChildren(tx, branchId, source.caseId, "service_record_revision", "service_record_revision", "service_record_case_id");
+        // Operation state is a document child and must be locked before jobs
+        // in the common order. Only the current revision blocks a new
+        // confirmation; retained partial record history is explicitly safe.
+        await assertNoBlockingRevisionDocumentStates(tx, {
+            branchId,
+            clientId: source.client.id,
+            serviceRecordCaseId: source.caseId,
+        });
 
         const transaction = tx as OptionalQueryTransaction;
         if (typeof transaction.$queryRaw === "function") {

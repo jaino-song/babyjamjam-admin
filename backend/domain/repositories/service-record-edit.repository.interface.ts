@@ -349,6 +349,27 @@ export interface ServiceRecordEditConfirmDocumentJobPlan {
 }
 
 /**
+ * A confirmation may need to leave an independent contract or receipt
+ * operation marker alongside the service-record revision.  The marker is
+ * immutable input plus a safe readiness state; provider work is owned by the
+ * operation service and is never started from this plan.
+ */
+export interface ServiceRecordEditConfirmOperationPlan {
+    operation: Exclude<ServiceRecordRevisionDocumentOperation, "record_snapshot">;
+    immutableInput: ServiceRecordEditJsonValue;
+    status: ServiceRecordRevisionDocumentStatus;
+    step: string;
+    lastErrorCode?: string | null;
+    documentVersion?: number | null;
+    sourceDocumentId?: string | null;
+    targetDocumentId?: string | null;
+    templateId?: string | null;
+    templateVersion?: string | null;
+    workflowScope?: ServiceRecordEditJsonValue | null;
+    mirrorGeneration?: string | null;
+}
+
+/**
  * A fully server-derived write plan. The repository computes no business
  * values from user input; it only applies this plan after taking the common
  * ownership locks and rereading the draft/source.
@@ -371,6 +392,9 @@ export interface ServiceRecordEditConfirmPlan {
     dispatchContext: ServiceRecordRevisionDispatchContext | null;
     documentStatus: ServiceRecordEditConfirmDocumentStatus;
     documentJob: ServiceRecordEditConfirmDocumentJobPlan | null;
+    /** Independent period/token operations; omitted only for legacy plans. */
+    contractOperation?: ServiceRecordEditConfirmOperationPlan | null;
+    receiptOperation?: ServiceRecordEditConfirmOperationPlan | null;
 }
 
 export interface ServiceRecordEditConfirmInput {

@@ -21,6 +21,7 @@ import {
     type IServiceRecordEditRepository,
     type ServiceRecordEditDraft,
     type ServiceRecordEditConfirmPlan,
+    type ServiceRecordEditConfirmOperationPlan,
     type ServiceRecordEditConfirmNewSession,
     type ServiceRecordEditConfirmSessionUpdate,
     type ServiceRecordEditJsonObject,
@@ -98,6 +99,10 @@ function stableStringify(value: ServiceRecordEditJsonValue): string {
             .join(",")}}`;
     }
     return JSON.stringify(value);
+}
+
+function jsonFingerprint(value: ServiceRecordEditJsonValue): string {
+    return createHash("sha256").update(stableStringify(value)).digest("hex");
 }
 
 function sourceFingerprint(source: SourceSnapshot): string {
@@ -689,7 +694,9 @@ export class AdminServiceRecordEditService {
         const completeness = revisionCompleteness(source);
         const revisionPayload = jsonValue({
             caseId: source.caseId,
-            branchName: source.branchName,
+            // A missing branch name is retained as explicit unknown evidence;
+            // no provider identity is invented for renderer eligibility.
+            branchName: source.branchName ?? null,
             clientId: source.client.id,
             requiredSessionCount: provisional.requiredSessionCount,
             startDate: provisional.after.startDate,
@@ -716,6 +723,8 @@ export class AdminServiceRecordEditService {
         const changed = provisional.contentChanges.headerChanged
             || contentChanged
             || hasPlannedDateDifference(provisional.before.sessions, provisional.after.sessions);
+        const periodChanged = provisional.after.startDate !== source.startDate
+            || provisional.after.endDate !== source.endDate;
         const documentStatus = completeness === "partial"
             ? "waiting_for_completion"
             : documentStatusForSource(source);
@@ -751,10 +760,116 @@ export class AdminServiceRecordEditService {
                     completeness,
                     manualReviewRequired: completeness === "partial"
                         || documentStatus === "capability_unverified",
-                    periodChanged: provisional.after.startDate !== source.startDate
-                        || provisional.after.endDate !== source.endDate,
+                    periodChanged,
                 },
                 payloadFingerprint: revisionFingerprint,
+            }
+            : null;
+
+        /**
+         * Contract and receipt synchronization are independent of record
+         * completeness.  The current local document scope intentionally
+         * exposes only identity/stage, so a linked contract is preserved as a
+         * durable manual-review marker until an authoritative provider fact
+         * capture is available.  A missing contract/token is an explicit
+         * not-required outcome and does not block a later confirmation.
+         */
+        const documentScope = provisional.documentScope;
+        const contractDocumentId = documentScope.contract.currentDocumentId;
+        const contractScopeKnown = documentScope.evidence === "observed";
+        const contractFactsAvailable = false;
+        // An observed null pointer proves that this client has no linked
+        // contract.  An unverified scope is an unknown source and must remain
+        // a manual-review marker whenever the period changes.
+        const contractRequiresSync = periodChanged
+            && (!contractScopeKnown || contractDocumentId !== null);
+        const contractOperationStatus: ServiceRecordEditConfirmOperationPlan["status"] = contractRequiresSync
+            ? contractFactsAvailable ? "pending" : "manual_review"
+            : "not_required";
+        const contractOperation: ServiceRecordEditConfirmOperationPlan | null = changed
+            ? {
+                operation: "contract_period",
+                immutableInput: jsonValue({
+                    kind: "contract_period",
+                    sourceDocumentId: contractDocumentId,
+                    sourceStage: documentScope.contract.stage,
+                    sourceEvidence: documentScope.evidence,
+                    targetPeriod: {
+                        startDate: provisional.after.startDate,
+                        endDate: provisional.after.endDate,
+                    },
+                    periodChanged,
+                    revision: revisionPayload,
+                }),
+                status: contractOperationStatus,
+                step: contractOperationStatus,
+                lastErrorCode: contractRequiresSync && !contractFactsAvailable
+                    ? "SERVICE_RECORD_CONTRACT_FACTS_UNAVAILABLE"
+                    : null,
+                documentVersion: null,
+                sourceDocumentId: contractDocumentId,
+                targetDocumentId: null,
+                templateId: null,
+                templateVersion: null,
+                workflowScope: jsonValue({
+                    stage: documentScope.contract.stage,
+                    evidence: documentScope.evidence,
+                }),
+                mirrorGeneration: null,
+            }
+            : null;
+
+        const receiptScope = documentScope.receipt;
+        const receiptTokenIds = receiptScope?.tokenIds ?? [];
+        const receiptScopeKnown = receiptScope?.evidence === "observed";
+        // Empty tokens are `not_required` only after the branch/client-scoped
+        // lookup explicitly returned an observed empty set.  Missing or
+        // unverified receipt scope remains unknown when the period changes.
+        const receiptRequiresSync = periodChanged
+            && (!receiptScopeKnown || receiptTokenIds.length > 0);
+        const receiptOperationStatus: ServiceRecordEditConfirmOperationPlan["status"] = receiptRequiresSync
+            ? "manual_review"
+            : "not_required";
+        const receiptOperation: ServiceRecordEditConfirmOperationPlan | null = changed
+            ? {
+                operation: "receipt_refresh",
+                immutableInput: jsonValue({
+                    kind: "receipt_refresh",
+                    expected: {
+                        serviceStartDate: provisional.after.startDate,
+                        serviceEndDate: provisional.after.endDate,
+                        receivedDate: null,
+                        amount: null,
+                    },
+                    tokens: {
+                        eformsignDocId: receiptScope?.eformsignDocId ?? null,
+                        tokenIds: receiptTokenIds,
+                    },
+                    source: {
+                        documentId: receiptScope?.sourceDocumentId ?? null,
+                        documentVersion: null,
+                        templateId: null,
+                        templateVersion: null,
+                        mirrorGeneration: null,
+                    },
+                    periodChanged,
+                    revision: revisionPayload,
+                }),
+                status: receiptOperationStatus,
+                step: receiptOperationStatus,
+                lastErrorCode: receiptRequiresSync
+                    ? "SERVICE_RECORD_RECEIPT_FACTS_UNAVAILABLE"
+                    : null,
+                documentVersion: null,
+                sourceDocumentId: receiptScope?.sourceDocumentId ?? null,
+                targetDocumentId: null,
+                templateId: null,
+                templateVersion: null,
+                workflowScope: jsonValue({
+                    evidence: receiptScope?.evidence ?? "unverified",
+                    eformsignDocId: receiptScope?.eformsignDocId ?? null,
+                }),
+                mirrorGeneration: null,
             }
             : null;
 
@@ -792,6 +907,8 @@ export class AdminServiceRecordEditService {
             dispatchContext,
             documentStatus,
             documentJob,
+            contractOperation,
+            receiptOperation,
         };
     }
 

@@ -101,6 +101,17 @@ export interface ServiceRecordEditDocumentScope {
         currentDocumentId: string | null;
         stage: ServiceRecordEditContractStage;
     };
+    /**
+     * Server-observed receipt-link ownership.  The editor only needs the
+     * identity evidence to decide whether a refresh intent is required; PDF
+     * fields and token secrets remain behind the receipt operation service.
+     */
+    receipt?: {
+        evidence: ServiceRecordEditEvidence;
+        eformsignDocId: number | null;
+        tokenIds: string[];
+        sourceDocumentId: string | null;
+    };
 }
 export type ServiceRecordEditContractStage = "completed" | "rejected" | "in_progress" | "unknown" | null;
 /** Full planned vector exposed by the read-only editor endpoint. */
