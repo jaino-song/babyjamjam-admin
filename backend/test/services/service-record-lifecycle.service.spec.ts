@@ -20,6 +20,8 @@ function lockedSnapshot(overrides: Record<string, unknown> = {}) {
         documentId: rawQueryDocumentId,
         branchId: rawQueryBranchId,
         documentKind: "service_record_snapshot",
+        revisionId: null,
+        snapshotVersion: null,
         statusType: "062",
         detailPayload: { id: "snapshot-062" },
         detailSourceUpdatedDate: new Date("2026-07-30T01:00:00.000Z"),
@@ -767,6 +769,185 @@ describe("ServiceRecordLifecycleService", () => {
         expect(transactionClient.$queryRaw).toHaveBeenCalledTimes(4);
     });
 
+    it("completes a revision-backed case only for its current usable revision and document version", async () => {
+        const revisionId = "44444444-4444-4444-8444-444444444444";
+        const documentVersion = 3;
+        const transactionClient = {
+            eformsign_doc: {
+                findFirst: jest.fn().mockResolvedValue({
+                    serviceRecordCaseId: rawQueryCaseId,
+                    revisionId,
+                    snapshotVersion: documentVersion,
+                }),
+            },
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([{
+                    id: rawQueryCaseId,
+                    currentRevisionId: revisionId,
+                    currentUsableRevisionId: revisionId,
+                    currentUsableDocumentVersion: documentVersion,
+                }])
+                .mockResolvedValueOnce([lockedSnapshot({
+                    revisionId,
+                    snapshotVersion: documentVersion,
+                })]),
+            service_record_case: {
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+                callback(transactionClient)),
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+
+        await expect(service.completeServiceRecordSnapshotIfReady({
+            branchId: rawQueryBranchId,
+            documentId: rawQueryDocumentId,
+        })).resolves.toBe(true);
+
+        const [caseLockQuery] = transactionClient.$queryRaw.mock.calls[0];
+        expect(caseLockQuery.strings.join(" ")).toContain("current_revision_id");
+        expect(caseLockQuery.strings.join(" ")).toContain("current_usable_revision_id");
+        expect(caseLockQuery.strings.join(" ")).toContain("current_usable_document_version");
+        expect(caseLockQuery.strings.join(" ")).not.toContain("form_version");
+        expect(transactionClient.service_record_case.updateMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: expect.objectContaining({
+                    id: rawQueryCaseId,
+                    branchId: rawQueryBranchId,
+                    status: SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED,
+                }),
+            }),
+        );
+    });
+
+    it("ignores an incomplete older revision snapshot while completing the current usable version", async () => {
+        const currentRevisionId = "44444444-4444-4444-8444-444444444444";
+        const oldRevisionId = "55555555-5555-4555-8555-555555555555";
+        const documentVersion = 4;
+        const transactionClient = {
+            eformsign_doc: {
+                findFirst: jest.fn().mockResolvedValue({
+                    serviceRecordCaseId: rawQueryCaseId,
+                    revisionId: currentRevisionId,
+                    snapshotVersion: documentVersion,
+                }),
+            },
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([{
+                    id: rawQueryCaseId,
+                    currentRevisionId,
+                    currentUsableRevisionId: currentRevisionId,
+                    currentUsableDocumentVersion: documentVersion,
+                }])
+                .mockResolvedValueOnce([
+                    lockedSnapshot({
+                        id: 6,
+                        documentId: "old-snapshot",
+                        revisionId: oldRevisionId,
+                        snapshotVersion: 3,
+                        syncStatus: "partial",
+                    }),
+                    lockedSnapshot({
+                        revisionId: currentRevisionId,
+                        snapshotVersion: documentVersion,
+                    }),
+                ]),
+            service_record_case: {
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+                callback(transactionClient)),
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+
+        await expect(service.completeServiceRecordSnapshotIfReady({
+            branchId: rawQueryBranchId,
+            documentId: rawQueryDocumentId,
+        })).resolves.toBe(true);
+
+        expect(transactionClient.service_record_case.updateMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not mutate the case for a stale revision callback after ownership moved forward", async () => {
+        const oldRevisionId = "55555555-5555-4555-8555-555555555555";
+        const currentRevisionId = "66666666-6666-4666-8666-666666666666";
+        const transactionClient = {
+            eformsign_doc: {
+                findFirst: jest.fn().mockResolvedValue({
+                    serviceRecordCaseId: rawQueryCaseId,
+                    revisionId: oldRevisionId,
+                    snapshotVersion: 3,
+                }),
+            },
+            $queryRaw: jest.fn().mockResolvedValueOnce([{
+                id: rawQueryCaseId,
+                currentRevisionId,
+                currentUsableRevisionId: currentRevisionId,
+                currentUsableDocumentVersion: 4,
+            }]),
+            service_record_case: { updateMany: jest.fn() },
+        };
+        const prisma = {
+            $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+                callback(transactionClient)),
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+
+        await expect(service.completeServiceRecordSnapshotIfReady({
+            branchId: rawQueryBranchId,
+            documentId: rawQueryDocumentId,
+        })).resolves.toBe(false);
+
+        expect(transactionClient.$queryRaw).toHaveBeenCalledTimes(1);
+        expect(transactionClient.service_record_case.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("does not let a legacy callback complete a case with revision-linked snapshot evidence", async () => {
+        const revisionId = "66666666-6666-4666-8666-666666666666";
+        const transactionClient = {
+            eformsign_doc: {
+                findFirst: jest.fn().mockResolvedValue({
+                    serviceRecordCaseId: rawQueryCaseId,
+                    revisionId: null,
+                    snapshotVersion: 3,
+                }),
+            },
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([{
+                    id: rawQueryCaseId,
+                    currentRevisionId: null,
+                    currentUsableRevisionId: null,
+                    currentUsableDocumentVersion: null,
+                }])
+                .mockResolvedValueOnce([
+                    lockedSnapshot(),
+                    lockedSnapshot({
+                        id: 8,
+                        documentId: "revision-snapshot",
+                        revisionId,
+                        snapshotVersion: 3,
+                    }),
+                ]),
+            service_record_case: { updateMany: jest.fn() },
+        };
+        const prisma = {
+            $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+                callback(transactionClient)),
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+
+        await expect(service.completeServiceRecordSnapshotIfReady({
+            branchId: rawQueryBranchId,
+            documentId: rawQueryDocumentId,
+        })).resolves.toBe(false);
+
+        expect(transactionClient.service_record_case.updateMany).not.toHaveBeenCalled();
+    });
+
     it("does not lock snapshots when the case is absent or no longer awaits documents", async () => {
         const transactionClient = {
             eformsign_doc: {
@@ -819,7 +1000,11 @@ describe("ServiceRecordLifecycleService", () => {
                 documentKind: "service_record_snapshot",
                 serviceRecordCaseId: { not: null },
             }),
-            select: { serviceRecordCaseId: true },
+            select: {
+                serviceRecordCaseId: true,
+                revisionId: true,
+                snapshotVersion: true,
+            },
         });
         expect(transactionClient.$queryRaw).not.toHaveBeenCalled();
         expect(transactionClient.service_record_case.updateMany).not.toHaveBeenCalled();

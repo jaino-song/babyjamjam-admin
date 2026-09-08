@@ -46,6 +46,8 @@ type LockedServiceRecordSnapshot = {
     documentId: string;
     branchId: string;
     documentKind: string;
+    revisionId: string | null;
+    snapshotVersion: number | null;
     statusType: string;
     detailPayload: Prisma.JsonValue | null;
     detailSourceUpdatedDate: Date | null;
@@ -55,6 +57,36 @@ type LockedServiceRecordSnapshot = {
     hasCurrentDocumentPdf: boolean;
     hasCurrentAuditTrailPdf: boolean;
 };
+
+type LockedServiceRecordCaseRevisionState = {
+    id: string;
+    currentRevisionId: string | null;
+    currentUsableRevisionId: string | null;
+    currentUsableDocumentVersion: number | null;
+};
+
+function normalizeRevisionId(value: string | null | undefined): string | null {
+    return value ?? null;
+}
+
+function normalizeSnapshotVersion(value: number | null | undefined): number | null {
+    return value ?? null;
+}
+
+/**
+ * A legacy snapshot has no revision identity. It remains eligible only for a
+ * case that has no revision evidence at all; a null-revision callback must not
+ * complete a case which has since entered the revision-backed lifecycle.
+ */
+function isLegacyCaseRevisionState(state: {
+    currentRevisionId: string | null | undefined;
+    currentUsableRevisionId: string | null | undefined;
+    currentUsableDocumentVersion: number | null | undefined;
+}): boolean {
+    return normalizeRevisionId(state.currentRevisionId) === null
+        && normalizeRevisionId(state.currentUsableRevisionId) === null
+        && normalizeSnapshotVersion(state.currentUsableDocumentVersion) === null;
+}
 
 function isoDate(date: Date | null | undefined): string | null {
     return date ? date.toISOString().slice(0, 10) : null;
@@ -582,12 +614,20 @@ export class ServiceRecordLifecycleService {
                 documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT,
                 serviceRecordCaseId: { not: null },
             },
-            select: { serviceRecordCaseId: true },
+            select: {
+                serviceRecordCaseId: true,
+                revisionId: true,
+                snapshotVersion: true,
+            },
         });
         if (!trigger?.serviceRecordCaseId) return false;
 
-        const cases = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
-            SELECT id
+        const cases = await tx.$queryRaw<LockedServiceRecordCaseRevisionState[]>(Prisma.sql`
+            SELECT
+                id,
+                current_revision_id AS "currentRevisionId",
+                current_usable_revision_id AS "currentUsableRevisionId",
+                current_usable_document_version AS "currentUsableDocumentVersion"
             FROM service_record_case
             WHERE id = ${trigger.serviceRecordCaseId}::uuid
               AND branch_id = ${params.branchId}::uuid
@@ -595,6 +635,29 @@ export class ServiceRecordLifecycleService {
             FOR UPDATE
         `);
         if (cases.length !== 1) return false;
+        const lockedCase = cases[0];
+        if (!lockedCase) return false;
+        const triggerRevisionId = normalizeRevisionId(trigger.revisionId);
+        const triggerSnapshotVersion = normalizeSnapshotVersion(trigger.snapshotVersion);
+        const currentRevisionId = normalizeRevisionId(lockedCase.currentRevisionId);
+        const currentUsableRevisionId = normalizeRevisionId(lockedCase.currentUsableRevisionId);
+        const currentUsableDocumentVersion = normalizeSnapshotVersion(lockedCase.currentUsableDocumentVersion);
+
+        if (triggerRevisionId === null) {
+            if (!isLegacyCaseRevisionState(lockedCase)) return false;
+        } else if (
+            currentRevisionId !== triggerRevisionId
+            || currentUsableRevisionId !== triggerRevisionId
+            || currentUsableDocumentVersion === null
+            || triggerSnapshotVersion === null
+            || !Number.isInteger(currentUsableDocumentVersion)
+            || currentUsableDocumentVersion < 1
+            || !Number.isInteger(triggerSnapshotVersion)
+            || triggerSnapshotVersion < 1
+            || currentUsableDocumentVersion !== triggerSnapshotVersion
+        ) {
+            return false;
+        }
 
         const snapshots = await tx.$queryRaw<LockedServiceRecordSnapshot[]>(Prisma.sql`
             SELECT
@@ -602,6 +665,8 @@ export class ServiceRecordLifecycleService {
                 document_id AS "documentId",
                 branch_id AS "branchId",
                 document_kind AS "documentKind",
+                revision_id AS "revisionId",
+                snapshot_version AS "snapshotVersion",
                 status_type AS "statusType",
                 detail_payload AS "detailPayload",
                 detail_source_updated_date AS "detailSourceUpdatedDate",
@@ -631,16 +696,22 @@ export class ServiceRecordLifecycleService {
             ORDER BY id ASC
             FOR UPDATE
         `);
-        const lockedTrigger = snapshots.find((snapshot) =>
+        const eligibleSnapshots = triggerRevisionId === null
+            ? snapshots.filter((snapshot) => normalizeRevisionId(snapshot.revisionId) === null)
+            : snapshots.filter((snapshot) =>
+                normalizeRevisionId(snapshot.revisionId) === triggerRevisionId
+                && normalizeSnapshotVersion(snapshot.snapshotVersion) === triggerSnapshotVersion);
+        if (triggerRevisionId === null && eligibleSnapshots.length !== snapshots.length) return false;
+        const lockedTrigger = eligibleSnapshots.find((snapshot) =>
             snapshot.documentId === params.documentId
             && snapshot.branchId === params.branchId
             && snapshot.documentKind === EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT,
         );
         if (
-            snapshots.length === 0
+            eligibleSnapshots.length === 0
             || !lockedTrigger
             || !isCurrentMirrorSnapshotVersion(lockedTrigger, params.mirrorVersion)
-            || snapshots.some((snapshot) =>
+            || eligibleSnapshots.some((snapshot) =>
                 !isReadyCurrentSnapshot(snapshot)
                 || !EFORMSIGN_COMPLETED_STATUS_CODES.has(snapshot.statusType))
         ) return false;
