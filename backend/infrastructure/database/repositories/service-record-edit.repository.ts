@@ -24,6 +24,9 @@ import {
     type ServiceRecordEditSource,
     type ServiceRecordEditSourceAssignment,
     type ServiceRecordEditSourceDay,
+    type ServiceRecordEditRevisionFactsSource,
+    type ServiceRecordEditRevisionFactsDocument,
+    type ServiceRecordEditRevisionFactsReceiptToken,
     type ServiceRecordRevision,
     type ServiceRecordRevisionDocumentState,
     type CreateServiceRecordRevisionDocumentStateInput,
@@ -348,6 +351,112 @@ async function loadDocumentScope(
             sourceDocumentId: receiptDocument?.documentId ?? null,
         },
     };
+}
+
+/**
+ * Load the exact contract document and branch/client-owned receipt tokens for
+ * the confirm planner.  The public source projection intentionally omits
+ * provider detail payloads; this private snapshot is passed only through the
+ * repository's confirm callback and is never returned by editor GET/PATCH.
+ * A missing pointer is authoritative only when the preceding scoped lookup
+ * observed it.  Query failures therefore leave token evidence undefined so
+ * the operation planner cannot misclassify an unknown source as not-required.
+ */
+async function loadRevisionFactsSource(
+    tx: Prisma.TransactionClient,
+    branchId: string,
+    source: ServiceRecordEditSource,
+): Promise<ServiceRecordEditRevisionFactsSource> {
+    const contractDocumentId = source.documentScope?.contract.currentDocumentId ?? null;
+    const receiptDocumentId = source.documentScope?.receipt?.sourceDocumentId ?? null;
+    // A receipt token can outlive a cleared client.eDocId pointer.  When the
+    // contract pointer is absent, the branch/client-owned receipt document is
+    // still the authoritative source for receipt facts.  Prefer the explicit
+    // contract pointer when both are present; never search by phone or across
+    // branches.
+    const factsDocumentId = contractDocumentId ?? receiptDocumentId;
+    const documentIds = [...new Set(
+        [contractDocumentId, receiptDocumentId].filter((id): id is string => typeof id === "string" && id.length > 0),
+    )];
+    const observedEmptyTokens = source.documentScope?.receipt?.evidence === "observed"
+        && (source.documentScope.receipt?.tokenIds.length ?? 0) === 0;
+    if (documentIds.length === 0) {
+        return {
+            document: null,
+            ...(observedEmptyTokens ? { receiptTokens: [] } : {}),
+        };
+    }
+
+    try {
+        const documents = await tx.eformsign_doc.findMany({
+            where: {
+                branchId,
+                documentKind: "contract",
+                clientId: source.client.id,
+                documentId: { in: documentIds },
+            },
+            select: {
+                documentId: true,
+                branchId: true,
+                clientId: true,
+                snapshotVersion: true,
+                templateId: true,
+                statusType: true,
+                stepType: true,
+                stepIndex: true,
+                stepName: true,
+                stepRecipientType: true,
+                stepRecipientName: true,
+                stepRecipientSms: true,
+                detailPayload: true,
+                receiptLinkTokens: {
+                    select: {
+                        id: true,
+                        eformsignDocId: true,
+                        branchId: true,
+                        clientId: true,
+                        active: true,
+                        revokedAt: true,
+                    },
+                },
+            },
+        });
+        const contractDocument = factsDocumentId === null
+            ? null
+            : documents.find((document) => document.documentId === factsDocumentId) ?? null;
+        const receiptTokens: ServiceRecordEditRevisionFactsReceiptToken[] = documents
+            .flatMap((document) => document.receiptLinkTokens)
+            .map((token) => ({
+                id: token.id,
+                eformsignDocId: token.eformsignDocId,
+                branchId: token.branchId,
+                clientId: token.clientId,
+                active: token.active,
+                revokedAt: token.revokedAt,
+            }));
+        const document: ServiceRecordEditRevisionFactsDocument | null = contractDocument === null
+            ? null
+            : {
+                documentId: contractDocument.documentId,
+                branchId: contractDocument.branchId,
+                clientId: contractDocument.clientId,
+                documentVersion: contractDocument.snapshotVersion,
+                templateId: contractDocument.templateId,
+                statusType: contractDocument.statusType,
+                stepType: contractDocument.stepType,
+                stepIndex: contractDocument.stepIndex,
+                stepName: contractDocument.stepName,
+                stepRecipientType: contractDocument.stepRecipientType,
+                stepRecipientName: contractDocument.stepRecipientName,
+                stepRecipientSms: contractDocument.stepRecipientSms,
+                detailPayload: contractDocument.detailPayload === null
+                    ? null
+                    : toDomainJson(contractDocument.detailPayload),
+            };
+        return { document, receiptTokens };
+    } catch {
+        return { document: null, receiptTokens: undefined };
+    }
 }
 
 function dateOnly(value: Date | null | undefined): string | null {
@@ -2262,14 +2371,16 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         if (!input.expectedGeneration) {
             throw new ServiceRecordEditConflictError("Revision document generation is required");
         }
+        const enqueueJob = input.enqueueJob !== false;
 
         // Discover the owning case before taking the mutable state lock.  The
         // common writer order is case first, then document state; retrying an
         // auxiliary operation must follow that order as well so a stale
         // operation cannot strand itself in `pending` while another revision
-        // becomes current.  Record-snapshot retries retain the legacy path
-        // because their provider job does not enqueue through this operation
-        // route.
+        // becomes current. Internal contract/receipt resumes set
+        // `enqueueJob: false`: they continue from the already-persisted
+        // immutable snapshot and deliberately do not use the editor's job
+        // dispatch context.
         const discoveredRows = await selectRevisionDocumentStateForBranch(context.tx, {
             branchId: input.branchId,
             revisionId: input.revisionId,
@@ -2279,7 +2390,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         if (!discoveredRow) return null;
         const isAuxiliaryOperation = discoveredRow.operation === "contract_period"
             || discoveredRow.operation === "receipt_refresh";
-        if (isAuxiliaryOperation) {
+        if (enqueueJob && isAuxiliaryOperation) {
             const ownerCase = await selectRevisionGenerationCase(context.tx, {
                 branchId: input.branchId,
                 clientId: input.clientId,
@@ -2303,7 +2414,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         if (!currentRow) return null;
         const current = toRevisionDocumentState(currentRow);
         if (!canRetryRevisionDocumentState(currentRow)) return current;
-        if (isAuxiliaryOperation && !operationRevisionDispatchContext(current)) {
+        if (enqueueJob && isAuxiliaryOperation && !operationRevisionDispatchContext(current)) {
             // Validate all server-owned dispatch inputs before changing the
             // status.  A malformed legacy state must remain inspectable and
             // retryable according to its prior status rather than becoming a
@@ -2332,7 +2443,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         `);
         const row = updated[0];
         const retried = row ? toRevisionDocumentState(row) : null;
-        if (retried
+        if (enqueueJob && retried
             && (retried.operation === "contract_period" || retried.operation === "receipt_refresh")) {
             const dispatchContext = operationRevisionDispatchContext(retried);
             if (!dispatchContext) {
@@ -2682,7 +2793,17 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             throw new ServiceRecordEditConflictError("Service-record ownership changed while confirmation was waiting");
         }
 
-        const snapshot: ServiceRecordEditConfirmSnapshot = { draft, source };
+        // Provider/document facts are captured after the common document locks
+        // and the fresh source reread.  They stay private to the confirm
+        // planner; public editor/draft projections never expose detail JSON or
+        // receipt token metadata.  A failed observation remains explicitly
+        // unknown so auxiliary operations fail closed.
+        const revisionFactsSource = await loadRevisionFactsSource(tx, input.branchId, source);
+        const snapshot: ServiceRecordEditConfirmSnapshot = {
+            draft,
+            source,
+            revisionFactsSource,
+        };
         const plan = await input.prepare(snapshot);
         if (plan.caseId !== source.caseId || plan.clientId !== source.client.id) {
             throw new ServiceRecordEditConflictError("Confirmation plan does not match the locked source");

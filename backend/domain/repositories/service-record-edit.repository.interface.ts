@@ -120,6 +120,58 @@ export interface ServiceRecordEditSource {
     };
 }
 
+/**
+ * Source rows passed only to the confirm planner's fact-capture policy.  This
+ * is deliberately separate from ServiceRecordEditSource so provider detail
+ * JSON never becomes part of the editor GET/draft DTO.  Every field is an
+ * observed database value; nullable metadata remains nullable evidence.
+ */
+export interface ServiceRecordEditRevisionFactsDocument {
+    documentId: string | null;
+    branchId?: string | null;
+    clientId?: number | null;
+    documentVersion?: number | null;
+    templateId?: string | null;
+    templateVersion?: string | null;
+    mirrorGeneration?: string | null;
+    startDate?: string | null;
+    endDate?: string | null;
+    receivedDate?: string | null;
+    receivedAmount?: string | number | null;
+    statusType?: string | number | null;
+    stepType?: string | number | null;
+    stepIndex?: string | number | null;
+    stepName?: string | null;
+    stepRecipientType?: string | number | null;
+    stepRecipientName?: string | null;
+    stepRecipientSms?: string | null;
+    detailPayload: ServiceRecordEditJsonValue | null;
+    stage?: "provider_review" | "provider_participant" | "signature_pending" | "completed" | "unsupported" | null;
+    workflowScope?: Record<string, string | number | boolean | null> | null;
+    participant?: {
+        id?: string | null;
+        name?: string | null;
+        phone?: string | null;
+    } | null;
+    allowedFieldIds?: readonly string[] | null;
+    fields?: ServiceRecordEditJsonValue;
+}
+
+export interface ServiceRecordEditRevisionFactsReceiptToken {
+    id: string;
+    eformsignDocId: number;
+    branchId: string | null;
+    clientId: number | null;
+    active: boolean;
+    revokedAt: Date | string | null;
+}
+
+export interface ServiceRecordEditRevisionFactsSource {
+    document: ServiceRecordEditRevisionFactsDocument | null;
+    /** Undefined means the token observation failed; [] is an observed empty set. */
+    receiptTokens?: readonly ServiceRecordEditRevisionFactsReceiptToken[];
+}
+
 export type ServiceRecordEditDraftStatus = "ACTIVE" | "DISCARDED" | "CONFIRMED";
 
 export interface ServiceRecordEditDraft {
@@ -216,6 +268,13 @@ export interface RetryServiceRecordRevisionDocumentInput {
     revisionId: string;
     stateId: string;
     expectedGeneration: string;
+    /**
+     * Public administrator retries enqueue the existing operation job. The
+     * contract/receipt services use the same CAS as an internal resume step;
+     * they must not require the editor dispatch context or create a second
+     * job while continuing from their persisted immutable snapshot.
+     */
+    enqueueJob?: boolean;
 }
 
 /**
@@ -294,6 +353,8 @@ export interface AppendServiceRecordRevisionInput {
 export interface ServiceRecordEditConfirmSnapshot {
     draft: ServiceRecordEditDraft;
     source: ServiceRecordEditSource;
+    /** Private locked document/token evidence for revision operation planning. */
+    revisionFactsSource?: ServiceRecordEditRevisionFactsSource;
 }
 
 export interface ServiceRecordEditConfirmSessionUpdate {
