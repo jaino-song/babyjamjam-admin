@@ -27,7 +27,7 @@ function runPhase3AuthChild({ tempDir, authStorageState }) {
         import { default as config } from "./phase3-e2e.config.mjs";
         import globalSetup from "./phase3-e2e-global-setup.mjs";
 
-        await globalSetup();
+        await globalSetup({ projects: [{ use: { baseURL: config.use.baseURL } }] });
         const storagePath = config.use.storageState;
         const storageStateExists = fs.existsSync(storagePath);
         const storageState = storageStateExists
