@@ -28,6 +28,8 @@ export interface ServiceRecordContext {
     startDate: string | null;
     header: Record<string, unknown> | null;
     sessions: ServiceRecordSession[];
+    /** Server-authoritative dates for every planned session. Public-safe: no admin provenance or originals. */
+    plannedSessionDates?: Array<{ sessionIndex: number; serviceDate: string }>;
     recordStatus?: string | null;
     pendingScheduleChange?: {
         id: string;
@@ -77,6 +79,8 @@ export interface ServiceRecordWizardSlots {
     signature?: (props: SignatureSlotProps) => ReactNode;
     /** Optional authenticated administrator controls. Public flows do not render this slot. */
     adminToolbar?: ReactNode;
+    /** Administrator confirm action rendered at the same overview action position as the public schedule button. */
+    adminConfirmAction?: ReactNode;
     /** Optional administrator-only date display override; public defaults stay unchanged. */
     serviceDateDisplay?: (props: ServiceDateDisplaySlotProps) => ReactNode;
     /** Optional administrator-only date editor trigger; public date input stays unchanged. */

@@ -324,8 +324,34 @@ export default function ServiceRecordPage() {
         while (lockedDays.has(d)) d++;
         return d;
     }, [lockedDays]);
+    const plannedDateVectorValid = useMemo(() => {
+        const plannedDates = ctx?.plannedSessionDates;
+        if (plannedDates === undefined) return true;
+        const isValidDateOnly = (value: string) => {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+            const [year, month, day] = value.split("-").map(Number);
+            const parsed = new Date(Date.UTC(year, month - 1, day));
+            return parsed.getUTCFullYear() === year
+                && parsed.getUTCMonth() === month - 1
+                && parsed.getUTCDate() === day;
+        };
+        return Array.isArray(plannedDates)
+            && plannedDates.length === (ctx?.totalSessions ?? 0)
+            && new Set(plannedDates.map((session) => session.sessionIndex)).size === plannedDates.length
+            && new Set(plannedDates.map((session) => session.serviceDate)).size === plannedDates.length
+            && plannedDates.every((session) => (
+                Number.isSafeInteger(session.sessionIndex)
+                && session.sessionIndex > 0
+                && session.sessionIndex <= (ctx?.totalSessions ?? 0)
+                && isValidDateOnly(session.serviceDate)
+            ));
+    }, [ctx?.plannedSessionDates, ctx?.totalSessions]);
     const defaultDate = useCallback(
         (d: number) => {
+            if (ctx?.plannedSessionDates !== undefined) {
+                if (!plannedDateVectorValid) return "";
+                return ctx.plannedSessionDates.find((session) => session.sessionIndex === d)?.serviceDate ?? "";
+            }
             const sessions = ctx?.sessions ?? [];
             const rawStart = ctx?.startDate ? ctx.startDate.slice(0, 10) : isoDateInKorea();
             const start = isBusinessDayKr(rawStart) ? rawStart : nextBusinessDayKr(rawStart);
@@ -339,7 +365,7 @@ export default function ServiceRecordPage() {
             };
             return chain(d);
         },
-        [ctx?.sessions, ctx?.startDate],
+        [ctx?.plannedSessionDates, ctx?.sessions, ctx?.startDate, plannedDateVectorValid],
     );
 
     async function submitPhone() {

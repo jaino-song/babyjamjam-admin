@@ -1,4 +1,7 @@
-import type { ServiceRecordEditContractStage } from "@babyjamjam/shared/types/service-record";
+import type {
+    ServiceRecordEditConfirmResponse,
+    ServiceRecordEditContractStage,
+} from "@babyjamjam/shared/types/service-record";
 
 import {
     AdminServiceRecordEditApiError,
@@ -47,6 +50,53 @@ function positiveInteger(value: unknown): number | null {
 
 function nonNegativeInteger(value: unknown): number | null {
     return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+const CONFIRM_DOCUMENT_STATUSES = [
+    "not_required",
+    "waiting_for_completion",
+    "capability_unverified",
+    "pending",
+] as const;
+
+const CONFIRM_STATUSES = ["confirmed", "no_changes"] as const;
+
+export function normalizeAdminServiceRecordEditConfirm(value: unknown): ServiceRecordEditConfirmResponse {
+    const clientId = isRecord(value) ? positiveInteger(value.clientId) : null;
+    const draftVersion = isRecord(value) ? positiveInteger(value.draftVersion) : null;
+    const caseVersion = isRecord(value) ? nonNegativeInteger(value.caseVersion) : null;
+    const revisionNumber = isRecord(value) && value.revisionNumber !== null
+        ? positiveInteger(value.revisionNumber)
+        : null;
+    if (!isRecord(value)
+        || !CONFIRM_STATUSES.includes(value.status as (typeof CONFIRM_STATUSES)[number])
+        || typeof value.caseId !== "string"
+        || value.caseId.length === 0
+        || clientId === null
+        || typeof value.draftId !== "string"
+        || value.draftId.length === 0
+        || draftVersion === null
+        || caseVersion === null
+        || (value.revisionId !== null && typeof value.revisionId !== "string")
+        || (value.revisionId !== null && value.revisionId.length === 0)
+        || (value.revisionNumber !== null && revisionNumber === null)
+        || !CONFIRM_DOCUMENT_STATUSES.includes(value.documentStatus as (typeof CONFIRM_DOCUMENT_STATUSES)[number])
+        || typeof value.confirmedAt !== "string"
+        || Number.isNaN(Date.parse(value.confirmedAt))) {
+        throw new Error("Invalid service record confirm response");
+    }
+    return {
+        status: value.status as ServiceRecordEditConfirmResponse["status"],
+        caseId: value.caseId,
+        clientId,
+        draftId: value.draftId,
+        draftVersion,
+        caseVersion,
+        revisionId: value.revisionId,
+        revisionNumber,
+        documentStatus: value.documentStatus as ServiceRecordEditConfirmResponse["documentStatus"],
+        confirmedAt: value.confirmedAt,
+    };
 }
 
 const SERVICE_RECORD_EDIT_CONTRACT_STAGES = ["completed", "rejected", "in_progress", "unknown"] as const;
@@ -612,6 +662,19 @@ export const adminServiceRecordEditApi = {
             body: JSON.stringify({ expectedDraftVersion }),
         });
         return normalizeAdminServiceRecordEditPreview(body);
+    },
+
+    async confirmDraft(
+        draftId: string,
+        expectedDraftVersion: number,
+        previewId: string,
+        idempotencyKey: string,
+    ): Promise<ServiceRecordEditConfirmResponse> {
+        const body = await request<unknown>(`${draftIdPath(draftId)}/confirm`, {
+            method: "POST",
+            body: JSON.stringify({ expectedDraftVersion, previewId, idempotencyKey }),
+        });
+        return normalizeAdminServiceRecordEditConfirm(body);
     },
 
     async discardDraft(

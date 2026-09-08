@@ -189,6 +189,49 @@ describe("admin service-record edit API adapter", () => {
         }));
     });
 
+    it("sends the exact preview-bound confirm body and rejects a malformed success", async () => {
+        const result = {
+            status: "confirmed",
+            caseId: "case-1",
+            clientId: 42,
+            draftId: "draft-1",
+            draftVersion: 3,
+            caseVersion: 8,
+            revisionId: "revision-1",
+            revisionNumber: 2,
+            documentStatus: "waiting_for_completion",
+            confirmedAt: "2026-09-08T01:02:03.000Z",
+        };
+        global.fetch = jest.fn()
+            .mockResolvedValueOnce(response(result, 200))
+            .mockResolvedValueOnce(response({ status: "confirmed" }, 200));
+
+        await expect(adminServiceRecordEditApi.confirmDraft(
+            "draft/1",
+            3,
+            "preview-1",
+            "11111111-1111-4111-8111-111111111111",
+        )).resolves.toEqual(result);
+        expect(global.fetch).toHaveBeenNthCalledWith(
+            1,
+            "/api/admin/service-records/drafts/draft%2F1/confirm",
+            expect.objectContaining({
+                method: "POST",
+                body: JSON.stringify({
+                    expectedDraftVersion: 3,
+                    previewId: "preview-1",
+                    idempotencyKey: "11111111-1111-4111-8111-111111111111",
+                }),
+            }),
+        );
+        await expect(adminServiceRecordEditApi.confirmDraft(
+            "draft-1",
+            3,
+            "preview-1",
+            "11111111-1111-4111-8111-111111111111",
+        )).rejects.toThrow("Invalid service record confirm response");
+    });
+
     it("turns a malformed preview envelope into a blocked preview instead of throwing", () => {
         expect(normalizeAdminServiceRecordEditPreview(null).blockingReasons).toEqual([
             { code: "INVALID_PREVIEW_RESPONSE", message: "미리보기 응답을 확인할 수 없습니다." },

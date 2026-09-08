@@ -5,7 +5,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
-import type { ServiceRecordEditPreviewResponse, ServiceRecordPlannedSession } from "@/features/service-records/types";
+import type {
+    ServiceRecordEditConfirmResponse,
+    ServiceRecordEditPreviewResponse,
+    ServiceRecordPlannedSession,
+} from "@/features/service-records/types";
 
 const SOURCE_COMPONENT = "ServiceRecordEditPreviewDialog";
 const DEFAULT_DATA_COMPONENT = "desktop_service-record-admin_edit-preview-dialog";
@@ -16,6 +20,11 @@ export interface ServiceRecordEditPreviewDialogProps {
     preview: ServiceRecordEditPreviewResponse | null;
     busy?: boolean;
     error?: string | null;
+    onConfirm?: () => void | Promise<void>;
+    confirmBusy?: boolean;
+    confirmError?: string | null;
+    confirmResult?: ServiceRecordEditConfirmResponse | null;
+    onRefresh?: () => void | Promise<void>;
     "data-component"?: string;
 }
 
@@ -52,6 +61,15 @@ function formatContractStage(value: string | null): string {
     }
 }
 
+function formatConfirmDocumentStatus(value: ServiceRecordEditConfirmResponse["documentStatus"]): string {
+    switch (value) {
+        case "not_required": return "전자문서 처리 불필요";
+        case "waiting_for_completion": return "전자문서 처리 대기 중";
+        case "capability_unverified": return "전자문서 처리 근거 확인 필요";
+        case "pending": return "전자문서 처리 중";
+    }
+}
+
 function SessionDateList({
     dataComponent,
     sessions,
@@ -85,6 +103,11 @@ export function ServiceRecordEditPreviewDialog({
     preview,
     busy = false,
     error = null,
+    onConfirm,
+    confirmBusy = false,
+    confirmError = null,
+    confirmResult = null,
+    onRefresh,
     "data-component": canonicalDataComponent,
 }: ServiceRecordEditPreviewDialogProps) {
     const dataComponent = canonicalDataComponent ?? DEFAULT_DATA_COMPONENT;
@@ -101,18 +124,31 @@ export function ServiceRecordEditPreviewDialog({
                 data-component={dataComponent}
                 size="form"
                 title="초안 변경 미리보기"
-                description="저장된 관리자 초안이 적용될 때의 날짜, 배정 영향, 내용 변경을 확인합니다. 이 화면에서는 최종 확정하지 않습니다."
+                description="저장된 관리자 초안이 적용될 때의 날짜, 배정 영향, 내용 변경을 확인한 뒤 수정 확정을 처리합니다."
                 contentClassName="max-h-[min(72vh,720px)] overflow-y-auto flex flex-col gap-5"
                 footer={(
-                    <Button
-                        type="button"
-                        variant="neutral"
-                        data-component={`${dataComponent}_actions_close`}
-                        disabled={busy}
-                        onClick={() => onOpenChange(false)}
-                    >
-                        닫기
-                    </Button>
+                    <div data-component={`${dataComponent}_actions`} data-slot="actions" className="flex flex-wrap justify-end gap-2">
+                        {preview && !hasBlockingReasons && onConfirm ? (
+                            <Button
+                                type="button"
+                                variant="positive"
+                                data-component={`${dataComponent}_actions_confirm`}
+                                disabled={busy || confirmBusy || Boolean(confirmResult)}
+                                onClick={() => { void onConfirm(); }}
+                            >
+                                {confirmBusy ? "확정 처리 중…" : confirmResult ? "수정 확정됨" : "수정 확정"}
+                            </Button>
+                        ) : null}
+                        <Button
+                            type="button"
+                            variant="neutral"
+                            data-component={`${dataComponent}_actions_close`}
+                            disabled={busy || confirmBusy}
+                            onClick={() => onOpenChange(false)}
+                        >
+                            닫기
+                        </Button>
+                    </div>
                 )}
             >
                 <div data-component={`${dataComponent}_content`} data-source-component={SOURCE_COMPONENT} className="flex flex-col gap-5">
@@ -123,6 +159,34 @@ export function ServiceRecordEditPreviewDialog({
                         <Alert variant="destructive" data-component={`${dataComponent}_content_error`} data-slot="error">
                             <AlertTitle>미리보기를 불러오지 못했습니다.</AlertTitle>
                             <AlertDescription>{error}</AlertDescription>
+                        </Alert>
+                    ) : null}
+                    {confirmError ? (
+                        <Alert variant="destructive" data-component={`${dataComponent}_content_confirm-error`} data-slot="confirm-error">
+                            <AlertTitle>수정 확정을 완료하지 못했습니다.</AlertTitle>
+                            <AlertDescription>
+                                <p>{confirmError}</p>
+                                {onRefresh && confirmError.includes("오래되어") ? (
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="neutral"
+                                        data-component={`${dataComponent}_content_confirm-error_refresh`}
+                                        onClick={() => { void onRefresh(); }}
+                                    >
+                                        최신 미리보기
+                                    </Button>
+                                ) : null}
+                            </AlertDescription>
+                        </Alert>
+                    ) : null}
+                    {confirmResult ? (
+                        <Alert variant="success" data-component={`${dataComponent}_content_confirmed`} data-slot="confirmed">
+                            <AlertTitle>수정 확정됨</AlertTitle>
+                            <AlertDescription>
+                                {confirmResult.status === "no_changes" ? "변경 없이 초안이 확정되었습니다." : "관리자 수정본이 확정되었습니다."}
+                                <br />{formatConfirmDocumentStatus(confirmResult.documentStatus)} · 확정 시각 {formatTimestamp(confirmResult.confirmedAt)}
+                            </AlertDescription>
                         </Alert>
                     ) : null}
                     {!busy && !error && preview ? (

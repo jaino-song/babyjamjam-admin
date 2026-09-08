@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
     DAY_PAGES,
@@ -26,6 +26,7 @@ import {
     type AdminServiceRecordEditDateMove,
     type AdminServiceRecordEditSessionChanges,
     type AdminServiceRecordEditState,
+    type ServiceRecordEditConfirmResponse,
     type ServiceRecordEditPreviewResponse,
     type ServiceRecordEditPreviewBlockingReason,
     type ServiceRecordPlannedSession,
@@ -489,6 +490,45 @@ function previewErrorMessage(status: number): string {
     return "초안 미리보기를 불러오지 못했습니다.";
 }
 
+function confirmErrorMessage(status: number): string {
+    if (status === 401) return "로그인이 필요합니다. 수정 확정을 처리하지 못했습니다.";
+    if (status === 403) return "수정 확정 권한이 없습니다. 입력과 초안은 유지됩니다.";
+    if (status === 404) return "초안을 찾을 수 없습니다. 입력과 초안은 유지됩니다.";
+    if (status === 409) return "미리보기가 오래되어 수정 확정에 실패했습니다. 최신 미리보기를 다시 확인해 주세요.";
+    return "수정 확정 응답을 확인하지 못했습니다. 같은 요청으로 다시 시도해 주세요.";
+}
+
+function confirmDocumentStatusMessage(status: ServiceRecordEditConfirmResponse["documentStatus"]): string {
+    switch (status) {
+        case "not_required": return "전자문서 처리 불필요";
+        case "waiting_for_completion": return "전자문서 처리 대기 중";
+        case "capability_unverified": return "전자문서 처리 근거 확인 필요";
+        case "pending": return "전자문서 처리 중";
+    }
+}
+
+function hasDraftChanges(changes: AdminServiceRecordEditChanges): boolean {
+    const hasHeaderChanges = Boolean(changes.header && Object.keys(changes.header).length > 0);
+    const hasSessionChanges = Boolean(changes.sessions?.some((session) => (
+        Object.keys(session).some((key) => key !== "sessionIndex")
+    )));
+    return hasHeaderChanges || hasSessionChanges;
+}
+
+function createIdempotencyKey(): string {
+    if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID();
+    const bytes = new Uint8Array(16);
+    if (typeof globalThis.crypto?.getRandomValues === "function") {
+        globalThis.crypto.getRandomValues(bytes);
+    } else {
+        for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
+    }
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 export interface ServiceRecordAdminWizardProps {
     clientId: string;
     overview: AdminServiceRecordEditorOverview;
@@ -528,6 +568,10 @@ export function ServiceRecordAdminWizard({
     const [previewBusy, setPreviewBusy] = useState(false);
     const [preview, setPreview] = useState<ServiceRecordEditPreviewResponse | null>(null);
     const [previewError, setPreviewError] = useState<string | null>(null);
+    const [confirmBusy, setConfirmBusy] = useState(false);
+    const [confirmError, setConfirmError] = useState<string | null>(null);
+    const [confirmResult, setConfirmResult] = useState<ServiceRecordEditConfirmResponse | null>(null);
+    const confirmIdempotencyKey = useRef<string | null>(null);
 
     const activeDraft = draftState?.draft?.status === "ACTIVE" ? draftState.draft : null;
     const context = useMemo(
@@ -574,8 +618,9 @@ export function ServiceRecordAdminWizard({
         () => new Set((workingChanges.sessions ?? []).map((session) => session.sessionIndex)),
         [workingChanges.sessions],
     );
+    const hasPendingChanges = useMemo(() => hasDraftChanges(workingChanges), [workingChanges]);
     const isSaving = saveState === "saving";
-    const formReadOnly = !activeDraft || Boolean(selectedSupplemental) || isSaving || dateMoveBusy;
+    const formReadOnly = !activeDraft || Boolean(selectedSupplemental) || isSaving || dateMoveBusy || Boolean(confirmResult);
 
     const markLocalChange = useCallback(() => {
         setDirty(true);
@@ -679,9 +724,12 @@ export function ServiceRecordAdminWizard({
     }, [activeDraft, baseView.context, dateMoveBusy, displayDay, selectedSupplemental, workingChanges]);
 
     const openPreview = useCallback(async () => {
-        if (!activeDraft || dateMoveBusy || previewBusy) return;
+        if (!activeDraft || dateMoveBusy || previewBusy || confirmBusy || confirmResult) return;
         const target = dirty ? await persistDraft() : draftState;
         if (!target?.draft || target.draft.status !== "ACTIVE") return;
+        confirmIdempotencyKey.current = null;
+        setConfirmResult(null);
+        setConfirmError(null);
         setPreviewDialogOpen(true);
         setPreviewBusy(true);
         setPreviewError(null);
@@ -698,7 +746,58 @@ export function ServiceRecordAdminWizard({
         } finally {
             setPreviewBusy(false);
         }
-    }, [activeDraft, dateMoveBusy, draftState, dirty, persistDraft, previewBusy]);
+    }, [activeDraft, confirmBusy, confirmResult, dateMoveBusy, draftState, dirty, persistDraft, previewBusy]);
+
+    const refreshPreview = useCallback(() => {
+        if (confirmBusy) return;
+        confirmIdempotencyKey.current = null;
+        setConfirmResult(null);
+        setConfirmError(null);
+        void openPreview();
+    }, [confirmBusy, openPreview]);
+
+    const confirmPreview = useCallback(async () => {
+        if (!activeDraft || !preview || preview.blockingReasons.length > 0 || confirmBusy) return;
+        if (preview.draftId !== activeDraft.id || preview.draftVersion !== activeDraft.draftVersion) {
+            setConfirmError(confirmErrorMessage(409));
+            return;
+        }
+        let idempotencyKey = confirmIdempotencyKey.current;
+        if (!idempotencyKey) {
+            try {
+                idempotencyKey = createIdempotencyKey();
+                confirmIdempotencyKey.current = idempotencyKey;
+            } catch {
+                setConfirmError(confirmErrorMessage(0));
+                return;
+            }
+        }
+        setConfirmBusy(true);
+        setConfirmError(null);
+        try {
+            const result = await adminServiceRecordEditApi.confirmDraft(
+                activeDraft.id,
+                preview.draftVersion,
+                preview.previewId,
+                idempotencyKey,
+            );
+            setConfirmResult(result);
+            setSaveState("saved");
+        } catch (error) {
+            const apiError = error instanceof AdminServiceRecordEditApiError ? error : null;
+            const status = apiError?.status ?? 0;
+            if (status === 409) {
+                // A stale preview is a definitive conflict. A fresh preview
+                // starts a new logical attempt and therefore gets a new key.
+                confirmIdempotencyKey.current = null;
+            }
+            // Transport loss, malformed 2xx data, and other unknown errors
+            // retain the key so an explicit retry cannot create a duplicate.
+            setConfirmError(confirmErrorMessage(status));
+        } finally {
+            setConfirmBusy(false);
+        }
+    }, [activeDraft, confirmBusy, preview]);
 
     const discardCurrentDraft = useCallback(async () => {
         if (!activeDraft) return;
@@ -720,6 +819,9 @@ export function ServiceRecordAdminWizard({
             setPreviewDialogOpen(false);
             setPreview(null);
             setPreviewError(null);
+            setConfirmError(null);
+            setConfirmResult(null);
+            confirmIdempotencyKey.current = null;
         } catch (error) {
             const apiError = error instanceof AdminServiceRecordEditApiError ? error : null;
             const status = apiError?.status ?? 500;
@@ -750,6 +852,12 @@ export function ServiceRecordAdminWizard({
         setPendingDateMove(null);
         setDateMoveError(null);
         setDateDialogOpen(false);
+        setPreviewDialogOpen(false);
+        setPreview(null);
+        setPreviewError(null);
+        setConfirmError(null);
+        setConfirmResult(null);
+        confirmIdempotencyKey.current = null;
     }, [baseView.context, displayDay, draftError, selectedSupplemental]);
 
     const keepLocalInput = useCallback(() => {
@@ -845,11 +953,11 @@ export function ServiceRecordAdminWizard({
     }, [originalDateForSession]);
 
     const openDateDialog = useCallback((sessionIndex: number) => {
-        if (!activeDraft || selectedSupplemental || sessionIndex !== displayDay || dateMoveBusy) return;
+        if (!activeDraft || selectedSupplemental || sessionIndex !== displayDay || dateMoveBusy || confirmResult) return;
         setPendingDateMove(null);
         setDateMoveError(null);
         setDateDialogOpen(true);
-    }, [activeDraft, dateMoveBusy, displayDay, selectedSupplemental]);
+    }, [activeDraft, confirmResult, dateMoveBusy, displayDay, selectedSupplemental]);
 
     const handleDateDialogOpenChange = useCallback((nextOpen: boolean) => {
         if (!nextOpen && dateMoveBusy) return;
@@ -869,6 +977,28 @@ export function ServiceRecordAdminWizard({
                     : saveState === "saved"
                 ? "저장됨"
                     : "초안 없음";
+    const adminConfirmAction = (
+        <Button
+            type="button"
+            data-slot="btn"
+            className="btn ghost schedule-change"
+            variant="outline"
+            data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_actions_confirm`}
+            disabled={
+                !activeDraft
+                || !hasPendingChanges
+                || isSaving
+                || dateMoveBusy
+                || discarding
+                || previewBusy
+                || confirmBusy
+                || Boolean(confirmResult)
+            }
+            onClick={() => { void openPreview(); }}
+        >
+            {confirmResult ? "수정 확정됨" : "수정 확정"}
+        </Button>
+    );
     const adminToolbar = (
         <>
             <span data-component={`${ADMIN_WIZARD_COMPONENT}_top-bar_admin-toolbar_status`} data-slot="admin-draft-status">{statusLabel}</span>
@@ -901,7 +1031,7 @@ export function ServiceRecordAdminWizard({
                         size="sm"
                         variant="outline"
                         data-component={`${ADMIN_WIZARD_COMPONENT}_top-bar_admin-toolbar_preview`}
-                        disabled={isSaving || dateMoveBusy || discarding || previewBusy}
+                        disabled={isSaving || dateMoveBusy || discarding || previewBusy || confirmBusy || Boolean(confirmResult)}
                         onClick={() => { void openPreview(); }}
                     >
                         변경 미리보기
@@ -924,6 +1054,15 @@ export function ServiceRecordAdminWizard({
                 <Alert className="admin-draft-source-alert" data-component={`${ADMIN_WIZARD_COMPONENT}_top-bar_admin-toolbar_source-changed`} variant="warning">
                     <AlertTitle>원본 기록 변경</AlertTitle>
                     <AlertDescription>원본 기록이 변경되었습니다. 초안 입력은 유지됩니다.</AlertDescription>
+                </Alert>
+            ) : null}
+            {confirmResult ? (
+                <Alert className="admin-draft-confirmed-alert" data-component={`${ADMIN_WIZARD_COMPONENT}_top-bar_admin-toolbar_confirmed`} variant="success">
+                    <AlertTitle>수정 확정됨</AlertTitle>
+                    <AlertDescription>
+                        {confirmResult.status === "no_changes" ? "변경 없이 초안이 확정되었습니다." : "관리자 수정본이 확정되었습니다."}
+                        {" "}{confirmDocumentStatusMessage(confirmResult.documentStatus)}.
+                    </AlertDescription>
                 </Alert>
             ) : null}
             {baseView.scheduleProjectionBlockingReasons.length > 0 ? (
@@ -1024,6 +1163,7 @@ export function ServiceRecordAdminWizard({
                         </Button>
                     ),
                     adminToolbar,
+                    adminConfirmAction,
                     overviewSupplemental: supplementalSessions.length > 0 ? (
                         <div
                             data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_supplemental`}
@@ -1079,6 +1219,11 @@ export function ServiceRecordAdminWizard({
                 preview={preview}
                 busy={previewBusy}
                 error={previewError}
+                onConfirm={confirmPreview}
+                confirmBusy={confirmBusy}
+                confirmError={confirmError}
+                confirmResult={confirmResult}
+                onRefresh={refreshPreview}
                 data-component={`${ADMIN_WIZARD_COMPONENT}_preview-dialog`}
             />
         </>
