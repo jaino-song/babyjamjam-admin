@@ -1,6 +1,9 @@
 -- Mutable operation state for the immutable service-record revision payload.
 -- Provider work continues to use eformsign_document_job; this table records
 -- the scoped operation generation and its durable local progress only.
+CREATE UNIQUE INDEX IF NOT EXISTS "uniq_service_record_case_branch_client_id"
+    ON "service_record_case" ("branch_id", "client_id", "id");
+
 CREATE TABLE IF NOT EXISTS "service_record_revision_document_state" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "branch_id" UUID NOT NULL,
@@ -39,9 +42,9 @@ CREATE TABLE IF NOT EXISTS "service_record_revision_document_state" (
         FOREIGN KEY ("branch_id") REFERENCES "branch"("id") ON DELETE NO ACTION ON UPDATE NO ACTION,
     CONSTRAINT "service_record_revision_document_state_client_fkey"
         FOREIGN KEY ("client_id") REFERENCES "client"("id") ON DELETE NO ACTION ON UPDATE NO ACTION,
-    CONSTRAINT "service_record_revision_document_state_case_branch_fkey"
-        FOREIGN KEY ("branch_id", "service_record_case_id")
-        REFERENCES "service_record_case"("branch_id", "id") ON DELETE NO ACTION ON UPDATE NO ACTION,
+    CONSTRAINT "service_record_revision_document_state_case_owner_fkey"
+        FOREIGN KEY ("branch_id", "client_id", "service_record_case_id")
+        REFERENCES "service_record_case"("branch_id", "client_id", "id") ON DELETE NO ACTION ON UPDATE NO ACTION,
     CONSTRAINT "service_record_revision_document_state_revision_fkey"
         FOREIGN KEY ("branch_id", "service_record_case_id", "revision_id")
         REFERENCES "service_record_revision"("branch_id", "service_record_case_id", "id")
@@ -50,7 +53,7 @@ CREATE TABLE IF NOT EXISTS "service_record_revision_document_state" (
 
 CREATE UNIQUE INDEX IF NOT EXISTS "service_record_revision_document_state_generation_key"
     ON "service_record_revision_document_state" ("generation");
-CREATE UNIQUE INDEX IF NOT EXISTS "uniq_service_record_revision_document_state_operation"
+CREATE INDEX IF NOT EXISTS "idx_service_record_revision_document_state_operation"
     ON "service_record_revision_document_state" ("branch_id", "revision_id", "operation");
 CREATE INDEX IF NOT EXISTS "idx_service_record_revision_document_state_owner_status"
     ON "service_record_revision_document_state" ("branch_id", "client_id", "status");
