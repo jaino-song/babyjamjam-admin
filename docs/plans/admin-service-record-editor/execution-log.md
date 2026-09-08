@@ -413,3 +413,5 @@
 
 - Phase4 사전 소유 경계 조사(구현 아님): 기존 문자 job은 소문자 `pending/processing/dispatching/sent/failed/canceled`를 사용하며 message-trigger.service의 authorizeClaimedJobForDispatch 트랜잭션이 claim token을 재검사한 뒤 dispatching을 저장한다. 현재 원본 fence는 EMPLOYEE_ASSIGNED schedule에 한정되어 revision/기간/문서 동기화 검사로 확장해야 한다. eformsign job은 queued/processing/reconciling/completed/failed/requires_attention이며 동일 dispatching 경계가 이미 있다고 가정하지 않는다. 메인이 실제 소스를 재확인했다.
 - 기존 persistClientIntent/persistScheduleIntent는 TransactionClient를 받는다. service-record token expiry는 자체20시 KST 정책이며 계약 자동 완료17시 설정과 구분한다. revision.appendRevision은 현재 자체 트랜잭션을 여므로4.1의 typed owning UoW 확장이 필요하다. 영수증 토큰 만료는 이 변경 대상이 아니다.
+
+- Task3.0 잔여 조사에서 EmployeeScheduleService.delete의 삭제 커밋 후 lifecycle 쓰기를 확인했다. delete usecase/employee-schedule repository interface와 기존 허용 concrete repository에 typed transaction 전달 경계를 추가하도록 범위를 확장했다. 삭제 정책 자체는 유지한다. 현재 부분 검사에는 실제 entry 순서, mirrored contract 순서, 문서 generation 불일치 전체 rollback이 포함된다. 최종3.0 결과를 고정한 뒤 Sol/high 좁은 FINAL을 추가하고, Phase3 전체 감사는3.1 뒤 별도로 유지한다.
