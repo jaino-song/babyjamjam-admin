@@ -205,3 +205,16 @@ describe("eformsignApi.finalizeHeadless", () => {
         expect(mockPost).toHaveBeenCalledTimes(3);
     });
 });
+
+describe("eformsignApi document download URLs", () => {
+    it("requests the receipt PNG renderer while keeping the ordinary PDF URL unchanged", async () => {
+        const { apiModule } = await loadApiModule();
+
+        expect(apiModule.eformsignApi.getDocumentReceiptDownloadUrl("doc/1")).toBe(
+            "/api/eformsign/documents/doc%2F1/download_files?fileType=document&format=receipt-png",
+        );
+        expect(apiModule.eformsignApi.getDocumentDownloadUrl("doc/1")).toBe(
+            "/api/eformsign/documents/doc%2F1/download_files?fileType=document",
+        );
+    });
+});

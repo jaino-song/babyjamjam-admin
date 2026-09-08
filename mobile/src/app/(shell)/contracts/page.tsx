@@ -112,6 +112,15 @@ import {
 } from "@/components/app/mobile-redesign/detail-sheet";
 import { ContractAutomationsPanel } from "@/components/app/mobile-redesign/ContractAutomationsPanel";
 import { ContractAutomationEditor } from "@/components/app/mobile-redesign/ContractAutomationEditor";
+import {
+  buildContractClientPrefill,
+  buildContractCreationPrefillFromClient,
+} from "@/lib/contracts/contract-client-prefill";
+import {
+  RECEIPT_SHARE_ERROR_MESSAGE,
+  getReceiptFileName,
+  shareReceiptPng,
+} from "@/lib/contracts/receipt-share";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { useClientDialogStore, type ClientWizardPrefill } from "@/stores/client-dialog-store";
 import { useFormStore, type ContractCreationPrefill } from "@/stores/form-store";
@@ -852,19 +861,12 @@ function providerRecipientPhone(
 function buildClientPrefillFromContract(
   doc: EformsignDocument,
 ): ClientWizardPrefill {
-  const prefill: ClientWizardPrefill = {};
   const name = customerName(doc);
   const phone = formatClientPhone(
     contractRecipientPhone(doc) ||
       documentFieldValue(doc, ["연락처", "휴대폰", "전화번호", "customerContact", "customerPhone"]),
   );
 
-  if (name && name !== "고객 미지정") prefill.name = name;
-  if (phone) prefill.phone = phone;
-
-  const birthday = normalizeDateToYymmdd(
-    documentFieldValue(doc, ["생년월일", "주민번호 앞자리", "customerDOB", "customerBirthDate", "birthday"]),
-  );
   const dueDate = normalizeDateToYymmdd(
     documentFieldValue(doc, ["출산 예정일", "출산예정일", "dueDate", "expectedBirthDate"]),
   );
@@ -914,18 +916,20 @@ function buildClientPrefillFromContract(
   const grant = numericText(documentFieldValue(doc, ["정부지원금", "지원금", "grant"]));
   const actualPrice = numericText(documentFieldValue(doc, ["본인부담금", "실결제금액", "actualPrice"]));
 
-  if (birthday) prefill.birthday = birthday;
-  if (dueDate) prefill.dueDate = dueDate;
-  if (address) prefill.address = address;
-  if (type) prefill.type = type;
-  if (duration !== undefined) prefill.duration = duration;
-  if (fullPrice) prefill.fullPrice = fullPrice;
-  if (grant) prefill.grant = grant;
-  if (actualPrice) prefill.actualPrice = actualPrice;
-  if (startDate) prefill.startDate = startDate;
-  if (endDate) prefill.endDate = endDate;
-
-  return prefill;
+  return buildContractClientPrefill({
+    name,
+    phone,
+    birthday: documentFieldValue(doc, ["생년월일", "주민번호 앞자리", "customerDOB", "customerBirthDate", "birthday"]),
+    dueDate,
+    address,
+    type,
+    duration,
+    fullPrice,
+    grant,
+    actualPrice,
+    startDate,
+    endDate,
+  });
 }
 
 function contractEndDateInputValue(
@@ -1005,26 +1009,17 @@ function buildContractCreationPrefillFromContract(
     }) ??
     employees.find((employee) => employee.name.trim() === provider);
 
-  return {
-    clientId: metadata?.clientId ?? null,
-    name: clientPrefill.name,
-    phone: clientPrefill.phone,
-    birthday: clientPrefill.birthday,
-    dueDate: yymmddPrefillToIso(clientPrefill.dueDate),
-    address: clientPrefill.address,
+  return buildContractCreationPrefillFromClient({
+    clientPrefill,
+    clientId: metadata?.clientId,
     employeeId: matchedEmployee?.id,
     employeeName: matchedEmployee?.name ?? (provider !== "-" ? provider : undefined),
     employeePhone: matchedEmployee?.phone ?? providerPhone,
+    dueDate: yymmddPrefillToIso(clientPrefill.dueDate),
     startDate,
     endDate,
-    fullPrice: clientPrefill.fullPrice,
-    grant: clientPrefill.grant,
-    actualPrice: clientPrefill.actualPrice,
     paymentDate,
-    voucherType: clientPrefill.type,
-    voucherDuration: clientPrefill.duration != null ? String(clientPrefill.duration) : undefined,
-    area: "",
-  };
+  });
 }
 
 function notificationChannelLabel(log: NotificationLogRecord): "메시지" {
@@ -1263,7 +1258,9 @@ function ContractDetailContent({
   const isPreviewOpen = previewDocumentId === doc.id;
   const statusLabel = tones.badge;
   const stageItems = contractStageItems(doc, category);
-  const receiptFilename = `${name} 영수증.pdf`;
+  const receiptCustomerName =
+    resolvedCustomerName === UNKNOWN_CUSTOMER_NAME ? "" : resolvedCustomerName.trim();
+  const receiptFilename = getReceiptFileName(receiptCustomerName);
   const notificationRows = useMemo(
     () =>
       notificationLogs
@@ -1331,51 +1328,19 @@ function ContractDetailContent({
     }
   };
   const handleReceiptShare = async () => {
-    if (
-      typeof navigator === "undefined" ||
-      typeof navigator.share !== "function" ||
-      typeof navigator.canShare !== "function" ||
-      typeof File === "undefined"
-    ) {
-      window.location.assign(receiptDownloadUrl);
-      return;
-    }
-
-    let canShareReceiptFile = false;
-    try {
-      canShareReceiptFile = navigator.canShare({
-        files: [new File([""], receiptFilename, { type: "application/pdf" })],
-      });
-    } catch {
-      window.location.assign(receiptDownloadUrl);
-      return;
-    }
-
-    if (!canShareReceiptFile) {
-      window.location.assign(receiptDownloadUrl);
-      return;
-    }
-
-    try {
-      const response = await fetch(receiptDownloadUrl, { credentials: "include" });
-      if (!response.ok) {
-        throw new Error(`Receipt PDF request failed with ${response.status}`);
-      }
-
-      const receiptBlob = await response.blob();
-      const receiptFile = new File([receiptBlob], receiptFilename, {
-        type: receiptBlob.type || "application/pdf",
-      });
-
-      if (!navigator.canShare({ files: [receiptFile] })) {
-        throw new Error("Receipt PDF file sharing is not supported.");
-      }
-
-      await navigator.share({ files: [receiptFile] });
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      window.location.assign(receiptDownloadUrl);
-    }
+    await shareReceiptPng({
+      url: receiptDownloadUrl,
+      fileName: receiptFilename,
+      navigatorObject: typeof navigator === "undefined" ? undefined : navigator,
+      fileConstructor: typeof File === "undefined" ? undefined : File,
+      onDownload: () => window.location.assign(receiptDownloadUrl),
+      onError: (message) =>
+        toast({
+          variant: "destructive",
+          title: "영수증 공유 실패",
+          description: message || RECEIPT_SHARE_ERROR_MESSAGE,
+        }),
+    });
   };
 
   return (
@@ -1522,7 +1487,7 @@ function ContractDetailContent({
                 data-component="mobile_contracts_detail-sheet_stack_detail-page_content_pdf-preview_header_receipt-download"
                 href={receiptDownloadUrl}
                 download={receiptFilename}
-                aria-label={`${name} 영수증 PDF 다운로드`}
+                aria-label={`${receiptFilename} 다운로드`}
               >
                 <Download size={16} strokeWidth={2.5} />
                 <span>영수증</span>
