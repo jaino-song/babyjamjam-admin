@@ -4,6 +4,7 @@ import {
     EformsignDocumentJobSource,
     EformsignDocumentJobType,
 } from "domain/entities/eformsign-document-job.entity";
+import type { Prisma } from "@prisma/client";
 
 export interface EnqueueEformsignDocumentJobInput {
     branchId: string;
@@ -31,6 +32,11 @@ export interface EformsignDocumentJobList {
 
 export interface IEformsignDocumentJobRepository {
     enqueue(input: EnqueueEformsignDocumentJobInput): Promise<{ job: EformsignDocumentJobEntity; existing: boolean }>;
+    /** Insert or replay a job using the caller's active transaction. */
+    enqueueInTransaction(
+        tx: Prisma.TransactionClient,
+        input: EnqueueEformsignDocumentJobInput,
+    ): Promise<{ job: EformsignDocumentJobEntity; existing: boolean }>;
     claimDue(limit?: number): Promise<EformsignDocumentJobEntity[]>;
     updateProgress(id: string, leaseToken: string, progressStep: string, heartbeatAt?: Date): Promise<EformsignDocumentJobEntity | null>;
     scheduleRetry(id: string, leaseToken: string, nextAttemptAt: Date, errorCode: string): Promise<EformsignDocumentJobEntity | null>;

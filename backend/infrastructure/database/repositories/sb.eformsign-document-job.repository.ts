@@ -33,8 +33,14 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
     constructor(private readonly prisma: PrismaService) {}
 
     async enqueue(input: EnqueueEformsignDocumentJobInput) {
-        return this.prisma.$transaction(async (tx) => {
-            const inserted = await tx.$queryRaw<RawJob[]>(Prisma.sql`
+        return this.prisma.$transaction((tx) => this.enqueueInTransaction(tx, input));
+    }
+
+    async enqueueInTransaction(
+        tx: Prisma.TransactionClient,
+        input: EnqueueEformsignDocumentJobInput,
+    ) {
+        const inserted = await tx.$queryRaw<RawJob[]>(Prisma.sql`
                 INSERT INTO "eformsign_document_job" (
                     branch_id, client_id, document_id, job_type, source, request_key,
                     active_key, payload, payload_fingerprint, progress_step, created_by_user_id
@@ -47,26 +53,25 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 ON CONFLICT DO NOTHING
                 RETURNING *
             `);
-            if (inserted[0]) return { job: this.toDomain(inserted[0]), existing: false };
+        if (inserted[0]) return { job: this.toDomain(inserted[0]), existing: false };
 
-            const existing = await tx.$queryRaw<RawJob[]>(Prisma.sql`
+        const existing = await tx.$queryRaw<RawJob[]>(Prisma.sql`
                 SELECT * FROM "eformsign_document_job"
                 WHERE request_key = ${input.requestKey} OR active_key = ${input.activeKey}
                 ORDER BY CASE WHEN request_key = ${input.requestKey} THEN 0 ELSE 1 END
                 LIMIT 1
             `);
-            if (!existing[0]) throw new Error("EFORMSIGN_DOCUMENT_JOB_KEY_CONFLICT");
-            if (existing[0].branch_id !== input.branchId) {
-                throw new Error("EFORMSIGN_DOCUMENT_JOB_KEY_CONFLICT");
-            }
-            if (
-                existing[0].request_key === input.requestKey
-                && existing[0].payload_fingerprint !== input.payloadFingerprint
-            ) {
-                throw new Error("EFORMSIGN_DOCUMENT_JOB_IDEMPOTENCY_MISMATCH");
-            }
-            return { job: this.toDomain(existing[0]), existing: true };
-        });
+        if (!existing[0]) throw new Error("EFORMSIGN_DOCUMENT_JOB_KEY_CONFLICT");
+        if (existing[0].branch_id !== input.branchId) {
+            throw new Error("EFORMSIGN_DOCUMENT_JOB_KEY_CONFLICT");
+        }
+        if (
+            existing[0].request_key === input.requestKey
+            && existing[0].payload_fingerprint !== input.payloadFingerprint
+        ) {
+            throw new Error("EFORMSIGN_DOCUMENT_JOB_IDEMPOTENCY_MISMATCH");
+        }
+        return { job: this.toDomain(existing[0]), existing: true };
     }
 
     async claimDue(limit = 1): Promise<EformsignDocumentJobEntity[]> {
