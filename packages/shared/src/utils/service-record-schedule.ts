@@ -1,8 +1,227 @@
-import { addBusinessDaysKr, calcEndDateBusinessDays } from "./business-days";
+import {
+    addBusinessDaysKr,
+    assertSupportedKoreanHolidayYear,
+    calcEndDateBusinessDays,
+    diffBusinessDaysKr,
+    isBusinessDayKr,
+    shiftBusinessDaysKr,
+} from "./business-days";
 
 export interface ServiceRecordScheduleEntry {
     sessionIndex: number;
     serviceDate: string;
+}
+
+/** Immutable ownership metadata carried by every authoritative planned slot. */
+export interface ServiceRecordScheduleProvenance {
+    assignmentId: string;
+    scheduleId: number;
+    employeeId: number;
+    provenanceVersion: string;
+}
+
+/** A complete, one-based vector of planned service sessions. */
+export interface ServiceRecordPlannedSession extends ServiceRecordScheduleEntry, ServiceRecordScheduleProvenance {
+    /** Original date from the first persisted projection; never changes after a move. */
+    originalDate: string;
+}
+
+export interface ServiceRecordScheduleShiftResult {
+    deltaBusinessDays: number;
+    entries: ServiceRecordPlannedSession[];
+}
+
+export class ServiceRecordScheduleValidationError extends Error {
+    readonly code: string;
+    readonly sessionIndex: number | null;
+
+    constructor(code: string, message: string, sessionIndex: number | null = null) {
+        super(message);
+        this.name = "ServiceRecordScheduleValidationError";
+        this.code = code;
+        this.sessionIndex = sessionIndex;
+    }
+}
+
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+function assertDateOnly(value: string, sessionIndex: number | null): void {
+    if (!DATE_ONLY_PATTERN.test(value)) {
+        throw new ServiceRecordScheduleValidationError(
+            "INVALID_DATE",
+            `Session ${sessionIndex ?? "?"} has an invalid service date`,
+            sessionIndex,
+        );
+    }
+    const [year, month, day] = value.split("-").map(Number);
+    const parsed = new Date(Date.UTC(year!, month! - 1, day));
+    if (
+        Number.isNaN(parsed.getTime())
+        || parsed.getUTCFullYear() !== year
+        || parsed.getUTCMonth() !== month! - 1
+        || parsed.getUTCDate() !== day
+    ) {
+        throw new ServiceRecordScheduleValidationError(
+            "INVALID_DATE",
+            `Session ${sessionIndex ?? "?"} has an invalid service date`,
+            sessionIndex,
+        );
+    }
+    assertSupportedKoreanHolidayYear(year!);
+}
+
+function assertBusinessDate(value: string, sessionIndex: number | null): void {
+    assertDateOnly(value, sessionIndex);
+    if (!isBusinessDayKr(value)) {
+        throw new ServiceRecordScheduleValidationError(
+            "NON_BUSINESS_DATE",
+            `Session ${sessionIndex ?? "?"} must use a Korean business day`,
+            sessionIndex,
+        );
+    }
+}
+
+function cloneEntry(entry: ServiceRecordPlannedSession): ServiceRecordPlannedSession {
+    return { ...entry };
+}
+
+/**
+ * Validates a complete authoritative vector before it is persisted or shifted.
+ * The function intentionally requires ownership and original-date provenance;
+ * callers with legacy rows must first resolve those fields from unique source
+ * evidence rather than inventing placeholders.
+ */
+export function validateServiceRecordScheduleVector(
+    entries: ReadonlyArray<ServiceRecordPlannedSession>,
+    requiredSessionCount?: number,
+): ServiceRecordPlannedSession[] {
+    const expectedCount = requiredSessionCount ?? entries.length;
+    if (!Number.isInteger(expectedCount) || expectedCount <= 0) {
+        throw new ServiceRecordScheduleValidationError(
+            "INVALID_SESSION_COUNT",
+            "A planned service vector requires a positive session count",
+        );
+    }
+    if (entries.length !== expectedCount) {
+        throw new ServiceRecordScheduleValidationError(
+            "INCOMPLETE_VECTOR",
+            `Expected ${expectedCount} planned sessions but received ${entries.length}`,
+        );
+    }
+
+    const orderedEntries = [...entries].sort((left, right) => left.sessionIndex - right.sessionIndex);
+    const indices = new Set<number>();
+    const dates = new Set<string>();
+    let previousDate: string | null = null;
+    const result = orderedEntries.map((entry) => {
+        if (!Number.isInteger(entry.sessionIndex) || entry.sessionIndex < 1 || entry.sessionIndex > expectedCount) {
+            throw new ServiceRecordScheduleValidationError(
+                "INVALID_SESSION_INDEX",
+                `Session ${String(entry.sessionIndex)} is outside the contracted range 1..${expectedCount}`,
+                Number.isInteger(entry.sessionIndex) ? entry.sessionIndex : null,
+            );
+        }
+        if (indices.has(entry.sessionIndex)) {
+            throw new ServiceRecordScheduleValidationError(
+                "DUPLICATE_SESSION_INDEX",
+                `Session ${entry.sessionIndex} appears more than once`,
+                entry.sessionIndex,
+            );
+        }
+        indices.add(entry.sessionIndex);
+
+        assertBusinessDate(entry.serviceDate, entry.sessionIndex);
+        assertBusinessDate(entry.originalDate, entry.sessionIndex);
+        if (dates.has(entry.serviceDate)) {
+            throw new ServiceRecordScheduleValidationError(
+                "DUPLICATE_SERVICE_DATE",
+                `Session ${entry.sessionIndex} duplicates a service date`,
+                entry.sessionIndex,
+            );
+        }
+        dates.add(entry.serviceDate);
+        if (previousDate !== null && entry.serviceDate <= previousDate) {
+            throw new ServiceRecordScheduleValidationError(
+                "INVERTED_SERVICE_DATES",
+                `Session ${entry.sessionIndex} is not after the previous session`,
+                entry.sessionIndex,
+            );
+        }
+        previousDate = entry.serviceDate;
+        if (!entry.assignmentId || typeof entry.assignmentId !== "string") {
+            throw new ServiceRecordScheduleValidationError(
+                "MISSING_ASSIGNMENT_PROVENANCE",
+                `Session ${entry.sessionIndex} has no assignment id`,
+                entry.sessionIndex,
+            );
+        }
+        if (entry.scheduleId <= 0 || entry.employeeId <= 0 || !Number.isInteger(entry.scheduleId) || !Number.isInteger(entry.employeeId)) {
+            throw new ServiceRecordScheduleValidationError(
+                "MISSING_ASSIGNMENT_PROVENANCE",
+                `Session ${entry.sessionIndex} has incomplete assignment ownership`,
+                entry.sessionIndex,
+            );
+        }
+        if (!entry.provenanceVersion || typeof entry.provenanceVersion !== "string") {
+            throw new ServiceRecordScheduleValidationError(
+                "MISSING_PROVENANCE_VERSION",
+                `Session ${entry.sessionIndex} has no provenance version`,
+                entry.sessionIndex,
+            );
+        }
+        return cloneEntry(entry);
+    });
+
+    for (let sessionIndex = 1; sessionIndex <= expectedCount; sessionIndex += 1) {
+        if (!indices.has(sessionIndex)) {
+            throw new ServiceRecordScheduleValidationError(
+                "INCOMPLETE_VECTOR",
+                `Session ${sessionIndex} is missing from the planned vector`,
+                sessionIndex,
+            );
+        }
+    }
+    result.sort((left, right) => left.sessionIndex - right.sessionIndex);
+    return result;
+}
+
+/**
+ * Shift the selected session and every later session by one signed business
+ * day delta. Each original date is retained and each current date is shifted
+ * independently, preserving intentionally irregular gaps in the vector.
+ */
+export function shiftServiceRecordScheduleSuffix(
+    entries: ReadonlyArray<ServiceRecordPlannedSession>,
+    sessionIndex: number,
+    newDate: string,
+): ServiceRecordScheduleShiftResult {
+    const vector = validateServiceRecordScheduleVector(entries);
+    if (!Number.isInteger(sessionIndex) || sessionIndex < 1 || sessionIndex > vector.length) {
+        throw new ServiceRecordScheduleValidationError(
+            "INVALID_SESSION_INDEX",
+            `Session ${sessionIndex} is outside the contracted range 1..${vector.length}`,
+            sessionIndex,
+        );
+    }
+    assertBusinessDate(newDate, sessionIndex);
+    const currentDate = vector[sessionIndex - 1]!.serviceDate;
+    const deltaBusinessDays = diffBusinessDaysKr(newDate, currentDate);
+    if (deltaBusinessDays === null) {
+        throw new ServiceRecordScheduleValidationError(
+            "INVALID_DATE",
+            `Unable to calculate a business-day shift for session ${sessionIndex}`,
+            sessionIndex,
+        );
+    }
+
+    const shifted = vector.map((entry) => {
+        if (entry.sessionIndex < sessionIndex) return cloneEntry(entry);
+        return {
+            ...entry,
+            serviceDate: shiftBusinessDaysKr(entry.serviceDate, deltaBusinessDays),
+        };
+    });
+    return { deltaBusinessDays, entries: validateServiceRecordScheduleVector(shifted, vector.length) };
 }
 
 const DATE_ONLY_PREFIX = /^(\d{4})-(\d{2})-(\d{2})/;

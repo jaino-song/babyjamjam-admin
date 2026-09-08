@@ -1,4 +1,7 @@
-import { getExpectedSessionDateFromRecords } from "./service-record-schedule";
+import {
+    getExpectedSessionDateFromRecords,
+    shiftServiceRecordScheduleSuffix,
+} from "./service-record-schedule";
 
 describe("getExpectedSessionDateFromRecords", () => {
     it("falls back to the N-th business day from start when no records exist", () => {
@@ -33,5 +36,53 @@ describe("getExpectedSessionDateFromRecords", () => {
 
     it("returns null when there is no start date and no preceding record", () => {
         expect(getExpectedSessionDateFromRecords(null, 1, [])).toBeNull();
+    });
+});
+
+describe("shiftServiceRecordScheduleSuffix", () => {
+    const vector = [
+        "2026-09-07", "2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11",
+        "2026-09-14", "2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18",
+        "2026-09-21", "2026-09-22", "2026-09-23",
+    ].map((serviceDate, index) => ({
+        sessionIndex: index + 1,
+        serviceDate,
+        originalDate: serviceDate,
+        assignmentId: `assignment-${index + 1}`,
+        scheduleId: 10,
+        employeeId: 20,
+        provenanceVersion: "case-7",
+    }));
+
+    it("moves the selected and later sessions by one signed business-day delta", () => {
+        const shifted = shiftServiceRecordScheduleSuffix(vector, 3, "2026-09-11");
+        expect(shifted.deltaBusinessDays).toBe(2);
+        expect(shifted.entries.map(({ serviceDate }) => serviceDate)).toEqual([
+            "2026-09-07", "2026-09-08", "2026-09-11", "2026-09-14", "2026-09-15",
+            "2026-09-16", "2026-09-17", "2026-09-18", "2026-09-21", "2026-09-22",
+            "2026-09-23", "2026-09-28", "2026-09-29",
+        ]);
+        expect(shifted.entries.map(({ originalDate }) => originalDate)).toEqual(vector.map(({ originalDate }) => originalDate));
+    });
+
+    it("preserves irregular gaps while shifting each suffix date independently", () => {
+        const entries = ["2026-09-07", "2026-09-09", "2026-09-14"].map((serviceDate, index) => ({
+            ...vector[index]!,
+            sessionIndex: index + 1,
+            serviceDate,
+            originalDate: serviceDate,
+        }));
+        expect(shiftServiceRecordScheduleSuffix(entries, 2, "2026-09-10").entries.map(({ serviceDate }) => serviceDate))
+            .toEqual(["2026-09-07", "2026-09-10", "2026-09-15"]);
+    });
+
+    it("rejects unsupported, weekend, duplicate, and inverted vectors", () => {
+        expect(() => shiftServiceRecordScheduleSuffix(vector, 3, "2028-01-04")).toThrow();
+        expect(() => shiftServiceRecordScheduleSuffix(vector, 3, "2026-09-12")).toThrow();
+        expect(() => shiftServiceRecordScheduleSuffix(
+            vector.map((entry, index) => index === 4 ? { ...entry, serviceDate: vector[3]!.serviceDate } : entry),
+            3,
+            "2026-09-11",
+        )).toThrow();
     });
 });
