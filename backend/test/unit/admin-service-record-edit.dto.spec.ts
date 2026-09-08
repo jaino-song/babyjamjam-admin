@@ -4,6 +4,7 @@ import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
 
 import {
+    ConfirmServiceRecordEditDraftDto,
     CreateServiceRecordEditDraftDto,
     UpdateServiceRecordEditDraftDto,
 } from "interface/dto/admin-service-record-edit.dto";
@@ -55,5 +56,21 @@ describe("admin service-record edit DTOs", () => {
         await expect(validationErrors(CreateServiceRecordEditDraftDto, {})).resolves.toEqual([]);
         const errors = await validationErrors(CreateServiceRecordEditDraftDto, { actorUserId: "forged" });
         expect(errors.some((error) => error.property === "actorUserId")).toBe(true);
+    });
+
+    it("requires the server preview id and UUID idempotency key for confirmation", async () => {
+        await expect(validationErrors(ConfirmServiceRecordEditDraftDto, {
+            expectedDraftVersion: 2,
+            previewId: "srp_" + "a".repeat(64),
+            idempotencyKey: "11111111-1111-4111-8111-111111111111",
+        })).resolves.toEqual([]);
+
+        const errors = await validationErrors(ConfirmServiceRecordEditDraftDto, {
+            expectedDraftVersion: 2,
+            previewId: "preview-from-client",
+            idempotencyKey: "not-a-uuid",
+        });
+        expect(errors.some((error) => error.property === "previewId")).toBe(true);
+        expect(errors.some((error) => error.property === "idempotencyKey")).toBe(true);
     });
 });

@@ -1355,16 +1355,25 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 ORDER BY CASE WHEN request_key = ${plan.documentJob.requestKey} THEN 0 ELSE 1 END
                 LIMIT 1
             `);
-            if (!existing[0] || (existing[0].request_key === plan.documentJob.requestKey
-                && existing[0].payload_fingerprint !== payloadFingerprint)) {
+            if (!existing[0]
+                || existing[0].request_key !== plan.documentJob.requestKey
+                || existing[0].payload_fingerprint !== payloadFingerprint) {
                 throw new ServiceRecordEditConflictError("The revision document job key was reused with different input");
             }
             return;
         }
         const delegate = tx.eformsign_document_job;
-        const existing = await delegate.findFirst({ where: { requestKey: plan.documentJob.requestKey } });
+        const existing = await delegate.findFirst({
+            where: {
+                OR: [
+                    { requestKey: plan.documentJob.requestKey },
+                    { activeKey: plan.documentJob.activeKey },
+                ],
+            },
+        });
         if (existing) {
-            if (existing.payloadFingerprint !== payloadFingerprint) {
+            if (existing.requestKey !== plan.documentJob.requestKey
+                || existing.payloadFingerprint !== payloadFingerprint) {
                 throw new ServiceRecordEditConflictError("The revision document job key was reused with different input");
             }
             return;
