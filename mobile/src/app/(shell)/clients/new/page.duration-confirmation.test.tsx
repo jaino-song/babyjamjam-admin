@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import type { Client } from "@/lib/client/types";
+import { calcEndDateBusinessDays } from "@/lib/date/business-days";
 import { useClientWizardStore } from "@/stores/client-wizard-store";
 
 import NewClientPage from "./page";
@@ -210,6 +211,20 @@ describe("mobile client service date confirmation", () => {
       endDate: "2026-09-09",
       allowBusinessDayMismatch: true,
     })));
+  });
+
+  it("keeps a manually cleared or changed end date until the start date changes", async () => {
+    renderCreate();
+
+    const endDateInput = screen.getByDisplayValue("2026-09-08");
+    fireEvent.change(endDateInput, { target: { value: "" } });
+    expect(endDateInput).toHaveValue("");
+
+    fireEvent.change(endDateInput, { target: { value: "2026-09-09" } });
+    expect(endDateInput).toHaveValue("2026-09-09");
+
+    fireEvent.change(screen.getByDisplayValue("2026-09-03"), { target: { value: "2026-09-04" } });
+    await waitFor(() => expect(endDateInput).toHaveValue(calcEndDateBusinessDays("2026-09-04", 15)));
   });
 
   it("requires edit confirmation and prevents duplicate confirmed submissions", async () => {
