@@ -168,6 +168,65 @@ export interface ServiceRecordEditPreviewResponse {
     documentScope: ServiceRecordEditDocumentScope;
 }
 
+/**
+ * The durable result returned by the administrator's atomic confirm action.
+ * Every field is server-owned and is persisted with the draft's idempotency
+ * record so a retry can replay the exact same response.
+ */
+export type ServiceRecordEditConfirmStatus = "confirmed" | "no_changes";
+
+export type ServiceRecordEditConfirmDocumentStatus =
+    | "not_required"
+    | "waiting_for_completion"
+    | "capability_unverified"
+    | "pending";
+
+export interface ServiceRecordEditConfirmResponse {
+    status: ServiceRecordEditConfirmStatus;
+    caseId: string;
+    clientId: number;
+    draftId: string;
+    draftVersion: number;
+    caseVersion: number;
+    revisionId: string | null;
+    revisionNumber: number | null;
+    documentStatus: ServiceRecordEditConfirmDocumentStatus;
+    confirmedAt: string;
+}
+
+/**
+ * Revision identity and business snapshot consumed by provider adapters.
+ * This context contains no credentials or provider response data. A worker
+ * must authorize the context again under its owning transaction before any
+ * irreversible dispatch.
+ */
+export interface ServiceRecordRevisionDispatchContext {
+    branchId: string;
+    clientId: number;
+    serviceRecordCaseId: string;
+    revisionId: string | null;
+    revisionNumber: number | null;
+    businessFingerprint: string;
+    plannedSessionCount: number | null;
+    plannedSessionDates: Array<{ sessionIndex: number; serviceDate: string }>;
+    documentSyncStatus: string;
+    lifecycleStatus: string;
+    formVersion: number;
+}
+
+export type ServiceRecordDispatchAuthorizationKind = "allow" | "stale" | "lost";
+
+export interface ServiceRecordDispatchAuthorizationResult {
+    kind: ServiceRecordDispatchAuthorizationKind;
+    reason?: string;
+}
+
+/** Immutable generation input captured by a later finalization boundary. */
+export interface ServiceRecordRevisionGenerationInput extends ServiceRecordRevisionDispatchContext {
+    snapshotReference: string;
+    generation: string;
+}
+
 export interface SignatureDocStatus {
     documentId: string;
     statusDetail: string;
