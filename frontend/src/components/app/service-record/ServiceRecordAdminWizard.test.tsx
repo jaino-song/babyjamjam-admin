@@ -195,6 +195,7 @@ describe("ServiceRecordAdminWizard", () => {
         expect(dayButtons).toHaveLength(3);
         expect([...dayButtons].every((button) => !(button as HTMLButtonElement).disabled)).toBe(true);
         expect(container.querySelector('[data-slot="provider"]')).toHaveClass("org");
+        expect(container.querySelector('[data-slot="provider"]')).toHaveTextContent("관리자 조회");
         expect(container).toHaveTextContent("2025.01.15");
         expect(container).toHaveTextContent("같은 회차의 추가 기록");
     });
@@ -291,6 +292,7 @@ describe("administrator draft editing", () => {
         );
 
         expect(container).toHaveTextContent("초안 변경");
+        expect(container.querySelector('[data-slot="provider"]')).toHaveTextContent("관리자 편집");
         fireEvent.click(container.querySelectorAll('[data-slot="day"]')[0]);
         const next = screen.getByRole("button", { name: "다음" });
         expect(next).not.toBeDisabled();
@@ -383,5 +385,19 @@ describe("administrator draft editing", () => {
             "/api/admin/service-records/drafts/draft-1/discard",
             expect.objectContaining({ method: "POST", body: JSON.stringify({ expectedDraftVersion: 1 }) }),
         );
+    });
+
+    it("uses a high-contrast admin alert for draft failures on the blue header", () => {
+        const { container } = render(
+            <ServiceRecordAdminWizard
+                clientId="42"
+                overview={overview}
+                initialDraftErrorStatus={403}
+            />,
+        );
+
+        const alert = container.querySelector('[data-component="desktop_service-record-admin_wizard_top-bar_admin-toolbar_error"]');
+        expect(alert).toHaveClass("admin-draft-alert");
+        expect(alert).toHaveTextContent("초안 접근 권한이 없습니다");
     });
 });

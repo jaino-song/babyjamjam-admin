@@ -91,4 +91,8 @@
 .srec .signed-chip{display:none;font-size:12px;font-weight:700;color:var(--primary);background:#eaf1ff;border-radius:99px;padding:4px 12px;margin-top:10px}
 .srec .signed-chip.show{display:inline-block}
 .srec .admin-draft-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px}
+.srec .admin-draft-alert{background:#fff7f8!important;border-color:#d36b87!important;color:#6c1b2f!important}
+.srec .admin-draft-alert h5,.srec .admin-draft-alert p{color:#6c1b2f!important}
+.srec .admin-draft-source-alert{background:#fffaf0!important;border-color:#d6a84f!important;color:#684b13!important}
+.srec .admin-draft-source-alert h5,.srec .admin-draft-source-alert p{color:#684b13!important}
 @media (max-width:360px){.srec .segrow{flex-direction:column}}
