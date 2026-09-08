@@ -450,3 +450,12 @@
 ### Phase3 병렬 구현 checkpoint 공유
 
 서버 worker의 공통 타입·영업일 v2·부호 있는 이동/벡터 함수 checkpoint `db611b42c`를 integration 및 wizard unit에 공유했다. 서버 정책/API/N 초기화 작업은 계속 진행 중이다. 날짜 UI worker의 `aba1d25b7`는 제어형 대화상자·테스트·manifest만 포함하며 집중 Jest7/7, ESLint, frontend TypeScript, UI architecture, frontend build exit0을 보고했다. 빌드는 기존 dynamic-cookie/invalid-URL 로그를 남겼으므로 외부 연결 부재의 증거로 해석하지 않는다. 실제 API/DB/브라우저 검증이 아니며 Phase3 전체 완료도 아니다. 날짜 UI를 integration 및 wizard unit에 공유한 뒤 깨끗한 해당 unit/branch를 제거했다. wizard worker는 공유 계약으로 서버 작업과 병렬 구현한다. Phase3 통합 검증 및 Sol/high 감사는 모든 구현을 합친 뒤 한 번 수행한다.
+
+
+### Phase3 통합 검증 및 단일 Sol 감사 — 보완 진행
+
+서버 a0b46c08e와 wizard244c5cb1d를 통합한 고정 소스는 c8c7dd60ef9e7b8554c554c574f8c43c75c68a10이다. 두 깨끗한 unit/branch를 즉시 제거했다. 메인 통합 검사: backend6 suites86, shared2 suites44, guarded disposablePG3 suites19, frontend6 suites55, mobile shared1 suite3 모두 통과(총207). 로그는 /tmp/bjj-phase3-integrated-{backend,shared,pg,frontend,mobile}.log. 서버/shared/PG 검사는 frontend-only merge 직전에 실행됐으며 그 후 해당 생산 파일은 변하지 않았다. 새 preview/PATCH 실제PG 경합은 이 결과에 포함되지 않는다.
+
+Phase 단위 Sol/high read-only 감사는 CLI runtime header에서 model gpt-5.6-sol, effort high, sandbox read-only를 확인했으며 session01a07fe2-3dc1-7ed1-9f02-609c05688e3e가 exit0으로 종료됐다. 판정 FIX_REQUIRED, HIGH4/MEDIUM2. 원문은 phase3-sol-audit.md에 보존한다. 미작성 회차 날짜/원본 표시, 날짜저장 실패 시 선택 유지, 서명·문서 영향 preview 결속, unsupported legacy 조회 오류, 부분손상 preview200의 fail-closed 처리, preview/PATCH 버전 경쟁을 보완한다.
+
+phase3-corrections-backend와 phase3-corrections-ui를 c8c7dd60e에서 분기했고 Luna/max 두 worker가 병렬 수정한다. backend worker는 관리자 editor presentation/source/shared metadata/preview read fence 및 테스트를, UI worker는 canonical vector 소비/실패 선택 보존/엄격 normalization/metadata 표시 및 테스트를 소유한다. 필요한 DTO checkpoint만 공유하며 task별 감사는 없다. 보완을 합친 뒤 해당6건의 해소 여부를 Sol이 확인한다. Phase4 구현은 이 phase gate 이후 시작한다.

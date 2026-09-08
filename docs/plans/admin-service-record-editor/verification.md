@@ -1,6 +1,6 @@
 # 구현 검증 현황
 
-2026-09-08 로컬 통합 기준. Phase1·2 구현/통합 검사와 Sol 최종 감사를 완료했다. Task3.0 저장 경계 변경을 통합했고 Task3.0 좁은 Sol 최종 감사도 통과했다. Phase3~6 전체 구현 또는 외부 연동 완료를 뜻하지 않는다. 과거 화면 초안 기록은 아래에 별도 보존한다.
+2026-09-08 로컬 통합 기준. Phase1·2 구현/통합 검사와 Sol 최종 감사를 완료했다. Task3.0 저장 경계 변경을 통합했고 Task3.0 좁은 Sol 최종 감사도 통과했다. Phase3 통합 집중 검사207개는 통과했으나 Sol 독립 감사6건을 보완 중이다. Phase3~6 전체 구현 또는 외부 연동 완료를 뜻하지 않는다. 과거 화면 초안 기록은 아래에 별도 보존한다.
 
 | 확인 대상 | 현재 증거 | 상태/한계 |
 |---|---|---|
@@ -14,7 +14,7 @@
 | mobile 생산 빌드 | 명령 범위 `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:3999 pnpm build` | PASS, 최초 값 누락 실패 별도. 실제API 없는 정적 렌더 로그는 외부 검증 아님 |
 | backend 전체 TypeScript | 기존 receipt helper/spec의5개 오류를 별도 baseline에서 재현 | FAIL, Task5.4에서 수정 필요 |
 | 공통 쓰기 잠금/owning transaction, 삭제·교체·mirror generation 재검증 | 통합1fcbb6f75: backend12 suites483 tests, guarded PG3 suites19 tests; worker build/lint PASS | PASS, Sol/high FINAL SHIP (1fcbb6f75), 차단 지적 없음 |
-| 초기 N13/duration15/가격15일 유지, 영업일 뒤 회차 이동, 원본 날짜 보존 | 승인된 Phase3 수락 조건 | NOT RUN |
+| 초기 N/duration 분리, 영업일 뒤 회차 이동, 관리자 날짜/미리보기 | 통합 c8c7dd60e: backend86/shared44/PG19/frontend55/mobile3, 총207 PASS | FIX_REQUIRED: Phase3 Sol6건, 서버·화면 병렬 보완 중. PG19는 기존 쓰기 경합 회귀이며 새 preview 경합 증거는 아님 |
 | 확정 트랜잭션/미리보기 결속/중복 확정/동시 발송 차단 | 승인된 Phase4 수락 조건 | NOT RUN |
 | 계약·영수증 동일기간/수령일·금액 보존/완료계약 신규서명 문서/실제PDF 검증 후 pointer CAS | 승인된 Phase5 수락 조건 | NOT RUN, 외부 capability 미검증 상태 유지 |
 | 실제 JWT/session/tenant 권한 HTTP+격리PG, 구 writer들과 경합 | 승인된 Phase6 수락 조건 | NOT RUN |
