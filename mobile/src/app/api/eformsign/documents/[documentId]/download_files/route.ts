@@ -60,13 +60,14 @@ export async function GET(
     const { searchParams } = new URL(request.url);
     const fileType = normalizeFileType(searchParams.get("fileType"));
     const requestedPageParam = searchParams.get("page");
+    const isReceiptPng = searchParams.get("format") === "receipt-png";
 
     try {
         const requestedPage = parsePageNumber(requestedPageParam);
         const response = await serverAPIClient.get(
             `/api/documents/${encodeURIComponent(documentId)}/download_files`,
             {
-                params: { fileType },
+                params: { fileType, ...(isReceiptPng ? { format: "receipt-png" } : {}) },
                 headers: getAuthHeaders(authToken),
                 responseType: "arraybuffer",
             },
@@ -83,6 +84,20 @@ export async function GET(
         const responseBody = response.data instanceof ArrayBuffer
             ? new Uint8Array(response.data)
             : new Uint8Array(response.data as ArrayLike<number>);
+        if (isReceiptPng) {
+            if (!contentType.startsWith("image/png")) {
+                return NextResponse.json({ error: "영수증 이미지 생성에 실패했습니다." }, { status: 502 });
+            }
+            return new NextResponse(responseBody, {
+                status: response.status,
+                headers: {
+                    "Content-Type": "image/png",
+                    "Content-Disposition": "attachment",
+                    "Cache-Control": "private, no-store",
+                },
+            });
+        }
+
         const outputBody = requestedPage
             ? await extractSinglePdfPage(responseBody, requestedPage)
             : responseBody;

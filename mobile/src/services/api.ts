@@ -450,7 +450,7 @@ export const eformsignApi = {
     getDocumentDownloadUrl: (documentId: string): string =>
         `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document`,
     getDocumentReceiptDownloadUrl: (documentId: string): string =>
-        `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document&page=7`,
+        `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document&format=receipt-png`,
     getDocumentPreviewUrl: (documentId: string): string =>
         `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document`,
     sendReceiptLink: async (documentId: string): Promise<{ jobId: string; scheduledFor: string; clientName: string }> => {
