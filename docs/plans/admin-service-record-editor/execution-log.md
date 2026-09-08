@@ -397,3 +397,5 @@
 - 2026 공식 월력요항의 추석 연휴는9/24~27(4일)이며 현재 표의9/28은 잘못 포함됐다: https://www.kasa.go.kr/prog/bbsArticle/BBSMSTR_000000000010/view.do?bbsId=BBSMSTR_000000000010&nttId=B000000001860Pe2zT3 . 2027 공식 월력요항은5/3·7/19·10/11·12/27 대체공휴일을 명시하나 현재표에누락됐고6/7은표에만포함됐다: https://www.kasa.go.kr/prog/plcyBrf/brief/kor/sub01_01_04/view.do?plcyBrfNo=431 . 변경된 달력으로 기존 N/벡터/원본을 자동 덮어쓰지 않는 조건을 Task3.1에 명시했다. 문의/외부 수정 없이 공개 공식 문서만 조회했다.
 
 - 통합 mobile 빌드: 최초 필수 공개API주소 누락으로실패, 파일설정변경없이 명령범위 loopback3999 값을 지정한 재실행PASS(원격호출없음; 정적페이지의 예상ECONNREFUSED로그별도). Phase3 공휴일 보정 추가 Sol/high PLAN APPROVE: 정확한날짜membership/version/생성물parity/기존N·벡터·이력보존lifecycle회귀/모호legacy차단을 수용조건으로유지한다.
+
+- Phase2 Sol 감사에서 countSubKey가 임의 문자열·음수·정수항목소수를 허용하는차단지적을 받았다. 공통descriptor수치metadata와 관리자/공개제출검증을 함께보정하도록Luna/max에범위를배정했다. UI표시보정b46fcf034는별도unit에커밋되어메인브라우저403흐름3/3PASS,480px이미지직접확인으로 오류안내대비와편집상태표시를확인했다. 감사수치보정은같은corrections unit의다음별도commit으로진행한다.
