@@ -388,3 +388,5 @@
 - Phase6 입력 Sol/high APPROVE. 실제 JWT/session/지점 guard를 통과하는 로컬 HTTP+PG 검사, 각 불변식의 테스트/명령/결과/artifact 목록, guarded DB runner와 기본 login setup 없는 mock 브라우저 config를 추가했다. 실제 bootstrap의 엄격한 GlobalValidationPipe도 좁은 HTTP harness에 적용한다. 외부 capability/공식Chrome 미검증 표시는 유지한다.
 
 - Task2.2 canonical validator 연결에서 backend가 사용하는 tracked vendor runtime에 양식 정의 export가 빠진 것을 확인했다. 기존 TypeScript runtime build include와 수동 관리 manifest export만 서버 worker scope에 추가하고 생성 산출물 및 실제 backend import를 검증한다. 별도 항목 사전이나 생성기 체계를 추가하지 않는다.
+
+- Task2.2 UI 메인 mock 브라우저9/9 PASS(390/480/1280): GET 무생성, 명시적 초안 시작, 제출된 불완전 과거 기록의 페이지 이동/내용 수정, CAS 저장, 새로고침 복원, 취소 후 원본 복귀,409/403 입력 보존, 명시적 최신 초안 불러오기. 검토 중 발견한 활성 입력란 갱신 누락과 제공인력용 페이지 완성 조건의 관리자 적용을 보완했다. /tmp/bjj-admin-draft-results. 공용 모바일 회귀12/12 PASS; 첫 명령은 다른 worktree Playwright 중복으로 미실행, 해당 unit runner로 수정 후 실제 통과했다. 실제 DB/외부 API 시험을 대신하지 않는다.
