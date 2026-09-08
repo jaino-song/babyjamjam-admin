@@ -28,6 +28,8 @@ import {
     type CreateServiceRecordRevisionDocumentStateInput,
     type AdvanceServiceRecordRevisionDocumentStateInput,
     type RetryServiceRecordRevisionDocumentInput,
+    type AllocateServiceRecordRevisionDocumentVersionInput,
+    type PromoteServiceRecordRevisionSnapshotInput,
     type ServiceRecordEditTransactionContext,
     type UpdateServiceRecordEditDraftInput,
 } from "domain/repositories/service-record-edit.repository.interface";
@@ -683,6 +685,247 @@ async function selectRevisionDocumentStateForBranch(
           AND state.id = ${scope.stateId}::uuid
         LIMIT 1
     `);
+}
+
+type RevisionGenerationCaseRow = {
+    id: string;
+    formVersion: number;
+    currentRevisionId: string | null;
+    currentUsableRevisionId: string | null;
+    currentUsableDocumentVersion: number | null;
+};
+
+type RevisionSnapshotChunkJoinRow = {
+    id: string;
+    revisionId: string | null;
+    snapshotVersion: number;
+    chunkIndex: number;
+    chunkCount: number;
+    status: string;
+    documentId: string | null;
+    storedDocumentId: string | null;
+    documentRevisionId: string | null;
+    documentBranchId: string | null;
+    documentClientId: number | null;
+    documentCaseId: string | null;
+    documentKind: string | null;
+    documentStatusType: string;
+    documentSnapshotVersion: number | null;
+    documentSnapshotChunkIndex: number | null;
+};
+
+function assertRevisionVersionInput(
+    input: AllocateServiceRecordRevisionDocumentVersionInput,
+): void {
+    assertUuid(input.branchId, "branch");
+    assertClientId(input.clientId);
+    assertUuid(input.serviceRecordCaseId, "case");
+    assertUuid(input.revisionId, "revision");
+    assertUuid(input.documentStateId, "state");
+    if (!input.generation || input.generation.length > 128) {
+        throw new ServiceRecordEditConflictError("Revision document generation is invalid");
+    }
+    if (input.expectedDocumentVersion !== null
+        && (!Number.isInteger(input.expectedDocumentVersion) || input.expectedDocumentVersion < 1)) {
+        throw new ServiceRecordEditConflictError("Revision document version expectation is invalid");
+    }
+}
+
+function assertRevisionPromotionInput(input: PromoteServiceRecordRevisionSnapshotInput): void {
+    assertUuid(input.branchId, "branch");
+    assertClientId(input.clientId);
+    assertUuid(input.serviceRecordCaseId, "case");
+    assertUuid(input.revisionId, "revision");
+    assertUuid(input.documentStateId, "state");
+    if (!input.generation || input.generation.length > 128) {
+        throw new ServiceRecordEditConflictError("Revision document generation is invalid");
+    }
+    if (!Number.isInteger(input.revisionNumber) || input.revisionNumber < 1
+        || !Number.isInteger(input.documentVersion) || input.documentVersion < 1
+        || !Number.isInteger(input.chunkCount) || input.chunkCount < 1
+        || !Array.isArray(input.documentIds)
+        || input.documentIds.length !== input.chunkCount
+        || input.documentIds.some((id) => typeof id !== "string" || id.trim().length === 0)
+        || new Set(input.documentIds).size !== input.documentIds.length) {
+        throw new ServiceRecordEditConflictError("Revision snapshot promotion input is invalid");
+    }
+}
+
+/**
+ * Acquire the same owner lock order used by confirmation before allocating or
+ * promoting a revision snapshot. Discovery is read-only; all writes and
+ * authoritative rereads happen after the client/employee/case locks.
+ */
+async function lockRevisionDocumentTargets(
+    tx: Prisma.TransactionClient,
+    input: {
+        branchId: string;
+        clientId: number;
+        serviceRecordCaseId: string;
+        documentStateId: string;
+        generation: string;
+    },
+): Promise<void> {
+    const transaction = tx as OptionalQueryTransaction;
+    if (typeof transaction.$queryRaw !== "function") return;
+
+    const discovered = await transaction.$queryRaw<Array<{
+        employeeId: number | null;
+        scheduleId: number | null;
+    }>>(Prisma.sql`
+        SELECT employee_id AS "employeeId", schedule_id AS "scheduleId"
+        FROM "service_record_assignment"
+        WHERE branch_id = ${input.branchId}::uuid
+          AND service_record_case_id = ${input.serviceRecordCaseId}::uuid
+        UNION
+        SELECT employee_id AS "employeeId", schedule_id AS "scheduleId"
+        FROM "service_record_day"
+        WHERE branch_id = ${input.branchId}::uuid
+          AND service_record_case_id = ${input.serviceRecordCaseId}::uuid
+    `);
+    await lockRowsByBranchAndIds(tx, "client", "client", input.branchId, [input.clientId], false);
+    const employeeIds = [...new Set(
+        discovered
+            .map((row) => row.employeeId)
+            .filter((id): id is number => typeof id === "number" && Number.isInteger(id) && id > 0),
+    )].sort((left, right) => left - right);
+    await lockRowsByBranchAndIds(tx, "employee", "employee", input.branchId, employeeIds, false);
+    await lockRowsByBranchAndIds(tx, "service_record_case", "service_record_case", input.branchId, [input.serviceRecordCaseId], true);
+    const scheduleIds = [...new Set(
+        discovered
+            .map((row) => row.scheduleId)
+            .filter((id): id is number => typeof id === "number" && Number.isInteger(id) && id > 0),
+    )].sort((left, right) => left - right);
+    await lockRowsByBranchAndIds(tx, "employee_schedule", "employee_schedule", input.branchId, scheduleIds, false);
+    await lockCaseChildren(tx, input.branchId, input.serviceRecordCaseId, "service_record_assignment", "service_record_assignment", "service_record_case_id");
+    await lockCaseChildren(tx, input.branchId, input.serviceRecordCaseId, "service_record_day", "service_record_day", "service_record_case_id");
+    await lockCaseChildren(tx, input.branchId, input.serviceRecordCaseId, "eformsign_doc", "eformsign_doc", "service_record_case_id");
+    await lockCaseChildren(tx, input.branchId, input.serviceRecordCaseId, "service_record_snapshot_chunk", "service_record_snapshot_chunk", "service_record_case_id");
+    await lockCaseChildren(tx, input.branchId, input.serviceRecordCaseId, "service_record_revision", "service_record_revision", "service_record_case_id");
+    await lockRowsByBranchAndIds(tx, "service_record_revision_document_state", "service_record_revision_document_state", input.branchId, [input.documentStateId], true);
+    await transaction.$queryRaw(Prisma.sql`
+        SELECT job.id
+        FROM "eformsign_document_job" AS job
+        WHERE job.branch_id = ${input.branchId}::uuid
+          AND job.client_id = ${input.clientId}
+          AND (
+              job.payload->>'documentStateId' = ${input.documentStateId}
+              OR job.payload->>'generation' = ${input.generation}
+          )
+        FOR UPDATE
+    `);
+}
+
+async function selectRevisionGenerationCase(
+    tx: Prisma.TransactionClient,
+    input: { branchId: string; clientId: number; serviceRecordCaseId: string },
+): Promise<RevisionGenerationCaseRow | null> {
+    const rows = await rawStateQuery<RevisionGenerationCaseRow[]>(tx, Prisma.sql`
+        SELECT
+            id,
+            form_version AS "formVersion",
+            current_revision_id AS "currentRevisionId",
+            current_usable_revision_id AS "currentUsableRevisionId",
+            current_usable_document_version AS "currentUsableDocumentVersion"
+        FROM "service_record_case"
+        WHERE branch_id = ${input.branchId}::uuid
+          AND client_id = ${input.clientId}
+          AND id = ${input.serviceRecordCaseId}::uuid
+        FOR UPDATE
+    `);
+    return rows[0] ?? null;
+}
+
+async function selectRevisionSnapshotChunks(
+    tx: Prisma.TransactionClient,
+    input: {
+        branchId: string;
+        clientId: number;
+        serviceRecordCaseId: string;
+        revisionId: string;
+        documentVersion: number;
+    },
+): Promise<RevisionSnapshotChunkJoinRow[]> {
+    return rawStateQuery<RevisionSnapshotChunkJoinRow[]>(tx, Prisma.sql`
+        SELECT
+            chunk.id,
+            chunk.revision_id AS "revisionId",
+            chunk.snapshot_version AS "snapshotVersion",
+            chunk.chunk_index AS "chunkIndex",
+            chunk.chunk_count AS "chunkCount",
+            chunk.status,
+            chunk.eformsign_document_id AS "documentId",
+            doc.document_id AS "storedDocumentId",
+            doc.revision_id AS "documentRevisionId",
+            doc.branch_id AS "documentBranchId",
+            doc.client_id AS "documentClientId",
+            doc.service_record_case_id AS "documentCaseId",
+            doc.document_kind AS "documentKind",
+            doc.status_type AS "documentStatusType",
+            doc.snapshot_version AS "documentSnapshotVersion",
+            doc.snapshot_chunk_index AS "documentSnapshotChunkIndex"
+        FROM "service_record_snapshot_chunk" AS chunk
+        INNER JOIN "eformsign_doc" AS doc
+            ON doc.document_id = chunk.eformsign_document_id
+        WHERE chunk.branch_id = ${input.branchId}::uuid
+          AND chunk.service_record_case_id = ${input.serviceRecordCaseId}::uuid
+          AND chunk.revision_id = ${input.revisionId}::uuid
+          AND chunk.snapshot_version = ${input.documentVersion}
+          AND chunk.eformsign_document_id IS NOT NULL
+        ORDER BY chunk.chunk_index ASC
+        FOR UPDATE OF chunk, doc
+    `);
+}
+
+async function persistRevisionJobDocumentVersion(
+    tx: Prisma.TransactionClient,
+    input: {
+        branchId: string;
+        clientId: number;
+        documentStateId: string;
+        generation: string;
+    },
+    documentVersion: number,
+): Promise<void> {
+    const jobs = await rawStateQuery<Array<{
+        id: string;
+        payload: unknown;
+    }>>(tx, Prisma.sql`
+        SELECT id, payload
+        FROM "eformsign_document_job"
+        WHERE branch_id = ${input.branchId}::uuid
+          AND client_id = ${input.clientId}
+          AND (
+              payload->>'documentStateId' = ${input.documentStateId}
+              OR payload->>'generation' = ${input.generation}
+          )
+        FOR UPDATE
+    `);
+    for (const job of jobs) {
+        if (job.payload === null) continue;
+        if (!job.payload || typeof job.payload !== "object" || Array.isArray(job.payload)) {
+            throw new ServiceRecordEditConflictError("Revision document job payload is invalid");
+        }
+        const payload = job.payload as Record<string, unknown>;
+        const existing = payload["documentVersion"];
+        if (existing !== undefined && existing !== null) {
+            if (typeof existing !== "number" || !Number.isInteger(existing) || existing !== documentVersion) {
+                throw new ServiceRecordEditConflictError("Revision document job version does not match state");
+            }
+            continue;
+        }
+        const nextPayload = { ...payload, documentVersion };
+        const nextFingerprint = jsonFingerprint(nextPayload);
+        await rawStateQuery(tx, Prisma.sql`
+            UPDATE "eformsign_document_job"
+            SET payload = ${jsonSql(nextPayload as unknown as ServiceRecordEditJsonValue)},
+                payload_fingerprint = ${nextFingerprint},
+                updated_at = now()
+            WHERE id = ${job.id}::uuid
+              AND branch_id = ${input.branchId}::uuid
+              AND client_id = ${input.clientId}
+        `);
+    }
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -1876,6 +2119,239 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         return row ? toRevisionDocumentState(row) : current;
     }
 
+    async allocateServiceRecordRevisionDocumentVersion(
+        input: AllocateServiceRecordRevisionDocumentVersionInput,
+    ): Promise<number> {
+        assertRevisionVersionInput(input);
+        return this.prisma.$transaction((tx) => (
+            this.allocateServiceRecordRevisionDocumentVersionInTransaction({ tx }, input)
+        ));
+    }
+
+    async allocateServiceRecordRevisionDocumentVersionInTransaction(
+        context: ServiceRecordEditTransactionContext,
+        input: AllocateServiceRecordRevisionDocumentVersionInput,
+    ): Promise<number> {
+        assertRevisionVersionInput(input);
+        await lockRevisionDocumentTargets(context.tx, input);
+
+        const ownerCase = await selectRevisionGenerationCase(context.tx, input);
+        if (!ownerCase || ownerCase.currentRevisionId !== input.revisionId) {
+            throw new ServiceRecordEditConflictError("Revision document case ownership changed");
+        }
+        const stateRows = await selectRevisionDocumentState(context.tx, {
+            branchId: input.branchId,
+            clientId: input.clientId,
+            serviceRecordCaseId: input.serviceRecordCaseId,
+            revisionId: input.revisionId,
+            stateId: input.documentStateId,
+            generation: input.generation,
+            forUpdate: true,
+        });
+        const stateRow = stateRows[0];
+        if (!stateRow || stateRow.operation !== "record_snapshot") {
+            throw new ServiceRecordEditConflictError("Revision document state is unavailable");
+        }
+        const current = toRevisionDocumentState(stateRow);
+        // A null expectation means the caller has not observed an allocation
+        // yet.  Another transaction may have won while this one waited; that
+        // is an idempotent replay of the same state generation.  A concrete
+        // expectation remains a strict CAS guard.
+        if (input.expectedDocumentVersion !== null
+            && current.documentVersion !== input.expectedDocumentVersion) {
+            throw new ServiceRecordEditConflictError("Revision document version changed while allocation was waiting");
+        }
+        if (current.documentVersion !== null) {
+            await persistRevisionJobDocumentVersion(context.tx, input, current.documentVersion);
+            return current.documentVersion;
+        }
+
+        const maxRows = await rawStateQuery<Array<{ maxVersion: number | null }>>(context.tx, Prisma.sql`
+            SELECT GREATEST(
+                COALESCE((
+                    SELECT MAX(snapshot_version)
+                    FROM "service_record_snapshot_chunk"
+                    WHERE branch_id = ${input.branchId}::uuid
+                      AND service_record_case_id = ${input.serviceRecordCaseId}::uuid
+                ), 0),
+                COALESCE((
+                    SELECT MAX(snapshot_version)
+                    FROM "eformsign_doc"
+                    WHERE service_record_case_id = ${input.serviceRecordCaseId}::uuid
+                      AND (branch_id = ${input.branchId}::uuid OR branch_id IS NULL)
+                      AND document_kind = 'service_record_snapshot'
+                ), 0),
+                COALESCE((
+                    SELECT MAX(document_version)
+                    FROM "service_record_revision_document_state"
+                    WHERE branch_id = ${input.branchId}::uuid
+                      AND service_record_case_id = ${input.serviceRecordCaseId}::uuid
+                      AND operation = 'record_snapshot'
+                ), 0),
+                COALESCE(${ownerCase.currentUsableDocumentVersion}, 0)
+            ) AS "maxVersion"
+        `);
+        const maxVersion = maxRows[0]?.maxVersion ?? 0;
+        if (!Number.isInteger(maxVersion) || maxVersion < 0 || maxVersion >= 2_147_483_647) {
+            throw new ServiceRecordEditConflictError("Revision document version cannot be allocated");
+        }
+        const nextVersion = maxVersion > 0 ? maxVersion + 1 : ownerCase.formVersion;
+        if (!Number.isInteger(nextVersion) || nextVersion < 1 || nextVersion > 2_147_483_647) {
+            throw new ServiceRecordEditConflictError("Revision document form version is invalid");
+        }
+        const updatedRows = await rawStateQuery<RevisionDocumentStateRow[]>(context.tx, Prisma.sql`
+            UPDATE "service_record_revision_document_state"
+            SET document_version = ${nextVersion},
+                version = version + 1,
+                updated_at = now()
+            WHERE id = ${input.documentStateId}::uuid
+              AND branch_id = ${input.branchId}::uuid
+              AND client_id = ${input.clientId}
+              AND service_record_case_id = ${input.serviceRecordCaseId}::uuid
+              AND revision_id = ${input.revisionId}::uuid
+              AND generation = ${input.generation}
+              AND version = ${current.version}
+              AND document_version IS NULL
+            RETURNING ${revisionDocumentStateColumns}
+        `);
+        const updated = updatedRows[0];
+        if (!updated) {
+            throw new ServiceRecordEditConflictError("Revision document version allocation was lost");
+        }
+        await persistRevisionJobDocumentVersion(context.tx, input, nextVersion);
+        return nextVersion;
+    }
+
+    async promoteServiceRecordRevisionSnapshot(
+        input: PromoteServiceRecordRevisionSnapshotInput,
+    ): Promise<boolean> {
+        assertRevisionPromotionInput(input);
+        return this.prisma.$transaction((tx) => (
+            this.promoteServiceRecordRevisionSnapshotInTransaction({ tx }, input)
+        ));
+    }
+
+    async promoteServiceRecordRevisionSnapshotInTransaction(
+        context: ServiceRecordEditTransactionContext,
+        input: PromoteServiceRecordRevisionSnapshotInput,
+    ): Promise<boolean> {
+        assertRevisionPromotionInput(input);
+        await lockRevisionDocumentTargets(context.tx, input);
+
+        const ownerCase = await selectRevisionGenerationCase(context.tx, input);
+        if (!ownerCase || ownerCase.currentRevisionId !== input.revisionId) return false;
+        if (
+            (ownerCase.currentUsableRevisionId !== null && ownerCase.currentUsableRevisionId !== input.revisionId)
+            || (ownerCase.currentUsableDocumentVersion !== null
+                && ownerCase.currentUsableDocumentVersion !== input.documentVersion)
+        ) return false;
+
+        const revisionRows = await rawStateQuery<Array<{ revisionNumber: number }>>(context.tx, Prisma.sql`
+            SELECT revision_number AS "revisionNumber"
+            FROM "service_record_revision"
+            WHERE branch_id = ${input.branchId}::uuid
+              AND service_record_case_id = ${input.serviceRecordCaseId}::uuid
+              AND id = ${input.revisionId}::uuid
+            FOR UPDATE
+        `);
+        if (revisionRows[0]?.revisionNumber !== input.revisionNumber) return false;
+
+        const stateRows = await selectRevisionDocumentState(context.tx, {
+            branchId: input.branchId,
+            clientId: input.clientId,
+            serviceRecordCaseId: input.serviceRecordCaseId,
+            revisionId: input.revisionId,
+            stateId: input.documentStateId,
+            generation: input.generation,
+            forUpdate: true,
+        });
+        const stateRow = stateRows[0];
+        if (!stateRow || stateRow.operation !== "record_snapshot") return false;
+        const current = toRevisionDocumentState(stateRow);
+        if (current.documentVersion !== input.documentVersion) return false;
+        if (current.status === "completed") {
+            return ownerCase.currentUsableRevisionId === input.revisionId
+                && ownerCase.currentUsableDocumentVersion === input.documentVersion;
+        }
+        if (!(current.status === "pending"
+            || current.status === "processing"
+            || current.status === "capability_unverified")) return false;
+
+        const rows = await selectRevisionSnapshotChunks(context.tx, input);
+        if (rows.length !== input.chunkCount) return false;
+        const persistedIds = new Set<string>();
+        const indexes = new Set<number>();
+        for (const row of rows) {
+            if (
+                row.revisionId !== input.revisionId
+                || row.snapshotVersion !== input.documentVersion
+                || row.status !== "CREATED"
+                || row.chunkCount !== input.chunkCount
+                || !Number.isInteger(row.chunkIndex)
+                || row.chunkIndex < 1
+                || row.chunkIndex > input.chunkCount
+                || indexes.has(row.chunkIndex)
+                || !row.documentId
+                || !row.storedDocumentId
+                || row.documentId !== row.storedDocumentId
+                || row.documentRevisionId !== input.revisionId
+                || row.documentBranchId !== input.branchId
+                || row.documentClientId !== input.clientId
+                || row.documentCaseId !== input.serviceRecordCaseId
+                || row.documentKind !== "service_record_snapshot"
+                || !["003", "012", "022", "032", "050", "062", "072", "092"]
+                    .includes(normalizeEformsignStatusCode(row.documentStatusType))
+                || row.documentSnapshotVersion !== input.documentVersion
+                || row.documentSnapshotChunkIndex !== row.chunkIndex
+            ) return false;
+            indexes.add(row.chunkIndex);
+            persistedIds.add(row.documentId);
+        }
+        if (indexes.size !== input.chunkCount || persistedIds.size !== input.chunkCount) return false;
+        const suppliedIds = new Set(input.documentIds);
+        if (suppliedIds.size !== persistedIds.size || [...suppliedIds].some((id) => !persistedIds.has(id))) {
+            return false;
+        }
+
+        const pointerRows = await rawStateQuery<Array<{ id: string }>>(context.tx, Prisma.sql`
+            UPDATE "service_record_case"
+            SET current_usable_revision_id = ${input.revisionId}::uuid,
+                current_usable_document_version = ${input.documentVersion},
+                updated_at = now()
+            WHERE branch_id = ${input.branchId}::uuid
+              AND client_id = ${input.clientId}
+              AND id = ${input.serviceRecordCaseId}::uuid
+              AND current_revision_id = ${input.revisionId}::uuid
+              AND (current_usable_revision_id IS NULL OR current_usable_revision_id = ${input.revisionId}::uuid)
+              AND (current_usable_document_version IS NULL OR current_usable_document_version = ${input.documentVersion})
+            RETURNING id
+        `);
+        if (pointerRows.length !== 1) return false;
+
+        const stateUpdated = await rawStateQuery<RevisionDocumentStateRow[]>(context.tx, Prisma.sql`
+            UPDATE "service_record_revision_document_state"
+            SET step = 'completed',
+                status = 'completed',
+                next_attempt_at = NULL,
+                last_error_code = NULL,
+                version = version + 1,
+                updated_at = now()
+            WHERE id = ${input.documentStateId}::uuid
+              AND branch_id = ${input.branchId}::uuid
+              AND client_id = ${input.clientId}
+              AND service_record_case_id = ${input.serviceRecordCaseId}::uuid
+              AND revision_id = ${input.revisionId}::uuid
+              AND generation = ${input.generation}
+              AND version = ${current.version}
+              AND document_version = ${input.documentVersion}
+            RETURNING ${revisionDocumentStateColumns}
+        `);
+        if (stateUpdated.length !== 1) {
+            throw new ServiceRecordEditConflictError("Revision snapshot promotion lost its state CAS");
+        }
+        return true;
+    }
+
     async confirmDraft(input: ServiceRecordEditConfirmInput): Promise<ServiceRecordEditConfirmResponse> {
         return this.prisma.$transaction((tx) => this.confirmDraftWithClient(tx, input));
     }
@@ -2090,6 +2566,17 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                         ? "SERVICE_RECORD_REVISION_WAITING_FOR_COMPLETION"
                         : "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED",
                 });
+                const documentVersion = plan.documentJob.payload["completeness"] === "partial"
+                    ? null
+                    : await this.allocateServiceRecordRevisionDocumentVersionInTransaction({ tx }, {
+                        branchId: input.branchId,
+                        clientId: source.client.id,
+                        serviceRecordCaseId: source.caseId,
+                        revisionId: revision.id,
+                        documentStateId: documentState.id,
+                        generation,
+                        expectedDocumentVersion: null,
+                    });
                 // Partial revisions are intentionally retained as waiting
                 // operation state. They have no provider job to claim until
                 // all N sessions are genuinely submitted; a queued partial
@@ -2104,6 +2591,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                         caseVersion,
                         generation,
                         documentState.id,
+                        documentVersion!,
                     );
                 }
             }
@@ -2449,6 +2937,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         caseVersion: number,
         generation: string,
         documentStateId: string,
+        documentVersion: number,
     ): Promise<void> {
         if (!plan.documentJob || !plan.dispatchContext) return;
         const context = {
@@ -2463,6 +2952,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             caseVersion,
             generation,
             documentStateId,
+            documentVersion,
             context,
         };
         const payloadFingerprint = jsonFingerprint(payload);

@@ -365,6 +365,9 @@ model eformsign_doc {
   employeeScheduleId         Int?                           @map("employee_schedule_id")
   templateId                 String?                        @map("template_id")
   serviceRecordCaseId        String?                        @map("service_record_case_id") @db.Uuid
+  /// Nullable for legacy documents; revision-bound snapshots must populate
+  /// this server-owned identity before pointer promotion.
+  revisionId                 String?                        @map("revision_id") @db.Uuid
   snapshotVersion            Int?                           @map("snapshot_version")
   snapshotChunkIndex         Int?                           @map("snapshot_chunk_index")
   detailPayload              Json?                          @map("detail_payload") @db.JsonB
@@ -393,6 +396,7 @@ model eformsign_doc {
   @@index([employeeScheduleId], map: "idx_eformsign_doc_employee_schedule_id")
   @@index([templateId], map: "idx_eformsign_doc_template_id")
   @@index([serviceRecordCaseId], map: "idx_eformsign_doc_service_record_case_id")
+  @@index([branchId, serviceRecordCaseId, revisionId, snapshotVersion, snapshotChunkIndex], map: "idx_eformsign_doc_revision_version")
   @@index([permanentPurgeRequestedAt], map: "idx_eformsign_doc_permanent_purge_requested_at")
 }
 
@@ -1358,6 +1362,9 @@ model service_record_snapshot_chunk {
   branchId             String                     @map("branch_id") @db.Uuid
   serviceRecordCaseId  String                     @map("service_record_case_id") @db.Uuid
   assignmentId         String?                    @map("assignment_id") @db.Uuid
+  /// Nullable for legacy chunks; new revision generations bind every chunk
+  /// to the immutable revision before renderer promotion.
+  revisionId           String?                    @map("revision_id") @db.Uuid
   snapshotVersion      Int                        @default(1) @map("snapshot_version")
   chunkIndex           Int                        @map("chunk_index")
   chunkCount           Int                        @map("chunk_count")
@@ -1381,6 +1388,7 @@ model service_record_snapshot_chunk {
 
   @@unique([serviceRecordCaseId, snapshotVersion, chunkIndex], map: "uniq_service_record_snapshot_chunk")
   @@index([branchId], map: "idx_service_record_snapshot_chunk_branch")
+  @@index([branchId, serviceRecordCaseId, revisionId, snapshotVersion, chunkIndex], map: "idx_service_record_snapshot_chunk_revision_version")
   @@index([status, nextAttemptAt], map: "idx_service_record_snapshot_chunk_retry")
 }
 
