@@ -585,6 +585,39 @@ const revisionDocumentStateColumns = Prisma.sql`
     updated_at AS "updatedAt"
 `;
 
+// `selectRevisionDocumentState` joins the state row to its owning case and
+// revision.  Both joined tables expose an `id`, `version`, and timestamps;
+// qualify every selected state column so PostgreSQL cannot resolve a field to
+// the wrong owner.  Inserts/updates use the unqualified fragment above in
+// their RETURNING clauses because those statements have one target table.
+const revisionDocumentStateSelectColumns = Prisma.sql`
+    state.id,
+    state.branch_id AS "branchId",
+    state.client_id AS "clientId",
+    state.service_record_case_id AS "serviceRecordCaseId",
+    state.revision_id AS "revisionId",
+    state.operation,
+    state.generation,
+    state.immutable_input AS "immutableInput",
+    state.input_fingerprint AS "inputFingerprint",
+    state.document_version AS "documentVersion",
+    state.source_document_id AS "sourceDocumentId",
+    state.target_document_id AS "targetDocumentId",
+    state.template_id AS "templateId",
+    state.template_version AS "templateVersion",
+    state.workflow_scope AS "workflowScope",
+    state.mirror_generation AS "mirrorGeneration",
+    state.output_proof AS "outputProof",
+    state.step,
+    state.status,
+    state.attempts,
+    state.next_attempt_at AS "nextAttemptAt",
+    state.last_error_code AS "lastErrorCode",
+    state.version,
+    state.created_at AS "createdAt",
+    state.updated_at AS "updatedAt"
+`;
+
 async function selectRevisionDocumentState(
     client: Prisma.TransactionClient | PrismaService,
     scope: {
@@ -599,7 +632,7 @@ async function selectRevisionDocumentState(
 ): Promise<RevisionDocumentStateRow[]> {
     const lock = scope.forUpdate ? Prisma.sql` FOR UPDATE` : Prisma.empty;
     return rawStateQuery<RevisionDocumentStateRow[]>(client, Prisma.sql`
-        SELECT ${revisionDocumentStateColumns}
+        SELECT ${revisionDocumentStateSelectColumns}
         FROM "service_record_revision_document_state" AS state
         INNER JOIN "service_record_case" AS owner_case
             ON owner_case.branch_id = state.branch_id
