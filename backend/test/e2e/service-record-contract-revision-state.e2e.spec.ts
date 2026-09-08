@@ -171,7 +171,7 @@ describeE2E("contract revision operation state (real disposable PostgreSQL)", ()
     });
 
     async function appendRevision(fixture: Awaited<ReturnType<typeof createServiceRecordConfirmFixture>>) {
-        return repository.appendRevision({
+        const revision = await repository.appendRevision({
             branchId: fixture.branch.id,
             serviceRecordCaseId: fixture.record.id,
             actorUserId: fixture.actorUserId,
@@ -180,6 +180,9 @@ describeE2E("contract revision operation state (real disposable PostgreSQL)", ()
             provenance: { source: "task5-contract-e2e" },
             formVersionAtConfirm: 2,
         });
+        await prisma.service_record_case.update({ where: { id: fixture.record.id },
+            data: { currentRevisionId: revision.id } });
+        return revision;
     }
 
     async function createOperationState(
