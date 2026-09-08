@@ -475,7 +475,7 @@ describeE2E("service-record finalization eligibility and frozen input (real disp
                 lastErrorCode: "INVALID_SERVICE_RECORD_REVISION_JOB_PAYLOAD" });
     });
 
-    it("preserves a frozen complete payload when another admin revision supersedes its queued job", async () => {
+    it("preserves a frozen complete payload while unresolved generation blocks another confirmation", async () => {
         const fixture = await createServiceRecordConfirmFixture(prisma);
         const first = await confirmAdminDateMove(prisma, fixture);
         await completeServiceRecordFinalizationCase(prisma, fixture);
@@ -484,13 +484,15 @@ describeE2E("service-record finalization eligibility and frozen input (real disp
         await claimFinalizationCase(finalizer, fixture.record.id, fixture.branch.id, new Date());
         const requestKey = `service-record-initial-finalization:${first.revisionId}`;
         const frozen = await prisma.eformsign_document_job.findUniqueOrThrow({ where: { requestKey } });
-        const next = await confirmAdminDateMove(prisma, fixture, "next confirmed revision");
-        expect(next.revisionId).not.toBe(first.revisionId);
-        const superseded = await prisma.eformsign_document_job.findUniqueOrThrow({ where: { requestKey } });
-        expect(superseded.payload).toEqual(frozen.payload);
-        expect(superseded.payloadFingerprint).toBe(frozen.payloadFingerprint);
-        expect(superseded).toMatchObject({ status: "failed", activeKey: null,
-            lastErrorCode: "SERVICE_RECORD_REVISION_SUPERSEDED" });
+        await expect(confirmAdminDateMove(prisma, fixture, "next confirmed revision"))
+            .rejects.toMatchObject({ response: { code: "SERVICE_RECORD_REVISION_OPERATION_UNRESOLVED" } });
+        const retained = await prisma.eformsign_document_job.findUniqueOrThrow({ where: { requestKey } });
+        expect(retained.payload).toEqual(frozen.payload);
+        expect(retained.payloadFingerprint).toBe(frozen.payloadFingerprint);
+        expect(retained.status).toBe(frozen.status);
+        expect(retained.activeKey).toBe(frozen.activeKey);
+        expect((await prisma.service_record_case.findUniqueOrThrow({ where: { id: fixture.record.id } }))
+            .currentRevisionId).toBe(first.revisionId);
     });
 
 });
