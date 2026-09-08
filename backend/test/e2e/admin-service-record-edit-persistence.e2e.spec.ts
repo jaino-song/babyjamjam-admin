@@ -2,7 +2,6 @@ import { Prisma, PrismaClient } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 
 import {
-    ServiceRecordEditConflictError,
     ServiceRecordEditDraftConflictError,
     ServiceRecordEditNotFoundError,
 } from "domain/errors/service-record-edit.error";
@@ -62,6 +61,7 @@ describeE2E("service-record edit persistence (real PostgreSQL)", () => {
     afterEach(async () => {
         await prisma.service_record_day.deleteMany({ where: { branchId: { in: [branchId, foreignBranchId] } } });
         await prisma.service_record_edit_draft.deleteMany({ where: { branchId: { in: [branchId, foreignBranchId] } } });
+        await prisma.service_record_revision.deleteMany({ where: { branchId: { in: [branchId, foreignBranchId] } } });
         await prisma.service_record_case.deleteMany({ where: { branchId: { in: [branchId, foreignBranchId] } } });
     });
 
@@ -69,6 +69,7 @@ describeE2E("service-record edit persistence (real PostgreSQL)", () => {
         if (!prisma) return;
         await prisma.service_record_day.deleteMany({ where: { branchId: { in: [branchId, foreignBranchId] } } });
         await prisma.service_record_edit_draft.deleteMany({ where: { branchId: { in: [branchId, foreignBranchId] } } });
+        await prisma.service_record_revision.deleteMany({ where: { branchId: { in: [branchId, foreignBranchId] } } });
         await prisma.service_record_case.deleteMany({ where: { branchId: { in: [branchId, foreignBranchId] } } });
         await prisma.branch.deleteMany({ where: { id: { in: [branchId, foreignBranchId] } } });
         await prisma.$disconnect();
@@ -77,8 +78,9 @@ describeE2E("service-record edit persistence (real PostgreSQL)", () => {
     it("keeps legacy nullable pointers and business rows unchanged while saving a draft", async () => {
         const legacyCase = await prisma.service_record_case.create({ data: { branchId } });
         expect(legacyCase.plannedSessions).toBeNull();
-        expect(legacyCase.currentContent).toBeNull();
-        expect(legacyCase.currentUsableDocumentPointer).toBeNull();
+        expect(legacyCase.currentRevisionId).toBeNull();
+        expect(legacyCase.currentUsableRevisionId).toBeNull();
+        expect(legacyCase.currentUsableDocumentVersion).toBeNull();
 
         const serviceCase = await prisma.service_record_case.create({
             data: {
@@ -90,8 +92,6 @@ describeE2E("service-record edit persistence (real PostgreSQL)", () => {
                 startDate: new Date("2026-09-01T00:00:00.000Z"),
                 endDate: new Date("2026-09-15T00:00:00.000Z"),
                 plannedSessions: [{ sessionIndex: 1, serviceDate: "2026-09-01" }],
-                currentContent: { canonical: "before" },
-                currentUsableDocumentPointer: "legacy-document-pointer",
             },
         });
         const serviceDay = await prisma.service_record_day.create({
@@ -293,46 +293,36 @@ describeE2E("service-record edit persistence (real PostgreSQL)", () => {
 
     it("appends an immutable revision under a parent lock", async () => {
         const serviceCase = await prisma.service_record_case.create({ data: { branchId, version: 8 } });
-        const rollback = new Error("rollback append-only assertion");
+        const appended = await repository.appendRevision({
+            branchId,
+            serviceRecordCaseId: serviceCase.id,
+            actorUserId: actorId(),
+            payload: { header: { momName: "Confirmed" } },
+            plannedSessions: [{ sessionIndex: 1, assignmentId: "assignment-real" }],
+            provenance: { sourceCaseVersion: 8, sourceFingerprint: "revision-source" },
+            formVersionAtConfirm: 3,
+            snapshotReference: "snapshot-real",
+        });
+        expect(appended).toMatchObject({ revisionNumber: 1, snapshotReference: "snapshot-real" });
 
-        await expect(prisma.$transaction(async (tx) => {
-            const appended = await repository.appendRevision({
-                branchId,
-                serviceRecordCaseId: serviceCase.id,
-                actorUserId: actorId(),
-                payload: { header: { momName: "Confirmed" } },
-                plannedSessions: [{ sessionIndex: 1, assignmentId: "assignment-real" }],
-                provenance: { sourceCaseVersion: 8, sourceFingerprint: "revision-source" },
-                formVersionAtConfirm: 3,
-                snapshotReference: "snapshot-real",
-            }, tx);
-            expect(appended).toMatchObject({ revisionNumber: 1, snapshotReference: "snapshot-real" });
+        await expect(prisma.$transaction(async (tx) => tx.$executeRaw(Prisma.sql`
+            UPDATE service_record_revision
+            SET payload = '{"tampered": true}'::jsonb
+            WHERE id = ${appended.id}::uuid
+        `))).rejects.toThrow(/append-only/);
 
-            await tx.$executeRaw(Prisma.sql`SAVEPOINT revision_mutation_update`);
-            await expect(tx.$executeRaw(Prisma.sql`
-                UPDATE service_record_revision
-                SET payload = '{"tampered": true}'::jsonb
-                WHERE id = ${appended.id}::uuid
-            `)).rejects.toThrow(/append-only/);
-            await tx.$executeRaw(Prisma.sql`ROLLBACK TO SAVEPOINT revision_mutation_update`);
+        await expect(prisma.$transaction(async (tx) => tx.$executeRaw(Prisma.sql`
+            DELETE FROM service_record_revision
+            WHERE id = ${appended.id}::uuid
+        `))).rejects.toThrow(/append-only/);
 
-            await tx.$executeRaw(Prisma.sql`SAVEPOINT revision_mutation_delete`);
-            await expect(tx.$executeRaw(Prisma.sql`
-                DELETE FROM service_record_revision
-                WHERE id = ${appended.id}::uuid
-            `)).rejects.toThrow(/append-only/);
-            await tx.$executeRaw(Prisma.sql`ROLLBACK TO SAVEPOINT revision_mutation_delete`);
-
-            const persisted = await tx.service_record_revision.findUniqueOrThrow({ where: { id: appended.id } });
-            expect(persisted.payload).toEqual({ header: { momName: "Confirmed" } });
-            throw rollback;
-        })).rejects.toBe(rollback);
-
-        await expect(prisma.service_record_revision.count({ where: { serviceRecordCaseId: serviceCase.id } })).resolves.toBe(0);
+        await expect(prisma.service_record_revision.findUniqueOrThrow({ where: { id: appended.id } })).resolves.toMatchObject({
+            payload: { header: { momName: "Confirmed" } },
+        });
         await expect(prisma.service_record_case.findUnique({ where: { id: serviceCase.id } })).resolves.not.toBeNull();
     });
 
-    it("maps an explicit duplicate revision number to a domain conflict", async () => {
+    it("allocates contiguous revision numbers while ignoring caller-provided numbering", async () => {
         const serviceCase = await prisma.service_record_case.create({ data: { branchId } });
         const input = {
             branchId,
@@ -342,14 +332,37 @@ describeE2E("service-record edit persistence (real PostgreSQL)", () => {
             plannedSessions: [],
             provenance: {},
             formVersionAtConfirm: 1,
-            revisionNumber: 1,
         };
-        const rollback = new Error("rollback duplicate-revision assertion");
-        await expect(prisma.$transaction(async (tx) => {
-            await repository.appendRevision(input, tx);
-            await expect(repository.appendRevision({ ...input, actorUserId: actorId() }, tx))
-                .rejects.toBeInstanceOf(ServiceRecordEditConflictError);
-            throw rollback;
-        })).rejects.toBe(rollback);
+        await expect(repository.appendRevision(input)).resolves.toMatchObject({ revisionNumber: 1 });
+        await expect(repository.appendRevision({ ...input, actorUserId: actorId() }))
+            .resolves.toMatchObject({ revisionNumber: 2 });
+    });
+
+    it("pins revision pointers to the same branch and case", async () => {
+        const firstCase = await prisma.service_record_case.create({ data: { branchId } });
+        const secondCase = await prisma.service_record_case.create({ data: { branchId } });
+        const revision = await repository.appendRevision({
+            branchId,
+            serviceRecordCaseId: secondCase.id,
+            actorUserId: actorId(),
+            payload: {},
+            plannedSessions: [],
+            provenance: {},
+            formVersionAtConfirm: 1,
+        });
+
+        await expect(prisma.service_record_case.update({
+            where: { id: firstCase.id },
+            data: { currentRevisionId: revision.id },
+        })).rejects.toThrow();
+        await expect(prisma.service_record_case.update({
+            where: { id: firstCase.id },
+            data: { currentUsableRevisionId: revision.id, currentUsableDocumentVersion: 1 },
+        })).rejects.toThrow();
+
+        const persisted = await prisma.service_record_case.findUniqueOrThrow({ where: { id: firstCase.id } });
+        expect(persisted.currentRevisionId).toBeNull();
+        expect(persisted.currentUsableRevisionId).toBeNull();
+        expect(persisted.currentUsableDocumentVersion).toBeNull();
     });
 });

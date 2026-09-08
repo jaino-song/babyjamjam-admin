@@ -1,7 +1,4 @@
-import {
-    ServiceRecordEditNotFoundError,
-    ServiceRecordEditConflictError,
-} from "domain/errors/service-record-edit.error";
+import { ServiceRecordEditNotFoundError } from "domain/errors/service-record-edit.error";
 import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
 
 const branchId = "11111111-1111-4111-8111-111111111111";
@@ -82,7 +79,7 @@ describe("ServiceRecordEditRepository", () => {
             sourceFingerprint: "source-fingerprint",
             sourceSnapshot: { status: "IN_PROGRESS", submittedAt: null },
             changes: { header: { momName: "Before" } },
-        } as const;
+        };
 
         await expect(repository.createOrResumeDraft(input)).resolves.toMatchObject({
             id: draftId,
@@ -345,42 +342,24 @@ describe("ServiceRecordEditRepository", () => {
         expect(tx.service_record_revision.create).not.toHaveBeenCalled();
     });
 
-    it("maps duplicate revision numbers to a domain conflict", async () => {
+    it("allocates contiguous revision numbers without accepting caller overrides", async () => {
         const tx = {
             $queryRaw: jest.fn().mockResolvedValue([{ id: caseId }]),
             service_record_revision: {
-                findFirst: jest.fn().mockResolvedValue(null),
-                create: jest.fn().mockRejectedValue(uniqueError()),
+                findFirst: jest.fn()
+                    .mockResolvedValueOnce(null)
+                    .mockResolvedValueOnce(revisionRow({ revisionNumber: 1 })),
+                create: jest.fn()
+                    .mockResolvedValueOnce(revisionRow({ revisionNumber: 1 }))
+                    .mockResolvedValueOnce(revisionRow({ revisionNumber: 2 })),
             },
         };
-        const repository = new ServiceRecordEditRepository({
+        const prisma = {
             $transaction: jest.fn(async (callback: (client: unknown) => Promise<unknown>) => callback(tx)),
-        } as never);
-
-        await expect(repository.appendRevision({
-            branchId,
-            serviceRecordCaseId: caseId,
-            actorUserId: actorId,
-            payload: {},
-            plannedSessions: [],
-            provenance: {},
-            formVersionAtConfirm: 1,
-            revisionNumber: 1,
-        })).rejects.toBeInstanceOf(ServiceRecordEditConflictError);
-    });
-
-    it("accepts a caller-supplied transaction so confirmation can compose atomically later", async () => {
-        const tx = {
-            $queryRaw: jest.fn().mockResolvedValue([{ id: caseId }]),
-            service_record_revision: {
-                findFirst: jest.fn().mockResolvedValue(null),
-                create: jest.fn().mockResolvedValue(revisionRow()),
-            },
         };
-        const prisma = { $transaction: jest.fn() };
         const repository = new ServiceRecordEditRepository(prisma as never);
 
-        await expect(repository.appendRevision({
+        const input = {
             branchId,
             serviceRecordCaseId: caseId,
             actorUserId: actorId,
@@ -388,7 +367,11 @@ describe("ServiceRecordEditRepository", () => {
             plannedSessions: [],
             provenance: {},
             formVersionAtConfirm: 1,
-        }, tx)).resolves.toMatchObject({ revisionNumber: 1 });
-        expect(prisma.$transaction).not.toHaveBeenCalled();
+        };
+        await expect(repository.appendRevision(input)).resolves.toMatchObject({ revisionNumber: 1 });
+        await expect(repository.appendRevision(input)).resolves.toMatchObject({ revisionNumber: 2 });
+        expect(tx.service_record_revision.create).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            data: expect.objectContaining({ revisionNumber: 2 }),
+        }));
     });
 });
