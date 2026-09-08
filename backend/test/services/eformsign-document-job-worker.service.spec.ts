@@ -75,11 +75,11 @@ function buildWorker(overrides: {
     finalize?: Record<string, jest.Mock>;
     reconciliation?: Record<string, jest.Mock>;
     schedulerLease?: ReturnType<typeof createSchedulerLeaseMock>;
-    prisma?: { $transaction: jest.Mock };
 } = {}) {
     const repository = {
         recoverStale: jest.fn().mockResolvedValue([]),
         claimDue: jest.fn().mockResolvedValue([]),
+        authorizeForDispatch: jest.fn().mockResolvedValue({ kind: "allow" }),
         updateProgress: jest.fn().mockImplementation(async () => job()),
         scheduleRetry: jest.fn().mockResolvedValue(null),
         markReconciling: jest.fn().mockResolvedValue(null),
@@ -115,9 +115,8 @@ function buildWorker(overrides: {
         { findByDocumentId: jest.fn().mockResolvedValue({ documentId: "doc" }) } as never,
         { findById: jest.fn().mockResolvedValue({ id: 7 }) } as never,
         schedulerLease,
-        overrides.prisma as never,
     );
-    return { worker, repository, dispatch, finalize, reconciliation, autoFinalizeScheduler, schedulerLease, prisma: overrides.prisma };
+    return { worker, repository, dispatch, finalize, reconciliation, autoFinalizeScheduler, schedulerLease };
 }
 
 describe("EformsignDocumentJobWorkerService", () => {
@@ -125,7 +124,7 @@ describe("EformsignDocumentJobWorkerService", () => {
         jest.useRealTimers();
     });
 
-    it("retries a pre-send failure with the first durable backoff", async () => {
+    it("reconciles a provider failure after the durable dispatch marker", async () => {
         const claimed = job();
         const { worker, repository, dispatch } = buildWorker({
             repository: { claimDue: jest.fn().mockResolvedValue([claimed]) },
@@ -146,13 +145,12 @@ describe("EformsignDocumentJobWorkerService", () => {
             expect.objectContaining({ clientId: 7, contractData: expect.any(Object), onProgress: expect.any(Function) }),
             workerPrincipal,
         );
-        expect(repository.scheduleRetry).toHaveBeenCalledWith(
+        expect(repository.scheduleRetry).not.toHaveBeenCalled();
+        expect(repository.markReconciling).toHaveBeenCalledWith(
             claimed.id,
             claimed.leaseToken,
-            expect.any(Date),
-            "HEADLESS_CREATE_PRE_SEND_FAILURE",
+            "creating",
         );
-        expect(repository.markReconciling).not.toHaveBeenCalled();
     });
 
     it("does not retry after the provider send becomes ambiguous", async () => {
@@ -290,22 +288,19 @@ describe("EformsignDocumentJobWorkerService", () => {
 
     it("commits the legacy create marker under the transaction before dispatch", async () => {
         const claimed = job();
-        const transaction = {
-            $queryRaw: jest.fn().mockResolvedValue([{ id: claimed.id }]),
-        };
-        const prisma = {
-            $transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>) => callback(transaction)),
-        };
-        const { worker } = buildWorker({ prisma });
+        const authorizeForDispatch = jest.fn().mockResolvedValue({ kind: "allow" });
+        const { worker } = buildWorker({ repository: { authorizeForDispatch } });
 
         const authorization = await (worker as unknown as {
             authorizeRevisionJob: (job: EformsignDocumentJobEntity) => Promise<unknown>;
         }).authorizeRevisionJob(claimed);
 
         expect(authorization).toEqual({ kind: "allow", irreversible: true });
-        expect(transaction.$queryRaw).toHaveBeenCalled();
-        const markerQuery = transaction.$queryRaw.mock.calls.at(-1)?.[0];
-        expect(markerQuery?.strings?.join(" ")).toContain("progress_step = 'creating'");
+        expect(authorizeForDispatch).toHaveBeenCalledWith({
+            jobId: claimed.id,
+            leaseToken: claimed.leaseToken,
+            expectedContext: null,
+        });
     });
 
     it("forwards revision authorization to the caller-transaction repository seam", async () => {
@@ -331,36 +326,15 @@ describe("EformsignDocumentJobWorkerService", () => {
                 completeness: "complete",
             },
         });
-        const transaction = {
-            $queryRaw: jest.fn().mockResolvedValue([{ id: 7 }]),
-            service_record_case: {
-                findUnique: jest.fn().mockResolvedValue({
-                    id: context.serviceRecordCaseId,
-                    branchId,
-                    clientId: 7,
-                    requiredSessionCount: null,
-                    plannedSessions: null,
-                    currentRevisionId: null,
-                    formVersion: 1,
-                    status: "IN_PROGRESS",
-                }),
-            },
-        };
-        const authorizeForDispatchInTransaction = jest.fn().mockResolvedValue({ kind: "allow" });
-        const prisma = {
-            $transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>) => callback(transaction)),
-        };
-        const { worker, repository } = buildWorker({
-            repository: { authorizeForDispatchInTransaction },
-            prisma,
-        });
+        const authorizeForDispatch = jest.fn().mockResolvedValue({ kind: "allow" });
+        const { worker, repository } = buildWorker({ repository: { authorizeForDispatch } });
 
         const authorization = await (worker as unknown as {
             authorizeRevisionJob: (job: EformsignDocumentJobEntity) => Promise<unknown>;
         }).authorizeRevisionJob(claimed);
 
         expect(authorization).toEqual({ kind: "allow", irreversible: true });
-        expect(authorizeForDispatchInTransaction).toHaveBeenCalledWith(transaction, {
+        expect(authorizeForDispatch).toHaveBeenCalledWith({
             jobId: claimed.id,
             leaseToken: claimed.leaseToken,
             expectedContext: context,
@@ -368,32 +342,19 @@ describe("EformsignDocumentJobWorkerService", () => {
         expect(repository.markRequiresAttention).not.toHaveBeenCalled();
     });
 
-    it("fails closed for an old finalize job whose document has no client owner", async () => {
+    it("delegates legacy finalize ownership to the repository boundary", async () => {
         const claimed = job({
             clientId: null,
             documentId: "legacy-finalize-document",
             jobType: "finalize_document",
             payload: { documentId: "legacy-finalize-document" },
         });
-        const transaction = {
-            eformsign_doc: {
-                findUnique: jest.fn().mockResolvedValue({
-                    id: 91,
-                    documentId: claimed.documentId,
-                    branchId,
-                    clientId: null,
-                    serviceRecordCaseId: null,
-                }),
-            },
-            $queryRaw: jest.fn(),
-        };
-        const prisma = {
-            $transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>) => callback(transaction)),
-        };
-        const authorizeForDispatchInTransaction = jest.fn();
+        const authorizeForDispatch = jest.fn().mockResolvedValue({
+            kind: "stale",
+            reason: "SERVICE_RECORD_FINALIZE_OWNER_UNAVAILABLE",
+        });
         const { worker } = buildWorker({
-            repository: { authorizeForDispatchInTransaction },
-            prisma,
+            repository: { authorizeForDispatch },
         });
 
         const authorization = await (worker as unknown as {
@@ -404,8 +365,11 @@ describe("EformsignDocumentJobWorkerService", () => {
             kind: "stale",
             reason: "SERVICE_RECORD_FINALIZE_OWNER_UNAVAILABLE",
         });
-        expect(authorizeForDispatchInTransaction).not.toHaveBeenCalled();
-        expect(transaction.$queryRaw).not.toHaveBeenCalled();
+        expect(authorizeForDispatch).toHaveBeenCalledWith({
+            jobId: claimed.id,
+            leaseToken: claimed.leaseToken,
+            expectedContext: null,
+        });
     });
 
     it("keeps the durable creating marker when a later provider step reports progress", async () => {
@@ -454,7 +418,7 @@ describe("EformsignDocumentJobWorkerService", () => {
         expect(repository.updateProgress).toHaveBeenCalledWith(
             claimed.id,
             claimed.leaseToken,
-            "info-inserted",
+            "creating",
             expect.any(Date),
         );
 

@@ -164,6 +164,134 @@ describe("SbEformsignDocumentJobRepository", () => {
         expect(queryRaw).toHaveBeenCalledTimes(1);
     });
 
+    it("owns the root legacy authorization transaction and commits the marker after the client lock", async () => {
+        const legacy = row({
+            id: dispatchJobId,
+            branch_id: dispatchBranchId,
+            client_id: 7,
+            status: "processing",
+            progress_step: "preparing",
+            lease_token: dispatchLeaseToken,
+            payload: { clientId: 7 },
+        });
+        queryRaw.mockImplementation(async (query: unknown) => {
+            const statement = sqlText(query);
+            if (statement.includes("UPDATE \"eformsign_document_job\"")) return [{ id: dispatchJobId }];
+            if (statement.includes("FROM \"eformsign_document_job\"")) return [legacy];
+            if (statement.includes("FROM \"client\"")) return [{ id: 7 }];
+            return [];
+        });
+
+        const result = await repository.authorizeForDispatch({
+            jobId: dispatchJobId,
+            leaseToken: dispatchLeaseToken,
+            expectedContext: null,
+        });
+
+        expect(result).toEqual({ kind: "allow" });
+        const statements = queryRaw.mock.calls.map(([query]) => sqlText(query));
+        const clientLockIndex = statements.findIndex((statement) => statement.includes("FROM \"client\""));
+        const markerIndex = statements.findIndex((statement) => statement.includes("progress_step = 'creating'"));
+        expect(clientLockIndex).toBeGreaterThanOrEqual(0);
+        expect(markerIndex).toBeGreaterThan(clientLockIndex);
+        expect(statements[markerIndex]).toContain("status = 'processing'");
+    });
+
+    it("rereads the current case under the common lock before authorizing a revision job", async () => {
+        const revisionJob = row({
+            id: dispatchJobId,
+            branch_id: dispatchBranchId,
+            client_id: 7,
+            status: "processing",
+            progress_step: "preparing",
+            lease_token: dispatchLeaseToken,
+            payload: { context: dispatchContext },
+        });
+        const currentCase = {
+            id: dispatchCaseId,
+            branchId: dispatchBranchId,
+            clientId: 7,
+            requiredSessionCount: 1,
+            plannedSessions: [{ sessionIndex: 1, serviceDate: "2026-09-01" }],
+            currentRevisionId: null,
+            formVersion: 3,
+            status: "IN_PROGRESS",
+        };
+        queryRaw.mockImplementation(async (query: unknown) => {
+            const statement = sqlText(query);
+            if (statement.includes("UPDATE \"eformsign_document_job\"")) return [{ id: dispatchJobId }];
+            if (statement.includes("FROM \"eformsign_document_job\"")) return [revisionJob];
+            if (statement.includes("FROM \"client\"")) return [{ id: 7 }];
+            if (statement.includes("FROM \"service_record_case\"")) return [{ id: dispatchCaseId }];
+            return [];
+        });
+        const transaction = {
+            $queryRaw: queryRaw,
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(currentCase),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn(async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction)),
+        } as unknown as PrismaService;
+        const revisionRepository = new SbEformsignDocumentJobRepository(prisma);
+
+        await expect(revisionRepository.authorizeForDispatch({
+            jobId: dispatchJobId,
+            leaseToken: dispatchLeaseToken,
+            expectedContext: dispatchContext,
+        })).resolves.toEqual({ kind: "allow" });
+
+        expect(transaction.service_record_case.findUnique).toHaveBeenCalledTimes(2);
+        const statements = queryRaw.mock.calls.map(([query]) => sqlText(query));
+        const markerIndex = statements.findIndex((statement) => statement.includes("progress_step = 'creating'"));
+        expect(markerIndex).toBeGreaterThan(
+            statements.findIndex((statement) => statement.includes("FROM \"service_record_case\"")),
+        );
+    });
+
+    it("fails closed before the marker when a legacy finalize document has no client owner", async () => {
+        const finalizeJob = row({
+            id: dispatchJobId,
+            branch_id: dispatchBranchId,
+            client_id: null,
+            document_id: "legacy-finalize",
+            job_type: "finalize_document",
+            status: "processing",
+            progress_step: "preparing",
+            lease_token: dispatchLeaseToken,
+            payload: { documentId: "legacy-finalize" },
+        });
+        queryRaw.mockResolvedValueOnce([finalizeJob]);
+        const transaction = {
+            $queryRaw: queryRaw,
+            eformsign_doc: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 91,
+                    documentId: "legacy-finalize",
+                    branchId: dispatchBranchId,
+                    clientId: null,
+                    serviceRecordCaseId: null,
+                }),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn(async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction)),
+        } as unknown as PrismaService;
+        const finalizeRepository = new SbEformsignDocumentJobRepository(prisma);
+
+        await expect(finalizeRepository.authorizeForDispatch({
+            jobId: dispatchJobId,
+            leaseToken: dispatchLeaseToken,
+            expectedContext: null,
+        })).resolves.toEqual({
+            kind: "stale",
+            reason: "SERVICE_RECORD_FINALIZE_OWNER_UNAVAILABLE",
+        });
+        expect(transaction.eformsign_doc.findUnique).toHaveBeenCalledTimes(1);
+        expect(queryRaw).toHaveBeenCalledTimes(1);
+    });
+
     it.each([
         { status: "failed", lease_token: dispatchLeaseToken, progress_step: "preparing" },
         { status: "processing", lease_token: "00000000-0000-4000-8000-000000000098", progress_step: "preparing" },

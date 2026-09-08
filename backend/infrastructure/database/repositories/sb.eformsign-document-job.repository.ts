@@ -1,4 +1,5 @@
-import { Injectable } from "@nestjs/common";
+import { ConflictException, Injectable } from "@nestjs/common";
+import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import {
     EformsignDocumentJobEntity,
@@ -18,7 +19,11 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import {
     authorizeServiceRecordDispatch,
 } from "application/policies/service-record-revision-state.policy";
-import type { ServiceRecordRevisionDispatchContext } from "@babyjamjam/shared/types/service-record";
+import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
+import type {
+    ServiceRecordDispatchAuthorizationResult,
+    ServiceRecordRevisionDispatchContext,
+} from "@babyjamjam/shared/types/service-record";
 
 type RawJob = {
     id: string; branch_id: string; client_id: number | null; document_id: string | null;
@@ -29,6 +34,75 @@ type RawJob = {
     started_at: Date | string | null; completed_at: Date | string | null; last_error_code: string | null;
     created_by_user_id: string | null; created_at: Date | string; updated_at: Date | string;
 };
+
+type DispatchJobSnapshot = Pick<
+    RawJob,
+    "id" | "branch_id" | "client_id" | "document_id" | "job_type" | "status"
+    | "lease_token" | "progress_step" | "payload"
+>;
+
+type DispatchDocumentSnapshot = {
+    id: number;
+    documentId: string;
+    branchId: string | null;
+    clientId: number | null;
+    serviceRecordCaseId: string | null;
+};
+
+function stableJson(value: unknown): string {
+    if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+    if (value && typeof value === "object") {
+        return `{${Object.entries(value as Record<string, unknown>)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([key, nested]) => `${JSON.stringify(key)}:${stableJson(nested)}`)
+            .join(",")}}`;
+    }
+    return JSON.stringify(value) ?? "null";
+}
+
+function plannedSessionDatesFromJson(value: Prisma.JsonValue | string | null): Array<{
+    sessionIndex: number;
+    serviceDate: string;
+}> {
+    let parsed: Prisma.JsonValue | null = value as Prisma.JsonValue | null;
+    if (typeof value === "string") {
+        try {
+            parsed = JSON.parse(value) as Prisma.JsonValue;
+        } catch {
+            parsed = null;
+        }
+    }
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+        .map((entry) => {
+            if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+            const row = entry as Record<string, Prisma.JsonValue>;
+            const sessionIndex = row["sessionIndex"];
+            const serviceDate = row["serviceDate"];
+            if (
+                typeof sessionIndex !== "number"
+                || !Number.isInteger(sessionIndex)
+                || typeof serviceDate !== "string"
+            ) return null;
+            return { sessionIndex, serviceDate };
+        })
+        .filter((entry): entry is { sessionIndex: number; serviceDate: string } => entry !== null)
+        .sort((left, right) => left.sessionIndex - right.sessionIndex);
+}
+
+function payloadDocumentId(value: Prisma.JsonValue | string | null): string | null {
+    let parsed: unknown = value;
+    if (typeof value === "string") {
+        try {
+            parsed = JSON.parse(value) as unknown;
+        } catch {
+            return null;
+        }
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const documentId = (parsed as Record<string, unknown>)["documentId"];
+    return typeof documentId === "string" && documentId.trim() ? documentId : null;
+}
 
 const ACTIVE_STATUSES = Prisma.sql`('queued', 'processing', 'reconciling')`;
 const TERMINAL_STATUSES = Prisma.sql`('completed', 'failed')`;
@@ -93,6 +167,256 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
             throw new Error("EFORMSIGN_DOCUMENT_JOB_IDEMPOTENCY_MISMATCH");
         }
         return { job: this.toDomain(existing[0]), existing: true };
+    }
+
+    /**
+     * Authorize a claimed job through the repository-owned transaction. The
+     * worker only supplies the claim token and optional revision context; all
+     * branch, client, document, case, and revision ownership is discovered
+     * from durable rows here before the marker CAS runs.
+     */
+    async authorizeForDispatch(
+        input: AuthorizeEformsignDocumentJobForDispatchInput,
+    ): Promise<ServiceRecordDispatchAuthorizationResult> {
+        if (!UUID_PATTERN.test(input.jobId) || !UUID_PATTERN.test(input.leaseToken)) {
+            return { kind: "lost", reason: "invalid_job_claim" } as const;
+        }
+
+        try {
+            return await this.prisma.$transaction(async (tx) => {
+                const initial = await this.readDispatchJob(tx, input.jobId, false);
+                if (!initial) return { kind: "lost", reason: "job_not_found" } as const;
+
+                const expected = input.expectedContext;
+                const isFinalize = initial.job_type === "finalize_document";
+                const isCreate = initial.job_type === "create_document";
+                if (!isFinalize && !isCreate) {
+                    return { kind: "lost", reason: "unsupported_job_type" } as const;
+                }
+
+                let branchId = initial.branch_id;
+                let clientId = initial.client_id;
+                let caseId: string | null = expected?.serviceRecordCaseId ?? null;
+                const documentId = initial.document_id ?? payloadDocumentId(initial.payload);
+                let document: DispatchDocumentSnapshot | null = null;
+
+                if (expected) {
+                    if (
+                        !isCreate
+                        || initial.branch_id !== expected.branchId
+                        || initial.client_id !== expected.clientId
+                    ) {
+                        return { kind: "lost", reason: "ownership_changed" } as const;
+                    }
+                    branchId = expected.branchId;
+                    clientId = expected.clientId;
+                    caseId = expected.serviceRecordCaseId;
+                } else if (isFinalize) {
+                    if (!documentId) {
+                        return {
+                            kind: "stale",
+                            reason: "SERVICE_RECORD_FINALIZE_OWNER_UNAVAILABLE",
+                        } as const;
+                    }
+                    document = await this.findDispatchDocument(tx, documentId);
+                    if (
+                        !document
+                        || document.documentId !== documentId
+                        || document.branchId !== initial.branch_id
+                        || document.clientId === null
+                        || (initial.client_id !== null && initial.client_id !== document.clientId)
+                    ) {
+                        return {
+                            kind: "stale",
+                            reason: "SERVICE_RECORD_FINALIZE_OWNER_UNAVAILABLE",
+                        } as const;
+                    }
+                    branchId = initial.branch_id;
+                    clientId = document.clientId;
+                    caseId = document.serviceRecordCaseId;
+                }
+
+                if (clientId !== null) {
+                    await lockServiceRecordWriteSet(tx, {
+                        branchId,
+                        clientId,
+                        caseId,
+                        ...(document ? { documentIds: [document.id] } : {}),
+                    });
+                } else if (isFinalize) {
+                    return {
+                        kind: "stale",
+                        reason: "SERVICE_RECORD_FINALIZE_OWNER_UNAVAILABLE",
+                    } as const;
+                }
+
+                // Common locks are acquired before the job lock. This reread
+                // proves that a confirm or ownership change which won first
+                // cannot be followed by an old provider operation.
+                const current = await this.readDispatchJob(tx, input.jobId, true);
+                if (
+                    !current
+                    || current.branch_id !== branchId
+                    || current.job_type !== initial.job_type
+                    || current.document_id !== initial.document_id
+                    || current.client_id !== initial.client_id
+                ) {
+                    return { kind: "lost", reason: "ownership_changed" } as const;
+                }
+
+                if (isFinalize) {
+                    if (!documentId) {
+                        return {
+                            kind: "stale",
+                            reason: "SERVICE_RECORD_FINALIZE_OWNER_UNAVAILABLE",
+                        } as const;
+                    }
+                    const currentDocument = await this.findDispatchDocument(tx, documentId);
+                    if (
+                        !currentDocument
+                        || currentDocument.id !== document?.id
+                        || currentDocument.documentId !== documentId
+                        || currentDocument.branchId !== branchId
+                        || currentDocument.clientId !== clientId
+                        || currentDocument.serviceRecordCaseId !== caseId
+                        || (current.document_id !== null && current.document_id !== documentId)
+                        || payloadDocumentId(current.payload) !== (current.document_id ?? documentId)
+                    ) {
+                        return {
+                            kind: "stale",
+                            reason: "SERVICE_RECORD_FINALIZE_OWNER_CHANGED",
+                        } as const;
+                    }
+                }
+
+                if (expected) {
+                    const caseDelegate = tx.service_record_case as unknown as {
+                        findUnique?: (args: unknown) => Promise<{
+                            id: string;
+                            branchId: string;
+                            clientId: number | null;
+                            requiredSessionCount: number | null;
+                            plannedSessions: Prisma.JsonValue | null;
+                            currentRevisionId: string | null;
+                            formVersion: number;
+                            status: string;
+                        } | null>;
+                    } | undefined;
+                    const revisionDelegate = tx.service_record_revision as unknown as {
+                        findUnique?: (args: unknown) => Promise<{
+                            revisionNumber: number;
+                            payload: Prisma.JsonValue;
+                        } | null>;
+                    } | undefined;
+                    if (typeof caseDelegate?.findUnique !== "function") {
+                        return { kind: "lost", reason: "SERVICE_RECORD_REVISION_CASE_UNAVAILABLE" } as const;
+                    }
+                    const currentCase = await caseDelegate.findUnique({
+                        where: { id: expected.serviceRecordCaseId },
+                        select: {
+                            id: true,
+                            branchId: true,
+                            clientId: true,
+                            requiredSessionCount: true,
+                            plannedSessions: true,
+                            currentRevisionId: true,
+                            formVersion: true,
+                            status: true,
+                        },
+                    });
+                    if (
+                        !currentCase
+                        || currentCase.id !== expected.serviceRecordCaseId
+                        || currentCase.branchId !== expected.branchId
+                        || currentCase.clientId !== expected.clientId
+                    ) {
+                        return { kind: "lost", reason: "SERVICE_RECORD_REVISION_OWNERSHIP_CHANGED" } as const;
+                    }
+
+                    let revisionNumber = currentCase.currentRevisionId === null
+                        ? null
+                        : expected.revisionNumber;
+                    let businessFingerprint = expected.businessFingerprint;
+                    if (currentCase.currentRevisionId !== null) {
+                        if (typeof revisionDelegate?.findUnique !== "function") {
+                            return { kind: "lost", reason: "SERVICE_RECORD_REVISION_UNAVAILABLE" } as const;
+                        }
+                        const revision = await revisionDelegate.findUnique({
+                            where: { id: currentCase.currentRevisionId },
+                            select: { revisionNumber: true, payload: true },
+                        });
+                        if (!revision) {
+                            return { kind: "lost", reason: "SERVICE_RECORD_REVISION_MISSING" } as const;
+                        }
+                        revisionNumber = revision.revisionNumber;
+                        businessFingerprint = createHash("sha256")
+                            .update(stableJson(revision.payload))
+                            .digest("hex");
+                    }
+
+                    const authorization = authorizeServiceRecordDispatch(expected, {
+                        branchId: currentCase.branchId,
+                        clientId: currentCase.clientId!,
+                        serviceRecordCaseId: currentCase.id,
+                        revisionId: currentCase.currentRevisionId,
+                        revisionNumber,
+                        businessFingerprint,
+                        plannedSessionCount: currentCase.requiredSessionCount,
+                        plannedSessionDates: plannedSessionDatesFromJson(currentCase.plannedSessions),
+                        documentSyncStatus: expected.documentSyncStatus,
+                        lifecycleStatus: currentCase.status,
+                        formVersion: currentCase.formVersion,
+                    });
+                    if (authorization.kind !== "allow") return authorization;
+                }
+
+                return this.authorizeForDispatchInTransaction(tx, {
+                    ...input,
+                    expectedContext: expected,
+                });
+            });
+        } catch (error) {
+            if (error instanceof ConflictException) {
+                return { kind: "lost", reason: "SERVICE_RECORD_WRITE_TARGET_CHANGED" } as const;
+            }
+            throw error;
+        }
+    }
+
+    private async readDispatchJob(
+        tx: Prisma.TransactionClient,
+        jobId: string,
+        forUpdate: boolean,
+    ): Promise<DispatchJobSnapshot | null> {
+        const rows = await tx.$queryRaw<DispatchJobSnapshot[]>(Prisma.sql`
+            SELECT
+                "id", "branch_id", "client_id", "document_id", "job_type", "status",
+                "lease_token", "progress_step", "payload"
+            FROM "eformsign_document_job"
+            WHERE "id" = ${jobId}::uuid
+            ${forUpdate ? Prisma.sql`FOR UPDATE` : Prisma.empty}
+        `);
+        return rows[0] ?? null;
+    }
+
+    private async findDispatchDocument(
+        tx: Prisma.TransactionClient,
+        documentId: string,
+    ): Promise<DispatchDocumentSnapshot | null> {
+        const delegate = tx.eformsign_doc as unknown as {
+            findUnique?: (args: unknown) => Promise<DispatchDocumentSnapshot | null>;
+        } | undefined;
+        if (typeof delegate?.findUnique !== "function") return null;
+        return delegate.findUnique({
+            where: { documentId },
+            select: {
+                id: true,
+                documentId: true,
+                branchId: true,
+                clientId: true,
+                serviceRecordCaseId: true,
+            },
+        });
     }
 
     /**
