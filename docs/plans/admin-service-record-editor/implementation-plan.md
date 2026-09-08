@@ -162,6 +162,24 @@ Task2.1 독립 감사 보정(2.2 unit의 별도 audit-fix commit으로 먼저 �
   **추가 Paths:** Task 2.1의 draft DTO/domain repository/error/Prisma repository (초안 API에 필요한 트랜잭션 연결과 검증만; 신규 schema 변경 제외), `packages/service-record-ui/src/` (관리자 전용 slot 또는 명시적 opt-in 속성만; 제공인력 기본 동작 유지), 해당 공유 컴포넌트 테스트. 원본 snapshot은 일관된 DB 읽기에서 만들고 서버가 지문을 계산한다. 답변 unknown key/잘못된 하위 값/과도한 JSON, 중복 또는 범위 밖 회차, 날짜의 비정규 YYYY-MM-DD 입력을 거부한다. 출처가 모호한 추가 과거 기록은 조회를 유지하며 임의 회차 수정으로 덮어쓰지 않는다.
   **Depends:** Task 2.1
 
+Task2.2 실행 분리: 위 기능/수락 조건은 유지하고 고정 API 계약 아래 서버와 화면의 소유 경로를 나눈다. `POST/GET client/:clientId/draft`, `PATCH drafts/:draftId`, `POST drafts/:draftId/discard` 응답은 `{ draft, sourceChanged, sourceCaseVersion, sourceFingerprint }`를 기본으로 하며 GET 초안 없음은 draft:null이다. draft는 서버 소유 id/case/branch/version/source/provenance와 허용 changes(header/sessions)를 포함한다. POST 재개도 현재 업무 지문과 비교한 실제 sourceChanged를 반환한다. 인증/저장은 backend와 관리자 adapter가 소유하며 공유 UI가 API를 호출하지 않는다.
+
+**Run together:** Task2.2 서버 연결 / Task2.2 화면 연결 (위 계약 고정 뒤 병행; 서버 결과를 먼저 통합하고 화면을 통합한 뒤 전체 검증).
+
+- **Task2.2 서버 연결** (feature, med)
+  - 위 Task2.2의 backend API·원본 snapshot·validator·권한·CAS·테스트를 담당한다. frontend/shared UI 소유 파일을 수정하지 않는다.
+
+  **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer (기존 phase1_shared_ui worker) · **Model:** gpt-5.6-luna · **Effort:** max
+
+  **Paths:** 위 Task2.2의 backend 경로만. **Depends:** Task2.1 저장 기반 및 감사 보정, 고정 API 계약. **Worktree:** `admin-service-record-editor-units/task-2-2`, branch `unit/admin-service-record-2-2`.
+
+- **Task2.2 화면 연결** (feature, med)
+  - 위 Task2.2의 frontend 관리자 adapter·API proxy·초안 UI와 shared admin opt-in·회귀 테스트를 담당한다. backend 소유 파일을 수정하지 않는다.
+
+  **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer (draft_ui worker) · **Model:** gpt-5.6-luna · **Effort:** max
+
+  **Paths:** 위 Task2.2의 frontend 경로, `packages/service-record-ui/src/` 및 해당 테스트, 필요 시 `packages/shared/src/types/service-record.ts`의 관리자 DTO 타입 추가만. **Depends:** Task2.1 저장 기반 및 감사 보정, 고정 API 계약. **Worktree:** `admin-service-record-editor-units/task-2-2-ui`, branch `unit/admin-service-record-2-2-ui`.
+
 - **Task 2.A: 단계 독립 감사** (test, high)
   - 이 단계의 변경과 실제 검증 근거를 읽기 전용으로 검토한다. 요구사항 충돌·권한 누락·날짜 또는 문서 불일치가 남으면 해당 task를 수정한 뒤 재감사한다. 승인 전 다음 단계에 착수하지 않는다.
 
