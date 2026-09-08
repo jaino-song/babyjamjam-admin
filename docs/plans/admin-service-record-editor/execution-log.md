@@ -424,3 +424,5 @@
 - 보완 unit `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor-units/task-3-0-corrections`, branch `unit/admin-service-record-3-0-corrections`, base06a074ab3 생성/오프라인 설치 완료. Luna/max에5개 지적을 배정했다. 실제 PG red/green, NULL 문서 정상 연결과 소유권/generation 보호, 잠금 안 최신 상태 재검사를 요구했다. Task3.1은 감사 해소까지 보류한다. 기존 통합 소스는 변경하지 않고 보완 unit만 작성한다.
 
 - Sol Task3.0 FINAL 확정: FIX_REQUIRED/HIGH, 총7건. 앞5건에 requestReplacement의 잠금 전 기간/주소 사용과 client 배정 경로의 과거 직원 잠금 누락을 추가했다. 승인뿐 아니라 거절/stale도 pending 조건의 단일 전환이 필요하다. 기존 client의 직접 case 잠금 반환값 무시도 공통 helper 전환으로 해소한다. Terminal case/doc 완료 경로는 이후 client/직원 잠금이 없는 것으로 확인됐다. 설계는 유효하며 재계획 없이7개 보정과 실제 PG 경합 회귀를 수행한다. Luna/max에 전체 최종 기준을 전달했다.
+
+- Task3.0 보완 중간 결과: worker의 의미 있는 실패 재현을 보정한 뒤 관련 5개 Jest suite 353개가 통과했다. 불완전한 mock의 TypeError는 결함 재현 근거에서 제외했다. 실제 PG의 7개 감사 경합 기준은 아직 검사 중이며, 이 단위 테스트 결과를 최종 감사 통과로 취급하지 않는다. 부모 코드 확인에서 case.clientId가 nullable이며 고객 삭제 시 SetNull인 점을 확인하여, root recompute의 고객 없는 실제 행도 mock 전용 fallback으로 무잠금 갱신하지 않도록 보완을 요청했다.
