@@ -175,6 +175,14 @@ describeE2E("service-record finalization eligibility and frozen input (real disp
                     babyWeight: "3.2kg",
                 },
             });
+        } else {
+            // Isolate missing header from missing sessions: all thirteen
+            // submitted rows are present in this case.
+            await completeServiceRecordFinalizationCase(prisma, fixture);
+            await prisma.service_record_case.update({
+                where: { id: fixture.record.id },
+                data: { babyWeight: null },
+            });
         }
 
         // Deliberately seed the stale lifecycle marker to model a READY row

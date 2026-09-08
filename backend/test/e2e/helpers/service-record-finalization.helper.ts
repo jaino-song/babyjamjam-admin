@@ -56,7 +56,24 @@ export async function completeServiceRecordFinalizationCase(
         },
     });
 
-    for (const [index, date] of ORIGINAL_THIRTEEN_DATES.slice(fixture.days.length).entries()) {
+    const currentCase = await prisma.service_record_case.findUniqueOrThrow({
+        where: { id: fixture.record.id },
+        select: { plannedSessionDates: true },
+    });
+    const plannedDates = Array.isArray(currentCase.plannedSessionDates)
+        ? currentCase.plannedSessionDates.map((entry, index) => {
+            if (!entry || typeof entry !== "object" || Array.isArray(entry)
+                || entry.sessionIndex !== index + 1 || typeof entry.serviceDate !== "string") {
+                throw new Error("Invalid finalization fixture planned vector");
+            }
+            return entry.serviceDate;
+        })
+        : [...ORIGINAL_THIRTEEN_DATES];
+    if (plannedDates.length !== ORIGINAL_THIRTEEN_DATES.length) {
+        throw new Error("Incomplete finalization fixture planned vector");
+    }
+
+    for (const [index, date] of plannedDates.slice(fixture.days.length).entries()) {
         const sessionIndex = fixture.days.length + index + 1;
         await prisma.service_record_day.create({
             data: {
