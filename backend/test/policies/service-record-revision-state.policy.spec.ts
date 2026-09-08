@@ -115,4 +115,32 @@ describe("service-record revision dispatch state policy", () => {
         })).toBe("unknown");
         expect(deriveServiceRecordDocumentSyncStatus({ ...facts, revisionJob: null })).toBe("unknown");
     });
+
+    it("keeps legacy and revised identities distinct when revision rows are absent", () => {
+        expect(deriveServiceRecordDocumentSyncStatus({
+            currentRevisionId: null,
+            currentUsableRevisionId: null,
+            currentUsableDocumentVersion: null,
+            revisionJob: null,
+        })).toBe("not_required");
+        expect(deriveServiceRecordDocumentSyncStatus({
+            currentRevisionId: context().revisionId,
+            currentUsableRevisionId: null,
+            currentUsableDocumentVersion: null,
+            revisionJob: null,
+        })).toBe("unknown");
+        expect(deriveServiceRecordDocumentSyncStatus({
+            currentRevisionId: null,
+            currentUsableRevisionId: null,
+            currentUsableDocumentVersion: null,
+            revisionJob: {
+                revisionId: context().revisionId,
+                payloadFingerprint: context().businessFingerprint,
+                status: "queued",
+                progressStep: "queued",
+                completeness: "complete",
+                manualReviewRequired: false,
+            },
+        })).toBe("unknown");
+    });
 });
