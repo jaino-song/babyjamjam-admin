@@ -19,6 +19,78 @@ export const SERVICE_RECORD_REVISION_DOCUMENT_SYNC_STATUSES = [
     "unknown",
 ] as const satisfies readonly ServiceRecordRevisionDocumentSyncStatus[];
 
+/**
+ * The only inputs accepted by the document-sync projection are rows read
+ * under the service-record owning lock.  In particular, a worker's expected
+ * status is deliberately absent: adapters must compare that expected context
+ * with this projection instead of manufacturing an observed value from it.
+ */
+export interface ServiceRecordDocumentSyncFacts {
+    currentRevisionId: string | null;
+    currentUsableRevisionId: string | null;
+    currentUsableDocumentVersion: number | null;
+    revisionJob: {
+        revisionId: string | null;
+        payloadFingerprint: string | null;
+        status: string;
+        progressStep: string | null;
+        completeness: "complete" | "partial" | null;
+        manualReviewRequired: boolean;
+    } | null;
+}
+
+/**
+ * Derive document synchronization from the locked persisted source.  A job
+ * row alone never proves completion; the current usable revision pointer and
+ * document version must also point at the same complete revision. Any missing,
+ * contradictory, or manually-reviewable evidence remains unknown.
+ */
+export function deriveServiceRecordDocumentSyncStatus(
+    facts: ServiceRecordDocumentSyncFacts,
+): ServiceRecordRevisionDocumentSyncStatus {
+    const job = facts.revisionJob;
+    if (!job) return "unknown";
+    if (job.revisionId === null) return "not_required";
+    if (
+        typeof job.revisionId !== "string"
+        || job.revisionId.length === 0
+        || typeof job.payloadFingerprint !== "string"
+        || !FINGERPRINT_PATTERN.test(job.payloadFingerprint)
+        || job.completeness !== "complete"
+        || job.manualReviewRequired
+    ) {
+        return "unknown";
+    }
+    if (
+        facts.currentRevisionId !== job.revisionId
+        || facts.currentUsableRevisionId !== job.revisionId
+    ) {
+        return "unknown";
+    }
+    if (
+        facts.currentUsableDocumentVersion === null
+        || !Number.isInteger(facts.currentUsableDocumentVersion)
+        || facts.currentUsableDocumentVersion < 1
+    ) {
+        return "unknown";
+    }
+
+    switch (job.status) {
+        case "queued":
+            return "pending";
+        case "processing":
+        case "reconciling":
+            return "waiting_for_completion";
+        case "completed":
+            return "completed";
+        case "failed":
+        case "requires_attention":
+            return "failed";
+        default:
+            return "unknown";
+    }
+}
+
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/i;
 
@@ -98,7 +170,12 @@ export function authorizeServiceRecordDispatch(
 export function isRevisionDocumentDispatchAllowed(
     context: ServiceRecordRevisionDispatchContext | null | undefined,
 ): boolean {
+    // Phase0 capability is still unverified. Every revision-bound operation
+    // must remain manual-review only, regardless of the contract-stage label
+    // or a worker-supplied pending/completed status. Legacy jobs have no
+    // revision identity and continue through their existing path.
     return isValidServiceRecordDispatchContext(context)
+        && context.revisionId === null
         && context.documentSyncStatus !== "unknown"
         && context.documentSyncStatus !== "capability_unverified";
 }

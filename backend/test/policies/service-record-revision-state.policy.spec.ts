@@ -1,5 +1,6 @@
 import {
     authorizeServiceRecordDispatch,
+    deriveServiceRecordDocumentSyncStatus,
     isRevisionDocumentDispatchAllowed,
     isValidServiceRecordDispatchContext,
 } from "application/policies/service-record-revision-state.policy";
@@ -35,7 +36,9 @@ describe("service-record revision dispatch state policy", () => {
 
         expect(isValidServiceRecordDispatchContext(expected)).toBe(true);
         expect(authorizeServiceRecordDispatch(expected, observed)).toEqual({ kind: "allow" });
-        expect(isRevisionDocumentDispatchAllowed(observed)).toBe(true);
+        // Phase0 capability is unverified for all revision-bound operations,
+        // even when the captured status looks dispatchable.
+        expect(isRevisionDocumentDispatchAllowed(observed)).toBe(false);
     });
 
     it("marks a changed revision/date context stale", () => {
@@ -63,5 +66,53 @@ describe("service-record revision dispatch state policy", () => {
             context(),
             context({ plannedSessionCount: 3 }),
         )).toEqual({ kind: "lost", reason: "invalid_dispatch_context" });
+    });
+
+    it("derives synchronization from locked revision pointers and the owned job row", () => {
+        const base = {
+            currentRevisionId: context().revisionId,
+            currentUsableRevisionId: context().revisionId,
+            currentUsableDocumentVersion: 4,
+            revisionJob: {
+                revisionId: context().revisionId,
+                payloadFingerprint: context().businessFingerprint,
+                status: "queued",
+                progressStep: "queued",
+                completeness: "complete" as const,
+                manualReviewRequired: false,
+            },
+        };
+        expect(deriveServiceRecordDocumentSyncStatus(base)).toBe("pending");
+        expect(deriveServiceRecordDocumentSyncStatus({
+            ...base,
+            revisionJob: { ...base.revisionJob, status: "processing", progressStep: "creating" },
+        })).toBe("waiting_for_completion");
+        expect(deriveServiceRecordDocumentSyncStatus({
+            ...base,
+            revisionJob: { ...base.revisionJob, status: "completed" },
+        })).toBe("completed");
+    });
+
+    it("does not manufacture readiness from a missing or contradictory persisted row", () => {
+        const revisionId = context().revisionId;
+        const facts = {
+            currentRevisionId: revisionId,
+            currentUsableRevisionId: null,
+            currentUsableDocumentVersion: null,
+            revisionJob: {
+                revisionId,
+                payloadFingerprint: context().businessFingerprint,
+                status: "completed",
+                progressStep: "sent",
+                completeness: "complete" as const,
+                manualReviewRequired: false,
+            },
+        };
+        expect(deriveServiceRecordDocumentSyncStatus(facts)).toBe("unknown");
+        expect(deriveServiceRecordDocumentSyncStatus({
+            ...facts,
+            revisionJob: { ...facts.revisionJob, completeness: "partial" },
+        })).toBe("unknown");
+        expect(deriveServiceRecordDocumentSyncStatus({ ...facts, revisionJob: null })).toBe("unknown");
     });
 });
