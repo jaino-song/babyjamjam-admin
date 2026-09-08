@@ -201,6 +201,28 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         };
     }
 
+    it("keeps an explicitly classified revision contract eligible when it carries a case scope", () => {
+        const { usecase } = setup();
+        const isServiceRecord = (usecase as unknown as {
+            isServiceRecord: (document: {
+                documentKind: string | null;
+                serviceRecordCaseId: string | null;
+                templateId: string | null;
+            }) => boolean;
+        }).isServiceRecord.bind(usecase);
+
+        expect(isServiceRecord({
+            documentKind: "contract",
+            serviceRecordCaseId: "case-1",
+            templateId: "contract-template",
+        })).toBe(false);
+        expect(isServiceRecord({
+            documentKind: null,
+            serviceRecordCaseId: "case-1",
+            templateId: "contract-template",
+        })).toBe(true);
+    });
+
     it("rejects a malformed mirrored customer phone before auto-registration or linking", async () => {
         const document = mirroredDocument({
             customerPhone: "not-a-phone",
