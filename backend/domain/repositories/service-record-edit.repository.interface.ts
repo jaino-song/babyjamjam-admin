@@ -4,6 +4,10 @@ import type {
     ServiceRecordEditConfirmDocumentStatus,
     ServiceRecordEditConfirmResponse,
     ServiceRecordRevisionDispatchContext,
+    ServiceRecordRevisionDocumentOperation,
+    ServiceRecordRevisionDocumentStatus,
+    ServiceRecordRevisionDocumentState,
+    ServiceRecordRevisionHistoryResponse,
 } from "@babyjamjam/shared/types/service-record";
 import type { Prisma } from "@prisma/client";
 
@@ -148,6 +152,60 @@ export interface ServiceRecordRevision {
     provenance: ServiceRecordEditJsonValue;
     formVersionAtConfirm: number;
     snapshotReference: string | null;
+}
+
+/** Server-owned immutable operation input captured for one revision. */
+export interface CreateServiceRecordRevisionDocumentStateInput {
+    branchId: string;
+    clientId: number;
+    serviceRecordCaseId: string;
+    revisionId: string;
+    operation: ServiceRecordRevisionDocumentOperation;
+    generation: string;
+    immutableInput: ServiceRecordEditJsonValue;
+    inputFingerprint: string;
+    documentVersion?: number | null;
+    sourceDocumentId?: string | null;
+    targetDocumentId?: string | null;
+    templateId?: string | null;
+    templateVersion?: string | null;
+    workflowScope?: ServiceRecordEditJsonValue | null;
+    mirrorGeneration?: string | null;
+    step?: string;
+    status?: ServiceRecordRevisionDocumentStatus;
+    attempts?: number;
+    nextAttemptAt?: Date | null;
+    lastErrorCode?: string | null;
+}
+
+/** Compare-and-swap transition for mutable operation progress. */
+export interface AdvanceServiceRecordRevisionDocumentStateInput {
+    branchId: string;
+    clientId: number;
+    stateId: string;
+    expectedGeneration: string;
+    expectedVersion: number;
+    step: string;
+    status: ServiceRecordRevisionDocumentStatus;
+    attempts?: number;
+    nextAttemptAt?: Date | null;
+    lastErrorCode?: string | null;
+    documentVersion?: number | null;
+    sourceDocumentId?: string | null;
+    targetDocumentId?: string | null;
+    templateId?: string | null;
+    templateVersion?: string | null;
+    workflowScope?: ServiceRecordEditJsonValue | null;
+    mirrorGeneration?: string | null;
+}
+
+/** A retry only reopens the existing generation; it never allocates a revision. */
+export interface RetryServiceRecordRevisionDocumentInput {
+    branchId: string;
+    clientId: number;
+    revisionId: string;
+    stateId: string;
+    expectedGeneration: string;
 }
 
 export interface CreateServiceRecordEditDraftInput {
@@ -310,6 +368,42 @@ export interface IServiceRecordEditRepository {
     discardDraft(input: DiscardServiceRecordEditDraftInput): Promise<ServiceRecordEditDraft>;
     /** Append an immutable revision, allocating the next case-local number under a row lock. */
     appendRevision(input: AppendServiceRecordRevisionInput): Promise<ServiceRecordRevision>;
+    /** Read branch/client-scoped revision history and safe operation summaries. */
+    listRevisionHistory(branchId: string, clientId: number): Promise<ServiceRecordRevisionHistoryResponse | null>;
+    /** Read one mutable operation row by all server-owned scope keys. */
+    findRevisionDocumentState(
+        branchId: string,
+        clientId: number,
+        revisionId: string,
+        stateId: string,
+    ): Promise<ServiceRecordRevisionDocumentState | null>;
+    /** Create a generation-bound operation state. The unique operation/generation constraints are authoritative. */
+    createRevisionDocumentState(
+        input: CreateServiceRecordRevisionDocumentStateInput,
+    ): Promise<ServiceRecordRevisionDocumentState>;
+    /** Same insert boundary for callers that already own the confirm transaction. */
+    createRevisionDocumentStateInTransaction(
+        context: ServiceRecordEditTransactionContext,
+        input: CreateServiceRecordRevisionDocumentStateInput,
+    ): Promise<ServiceRecordRevisionDocumentState>;
+    /** Advance mutable progress only when generation and version still match. */
+    advanceRevisionDocumentState(
+        input: AdvanceServiceRecordRevisionDocumentStateInput,
+    ): Promise<ServiceRecordRevisionDocumentState | null>;
+    /** Same CAS boundary on an existing caller-owned transaction. */
+    advanceRevisionDocumentStateInTransaction(
+        context: ServiceRecordEditTransactionContext,
+        input: AdvanceServiceRecordRevisionDocumentStateInput,
+    ): Promise<ServiceRecordRevisionDocumentState | null>;
+    /** Reopen a failed/manual operation without changing revision or generation identity. */
+    retryRevisionDocumentState(
+        input: RetryServiceRecordRevisionDocumentInput,
+    ): Promise<ServiceRecordRevisionDocumentState | null>;
+    /** Same retry CAS boundary on an existing caller-owned transaction. */
+    retryRevisionDocumentStateInTransaction(
+        context: ServiceRecordEditTransactionContext,
+        input: RetryServiceRecordRevisionDocumentInput,
+    ): Promise<ServiceRecordRevisionDocumentState | null>;
     /**
      * Confirm one active draft atomically. The repository owns the typed
      * Prisma transaction and invokes `prepare` only after the common lock
