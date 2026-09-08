@@ -120,6 +120,59 @@ describe("ReceiptLinkDeliveryEnricher", () => {
         expect(issueService.issue).not.toHaveBeenCalled();
     });
 
+    it("rechecks the authoritative mirror generation before staged delivery", async () => {
+        const issueService = {
+            issue: jest.fn(),
+            assertDocumentSyncReady: jest.fn().mockResolvedValue(undefined),
+        };
+        const tokenService = {
+            getStatus: jest.fn().mockResolvedValue({ ok: true, storagePath: "receipts/branch/receipt.png" }),
+        };
+        const storage = { createSignedUrl: jest.fn().mockResolvedValue("https://storage.example/signed") };
+        const enricher = new ReceiptLinkDeliveryEnricher(
+            new SmsTriggerPayloadEnricherRegistry(),
+            issueService as never,
+            tokenService as never,
+            storage as never,
+        );
+        const stagedJob = makeJob("agent-sms-retry:action-1", "https://m.admin.example/receipt/efr_live");
+
+        await enricher.validateStagedSnapshot(stagedJob);
+
+        expect(issueService.assertDocumentSyncReady).toHaveBeenCalledWith({
+            branchId: "11111111-1111-1111-1111-111111111111",
+            clientId: 7,
+        });
+        expect(tokenService.getStatus).toHaveBeenCalledWith("efr_live", expect.any(Date));
+    });
+
+    it("pins an explicitly selected contract document during staged delivery", async () => {
+        const issueService = {
+            issue: jest.fn(),
+            assertDocumentSyncReady: jest.fn().mockResolvedValue(undefined),
+        };
+        const tokenService = {
+            getStatus: jest.fn().mockResolvedValue({ ok: true, storagePath: "receipts/branch/receipt.png" }),
+        };
+        const storage = { createSignedUrl: jest.fn().mockResolvedValue("https://storage.example/signed") };
+        const enricher = new ReceiptLinkDeliveryEnricher(
+            new SmsTriggerPayloadEnricherRegistry(),
+            issueService as never,
+            tokenService as never,
+            storage as never,
+        );
+        const stagedJob = makeJob("agent-sms-retry:action-1", "https://m.admin.example/receipt/efr_live");
+        stagedJob.payload.receiptEformsignDocId = 42;
+
+        await enricher.validateStagedSnapshot(stagedJob);
+
+        expect(issueService.assertDocumentSyncReady).toHaveBeenCalledWith({
+            branchId: "11111111-1111-1111-1111-111111111111",
+            clientId: 7,
+            eformsignDocId: 42,
+        });
+    });
+
     it("rejects a staged retry when the token row exists but its receipt object is missing", async () => {
         const tokenService = {
             getStatus: jest.fn().mockResolvedValue({ ok: true, storagePath: "receipts/branch/missing.png" }),

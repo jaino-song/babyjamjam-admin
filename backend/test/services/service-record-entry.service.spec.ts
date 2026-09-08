@@ -303,6 +303,88 @@ async function expectException(
     }
 }
 
+describe("ServiceRecordEntryService planned-session dates", () => {
+    const plannedSessions = [
+        "2026-07-01",
+        "2026-07-02",
+        "2026-07-03",
+        "2026-07-06",
+        "2026-07-07",
+    ].map((serviceDate, offset) => ({
+        sessionIndex: offset + 1,
+        serviceDate,
+        originalDate: serviceDate,
+        assignmentId: `assignment-${offset + 1}`,
+        scheduleId: 10,
+        employeeId: 20,
+        provenanceVersion: "revision-1",
+    }));
+
+    it("exposes the complete persisted planned vector, including future unwritten sessions", async () => {
+        const record = createRecord({ plannedSessions });
+        const prisma = {
+            service_record_case: {
+                findFirst: jest.fn().mockResolvedValue({ ...record, days: [] }),
+                findUnique: jest.fn().mockResolvedValue({ ...record, days: [] }),
+            },
+            employee_schedule: {
+                findUnique: jest.fn().mockResolvedValue({
+                    client: { id: 100, name: "고객" },
+                    primaryEmployee: { id: 20, name: "제공자" },
+                }),
+            },
+            schedule_change_request: {
+                findFirst: jest.fn().mockResolvedValue(null),
+            },
+        };
+        const service = new ServiceRecordEntryService(
+            prisma as unknown as PrismaService,
+            {} as ServiceRecordTokenService,
+            {} as ServiceRecordLifecycleService,
+        );
+
+        const result = await service.getContext(context);
+
+        expect(result.plannedSessionDates).toEqual(plannedSessions.map(({ sessionIndex, serviceDate }) => ({
+            sessionIndex,
+            serviceDate,
+        })));
+    });
+
+    it("rejects provider dates that disagree with the canonical vector before any period write", async () => {
+        const transactionRecord = createRecord({ plannedSessions });
+        const { service, upsert, scheduleUpdate, transactionClient } = createHarness({ transactionRecord });
+
+        await expect(service.upsertSession(
+            context,
+            3,
+            createDto({ serviceDate: "2026-07-08T00:00:00.000Z" }),
+            false,
+        )).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_PLANNED_DATE_STALE" } });
+
+        expect(upsert).not.toHaveBeenCalled();
+        expect(scheduleUpdate).not.toHaveBeenCalled();
+        expect(transactionClient.client.update).not.toHaveBeenCalled();
+    });
+
+    it("persists a provider submission only when its date matches the canonical vector", async () => {
+        const transactionRecord = createRecord({ plannedSessions });
+        const { service, upsert } = createHarness({ transactionRecord });
+
+        await service.upsertSession(
+            context,
+            1,
+            createDto({ serviceDate: "2026-07-01T00:00:00.000Z" }),
+            false,
+        );
+
+        expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
+            create: expect.objectContaining({ serviceDate: new Date("2026-07-01T00:00:00.000Z") }),
+            update: expect.objectContaining({ serviceDate: new Date("2026-07-01T00:00:00.000Z") }),
+        }));
+    });
+});
+
 describe("ServiceRecordEntryService.upsertSession", () => {
     afterEach(() => {
         jest.useRealTimers();

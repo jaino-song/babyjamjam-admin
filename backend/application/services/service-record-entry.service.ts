@@ -22,6 +22,10 @@ import { SERVICE_RECORD_TEXT_LIMITS } from "domain/constants/service-record-text
 import { addBusinessDaysKr } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { SaveServiceHeaderDto, UpsertSessionDto } from "interface/dto/service-record-entry.dto";
+import {
+    validateServiceRecordScheduleVector,
+    type ServiceRecordPlannedSession,
+} from "@babyjamjam/shared/utils/service-record-schedule";
 
 import {
     ServiceRecordTokenService,
@@ -35,6 +39,86 @@ import {
 
 function toIso(d: Date): string {
     return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Read the persisted, complete planned-session vector without inventing
+ * provenance or dates.  Provider callers only need the date projection, but
+ * validating the full row here prevents a malformed/partial admin revision
+ * from silently falling back to the legacy start-date calculation.
+ */
+function plannedSessionVector(
+    raw: Prisma.JsonValue | null | undefined,
+    requiredSessionCount: number | null | undefined,
+): ServiceRecordPlannedSession[] | null {
+    if (raw === null || raw === undefined) return null;
+    const values = Array.isArray(raw)
+        ? raw
+        : typeof raw === "object" && raw !== null && !Array.isArray(raw)
+            ? ((raw as Record<string, Prisma.JsonValue>)["sessions"]
+                ?? (raw as Record<string, Prisma.JsonValue>)["entries"]
+                ?? (raw as Record<string, Prisma.JsonValue>)["plannedSessions"])
+            : null;
+    if (!Array.isArray(values)) return null;
+
+    const entries: ServiceRecordPlannedSession[] = [];
+    for (const value of values) {
+        if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+        const row = value as Record<string, Prisma.JsonValue>;
+        const provenance = typeof row["provenance"] === "object" && row["provenance"] !== null && !Array.isArray(row["provenance"])
+            ? row["provenance"] as Record<string, Prisma.JsonValue>
+            : null;
+        const sessionIndex = row["sessionIndex"];
+        const serviceDate = row["serviceDate"];
+        const originalDate = row["originalDate"];
+        const assignmentId = row["assignmentId"];
+        const scheduleId = row["scheduleId"] ?? provenance?.["scheduleId"];
+        const employeeId = row["employeeId"] ?? provenance?.["employeeId"];
+        const provenanceVersion = row["provenanceVersion"]
+            ?? provenance?.["version"]
+            ?? row["version"];
+        if (
+            typeof sessionIndex !== "number"
+            || !Number.isInteger(sessionIndex)
+            || typeof serviceDate !== "string"
+            || typeof originalDate !== "string"
+            || typeof assignmentId !== "string"
+            || typeof scheduleId !== "number"
+            || !Number.isInteger(scheduleId)
+            || typeof employeeId !== "number"
+            || !Number.isInteger(employeeId)
+            || (typeof provenanceVersion !== "string" && typeof provenanceVersion !== "number")
+        ) {
+            return null;
+        }
+        entries.push({
+            sessionIndex,
+            serviceDate,
+            originalDate,
+            assignmentId,
+            scheduleId,
+            employeeId,
+            provenanceVersion: String(provenanceVersion),
+        });
+    }
+    try {
+        return validateServiceRecordScheduleVector(
+            entries,
+            requiredSessionCount ?? undefined,
+        );
+    } catch {
+        return null;
+    }
+}
+
+function persistedPlannedSessionDates(
+    raw: Prisma.JsonValue | null | undefined,
+    requiredSessionCount: number | null | undefined,
+): Array<{ sessionIndex: number; serviceDate: string }> | null {
+    return plannedSessionVector(raw, requiredSessionCount)?.map(({ sessionIndex, serviceDate }) => ({
+        sessionIndex,
+        serviceDate,
+    })) ?? null;
 }
 
 /**
@@ -86,6 +170,11 @@ export class ServiceRecordEntryService {
         if (!schedule) throw new NotFoundException("Assignment not found");
         if (!record) throw new NotFoundException("Service record not found");
 
+        const plannedSessionDates = persistedPlannedSessionDates(
+            record.plannedSessions,
+            record.requiredSessionCount,
+        );
+
         return {
             employee: { id: schedule.primaryEmployee.id, name: schedule.primaryEmployee.name },
             client: { id: schedule.client.id, name: schedule.client.name },
@@ -101,6 +190,7 @@ export class ServiceRecordEntryService {
                 ...day,
                 sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
             })),
+            ...(plannedSessionDates ? { plannedSessionDates } : {}),
             pendingScheduleChange: pendingScheduleChange
                 ? {
                     id: pendingScheduleChange.id,
@@ -323,6 +413,25 @@ export class ServiceRecordEntryService {
             }
             if (record.startDate && serviceDate < record.startDate) {
                 throw new BadRequestException("Service date cannot precede the service start date.");
+            }
+
+            // A confirmed administrator revision is authoritative for every
+            // provider slot, including slots that do not yet have a day row.
+            // Check the persisted vector after the common lock/reread and
+            // before any schedule/client extension so stale provider input can
+            // never mutate derived periods first.
+            const plannedVector = plannedSessionVector(record.plannedSessions, total);
+            if (record.plannedSessions !== null && record.plannedSessions !== undefined) {
+                if (!plannedVector) {
+                    throw new ConflictException({ code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" });
+                }
+                const plannedDate = plannedVector.find((entry) => entry.sessionIndex === sessionIndex)?.serviceDate;
+                if (!plannedDate) {
+                    throw new ConflictException({ code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" });
+                }
+                if (toIso(serviceDate) !== plannedDate) {
+                    throw new ConflictException({ code: "SERVICE_RECORD_PLANNED_DATE_STALE" });
+                }
             }
 
             // A postponed session (a later serviceDate than originally

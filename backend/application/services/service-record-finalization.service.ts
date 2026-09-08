@@ -3,6 +3,10 @@ import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { captureServiceRecordError } from "infrastructure/observability/service-record-sentry";
 import {
+    lockServiceRecordCaseForWrite,
+    lockServiceRecordWriteSet,
+} from "application/policies/service-record-write-lock.policy";
+import {
     SERVICE_RECORD_CASE_STATUS,
     ServiceRecordLifecycleService,
 } from "./service-record-lifecycle.service";
@@ -45,27 +49,8 @@ export class ServiceRecordFinalizationService {
 
         let finalizedCount = 0;
         for (const candidate of candidates) {
-            const claimed = await this.prisma.service_record_case.updateMany({
-                where: {
-                    id: candidate.id,
-                    OR: [
-                        { status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE },
-                        {
-                            status: SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED,
-                            nextAttemptAt: { lte: referenceDate },
-                        },
-                    ],
-                },
-                data: {
-                    status: SERVICE_RECORD_CASE_STATUS.FINALIZING,
-                    finalizationStartedAt: new Date(),
-                    finalizationAttempts: { increment: 1 },
-                    nextAttemptAt: null,
-                    lastError: null,
-                    version: { increment: 1 },
-                },
-            });
-            if (claimed.count !== 1) continue;
+            const claim = await this.claimFinalizationCase(candidate.id, candidate.branchId, referenceDate);
+            if (!claim.claimed) continue;
 
             try {
                 const result = await this.createSnapshotUsecase.executeCase(
@@ -108,13 +93,155 @@ export class ServiceRecordFinalizationService {
             } catch (error) {
                 await this.recordFailure(
                     candidate.id,
-                    candidate.finalizationAttempts + 1,
+                    claim.attempts,
                     error,
                 );
             }
         }
 
         return finalizedCount;
+    }
+
+    /**
+     * Claim a finalization case under the same client -> employees -> case
+     * ordering used by provider and administrator writers. The compatibility
+     * fallback keeps existing narrow unit doubles working; a real Prisma
+     * transaction always takes the complete lock surface and rereads the case
+     * after waiting before changing its lifecycle state.
+     */
+    private async claimFinalizationCase(
+        caseId: string,
+        branchId: string,
+        referenceDate: Date,
+    ): Promise<{ claimed: boolean; attempts: number }> {
+        return this.prisma.$transaction(async (tx) => {
+            const caseDelegate = tx.service_record_case as unknown as {
+                findUnique?: (args: unknown) => Promise<{
+                    id: string;
+                    branchId: string;
+                    clientId: number | null;
+                    status: string;
+                    nextAttemptAt: Date | null;
+                    finalizationAttempts: number;
+                } | null>;
+            } | undefined;
+            if (typeof caseDelegate?.findUnique !== "function") {
+                const claimed = await tx.service_record_case.updateMany({
+                    where: {
+                        id: caseId,
+                        OR: [
+                            { status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE },
+                            {
+                                status: SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED,
+                                nextAttemptAt: { lte: referenceDate },
+                            },
+                        ],
+                    },
+                    data: {
+                        status: SERVICE_RECORD_CASE_STATUS.FINALIZING,
+                        finalizationStartedAt: new Date(),
+                        finalizationAttempts: { increment: 1 },
+                        nextAttemptAt: null,
+                        lastError: null,
+                        version: { increment: 1 },
+                    },
+                });
+                return { claimed: claimed.count === 1, attempts: claimed.count === 1 ? 1 : 0 };
+            }
+
+            const discovered = await caseDelegate.findUnique({
+                where: { id: caseId },
+                select: {
+                    id: true,
+                    branchId: true,
+                    clientId: true,
+                    status: true,
+                    nextAttemptAt: true,
+                    finalizationAttempts: true,
+                },
+            });
+            if (
+                !discovered
+                || discovered.branchId !== branchId
+                || (
+                    discovered.status === SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED
+                    && discovered.nextAttemptAt !== null
+                    && discovered.nextAttemptAt.getTime() > referenceDate.getTime()
+                )
+                || (
+                    discovered.status !== SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE
+                    && discovered.status !== SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED
+                )
+            ) {
+                return { claimed: false, attempts: 0 };
+            }
+
+            if (discovered.clientId !== null) {
+                await lockServiceRecordWriteSet(tx, {
+                    branchId,
+                    clientId: discovered.clientId,
+                    caseId: discovered.id,
+                });
+            } else {
+                const locked = await lockServiceRecordCaseForWrite(tx, branchId, discovered.id);
+                if (typeof tx.$queryRaw === "function" && !locked) {
+                    return { claimed: false, attempts: 0 };
+                }
+            }
+
+            const current = await caseDelegate.findUnique({
+                where: { id: caseId },
+                select: {
+                    id: true,
+                    branchId: true,
+                    clientId: true,
+                    status: true,
+                    nextAttemptAt: true,
+                    finalizationAttempts: true,
+                },
+            });
+            if (
+                !current
+                || current.branchId !== branchId
+                || (
+                    current.status === SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED
+                    && current.nextAttemptAt !== null
+                    && current.nextAttemptAt.getTime() > referenceDate.getTime()
+                )
+                || (
+                    current.status !== SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE
+                    && current.status !== SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED
+                )
+            ) {
+                return { claimed: false, attempts: 0 };
+            }
+
+            const claimed = await tx.service_record_case.updateMany({
+                where: {
+                    id: caseId,
+                    branchId,
+                    OR: [
+                        { status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE },
+                        {
+                            status: SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED,
+                            nextAttemptAt: { lte: referenceDate },
+                        },
+                    ],
+                },
+                data: {
+                    status: SERVICE_RECORD_CASE_STATUS.FINALIZING,
+                    finalizationStartedAt: new Date(),
+                    finalizationAttempts: { increment: 1 },
+                    nextAttemptAt: null,
+                    lastError: null,
+                    version: { increment: 1 },
+                },
+            });
+            return {
+                claimed: claimed.count === 1,
+                attempts: claimed.count === 1 ? current.finalizationAttempts + 1 : 0,
+            };
+        });
     }
 
     private async recoverStaleFinalizations(referenceDate: Date): Promise<void> {

@@ -1,6 +1,8 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Interval } from "@nestjs/schedule";
+import { createHash } from "node:crypto";
+import { Prisma } from "@prisma/client";
 
 import type { ContractDataDto } from "application/dto/contract.dto";
 import { EformsignDocumentJobReconciliationService } from "application/services/eformsign-document-job-reconciliation.service";
@@ -29,6 +31,16 @@ import {
 } from "domain/repositories/client.repository.interface";
 import { createEformsignWorkerPrincipal } from "application/services/eformsign-credential-boundary.service";
 import { SchedulerLeaseService } from "application/services/scheduler-lease.service";
+import { PrismaService } from "infrastructure/database/prisma.service";
+import type {
+    ServiceRecordRevisionDispatchContext,
+} from "@babyjamjam/shared/types/service-record";
+import {
+    authorizeServiceRecordDispatch,
+    isRevisionDocumentDispatchAllowed,
+    isValidServiceRecordDispatchContext,
+} from "application/policies/service-record-revision-state.policy";
+import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 
 const WORKER_INTERVAL_MS = 5_000;
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -51,6 +63,75 @@ interface FinalizeDocumentJobPayload {
     documentId?: string;
     prefillEndDate?: string;
     progressId?: string;
+}
+
+type RevisionDocumentJobPayload = {
+    kind: "service_record_revision";
+    context: ServiceRecordRevisionDispatchContext;
+    immutablePayload: Record<string, unknown>;
+    payloadFingerprint: string;
+    completeness: "complete";
+    revisionId?: string | null;
+    revisionNumber?: number | null;
+    snapshotReference?: string | null;
+    generation?: string | null;
+};
+
+type CreateDispatchAuthorizationResult = {
+    kind: "allow" | "stale" | "lost";
+    reason?: string;
+    /** The durable progress marker was committed before the provider call. */
+    irreversible?: boolean;
+};
+
+function revisionPayload(value: unknown): RevisionDocumentJobPayload | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const row = value as Record<string, unknown>;
+    if (row["kind"] !== "service_record_revision") return null;
+    const context = row["context"];
+    if (!context || typeof context !== "object" || Array.isArray(context)) return null;
+    const candidate = row as unknown as RevisionDocumentJobPayload;
+    return isValidServiceRecordDispatchContext(candidate.context)
+        && candidate.completeness === "complete"
+        && typeof candidate.payloadFingerprint === "string"
+        && candidate.immutablePayload !== null
+        && typeof candidate.immutablePayload === "object"
+        && !Array.isArray(candidate.immutablePayload)
+        ? candidate
+        : null;
+}
+
+function stableJson(value: unknown): string {
+    if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+    if (value && typeof value === "object") {
+        return `{${Object.entries(value as Record<string, unknown>)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([key, nested]) => `${JSON.stringify(key)}:${stableJson(nested)}`)
+            .join(",")}}`;
+    }
+    return JSON.stringify(value) ?? "null";
+}
+
+function plannedSessionDatesFromJson(value: Prisma.JsonValue | null): Array<{
+    sessionIndex: number;
+    serviceDate: string;
+}> {
+    if (!Array.isArray(value)) return [];
+    return value
+        .map((entry) => {
+            if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+            const row = entry as Record<string, Prisma.JsonValue>;
+            const sessionIndex = row["sessionIndex"];
+            const serviceDate = row["serviceDate"];
+            if (
+                typeof sessionIndex !== "number"
+                || !Number.isInteger(sessionIndex)
+                || typeof serviceDate !== "string"
+            ) return null;
+            return { sessionIndex, serviceDate };
+        })
+        .filter((entry): entry is { sessionIndex: number; serviceDate: string } => entry !== null)
+        .sort((left, right) => left.sessionIndex - right.sessionIndex);
 }
 
 /**
@@ -77,6 +158,8 @@ export class EformsignDocumentJobWorkerService {
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
         private readonly schedulerLease: SchedulerLeaseService,
+        /** Optional for narrow unit doubles; production always supplies Prisma. */
+        private readonly prisma?: PrismaService,
     ) {}
 
     @Interval(WORKER_INTERVAL_MS)
@@ -134,8 +217,40 @@ export class EformsignDocumentJobWorkerService {
             return;
         }
 
+        let revisionAuthorization: CreateDispatchAuthorizationResult;
+        try {
+            revisionAuthorization = await this.authorizeRevisionJob(job);
+        } catch {
+            await this.handlePreSendFailure(job, "SERVICE_RECORD_REVISION_AUTHORIZATION_FAILURE");
+            return;
+        }
+        if (revisionAuthorization.kind !== "allow") {
+            const attention = await this.repository.markRequiresAttention(
+                job.id,
+                job.leaseToken,
+                revisionAuthorization.reason ?? "SERVICE_RECORD_REVISION_DISPATCH_NOT_AUTHORIZED",
+            );
+            await this.recordAutoFinalizeTerminalOutcome(
+                job,
+                attention,
+                revisionAuthorization.reason ?? "SERVICE_RECORD_REVISION_DISPATCH_NOT_AUTHORIZED",
+            );
+            return;
+        }
+        if (revisionAuthorization.irreversible) {
+            // The database marker is the source of truth for confirm races;
+            // mirror it on this claimed copy so any exception after the
+            // marker follows reconciliation instead of a retry path.
+            Object.assign(job, { progressStep: "creating" });
+        }
+
         let latestProgressStep: EformsignHeadlessProgressStep | undefined;
-        const heartbeat = this.startHeartbeat(job.id, job.leaseToken, () => latestProgressStep);
+        const heartbeat = this.startHeartbeat(
+            job.id,
+            job.leaseToken,
+            () => latestProgressStep,
+            job.progressStep === "creating" || job.progressStep === "sent",
+        );
         try {
             if (job.jobType === "create_document") {
                 await this.processCreation(job, (step) => {
@@ -201,7 +316,12 @@ export class EformsignDocumentJobWorkerService {
                 onProgress: async (step) => {
                     latestProgressStep = step;
                     onProgressStep?.(step);
-                    await this.recordProgress(job.id, leaseToken, step);
+                    await this.recordProgress(
+                        job.id,
+                        leaseToken,
+                        step,
+                        job.progressStep === "creating" || job.progressStep === "sent",
+                    );
                 },
             },
             createEformsignWorkerPrincipal(job.branchId),
@@ -215,7 +335,191 @@ export class EformsignDocumentJobWorkerService {
             await this.markAndReconcile(job, latestProgressStep);
             return;
         }
+        if (job.progressStep === "creating") {
+            // A durable pre-send authorization marker makes this attempt
+            // irreversible from the confirm race's perspective. Even when
+            // the provider reports a synchronous failure before its callback,
+            // reconcile instead of reopening a second send via retry.
+            await this.markAndReconcile(job, "creating");
+            return;
+        }
         await this.handlePreSendFailure(job, "HEADLESS_CREATE_PRE_SEND_FAILURE");
+    }
+
+    /**
+     * Service-record revision jobs carry their complete immutable generation
+     * input in the queued payload. Before opening the provider boundary, lock
+     * the owning case through the common writer order and compare the captured
+     * revision context. Legacy create jobs have no context and retain their
+     * existing path. Capability-unverified/invalid inputs fail closed without
+     * any vendor call.
+     */
+    private async authorizeRevisionJob(
+        job: EformsignDocumentJobEntity,
+    ): Promise<CreateDispatchAuthorizationResult> {
+        if (job.jobType !== "create_document") return { kind: "allow" };
+        const rawPayload = job.payload ?? {};
+        const payload = revisionPayload(rawPayload);
+        if (!payload) {
+            // A normal legacy create payload does not carry a `kind` marker.
+            if (rawPayload["kind"] === undefined) {
+                if (!this.prisma || !job.branchId || job.clientId === null) return { kind: "allow" };
+                return this.authorizeLegacyCreateJob(job);
+            }
+            return { kind: "stale", reason: "INVALID_SERVICE_RECORD_REVISION_JOB_PAYLOAD" };
+        }
+        if (!isRevisionDocumentDispatchAllowed(payload.context)) {
+            return { kind: "stale", reason: "SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED" };
+        }
+        if (!this.prisma) {
+            return { kind: "lost", reason: "SERVICE_RECORD_REVISION_AUTHORIZATION_UNAVAILABLE" };
+        }
+
+        return this.prisma.$transaction(async (transaction) => {
+            const context = payload.context;
+            const caseDelegate = transaction.service_record_case as unknown as {
+                findUnique?: (args: unknown) => Promise<{
+                    id: string;
+                    branchId: string;
+                    clientId: number | null;
+                    requiredSessionCount: number | null;
+                    plannedSessions: Prisma.JsonValue | null;
+                    currentRevisionId: string | null;
+                    formVersion: number;
+                    status: string;
+                } | null>;
+            } | undefined;
+            const revisionDelegate = transaction.service_record_revision as unknown as {
+                findUnique?: (args: unknown) => Promise<{
+                    revisionNumber: number;
+                    payload: Prisma.JsonValue;
+                } | null>;
+            } | undefined;
+            if (typeof caseDelegate?.findUnique !== "function") {
+                return { kind: "lost" as const, reason: "SERVICE_RECORD_REVISION_CASE_UNAVAILABLE" };
+            }
+
+            await lockServiceRecordWriteSet(transaction, {
+                branchId: context.branchId,
+                clientId: context.clientId,
+                caseId: context.serviceRecordCaseId,
+            });
+            const current = await caseDelegate.findUnique({
+                where: { id: context.serviceRecordCaseId },
+                select: {
+                    id: true,
+                    branchId: true,
+                    clientId: true,
+                    requiredSessionCount: true,
+                    plannedSessions: true,
+                    currentRevisionId: true,
+                    formVersion: true,
+                    status: true,
+                },
+            });
+            if (
+                !current
+                || current.id !== context.serviceRecordCaseId
+                || current.branchId !== context.branchId
+                || current.clientId !== context.clientId
+            ) {
+                return { kind: "lost" as const, reason: "SERVICE_RECORD_REVISION_OWNERSHIP_CHANGED" };
+            }
+
+            let revisionNumber = current.currentRevisionId === null ? null : context.revisionNumber;
+            let businessFingerprint = context.businessFingerprint;
+            if (current.currentRevisionId !== null && typeof revisionDelegate?.findUnique === "function") {
+                const revision = await revisionDelegate.findUnique({
+                    where: { id: current.currentRevisionId },
+                    select: { revisionNumber: true, payload: true },
+                });
+                if (!revision) {
+                    return { kind: "lost" as const, reason: "SERVICE_RECORD_REVISION_MISSING" };
+                }
+                revisionNumber = revision.revisionNumber;
+                businessFingerprint = createHash("sha256")
+                    .update(stableJson(revision.payload))
+                    .digest("hex");
+            }
+
+            const observed: ServiceRecordRevisionDispatchContext = {
+                branchId: current.branchId,
+                clientId: context.clientId,
+                serviceRecordCaseId: current.id,
+                revisionId: current.currentRevisionId,
+                revisionNumber,
+                businessFingerprint,
+                plannedSessionCount: current.requiredSessionCount,
+                plannedSessionDates: plannedSessionDatesFromJson(current.plannedSessions),
+                documentSyncStatus: context.documentSyncStatus,
+                lifecycleStatus: current.status,
+                formVersion: current.formVersion,
+            };
+            const authorization = authorizeServiceRecordDispatch(context, observed);
+            if (authorization.kind === "stale") {
+                return {
+                    kind: "stale",
+                    reason: authorization.reason ?? "SERVICE_RECORD_REVISION_CONTEXT_STALE",
+                };
+            }
+            if (authorization.kind === "lost") {
+                return { kind: "lost", reason: authorization.reason };
+            }
+            return this.markCreateDispatching(transaction, job);
+        });
+    }
+
+    /**
+     * Legacy creation jobs have no revision context to compare, but a
+     * client-owned job still competes with confirm and schedule writers. The
+     * common lock is therefore required before the same durable creating
+     * marker is committed. Non-client jobs retain their existing path.
+     */
+    private async authorizeLegacyCreateJob(
+        job: EformsignDocumentJobEntity,
+    ): Promise<CreateDispatchAuthorizationResult> {
+        if (!this.prisma || !job.branchId || job.clientId === null) {
+            // Narrow unit doubles do not inject Prisma. Production jobs always
+            // have the transaction boundary; keep the legacy unit path intact.
+            return { kind: "allow" };
+        }
+        return this.prisma.$transaction(async (transaction) => {
+            await lockServiceRecordWriteSet(transaction, {
+                branchId: job.branchId,
+                clientId: job.clientId!,
+            });
+            return this.markCreateDispatching(transaction, job);
+        });
+    }
+
+    /** Persist the pre-provider marker while the owning lock set is held. */
+    private async markCreateDispatching(
+        transaction: Prisma.TransactionClient,
+        job: EformsignDocumentJobEntity,
+    ): Promise<CreateDispatchAuthorizationResult> {
+        if (
+            typeof transaction.$queryRaw !== "function"
+            || !job.branchId
+            || job.clientId === null
+            || !job.leaseToken
+        ) {
+            return { kind: "lost", reason: "SERVICE_RECORD_DISPATCH_MARKER_UNAVAILABLE" };
+        }
+        const rows = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            UPDATE "eformsign_document_job"
+            SET progress_step = 'creating',
+                updated_at = date_trunc('milliseconds', clock_timestamp())
+            WHERE id = ${job.id}::uuid
+              AND branch_id = ${job.branchId}::uuid
+              AND client_id = ${job.clientId}
+              AND status = 'processing'
+              AND lease_token = ${job.leaseToken}::uuid
+              AND (progress_step IS NULL OR progress_step IN ('queued', 'validating', 'preparing'))
+            RETURNING id
+        `);
+        return rows.length === 1
+            ? { kind: "allow", irreversible: true }
+            : { kind: "lost", reason: "SERVICE_RECORD_DISPATCH_CLAIM_LOST" };
     }
 
     private async processFinalization(
@@ -247,7 +551,12 @@ export class EformsignDocumentJobWorkerService {
                     onProgress: async (progressStep) => {
                         latestProgressStep = progressStep;
                         onProgressStep?.(progressStep);
-                        await this.recordProgress(job.id, leaseToken, progressStep);
+                        await this.recordProgress(
+                            job.id,
+                            leaseToken,
+                            progressStep,
+                            job.progressStep === "creating" || job.progressStep === "sent",
+                        );
                     },
                 },
                 createEformsignWorkerPrincipal(job.branchId),
@@ -363,9 +672,14 @@ export class EformsignDocumentJobWorkerService {
         jobId: string,
         jobLeaseToken: string,
         progressStep: () => string | undefined,
+        preserveDispatchMarker = false,
     ): ReturnType<typeof setInterval> {
         const heartbeat = setInterval(() => {
-            void this.repository.updateProgress(jobId, jobLeaseToken, progressStep() ?? "processing", new Date()).catch(() => {
+            const observed = progressStep();
+            const persisted = preserveDispatchMarker
+                ? observed === "sent" ? "sent" : "creating"
+                : observed ?? "processing";
+            void this.repository.updateProgress(jobId, jobLeaseToken, persisted, new Date()).catch(() => {
                 this.logger.warn(`Eformsign document job ${jobId} heartbeat failed`);
             });
         }, HEARTBEAT_INTERVAL_MS);
@@ -373,8 +687,14 @@ export class EformsignDocumentJobWorkerService {
         return heartbeat;
     }
 
-    private async recordProgress(jobId: string, leaseToken: string, step: EformsignHeadlessProgressStep): Promise<void> {
-        const updated = await this.repository.updateProgress(jobId, leaseToken, step, new Date());
+    private async recordProgress(
+        jobId: string,
+        leaseToken: string,
+        step: EformsignHeadlessProgressStep,
+        preserveDispatchMarker = false,
+    ): Promise<void> {
+        const persistedStep = preserveDispatchMarker && step !== "sent" ? "creating" : step;
+        const updated = await this.repository.updateProgress(jobId, leaseToken, persistedStep, new Date());
         if (!updated) {
             throw new Error("EFORMSIGN_DOCUMENT_JOB_LEASE_LOST");
         }
