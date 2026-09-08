@@ -1,3 +1,7 @@
+## Final status: local Phase5 SHIP
+
+Sol/high same-session closure passed at `535a7f2db`. Real external activation remains unverified and fail-closed. Phase6 HTTP and browser verification follows.
+
 # Phase5 local verification
 
 Status: independent Phase5 audit REVISE; three verified findings are being corrected in two parallel units. Phase4 same-session Sol/high audit SHIP at1913ef766; external Phase0 capability remains unverified. No vendor, SMS, production storage or environment database calls authorized in this phase.

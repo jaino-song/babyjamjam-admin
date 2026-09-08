@@ -84,3 +84,16 @@ The supplied PG scenario does not catch this: it explicitly sets `linkExistingOn
 The requested atomic `client.eDocId`, revision, and end-date fences themselves are correctly present, including the deterministic pointer-change race. Explicit `documentKind: contract` also remains eligible without label-derived authority. No additional hypothesis is reported.
 
 Phase0 production activation remains deliberately unverified and fail-closed; this is not a Phase5 defect. Phase6 real HTTP-guard and browser verification remains pending.
+
+## Final same-session closure — local Phase5 SHIP
+
+Model: gpt-5.6-sol | Effort: high
+
+SHIP — local Phase5.
+
+No remaining actionable defect found. Commit `84adf3198` correctly gates every post-link lifecycle initialization on `linked`/`already_linked`, while preserving lifecycle initialization after actual client creation. The PostgreSQL fixture now injects the real lifecycle service, uses production-shaped reconciler options, and verifies the entire pending-case row—including `version` and `updatedAt`—remains unchanged.
+
+The supplied logs report 10/10 PostgreSQL tests and 66/66 linker unit tests passing; tests were not rerun under this read-only audit.
+
+Phase0 production activation and real provider workflow capability remain unverified and fail-closed. Phase6 real HTTP guard and browser verification remains pending.
+Audit session: `01a081e9-5b2e-7732-a961-b3d34d8a3d12`; implementation checkpoint: `535a7f2db`.
