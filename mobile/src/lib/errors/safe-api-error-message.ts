@@ -302,7 +302,11 @@ function consumeSqlDerivedRelation(tokens: SqlToken[], start: number): number | 
     return null;
 }
 
-function hasSqlRelationAfterFrom(tokens: SqlToken[], fromIndex: number): boolean {
+function hasSqlRelationAfterFrom(
+    tokens: SqlToken[],
+    fromIndex: number,
+    projection: SqlToken[],
+): boolean {
     const relationStart = fromIndex + 1;
     const isDerivedRelation = tokens[relationStart]?.value === "(";
     let index = isDerivedRelation
@@ -325,9 +329,25 @@ function hasSqlRelationAfterFrom(tokens: SqlToken[], fromIndex: number): boolean
     }
 
     const tail = tokens[index];
-    return tail === undefined
+    if (
+        tail === undefined
         || tail.value === ";"
-        || (tail.kind === "word" && SQL_RELATION_TAIL_KEYWORDS.has(tail.value));
+        || (tail.kind === "word" && SQL_RELATION_TAIL_KEYWORDS.has(tail.value))
+    ) {
+        return true;
+    }
+
+    // SQL commonly continues with a bare table alias or a dialect-specific
+    // clause. Once the projection and relation are SQL-shaped, an unknown tail
+    // should remain hidden instead of making the diagnostic displayable. Keep
+    // the natural-language "from the list" near-miss visible when it has a
+    // single plain-word projection.
+    return !(
+        projection.length === 1
+        && projection[0]?.kind === "word"
+        && tokens[relationStart]?.kind === "word"
+        && tokens[relationStart]?.value === "the"
+    );
 }
 
 function looksLikeSqlSelectDiagnostic(message: string): boolean {
@@ -344,7 +364,7 @@ function looksLikeSqlSelectDiagnostic(message: string): boolean {
         }
 
         const projection = tokens.slice(index + 1, fromIndex);
-        if (isSqlProjection(projection) && hasSqlRelationAfterFrom(tokens, fromIndex)) {
+        if (isSqlProjection(projection) && hasSqlRelationAfterFrom(tokens, fromIndex, projection)) {
             return true;
         }
     }

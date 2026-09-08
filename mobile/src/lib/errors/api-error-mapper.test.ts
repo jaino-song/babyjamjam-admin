@@ -174,6 +174,10 @@ describe("getErrorMessage", () => {
         ["nested expression", "SELECT (COALESCE(id, 0) + 1) AS next_id FROM clients"],
         ["nested select", "SELECT (SELECT 1 FROM related_clients) AS related_count FROM clients"],
         ["quoted expression", 'SELECT "id" AS "client_id" FROM "clients"'],
+        ["bare table alias", "SELECT u.id FROM users u"],
+        ["bare table alias with WHERE", "SELECT u.id FROM users u WHERE u.id = 1"],
+        ["explicit table alias", "SELECT u.id FROM users AS u WHERE u.id = 1"],
+        ["bare table alias with JOIN", "SELECT u.id FROM users u JOIN teams t ON t.id = u.team_id"],
     ] as const)("rejects %s SQL diagnostics from a 4xx response", (_shape, serverMessage) => {
         const error = axiosError(409, { message: serverMessage, clientId: 73 });
 

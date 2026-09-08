@@ -182,6 +182,10 @@ describe("client API routes", () => {
     [400, "SELECT 1 FROM clients"],
     [409, "SELECT id + 1 FROM clients"],
     [422, "SELECT CASE WHEN id = 1 THEN 'one' ELSE 'other' END FROM clients"],
+    [400, "SELECT u.id FROM users u"],
+    [409, "SELECT u.id FROM users u WHERE u.id = 1"],
+    [422, "SELECT u.id FROM users AS u WHERE u.id = 1"],
+    [400, "SELECT u.id FROM users u JOIN teams t ON t.id = u.team_id"],
   ] as const)("does not expose SQL diagnostics in a %i BFF response", async (status, message) => {
     mockGet.mockRejectedValue({
       response: {
@@ -253,6 +257,10 @@ describe("client API routes", () => {
     },
     {
       message: "SELECT (COALESCE(id, 0) + 1) AS next_id FROM clients",
+      clientId: 73,
+    },
+    {
+      message: "SELECT u.id FROM users u WHERE u.id = 1",
       clientId: 73,
     },
     {
