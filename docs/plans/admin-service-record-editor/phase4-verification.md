@@ -90,3 +90,5 @@ Final integrated correction check: all11 exact confirmation suites pass58/58 (`/
 Sol/high residual2 found no new production defect, but retained NO_SHIP for two historical compatibility proof gaps. Added an actual PostgreSQL historical revision-prefixed NULL-payload recovery test: real recoverStale transitions to reconciling, worker refuses with requires_attention/INVALID_SERVICE_RECORD_REVISION_JOB_PAYLOAD before any target, custody, dispatch, finalization or reconciliation calls. Added explicit non-null legacy payload redaction assertion to each confirm-wins document race.
 
 Exact changed suites: finalization and document-races, 15/15 PASS, `/tmp/bjj-phase4-residual2-proof.log`. Previous integrated 58/58 evidence remains; these overlap and are not added. No production change, external call, HTTP/browser or official PDF proof. Same phase audit residual closure pending.
+
+Final same-session Sol/high residual closure: SHIP for local Phase4 only. See phase4-final-audit.md. Phase5 local implementation may begin; external capability remains unverified.
