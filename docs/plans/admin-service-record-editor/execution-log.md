@@ -408,3 +408,5 @@
 
 - Task3.0 격리 PostgreSQL에서 case 선점과 client 선점이 반대로 진입하는 barrier 재현이 예상한 lock timeout으로 실패했다. 이는 기존 위험의 red 재현이며 수정 후 제품 writer의 성공 증거와 구분한다. Luna/max가 공통 순서와 대상 재검증을 연결 중이다. PG 테스트 생성 함수 자체에서 DATABASE_URL과 DIRECT_URL을 모두 검사하도록 요구했다.
 - Task3.1 사전 확인: lifecycle.ensureForClient는 client.duration을 fallback으로 사용하고 upsert의 create/update 모두 requiredSessionCount에 대입하므로, 저장된 N13을 duration15로 덮을 수 있다. recompute는 record.requiredSessionCount를 fallback으로 사용한다. 이전 scout의 “duration 초기화만 overwrite” 결론은 채택하지 않는다. 현재 mobile public page는664줄이며 과거911줄 등의 위치도 증거로 사용하지 않는다. 이 경로의 기존 N 보존은3.1 회귀 조건이다.
+
+- Task3.0 범위 보완: terminateService/completeReplacement가 호출하는 UpdateClientUsecase와 client repository는 자체 트랜잭션 소유 경계라, service만 감싸면 중첩 저장이 된다. 동일 트랜잭션 전달을 위한 usecase/interface/sb.client.repository 세 경로를 승인된3.0 Paths에 추가했다. 기존 업무 로직과 duration/가격/N 의미는 유지한다.
