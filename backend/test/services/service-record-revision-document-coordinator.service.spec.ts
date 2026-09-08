@@ -202,6 +202,29 @@ describe("ServiceRecordRevisionDocumentCoordinator", () => {
         });
     });
 
+    it("preserves an explicitly null source document version", () => {
+        const facts = lockedFacts({ documentVersion: null });
+        const result = buildServiceRecordContractRevisionSnapshot(facts);
+
+        expect(result.reason).toBeNull();
+        expect(result.snapshot?.original.documentVersion).toBeNull();
+    });
+
+    it("rejects an omitted source document version instead of inventing one", () => {
+        const facts = lockedFacts() as unknown as Record<string, unknown>;
+        const source = facts["sourceDocument"] as Record<string, unknown>;
+        delete source["documentVersion"];
+
+        const result = buildServiceRecordContractRevisionSnapshot(
+            facts as unknown as ServiceRecordRevisionContractLockedFacts,
+        );
+
+        expect(result).toEqual({
+            snapshot: null,
+            reason: "CONTRACT_REVISION_SNAPSHOT_MISSING_FACT:sourceDocument.documentVersion",
+        });
+    });
+
     it("rejects malformed target periods and preserves the exact source facts", () => {
         const facts = lockedFacts();
         const result = buildServiceRecordContractRevisionSnapshot({

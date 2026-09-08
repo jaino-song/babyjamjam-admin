@@ -179,6 +179,10 @@ function isPositiveInteger(value: unknown): value is number {
     return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
+function isDocumentVersion(value: unknown): value is number | null {
+    return value === null || isPositiveInteger(value);
+}
+
 function isDateOnly(value: unknown): value is string {
     if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
     const [year, month, day] = value.split("-").map(Number);
@@ -235,7 +239,7 @@ export function buildServiceRecordContractRevisionSnapshot(
     if (!source) return missingSnapshotFact("sourceDocument");
     if (!target) return missingSnapshotFact("targetPeriod");
     if (!isNonEmptyString(source.documentId)) return missingSnapshotFact("sourceDocument.documentId");
-    if (!isPositiveInteger(source.documentVersion)) return missingSnapshotFact("sourceDocument.documentVersion");
+    if (!isDocumentVersion(source.documentVersion)) return missingSnapshotFact("sourceDocument.documentVersion");
     if (!isNonEmptyString(source.templateId)) return missingSnapshotFact("sourceDocument.templateId");
     if (!isNonEmptyString(source.templateVersion)) return missingSnapshotFact("sourceDocument.templateVersion");
     if (!isWorkflowScope(source.workflowScope)) return missingSnapshotFact("sourceDocument.workflowScope");

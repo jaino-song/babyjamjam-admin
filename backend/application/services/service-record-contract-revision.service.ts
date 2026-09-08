@@ -87,7 +87,8 @@ export type ServiceRecordContractRevisionWorkflowScope = Record<
 
 export interface ServiceRecordContractRevisionOriginalDocument {
     documentId: string;
-    documentVersion: number;
+    /** Provider snapshots may legitimately omit a version; null is frozen explicitly. */
+    documentVersion: number | null;
     templateId: string;
     templateVersion: string;
     workflowScope: ServiceRecordContractRevisionWorkflowScope;
@@ -266,6 +267,10 @@ function isIsoDate(value: unknown): value is string {
 
 function isPositiveInteger(value: unknown): value is number {
     return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function isDocumentVersion(value: unknown): value is number | null {
+    return value === null || isPositiveInteger(value);
 }
 
 function isAllowedWorkflowValue(value: unknown): value is string | number | boolean | null {
@@ -492,7 +497,7 @@ export class ServiceRecordContractRevisionService {
         const original = value["original"];
         const target = value["target"];
         if (!isNonEmptyString(original["documentId"])
-            || !isPositiveInteger(original["documentVersion"])
+            || !isDocumentVersion(original["documentVersion"])
             || !isNonEmptyString(original["templateId"])
             || !isNonEmptyString(original["templateVersion"])
             || !isWorkflowScope(original["workflowScope"])
@@ -543,7 +548,7 @@ export class ServiceRecordContractRevisionService {
         const original = snapshot.original;
         const target = snapshot.target;
         if (!isNonEmptyString(original.documentId)
-            || !isPositiveInteger(original.documentVersion)
+            || !isDocumentVersion(original.documentVersion)
             || !isNonEmptyString(original.templateId)
             || !isNonEmptyString(original.templateVersion)
             || !isWorkflowScope(original.workflowScope)
