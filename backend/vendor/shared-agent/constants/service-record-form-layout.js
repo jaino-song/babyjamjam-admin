@@ -39,8 +39,8 @@ exports.SERVICE_RECORD_FORM_LAYOUT = [
                 label: "⑤ 식사/간식",
                 kind: "counts",
                 subKeys: [
-                    { key: "meals_meal", label: "식사", unit: "회" },
-                    { key: "meals_snack", label: "간식", unit: "회" },
+                    { key: "meals_meal", label: "식사", unit: "회", min: 0, step: 1 },
+                    { key: "meals_snack", label: "간식", unit: "회", min: 0, step: 1 },
                 ],
             },
         ],
@@ -54,7 +54,7 @@ exports.SERVICE_RECORD_FORM_LAYOUT = [
                 key: "temperature",
                 label: "⑥ 체온",
                 kind: "counts",
-                subKeys: [{ key: "temperature_temp", label: "체온", unit: "℃" }],
+                subKeys: [{ key: "temperature_temp", label: "체온", unit: "℃", min: 0, step: 0.1 }],
             },
             {
                 key: "sleep",
@@ -67,15 +67,15 @@ exports.SERVICE_RECORD_FORM_LAYOUT = [
                 key: "breastFeeding",
                 label: "⑧ 모유수유",
                 kind: "counts",
-                subKeys: [{ key: "breastFeeding_count", label: "횟수", unit: "회" }],
+                subKeys: [{ key: "breastFeeding_count", label: "횟수", unit: "회", min: 0, step: 1 }],
             },
             {
                 key: "formulaFeeding",
                 label: "⑨ 분유수유",
                 kind: "counts",
                 subKeys: [
-                    { key: "formulaFeeding_count", label: "횟수", unit: "회" },
-                    { key: "formulaFeeding_ml", label: "회당", unit: "ml" },
+                    { key: "formulaFeeding_count", label: "횟수", unit: "회", min: 0, step: 1 },
+                    { key: "formulaFeeding_ml", label: "회당", unit: "ml", min: 0, step: 1 },
                 ],
             },
             {

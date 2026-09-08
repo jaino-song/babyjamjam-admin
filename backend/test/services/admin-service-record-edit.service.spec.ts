@@ -1,4 +1,4 @@
-import { ConflictException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import { ServiceRecordEditConflictError } from "domain/errors/service-record-edit.error";
@@ -241,6 +241,46 @@ describe("AdminServiceRecordEditService", () => {
         const result = await harness.service.getDraft(BRANCH_ID, CLIENT_ID);
 
         expect(result.sourceChanged).toBe(true);
+    });
+
+    it("tracks client renames while ignoring lifecycle-only status and version changes", async () => {
+        const harness = createHarness();
+        const first = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+        const persisted = first.draft;
+        if (!persisted) throw new Error("expected a draft");
+        harness.repository.findActiveDraft.mockResolvedValue(persisted);
+
+        const baseline = sourceSnapshot();
+        harness.repository.loadSource.mockResolvedValue({
+            ...baseline,
+            client: { ...baseline.client, name: "이름 변경" },
+        });
+        await expect(harness.service.getDraft(BRANCH_ID, CLIENT_ID)).resolves.toMatchObject({ sourceChanged: true });
+
+        harness.repository.loadSource.mockResolvedValue({
+            ...baseline,
+            caseVersion: baseline.caseVersion + 1,
+            client: { ...baseline.client, serviceStatus: "completed" },
+        });
+        await expect(harness.service.getDraft(BRANCH_ID, CLIENT_ID)).resolves.toMatchObject({ sourceChanged: false });
+    });
+
+    it.each([
+        ["meals_meal", "1.5"],
+        ["temperature_temp", "36.75"],
+        ["meals_meal", "NaN"],
+    ])("rejects invalid numeric draft answer %s=%s before persistence", async (key, value) => {
+        const harness = createHarness();
+
+        await expect(harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {
+            changes: {
+                sessions: [{
+                    sessionIndex: 1,
+                    answers: { [key]: value },
+                }],
+            },
+        })).rejects.toBeInstanceOf(BadRequestException);
+        expect(harness.repository.createOrResumeDraft).not.toHaveBeenCalled();
     });
 
     it("rejects authority fields, duplicate sessions, and invalid dates before persistence", async () => {

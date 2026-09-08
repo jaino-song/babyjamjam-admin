@@ -95,6 +95,7 @@ function sourceFingerprint(source: SourceSnapshot): string {
         endDate: source.endDate,
         client: {
             id: source.client.id,
+            name: source.client.name,
             duration: source.client.duration,
             startDate: source.client.startDate,
             endDate: source.client.endDate,

@@ -44,6 +44,45 @@ describe("service-record answer validation policy", () => {
         expect(result).toEqual(allAnswers());
     });
 
+    it("preserves valid UI numeric strings and empty partial clears", () => {
+        const answers = {
+            ...allAnswers(),
+            meals_meal: "3",
+            meals_snack: "",
+            temperature_temp: "36.7",
+            breastFeeding_count: "5",
+            formulaFeeding_count: "1",
+            formulaFeeding_ml: "80",
+        };
+
+        expect(validateServiceRecordAnswers(answers)).toEqual(answers);
+    });
+
+    it("accepts the canonical flat submission fixture", () => {
+        const answers = { sitzBath: "실시", sleep: "잘 잠", stool: "정상변" };
+
+        expect(validateServiceRecordAnswers(answers)).toEqual(answers);
+    });
+
+    it.each([
+        ["meals_meal", -1],
+        ["meals_meal", "-1"],
+        ["meals_meal", 1.5],
+        ["meals_meal", "1.5"],
+        ["meals_meal", "NaN"],
+        ["meals_meal", "Infinity"],
+        ["meals_meal", "0x10"],
+        ["meals_meal", Number.MAX_SAFE_INTEGER + 1],
+        ["temperature_temp", -0.1],
+        ["temperature_temp", "-0.1"],
+        ["temperature_temp", 36.75],
+        ["temperature_temp", "36.75"],
+        ["temperature_temp", Number.POSITIVE_INFINITY],
+        ["temperature_temp", "not-a-number"],
+    ])("rejects invalid numeric value %s=%s", (key, value) => {
+        expect(() => validateServiceRecordAnswers({ [key]: value })).toThrow(BadRequestException);
+    });
+
     it("uses descriptor options for every multi/radio answer", () => {
         for (const field of SERVICE_RECORD_FORM_LAYOUT.flatMap((section) => section.fields)) {
             if (field.source === "session" || !field.options?.length) continue;

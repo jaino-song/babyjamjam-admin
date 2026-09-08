@@ -708,13 +708,13 @@ export function ServiceRecordAdminWizard({
                 ) : null}
             </div>
             {draftState?.sourceChanged ? (
-                <Alert data-component={`${ADMIN_WIZARD_COMPONENT}_top-bar_admin-toolbar_source-changed`} variant="warning">
+                <Alert className="admin-draft-source-alert" data-component={`${ADMIN_WIZARD_COMPONENT}_top-bar_admin-toolbar_source-changed`} variant="warning">
                     <AlertTitle>원본 기록 변경</AlertTitle>
                     <AlertDescription>원본 기록이 변경되었습니다. 초안 입력은 유지됩니다.</AlertDescription>
                 </Alert>
             ) : null}
             {draftError ? (
-                <Alert data-component={`${ADMIN_WIZARD_COMPONENT}_top-bar_admin-toolbar_error`} variant="destructive">
+                <Alert className="admin-draft-alert" data-component={`${ADMIN_WIZARD_COMPONENT}_top-bar_admin-toolbar_error`} variant="destructive">
                     <AlertTitle>초안 저장 실패</AlertTitle>
                     <AlertDescription>
                         <p>{draftError.message}</p>
@@ -771,7 +771,9 @@ export function ServiceRecordAdminWizard({
                 onEditSection={setPageIdx}
                 slots={{
                     provider: ({ "data-component": dataComponent }) => (
-                        <span data-component={dataComponent} data-slot="provider" className="org">관리자 조회 전용</span>
+                        <span data-component={dataComponent} data-slot="provider" className="org">
+                            {activeDraft && !selectedSupplemental ? "관리자 편집" : "관리자 조회"}
+                        </span>
                     ),
                     signature: (signatureProps) => <ReadOnlySignature {...signatureProps} />,
                     adminToolbar,
