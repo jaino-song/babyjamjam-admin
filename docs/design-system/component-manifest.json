@@ -1388,6 +1388,19 @@
         "requiredFor": [
           "authenticated read-only service-record editor route"
         ]
+      },
+      {
+        "name": "ServiceRecordDateSelectionDialog",
+        "layer": "organism",
+        "import": "@/components/app/service-record/ServiceRecordDateSelectionDialog",
+        "file": "frontend/src/components/app/service-record/ServiceRecordDateSelectionDialog.tsx",
+        "exports": [
+          "ServiceRecordDateSelectionDialog",
+          "ServiceRecordDateSelectionDialogProps"
+        ],
+        "requiredFor": [
+          "service-record admin provisional business-date selection"
+        ]
       }
     ],
     "mobile": [
