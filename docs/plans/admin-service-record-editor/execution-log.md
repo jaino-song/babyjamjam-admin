@@ -415,3 +415,7 @@
 - 기존 persistClientIntent/persistScheduleIntent는 TransactionClient를 받는다. service-record token expiry는 자체20시 KST 정책이며 계약 자동 완료17시 설정과 구분한다. revision.appendRevision은 현재 자체 트랜잭션을 여므로4.1의 typed owning UoW 확장이 필요하다. 영수증 토큰 만료는 이 변경 대상이 아니다.
 
 - Task3.0 잔여 조사에서 EmployeeScheduleService.delete의 삭제 커밋 후 lifecycle 쓰기를 확인했다. delete usecase/employee-schedule repository interface와 기존 허용 concrete repository에 typed transaction 전달 경계를 추가하도록 범위를 확장했다. 삭제 정책 자체는 유지한다. 현재 부분 검사에는 실제 entry 순서, mirrored contract 순서, 문서 generation 불일치 전체 rollback이 포함된다. 최종3.0 결과를 고정한 뒤 Sol/high 좁은 FINAL을 추가하고, Phase3 전체 감사는3.1 뒤 별도로 유지한다.
+
+- Task3.0 worker d7aad5c6a를 통합3bfc3d862로 병합하고 clean unit/branch를 즉시 제거했다. 공통 정책, entry/일정/고객/배정 생성·변경·삭제, lifecycle, mirror 연결과 typed repository tx 경계 총26개 파일을 변경했다. Worker11 suites452 tests, 최종 delete/lifecycle63 tests, build PASS, lint0오류/79기존경고, tsc5기존receipt오류만 확인했다.
+- 메인 통합 재검사: 기존 schedule-change 단위검사20개를 더해12 suites472/472 PASS, guarded PG7/7 PASS. PG는 기존 반대 순서 conflict, 공통 순서 직렬화, 고객 잠금 실패, 대상 집합 변경, 실제 syncEndDateFromMirroredContract가 기다리는 동안 문서 generation/소유권 변경 시 오래된 client/case 갱신 거절을 포함한다. 두 DB URL 모두127.0.0.1:62295/bjj_revision_task3로 명시했고 외부/운영 작업은 실행하지 않았다. 삭제·중단·교체 쓰기도 같은 저장 단위에 포함한다.
+- Sol/high Task3.0 좁은 FINAL을 통합3bfc3d862 기준으로 시작했다. N/duration clobber와 달력 보정/날짜 preview는 아직3.1 대기이며, Phase3 전체 감사 완료나 날짜 변경 기능 완성을 뜻하지 않는다. Task3.0 PG lease는 메인에 반환됐고 현재 DB 사용 작업은 없다.
