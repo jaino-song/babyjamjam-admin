@@ -150,4 +150,35 @@ describeE2E("receipt preparation before atomic authorization (actual PostgreSQL)
             .not.toBe("dispatching");
     });
 
+    it("rejects a legacy claim canceled after acquisition but before preparation", async () => {
+        const { fixture, jobs, job, confirm } = await setup();
+        const claimed = serviceRecordConfirmBarrier();
+        const resume = serviceRecordConfirmBarrier();
+        const pausedJobs = new Proxy(jobs, { get(target, property, receiver) {
+            if (property === "claimPendingWithRuleFence") {
+                return async (...args: Parameters<SbMessageTriggerJobRepository["claimPendingWithRuleFence"]>) => {
+                    const token = await target.claimPendingWithRuleFence(...args);
+                    claimed.release();
+                    await resume.entered;
+                    return token;
+                };
+            }
+            const value: unknown = Reflect.get(target, property, receiver);
+            return typeof value === "function" ? value.bind(target) : value;
+        } });
+        const prepareJob = jest.fn(async () => ({ snapshot: Object.freeze({}), serializedSnapshot: "synthetic" }));
+        const sendPreparedJob = jest.fn(async () => true);
+        const dispatch = dispatcher(pausedJobs, { prepareJob, sendPreparedJob })(job, fixture.branch.id)
+            .then(() => undefined, (error: unknown) => error);
+        try {
+            await reached(claimed.entered, dispatch);
+            expect(await confirm()).toMatchObject({ status: "confirmed" });
+        } finally { resume.release(); }
+        expect(await dispatch).toBeUndefined();
+        expect(prepareJob).not.toHaveBeenCalled();
+        expect(sendPreparedJob).not.toHaveBeenCalled();
+        expect(await prisma.message_trigger_job.findUniqueOrThrow({ where: { id: job.id } }))
+            .toMatchObject({ status: "canceled", claimToken: null });
+    });
+
 });
