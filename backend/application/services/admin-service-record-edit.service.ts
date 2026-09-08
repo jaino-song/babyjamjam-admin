@@ -20,13 +20,21 @@ import {
     type CreateServiceRecordEditDraftInput,
     type IServiceRecordEditRepository,
     type ServiceRecordEditDraft,
+    type ServiceRecordEditConfirmPlan,
+    type ServiceRecordEditConfirmSessionUpdate,
     type ServiceRecordEditJsonObject,
     type ServiceRecordEditJsonValue,
     type ServiceRecordEditSource,
 } from "domain/repositories/service-record-edit.repository.interface";
 import type {
+    ServiceRecordEditConfirmDocumentStatus,
+    ServiceRecordEditConfirmResponse,
+    ServiceRecordRevisionDispatchContext,
+} from "@babyjamjam/shared/types/service-record";
+import type {
     AdminServiceRecordEditChangesDto,
     AdminServiceRecordEditStateDto,
+    ConfirmServiceRecordEditDraftDto,
     CreateServiceRecordEditDraftDto,
     DiscardServiceRecordEditDraftDto,
     PreviewServiceRecordEditDraftDto,
@@ -119,6 +127,53 @@ function sourceFingerprint(source: SourceSnapshot): string {
 
 function mapDraft(draft: ServiceRecordEditDraft): ServiceRecordEditDraft {
     return draft;
+}
+
+function asJsonRecord(value: ServiceRecordEditJsonValue | undefined): Record<string, ServiceRecordEditJsonValue> | null {
+    return isPlainRecord(value) ? value as Record<string, ServiceRecordEditJsonValue> : null;
+}
+
+interface ConfirmSessionPatch {
+    sessionIndex: number;
+    serviceDate?: string;
+    answers?: ServiceRecordEditJsonValue;
+    etcService?: string;
+    notes?: string;
+    paymentConfirmed?: boolean;
+}
+
+function sessionChangeMap(value: ServiceRecordEditJsonValue | undefined): Map<number, ConfirmSessionPatch> {
+    if (!Array.isArray(value)) return new Map();
+        const result = new Map<number, ConfirmSessionPatch>();
+        for (const item of value) {
+            const record = asJsonRecord(item);
+            if (!record) continue;
+            const index = record["sessionIndex"];
+            if (typeof index !== "number" || !Number.isInteger(index) || index < 1) continue;
+            const patch: ConfirmSessionPatch = { sessionIndex: index };
+            if (typeof record["serviceDate"] === "string") patch.serviceDate = record["serviceDate"];
+            if (record["answers"] !== undefined) patch.answers = record["answers"];
+            if (typeof record["etcService"] === "string") patch.etcService = record["etcService"];
+            if (typeof record["notes"] === "string") patch.notes = record["notes"];
+            if (typeof record["paymentConfirmed"] === "boolean") patch.paymentConfirmed = record["paymentConfirmed"];
+            result.set(index, patch);
+        }
+    return result;
+}
+
+function documentStatusForSource(source: ServiceRecordEditSource): ServiceRecordEditConfirmDocumentStatus {
+    switch (source.documentScope?.contract.stage) {
+        case "in_progress":
+            return "waiting_for_completion";
+        case "rejected":
+            return "pending";
+        case "completed":
+        case "unknown":
+        case null:
+        case undefined:
+        default:
+            return "capability_unverified";
+    }
 }
 
 @Injectable()
@@ -245,6 +300,260 @@ export class AdminServiceRecordEditService {
         const previewFingerprint = jsonValue(previewValues);
         const previewId = `srp_${createHash("sha256").update(stableStringify(previewFingerprint)).digest("hex")}`;
         return { ...provisional, previewId };
+    }
+
+    /**
+     * Confirm a server-produced preview. The repository owns the transaction,
+     * lock order, fresh reread, idempotency replay, and all durable writes;
+     * this callback only derives a typed plan from that locked snapshot.
+     */
+    async confirmDraft(
+        branchId: string,
+        draftId: string,
+        actorUserId: string,
+        dto: ConfirmServiceRecordEditDraftDto,
+    ): Promise<ServiceRecordEditConfirmResponse> {
+        if (!UUID_PATTERN.test(draftId) || !UUID_PATTERN.test(dto.idempotencyKey)) {
+            throw new NotFoundException("Service-record draft not found");
+        }
+        if (!Number.isInteger(dto.expectedDraftVersion) || dto.expectedDraftVersion < 1) {
+            throw new BadRequestException("expectedDraftVersion must be a positive integer");
+        }
+        if (typeof dto.previewId !== "string" || !/^srp_[0-9a-f]{64}$/i.test(dto.previewId)) {
+            throw new BadRequestException("previewId is invalid");
+        }
+
+        const requestFingerprint = createHash("sha256")
+            .update(stableStringify(jsonValue({
+                draftId,
+                expectedDraftVersion: dto.expectedDraftVersion,
+                previewId: dto.previewId,
+                idempotencyKey: dto.idempotencyKey,
+            })))
+            .digest("hex");
+
+        try {
+            return await this.repository.confirmDraft({
+                branchId,
+                draftId,
+                expectedDraftVersion: dto.expectedDraftVersion,
+                previewId: dto.previewId,
+                idempotencyKey: dto.idempotencyKey,
+                requestFingerprint,
+                actorUserId,
+                prepare: ({ draft, source }) => this.buildConfirmPlan({
+                    draft,
+                    source,
+                    branchId,
+                    draftId,
+                    actorUserId,
+                    previewId: dto.previewId,
+                }),
+            });
+        } catch (error) {
+            if (error instanceof ServiceRecordEditNotFoundError) this.throwRepositoryNotFound(error);
+            if (error instanceof ServiceRecordEditConflictError) {
+                throw new ConflictException({ code: error.code, message: error.message });
+            }
+            throw error;
+        }
+    }
+
+    private buildConfirmPlan(args: {
+        draft: ServiceRecordEditDraft;
+        source: SourceSnapshot;
+        branchId: string;
+        draftId: string;
+        actorUserId: string;
+        previewId: string;
+    }): ServiceRecordEditConfirmPlan {
+        const { draft, source, branchId, draftId, actorUserId, previewId } = args;
+        if (draft.status !== "ACTIVE") {
+            throw new ConflictException({ code: "SERVICE_RECORD_DRAFT_CLOSED" });
+        }
+
+        const fingerprint = sourceFingerprint(source);
+        if (draft.sourceFingerprint !== fingerprint) {
+            throw new ConflictException({
+                code: "SERVICE_RECORD_SOURCE_CHANGED",
+                sourceChanged: true,
+                sourceCaseVersion: source.caseVersion,
+                sourceFingerprint: fingerprint,
+            });
+        }
+
+        const provisional = buildServiceRecordEditPreview({
+            draftId,
+            draftVersion: draft.draftVersion,
+            sourceCaseVersion: source.caseVersion,
+            sourceFingerprint: fingerprint,
+            source,
+            changes: draft.changes,
+            previewId: "pending",
+        });
+        const { previewId: _ignoredPreviewId, ...previewValues } = provisional;
+        void _ignoredPreviewId;
+        const computedPreviewId = `srp_${createHash("sha256")
+            .update(stableStringify(jsonValue(previewValues)))
+            .digest("hex")}`;
+        if (computedPreviewId !== previewId) {
+            throw new ConflictException({
+                code: "SERVICE_RECORD_PREVIEW_STALE",
+                previewId: computedPreviewId,
+                sourceCaseVersion: source.caseVersion,
+                sourceFingerprint: fingerprint,
+            });
+        }
+        if (provisional.blockingReasons.length > 0) {
+            throw new ConflictException({
+                code: "SERVICE_RECORD_PREVIEW_BLOCKED",
+                blockingReasons: provisional.blockingReasons,
+            });
+        }
+
+        const sourceChanges = asJsonRecord(draft.changes);
+        const headerChanges = asJsonRecord(sourceChanges?.["header"]);
+        const header = {
+            momName: source.header.momName,
+            momBirth: source.header.momBirth,
+            babyName: source.header.babyName,
+            babyBirth: source.header.babyBirth,
+            deliveryType: source.header.deliveryType,
+            babyWeight: source.header.babyWeight,
+        };
+        if (headerChanges) {
+            for (const key of Object.keys(header)) {
+                const value = headerChanges[key];
+                if (typeof value === "string") header[key as keyof typeof header] = value;
+            }
+        }
+
+        const bySession = sessionChangeMap(sourceChanges?.["sessions"]);
+        const afterByIndex = new Map(provisional.after.sessions.map((entry) => [entry.sessionIndex, entry]));
+        const sessions: ServiceRecordEditConfirmSessionUpdate[] = source.sessions.map((day) => {
+            const patch = bySession.get(day.sessionIndex);
+            const projected = afterByIndex.get(day.sessionIndex);
+            return {
+                sourceRowId: day.sourceRowId,
+                serviceDate: projected?.serviceDate ?? day.serviceDate,
+                answers: patch?.answers ?? day.answers,
+                etcService: typeof patch?.etcService === "string" ? patch.etcService : day.etcService,
+                notes: typeof patch?.notes === "string" ? patch.notes : day.notes,
+                paymentConfirmed: typeof patch?.paymentConfirmed === "boolean"
+                    ? patch.paymentConfirmed
+                    : day.paymentConfirmed,
+            };
+        });
+
+        const plannedSessions = jsonValue(provisional.after.sessions);
+        const effectiveRows = source.sessions.map((day) => {
+            const update = sessions.find((session) => session.sourceRowId === day.sourceRowId);
+            return {
+                sourceRowId: day.sourceRowId,
+                sessionIndex: day.sessionIndex,
+                serviceDate: update?.serviceDate ?? day.serviceDate,
+                answers: update?.answers ?? day.answers,
+                etcService: update?.etcService ?? day.etcService,
+                notes: update?.notes ?? day.notes,
+                paymentConfirmed: update?.paymentConfirmed ?? day.paymentConfirmed,
+                employeeId: day.employeeId,
+                scheduleId: day.scheduleId,
+                formVersion: day.formVersion,
+                submittedAt: day.submittedAt,
+                clientSignedAt: day.clientSignedAt,
+            };
+        });
+        const revisionPayload = jsonValue({
+            caseId: source.caseId,
+            clientId: source.client.id,
+            requiredSessionCount: provisional.requiredSessionCount,
+            startDate: provisional.after.startDate,
+            endDate: provisional.after.endDate,
+            formVersion: source.formVersion,
+            header,
+            plannedSessions,
+            sessions: effectiveRows,
+            signatureMetadata: provisional.signatureMetadata,
+            documentScope: provisional.documentScope,
+        });
+        const revisionFingerprint = createHash("sha256")
+            .update(stableStringify(revisionPayload))
+            .digest("hex");
+        const changed = provisional.contentChanges.headerChanged
+            || provisional.contentChanges.changedSessionIndexes.length > 0;
+        const documentStatus = documentStatusForSource(source);
+        const dispatchContext: ServiceRecordRevisionDispatchContext | null = changed
+            ? {
+                branchId,
+                clientId: source.client.id,
+                serviceRecordCaseId: source.caseId,
+                revisionId: null,
+                revisionNumber: null,
+                businessFingerprint: revisionFingerprint,
+                plannedSessionCount: provisional.requiredSessionCount,
+                plannedSessionDates: provisional.after.sessions.map((entry) => ({
+                    sessionIndex: entry.sessionIndex,
+                    serviceDate: entry.serviceDate,
+                })),
+                documentSyncStatus: documentStatus,
+                lifecycleStatus: source.caseLifecycle.status,
+                formVersion: source.formVersion,
+            }
+            : null;
+        const documentJob = changed && dispatchContext
+            ? {
+                requestKey: `service-record-revision:${source.caseId}:${draft.id}`,
+                activeKey: `service-record-revision:${source.caseId}`,
+                payload: {
+                    kind: "service_record_revision",
+                    revisionId: null,
+                    revisionNumber: null,
+                    context: dispatchContext,
+                    immutablePayload: revisionPayload,
+                    payloadFingerprint: revisionFingerprint,
+                    completeness: "complete",
+                    manualReviewRequired: documentStatus === "capability_unverified",
+                    periodChanged: provisional.after.startDate !== source.startDate
+                        || provisional.after.endDate !== source.endDate,
+                },
+                payloadFingerprint: revisionFingerprint,
+            }
+            : null;
+
+        return {
+            status: changed ? "confirmed" : "no_changes",
+            sourceFingerprint: fingerprint,
+            caseId: source.caseId,
+            clientId: source.client.id,
+            formVersion: source.formVersion,
+            requiredSessionCount: provisional.requiredSessionCount,
+            startDate: provisional.after.startDate,
+            endDate: provisional.after.endDate,
+            header,
+            plannedSessions,
+            sessions,
+            assignments: provisional.provenance.map((range) => ({
+                assignmentId: range.assignmentId,
+                scheduleId: range.scheduleId,
+                startDate: range.startDate,
+                endDate: range.endDate,
+            })),
+            revision: changed
+                ? {
+                    branchId,
+                    serviceRecordCaseId: source.caseId,
+                    actorUserId,
+                    payload: revisionPayload,
+                    plannedSessions,
+                    provenance: jsonValue(provisional.provenance),
+                    formVersionAtConfirm: source.formVersion,
+                    snapshotReference: null,
+                }
+                : null,
+            dispatchContext,
+            documentStatus,
+            documentJob,
+        };
     }
 
     async discardDraft(
