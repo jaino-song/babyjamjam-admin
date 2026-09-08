@@ -15,6 +15,7 @@
         "src/agent/action-types.ts",
         "src/agent/capability-meta.ts",
         "src/agent/message-parts.ts",
+        "src/constants/service-record-form-layout.ts",
         "src/utils/business-days.ts",
         "src/utils/birthday.ts"
     ]

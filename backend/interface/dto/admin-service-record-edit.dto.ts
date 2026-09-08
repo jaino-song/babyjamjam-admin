@@ -3,17 +3,18 @@ import {
     ArrayMaxSize,
     IsArray,
     IsBoolean,
-    IsDateString,
     IsInt,
     IsObject,
     IsOptional,
     IsString,
+    Matches,
     Min,
     MaxLength,
     ValidateNested,
 } from "class-validator";
 
 import { SERVICE_RECORD_TEXT_LIMITS } from "domain/constants/service-record-text-limits";
+import type { ServiceRecordEditDraft } from "domain/repositories/service-record-edit.repository.interface";
 
 /**
  * Header values the administrator editor is allowed to draft. Identity,
@@ -39,7 +40,8 @@ export class ServiceRecordEditSessionChangesDto {
     @Min(1)
     sessionIndex!: number;
 
-    @IsOptional() @IsDateString() serviceDate?: string;
+    /** Date-only input; timestamps would blur the business-date boundary. */
+    @IsOptional() @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/) serviceDate?: string;
     @IsOptional() @IsObject() answers?: Record<string, unknown>;
     @IsOptional() @IsString() @MaxLength(SERVICE_RECORD_TEXT_LIMITS.etcService)
     etcService?: string;
@@ -87,6 +89,14 @@ export class DiscardServiceRecordEditDraftDto {
     @IsInt()
     @Min(1)
     expectedDraftVersion!: number;
+}
+
+/** Stable response envelope shared by start/read/save/discard routes. */
+export interface AdminServiceRecordEditStateDto {
+    draft: ServiceRecordEditDraft | null;
+    sourceChanged: boolean;
+    sourceCaseVersion: number;
+    sourceFingerprint: string;
 }
 
 // Explicit aliases make the adapter naming clear without introducing a second

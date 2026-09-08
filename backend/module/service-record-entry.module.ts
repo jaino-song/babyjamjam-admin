@@ -8,6 +8,7 @@ import { AdminServiceRecordController } from "interface/controllers/admin-servic
 import { ServiceRecordEntryController } from "interface/controllers/service-record-entry.controller";
 import { ScheduleChangeController } from "interface/controllers/schedule-change.controller";
 import { AdminServiceRecordService } from "application/services/admin-service-record.service";
+import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import { ServiceRecordEntryService } from "application/services/service-record-entry.service";
 import { ScheduleChangeService } from "application/services/schedule-change.service";
 import { ServiceRecordTokenService } from "application/services/service-record-token.service";
@@ -34,6 +35,7 @@ import { ServiceRecordEditRepository } from "infrastructure/database/repositorie
     controllers: [ServiceRecordEntryController, ScheduleChangeController, AdminServiceRecordController],
     providers: [
         AdminServiceRecordService,
+        AdminServiceRecordEditService,
         ServiceRecordEntryService,
         ScheduleChangeService,
         ServiceRecordTokenService,

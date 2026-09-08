@@ -17,6 +17,10 @@
     "./utils/birthday": {
       "types": "./utils/birthday.d.ts",
       "require": "./utils/birthday.js"
+    },
+    "./constants/service-record-form-layout": {
+      "types": "./constants/service-record-form-layout.d.ts",
+      "require": "./constants/service-record-form-layout.js"
     }
   },
   "dependencies": {

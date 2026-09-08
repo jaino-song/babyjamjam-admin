@@ -320,6 +320,31 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         }));
     });
 
+    it("keeps the public flat-form auxiliary fields compatible with the shared answer validator", async () => {
+        const { service, upsert } = createHarness();
+
+        await service.upsertSession(context, 1, createDto({
+            answers: {
+                perineum: ["이상없음"],
+                etcService: "flat 기타서비스",
+                notes: "flat 특이사항",
+                paymentConfirmed: true,
+            },
+            etcService: "flat 기타서비스",
+            notes: "flat 특이사항",
+            paymentConfirmed: true,
+        }), true);
+
+        expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
+            create: expect.objectContaining({
+                answers: { perineum: ["이상없음"] },
+                etcService: "flat 기타서비스",
+                notes: "flat 특이사항",
+                paymentConfirmed: true,
+            }),
+        }));
+    });
+
     it.each([
         ["draft save", false, SERVICE_RECORD_CASE_STATUS.IN_PROGRESS],
         ["submit", true, SERVICE_RECORD_CASE_STATUS.IN_PROGRESS],
