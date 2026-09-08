@@ -8,6 +8,7 @@ import { EFORMSIGN_COMPLETED_STATUS_CODES } from "domain/constants/eformsign-doc
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { countBusinessDaysKr } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 
 export const SERVICE_RECORD_CASE_STATUS = {
     WAITING_FOR_DETAILS: "WAITING_FOR_DETAILS",
@@ -35,6 +36,7 @@ const IMMUTABLE_FINALIZATION_STATUSES = new Set<string>([
 ]);
 
 type DbClient = Prisma.TransactionClient | PrismaService;
+type ServiceRecordCaseRecord = Prisma.service_record_caseGetPayload<Prisma.service_record_caseDefaultArgs>;
 
 type LockedServiceRecordSnapshot = {
     id: number;
@@ -127,7 +129,20 @@ function isReadyCurrentSnapshot(snapshot: LockedServiceRecordSnapshot): boolean 
 export class ServiceRecordLifecycleService {
     constructor(private readonly prisma: PrismaService) {}
 
-    async ensureForSchedule(scheduleId: number, tx?: Prisma.TransactionClient) {
+    async ensureForSchedule(
+        scheduleId: number,
+        tx?: Prisma.TransactionClient,
+    ): Promise<ServiceRecordCaseRecord | null> {
+        if (!tx && typeof this.prisma.$transaction === "function") {
+            return this.prisma.$transaction(async (transaction) => {
+                const schedule = await transaction.employee_schedule.findUnique({
+                    where: { id: scheduleId },
+                    select: { clientId: true },
+                });
+                if (!schedule) throw new NotFoundException("Assignment not found");
+                return this.ensureForClient(schedule.clientId, transaction);
+            });
+        }
         const db = tx ?? this.prisma;
         const schedule = await db.employee_schedule.findUnique({
             where: { id: scheduleId },
@@ -137,9 +152,27 @@ export class ServiceRecordLifecycleService {
         return this.ensureForClient(schedule.clientId, tx);
     }
 
-    async ensureForClient(clientId: number, tx?: Prisma.TransactionClient) {
+    async ensureForClient(
+        clientId: number,
+        tx?: Prisma.TransactionClient,
+    ): Promise<ServiceRecordCaseRecord | null> {
+        // A no-transaction lifecycle call still performs a business write.
+        // Put the complete read/lock/reread/upsert sequence in one owning
+        // transaction so callers cannot observe a stale client or schedule
+        // set and then repair it from a separate root transaction.
+        if (!tx && typeof this.prisma.$transaction === "function") {
+            return this.prisma.$transaction((transaction) =>
+                this.ensureForClient(clientId, transaction));
+        }
+        return this.ensureForClientInTransaction(clientId, tx);
+    }
+
+    private async ensureForClientInTransaction(
+        clientId: number,
+        tx?: Prisma.TransactionClient,
+    ): Promise<ServiceRecordCaseRecord | null> {
         const db = tx ?? this.prisma;
-        const client = await db.client.findUnique({
+        let client = await db.client.findUnique({
             where: { id: clientId },
             select: {
                 id: true,
@@ -160,7 +193,56 @@ export class ServiceRecordLifecycleService {
             ?? null;
         if (!branchId || !client.startDate) return null;
 
-        const existing = await db.service_record_case.findUnique({ where: { clientId } });
+        let existing = await db.service_record_case.findUnique({ where: { clientId } });
+
+        // Lifecycle synchronization is a business write. When an owning
+        // transaction is supplied, acquire the same client -> employee -> case
+        // -> schedule/assignment/day order as the schedule and entry writers,
+        // then reread the target set before deriving any values. This removes
+        // the old post-commit root transaction race without changing lifecycle
+        // status or duration semantics.
+        if (
+            tx
+            && typeof tx.$queryRaw === "function"
+        ) {
+            await lockServiceRecordWriteSet(tx, {
+                branchId,
+                clientId,
+                caseId: existing?.id,
+                scheduleIds: client.employeeSchedules.map((schedule) => schedule.id),
+                employeeIds: client.employeeSchedules.flatMap((schedule) => [
+                    schedule.primaryEmployeeId,
+                    schedule.secondaryEmployeeId,
+                ]),
+            });
+            const rereadClient = await db.client.findUnique({
+                where: { id: clientId },
+                select: {
+                    id: true,
+                    branchId: true,
+                    startDate: true,
+                    endDate: true,
+                    duration: true,
+                    serviceStatus: true,
+                    employeeSchedules: {
+                        include: { primaryEmployee: true },
+                        orderBy: [{ startDate: "asc" }, { id: "asc" }],
+                    },
+                },
+            });
+            if (!rereadClient) throw new NotFoundException("Client not found");
+            const rereadBranchId = rereadClient.branchId
+                ?? rereadClient.employeeSchedules.find((schedule) => schedule.branchId)?.branchId
+                ?? null;
+            if (rereadBranchId !== branchId) {
+                throw new ConflictException("Client branch changed while acquiring service-record locks");
+            }
+            client = rereadClient;
+            existing = await db.service_record_case.findUnique({ where: { clientId } });
+            if (existing && (existing.branchId !== branchId || existing.clientId !== clientId)) {
+                throw new ConflictException("Service-record case branch changed while acquiring write locks");
+            }
+        }
         const finalizationDueAt = client.endDate
             ? getServiceRecordFinalizationDueAt(client.endDate)
             : null;
@@ -367,8 +449,40 @@ export class ServiceRecordLifecycleService {
         detailSyncedAt: Date;
     }): Promise<boolean> {
         return await this.prisma.$transaction(async (tx) => {
-            const current = await tx.$queryRaw<{ id: number }[]>(Prisma.sql`
-                SELECT id
+            const completeLockSurface = this.hasCompleteServiceRecordWriteLockSurface(tx);
+            const discoveredDocument = completeLockSurface
+                && typeof tx.eformsign_doc?.findFirst === "function"
+                ? await tx.eformsign_doc.findFirst({
+                    where: {
+                        documentId: params.documentId,
+                        branchId: params.branchId,
+                    },
+                    select: {
+                        id: true,
+                        clientId: true,
+                        branchId: true,
+                        serviceRecordCaseId: true,
+                    },
+                })
+                : null;
+            const lockedWriteSet = completeLockSurface
+                ? await this.lockClientOwnedWriteSet(tx, {
+                    branchId: params.branchId,
+                    clientId: params.clientId,
+                    documentRowId: discoveredDocument?.id,
+                })
+                : null;
+            if (completeLockSurface && !lockedWriteSet) return false;
+            const current = await tx.$queryRaw<Array<{
+                id: number;
+                clientId?: number | null;
+                branchId?: string | null;
+                serviceRecordCaseId?: string | null;
+            }>>(Prisma.sql`
+                SELECT id,
+                       client_id AS "clientId",
+                       branch_id AS "branchId",
+                       service_record_case_id AS "serviceRecordCaseId"
                 FROM eformsign_doc
                 WHERE document_id = ${params.documentId}
                   AND branch_id = ${params.branchId}::uuid
@@ -394,7 +508,22 @@ export class ServiceRecordLifecycleService {
                   )
                 FOR UPDATE
             `);
-            if (current.length !== 1) {
+            const currentDocument = current[0];
+            if (
+                current.length !== 1
+                || (
+                    completeLockSurface
+                    && currentDocument
+                    && (
+                        currentDocument.clientId !== params.clientId
+                        || currentDocument.branchId !== params.branchId
+                        || (
+                            currentDocument.serviceRecordCaseId !== null
+                            && currentDocument.serviceRecordCaseId !== lockedWriteSet?.caseId
+                        )
+                    )
+                )
+            ) {
                 return false;
             }
 
@@ -519,6 +648,15 @@ export class ServiceRecordLifecycleService {
         },
         tx: Prisma.TransactionClient,
     ): Promise<void> {
+        if (this.hasCompleteServiceRecordWriteLockSurface(tx)) {
+            const locked = await this.lockClientOwnedWriteSet(tx, {
+                branchId: params.branchId,
+                clientId: params.clientId,
+            });
+            if (!locked) {
+                throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+            }
+        }
         await this.validatePeriodChange({
             clientId: params.clientId,
             endDate: params.endDate,
@@ -571,6 +709,86 @@ export class ServiceRecordLifecycleService {
         }
 
         await this.ensureForClient(params.clientId, tx);
+    }
+
+    private hasCompleteServiceRecordWriteLockSurface(
+        tx: Prisma.TransactionClient,
+    ): boolean {
+        const scheduleDelegate = tx.employee_schedule as unknown as {
+            findMany?: unknown;
+        } | undefined;
+        const caseDelegate = tx.service_record_case as unknown as {
+            findUnique?: unknown;
+        } | undefined;
+        return typeof tx.$queryRaw === "function"
+            && typeof scheduleDelegate?.findMany === "function"
+            && typeof caseDelegate?.findUnique === "function";
+    }
+
+    private async lockClientOwnedWriteSet(
+        tx: Prisma.TransactionClient,
+        params: { branchId: string; clientId: number; documentRowId?: number },
+    ): Promise<{
+        scheduleIds: number[];
+        employeeIds: number[];
+        caseId: string | null;
+    } | null> {
+        const client = await tx.client.findUnique({
+            where: { id: params.clientId },
+            select: { id: true, branchId: true },
+        });
+        if (!client || (client.branchId !== null && client.branchId !== params.branchId)) {
+            return null;
+        }
+        const schedules = await tx.employee_schedule.findMany({
+            where: { branchId: params.branchId, clientId: params.clientId },
+            select: {
+                id: true,
+                primaryEmployeeId: true,
+                secondaryEmployeeId: true,
+            },
+            orderBy: { id: "asc" },
+        });
+        const existing = await tx.service_record_case.findUnique({
+            where: { clientId: params.clientId },
+            select: { id: true, branchId: true, clientId: true },
+        });
+        const caseId = existing?.branchId === params.branchId && existing.clientId === params.clientId
+            ? existing.id
+            : undefined;
+        const result = await lockServiceRecordWriteSet(tx, {
+            branchId: params.branchId,
+            clientId: params.clientId,
+            caseId,
+            expectedScheduleIds: schedules.map((schedule) => schedule.id),
+            scheduleIds: schedules.map((schedule) => schedule.id),
+            employeeIds: schedules.flatMap((schedule) => [
+                schedule.primaryEmployeeId,
+                schedule.secondaryEmployeeId,
+            ]),
+            documentIds: params.documentRowId === undefined ? [] : [params.documentRowId],
+        });
+        const rereadClient = await tx.client.findUnique({
+            where: { id: params.clientId },
+            select: { id: true, branchId: true },
+        });
+        if (!rereadClient || (rereadClient.branchId !== null && rereadClient.branchId !== params.branchId)) {
+            throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+        }
+        const rereadCase = await tx.service_record_case.findUnique({
+            where: { clientId: params.clientId },
+            select: { id: true, branchId: true, clientId: true },
+        });
+        if (
+            rereadCase
+            && (rereadCase.branchId !== params.branchId || rereadCase.clientId !== params.clientId)
+        ) {
+            throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+        }
+        return {
+            ...result,
+            caseId: rereadCase?.id ?? null,
+        };
     }
 
     async recompute(serviceRecordCaseId: string, tx?: Prisma.TransactionClient) {

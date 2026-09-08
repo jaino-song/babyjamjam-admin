@@ -9,9 +9,8 @@ import {
 import { Prisma } from "@prisma/client";
 import {
     assertNoActiveEmployeeScheduleOverlap,
-    lockClientForScheduleWrite,
-    lockEmployeesForScheduleWrite,
 } from "application/policies/employee-schedule-invariants.policy";
+import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { addBusinessDaysKr, isBusinessDayKr, nextBusinessDayKr } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -273,7 +272,7 @@ export class ScheduleChangeService {
 
         try {
             const result = await this.prisma.$transaction(async (tx) => {
-                const schedule = await tx.employee_schedule.findFirst({
+                let schedule = await tx.employee_schedule.findFirst({
                     where: { id: scheduleId, branchId },
                     include: { client: true, primaryEmployee: true },
                 });
@@ -282,23 +281,39 @@ export class ScheduleChangeService {
                     throw new BadRequestException("Assignment has no end date");
                 }
 
-                const record = await tx.service_record_case.findFirst({
+                let record = await tx.service_record_case.findFirst({
                     where: { branchId, clientId: schedule.clientId },
                 });
                 if (!record) throw new NotFoundException("Service record not found");
 
-                // Lock the client/employee rows before touching any
-                // service_record_day rows so this transaction acquires locks
-                // in the same order as the entry-service upsertSession
-                // extension path (client -> employees, then day rows).
-                // Locking after the day writes (as before) could deadlock
-                // against a concurrent upsertSession run that locks the
-                // client/employees first and then waits on these day rows.
-                await lockClientForScheduleWrite(tx, branchId, schedule.clientId);
-                await lockEmployeesForScheduleWrite(tx, branchId, [
-                    schedule.primaryEmployeeId,
-                    schedule.secondaryEmployeeId,
-                ]);
+                // Discover ids before locking, then use the shared order and
+                // reread the owner rows. This keeps admin date changes aligned
+                // with entry/lifecycle writers and rejects a changed target set.
+                await lockServiceRecordWriteSet(tx, {
+                    branchId,
+                    clientId: schedule.clientId,
+                    caseId: record.id,
+                    scheduleIds: [schedule.id],
+                    employeeIds: [schedule.primaryEmployeeId, schedule.secondaryEmployeeId],
+                });
+                const rereadSchedule = await tx.employee_schedule.findFirst({
+                    where: { id: scheduleId, branchId },
+                    include: { client: true, primaryEmployee: true },
+                });
+                const rereadRecord = await tx.service_record_case.findFirst({
+                    where: { branchId, clientId: schedule.clientId },
+                });
+                if (
+                    !rereadSchedule
+                    || rereadSchedule.clientId !== schedule.clientId
+                    || rereadSchedule.branchId !== branchId
+                    || !rereadRecord
+                    || rereadRecord.id !== record.id
+                ) {
+                    throw new ConflictException("Schedule-change target changed while acquiring write locks");
+                }
+                schedule = rereadSchedule;
+                record = rereadRecord;
 
                 const pendingRequest = await tx.schedule_change_request.findFirst({
                     where: { scheduleId, status: "pending" },
@@ -465,26 +480,39 @@ export class ScheduleChangeService {
                     throw new ConflictException({ code: "REQUEST_NOT_PENDING" });
                 }
 
-                const schedule = await tx.employee_schedule.findUnique({
+                let schedule = await tx.employee_schedule.findUnique({
                     where: { id: request.scheduleId },
                     include: { client: true, primaryEmployee: true },
                 });
                 if (!schedule) throw new NotFoundException("Assignment not found");
-                const record = await tx.service_record_case.findUnique({ where: { clientId: request.clientId } });
+                let record = await tx.service_record_case.findUnique({ where: { clientId: request.clientId } });
                 if (!record) throw new NotFoundException("Service record not found");
 
-                // Lock the client/employee rows before touching any
-                // service_record_day rows so this transaction acquires locks
-                // in the same order as the entry-service upsertSession
-                // extension path (client -> employees, then day rows).
-                // Locking after the day writes (as before) could deadlock
-                // against a concurrent upsertSession run that locks the
-                // client/employees first and then waits on these day rows.
-                await lockClientForScheduleWrite(tx, request.branchId, request.clientId);
-                await lockEmployeesForScheduleWrite(tx, request.branchId, [
-                    schedule.primaryEmployeeId,
-                    schedule.secondaryEmployeeId,
-                ]);
+                await lockServiceRecordWriteSet(tx, {
+                    branchId: request.branchId,
+                    clientId: request.clientId,
+                    caseId: record.id,
+                    scheduleIds: [schedule.id],
+                    employeeIds: [schedule.primaryEmployeeId, schedule.secondaryEmployeeId],
+                });
+                const rereadSchedule = await tx.employee_schedule.findUnique({
+                    where: { id: request.scheduleId },
+                    include: { client: true, primaryEmployee: true },
+                });
+                const rereadRecord = await tx.service_record_case.findUnique({
+                    where: { clientId: request.clientId },
+                });
+                if (
+                    !rereadSchedule
+                    || rereadSchedule.clientId !== request.clientId
+                    || rereadSchedule.branchId !== request.branchId
+                    || !rereadRecord
+                    || rereadRecord.id !== record.id
+                ) {
+                    throw new ConflictException("Schedule-change target changed while acquiring write locks");
+                }
+                schedule = rereadSchedule;
+                record = rereadRecord;
 
                 const days = await tx.service_record_day.findMany({
                     where: { serviceRecordCaseId: record.id },

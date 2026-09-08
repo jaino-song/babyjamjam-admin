@@ -328,6 +328,49 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(transaction.client.updateMany).not.toHaveBeenCalled();
     });
 
+    it("repairs an assigned mirror through the complete common lock order", async () => {
+        const document = mirroredDocument({
+            branchId: "branch-1",
+            clientId: 21,
+        });
+        const { transaction, serviceRecordLifecycle, usecase } = setup(document);
+        const tx = transaction as typeof transaction & {
+            employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
+            service_record_case: { findUnique: jest.Mock };
+        };
+        tx.employee_schedule.findMany = jest.fn().mockResolvedValue([{
+            id: 91,
+            primaryEmployeeId: 71,
+            secondaryEmployeeId: 72,
+        }]);
+        tx.service_record_case = {
+            findUnique: jest.fn().mockResolvedValue({
+                id: "case-1",
+                branchId: "branch-1",
+                clientId: 21,
+            }),
+        };
+
+        await expect(usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
+            .resolves.toBe("linked");
+
+        const lockTables = transaction.$queryRaw.mock.calls
+            .map(([query]) => (query as { strings?: string[] }).strings?.join(" ").toLowerCase() ?? "")
+            .filter((query) => query.includes("for update"))
+            .map((query) => query.match(/from\s+"?([a-z_]+)"?/)?.[1] ?? "unknown");
+        expect(lockTables.slice(0, 8)).toEqual([
+            "client",
+            "employee",
+            "service_record_case",
+            "employee_schedule",
+            "service_record_assignment",
+            "service_record_day",
+            "eformsign_doc",
+            "eformsign_doc",
+        ]);
+        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(21, transaction);
+    });
+
     it("repairs the client contract pointer for an already assigned document", async () => {
         const document = mirroredDocument({
             branchId: "branch-1",
@@ -460,7 +503,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             }),
         });
         expect(serviceRecordLifecycle.ensureForClient)
-            .toHaveBeenCalledWith(31);
+            .toHaveBeenCalledWith(31, expect.anything());
     });
 
     it("resolves the area from the contract template name", async () => {
@@ -800,7 +843,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(messageTrigger.syncClientRulesForClient).not.toHaveBeenCalled();
         expect(transaction.message_trigger_rule.upsert).not.toHaveBeenCalled();
         expect(transaction.message_trigger_job.upsert).not.toHaveBeenCalled();
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(31);
+        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(31, expect.anything());
     });
 
     it("does not mutate a stale mirror generation after the parent-row fence loses", async () => {
@@ -878,7 +921,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
     });
 
-    it("does not initialize lifecycle after an assigned link when the post-link generation recheck loses", async () => {
+    it("keeps assigned-link lifecycle inside its owning transaction when the post-link generation recheck loses", async () => {
         const document = mirroredDocument({
             branchId: "branch-1",
             clientId: 21,
@@ -901,10 +944,13 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(transaction.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
         expect(transaction.client.updateMany).toHaveBeenCalledTimes(1);
         expect(transaction.$queryRaw).toHaveBeenCalledTimes(2);
-        expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(
+            21,
+            transaction,
+        );
     });
 
-    it("does not initialize lifecycle or message automation after a created link when the post-link generation recheck loses", async () => {
+    it("keeps created-link lifecycle in the owning transaction when the post-link generation recheck loses", async () => {
         const document = mirroredDocument({
             branchId: "branch-1",
             customerPhone: "01012345678",
@@ -930,9 +976,100 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(transaction.client.create).toHaveBeenCalledTimes(1);
         expect(transaction.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
         expect(transaction.$queryRaw).toHaveBeenCalledTimes(2);
-        expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(
+            31,
+            transaction,
+        );
         expect(messageTrigger.ensureDefaultRulesForBranch).not.toHaveBeenCalled();
         expect(messageTrigger.syncClientRulesForClient).not.toHaveBeenCalled();
+    });
+
+    it("rolls back a full-surface client and schedule when the expected generation changes", async () => {
+        const document = mirroredDocument({
+            branchId: "branch-1",
+            customerPhone: "01012345678",
+            detailPayload: contractDetailWithProviders(),
+        });
+        const {
+            transaction,
+            prisma,
+            messageTrigger,
+            serviceRecordLifecycle,
+            usecase,
+        } = setup(document);
+        const tx = transaction as typeof transaction & {
+            employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
+            service_record_case: { findUnique: jest.Mock };
+        };
+        let createdClientId: number | null = null;
+        let createdScheduleId: number | null = null;
+        let claimedDocument = false;
+        tx.employee_schedule.findMany = jest.fn().mockImplementation(async () => (
+            createdScheduleId === null
+                ? []
+                : [{ id: createdScheduleId, primaryEmployeeId: 55, secondaryEmployeeId: 56 }]
+        ));
+        tx.service_record_case = {
+            findUnique: jest.fn().mockResolvedValue(null),
+        };
+        tx.employee.findMany.mockResolvedValue([
+            { id: 55, name: "박관리사", phone: "010-5555-1111" },
+            { id: 56, name: "최관리사", phone: "01055552222" },
+        ]);
+        tx.client.create.mockImplementation(async () => {
+            createdClientId = 31;
+            return { id: 31 };
+        });
+        tx.employee_schedule.create.mockImplementation(async () => {
+            createdScheduleId = 91;
+            return { id: 91 };
+        });
+        tx.client.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) => ({
+            id: where.id,
+            branchId: "branch-1",
+            eDocId: "doc-1",
+        }));
+        tx.eformsign_doc.updateMany.mockImplementation(async () => {
+            claimedDocument = true;
+            return { count: 1 };
+        });
+        tx.$queryRaw.mockImplementation(async (query: { strings?: string[] }) => {
+            const sql = query.strings?.join(" ") ?? "";
+            return sql.includes("detail_source_updated_date") ? [] : [{ id: 11 }];
+        });
+        // Prisma rolls back the callback's writes when the generation sentinel
+        // is thrown. Keep a tiny state snapshot in the unit double so this test
+        // proves the stale result cannot leave a client, schedule, or claim.
+        prisma.$transaction.mockImplementation(async (
+            work: (candidate: typeof transaction) => Promise<unknown>,
+        ) => {
+            const snapshot = {
+                createdClientId,
+                createdScheduleId,
+                claimedDocument,
+            };
+            try {
+                return await work(transaction);
+            } catch (error) {
+                createdClientId = snapshot.createdClientId;
+                createdScheduleId = snapshot.createdScheduleId;
+                claimedDocument = snapshot.claimedDocument;
+                throw error;
+            }
+        });
+        tx.client.findMany.mockResolvedValue([]);
+
+        await expect(usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
+            .resolves.toBe("mirror_not_ready");
+
+        expect(createdClientId).toBeNull();
+        expect(createdScheduleId).toBeNull();
+        expect(claimedDocument).toBe(false);
+        expect(tx.client.create).toHaveBeenCalledTimes(1);
+        expect(tx.employee_schedule.create).toHaveBeenCalledTimes(1);
+        expect(tx.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(31, transaction);
+        expect(messageTrigger.ensureDefaultRulesForBranch).not.toHaveBeenCalled();
     });
 
     it("runs created-link lifecycle and message automation while the second generation lock is held", async () => {
@@ -956,6 +1093,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         )).resolves.toBe("created");
 
         expect(transaction.$queryRaw).toHaveBeenCalledTimes(2);
+        expect(transaction.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
         expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(
             31,
             transaction,
@@ -997,7 +1135,8 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         )).rejects.toThrow("lifecycle unavailable");
 
         expect(transaction.client.create).toHaveBeenCalledTimes(1);
-        expect(transaction.$queryRaw).toHaveBeenCalledTimes(2);
+        expect(transaction.$queryRaw).toHaveBeenCalledTimes(1);
+        expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
         expect(messageTrigger.ensureDefaultRulesForBranch).not.toHaveBeenCalled();
     });
 
@@ -1054,7 +1193,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 customerPhone: "01012345678",
             },
         });
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(31);
+        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(31, expect.anything());
     });
 
     it("uses only an explicitly active global branch for auto-registration", async () => {

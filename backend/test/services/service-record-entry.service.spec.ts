@@ -308,6 +308,39 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         jest.useRealTimers();
     });
 
+    it("uses the common client, employee, case, schedule, assignment, day lock order for an owned assignment", async () => {
+        const schedule = {
+            id: 10,
+            clientId: 100,
+            branchId: BRANCH_ID,
+            primaryEmployeeId: 20,
+            secondaryEmployeeId: null,
+            startDate: new Date("2026-07-01T00:00:00.000Z"),
+            endDate: new Date("2026-07-31T00:00:00.000Z"),
+            replaced: false,
+            primaryEmployee: { name: "제공자" },
+        };
+        const { service, transactionClient } = createHarness({ schedule });
+
+        await service.upsertSession(context, 1, createDto(), false);
+
+        const lockTables = transactionClient.$queryRaw.mock.calls
+            .map(([query]) => (query as { strings?: string[] }).strings?.join(" ").toLowerCase() ?? "")
+            .filter((query) => query.includes("for update"))
+            .map((query) => {
+                const match = query.match(/from\s+"?([a-z_]+)"?/);
+                return match?.[1] ?? "unknown";
+            });
+        expect(lockTables.slice(0, 6)).toEqual([
+            "client",
+            "employee",
+            "service_record_case",
+            "employee_schedule",
+            "service_record_assignment",
+            "service_record_day",
+        ]);
+    });
+
     it("allows an unlocked session to be edited and submitted", async () => {
         const existing = createDay({ locked: false, clientSignature: null, clientSignedAt: null });
         const { service, upsert } = createHarness({ existing });

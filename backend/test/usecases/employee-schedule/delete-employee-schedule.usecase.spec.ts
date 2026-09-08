@@ -34,6 +34,85 @@ describe("DeleteEmployeeScheduleUsecase", () => {
         expect(repository.delete).toHaveBeenCalledWith(branchId, schedule.id);
     });
 
+    it("locks the complete client-owned set and forwards the owning transaction", async () => {
+        const transaction = {
+            $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+            employee_schedule: {
+                findMany: jest.fn().mockResolvedValue([{
+                    id: schedule.id,
+                    primaryEmployeeId: schedule.primaryEmployeeId,
+                    secondaryEmployeeId: schedule.secondaryEmployeeId,
+                }]),
+            },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: "case-1",
+                    branchId,
+                    clientId: schedule.clientId,
+                }),
+            },
+        };
+        const repository = {
+            findById: jest.fn()
+                .mockResolvedValueOnce(schedule)
+                .mockResolvedValueOnce(schedule),
+            delete: jest.fn().mockResolvedValue(undefined),
+        };
+        const usecase = new DeleteEmployeeScheduleUsecase(repository as never);
+
+        await usecase.execute(branchId, schedule.id, transaction as never);
+
+        const lockTables = transaction.$queryRaw.mock.calls
+            .map(([query]) => (query as { strings?: string[] }).strings?.join(" ").toLowerCase() ?? "")
+            .filter((query) => query.includes("for update"))
+            .map((query) => query.match(/from\s+"?([a-z_]+)"?/)?.[1] ?? "unknown");
+        expect(lockTables.slice(0, 6)).toEqual([
+            "client",
+            "employee",
+            "service_record_case",
+            "employee_schedule",
+            "service_record_assignment",
+            "service_record_day",
+        ]);
+        expect(repository.delete).toHaveBeenCalledWith(branchId, schedule.id, transaction);
+    });
+
+    it("rejects a changed owner after locks without deleting the stale target", async () => {
+        const transaction = {
+            $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+            employee_schedule: {
+                findMany: jest.fn().mockResolvedValue([{
+                    id: schedule.id,
+                    primaryEmployeeId: schedule.primaryEmployeeId,
+                    secondaryEmployeeId: schedule.secondaryEmployeeId,
+                }]),
+            },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(null),
+            },
+        };
+        const changed = new EmployeeScheduleEntity(
+            schedule.id,
+            99,
+            schedule.primaryEmployeeId,
+            schedule.secondaryEmployeeId,
+            schedule.workAddress,
+            schedule.startDate,
+            schedule.endDate,
+        );
+        const repository = {
+            findById: jest.fn()
+                .mockResolvedValueOnce(schedule)
+                .mockResolvedValueOnce(changed),
+            delete: jest.fn(),
+        };
+        const usecase = new DeleteEmployeeScheduleUsecase(repository as never);
+
+        await expect(usecase.execute(branchId, schedule.id, transaction as never))
+            .rejects.toBeInstanceOf(ConflictException);
+        expect(repository.delete).not.toHaveBeenCalled();
+    });
+
     it("returns a stable 409 when the repository reports retained data", async () => {
         const repository = {
             findById: jest.fn().mockResolvedValue(schedule),
