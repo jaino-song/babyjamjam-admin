@@ -338,7 +338,8 @@ describe("SbEformsignDocumentJobRepository", () => {
         queryRaw.mockResolvedValueOnce([row({ status: "completed", payload: null, active_key: null })]);
         await repository.markCompleted(row().id, "00000000-0000-0000-0000-000000000099", "doc-1");
         const statement = sqlText(queryRaw.mock.calls[0][0]);
-        expect(statement).toContain("payload = NULL");
+        expect(statement).toContain("payload = CASE");
+        expect(statement).toContain("service_record_revision");
         expect(statement).toContain("active_key = NULL");
     });
 
@@ -350,8 +351,56 @@ describe("SbEformsignDocumentJobRepository", () => {
             "AMBIGUOUS_PROVIDER_STATE",
         );
         const statement = sqlText(queryRaw.mock.calls[0][0]);
-        expect(statement).toContain("payload = NULL");
+        expect(statement).toContain("payload = CASE");
+        expect(statement).toContain("service_record_revision");
         expect(statement).not.toContain("active_key = NULL");
+    });
+
+    it.each([
+        "markReconciling",
+        "markCompleted",
+        "markFailed",
+        "markRequiresAttention",
+    ] as const)("retains a revision immutable payload through %s", async (transition) => {
+        const immutablePayload = {
+            kind: "service_record_revision",
+            context: { revisionId: dispatchCaseId },
+            immutablePayload: { generationId: "generation-1" },
+            payloadFingerprint: "b".repeat(64),
+            completeness: "complete",
+        };
+        queryRaw.mockResolvedValueOnce([row({
+            status: transition === "markReconciling"
+                ? "reconciling"
+                : transition === "markCompleted"
+                    ? "completed"
+                    : transition === "markFailed"
+                        ? "failed"
+                        : "requires_attention",
+            payload: immutablePayload,
+            payload_fingerprint: immutablePayload.payloadFingerprint,
+            active_key: transition === "markCompleted" ? null : row().active_key,
+        })]);
+
+        const transitioned = transition === "markReconciling"
+            ? await repository.markReconciling(row().id, "00000000-0000-0000-0000-000000000099")
+            : transition === "markCompleted"
+                ? await repository.markCompleted(row().id, "00000000-0000-0000-0000-000000000099")
+                : transition === "markFailed"
+                    ? await repository.markFailed(
+                        row().id,
+                        "00000000-0000-0000-0000-000000000099",
+                        "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED",
+                    )
+                    : await repository.markRequiresAttention(
+                        row().id,
+                        "00000000-0000-0000-0000-000000000099",
+                        "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED",
+                    );
+
+        expect(transitioned?.payload).toEqual(immutablePayload);
+        expect(transitioned?.payloadFingerprint).toBe(immutablePayload.payloadFingerprint);
+        expect(sqlText(queryRaw.mock.calls[0][0])).toContain("jsonb_typeof(payload)");
     });
 
     it("records an auto-finalize terminal attempt atomically and releases retry capacity below the cap", async () => {
@@ -422,16 +471,43 @@ describe("SbEformsignDocumentJobRepository", () => {
     });
 
     it("recovers only pre-send progress to queued and reconciles possible sends", async () => {
+        const revisionPayload = {
+            kind: "service_record_revision",
+            context: { revisionId: dispatchCaseId },
+            immutablePayload: { generationId: "generation-1" },
+            payloadFingerprint: "b".repeat(64),
+            completeness: "complete",
+        };
         queryRaw.mockResolvedValueOnce([
             row({ progress_step: "validating", status: "queued" }),
-            row({ id: "00000000-0000-0000-0000-000000000002", progress_step: "creating", status: "reconciling", payload: null }),
+            row({
+                id: "00000000-0000-0000-0000-000000000002",
+                progress_step: "creating",
+                status: "reconciling",
+                payload: revisionPayload,
+                payload_fingerprint: revisionPayload.payloadFingerprint,
+            }),
         ]);
         const recovered = await repository.recoverStale(new Date());
         expect(recovered.map((job) => job.status)).toEqual(["queued", "reconciling"]);
+        expect(recovered[1]?.payload).toEqual(revisionPayload);
         const statement = sqlText(queryRaw.mock.calls[0][0]);
         expect(statement).toContain("progress_step IS NULL");
         expect(statement).toContain("ELSE 'reconciling'");
+        expect(statement).toContain("jsonb_typeof(payload)");
         expect(statement).toContain("status IN ('processing', 'reconciling')");
+    });
+
+    it("retains revision generation rows during terminal retention cleanup", async () => {
+        executeRaw.mockResolvedValueOnce(1);
+
+        await expect(repository.deleteExpiredTerminal(new Date("2026-09-01T00:00:00Z"))).resolves.toBe(1);
+
+        const statement = sqlText(executeRaw.mock.calls[0][0]);
+        expect(statement).toContain("jsonb_typeof(payload)");
+        expect(statement).toContain("payload->>'kind' = 'service_record_revision'");
+        expect(statement).toContain("COALESCE");
+        expect(statement).toContain("NOT (");
     });
 
     it("scopes summary and every list section to the authenticated branch", async () => {

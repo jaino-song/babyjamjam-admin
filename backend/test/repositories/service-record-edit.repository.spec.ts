@@ -895,6 +895,26 @@ describe("ServiceRecordEditRepository", () => {
         expect(messageUpdate).toContain("claim_token = NULL");
     });
 
+    it("preserves revision generation payloads while superseding queued document jobs", async () => {
+        const tx = {
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([]),
+        };
+        const repository = new ServiceRecordEditRepository({} as never);
+
+        await expect((repository as unknown as {
+            invalidateSupersededJobs: (client: unknown, branch: string, serviceCase: string, clientId: number) => Promise<void>;
+        }).invalidateSupersededJobs(tx, branchId, caseId, 101)).resolves.toBeUndefined();
+
+        const documentUpdate = sqlTextWithValues(tx.$queryRaw.mock.calls[2]?.[0]);
+        expect(documentUpdate).toContain("payload = CASE");
+        expect(documentUpdate).toContain("job.payload->>'kind' = 'service_record_revision'");
+        expect(documentUpdate).toContain("ELSE NULL");
+    });
+
     it("uses the same-branch canonical document owner for null-client eform jobs", async () => {
         const tx = {
             $queryRaw: jest.fn()

@@ -104,6 +104,12 @@ function buildWorker(overrides: {
     const autoFinalizeScheduler = {
         recordTerminalFailure: jest.fn().mockResolvedValue(undefined),
     };
+    const eformsignDocRepository = {
+        findByDocumentId: jest.fn().mockResolvedValue({ documentId: "doc" }),
+    };
+    const clientRepository = {
+        findById: jest.fn().mockResolvedValue({ id: 7 }),
+    };
     const schedulerLease = overrides.schedulerLease ?? createSchedulerLeaseMock();
     const worker = new EformsignDocumentJobWorkerService(
         new ConfigService({ EFORMSIGN_DOCUMENT_JOBS_WORKER_ENABLED: "true" }),
@@ -112,11 +118,21 @@ function buildWorker(overrides: {
         finalize as never,
         reconciliation as never,
         autoFinalizeScheduler as never,
-        { findByDocumentId: jest.fn().mockResolvedValue({ documentId: "doc" }) } as never,
-        { findById: jest.fn().mockResolvedValue({ id: 7 }) } as never,
+        eformsignDocRepository as never,
+        clientRepository as never,
         schedulerLease,
     );
-    return { worker, repository, dispatch, finalize, reconciliation, autoFinalizeScheduler, schedulerLease };
+    return {
+        worker,
+        repository,
+        dispatch,
+        finalize,
+        reconciliation,
+        autoFinalizeScheduler,
+        eformsignDocRepository,
+        clientRepository,
+        schedulerLease,
+    };
 }
 
 describe("EformsignDocumentJobWorkerService", () => {
@@ -283,6 +299,79 @@ describe("EformsignDocumentJobWorkerService", () => {
             claimed.id,
             claimed.leaseToken,
             "SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED",
+        );
+    });
+
+    it("blocks a recovered revision reconciliation before target or provider reads", async () => {
+        const recovered = job({
+            status: "reconciling",
+            progressStep: "creating",
+            requestKey: "service-record-initial-finalization:00000000-0000-4000-8000-000000000021",
+            payload: {
+                kind: "service_record_revision",
+                generationKind: "INITIAL_FINALIZATION",
+                revisionId: "00000000-0000-4000-8000-000000000021",
+                revisionNumber: 1,
+                context: {
+                    branchId,
+                    clientId: 7,
+                    serviceRecordCaseId: "00000000-0000-4000-8000-000000000020",
+                    revisionId: "00000000-0000-4000-8000-000000000021",
+                    revisionNumber: 1,
+                    businessFingerprint: "a".repeat(64),
+                    plannedSessionCount: 1,
+                    plannedSessionDates: [{ sessionIndex: 1, serviceDate: "2026-08-13" }],
+                    documentSyncStatus: "capability_unverified",
+                    lifecycleStatus: "READY_TO_FINALIZE",
+                    formVersion: 1,
+                },
+                immutablePayload: { generationId: "generation-1" },
+                payloadFingerprint: "b".repeat(64),
+                completeness: "complete",
+                manualReviewRequired: true,
+            },
+            payloadFingerprint: "b".repeat(64),
+        });
+        const { worker, repository, reconciliation, clientRepository } = buildWorker({
+            repository: {
+                recoverStale: jest.fn().mockResolvedValue([recovered]),
+            },
+        });
+
+        await worker.processDueJobs();
+
+        expect(reconciliation.reconcile).not.toHaveBeenCalled();
+        expect(clientRepository.findById).not.toHaveBeenCalled();
+        expect(repository.markRequiresAttention).toHaveBeenCalledWith(
+            recovered.id,
+            recovered.leaseToken,
+            "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED",
+        );
+    });
+
+    it("fails closed for a recovered revision marker with missing immutable evidence", async () => {
+        const recovered = job({
+            status: "reconciling",
+            progressStep: "creating",
+            requestKey: "service-record-initial-finalization:00000000-0000-4000-8000-000000000021",
+            payload: {
+                kind: "service_record_revision",
+                revisionId: "00000000-0000-4000-8000-000000000021",
+            },
+        });
+        const { worker, repository, reconciliation } = buildWorker({
+            repository: {
+                recoverStale: jest.fn().mockResolvedValue([recovered]),
+            },
+        });
+
+        await worker.processDueJobs();
+
+        expect(reconciliation.reconcile).not.toHaveBeenCalled();
+        expect(repository.markRequiresAttention).toHaveBeenCalledWith(
+            recovered.id,
+            recovered.leaseToken,
+            "INVALID_SERVICE_RECORD_REVISION_JOB_PAYLOAD",
         );
     });
 

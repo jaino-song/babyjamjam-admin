@@ -615,7 +615,12 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
     async markReconciling(id: string, leaseToken: string, progressStep = "reconciling") {
         return this.updateOne(Prisma.sql`
             UPDATE "eformsign_document_job" SET status = 'reconciling', progress_step = ${progressStep},
-                payload = NULL, heartbeat_at = now(), updated_at = now()
+                payload = CASE
+                    WHEN jsonb_typeof(payload) = 'object'
+                        AND payload->>'kind' = 'service_record_revision' THEN payload
+                    ELSE NULL
+                END,
+                heartbeat_at = now(), updated_at = now()
             WHERE id = ${id}::uuid AND lease_token = ${leaseToken}::uuid
               AND status IN ('processing', 'reconciling') RETURNING *
         `);
@@ -625,7 +630,12 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         return this.updateOne(Prisma.sql`
             UPDATE "eformsign_document_job" SET status = 'completed',
                 document_id = COALESCE(${documentId ?? null}, document_id), completed_at = now(),
-                payload = NULL, active_key = NULL, heartbeat_at = NULL, lease_token = NULL,
+                payload = CASE
+                    WHEN jsonb_typeof(payload) = 'object'
+                        AND payload->>'kind' = 'service_record_revision' THEN payload
+                    ELSE NULL
+                END,
+                active_key = NULL, heartbeat_at = NULL, lease_token = NULL,
                 last_error_code = NULL, updated_at = now()
             WHERE id = ${id}::uuid AND lease_token = ${leaseToken}::uuid
               AND status IN ('processing', 'reconciling') RETURNING *
@@ -653,6 +663,8 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 END,
                 payload = CASE
                     WHEN progress_step IS NULL OR progress_step IN ('queued', 'validating', 'preparing') THEN payload
+                    WHEN jsonb_typeof(payload) = 'object'
+                        AND payload->>'kind' = 'service_record_revision' THEN payload
                     ELSE NULL
                 END,
                 heartbeat_at = NULL,
@@ -689,7 +701,13 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
 
     async deleteExpiredTerminal(cutoff: Date) {
         const count = await this.prisma.$executeRaw(Prisma.sql`
-            DELETE FROM "eformsign_document_job" WHERE status IN ${TERMINAL_STATUSES} AND completed_at < ${cutoff}
+            DELETE FROM "eformsign_document_job"
+            WHERE status IN ${TERMINAL_STATUSES}
+              AND completed_at < ${cutoff}
+              AND NOT (
+                  COALESCE(jsonb_typeof(payload) = 'object', false)
+                  AND COALESCE(payload->>'kind' = 'service_record_revision', false)
+              )
         `);
         return Number(count);
     }
@@ -704,7 +722,12 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         return this.prisma.$transaction(async (tx) => {
             const rows = await tx.$queryRaw<RawJob[]>(Prisma.sql`
                 UPDATE "eformsign_document_job" SET status = ${status}, last_error_code = ${errorCode},
-                    completed_at = now(), payload = NULL,
+                    completed_at = now(),
+                    payload = CASE
+                        WHEN jsonb_typeof(payload) = 'object'
+                            AND payload->>'kind' = 'service_record_revision' THEN payload
+                        ELSE NULL
+                    END,
                     active_key = CASE
                         WHEN ${releaseActiveKey} AND source <> 'auto_finalize' THEN NULL
                         ELSE active_key
