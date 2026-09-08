@@ -5,6 +5,10 @@ import {
     EformsignDocumentJobType,
 } from "domain/entities/eformsign-document-job.entity";
 import type { Prisma } from "@prisma/client";
+import type {
+    ServiceRecordDispatchAuthorizationResult,
+    ServiceRecordRevisionDispatchContext,
+} from "@babyjamjam/shared/types/service-record";
 
 export interface EnqueueEformsignDocumentJobInput {
     branchId: string;
@@ -30,6 +34,19 @@ export interface EformsignDocumentJobList {
     recent: EformsignDocumentJobEntity[];
 }
 
+/**
+ * Claim a live worker lease for the irreversible provider boundary while the
+ * caller's transaction still owns the common service-record lock set.
+ * `expectedContext` is omitted only for legacy create/finalize jobs that do
+ * not carry a service-record revision intent; those jobs still require the
+ * matching live lease and processing status.
+ */
+export interface AuthorizeEformsignDocumentJobForDispatchInput {
+    jobId: string;
+    leaseToken: string;
+    expectedContext?: ServiceRecordRevisionDispatchContext | null;
+}
+
 export interface IEformsignDocumentJobRepository {
     enqueue(input: EnqueueEformsignDocumentJobInput): Promise<{ job: EformsignDocumentJobEntity; existing: boolean }>;
     /** Insert or replay a job using the caller's active transaction. */
@@ -37,6 +54,10 @@ export interface IEformsignDocumentJobRepository {
         tx: Prisma.TransactionClient,
         input: EnqueueEformsignDocumentJobInput,
     ): Promise<{ job: EformsignDocumentJobEntity; existing: boolean }>;
+    authorizeForDispatchInTransaction(
+        tx: Prisma.TransactionClient,
+        input: AuthorizeEformsignDocumentJobForDispatchInput,
+    ): Promise<ServiceRecordDispatchAuthorizationResult>;
     claimDue(limit?: number): Promise<EformsignDocumentJobEntity[]>;
     updateProgress(id: string, leaseToken: string, progressStep: string, heartbeatAt?: Date): Promise<EformsignDocumentJobEntity | null>;
     scheduleRetry(id: string, leaseToken: string, nextAttemptAt: Date, errorCode: string): Promise<EformsignDocumentJobEntity | null>;

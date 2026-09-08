@@ -30,7 +30,11 @@ const validContractData = {
 };
 
 function buildService() {
-    const repository = { enqueue: jest.fn(), enqueueInTransaction: jest.fn() };
+    const repository = {
+        enqueue: jest.fn(),
+        enqueueInTransaction: jest.fn(),
+        authorizeForDispatchInTransaction: jest.fn(),
+    };
     const documents = { findByDocumentId: jest.fn() };
     const clients = { findById: jest.fn() };
     const service = new EformsignDocumentJobService(
@@ -68,6 +72,21 @@ describe("EformsignDocumentJobService", () => {
         expect(repository.enqueue).not.toHaveBeenCalled();
     });
 
+    it("forwards the caller transaction to the durable dispatch authorization seam", async () => {
+        const { service, repository } = buildService();
+        const tx = { marker: "caller-transaction" };
+        const input = {
+            jobId: "00000000-0000-4000-8000-000000000001",
+            leaseToken: "00000000-0000-4000-8000-000000000002",
+        };
+        const result = { kind: "allow" as const };
+        repository.authorizeForDispatchInTransaction.mockResolvedValue(result);
+
+        await expect(service.authorizeForDispatchInTransaction(tx as never, input))
+            .resolves.toEqual(result);
+        expect(repository.authorizeForDispatchInTransaction).toHaveBeenCalledWith(tx, input);
+    });
+
     it("refuses finalization when the authenticated branch does not own the document", async () => {
         const { service, repository, documents } = buildService();
         documents.findByDocumentId.mockResolvedValue(null);
@@ -84,7 +103,7 @@ describe("EformsignDocumentJobService", () => {
 
     it("allows finalization when the authenticated branch owns the document", async () => {
         const { service, repository, documents } = buildService();
-        documents.findByDocumentId.mockResolvedValue({ documentId: "owned-document" });
+        documents.findByDocumentId.mockResolvedValue({ documentId: "owned-document", clientId: 7 });
         repository.enqueue.mockResolvedValue({ job: { id: "job-1" }, existing: false });
 
         await expect(service.enqueueFinalizeDocument({
@@ -95,6 +114,7 @@ describe("EformsignDocumentJobService", () => {
         })).resolves.toEqual({ job: { id: "job-1" }, existing: false });
         expect(repository.enqueue).toHaveBeenCalledWith(expect.objectContaining({
             branchId,
+            clientId: 7,
             documentId: "owned-document",
             activeKey: "finalize:owned-document",
         }));
