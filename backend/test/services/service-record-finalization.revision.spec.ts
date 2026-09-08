@@ -6,6 +6,7 @@ const branchId = "00000000-0000-4000-8000-000000000010";
 const caseId = "00000000-0000-4000-8000-000000000020";
 const clientId = 7;
 const revisionId = "00000000-0000-4000-8000-000000000030";
+const stateId = "00000000-0000-4000-8000-000000000070";
 const date = new Date("2026-09-07T00:00:00.000Z");
 
 function source() {
@@ -87,11 +88,19 @@ function sourceWith(overrides: Record<string, unknown>) {
 }
 
 function buildService(jobService: Record<string, jest.Mock>) {
+    const editRepository = {
+        createRevisionDocumentStateInTransaction: jest.fn().mockResolvedValue({
+            id: stateId,
+            documentVersion: 3,
+        }),
+        allocateServiceRecordRevisionDocumentVersionInTransaction: jest.fn().mockResolvedValue(3),
+    };
     return new ServiceRecordFinalizationService(
         {} as never,
         {} as never,
         {} as never,
         jobService as never,
+        editRepository as never,
     );
 }
 
@@ -139,6 +148,8 @@ describe("ServiceRecordFinalizationService revised generation", () => {
             revisionNumber: 2,
             completeness: "complete",
             manualReviewRequired: true,
+            documentVersion: 3,
+            documentStateId: stateId,
             context: {
                 branchId,
                 clientId,
@@ -209,6 +220,7 @@ describe("ServiceRecordFinalizationService revised generation", () => {
             revisionId,
             completeness: "complete",
             manualReviewRequired: true,
+            documentVersion: 3,
             payloadFingerprint: frozenFingerprint,
             snapshotReference: `service-record-initial-finalization:${revisionId}`,
             immutablePayload,
