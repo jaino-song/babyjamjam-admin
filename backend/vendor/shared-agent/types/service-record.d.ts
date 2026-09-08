@@ -200,8 +200,8 @@ export interface ServiceRecordRevisionGenerationInput extends ServiceRecordRevis
     generationKind: "REVISION_SNAPSHOT" | "INITIAL_FINALIZATION";
     /** Mutable operation-state row that owns this generation's CAS. */
     documentStateId: string;
-    /** Null until the renderer allocates the next case document version. */
-    documentVersion: number | null;
+    /** Core allocates and persists this fixed case-local version before rendering. */
+    documentVersion: number;
     snapshotReference: string;
     generation: string;
     /** Immutable complete input captured under the finalization lock. */
