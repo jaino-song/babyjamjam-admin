@@ -1,23 +1,23 @@
 # Phase5 local verification
 
-Status: implementation in progress. Phase4 same-session Sol/high audit SHIP at1913ef766; external Phase0 capability remains unverified. No vendor, SMS, production storage or environment database calls authorized in this phase.
+Status: local implementation integrated; independent Phase5 audit pending. Phase4 same-session Sol/high audit SHIP at1913ef766; external Phase0 capability remains unverified. No vendor, SMS, production storage or environment database calls authorized in this phase.
 
 Four isolated units start together from integration1913ef766: `phase5-record-generation` / `unit/admin-service-record-5-generation`, `phase5-contract-sync` / `unit/admin-service-record-5-contract`, `phase5-receipt-refresh` / `unit/admin-service-record-5-receipt`, `phase5-editor-status` / `unit/admin-service-record-5-ui`. All under `/Users/jaino/Development/babyjamjam-admin/`; base branch `admin-service-record-editor`. Runtime Luna/max, local. Parent integrates shared checkpoints and generates client; linked dependencies are read-only to workers. One integrated Sol/high phase audit follows required checks.
 
 | Required local evidence | Status |
 |---|---|
-| Immutable complete generation, legacy max-version allocation, same retry identity | Pending |
-| All-chunk promotion CAS, old event cannot promote current pointers | Pending |
-| Draft allowed and next confirmation gated while unresolved operations | Pending |
-| Contract unchanged period no-op; original received date/amount preserved | Pending |
-| Incomplete record readiness separate from changed contract period | Pending |
-| Completed contract new signature and old pointer retained | Pending |
-| Capability unverified zero external calls; unknown-outcome resume | Pending |
-| Fresh PDF expected-field verification rejects stale/ambiguous output | Pending |
-| Receipt token/access/expiry identity preserved and image promotion CAS | Pending |
-| Tenant-scoped history/retry; stale generation rejected | Pending |
-| Admin state/history, same-origin notification and focus requery | Pending |
-| Known receipt helper type errors resolved; affected checks | Pending |
+| Immutable complete generation, legacy max-version allocation, same retry identity | Local renderer unit + version/finalizer PG PASS; activation blocked |
+| All-chunk promotion CAS, old event cannot promote current pointers | Successive-version PG PASS; lifecycle stale-event unit PASS; full webhook/poller audit pending |
+| Draft allowed and next confirmation gated while unresolved operations | Actual-PG operation intent suite PASS |
+| Contract unchanged period no-op; original received date/amount preserved | Contract unit/PG PASS; locked source capture wired; unavailable metadata fails closed |
+| Incomplete record readiness separate from changed contract period | Actual-PG partial intent suite PASS |
+| Completed contract new signature and old pointer retained | Fake-provider contract unit evidence; real activation unverified |
+| Capability unverified zero external calls; unknown-outcome resume | Real dispatch gate PG PASS + fake-provider unknown resume PG PASS |
+| Fresh PDF expected-field verification rejects stale/ambiguous output | Synthetic PDF verifier unit PASS; authoritative vendor PDF not tested |
+| Receipt token/access/expiry identity preserved and image promotion CAS | Actual-PG receipt/access suite PASS |
+| Tenant-scoped history/retry; stale generation rejected | State repository PG and API unit PASS; actual HTTP deferred Phase6 |
+| Admin state/history, same-origin notification and focus requery | Frontend unit PASS; browser deferred Phase6 |
+| Known receipt helper type errors resolved; affected checks | Helper suite PASS; backend typecheck PASS through pre-facts checkpoint |
 
 Phase6 actual HTTP guards and dedicated mock browser evidence remain pending, and will not be represented by service/unit test totals. Local fake-provider/PDF proof cannot activate a vendor capability.
 
@@ -54,6 +54,8 @@ Phase6 actual HTTP guards and dedicated mock browser evidence remain pending, an
 - Added second usable revision promotion scenario. Actual-PG version suite4 PASS/1 FAIL (`/tmp/bjj-phase5-second-promotion-red.log`): next allocation fails after an existing usable version. Also identified pointer promotion requires previous usable pointer already equal new revision, preventing replacement. Both remain correction work; first-version tests alone are insufficient.
 - 831b5a448 lifecycle revision fence integrated; parent focused suite37/37 PASS (`/tmp/bjj-phase5-lifecycle-fence-integrated.log`). Completion uses current/current-usable revision and document version, excluding historical snapshot rows; legacy null-revision behavior remains separate.
 - 321266f30 allocator/promotion/retry correction integrated. Parent exact PostgreSQL version+operation suites10/10 PASS (`/tmp/bjj-phase5-second-promotion-green.log`), including second usable revision replacement only after all new chunks are complete. Bigint allocation failure and prior-pointer replacement defect are resolved. Malformed auxiliary retry validates context before changing state; stale revision retries are refused.
-- 2653774cd pure source fact capture integrated; parent exact policy suite7/7 PASS (`/tmp/bjj-phase5-facts-integrated.log`). Current standard document storage does not supply templateVersion/mirrorGeneration; missing metadata remains a named manual-review/activation limitation, not fabricated from timestamps or hashes. Core source wiring is pending.
+- 2653774cd pure source fact capture integrated; parent exact policy suite7/7 PASS (`/tmp/bjj-phase5-facts-integrated.log`). Current standard document storage does not supply templateVersion/mirrorGeneration; missing metadata remains a named manual-review/activation limitation, not fabricated from timestamps or hashes. Core source wiring was subsequently integrated at0051fd257.
 - a70766801 actual operation dispatch gate suite integrated and parent5/5 PASS (`/tmp/bjj-phase5-operation-dispatch-postgres.log`). Real authorizeForDispatch continues to reject revised operations as CAPABILITY_UNVERIFIED; actual worker makes zero coordinator/renderer/vendor calls. Positive operation route remains mocked-authorization unit evidence only.
 - Full focused PG matrix initially52 PASS/1 FAIL (`/tmp/bjj-phase5-pg-matrix-pre-facts.log`): contract resume fixture appended revision without marking it current. Corrected synthetic currentRevisionId to match real ownership requirements; exact contract suite3/3 PASS (`/tmp/bjj-phase5-contract-resume-context-green.log`). Production current-revision gate retained.
+
+- 0051fd257 locked source capture/planner and internal-resume separation integrated. Final parent exact PostgreSQL matrix8 suites58/58 PASS (`/tmp/bjj-phase5-final-pg-matrix.log`); exact service/repository/policy/module unit matrix10 suites154/154 PASS (`/tmp/bjj-phase5-final-unit-matrix.log`); normal backend `tsc --noEmit` PASS (`/tmp/bjj-phase5-final-backend-types.log`). Counts overlap earlier checkpoint results and are not additive. Phase5 independent Sol/high audit starts after this integrated checkpoint. Phase6 not started.
