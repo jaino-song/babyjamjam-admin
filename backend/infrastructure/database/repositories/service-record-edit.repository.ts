@@ -854,7 +854,7 @@ async function selectRevisionSnapshotChunks(
             chunk.chunk_index AS "chunkIndex",
             chunk.chunk_count AS "chunkCount",
             chunk.status,
-            chunk.eformsign_document_id AS "documentId",
+            chunk.document_id AS "documentId",
             doc.document_id AS "storedDocumentId",
             doc.revision_id AS "documentRevisionId",
             doc.branch_id AS "documentBranchId",
@@ -866,12 +866,12 @@ async function selectRevisionSnapshotChunks(
             doc.snapshot_chunk_index AS "documentSnapshotChunkIndex"
         FROM "service_record_snapshot_chunk" AS chunk
         INNER JOIN "eformsign_doc" AS doc
-            ON doc.document_id = chunk.eformsign_document_id
+            ON doc.document_id = chunk.document_id
         WHERE chunk.branch_id = ${input.branchId}::uuid
           AND chunk.service_record_case_id = ${input.serviceRecordCaseId}::uuid
           AND chunk.revision_id = ${input.revisionId}::uuid
           AND chunk.snapshot_version = ${input.documentVersion}
-          AND chunk.eformsign_document_id IS NOT NULL
+          AND chunk.document_id IS NOT NULL
         ORDER BY chunk.chunk_index ASC
         FOR UPDATE OF chunk, doc
     `);
