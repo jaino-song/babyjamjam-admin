@@ -778,7 +778,11 @@ describe("ClientService", () => {
 
             expect(linkMirroredDocumentByPhoneUsecase.execute).toHaveBeenCalledWith(
                 "DOC-PARTIAL",
-                { linkExistingOnly: true },
+                {
+                    linkExistingOnly: true,
+                    existingClientId: mockClient.id,
+                    existingClientBranchId: branchId,
+                },
             );
             expect(prismaService.eformsign_doc.findMany).toHaveBeenNthCalledWith(2, {
                 where: {

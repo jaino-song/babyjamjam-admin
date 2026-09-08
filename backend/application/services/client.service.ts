@@ -547,7 +547,11 @@ export class ClientService {
         for (const candidate of candidates) {
             const result = await this.linkMirroredDocumentByPhoneUsecase.execute(
                 candidate.documentId,
-                { linkExistingOnly: true },
+                {
+                    linkExistingOnly: true,
+                    existingClientId: client.id,
+                    existingClientBranchId: branchId,
+                },
             );
             if (result === "linked") {
                 ownershipChanged = true;
@@ -1858,32 +1862,42 @@ export class ClientService {
                 }
             }
 
-            const result = await transaction.client.updateMany({
-                where: { id, branchId: branchid },
-                data: {
-                    name: params.name,
-                    address: params.address === undefined ? undefined : params.address,
-                    phone: params.phone === undefined ? undefined : params.phone,
-                    phoneNormalized: normalizedPhoneUpdate,
-                    type: lockedPricing?.type,
-                    duration: duration === undefined ? undefined : duration,
-                    fullPrice: lockedPricing?.fullPrice,
-                    grant: lockedPricing?.grant,
-                    actualPrice: lockedPricing?.actualPrice,
-                    startDate: startDateUpdate,
-                    endDate: endDateUpdate,
-                    careCenter: params.careCenter === undefined ? undefined : params.careCenter,
-                    voucherClient: params.voucherClient,
-                    birthday: params.birthday === undefined ? undefined : params.birthday,
-                    dueDate: dueDateUpdate,
-                    birthDate: birthDateUpdate,
-                    serviceStatus: params.serviceStatus === undefined ? undefined : params.serviceStatus,
-                    breastPump: params.breastPump,
-                    eDocId: params.eDocId === undefined ? undefined : params.eDocId,
-                    areaId: params.areaId === undefined ? undefined : params.areaId,
-                },
-            });
-            if (result.count === 0) {
+            const clientUpdateData = {
+                name: params.name,
+                address: params.address === undefined ? undefined : params.address,
+                phone: params.phone === undefined ? undefined : params.phone,
+                phoneNormalized: normalizedPhoneUpdate,
+                type: lockedPricing?.type,
+                duration: duration === undefined ? undefined : duration,
+                fullPrice: lockedPricing?.fullPrice,
+                grant: lockedPricing?.grant,
+                actualPrice: lockedPricing?.actualPrice,
+                startDate: startDateUpdate,
+                endDate: endDateUpdate,
+                careCenter: params.careCenter === undefined ? undefined : params.careCenter,
+                voucherClient: params.voucherClient,
+                birthday: params.birthday === undefined ? undefined : params.birthday,
+                dueDate: dueDateUpdate,
+                birthDate: birthDateUpdate,
+                serviceStatus: params.serviceStatus === undefined ? undefined : params.serviceStatus,
+                breastPump: params.breastPump,
+                eDocId: params.eDocId === undefined ? undefined : params.eDocId,
+                areaId: params.areaId === undefined ? undefined : params.areaId,
+            };
+            // An employee-only edit still owns the client lock and may create
+            // a replacement schedule, but Prisma reports zero rows for an
+            // updateMany whose data is entirely undefined. Keep the target
+            // existence guard while avoiding a false NotFound after the
+            // schedule write.
+            if (Object.values(clientUpdateData).some((value) => value !== undefined)) {
+                const result = await transaction.client.updateMany({
+                    where: { id, branchId: branchid },
+                    data: clientUpdateData,
+                });
+                if (result.count === 0) {
+                    throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${id})`);
+                }
+            } else if (!currentClient) {
                 throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${id})`);
             }
             await this.serviceRecordLifecycleService?.ensureForClient(id, transaction);

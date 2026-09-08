@@ -89,7 +89,10 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             $executeRaw: jest.fn().mockResolvedValue(1),
             $queryRaw: jest.fn().mockResolvedValue([{ id: 11 }]),
             eformsign_doc: {
-                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+                updateMany: jest.fn().mockImplementation(async ({ data }) => {
+                    Object.assign(document, data);
+                    return { count: 1 };
+                }),
                 findUnique: jest.fn().mockImplementation(({ where }) =>
                     Promise.resolve(
                         where.documentId === document.documentId
@@ -212,14 +215,14 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
     });
 
     it("claims a later-mirrored legacy document for the one exact phone match", async () => {
-        const { transaction, usecase } = setup();
+        const { transaction, usecase } = setup(mirroredDocument({ branchId: "branch-1" }));
 
         await expect(usecase.execute("doc-1")).resolves.toBe("linked");
 
         expect(transaction.client.findMany).toHaveBeenCalledWith({
             where: {
                 phone: { not: null },
-                branchId: { not: null },
+                branchId: "branch-1",
                 OR: [{ phone: { endsWith: "5678" } }],
             },
             select: {
@@ -250,7 +253,11 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
 
     it("claims a branchless existing-client mirror when the observed source generation is current", async () => {
         const document = mirroredDocument({ branchId: null, clientId: null });
-        const { transaction, usecase } = setup(document);
+        const { transaction, settings, usecase } = setup(document);
+        settings.getEformsignTemplateBranch.mockResolvedValue({
+            branchId: "branch-1",
+            effectiveFrom: new Date("2026-07-01T00:00:00.000Z"),
+        });
         const tx = transaction as typeof transaction & {
             employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
             service_record_case: { findUnique: jest.Mock };
@@ -262,7 +269,11 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         transaction.$queryRaw.mockImplementation((query: { strings?: string[] }) => {
             const sql = query.strings?.join(" ").toLowerCase() ?? "";
             if (sql.includes("from eformsign_doc as doc")) {
-                return Promise.resolve(sql.includes("branch_id is null") ? [{ id: 11 }] : []);
+                return Promise.resolve(
+                    sql.includes("branch_id is null") || sql.includes("doc.branch_id =")
+                        ? [{ id: 11 }]
+                        : [],
+                );
             }
             return Promise.resolve([{ id: 11 }]);
         });
@@ -281,8 +292,40 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         );
     });
 
+    it("uses the server-owned client scope for a client-initiated branchless link", async () => {
+        const document = mirroredDocument({ branchId: null, clientId: null });
+        const { transaction, usecase } = setup(document);
+        transaction.client.findMany.mockResolvedValue([{
+            id: 21,
+            branchId: "branch-1",
+            phone: "010-1234-5678",
+            eDocId: null,
+        }]);
+
+        await expect(usecase.execute("doc-1", {
+            linkExistingOnly: true,
+            existingClientId: 21,
+            existingClientBranchId: "branch-1",
+        })).resolves.toBe("linked");
+
+        expect(transaction.client.findMany).toHaveBeenCalledWith({
+            where: {
+                id: 21,
+                phone: { not: null },
+                branchId: "branch-1",
+                OR: [{ phone: { endsWith: "5678" } }],
+            },
+            select: {
+                id: true,
+                branchId: true,
+                phone: true,
+                eDocId: true,
+            },
+        });
+    });
+
     it("limits a completed-status mirror to an existing client without completion effects", async () => {
-        const document = mirroredDocument({ statusType: "072" });
+        const document = mirroredDocument({ statusType: "072", branchId: "branch-1" });
         const {
             transaction,
             settings,
@@ -321,7 +364,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
     });
 
     it("does not guess when the normalized phone matches multiple clients", async () => {
-        const { transaction, usecase } = setup();
+        const { transaction, usecase } = setup(mirroredDocument({ branchId: "branch-1" }));
         transaction.client.findMany.mockResolvedValue([
             {
                 id: 21,
@@ -331,7 +374,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             },
             {
                 id: 22,
-                branchId: "branch-2",
+                branchId: "branch-1",
                 phone: "+82 10 1234 5678",
                 eDocId: null,
             },
@@ -342,7 +385,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
     });
 
     it("keeps the client pointer on a newer contract", async () => {
-        const { document, transaction, usecase } = setup();
+        const { document, transaction, usecase } = setup(mirroredDocument({ branchId: "branch-1" }));
         transaction.client.findMany.mockResolvedValue([{
             id: 21,
             branchId: "branch-1",
@@ -567,7 +610,11 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         transaction.$queryRaw.mockImplementation((query: { strings?: string[] }) => {
             const sql = query.strings?.join(" ").toLowerCase() ?? "";
             if (sql.includes("from eformsign_doc as doc")) {
-                return Promise.resolve(sql.includes("branch_id is null") ? [{ id: 11 }] : []);
+                return Promise.resolve(
+                    sql.includes("branch_id is null") || sql.includes("doc.branch_id =")
+                        ? [{ id: 11 }]
+                        : [],
+                );
             }
             return Promise.resolve([{ id: 11 }]);
         });
@@ -1419,7 +1466,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         settings.getClientAutoRegistrationEnabled.mockResolvedValue(false);
         transaction.client.findMany.mockResolvedValue([]);
 
-        await expect(usecase.execute("doc-1")).resolves.toBe("no_branch");
+        await expect(usecase.execute("doc-1")).resolves.toBe("disabled");
 
         expect(settings.getClientAutoRegistrationEnabled)
             .toHaveBeenCalledWith("branch-2");
