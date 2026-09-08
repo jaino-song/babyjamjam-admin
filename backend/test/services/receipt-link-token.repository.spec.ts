@@ -11,6 +11,9 @@ const mockedRunSystemScope = runSystemScope as jest.Mock;
 const BASE_ROW = {
     id: "tok-1",
     eformsignDocId: 1,
+    branchId: "11111111-1111-1111-1111-111111111111",
+    clientId: 7,
+    createdAt: new Date("2026-09-01T00:00:00.000Z"),
     accessTokenHash: null,
     expectedBirthdayHash: "hash",
     verifiedAt: null,
@@ -49,6 +52,9 @@ function makeFakePrisma() {
         updateMany: jest.fn(),
         deleteMany: jest.fn(),
     };
+    const service_record_revision = {
+        findFirst: jest.fn().mockResolvedValue(null),
+    };
     const tx: FakeTx = { receipt_link_token, $executeRaw: jest.fn(), $queryRaw: jest.fn() };
     const $transaction = jest.fn(async (arg: unknown) => {
         if (typeof arg === "function") {
@@ -57,7 +63,7 @@ function makeFakePrisma() {
         return Promise.all(arg as Promise<unknown>[]);
     });
     const $queryRaw = jest.fn();
-    return { receipt_link_token, $transaction, $queryRaw, __tx: tx };
+    return { receipt_link_token, service_record_revision, $transaction, $queryRaw, __tx: tx };
 }
 
 describe("SbReceiptLinkTokenRepository", () => {
@@ -322,6 +328,53 @@ describe("SbReceiptLinkTokenRepository", () => {
         expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
+    it("rethrows unexpected promotion transaction failures instead of reporting a stale CAS", async () => {
+        const prisma = makeFakePrisma();
+        const repository = new SbReceiptLinkTokenRepository(prisma as never);
+        const error = new Error("database unavailable");
+        prisma.__tx.$executeRaw.mockRejectedValue(error);
+
+        const proof = {
+            officialPdfSha256: "a".repeat(64),
+            verifiedAt: "2026-09-08T03:00:00.000Z",
+            pageCount: 1,
+            scope: {
+                branchId: "11111111-1111-4111-8111-111111111111",
+                clientId: 7,
+                revisionId: "33333333-3333-4333-8333-333333333333",
+                documentId: "target-document",
+                generation: "generation-1",
+                mirrorGeneration: "mirror-1",
+                templateId: "template-1",
+                templateVersion: "v3",
+            },
+            expected: { serviceStartDate: "2026-08-01", serviceEndDate: "2026-08-14", receivedDate: "2026-08-02", amount: "123000" },
+        };
+        const input = {
+            branchId: "11111111-1111-4111-8111-111111111111",
+            clientId: 7,
+            serviceRecordCaseId: "22222222-2222-4222-8222-222222222222",
+            revisionId: "33333333-3333-4333-8333-333333333333",
+            documentStateId: "44444444-4444-4444-8444-444444444444",
+            expectedGeneration: "generation-1",
+            expectedStateVersion: 1,
+            targetDocumentId: "target-document",
+            documentVersion: 3,
+            templateId: "template-1",
+            templateVersion: "v3",
+            mirrorGeneration: "mirror-1",
+            eformsignDocId: 42,
+            tokenIds: ["55555555-5555-4555-8555-555555555555"],
+            storagePath: "receipts/new.png",
+            contentSha256: "b".repeat(64),
+            byteSize: 9,
+            proof,
+            now: new Date("2026-09-08T03:00:00.000Z"),
+        };
+
+        await expect(repository.promoteReceiptRevisionArtifact(input)).rejects.toBe(error);
+    });
+
     it("restores a legacy reissued URL with the service-end expiry and requires fresh authentication", async () => {
         const prisma = makeFakePrisma();
         const repository = new SbReceiptLinkTokenRepository(prisma as never);
@@ -334,6 +387,62 @@ describe("SbReceiptLinkTokenRepository", () => {
         expect(prisma.receipt_link_token.update).toHaveBeenCalledWith({ where: { id: "tok-1" }, data: {
             active: true, revokedAt: null, accessTokenHash: null, verifiedAt: null, expiresAt: new Date("2026-09-24T15:00:00Z"),
         } });
+    });
+
+    it("preserves a token that existed before a confirmed service-record revision", async () => {
+        const prisma = makeFakePrisma();
+        const repository = new SbReceiptLinkTokenRepository(prisma as never);
+        const revokedAt = new Date("2026-09-02T00:00:00.000Z");
+        const verifiedAt = new Date("2026-09-01T08:00:00.000Z");
+        const storedExpiry = new Date("2026-09-30T00:00:00.000Z");
+        const row = {
+            ...BASE_ROW,
+            active: false,
+            revokedAt,
+            accessTokenHash: "existing-session",
+            verifiedAt,
+            expiresAt: storedExpiry,
+            client: { name: "김산모", endDate: new Date("2026-10-15T00:00:00.000Z") },
+        };
+        prisma.receipt_link_token.findUnique.mockResolvedValue(row);
+        prisma.service_record_revision.findFirst.mockResolvedValue({ id: "revision-1" });
+
+        const result = await repository.findByLinkTokenHash("revision-token");
+
+        expect(result).toMatchObject({
+            active: false,
+            accessTokenHash: "existing-session",
+            verifiedAt,
+            expiresAt: storedExpiry,
+        });
+        expect(prisma.service_record_revision.findFirst).toHaveBeenCalledWith({
+            where: {
+                branchId: BASE_ROW.branchId,
+                confirmedAt: { gte: BASE_ROW.createdAt },
+                serviceRecordCase: { is: { branchId: BASE_ROW.branchId, clientId: BASE_ROW.clientId } },
+            },
+            select: { id: true },
+        });
+        expect(prisma.receipt_link_token.update).not.toHaveBeenCalled();
+    });
+
+    it("fails closed without mutating the token when revision protection lookup fails", async () => {
+        const prisma = makeFakePrisma();
+        const repository = new SbReceiptLinkTokenRepository(prisma as never);
+        const row = {
+            ...BASE_ROW,
+            active: false,
+            revokedAt: new Date("2026-09-02T00:00:00.000Z"),
+            accessTokenHash: "existing-session",
+            client: { name: "김산모", endDate: new Date("2026-10-15T00:00:00.000Z") },
+        };
+        prisma.receipt_link_token.findUnique.mockResolvedValue(row);
+        prisma.service_record_revision.findFirst.mockRejectedValue(new Error("database unavailable"));
+
+        const result = await repository.findByLinkTokenHash("revision-token");
+
+        expect(result).toMatchObject({ active: false, accessTokenHash: "existing-session", expiresAt: row.expiresAt });
+        expect(prisma.receipt_link_token.update).not.toHaveBeenCalled();
     });
 
     it("does not clean up a link whose service end was extended", async () => {

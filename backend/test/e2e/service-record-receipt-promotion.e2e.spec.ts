@@ -307,6 +307,84 @@ describeE2E("receipt revision artifact promotion (disposable PostgreSQL)", () =>
             });
     });
 
+    it("preserves revision-era token state on public lookup while retaining legacy restoration", async () => {
+        const promotion = await buildPromotionFixture(prisma);
+        const revisionTokenHash = hash(`link-${promotion.token.id}`);
+        const storedExpiry = promotion.token.expiresAt;
+        const revisionRevokedAt = new Date("2026-09-02T00:00:00.000Z");
+        const revisionAccessTokenHash = hash(`revision-session-${promotion.token.id}`);
+        const revisionVerifiedAt = new Date("2026-09-02T08:00:00.000Z");
+
+        await prisma.receipt_link_token.update({
+            where: { id: promotion.token.id },
+            data: {
+                active: false,
+                revokedAt: revisionRevokedAt,
+                accessTokenHash: revisionAccessTokenHash,
+                verifiedAt: revisionVerifiedAt,
+                expiresAt: storedExpiry,
+                createdAt: new Date("2026-08-31T00:00:00.000Z"),
+            },
+        });
+        await prisma.client.update({
+            where: { id: promotion.fixture.client.id },
+            data: { endDate: new Date("2026-10-15T00:00:00.000Z") },
+        });
+
+        const protectedLookup = await tokenRepository.findByLinkTokenHash(revisionTokenHash);
+        expect(protectedLookup).toMatchObject({
+            active: false,
+            accessTokenHash: revisionAccessTokenHash,
+            verifiedAt: revisionVerifiedAt,
+            expiresAt: storedExpiry,
+        });
+        await expect(prisma.receipt_link_token.findUniqueOrThrow({ where: { id: promotion.token.id } }))
+            .resolves.toMatchObject({
+                active: false,
+                revokedAt: revisionRevokedAt,
+                accessTokenHash: revisionAccessTokenHash,
+                verifiedAt: revisionVerifiedAt,
+                expiresAt: storedExpiry,
+            });
+
+        const legacyTokenId = randomUUID();
+        const legacyCreatedAt = new Date("2026-10-01T00:00:00.000Z");
+        await prisma.receipt_link_token.create({
+            data: {
+                id: legacyTokenId,
+                branchId: promotion.fixture.branch.id,
+                clientId: promotion.fixture.client.id,
+                eformsignDocId: promotion.originalDocument.id,
+                jobId: null,
+                linkTokenHash: hash(`link-${legacyTokenId}`),
+                accessTokenHash: hash(`legacy-session-${legacyTokenId}`),
+                expectedBirthdayHash: hash(`legacy-birthday-${legacyTokenId}`),
+                verifiedAt: new Date("2026-10-02T08:00:00.000Z"),
+                failedAttempts: 1,
+                lockedAt: null,
+                expiresAt: new Date("2026-10-02T00:00:00.000Z"),
+                active: false,
+                revokedAt: new Date("2026-10-02T09:00:00.000Z"),
+                storagePath: `receipts/${legacyTokenId}/legacy.pdf`,
+                contentSha256: "d".repeat(64),
+                byteSize: 123,
+                source: "manual",
+                createdBy: promotion.fixture.actorUserId,
+                createdAt: legacyCreatedAt,
+            },
+        });
+
+        const legacyLookup = await tokenRepository.findByLinkTokenHash(hash(`link-${legacyTokenId}`));
+        expect(legacyLookup).toMatchObject({
+            active: true,
+            accessTokenHash: null,
+            verifiedAt: null,
+            expiresAt: new Date("2026-10-29T15:00:00.000Z"),
+        });
+        await expect(prisma.receipt_link_token.findUniqueOrThrow({ where: { id: legacyTokenId } }))
+            .resolves.toMatchObject({ active: true, revokedAt: null, accessTokenHash: null });
+    });
+
     it("fails closed for stale proof, state version, and revision without replacing the old artifact", async () => {
         const promotion = await buildPromotionFixture(prisma);
         const beforeToken = await prisma.receipt_link_token.findUniqueOrThrow({ where: { id: promotion.token.id } });

@@ -36,6 +36,12 @@ interface RawRow {
     client?: { name: string; endDate?: Date | null } | null;
 }
 
+interface RevisionProtectionLookup {
+    branchId: string | null;
+    clientId: number | null;
+    createdAt: Date;
+}
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -150,6 +156,43 @@ function toRecord(row: RawRow): ReceiptLinkTokenRecord {
 export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository {
     constructor(private readonly prisma: PrismaService) {}
 
+    /**
+     * A token that predates a confirmed service-record revision is part of that
+     * immutable history. Its persisted access/authentication and expiry fields
+     * must remain authoritative even when the legacy lookup repair is still
+     * applicable to older, unrelated tokens.
+     */
+    private async hasConfirmedRevisionAtOrAfterToken(
+        row: RevisionProtectionLookup,
+    ): Promise<boolean | null> {
+        if (row.clientId === null) return false;
+        if (typeof row.branchId !== "string" || row.branchId.length === 0
+            || !(row.createdAt instanceof Date)
+            || !Number.isFinite(row.createdAt.getTime())) {
+            return null;
+        }
+
+        try {
+            const revision = await this.prisma.service_record_revision.findFirst({
+                where: {
+                    branchId: row.branchId,
+                    confirmedAt: { gte: row.createdAt },
+                    serviceRecordCase: {
+                        is: {
+                            branchId: row.branchId,
+                            clientId: row.clientId,
+                        },
+                    },
+                },
+                select: { id: true },
+            });
+            return revision !== null;
+        } catch {
+            // A lookup failure must not turn a public read into a token mutation.
+            return null;
+        }
+    }
+
     async withJobIssuanceLock<T>(
         jobId: string,
         operation: (contended: boolean, repository: IReceiptLinkTokenIssuanceRepository) => Promise<T>,
@@ -182,6 +225,10 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
                 include: INCLUDE_NAMES,
             });
             if (!row) return null;
+            const revisionProtection = await this.hasConfirmedRevisionAtOrAfterToken(row);
+            if (revisionProtection === true || revisionProtection === null) {
+                return toRecord(row);
+            }
             // Missing legacy end dates keep their original expiry, but do not prevent
             // restoration of URLs revoked by the former reissuance policy.
             const expiresAt = row.client?.endDate ? getReceiptLinkExpiresAt(row.client.endDate) : row.expiresAt;
@@ -614,10 +661,16 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
                 stateVersion: completedState.version,
             };
             });
-        } catch {
-            // A failed transaction (including a post-update CAS mismatch)
-            // leaves every old artifact intact; callers may reconcile safely.
-            return { disposition: "stale", tokenIds: [], stateVersion: null };
+        } catch (error) {
+            if (error instanceof ReceiptPromotionRollback) {
+                // The transaction is rolled back, preserving every old token
+                // artifact when a final CAS unexpectedly loses.
+                return { disposition: "stale", tokenIds: [], stateVersion: null };
+            }
+            // Unexpected database failures must reach the service boundary so
+            // the durable operation can record a retryable failure. Prisma
+            // rolls back the interactive transaction before this rethrow.
+            throw error;
         }
     }
 
