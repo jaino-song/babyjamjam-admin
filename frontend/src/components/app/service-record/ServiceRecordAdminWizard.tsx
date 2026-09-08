@@ -13,6 +13,20 @@ import type {
     SignatureSlotProps,
 } from "@babyjamjam/service-record-ui";
 
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
+import { Button } from "@/components/ui/button";
+import {
+    adminServiceRecordEditApi,
+    normalizeAdminServiceRecordEditState,
+} from "@/features/service-records/api/admin-service-record-edit.api";
+import {
+    AdminServiceRecordEditApiError,
+    type AdminServiceRecordEditChanges,
+    type AdminServiceRecordEditSessionChanges,
+    type AdminServiceRecordEditState,
+} from "@/features/service-records/types";
+
 import type {
     ServiceRecordAssignment,
     ServiceRecordCase,
@@ -287,6 +301,95 @@ function draftForSession(session: {
     };
 }
 
+function cloneAdminServiceRecordEditChanges(
+    changes: AdminServiceRecordEditChanges | null | undefined,
+): AdminServiceRecordEditChanges {
+    if (!changes) return {};
+    return {
+        ...(changes.header ? { header: { ...changes.header } } : {}),
+        ...(changes.sessions
+            ? {
+                sessions: changes.sessions.map((session) => ({
+                    ...session,
+                    ...(session.answers ? { answers: { ...session.answers } } : {}),
+                })),
+            }
+            : {}),
+    };
+}
+
+function applyAdminServiceRecordEditChanges(
+    context: ServiceRecordContext,
+    changes: AdminServiceRecordEditChanges,
+): ServiceRecordContext {
+    const sessionChanges = new Map((changes.sessions ?? []).map((session) => [session.sessionIndex, session]));
+    return {
+        ...context,
+        header: context.header || changes.header
+            ? { ...(context.header ?? {}), ...(changes.header ?? {}) }
+            : null,
+        sessions: context.sessions.map((session) => {
+            const patch = sessionChanges.get(session.sessionIndex);
+            if (!patch) return session;
+            return {
+                ...session,
+                ...(patch.serviceDate ? { serviceDate: patch.serviceDate } : {}),
+                ...(patch.answers ? { answers: { ...(session.answers ?? {}), ...patch.answers } } : {}),
+                ...(patch.etcService !== undefined ? { etcService: patch.etcService } : {}),
+                ...(patch.notes !== undefined ? { notes: patch.notes } : {}),
+                ...(patch.paymentConfirmed !== undefined ? { paymentConfirmed: patch.paymentConfirmed } : {}),
+            };
+        }),
+    };
+}
+
+function updateAdminServiceRecordEditSession(
+    current: AdminServiceRecordEditChanges,
+    sessionIndex: number,
+    patch: Omit<AdminServiceRecordEditSessionChanges, "sessionIndex">,
+): AdminServiceRecordEditChanges {
+    const sessions = [...(current.sessions ?? [])];
+    const index = sessions.findIndex((session) => session.sessionIndex === sessionIndex);
+    const existing = index >= 0 ? sessions[index] : { sessionIndex };
+    const next = {
+        ...existing,
+        ...patch,
+        ...(patch.answers
+            ? { answers: { ...(existing.answers ?? {}), ...patch.answers } }
+            : existing.answers
+                ? { answers: { ...existing.answers } }
+                : {}),
+    };
+    if (index >= 0) sessions[index] = next;
+    else sessions.push(next);
+    return { ...current, sessions };
+}
+
+function updateAdminServiceRecordEditField(
+    current: AdminServiceRecordEditChanges,
+    sessionIndex: number,
+    key: string,
+    value: unknown,
+): AdminServiceRecordEditChanges {
+    if (key === "_date") {
+        return updateAdminServiceRecordEditSession(current, sessionIndex, { serviceDate: String(value ?? "") });
+    }
+    if (key === "etcService" || key === "notes") {
+        return updateAdminServiceRecordEditSession(current, sessionIndex, { [key]: String(value ?? "") });
+    }
+    if (key === "paymentConfirmed") {
+        return updateAdminServiceRecordEditSession(current, sessionIndex, { paymentConfirmed: Boolean(value) });
+    }
+    return updateAdminServiceRecordEditSession(current, sessionIndex, { answers: { [key]: value } });
+}
+
+function latestStateFromDraftConflict(error: AdminServiceRecordEditApiError): AdminServiceRecordEditState | null {
+    if (!isRecord(error.body)) return null;
+    const latestDraft = error.body.latestDraft ?? error.body.draft ?? null;
+    if (!latestDraft && error.status !== 409) return null;
+    return normalizeAdminServiceRecordEditState({ ...error.body, draft: latestDraft });
+}
+
 function ReadOnlySignature({
     "data-component": dataComponent,
     value,
@@ -315,21 +418,60 @@ function ReadOnlySignature({
     );
 }
 
-export interface ServiceRecordAdminWizardProps {
-    overview: AdminServiceRecordEditorOverview;
+type DraftSaveState = "idle" | "saving" | "saved" | "error";
+
+interface DraftErrorState {
+    status: number;
+    message: string;
+    latestState: AdminServiceRecordEditState | null;
 }
 
-export function ServiceRecordAdminWizard({ overview }: ServiceRecordAdminWizardProps) {
-    const view = useMemo(() => buildAdminServiceRecordView(overview), [overview]);
-    const context = view.context;
-    const supplementalSessions = view.supplementalSessions;
-    const header = useMemo(() => headerToInput(context.header), [context.header]);
-    const [screen, setScreen] = useState<"overview" | "day">("overview");
+function draftErrorMessage(status: number): string {
+    if (status === 401) return "로그인이 필요합니다. 초안 입력은 유지됩니다.";
+    if (status === 403) return "초안 접근 권한이 없습니다. 현재 입력은 유지됩니다.";
+    if (status === 404) return "초안을 찾을 수 없습니다. 현재 입력은 유지됩니다.";
+    if (status === 409) return "다른 관리자의 변경으로 저장되지 않았습니다. 입력은 유지되었습니다. 최신 초안을 불러오거나 내 입력을 유지하세요.";
+    return "초안을 저장하지 못했습니다. 입력은 유지됩니다.";
+}
+
+export interface ServiceRecordAdminWizardProps {
+    clientId: string;
+    overview: AdminServiceRecordEditorOverview;
+    initialDraftState?: AdminServiceRecordEditState | null;
+    initialDraftErrorStatus?: number | null;
+}
+
+export function ServiceRecordAdminWizard({
+    clientId,
+    overview,
+    initialDraftState = null,
+    initialDraftErrorStatus = null,
+}: ServiceRecordAdminWizardProps) {
+    const baseView = useMemo(() => buildAdminServiceRecordView(overview), [overview]);
+    const supplementalSessions = baseView.supplementalSessions;
+    const [draftState, setDraftState] = useState<AdminServiceRecordEditState | null>(initialDraftState);
+    const [workingChanges, setWorkingChanges] = useState<AdminServiceRecordEditChanges>(() => (
+        cloneAdminServiceRecordEditChanges(initialDraftState?.draft?.changes)
+    ));
+    const [dirty, setDirty] = useState(false);
+    const [saveState, setSaveState] = useState<DraftSaveState>(initialDraftState?.draft ? "saved" : "idle");
+    const [draftError, setDraftError] = useState<DraftErrorState | null>(() => initialDraftErrorStatus
+        ? { status: initialDraftErrorStatus, message: draftErrorMessage(initialDraftErrorStatus), latestState: null }
+        : null);
+    const [discardModalOpen, setDiscardModalOpen] = useState(false);
+    const [discarding, setDiscarding] = useState(false);
+    const [screen, setScreen] = useState<"overview" | "service" | "day">("overview");
     const [day, setDay] = useState(1);
     const [pageIdx, setPageIdx] = useState(0);
     const [draft, setDraft] = useState<Record<string, unknown>>({});
     const [selectedSupplementalKey, setSelectedSupplementalKey] = useState<string | null>(null);
 
+    const activeDraft = draftState?.draft?.status === "ACTIVE" ? draftState.draft : null;
+    const context = useMemo(
+        () => applyAdminServiceRecordEditChanges(baseView.context, workingChanges),
+        [baseView.context, workingChanges],
+    );
+    const header = useMemo(() => headerToInput(context.header), [context.header]);
     const selectedSupplemental = supplementalSessions.find((item) => item.key === selectedSupplementalKey);
     const activeContext = useMemo(() => {
         if (!selectedSupplemental) return context;
@@ -338,10 +480,9 @@ export function ServiceRecordAdminWizard({ overview }: ServiceRecordAdminWizardP
             sessions: [
                 ...context.sessions.filter((session) => session.sessionIndex !== selectedSupplemental.sessionIndex),
                 selectedSupplemental.session,
-        ],
+            ],
         };
     }, [context, selectedSupplemental]);
-
     const displayDay = selectedSupplemental
         ? day
         : Math.min(day, Math.max(context.totalSessions, 1));
@@ -354,6 +495,106 @@ export function ServiceRecordAdminWizard({ overview }: ServiceRecordAdminWizardP
         ),
         [activeContext.sessions],
     );
+    const changedSessionIndexes = useMemo(
+        () => new Set((workingChanges.sessions ?? []).map((session) => session.sessionIndex)),
+        [workingChanges.sessions],
+    );
+    const isSaving = saveState === "saving";
+    const formReadOnly = !activeDraft || Boolean(selectedSupplemental) || isSaving;
+
+    const markLocalChange = useCallback(() => {
+        setDirty(true);
+        setSaveState("idle");
+        setDraftError(null);
+    }, []);
+
+    const updateWorkingChanges = useCallback((updater: (current: AdminServiceRecordEditChanges) => AdminServiceRecordEditChanges) => {
+        setWorkingChanges((current) => updater(current));
+        markLocalChange();
+    }, [markLocalChange]);
+
+    const persistDraft = useCallback(async (): Promise<boolean> => {
+        setSaveState("saving");
+        setDraftError(null);
+        try {
+            const response = activeDraft
+                ? await adminServiceRecordEditApi.updateDraft(activeDraft.id, activeDraft.draftVersion, workingChanges)
+                : await adminServiceRecordEditApi.startDraft(clientId);
+            if (!response.draft || response.draft.status !== "ACTIVE") {
+                throw new Error("Draft start did not return an active draft");
+            }
+            const nextChanges = cloneAdminServiceRecordEditChanges(response.draft.changes);
+            const nextContext = applyAdminServiceRecordEditChanges(baseView.context, nextChanges);
+            const nextSession = selectedSupplemental
+                ? selectedSupplemental.session
+                : nextContext.sessions.find((session) => session.sessionIndex === displayDay);
+            setDraftState(response);
+            setWorkingChanges(nextChanges);
+            setDraft(draftForSession(nextSession));
+            setDirty(false);
+            setSaveState("saved");
+            return true;
+        } catch (error) {
+            const apiError = error instanceof AdminServiceRecordEditApiError ? error : null;
+            const status = apiError?.status ?? 500;
+            setDraftError({
+                status,
+                message: draftErrorMessage(status),
+                latestState: status === 409 && apiError ? latestStateFromDraftConflict(apiError) : null,
+            });
+            setSaveState("error");
+            return false;
+        }
+    }, [activeDraft, baseView.context, clientId, displayDay, selectedSupplemental, workingChanges]);
+
+    const discardCurrentDraft = useCallback(async () => {
+        if (!activeDraft) return;
+        setDiscarding(true);
+        setDraftError(null);
+        try {
+            const response = await adminServiceRecordEditApi.discardDraft(activeDraft.id, activeDraft.draftVersion);
+            setDraftState(response);
+            setWorkingChanges({});
+            setDraft({});
+            setDirty(false);
+            setSaveState("idle");
+            setSelectedSupplementalKey(null);
+            setScreen("overview");
+            setDiscardModalOpen(false);
+        } catch (error) {
+            const apiError = error instanceof AdminServiceRecordEditApiError ? error : null;
+            const status = apiError?.status ?? 500;
+            setDraftError({
+                status,
+                message: draftErrorMessage(status),
+                latestState: status === 409 && apiError ? latestStateFromDraftConflict(apiError) : null,
+            });
+        } finally {
+            setDiscarding(false);
+        }
+    }, [activeDraft]);
+
+    const reloadLatestDraft = useCallback(() => {
+        const latest = draftError?.latestState;
+        if (!latest) return;
+        const nextChanges = cloneAdminServiceRecordEditChanges(latest.draft?.changes);
+        const nextContext = applyAdminServiceRecordEditChanges(baseView.context, nextChanges);
+        const nextSession = selectedSupplemental
+            ? selectedSupplemental.session
+            : nextContext.sessions.find((session) => session.sessionIndex === displayDay);
+        setDraftState(latest);
+        setWorkingChanges(nextChanges);
+        setDraft(draftForSession(nextSession));
+        setDirty(false);
+        setSaveState(latest.draft?.status === "ACTIVE" ? "saved" : "idle");
+        setDraftError(null);
+    }, [baseView.context, displayDay, draftError, selectedSupplemental]);
+
+    const keepLocalInput = useCallback(() => {
+        setDraftError(null);
+        setSaveState("error");
+    }, []);
+
     const nextOpenDay = useCallback(() => {
         for (let sessionIndex = 1; sessionIndex <= context.totalSessions; sessionIndex += 1) {
             if (!lockedDays.has(sessionIndex)) return sessionIndex;
@@ -366,15 +607,24 @@ export function ServiceRecordAdminWizard({ overview }: ServiceRecordAdminWizardP
     );
     const openDay = useCallback((sessionIndex: number) => {
         const bounded = Math.min(Math.max(sessionIndex, 1), Math.max(context.totalSessions, 1));
-        const session = activeContext.sessions.find((row) => row.sessionIndex === bounded);
+        const session = context.sessions.find((row) => row.sessionIndex === bounded);
         setSelectedSupplementalKey(null);
         setDay(bounded);
         setPageIdx(0);
         setDraft(draftForSession(session));
         setScreen("day");
-    }, [activeContext.sessions, context.totalSessions]);
+    }, [context.sessions, context.totalSessions]);
+    const openSupplemental = useCallback((key: string) => {
+        const item = supplementalSessions.find((candidate) => candidate.key === key);
+        if (!item) return;
+        setSelectedSupplementalKey(key);
+        setDay(item.sessionIndex);
+        setPageIdx(0);
+        setDraft(draftForSession(item.session));
+        setScreen("day");
+    }, [supplementalSessions]);
     const goBack = useCallback(() => {
-        if (screen === "day") {
+        if (screen === "day" || screen === "service") {
             setSelectedSupplementalKey(null);
             setScreen("overview");
         }
@@ -382,84 +632,198 @@ export function ServiceRecordAdminWizard({ overview }: ServiceRecordAdminWizardP
     const goNextPage = useCallback(() => {
         setPageIdx((current) => Math.min(current + 1, DAY_PAGES.length - 1));
     }, []);
+    const onFieldChange = useCallback((key: string, value: unknown) => {
+        setDraft((current) => ({ ...current, [key]: value }));
+        if (!activeDraft || selectedSupplemental) return;
+        updateWorkingChanges((current) => updateAdminServiceRecordEditField(current, displayDay, key, value));
+    }, [activeDraft, displayDay, selectedSupplemental, updateWorkingChanges]);
+    const onToggleMulti = useCallback((key: string, option: string) => {
+        const current = Array.isArray(draft[key]) ? [...draft[key] as string[]] : [];
+        const next = current.includes(option) ? current.filter((item) => item !== option) : [...current, option];
+        onFieldChange(key, next);
+    }, [draft, onFieldChange]);
+    const onServiceDateChange = useCallback((next: string) => {
+        setDraft((current) => ({ ...current, _date: next }));
+        if (!activeDraft || selectedSupplemental) return;
+        updateWorkingChanges((current) => updateAdminServiceRecordEditField(current, displayDay, "_date", next));
+    }, [activeDraft, displayDay, selectedSupplemental, updateWorkingChanges]);
+    const onHeaderChange = useCallback((key: string, value: string) => {
+        if (!activeDraft) return;
+        updateWorkingChanges((current) => ({
+            ...current,
+            header: { ...(current.header ?? {}), [key]: value },
+        }));
+    }, [activeDraft, updateWorkingChanges]);
+    const onSaveHeader = useCallback(async () => {
+        const saved = await persistDraft();
+        if (saved) setScreen("overview");
+    }, [persistDraft]);
+
+    const statusLabel = saveState === "saving"
+            ? "저장 중…"
+            : saveState === "error"
+                ? "저장 실패"
+                : dirty
+                    ? "저장 필요"
+                    : saveState === "saved"
+                ? "저장됨"
+                    : "초안 없음";
+    const adminToolbar = (
+        <>
+            <span data-component={`${ADMIN_WIZARD_COMPONENT}_top-bar_admin-toolbar_status`} data-slot="admin-draft-status">{statusLabel}</span>
+            <div data-component={`${ADMIN_WIZARD_COMPONENT}_top-bar_admin-toolbar_actions`} data-slot="admin-draft-actions">
+                <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    data-component={`${ADMIN_WIZARD_COMPONENT}_top-bar_admin-toolbar_save`}
+                    disabled={isSaving || discarding}
+                    onClick={() => { void persistDraft(); }}
+                >
+                    초안 저장
+                </Button>
+                {activeDraft ? (
+                    <Button
+                        type="button"
+                        size="sm"
+                        variant="negative"
+                        data-component={`${ADMIN_WIZARD_COMPONENT}_top-bar_admin-toolbar_discard`}
+                        disabled={isSaving || discarding}
+                        onClick={() => setDiscardModalOpen(true)}
+                    >
+                        초안 취소
+                    </Button>
+                ) : null}
+                {activeDraft && screen !== "service" ? (
+                    <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        data-component={`${ADMIN_WIZARD_COMPONENT}_top-bar_admin-toolbar_header`}
+                        disabled={isSaving || discarding}
+                        onClick={() => setScreen("service")}
+                    >
+                        기본정보 편집
+                    </Button>
+                ) : null}
+            </div>
+            {draftState?.sourceChanged ? (
+                <Alert data-component={`${ADMIN_WIZARD_COMPONENT}_top-bar_admin-toolbar_source-changed`} variant="warning">
+                    <AlertTitle>원본 기록 변경</AlertTitle>
+                    <AlertDescription>원본 기록이 변경되었습니다. 초안 입력은 유지됩니다.</AlertDescription>
+                </Alert>
+            ) : null}
+            {draftError ? (
+                <Alert data-component={`${ADMIN_WIZARD_COMPONENT}_top-bar_admin-toolbar_error`} variant="destructive">
+                    <AlertTitle>초안 저장 실패</AlertTitle>
+                    <AlertDescription>
+                        <p>{draftError.message}</p>
+                        {draftError.latestState ? (
+                            <div data-component={`${ADMIN_WIZARD_COMPONENT}_top-bar_admin-toolbar_conflict-actions`} data-slot="conflict-actions">
+                                <Button type="button" size="sm" variant="neutral" onClick={reloadLatestDraft}>최신 초안 불러오기</Button>
+                                <Button type="button" size="sm" variant="outline" onClick={keepLocalInput}>내 입력 유지</Button>
+                            </div>
+                        ) : null}
+                    </AlertDescription>
+                </Alert>
+            ) : null}
+        </>
+    );
 
     return (
-        <ServiceRecordWizard
-            data-component={ADMIN_WIZARD_COMPONENT}
-            screen={screen}
-            phone=""
-            phoneError={null}
-            context={activeContext}
-            header={header}
-            day={displayDay}
-            pageIdx={pageIdx}
-            draft={draft}
-            editing={Boolean(currentSession)}
-            readOnly
-            clientSignature={currentSession?.clientSignature ?? null}
-            busy={false}
-            isRecordFinalized={false}
-            lockedDays={lockedDays}
-            nextOpenDay={nextOpenDay}
-            scheduleChangeBusy={false}
-            hasServiceDateMismatch={false}
-            defaultDate={defaultDate}
-            onPhoneChange={() => undefined}
-            onSubmitPhone={() => undefined}
-            onBack={goBack}
-            onHeaderChange={() => undefined}
-            onDeliveryTypeChange={() => undefined}
-            onSaveHeader={() => undefined}
-            onOpenDay={openDay}
-            onOpenScheduleChangePreview={() => undefined}
-            onServiceDateChange={() => undefined}
-            onFieldChange={(key, value) => setDraft((current) => ({ ...current, [key]: value }))}
-            onToggleMulti={() => undefined}
-            onSignatureChange={() => undefined}
-            onNextPage={goNextPage}
-            onOpenSubmitModal={() => undefined}
-            onEditSection={setPageIdx}
-            slots={{
-                provider: ({ "data-component": dataComponent }) => (
-                    <span data-component={dataComponent} data-slot="provider" className="org">관리자 조회 전용</span>
-                ),
-                signature: (signatureProps) => <ReadOnlySignature {...signatureProps} />,
-                overviewSupplemental: supplementalSessions.length > 0 ? (
-                    <div
-                        data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_supplemental`}
-                        data-slot="supplemental"
-                        className="overview-supplemental"
-                    >
-                        <p data-slot="supplemental-title" className="supplemental-title">같은 회차의 추가 기록</p>
-                        {supplementalSessions.map((item) => (
-                            <button
-                                type="button"
-                                key={item.key}
-                                data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_supplemental_item-${item.key}`}
-                                data-slot="supplemental-item"
-                                className="supplemental-item"
-                                onClick={() => {
-                                    setSelectedSupplementalKey(item.key);
-                                    setDay(item.sessionIndex);
-                                    setPageIdx(0);
-                                    setDraft(draftForSession(item.session));
-                                    setScreen("day");
-                                }}
-                            >
-                                <span>{item.sessionIndex}회차 · {item.sourceLabel}</span>
-                                <span>{formatShortDate(item.session.serviceDate)}</span>
-                            </button>
-                        ))}
-                    </div>
-                ) : null,
-            }}
-        />
+        <>
+            <ServiceRecordWizard
+                data-component={ADMIN_WIZARD_COMPONENT}
+                screen={screen}
+                phone=""
+                phoneError={null}
+                context={activeContext}
+                header={header}
+                day={displayDay}
+                pageIdx={pageIdx}
+                draft={draft}
+                editing={Boolean(currentSession)}
+                readOnly={formReadOnly}
+                adminMode
+                changedSessionIndexes={changedSessionIndexes}
+                clientSignature={currentSession?.clientSignature ?? null}
+                busy={isSaving}
+                isRecordFinalized={false}
+                lockedDays={lockedDays}
+                nextOpenDay={nextOpenDay}
+                scheduleChangeBusy={false}
+                hasServiceDateMismatch={false}
+                defaultDate={defaultDate}
+                onPhoneChange={() => undefined}
+                onSubmitPhone={() => undefined}
+                onBack={goBack}
+                onHeaderChange={onHeaderChange}
+                onDeliveryTypeChange={(value) => onHeaderChange("deliveryType", value)}
+                onSaveHeader={onSaveHeader}
+                onOpenDay={openDay}
+                onOpenScheduleChangePreview={() => undefined}
+                onServiceDateChange={onServiceDateChange}
+                onFieldChange={onFieldChange}
+                onToggleMulti={onToggleMulti}
+                onSignatureChange={() => undefined}
+                onNextPage={goNextPage}
+                onOpenSubmitModal={() => { void persistDraft(); }}
+                onEditSection={setPageIdx}
+                slots={{
+                    provider: ({ "data-component": dataComponent }) => (
+                        <span data-component={dataComponent} data-slot="provider" className="org">관리자 조회 전용</span>
+                    ),
+                    signature: (signatureProps) => <ReadOnlySignature {...signatureProps} />,
+                    adminToolbar,
+                    overviewSupplemental: supplementalSessions.length > 0 ? (
+                        <div
+                            data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_supplemental`}
+                            data-slot="supplemental"
+                            className="overview-supplemental"
+                        >
+                            <p data-slot="supplemental-title" className="supplemental-title">같은 회차의 추가 기록</p>
+                            {supplementalSessions.map((item) => (
+                                <button
+                                    type="button"
+                                    key={item.key}
+                                    data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_supplemental_item-${item.key}`}
+                                    data-slot="supplemental-item"
+                                    className="supplemental-item"
+                                    onClick={() => openSupplemental(item.key)}
+                                >
+                                    <span>{item.sessionIndex}회차 · {item.sourceLabel}</span>
+                                    <span>{formatShortDate(item.session.serviceDate)}</span>
+                                </button>
+                            ))}
+                        </div>
+                    ) : null,
+                }}
+            />
+            <TwoButtonModal
+                open={discardModalOpen}
+                onOpenChange={setDiscardModalOpen}
+                title="초안을 취소할까요?"
+                description="저장된 초안과 저장하지 않은 관리자 입력이 취소됩니다. 원본 제공기록은 변경되지 않습니다."
+                approvalLabel="초안 취소"
+                pendingLabel="취소 중…"
+                approvalVariant="destructive"
+                isPending={discarding}
+                onApprove={() => { void discardCurrentDraft(); }}
+                data-component={`${ADMIN_WIZARD_COMPONENT}_discard-modal`}
+            />
+        </>
     );
 }
 
 type ViewerState =
     | { kind: "loading"; clientId: string }
-    | { kind: "ready"; clientId: string; overview: AdminServiceRecordEditorOverview }
+    | {
+        kind: "ready";
+        clientId: string;
+        overview: AdminServiceRecordEditorOverview;
+        draftState: AdminServiceRecordEditState | null;
+        draftErrorStatus: number | null;
+    }
     | { kind: "error"; clientId: string; status: number };
 
 function parseOverview(payload: unknown): AdminServiceRecordEditorOverview | null {
@@ -490,9 +854,18 @@ export function ServiceRecordAdminViewer({ clientId }: ServiceRecordAdminViewerP
                 }
                 const payload = await response.json().catch(() => null);
                 const overview = parseOverview(payload);
-                setState(overview
-                    ? { kind: "ready", clientId, overview }
-                    : { kind: "error", clientId, status: 500 });
+                if (!overview) {
+                    setState({ kind: "error", clientId, status: 500 });
+                    return;
+                }
+                try {
+                    const draftState = await adminServiceRecordEditApi.getDraft(clientId);
+                    if (alive) setState({ kind: "ready", clientId, overview, draftState, draftErrorStatus: null });
+                } catch (error) {
+                    if (!alive) return;
+                    const status = error instanceof AdminServiceRecordEditApiError ? error.status : 500;
+                    setState({ kind: "ready", clientId, overview, draftState: null, draftErrorStatus: status });
+                }
             })
             .catch(() => {
                 if (alive) setState({ kind: "error", clientId, status: 500 });
@@ -521,5 +894,12 @@ export function ServiceRecordAdminViewer({ clientId }: ServiceRecordAdminViewerP
                     : "제공기록지를 불러오지 못했습니다.";
         return <p data-component={`desktop_service-record-admin_state-error-${visibleState.status}`} data-slot="state">{message}</p>;
     }
-    return <ServiceRecordAdminWizard overview={visibleState.overview} />;
+    return (
+        <ServiceRecordAdminWizard
+            clientId={visibleState.clientId}
+            overview={visibleState.overview}
+            initialDraftState={visibleState.draftState}
+            initialDraftErrorStatus={visibleState.draftErrorStatus}
+        />
+    );
 }

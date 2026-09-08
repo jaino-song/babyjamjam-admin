@@ -56,6 +56,8 @@
 .srec .day.done{background:#eef5ff;border-color:#c7dafa}.srec .day.done .st{color:var(--primary);font-weight:700}
 .srec .day.readonly{border-color:#c7dafa;background:#fbfdff;cursor:pointer}
 .srec .day.readonly .st{color:var(--primary);font-weight:700}
+.srec .day.draft-changed{border-color:var(--primary);background:#f1f6ff;box-shadow:0 0 0 3px #e8f0ff}
+.srec .day.draft-changed .st{color:var(--primary);font-weight:700}
 .srec .day.locked{opacity:.5;cursor:not-allowed}.srec .day.current{border-color:var(--primary);box-shadow:0 0 0 3px #e8f0ff}
 .srec .overview-actions{display:flex;flex-direction:column;gap:10px;margin-top:16px}
 .srec .overview-supplemental{display:flex;flex-direction:column;gap:8px;margin-top:16px;padding-top:14px;border-top:1px dashed var(--line)}
@@ -88,4 +90,5 @@
 .srec .sign-note{font-size:12px;color:var(--muted);line-height:1.55;margin:8px 0 0}
 .srec .signed-chip{display:none;font-size:12px;font-weight:700;color:var(--primary);background:#eaf1ff;border-radius:99px;padding:4px 12px;margin-top:10px}
 .srec .signed-chip.show{display:inline-block}
+.srec .admin-draft-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px}
 @media (max-width:360px){.srec .segrow{flex-direction:column}}
