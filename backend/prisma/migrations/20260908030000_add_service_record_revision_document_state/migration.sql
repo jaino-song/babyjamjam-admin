@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS "service_record_revision_document_state" (
     "template_version" TEXT,
     "workflow_scope" JSONB,
     "mirror_generation" TEXT,
+    "output_proof" JSONB,
     "step" VARCHAR(80) NOT NULL DEFAULT 'pending',
     "status" VARCHAR(32) NOT NULL DEFAULT 'pending',
     "attempts" INTEGER NOT NULL DEFAULT 0,
