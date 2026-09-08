@@ -97,6 +97,32 @@ describeE2E("revision operation intent readiness (disposable PostgreSQL)", () =>
         ]));
     });
 
+    it("queues a same-generation retry and reuses its durable operation job", async () => {
+        const fixture = await createServiceRecordConfirmFixture(prisma);
+        await linkIncompleteContract(fixture);
+        const result = await confirm(fixture, true);
+        const operation = (await states(result.revisionId)).find((row) => row.operation === "contract_period");
+        if (!operation) throw new Error("Missing contract operation");
+        const repository = new ServiceRecordEditRepository(prisma as unknown as PrismaService);
+        const retry = { branchId: fixture.branch.id, clientId: fixture.client.id,
+            revisionId: operation.revisionId, stateId: operation.id, expectedGeneration: operation.generation };
+        expect(await repository.retryRevisionDocumentState(retry)).toMatchObject({ status: "pending", generation: operation.generation });
+        const jobs = await prisma.eformsign_document_job.findMany({ where: { branchId: fixture.branch.id,
+            clientId: fixture.client.id, requestKey: { startsWith: "service-record-revision-operations:" } } });
+        expect(jobs).toHaveLength(1);
+        const job = jobs[0]!;
+        expect(job.payload).toMatchObject({ kind: "service_record_revision_operations",
+            context: { branchId: fixture.branch.id, clientId: fixture.client.id, revisionId: operation.revisionId },
+            operations: { contract: { documentStateId: operation.id, generation: operation.generation } } });
+        await prisma.eformsign_document_job.update({ where: { id: job.id }, data: { status: "requires_attention", activeKey: null } });
+        await prisma.service_record_revision_document_state.update({ where: { id: operation.id },
+            data: { status: "failed", step: "preparing" } });
+        expect(await repository.retryRevisionDocumentState(retry)).toMatchObject({ status: "pending", generation: operation.generation });
+        expect(await prisma.eformsign_document_job.count({ where: { requestKey: job.requestKey } })).toBe(1);
+        expect(await prisma.eformsign_document_job.findUniqueOrThrow({ where: { id: job.id } }))
+            .toMatchObject({ status: "queued", payload: job.payload, payloadFingerprint: job.payloadFingerprint });
+    });
+
     it("allows saved drafts but refuses the next confirmation while a contract operation is unresolved", async () => {
         const fixture = await createServiceRecordConfirmFixture(prisma);
         await linkIncompleteContract(fixture);
