@@ -233,6 +233,11 @@ export interface ServiceRecordDispatchAuthorizationResult {
 
 /** Immutable generation input captured by a later finalization boundary. */
 export interface ServiceRecordRevisionGenerationInput extends ServiceRecordRevisionDispatchContext {
+    generationKind: "REVISION_SNAPSHOT" | "INITIAL_FINALIZATION";
+    /** Mutable operation-state row that owns this generation's CAS. */
+    documentStateId: string;
+    /** Null until the renderer allocates the next case document version. */
+    documentVersion: number | null;
     snapshotReference: string;
     generation: string;
     /** Immutable complete input captured under the finalization lock. */
