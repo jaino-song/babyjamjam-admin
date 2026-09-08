@@ -2160,6 +2160,21 @@ export class MessageTriggerService {
             return;
         }
 
+        // Receipt preparation can render, upload, and mint a token. Revalidate
+        // the persisted service-record source while the claim is still
+        // reversible, then release the common locks before opening that
+        // preparation boundary. The post-preparation authorization below is
+        // still required because a confirm may win while preparation runs.
+        const preparationFence = await this.authorizeClaimedJobBeforePreparation(job);
+        if (preparationFence.kind === "lost") {
+            return;
+        }
+        if (preparationFence.kind === "stale") {
+            job.cancel(preparationFence.reason);
+            await this.persistTriggerJobStatus(job, "persist stale trigger job before preparation");
+            return;
+        }
+
         const preparation = await this.prepareClaimedJob(job);
         if (!preparation) {
             // Preparation either canceled the job with a policy skip reason or
@@ -2195,6 +2210,43 @@ export class MessageTriggerService {
         job.markDispatchAuthorized();
         await this.deliverClaimedJob(job, preparation);
         await this.persistTriggerJobStatus(job, "persist dispatched trigger job");
+    }
+
+    /**
+     * Check revised service-record ownership and document readiness before
+     * receipt preparation. This transaction never marks the job dispatching;
+     * it only holds the common aggregate locks for the authoritative reread,
+     * then commits and releases them before rendering/upload/token work.
+     *
+     * Legacy SMS jobs have no revision context and retain their established
+     * one-step preparation path. Their existing post-preparation claim fence
+     * remains responsible for cancellation races.
+     */
+    private async authorizeClaimedJobBeforePreparation(
+        job: MessageTriggerJobEntity,
+    ): Promise<PreProviderSendFenceResult> {
+        if (job.payload.serviceRecordRevisionContext === undefined) {
+            return { kind: "allow" };
+        }
+
+        return this.prisma.$transaction(async (transaction) => {
+            const revisionFence = await this.fenceServiceRecordRevisionBeforeProviderSend(
+                job,
+                transaction,
+            );
+            if (revisionFence.kind !== "allow") {
+                return revisionFence;
+            }
+
+            // Verify that the claim is still processing and owned by this
+            // worker before releasing the source locks. No snapshot exists
+            // yet, so the post-preparation snapshot CAS remains authoritative
+            // after enrichment completes.
+            return this.fenceClaimTokenBeforeProviderSend(job, transaction);
+        }, {
+            maxWait: CLAIM_DISPATCH_AUTHORIZATION_TIMEOUT_MS,
+            timeout: CLAIM_DISPATCH_AUTHORIZATION_TIMEOUT_MS,
+        });
     }
 
     /**

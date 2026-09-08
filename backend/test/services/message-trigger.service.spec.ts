@@ -1642,6 +1642,108 @@ describe("MessageTriggerService", () => {
         expect(job.status).toBe("sent");
     });
 
+    it.each([
+        {
+            name: "already stale synchronization",
+            expectedDocumentSyncStatus: "pending" as const,
+            expectedReason: "revision_or_business_state_changed",
+        },
+        {
+            name: "revision capability is unverified",
+            expectedDocumentSyncStatus: "completed" as const,
+            expectedReason: "SERVICE_RECORD_DOCUMENT_SYNC_UNVERIFIED",
+        },
+    ])("rejects $name before receipt preparation", async ({
+        expectedDocumentSyncStatus,
+        expectedReason,
+    }) => {
+        const dispatcher = createDispatchService();
+        const businessFingerprint = createHash("sha256").update("{}").digest("hex");
+        const expectedContext = {
+            branchId,
+            clientId: 1,
+            serviceRecordCaseId: "case-1",
+            revisionId: "revision-1",
+            revisionNumber: 1,
+            businessFingerprint,
+            plannedSessionCount: 1,
+            plannedSessionDates: [{ sessionIndex: 1, serviceDate: "2026-09-10" }],
+            documentSyncStatus: expectedDocumentSyncStatus,
+            lifecycleStatus: "ACTIVE",
+            formVersion: 1,
+        };
+        const job = createJob({
+            payload: {
+                memberId: "member-1",
+                recipientName: "김산모",
+                recipientPhone: "010-1234-5678",
+                templateVariables: {},
+                serviceRecordRevisionContext: expectedContext,
+            },
+        });
+        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.messageSenderApprovalService.getApprovedBranchIds.mockResolvedValue(new Set([branchId]));
+        const prepareJob = jest.fn().mockResolvedValue({
+            snapshot: { snapshotHash: "must-not-prepare" },
+            serializedSnapshot: "must-not-prepare",
+        });
+        const sendPreparedJob = jest.fn().mockResolvedValue(true);
+        Object.assign(dispatcher.deliveryService, { prepareJob, sendPreparedJob });
+
+        const currentCase = {
+            id: "case-1",
+            branchId,
+            clientId: 1,
+            requiredSessionCount: 1,
+            plannedSessions: expectedContext.plannedSessionDates,
+            currentRevisionId: "revision-1",
+            currentUsableRevisionId: "revision-1",
+            currentUsableDocumentVersion: 1,
+            formVersion: 1,
+            status: "ACTIVE",
+        };
+        const transaction = dispatcher.transaction as unknown as {
+            $queryRaw: jest.Mock;
+            service_record_case: { findUnique: jest.Mock };
+            service_record_revision: { findUnique: jest.Mock };
+        };
+        transaction.service_record_case = {
+            findUnique: jest.fn().mockResolvedValue(currentCase),
+        };
+        transaction.service_record_revision = {
+            findUnique: jest.fn().mockResolvedValue({ revisionNumber: 1, payload: {} }),
+        };
+        let queryCount = 0;
+        transaction.$queryRaw.mockImplementation(async () => {
+            queryCount += 1;
+            if (queryCount === 1) return [{ id: 1 }]; // client lock
+            if (queryCount === 2) return [{ id: "case-1" }]; // case lock
+            if (queryCount === 3 || queryCount === 4) return []; // assignments/days
+            if (queryCount === 5) {
+                return [{
+                    payload: {
+                        revisionId: "revision-1",
+                        completeness: "complete",
+                        manualReviewRequired: false,
+                    },
+                    payload_fingerprint: "b".repeat(64),
+                    status: "completed",
+                    progress_step: "sent",
+                }];
+            }
+            throw new Error(`unexpected query ${queryCount}`);
+        });
+
+        await dispatcher.service.dispatchDueJobs();
+
+        expect(prepareJob).not.toHaveBeenCalled();
+        expect(sendPreparedJob).not.toHaveBeenCalled();
+        expect(dispatcher.deliveryService.sendJob).not.toHaveBeenCalled();
+        expect(job.status).toBe("canceled");
+        expect(job.cancelReason).toBe(expectedReason);
+        expect(dispatcher.jobRepository.update).toHaveBeenCalledWith(job);
+    });
+
     it("derives the observed document sync state from the locked revision job", async () => {
         const service = createDispatchService().service;
         const internals = service as unknown as ServiceInternals;
