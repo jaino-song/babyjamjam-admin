@@ -169,9 +169,11 @@ describeE2E("atomic service-record confirmation (real disposable PostgreSQL)", (
             expectedDraftVersion: saved.draft!.draftVersion,
         });
         expect(preview.blockingReasons).toEqual([]);
-        const result = await service.confirmDraft(fixture.branch.id, draft.id, fixture.actorUserId, {
+        const request = {
             expectedDraftVersion: saved.draft!.draftVersion, previewId: preview.previewId, idempotencyKey: randomUUID(),
-        });
+        };
+        const result = await service.confirmDraft(fixture.branch.id, draft.id, fixture.actorUserId, request);
+        expect(await service.confirmDraft(fixture.branch.id, draft.id, fixture.actorUserId, request)).toEqual(result);
         expect(result.status).toBe("confirmed");
         const day = await prisma.service_record_day.findUnique({ where: {
             serviceRecordCaseId_caseSessionIndex: { serviceRecordCaseId: fixture.record.id, caseSessionIndex: 4 },
