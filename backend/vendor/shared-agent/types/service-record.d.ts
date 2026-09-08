@@ -1,15 +1,12 @@
 import type { MessageTriggerJobStatus } from "./message";
-
 export type ServiceRecordLinkStatus = "none" | "scheduled" | "sent" | "failed" | "canceled";
 export type ServiceRecordTokenState = "active" | "expired" | "revoked" | null;
-
 export interface ServiceRecordToken {
     issuedAt: string;
     verifiedAt: string | null;
     expiresAt: string;
     state: ServiceRecordTokenState;
 }
-
 export interface ServiceRecordLink {
     status: ServiceRecordLinkStatus;
     scheduledFor: string | null;
@@ -17,7 +14,6 @@ export interface ServiceRecordLink {
     lastSentAt: string | null;
     token: ServiceRecordToken | null;
 }
-
 export interface ServiceRecordHeader {
     momName: string | null;
     momBirth: string | null;
@@ -28,7 +24,6 @@ export interface ServiceRecordHeader {
     createdAt: string;
     updatedAt: string;
 }
-
 export interface ServiceRecordSession {
     sessionIndex: number;
     serviceDate: string;
@@ -44,7 +39,6 @@ export interface ServiceRecordSession {
     employeeName?: string | null;
     formVersion?: number;
 }
-
 /** Assignment provenance for one authoritative planned service session. */
 export interface ServiceRecordPlannedSessionProvenance {
     assignmentId: string;
@@ -52,21 +46,18 @@ export interface ServiceRecordPlannedSessionProvenance {
     employeeId: number;
     provenanceVersion: string;
 }
-
 /** Complete planned-session entry shared by the editor and later confirm flow. */
 export interface ServiceRecordPlannedSession extends ServiceRecordPlannedSessionProvenance {
     sessionIndex: number;
     serviceDate: string;
     originalDate: string;
 }
-
 export interface ServiceRecordEditPreviewBlockingReason {
     code: string;
     message: string;
     sessionIndex?: number;
     assignmentId?: string;
 }
-
 export interface ServiceRecordEditPreviewAssignmentRange {
     assignmentId: string;
     scheduleId: number;
@@ -75,18 +66,15 @@ export interface ServiceRecordEditPreviewAssignmentRange {
     endDate: string;
     provenanceVersion: string;
 }
-
 export interface ServiceRecordEditPreviewContentChanges {
     headerChanged: boolean;
     changedSessionIndexes: number[];
 }
-
 export interface ServiceRecordEditPreviewVector {
     startDate: string | null;
     endDate: string | null;
     sessions: ServiceRecordPlannedSession[];
 }
-
 /**
  * Server-owned preview contract. The identifier is bound to every value that
  * a later atomic confirm will recheck; clients cannot supply provenance or
@@ -107,7 +95,6 @@ export interface ServiceRecordEditPreviewResponse {
     impactedAssignments: string[];
     blockingReasons: ServiceRecordEditPreviewBlockingReason[];
 }
-
 export interface SignatureDocStatus {
     documentId: string;
     statusDetail: string;
@@ -118,7 +105,6 @@ export interface SignatureDocStatus {
     snapshotChunkIndex?: number | null;
     employeeScheduleId?: number | null;
 }
-
 export interface ServiceRecordCase {
     id: string;
     status: string;
@@ -134,7 +120,6 @@ export interface ServiceRecordCase {
     sessions: ServiceRecordSession[];
     signatureDocs: SignatureDocStatus[];
 }
-
 export interface ServiceRecordAssignment {
     scheduleId: number;
     startDate: string;
@@ -151,40 +136,33 @@ export interface ServiceRecordAssignment {
     sessions: ServiceRecordSession[];
     signatureDoc: SignatureDocStatus | null;
 }
-
 export interface ServiceRecordOverview {
     record?: ServiceRecordCase | null;
     assignments: ServiceRecordAssignment[];
 }
-
 export interface SendServiceRecordLinkResponse {
     ok: boolean;
     jobId: string;
     status: MessageTriggerJobStatus;
     scheduledFor: string;
 }
-
 export interface PrepareServiceRecordLinkResponse {
     serviceRecordUrl: string;
     preparedLinkToken: string;
     expiresAt: string;
 }
-
 export interface ResetServiceRecordLinkResponse {
     serviceRecordUrl: string;
     expiresAt: string;
 }
-
 export interface ServiceScheduleChangePreviewResponse {
     sessionIndex: number;
     fromDate: string;
     minimumDate: string;
 }
-
 export interface ApplyServiceScheduleChangeRequest {
     toDate: string;
 }
-
 export interface ApplyServiceScheduleChangeResponse {
     id: string;
     scheduleId: number;
@@ -196,11 +174,9 @@ export interface ApplyServiceScheduleChangeResponse {
     newEndDate: string;
     status: "approved";
 }
-
 export interface PrepareServiceRecordLinkRequest {
     recipientPhone?: string;
 }
-
 export interface SendServiceRecordLinkRequest {
     preparedLinkToken?: string;
     recipientPhone?: string;
