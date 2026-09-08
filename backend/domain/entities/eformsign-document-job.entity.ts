@@ -14,6 +14,11 @@ export type EformsignDocumentJobSource = (typeof EFORMSIGN_DOCUMENT_JOB_SOURCES)
 export type EformsignDocumentJobStatus = (typeof EFORMSIGN_DOCUMENT_JOB_STATUSES)[number];
 export type EformsignDocumentJobPayload = Record<string, unknown>;
 
+// Shared, immutable revision generation input consumed by the record
+// renderer. Re-exporting it from the job entity keeps adapter imports on the
+// existing domain boundary instead of reaching into package internals.
+export type { ServiceRecordRevisionGenerationInput } from "@babyjamjam/shared/types/service-record";
+
 export interface EformsignDocumentJobProps {
     id: string;
     branchId: string;

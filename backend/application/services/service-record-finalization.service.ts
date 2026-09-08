@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, Logger, Optional } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase";
@@ -21,6 +21,11 @@ import {
     EformsignDocumentJobService,
     sha256CanonicalJson,
 } from "./eformsign-document-job.service";
+import {
+    SERVICE_RECORD_EDIT_REPOSITORY,
+    type IServiceRecordEditRepository,
+    type ServiceRecordEditJsonValue,
+} from "domain/repositories/service-record-edit.repository.interface";
 
 const CASE_BATCH_SIZE = 10;
 const MAX_RETRY_DELAY_MS = 6 * 60 * 60 * 1000;
@@ -341,6 +346,9 @@ export class ServiceRecordFinalizationService {
         private readonly createSnapshotUsecase: CreateAndSendServiceRecordSnapshotUsecase,
         @Optional()
         private readonly documentJobService?: EformsignDocumentJobService,
+        @Optional()
+        @Inject(SERVICE_RECORD_EDIT_REPOSITORY)
+        private readonly editRepository?: IServiceRecordEditRepository,
     ) {}
 
     async processDueCases(referenceDate = new Date(), limit = CASE_BATCH_SIZE): Promise<number> {
@@ -699,6 +707,25 @@ export class ServiceRecordFinalizationService {
         const requestKey = `service-record-initial-finalization:${revisionId}`;
         const existing = await this.documentJobService.findByRequestKeyInTransaction(tx, requestKey);
         if (existing) {
+            const existingPayload = existing.payload;
+            const existingGeneration = existingPayload?.["generation"];
+            const existingImmutablePayload = existingPayload?.["immutablePayload"];
+            if (
+                typeof existingGeneration === "string"
+                && existingGeneration.length > 0
+                && existingImmutablePayload
+                && typeof existingImmutablePayload === "object"
+                && !Array.isArray(existingImmutablePayload)
+            ) {
+                await this.ensureInitialFinalizationState(
+                    tx,
+                    source,
+                    revisionId,
+                    existingGeneration,
+                    existingImmutablePayload as Record<string, unknown>,
+                    requestKey,
+                );
+            }
             this.assertFrozenGenerationJob(existing, source, revisionId, requestKey);
             return;
         }
@@ -735,6 +762,14 @@ export class ServiceRecordFinalizationService {
         const generation = randomGenerationId();
         const immutablePayload = this.buildInitialFinalizationPayload(source, revision, generation);
         const payloadFingerprint = sha256CanonicalJson(immutablePayload);
+        const documentStateId = await this.ensureInitialFinalizationState(
+            tx,
+            source,
+            revisionId,
+            generation,
+            immutablePayload,
+            requestKey,
+        );
         const plannedSessionDates = source.days
             .map((day) => ({
                 sessionIndex: day.caseSessionIndex!,
@@ -766,6 +801,7 @@ export class ServiceRecordFinalizationService {
             completeness: "complete" as const,
             manualReviewRequired: true,
             snapshotReference: requestKey,
+            ...(documentStateId ? { documentStateId } : {}),
         };
 
         const result = await this.documentJobService.enqueueInTransaction(tx, {
@@ -785,6 +821,42 @@ export class ServiceRecordFinalizationService {
         if (result.existing) {
             this.assertFrozenGenerationJob(result.job, source, revisionId, requestKey);
         }
+    }
+
+    /**
+     * Keep the provider job and the operation-state row tied to the same
+     * immutable generation.  The finalizer already owns the caller
+     * transaction and has locked the client/case source; this method never
+     * opens a nested transaction or reads mutable rows.
+     */
+    private async ensureInitialFinalizationState(
+        tx: Prisma.TransactionClient,
+        source: FinalizationCaseSnapshot,
+        revisionId: string,
+        generation: string,
+        immutablePayload: Record<string, unknown>,
+        requestKey: string,
+    ): Promise<string | null> {
+        if (!this.editRepository || source.clientId === null) return null;
+        const state = await this.editRepository.createRevisionDocumentStateInTransaction({ tx }, {
+            branchId: source.branchId,
+            clientId: source.clientId,
+            serviceRecordCaseId: source.id,
+            revisionId,
+            operation: "record_snapshot",
+            generation,
+            immutableInput: immutablePayload as unknown as ServiceRecordEditJsonValue,
+            inputFingerprint: sha256CanonicalJson(immutablePayload),
+            workflowScope: {
+                requestKey,
+                generationKind: "INITIAL_FINALIZATION",
+                formVersion: source.formVersion,
+            },
+            step: "capability_unverified",
+            status: "capability_unverified",
+            lastErrorCode: "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED",
+        });
+        return state.id;
     }
 
     private buildInitialFinalizationPayload(
