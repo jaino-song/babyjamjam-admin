@@ -109,6 +109,18 @@ function randomGenerationId(): string {
     return randomUUID();
 }
 
+function revisionOriginalDateRows(payload: Prisma.JsonValue): Prisma.JsonValue[] | null {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+    const row = payload as Record<string, Prisma.JsonValue>;
+    // plannedSessions is the immutable full 1..N vector. A revision's
+    // sessions member intentionally contains only stored/edited rows while
+    // later provider submissions are still unwritten.
+    if (Object.prototype.hasOwnProperty.call(row, "plannedSessions")) {
+        return Array.isArray(row["plannedSessions"]) ? row["plannedSessions"] : null;
+    }
+    return Array.isArray(row["sessions"]) ? row["sessions"] : null;
+}
+
 function isCompleteFinalizationSource(record: FinalizationCaseSnapshot): boolean {
     const required = record.requiredSessionCount;
     if (!Number.isInteger(required) || required === null || required < 1) return false;
@@ -172,9 +184,8 @@ function isCompleteFinalizationSource(record: FinalizationCaseSnapshot): boolean
 }
 
 function revisionOriginalDates(payload: Prisma.JsonValue): Map<number, string | null> {
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return new Map();
-    const sessions = (payload as Record<string, Prisma.JsonValue>)["sessions"];
-    if (!Array.isArray(sessions)) return new Map();
+    const sessions = revisionOriginalDateRows(payload);
+    if (!sessions) return new Map();
     const result = new Map<number, string | null>();
     for (const item of sessions) {
         if (!item || typeof item !== "object" || Array.isArray(item)) continue;
@@ -191,9 +202,8 @@ function hasCompleteRevisionOriginalDates(
     requiredSessionCount: number,
     expectedIndexes: ReadonlySet<number>,
 ): boolean {
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
-    const sessions = (payload as Record<string, Prisma.JsonValue>)["sessions"];
-    if (!Array.isArray(sessions) || sessions.length !== requiredSessionCount) return false;
+    const sessions = revisionOriginalDateRows(payload);
+    if (!sessions || sessions.length !== requiredSessionCount) return false;
     const seen = new Set<number>();
     for (const item of sessions) {
         if (!item || typeof item !== "object" || Array.isArray(item)) return false;
