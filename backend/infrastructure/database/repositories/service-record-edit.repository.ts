@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 
 import {
     ServiceRecordEditConflictError,
@@ -2014,7 +2015,48 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             await this.invalidateSupersededJobs(tx, input.branchId, source.caseId, source.client.id);
             await this.persistReevaluationIntents(tx, input.branchId, source.client.id, plan.assignments, now);
             if (revision && plan.documentJob && plan.dispatchContext) {
-                await this.enqueueRevisionJob(tx, input, plan, revision, caseVersion);
+                const generation = randomUUID();
+                const documentState = await this.createRevisionDocumentStateInTransaction({ tx }, {
+                    branchId: input.branchId,
+                    clientId: source.client.id,
+                    serviceRecordCaseId: source.caseId,
+                    revisionId: revision.id,
+                    operation: "record_snapshot",
+                    generation,
+                    immutableInput: revision.payload,
+                    inputFingerprint: jsonFingerprint(revision.payload),
+                    workflowScope: {
+                        requestKey: plan.documentJob.requestKey,
+                        activeKey: plan.documentJob.activeKey,
+                        caseVersion,
+                        formVersion: source.formVersion,
+                    },
+                    step: plan.documentStatus === "waiting_for_completion"
+                        ? "waiting_for_completion"
+                        : "capability_unverified",
+                    status: plan.documentStatus === "waiting_for_completion"
+                        ? "waiting_for_completion"
+                        : "capability_unverified",
+                    lastErrorCode: plan.documentStatus === "waiting_for_completion"
+                        ? "SERVICE_RECORD_REVISION_WAITING_FOR_COMPLETION"
+                        : "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED",
+                });
+                // Partial revisions are intentionally retained as waiting
+                // operation state. They have no provider job to claim until
+                // all N sessions are genuinely submitted; a queued partial
+                // job would otherwise be mistaken for an executable provider
+                // intent by older workers.
+                if (plan.documentJob.payload["completeness"] !== "partial") {
+                    await this.enqueueRevisionJob(
+                        tx,
+                        input,
+                        plan,
+                        revision,
+                        caseVersion,
+                        generation,
+                        documentState.id,
+                    );
+                }
             }
         }
 
@@ -2356,6 +2398,8 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         plan: ServiceRecordEditConfirmPlan,
         revision: ServiceRecordRevision,
         caseVersion: number,
+        generation: string,
+        documentStateId: string,
     ): Promise<void> {
         if (!plan.documentJob || !plan.dispatchContext) return;
         const context = {
@@ -2368,6 +2412,8 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             revisionId: revision.id,
             revisionNumber: revision.revisionNumber,
             caseVersion,
+            generation,
+            documentStateId,
             context,
         };
         const payloadFingerprint = jsonFingerprint(payload);
