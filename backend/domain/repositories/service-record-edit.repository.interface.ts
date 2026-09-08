@@ -385,6 +385,17 @@ export interface IServiceRecordEditRepository {
         revisionId: string,
         stateId: string,
     ): Promise<ServiceRecordRevisionDocumentState | null>;
+    /**
+     * Read one operation state by branch/revision/state identity.  The
+     * repository resolves the owning client from the locked case/revision
+     * joins; callers never supply a client value that could widen tenant
+     * scope.
+     */
+    findRevisionDocumentStateForBranch(
+        branchId: string,
+        revisionId: string,
+        stateId: string,
+    ): Promise<ServiceRecordRevisionDocumentState | null>;
     /** Create a generation-bound operation state. The unique operation/generation constraints are authoritative. */
     createRevisionDocumentState(
         input: CreateServiceRecordRevisionDocumentStateInput,
