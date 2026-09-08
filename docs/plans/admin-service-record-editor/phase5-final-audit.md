@@ -39,3 +39,33 @@ Activation limitations
 - Phase0 authoritative vendor/PDF activation remains unverified. Phase6 real HTTP guard and browser tests remain pending.
 - No tests were run, per the audit restriction. No hypotheses are being reported as defects.
 
+
+## Same-session closure review at1e2511738
+
+Model: gpt-5.6-sol | Effort: high
+
+REVISE
+
+### Verified defect
+
+1. The deferred mirrored reconciler still bypasses the current-pointer/revision fence.
+
+   Trigger: an older completed contract’s mirror is reconciled after a newer revision or contract pointer becomes current. The reconciler always supplies `mirrorVersion` ([reconcile-completed-mirrored-eformsign-doc.usecase.ts:89](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/usecases/eformsign-doc/reconcile-completed-mirrored-eformsign-doc.usecase.ts:89)), selecting `syncEndDateFromMirroredContract`. That transaction validates mirror generation and document ownership, but does not compare `client.eDocId`, document `revisionId`, or the case’s `currentRevisionId` before persisting ([service-record-lifecycle.service.ts:666](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-lifecycle.service.ts:666), [service-record-lifecycle.service.ts:720](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-lifecycle.service.ts:720)). It consequently writes `client.endDate` and projects it into the case ([service-record-lifecycle.service.ts:931](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-lifecycle.service.ts:931), [service-record-lifecycle.service.ts:948](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-lifecycle.service.ts:948)).
+
+   The mirrored linker likewise decides whether to replace `client.eDocId` using only `createdDate`, without revision identity ([link-mirrored-eformsign-doc-by-phone.usecase.ts:1359](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/usecases/eformsign-doc/link-mirrored-eformsign-doc-by-phone.usecase.ts:1359), [link-mirrored-eformsign-doc-by-phone.usecase.ts:1371](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/usecases/eformsign-doc/link-mirrored-eformsign-doc-by-phone.usecase.ts:1371)).
+
+   Consequence: a stale poller/reconciler completion can still overwrite the current contract pointer or revised dates. Apply the same locked pointer/revision evidence used by `syncEndDateFromCurrentContract` inside the mirrored transaction, fence the mirrored pointer update by revision identity, and add an actual-PostgreSQL race through the reconciler entry point.
+
+### Verified closures
+
+- Finding 2 is closed: the confirmation planner now builds target values only from observed provider field IDs, supports separate and combined-period fields, and refuses invalid or empty mappings ([admin-service-record-edit.service.ts:795](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/admin-service-record-edit.service.ts:795), [service-record-revision-facts.policy.ts:1094](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/policies/service-record-revision-facts.policy.ts:1094), [service-record-contract-revision.service.ts:309](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-contract-revision.service.ts:309)).
+- Finding 3 is closed: display labels no longer establish workflow stage; explicit adapter stage or structured recipient/save-permission evidence is required ([service-record-revision-facts.policy.ts:823](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/policies/service-record-revision-facts.policy.ts:823)).
+- Finding 1 is closed for the direct legacy webhook path, but not for the deferred mirrored reconciler described above.
+
+### Hypotheses
+
+None.
+
+### Activation limitations
+
+Phase0 production activation remains intentionally unverified and revision-bound dispatch remains fail-closed with zero external calls ([sb.eformsign-document-job.repository.ts:243](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/infrastructure/database/repositories/sb.eformsign-document-job.repository.ts:243), [eformsign-doc.module.ts:180](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/module/eformsign-doc.module.ts:180)). Phase6 HTTP-guard and browser verification also remains pending.
