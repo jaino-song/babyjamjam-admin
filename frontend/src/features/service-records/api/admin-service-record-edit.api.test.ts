@@ -258,6 +258,22 @@ describe("admin service-record edit API adapter", () => {
         expect(preview.after.sessions).toEqual([]);
     });
 
+    it.each([undefined, "13", 0, -1, 1.5, Number.NaN])("rejects malformed blocked-preview count %s while preserving explicit null", (count) => {
+        const blocked = strictPreview({
+            requiredSessionCount: null,
+            before: { startDate: null, endDate: null, sessions: [] },
+            after: { startDate: null, endDate: null, sessions: [] },
+            provenance: [],
+            blockingReasons: [{ code: "UNSUPPORTED_SESSION_COUNT", message: "회차 수를 확인할 수 없습니다." }],
+        });
+        expect(normalizeAdminServiceRecordEditPreview(blocked).blockingReasons.map((reason) => reason.code))
+            .toEqual(["UNSUPPORTED_SESSION_COUNT"]);
+        const malformed = { ...blocked, requiredSessionCount: count };
+        if (count === undefined) Reflect.deleteProperty(malformed, "requiredSessionCount");
+        expect(normalizeAdminServiceRecordEditPreview(malformed).blockingReasons.map((reason) => reason.code))
+            .toEqual(["UNSUPPORTED_SESSION_COUNT", "INVALID_PREVIEW_RESPONSE"]);
+    });
+
     it("does not waive malformed metadata, rejects duplicate current dates, and accepts shifted originals and chunk index zero", () => {
         const { signatureMetadata, documentScope, ...withoutMetadata } = strictPreview();
         expect(signatureMetadata).toBeDefined();

@@ -471,6 +471,7 @@ export function normalizeAdminServiceRecordEditPreview(value: unknown): ServiceR
         && isRecord(payload.after)
         && draftVersion !== null
         && sourceCaseVersion !== null
+        && (payload.requiredSessionCount === null || requiredSessionCount !== null)
         && sourceFingerprint
         && calendarVersion;
     const hasLegitimateBlockingProjection = blockingReasons.length > 0
