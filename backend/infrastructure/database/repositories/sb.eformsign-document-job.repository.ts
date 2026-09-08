@@ -18,6 +18,7 @@ import {
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
     authorizeServiceRecordDispatch,
+    deriveServiceRecordDocumentSyncStatus,
 } from "application/policies/service-record-revision-state.policy";
 import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import type {
@@ -38,7 +39,7 @@ type RawJob = {
 type DispatchJobSnapshot = Pick<
     RawJob,
     "id" | "branch_id" | "client_id" | "document_id" | "job_type" | "status"
-    | "lease_token" | "progress_step" | "payload"
+    | "lease_token" | "progress_step" | "payload" | "payload_fingerprint"
 >;
 
 type DispatchDocumentSnapshot = {
@@ -123,12 +124,63 @@ function payloadContext(value: RawJob["payload"]): ServiceRecordRevisionDispatch
     return context as ServiceRecordRevisionDispatchContext;
 }
 
+function payloadRevisionJob(value: RawJob["payload"]): {
+    revisionId: string | null;
+    payloadFingerprint: string | null;
+    completeness: "complete" | "partial" | null;
+    manualReviewRequired: boolean;
+} | null {
+    let parsed: unknown = value;
+    if (typeof value === "string") {
+        try {
+            parsed = JSON.parse(value) as unknown;
+        } catch {
+            return null;
+        }
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const row = parsed as Record<string, unknown>;
+    const context = row["context"];
+    if (!context || typeof context !== "object" || Array.isArray(context)) return null;
+    const contextRevisionId = (context as Record<string, unknown>)["revisionId"];
+    const revisionId = typeof row["revisionId"] === "string"
+        ? row["revisionId"]
+        : typeof contextRevisionId === "string"
+            ? contextRevisionId
+            : null;
+    const payloadFingerprint = typeof row["payloadFingerprint"] === "string"
+        ? row["payloadFingerprint"]
+        : null;
+    const completeness = row["completeness"] === "complete" || row["completeness"] === "partial"
+        ? row["completeness"]
+        : null;
+    return {
+        revisionId,
+        payloadFingerprint,
+        completeness,
+        manualReviewRequired: row["manualReviewRequired"] === true,
+    };
+}
+
 @Injectable()
 export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRepository {
     constructor(private readonly prisma: PrismaService) {}
 
     async enqueue(input: EnqueueEformsignDocumentJobInput) {
         return this.prisma.$transaction((tx) => this.enqueueInTransaction(tx, input));
+    }
+
+    async findByRequestKeyInTransaction(
+        tx: Prisma.TransactionClient,
+        requestKey: string,
+    ) {
+        const rows = await tx.$queryRaw<RawJob[]>(Prisma.sql`
+            SELECT *
+            FROM "eformsign_document_job"
+            WHERE request_key = ${requestKey}
+            LIMIT 1
+        `);
+        return rows[0] ? this.toDomain(rows[0]) : null;
     }
 
     async enqueueInTransaction(
@@ -188,6 +240,15 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 if (!initial) return { kind: "lost", reason: "job_not_found" } as const;
 
                 const expected = input.expectedContext;
+                // Phase0 has not verified the revised-record provider path.
+                // A revision-bound claim therefore remains manual-review only,
+                // even if a forged worker context says pending/completed.
+                if (expected?.revisionId !== null && expected?.revisionId !== undefined) {
+                    return {
+                        kind: "stale",
+                        reason: "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED",
+                    } as const;
+                }
                 const isFinalize = initial.job_type === "finalize_document";
                 const isCreate = initial.job_type === "create_document";
                 if (!isFinalize && !isCreate) {
@@ -298,6 +359,8 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                             requiredSessionCount: number | null;
                             plannedSessions: Prisma.JsonValue | null;
                             currentRevisionId: string | null;
+                            currentUsableRevisionId: string | null;
+                            currentUsableDocumentVersion: number | null;
                             formVersion: number;
                             status: string;
                         } | null>;
@@ -320,6 +383,8 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                             requiredSessionCount: true,
                             plannedSessions: true,
                             currentRevisionId: true,
+                            currentUsableRevisionId: true,
+                            currentUsableDocumentVersion: true,
                             formVersion: true,
                             status: true,
                         },
@@ -354,6 +419,21 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                             .digest("hex");
                     }
 
+                    const persistedRevisionJob = payloadRevisionJob(current.payload);
+                    const documentSyncStatus = expected.revisionId === null
+                        ? expected.documentSyncStatus
+                        : deriveServiceRecordDocumentSyncStatus({
+                            currentRevisionId: currentCase.currentRevisionId,
+                            currentUsableRevisionId: currentCase.currentUsableRevisionId,
+                            currentUsableDocumentVersion: currentCase.currentUsableDocumentVersion,
+                            revisionJob: persistedRevisionJob
+                                ? {
+                                    ...persistedRevisionJob,
+                                    status: current.status,
+                                    progressStep: current.progress_step,
+                                }
+                                : null,
+                        });
                     const authorization = authorizeServiceRecordDispatch(expected, {
                         branchId: currentCase.branchId,
                         clientId: currentCase.clientId!,
@@ -363,7 +443,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                         businessFingerprint,
                         plannedSessionCount: currentCase.requiredSessionCount,
                         plannedSessionDates: plannedSessionDatesFromJson(currentCase.plannedSessions),
-                        documentSyncStatus: expected.documentSyncStatus,
+                        documentSyncStatus,
                         lifecycleStatus: currentCase.status,
                         formVersion: currentCase.formVersion,
                     });
@@ -391,7 +471,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         const rows = await tx.$queryRaw<DispatchJobSnapshot[]>(Prisma.sql`
             SELECT
                 "id", "branch_id", "client_id", "document_id", "job_type", "status",
-                "lease_token", "progress_step", "payload"
+                "lease_token", "progress_step", "payload", "payload_fingerprint"
             FROM "eformsign_document_job"
             WHERE "id" = ${jobId}::uuid
             ${forUpdate ? Prisma.sql`FOR UPDATE` : Prisma.empty}
@@ -431,6 +511,12 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
     ) {
         if (!UUID_PATTERN.test(input.jobId) || !UUID_PATTERN.test(input.leaseToken)) {
             return { kind: "lost", reason: "invalid_job_claim" } as const;
+        }
+        if (input.expectedContext?.revisionId !== null && input.expectedContext?.revisionId !== undefined) {
+            return {
+                kind: "stale",
+                reason: "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED",
+            } as const;
         }
 
         const rows = await tx.$queryRaw<RawJob[]>(Prisma.sql`

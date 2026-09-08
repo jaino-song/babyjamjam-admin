@@ -1,4 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { ConflictException, Injectable, Logger, Optional } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { captureServiceRecordError } from "infrastructure/observability/service-record-sentry";
@@ -11,11 +13,205 @@ import {
     ServiceRecordLifecycleService,
 } from "./service-record-lifecycle.service";
 import { createEformsignWorkerPrincipal } from "./eformsign-credential-boundary.service";
+import {
+    EformsignDocumentJobService,
+    sha256CanonicalJson,
+} from "./eformsign-document-job.service";
 
 const CASE_BATCH_SIZE = 10;
 const MAX_RETRY_DELAY_MS = 6 * 60 * 60 * 1000;
 const FINALIZATION_STALE_MS = 20 * 60 * 1000;
 const COMPLETED_DOCUMENT_STATUS_TYPES = ["003", "012", "022", "032", "050", "062", "072", "092"];
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+type FinalizationDaySnapshot = {
+    id: string;
+    scheduleId: number | null;
+    caseSessionIndex: number | null;
+    sessionIndex: number;
+    employeeId: number | null;
+    employeeNameSnapshot: string | null;
+    formVersion: number;
+    serviceDate: Date;
+    answers: Prisma.JsonValue;
+    etcService: string | null;
+    notes: string | null;
+    paymentConfirmed: boolean;
+    momApproval: string | null;
+    clientSignature: string | null;
+    clientSignedAt: Date | null;
+    locked: boolean;
+    submittedAt: Date | null;
+};
+
+type FinalizationAssignmentSnapshot = {
+    id: string;
+    scheduleId: number | null;
+    employeeId: number | null;
+    employeeNameSnapshot: string;
+    startDate: Date;
+    endDate: Date;
+};
+
+type FinalizationCaseSnapshot = {
+    id: string;
+    branchId: string;
+    clientId: number | null;
+    status: string;
+    nextAttemptAt: Date | null;
+    finalizationAttempts: number;
+    formVersion: number;
+    requiredSessionCount: number | null;
+    startDate: Date | null;
+    endDate: Date | null;
+    plannedSessions: Prisma.JsonValue | null;
+    currentRevisionId: string | null;
+    currentUsableRevisionId: string | null;
+    currentUsableDocumentVersion: number | null;
+    momName: string | null;
+    momBirth: string | null;
+    babyName: string | null;
+    babyBirth: string | null;
+    deliveryType: string | null;
+    babyWeight: string | null;
+    completedAt: Date | null;
+    finalizationDueAt: Date | null;
+    finalizationStartedAt: Date | null;
+    finalizedAt: Date | null;
+    documentsCompletedAt: Date | null;
+    client: {
+        id: number;
+        name: string;
+        duration: number | null;
+        startDate: Date | null;
+        endDate: Date | null;
+        serviceStatus: string | null;
+    } | null;
+    assignments: FinalizationAssignmentSnapshot[];
+    days: FinalizationDaySnapshot[];
+};
+
+type FinalizationRevisionSnapshot = {
+    id: string;
+    revisionNumber: number;
+    payload: Prisma.JsonValue;
+};
+
+function isoDate(value: Date | null | undefined): string | null {
+    return value ? value.toISOString().slice(0, 10) : null;
+}
+
+function isoTimestamp(value: Date | null | undefined): string | null {
+    return value?.toISOString() ?? null;
+}
+
+function randomGenerationId(): string {
+    return randomUUID();
+}
+
+function isCompleteFinalizationSource(record: FinalizationCaseSnapshot): boolean {
+    const required = record.requiredSessionCount;
+    if (!Number.isInteger(required) || required === null || required < 1) return false;
+    if (record.days.length !== required) return false;
+    const completeHeader = [
+        record.momName,
+        record.momBirth,
+        record.babyName,
+        record.babyBirth,
+        record.deliveryType,
+        record.babyWeight,
+    ].every((value) => Boolean(value?.trim()));
+    if (!completeHeader) return false;
+    if (record.assignments.length === 0 || record.assignments.some((assignment) => (
+        typeof assignment.id !== "string"
+        || assignment.id.length === 0
+        || !Number.isInteger(assignment.scheduleId)
+        || (assignment.scheduleId ?? 0) < 1
+        || !Number.isInteger(assignment.employeeId)
+        || (assignment.employeeId ?? 0) < 1
+        || !assignment.employeeNameSnapshot.trim()
+        || !DATE_ONLY_PATTERN.test(isoDate(assignment.startDate) ?? "")
+        || !DATE_ONLY_PATTERN.test(isoDate(assignment.endDate) ?? "")
+        || assignment.startDate.getTime() > assignment.endDate.getTime()
+    ))) return false;
+
+    const seen = new Set<number>();
+    for (const day of record.days) {
+        const index = day.caseSessionIndex;
+        const assignment = record.assignments.find((candidate) => (
+            candidate.scheduleId === day.scheduleId
+            && candidate.employeeId === day.employeeId
+        ));
+        if (
+            typeof index !== "number"
+            ||
+            !Number.isInteger(index)
+            || index < 1
+            || index > required
+            || seen.has(index)
+            || !day.locked
+            || day.momApproval !== "approved"
+            || !day.submittedAt
+            || !day.clientSignature?.trim()
+            || !day.clientSignedAt
+            || !assignment
+            || !Number.isInteger(day.scheduleId)
+            || (day.scheduleId ?? 0) < 1
+            || !Number.isInteger(day.employeeId)
+            || (day.employeeId ?? 0) < 1
+            || !day.employeeNameSnapshot?.trim()
+            || !Number.isInteger(day.formVersion)
+            || day.formVersion < 1
+        ) {
+            return false;
+        }
+        seen.add(index);
+    }
+    return [...seen].sort((left, right) => left - right)
+        .every((index, position) => index === position + 1);
+}
+
+function revisionOriginalDates(payload: Prisma.JsonValue): Map<number, string | null> {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return new Map();
+    const sessions = (payload as Record<string, Prisma.JsonValue>)["sessions"];
+    if (!Array.isArray(sessions)) return new Map();
+    const result = new Map<number, string | null>();
+    for (const item of sessions) {
+        if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+        const row = item as Record<string, Prisma.JsonValue>;
+        const index = row["sessionIndex"];
+        if (typeof index !== "number" || !Number.isInteger(index) || index < 1) continue;
+        result.set(index, typeof row["originalDate"] === "string" ? row["originalDate"] : null);
+    }
+    return result;
+}
+
+function hasCompleteRevisionOriginalDates(
+    payload: Prisma.JsonValue,
+    requiredSessionCount: number,
+    expectedIndexes: ReadonlySet<number>,
+): boolean {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+    const sessions = (payload as Record<string, Prisma.JsonValue>)["sessions"];
+    if (!Array.isArray(sessions) || sessions.length !== requiredSessionCount) return false;
+    const seen = new Set<number>();
+    for (const item of sessions) {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+        const row = item as Record<string, Prisma.JsonValue>;
+        const index = row["sessionIndex"];
+        const originalDate = row["originalDate"];
+        if (
+            typeof index !== "number"
+            || !Number.isInteger(index)
+            || !expectedIndexes.has(index)
+            || seen.has(index)
+            || typeof originalDate !== "string"
+            || !DATE_ONLY_PATTERN.test(originalDate)
+        ) return false;
+        seen.add(index);
+    }
+    return seen.size === expectedIndexes.size;
+}
 
 @Injectable()
 export class ServiceRecordFinalizationService {
@@ -25,6 +221,8 @@ export class ServiceRecordFinalizationService {
         private readonly prisma: PrismaService,
         private readonly lifecycleService: ServiceRecordLifecycleService,
         private readonly createSnapshotUsecase: CreateAndSendServiceRecordSnapshotUsecase,
+        @Optional()
+        private readonly documentJobService?: EformsignDocumentJobService,
     ) {}
 
     async processDueCases(referenceDate = new Date(), limit = CASE_BATCH_SIZE): Promise<number> {
@@ -113,7 +311,7 @@ export class ServiceRecordFinalizationService {
         caseId: string,
         branchId: string,
         referenceDate: Date,
-    ): Promise<{ claimed: boolean; attempts: number }> {
+    ): Promise<{ claimed: boolean; attempts: number; blockedGeneration?: boolean }> {
         return this.prisma.$transaction(async (tx) => {
             const caseDelegate = tx.service_record_case as unknown as {
                 findUnique?: (args: unknown) => Promise<{
@@ -216,6 +414,34 @@ export class ServiceRecordFinalizationService {
                 return { claimed: false, attempts: 0 };
             }
 
+            // A real finalization transaction rereads the complete source
+            // after the common lock set. This is the eligibility fence for
+            // both legacy snapshots and immutable revised generations.
+            const source = await this.readFinalizationCase(tx, caseId);
+            if (!source || source.branchId !== branchId || source.clientId !== current.clientId) {
+                return { claimed: false, attempts: 0 };
+            }
+            if (source.currentRevisionId !== null) {
+                if (!isCompleteFinalizationSource(source)) {
+                    // READY can be stale after a later provider edit. Let the
+                    // existing lifecycle policy recalculate it while this
+                    // transaction still owns the case/client lock.
+                    if (current.status === SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE) {
+                        await this.lifecycleService.recompute(caseId, tx);
+                    }
+                    return { claimed: false, attempts: 0, blockedGeneration: true };
+                }
+                await this.freezeInitialFinalizationGeneration(tx, source);
+                // Phase0 capability remains unverified. The durable job is a
+                // manual-review intent; no case claim or provider execution is
+                // allowed from this scheduler path.
+                return {
+                    claimed: false,
+                    attempts: current.finalizationAttempts,
+                    blockedGeneration: true,
+                };
+            }
+
             const claimed = await tx.service_record_case.updateMany({
                 where: {
                     id: caseId,
@@ -242,6 +468,337 @@ export class ServiceRecordFinalizationService {
                 attempts: claimed.count === 1 ? current.finalizationAttempts + 1 : 0,
             };
         });
+    }
+
+    /**
+     * Read the current source only after the caller owns the complete
+     * client/employee/case lock set. The finalization scheduler must never
+     * derive a generation payload from the pre-lock candidate query.
+     */
+    private async readFinalizationCase(
+        tx: Prisma.TransactionClient,
+        caseId: string,
+    ): Promise<FinalizationCaseSnapshot | null> {
+        const delegate = tx.service_record_case as unknown as {
+            findUnique?: (args: unknown) => Promise<FinalizationCaseSnapshot | null>;
+        } | undefined;
+        if (typeof delegate?.findUnique !== "function") return null;
+        return delegate.findUnique({
+            where: { id: caseId },
+            select: {
+                id: true,
+                branchId: true,
+                clientId: true,
+                status: true,
+                nextAttemptAt: true,
+                finalizationAttempts: true,
+                formVersion: true,
+                requiredSessionCount: true,
+                startDate: true,
+                endDate: true,
+                plannedSessions: true,
+                currentRevisionId: true,
+                currentUsableRevisionId: true,
+                currentUsableDocumentVersion: true,
+                momName: true,
+                momBirth: true,
+                babyName: true,
+                babyBirth: true,
+                deliveryType: true,
+                babyWeight: true,
+                completedAt: true,
+                finalizationDueAt: true,
+                finalizationStartedAt: true,
+                finalizedAt: true,
+                documentsCompletedAt: true,
+                client: {
+                    select: {
+                        id: true,
+                        name: true,
+                        duration: true,
+                        startDate: true,
+                        endDate: true,
+                        serviceStatus: true,
+                    },
+                },
+                assignments: {
+                    select: {
+                        id: true,
+                        scheduleId: true,
+                        employeeId: true,
+                        employeeNameSnapshot: true,
+                        startDate: true,
+                        endDate: true,
+                    },
+                    orderBy: [{ startDate: "asc" }, { id: "asc" }],
+                },
+                days: {
+                    select: {
+                        id: true,
+                        scheduleId: true,
+                        caseSessionIndex: true,
+                        sessionIndex: true,
+                        employeeId: true,
+                        employeeNameSnapshot: true,
+                        formVersion: true,
+                        serviceDate: true,
+                        answers: true,
+                        etcService: true,
+                        notes: true,
+                        paymentConfirmed: true,
+                        momApproval: true,
+                        clientSignature: true,
+                        clientSignedAt: true,
+                        locked: true,
+                        submittedAt: true,
+                    },
+                    orderBy: [{ caseSessionIndex: "asc" }, { sessionIndex: "asc" }, { id: "asc" }],
+                },
+            },
+        });
+    }
+
+    /**
+     * Freeze a complete revised source exactly once. The durable job payload
+     * is the generation input; retries resolve the request key and reuse that
+     * payload without reading or rebuilding from the mutable case again.
+     */
+    private async freezeInitialFinalizationGeneration(
+        tx: Prisma.TransactionClient,
+        source: FinalizationCaseSnapshot,
+    ): Promise<void> {
+        const revisionId = source.currentRevisionId;
+        if (!revisionId || !source.clientId) {
+            throw new ConflictException({ code: "SERVICE_RECORD_REVISION_SOURCE_UNAVAILABLE" });
+        }
+        if (!this.documentJobService) {
+            throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE" });
+        }
+
+        const requestKey = `service-record-initial-finalization:${revisionId}`;
+        const existing = await this.documentJobService.findByRequestKeyInTransaction(tx, requestKey);
+        if (existing) {
+            this.assertFrozenGenerationJob(existing, source, revisionId, requestKey);
+            return;
+        }
+
+        const revisionDelegate = tx.service_record_revision as unknown as {
+            findUnique?: (args: unknown) => Promise<FinalizationRevisionSnapshot | null>;
+        } | undefined;
+        if (typeof revisionDelegate?.findUnique !== "function") {
+            throw new ConflictException({ code: "SERVICE_RECORD_REVISION_SOURCE_UNAVAILABLE" });
+        }
+        const revision = await revisionDelegate.findUnique({
+            where: { id: revisionId },
+            select: { id: true, revisionNumber: true, payload: true },
+        });
+        if (!revision || revision.id !== revisionId || revision.revisionNumber < 1) {
+            throw new ConflictException({ code: "SERVICE_RECORD_REVISION_SOURCE_UNAVAILABLE" });
+        }
+        const required = source.requiredSessionCount;
+        const expectedIndexes = new Set(
+            source.days
+                .map((day) => day.caseSessionIndex)
+                .filter((index): index is number => typeof index === "number"),
+        );
+        if (
+            required === null
+            || !Number.isInteger(required)
+            || required < 1
+            || expectedIndexes.size !== required
+            || !hasCompleteRevisionOriginalDates(revision.payload, required, expectedIndexes)
+        ) {
+            throw new ConflictException({ code: "SERVICE_RECORD_REVISION_SOURCE_UNAVAILABLE" });
+        }
+
+        const generation = randomGenerationId();
+        const immutablePayload = this.buildInitialFinalizationPayload(source, revision, generation);
+        const payloadFingerprint = sha256CanonicalJson(immutablePayload);
+        const plannedSessionDates = source.days
+            .map((day) => ({
+                sessionIndex: day.caseSessionIndex!,
+                serviceDate: isoDate(day.serviceDate)!,
+            }))
+            .sort((left, right) => left.sessionIndex - right.sessionIndex);
+        const context = {
+            branchId: source.branchId,
+            clientId: source.clientId,
+            serviceRecordCaseId: source.id,
+            revisionId,
+            revisionNumber: revision.revisionNumber,
+            businessFingerprint: payloadFingerprint,
+            plannedSessionCount: source.requiredSessionCount,
+            plannedSessionDates,
+            documentSyncStatus: "capability_unverified" as const,
+            lifecycleStatus: source.status,
+            formVersion: source.formVersion,
+        };
+        const payload = {
+            kind: "service_record_revision" as const,
+            generationKind: "INITIAL_FINALIZATION" as const,
+            generation,
+            revisionId,
+            revisionNumber: revision.revisionNumber,
+            context,
+            immutablePayload,
+            payloadFingerprint,
+            completeness: "complete" as const,
+            manualReviewRequired: true,
+            snapshotReference: requestKey,
+        };
+
+        const result = await this.documentJobService.enqueueInTransaction(tx, {
+            branchId: source.branchId,
+            clientId: source.clientId,
+            documentId: null,
+            jobType: "create_document",
+            source: "auto_finalize",
+            requestKey,
+            activeKey: `service-record-initial-finalization:${source.id}`,
+            payload,
+            payloadFingerprint,
+            // The provider worker is the generation principal. The user who
+            // confirmed the revision remains in the immutable revision row.
+            createdByUserId: null,
+        });
+        if (result.existing) {
+            this.assertFrozenGenerationJob(result.job, source, revisionId, requestKey);
+        }
+    }
+
+    private buildInitialFinalizationPayload(
+        source: FinalizationCaseSnapshot,
+        revision: FinalizationRevisionSnapshot,
+        generation: string,
+    ): Record<string, unknown> {
+        const originalDates = revisionOriginalDates(revision.payload);
+        const sessions = source.days
+            .map((day) => {
+                const sessionIndex = day.caseSessionIndex!;
+                return {
+                    sourceRowId: day.id,
+                    sessionIndex,
+                    serviceDate: isoDate(day.serviceDate),
+                    originalDate: originalDates.get(sessionIndex) ?? null,
+                    scheduleId: day.scheduleId,
+                    employeeId: day.employeeId,
+                    employeeNameSnapshot: day.employeeNameSnapshot,
+                    formVersion: day.formVersion,
+                    answers: day.answers,
+                    etcService: day.etcService,
+                    notes: day.notes,
+                    paymentConfirmed: day.paymentConfirmed,
+                    momApproval: day.momApproval,
+                    clientSignature: day.clientSignature,
+                    clientSignedAt: isoTimestamp(day.clientSignedAt),
+                    locked: day.locked,
+                    submittedAt: isoTimestamp(day.submittedAt),
+                };
+            })
+            .sort((left, right) => left.sessionIndex - right.sessionIndex);
+        return {
+            kind: "service_record_initial_finalization_input",
+            generation,
+            branchId: source.branchId,
+            caseId: source.id,
+            clientId: source.clientId,
+            revisionId: revision.id,
+            revisionNumber: revision.revisionNumber,
+            formVersion: source.formVersion,
+            requiredSessionCount: source.requiredSessionCount,
+            startDate: isoDate(source.startDate),
+            endDate: isoDate(source.endDate),
+            header: {
+                momName: source.momName,
+                momBirth: source.momBirth,
+                babyName: source.babyName,
+                babyBirth: source.babyBirth,
+                deliveryType: source.deliveryType,
+                babyWeight: source.babyWeight,
+            },
+            lifecycle: {
+                status: source.status,
+                completedAt: isoTimestamp(source.completedAt),
+                finalizationDueAt: isoTimestamp(source.finalizationDueAt),
+                finalizationStartedAt: isoTimestamp(source.finalizationStartedAt),
+                finalizedAt: isoTimestamp(source.finalizedAt),
+                documentsCompletedAt: isoTimestamp(source.documentsCompletedAt),
+            },
+            client: source.client
+                ? {
+                    id: source.client.id,
+                    name: source.client.name,
+                    duration: source.client.duration,
+                    startDate: isoDate(source.client.startDate),
+                    endDate: isoDate(source.client.endDate),
+                    serviceStatus: source.client.serviceStatus,
+                }
+                : null,
+            assignments: source.assignments.map((assignment) => ({
+                assignmentId: assignment.id,
+                scheduleId: assignment.scheduleId,
+                employeeId: assignment.employeeId,
+                employeeNameSnapshot: assignment.employeeNameSnapshot,
+                startDate: isoDate(assignment.startDate),
+                endDate: isoDate(assignment.endDate),
+            })),
+            plannedSessions: source.plannedSessions,
+            sessions,
+            // Keep the immutable editor payload alongside the fresh provider
+            // rows so a later worker never has to reconstruct the revision.
+            sourceRevisionPayload: revision.payload,
+        };
+    }
+
+    private assertFrozenGenerationJob(
+        job: {
+            requestKey: string;
+            branchId: string;
+            clientId: number | null;
+            jobType: string;
+            payloadFingerprint: string | null;
+            payload: Record<string, unknown> | null;
+        },
+        source: FinalizationCaseSnapshot,
+        revisionId: string,
+        requestKey: string,
+    ): void {
+        const payload = job.payload;
+        const context = payload?.["context"];
+        const contextRecord = context && typeof context === "object" && !Array.isArray(context)
+            ? context as Record<string, unknown>
+            : null;
+        const immutablePayload = payload?.["immutablePayload"];
+        if (
+            job.requestKey !== requestKey
+            || job.branchId !== source.branchId
+            || job.clientId !== source.clientId
+            || job.jobType !== "create_document"
+            || job.payloadFingerprint !== payload?.["payloadFingerprint"]
+            || !payload
+            || payload["kind"] !== "service_record_revision"
+            || payload["generationKind"] !== "INITIAL_FINALIZATION"
+            || payload["revisionId"] !== revisionId
+            || payload["completeness"] !== "complete"
+            || payload["manualReviewRequired"] !== true
+            || typeof payload["payloadFingerprint"] !== "string"
+            || !/^[0-9a-f]{64}$/i.test(payload["payloadFingerprint"])
+            || typeof payload["generation"] !== "string"
+            || payload["generation"].length === 0
+            || typeof immutablePayload !== "object"
+            || immutablePayload === null
+            || Array.isArray(immutablePayload)
+            || !contextRecord
+            || contextRecord["branchId"] !== source.branchId
+            || contextRecord["clientId"] !== source.clientId
+            || contextRecord["serviceRecordCaseId"] !== source.id
+            || contextRecord["revisionId"] !== revisionId
+            || contextRecord["businessFingerprint"] !== payload["payloadFingerprint"]
+            || payload["snapshotReference"] !== requestKey
+            || sha256CanonicalJson(immutablePayload) !== payload["payloadFingerprint"]
+        ) {
+            throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED" });
+        }
     }
 
     private async recoverStaleFinalizations(referenceDate: Date): Promise<void> {

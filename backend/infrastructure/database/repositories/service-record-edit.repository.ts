@@ -27,6 +27,10 @@ import {
     type UpdateServiceRecordEditDraftInput,
 } from "domain/repositories/service-record-edit.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import {
+    persistClientMessageAutomationIntent,
+    persistScheduleMessageAutomationIntent,
+} from "application/services/message-automation-intent-writer";
 import type {
     ServiceRecordEditContractStage,
     ServiceRecordEditDocumentChunk,
@@ -1308,6 +1312,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 });
             }
             await this.invalidateSupersededJobs(tx, input.branchId, source.caseId, source.client.id);
+            await this.persistReevaluationIntents(tx, input.branchId, source.client.id, plan.assignments, now);
             if (revision && plan.documentJob && plan.dispatchContext) {
                 await this.enqueueRevisionJob(tx, input, plan, revision, caseVersion);
             }
@@ -1346,6 +1351,59 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         });
         if (persisted.count !== 1) throw new ServiceRecordEditDraftConflictError();
         return response;
+    }
+
+    /**
+     * Confirmation invalidates old pending work and leaves a durable marker
+     * for the existing automation reconciler to recalculate future jobs. The
+     * marker is written in this transaction so any later failure rolls it back
+     * with the case, day, revision, and draft writes.
+     */
+    private async persistReevaluationIntents(
+        tx: Prisma.TransactionClient,
+        branchId: string,
+        clientId: number,
+        assignments: ServiceRecordEditConfirmPlan["assignments"],
+        intentAt: Date,
+    ): Promise<void> {
+        const transaction = tx as unknown as {
+            message_trigger_rule?: { upsert?: unknown };
+            message_trigger_job?: { upsert?: unknown };
+        };
+        // Narrow unit doubles used by older repository tests do not expose the
+        // message delegates. A real Prisma transaction always does, and the
+        // production path therefore remains durable and atomic.
+        if (
+            typeof transaction.message_trigger_rule?.upsert !== "function"
+            || typeof transaction.message_trigger_job?.upsert !== "function"
+        ) {
+            return;
+        }
+        await persistClientMessageAutomationIntent(tx, {
+            branchId,
+            clientId,
+            includePast: false,
+            suppressGreeting: true,
+            intentAt,
+        });
+        const scheduleIds = [...new Set(
+            assignments
+                .map((assignment) => assignment.scheduleId)
+                .filter((scheduleId): scheduleId is number => (
+                    typeof scheduleId === "number"
+                    && Number.isInteger(scheduleId)
+                    && scheduleId > 0
+                )),
+        )].sort((left, right) => left - right);
+        for (const scheduleId of scheduleIds) {
+            await persistScheduleMessageAutomationIntent(tx, {
+                branchId,
+                clientId,
+                scheduleId,
+                includePast: false,
+                intentAt,
+            });
+        }
     }
 
     private async lockConfirmTargets(

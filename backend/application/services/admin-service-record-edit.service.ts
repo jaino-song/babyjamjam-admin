@@ -274,18 +274,11 @@ function buildFutureContentSession(
 }
 
 function documentStatusForSource(source: ServiceRecordEditSource): ServiceRecordEditConfirmDocumentStatus {
-    switch (source.documentScope?.contract.stage) {
-        case "in_progress":
-            return "waiting_for_completion";
-        case "rejected":
-            return "pending";
-        case "completed":
-        case "unknown":
-        case null:
-        case undefined:
-        default:
-            return "capability_unverified";
-    }
+    // Phase0 has not proved that a revised record can be rendered and
+    // delivered by the provider. Contract stage is therefore presentation
+    // metadata only; it must never authorize a new revision operation.
+    void source;
+    return "capability_unverified";
 }
 
 const COMPLETE_SERVICE_RECORD_CASE_STATUSES = new Set([

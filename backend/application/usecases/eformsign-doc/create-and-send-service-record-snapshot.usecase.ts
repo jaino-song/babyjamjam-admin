@@ -169,6 +169,14 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
         if (!record || record.branchId !== branchid) {
             throw new NotFoundException("Service record not found");
         }
+        // Revised records are frozen into a durable, capability-gated
+        // generation job by the finalization service. This legacy usecase
+        // reads mutable live rows and owns provider credentials, so it must
+        // never become an alternate revised-document path while Phase0 is
+        // still unverified.
+        if (record.currentRevisionId != null) {
+            throw new ConflictException({ code: "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED" });
+        }
         this.assertReadyForSnapshot(record);
 
         const persistedChunkLayout = await this.prisma.service_record_snapshot_chunk.findMany({

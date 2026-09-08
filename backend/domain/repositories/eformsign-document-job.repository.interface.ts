@@ -49,6 +49,11 @@ export interface AuthorizeEformsignDocumentJobForDispatchInput {
 
 export interface IEformsignDocumentJobRepository {
     enqueue(input: EnqueueEformsignDocumentJobInput): Promise<{ job: EformsignDocumentJobEntity; existing: boolean }>;
+    /** Read one immutable request-key row inside an already-owned transaction. */
+    findByRequestKeyInTransaction(
+        tx: Prisma.TransactionClient,
+        requestKey: string,
+    ): Promise<EformsignDocumentJobEntity | null>;
     /** Insert or replay a job using the caller's active transaction. */
     enqueueInTransaction(
         tx: Prisma.TransactionClient,
