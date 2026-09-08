@@ -235,6 +235,22 @@ Phase3 달력 검증 보정: 공통 한국 영업일 표 자체도 공식 월력
   **추가 UI Paths:** `frontend/src/components/app/service-record/ServiceRecordAdminWizard.tsx`, `packages/service-record-ui/src/ServiceRecordWizard.tsx`, `packages/service-record-ui/src/types.ts`, `frontend/src/app/api/admin/service-records/`, `frontend/src/components/app/clients/ClientFormDialog.tsx`, `frontend/src/components/app/clients/__tests__/ClientFormDialog.duration-confirmation.test.tsx`, 관련 테스트. 기존 고객 모달의 기간/duration 확인 절차와 exact periodKey 결속을 재사용한다. 새 확인 체계를 만들지 않으며 기존 동작이 요구사항을 충족하면 테스트로 유지한다.
   **Depends:** Task 3.0
 
+Task3.1 실행 분리: 날짜 계산·서버 계약과 API에 의존하지 않는 날짜 선택 UI의 소유 파일을 분리한다. 서버 계약이 고정되기 전에는 UI를 API에 연결하지 않으며 서버 변경을 먼저 통합한다.
+
+**Run together:** Task3.1 서버 계산 / Task3.1 날짜 선택 UI (독립 구성요소만 병행, 계약 확정 뒤 관리자 화면 연결).
+
+- **Task3.1 서버 계산** (feature, high)
+  - 위 Task3.1의 backend/shared 계산·N 보존·초안 날짜 이동·미리보기와 해당 검증을 담당한다.
+
+  **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer (phase3_lock_corrections) · **Model:** gpt-5.6-luna · **Effort:** max  
+  **Paths:** 위 Task3.1 backend/shared 경로와 생성 vendor 산출물. **Depends:** Task3.0 독립 감사 SHIP. **Worktree:** `admin-service-record-editor-units/task-3-1-backend`, branch `unit/admin-service-record-3-1-backend`.
+
+- **Task3.1 날짜 선택 UI** (feature, med)
+  - 기존 FormDialogShell·CompactDateSelect·Button을 조합해 영업일만 선택하는 제어형 대화상자를 구현한다. 취소는 초안을 변경하지 않고 적용은 부모에 날짜만 전달한다. 달력 표를 복제하지 않는다.
+
+  **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer (mirror_request_pg_races) · **Model:** gpt-5.6-luna · **Effort:** max  
+  **Paths:** `frontend/src/components/app/service-record/`의 날짜 선택 구성요소 및 관련 테스트, 필요한 `docs/design-system/component-manifest.json` 등록만. 관리자 wizard/API/backend/shared 파일은 이 단위에서 수정하지 않는다. **Depends:** Task3.0 독립 감사 SHIP 및 기존 공통 영업일 함수. **Worktree:** `admin-service-record-editor-units/task-3-1-date-ui`, branch `unit/admin-service-record-3-1-date-ui`.
+
 제안 API (기존 `/admin/service-records` 아래, 모두 지점 권한 검사):
 
 | 요청 | 책임 |
