@@ -136,6 +136,14 @@ describeE2E("admin service-record HTTP authorization", () => {
             .expect(401);
     });
 
+    it("returns 401 for a correctly signed but expired access token", async () => {
+        const token = await tokenFor(fixture.admin, -1);
+        await request(app.getHttpServer())
+            .get(editorPath(fixture.activeClientId))
+            .set("Authorization", `Bearer ${token}`)
+            .expect(401);
+    });
+
     it("returns 401 for a valid access token whose session is expired", async () => {
         const token = await tokenFor(fixture.expiredSessionAdmin);
         await request(app.getHttpServer())
