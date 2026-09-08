@@ -1617,8 +1617,14 @@ describe("MessageTriggerService", () => {
         let queryCount = 0;
         dispatcher.transaction.$queryRaw.mockImplementation(async () => {
             queryCount += 1;
-            events.push(queryCount === 1 ? "claim-read" : "authorize-cas");
-            return queryCount === 1
+            events.push(
+                queryCount === 1
+                    ? "preparation-claim-read"
+                    : queryCount === 2
+                        ? "claim-read"
+                        : "authorize-cas",
+            );
+            return queryCount === 1 || queryCount === 2
                 ? [{
                     status: "processing",
                     claim_token: "claim-a",
@@ -1630,6 +1636,7 @@ describe("MessageTriggerService", () => {
         await dispatcher.service.dispatchDueJobs();
 
         expect(events).toEqual([
+            "preparation-claim-read",
             "prepare",
             "persist-preparation",
             "claim-read",
@@ -1640,6 +1647,30 @@ describe("MessageTriggerService", () => {
         expect(dispatcher.deliveryService.sendJob).not.toHaveBeenCalled();
         expect(preparedDelivery.sendPreparedJob).toHaveBeenCalledWith(job, preparation);
         expect(job.status).toBe("sent");
+    });
+
+    it("does not prepare a legacy receipt when its claim is lost before preparation", async () => {
+        const dispatcher = createDispatchService();
+        const job = createJob();
+        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.messageSenderApprovalService.getApprovedBranchIds.mockResolvedValue(new Set([branchId]));
+        const prepareJob = jest.fn().mockResolvedValue({
+            snapshot: { snapshotHash: "must-not-prepare" },
+            serializedSnapshot: "must-not-prepare",
+        });
+        const sendPreparedJob = jest.fn().mockResolvedValue(true);
+        Object.assign(dispatcher.deliveryService, { prepareJob, sendPreparedJob });
+        dispatcher.transaction.$queryRaw.mockResolvedValueOnce([{
+            status: "canceled",
+            claim_token: null,
+        }]);
+
+        await dispatcher.service.dispatchDueJobs();
+
+        expect(prepareJob).not.toHaveBeenCalled();
+        expect(sendPreparedJob).not.toHaveBeenCalled();
+        expect(dispatcher.deliveryService.sendJob).not.toHaveBeenCalled();
+        expect(dispatcher.jobRepository.update).not.toHaveBeenCalled();
     });
 
     it.each([
