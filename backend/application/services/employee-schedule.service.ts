@@ -59,9 +59,15 @@ export class EmployeeScheduleService {
                 includePast: true,
                 intentAt,
             });
+            // Keep lifecycle writes in the transaction that owns the schedule
+            // mutation; a post-commit root transaction could observe a
+            // partially synchronized case under concurrent writes.
+            await this.serviceRecordLifecycleService?.ensureForClient(
+                created.clientId,
+                transaction,
+            );
             return created;
         });
-        await this.serviceRecordLifecycleService?.ensureForClient(schedule.clientId);
         await this.messageAutomationIntentService
             .fulfillScheduleIntent({
                 branchId: branchid,
@@ -128,9 +134,12 @@ export class EmployeeScheduleService {
                 intentAt,
                 replaceExisting: true,
             });
+            await this.serviceRecordLifecycleService?.ensureForClient(
+                updated.clientId,
+                transaction,
+            );
             return updated;
         });
-        await this.serviceRecordLifecycleService?.ensureForClient(schedule.clientId);
         await this.messageAutomationIntentService
             .fulfillScheduleIntent({
                 branchId: branchid,
@@ -159,10 +168,23 @@ export class EmployeeScheduleService {
     }
 
     async delete(branchid: string, id: number): Promise<void> {
+        // Keep discovery outside the mutation only as a fast not-found path;
+        // the delete usecase repeats it and revalidates after the complete
+        // client/employee/case/schedule lock set inside this owning tx.
         const schedule = await this.findEmployeeScheduleByIdUsecase.execute(branchid, id);
-        await this.deleteEmployeeScheduleUsecase.execute(branchid, id);
-        if (schedule) {
-            await this.serviceRecordLifecycleService?.ensureForClient(schedule.clientId);
+        if (!schedule) {
+            // Preserve the usecase's scoped 404/retention behavior for a
+            // missing discovery read. A concurrent disappearance is handled
+            // by the same guarded call below when a row was initially found.
+            await this.deleteEmployeeScheduleUsecase.execute(branchid, id);
+            return;
         }
+        await this.prisma.$transaction(async (transaction) => {
+            await this.deleteEmployeeScheduleUsecase.execute(branchid, id, transaction);
+            await this.serviceRecordLifecycleService?.ensureForClient(
+                schedule.clientId,
+                transaction,
+            );
+        });
     }
 }

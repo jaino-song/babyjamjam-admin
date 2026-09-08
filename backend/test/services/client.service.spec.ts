@@ -3125,7 +3125,7 @@ describe("ClientService", () => {
                 expect(updateClientUsecase.execute).toHaveBeenCalledWith(branchId, 1, {
                     serviceStatus: "terminated",
                     endDate: expect.any(Date),
-                });
+                }, expect.anything());
                 expect(prismaService.employee_schedule.updateMany).toHaveBeenCalledWith({
                     where: { clientId: 1, branchId, replaced: false, terminatedAt: null },
                     data: { terminatedAt: expect.any(Date) },
@@ -3151,7 +3151,7 @@ describe("ClientService", () => {
                 // Assert
                 expect(updateClientUsecase.execute).toHaveBeenCalledWith(branchId, 1, expect.objectContaining({
                     serviceStatus: "terminated",
-                }));
+                }), expect.anything());
             });
 
             it("should sync client trigger rules with includePast=false", async () => {
@@ -3723,6 +3723,7 @@ describe("ClientService", () => {
                 );
                 findClientByIdUsecase.execute.mockResolvedValue(mockClient);
                 updateClientUsecase.execute.mockResolvedValue(completedClient);
+                clientRepository.findByIdForUpdate.mockResolvedValue(mockClient);
 
                 // Act
                 await service.completeReplacement(branchId, 1);
@@ -3732,7 +3733,7 @@ describe("ClientService", () => {
                 // Should compute status (active since we're between start and end dates)
                 expect(updateClientUsecase.execute).toHaveBeenCalledWith(branchId, 1, {
                     serviceStatus: expect.stringMatching(/active|waiting|completed/),
-                });
+                }, expect.anything());
             });
         });
 
@@ -3747,6 +3748,7 @@ describe("ClientService", () => {
                 );
                 findClientByIdUsecase.execute.mockResolvedValue(mockClient);
                 updateClientUsecase.execute.mockResolvedValue(mockClient);
+                clientRepository.findByIdForUpdate.mockResolvedValue(mockClient);
 
                 // Act
                 await service.completeReplacement(branchId, 1);

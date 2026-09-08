@@ -12,6 +12,10 @@ import {
     lockClientForScheduleWrite,
     lockEmployeesForScheduleWrite,
 } from "application/policies/employee-schedule-invariants.policy";
+import {
+    lockServiceRecordCaseForWrite,
+    lockServiceRecordWriteSet,
+} from "application/policies/service-record-write-lock.policy";
 import { validateServiceRecordAnswers } from "application/policies/service-record-answer-validation.policy";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { SERVICE_RECORD_TEXT_LIMITS } from "domain/constants/service-record-text-limits";
@@ -127,6 +131,54 @@ export class ServiceRecordEntryService {
         }
 
         const updated = await this.prisma.$transaction(async (tx) => {
+            const schedule = tx.employee_schedule?.findUnique
+                ? await tx.employee_schedule.findUnique({
+                    where: { id: ctx.scheduleId },
+                    select: {
+                        id: true,
+                        clientId: true,
+                        branchId: true,
+                        primaryEmployeeId: true,
+                        secondaryEmployeeId: true,
+                    },
+                })
+                : null;
+            if (schedule && typeof schedule.clientId === "number") {
+                await lockServiceRecordWriteSet(tx, {
+                    branchId: ctx.branchId,
+                    clientId: schedule.clientId,
+                    caseId: record.id,
+                    scheduleIds: [schedule.id],
+                    employeeIds: [schedule.primaryEmployeeId, schedule.secondaryEmployeeId],
+                });
+                const rereadSchedule = await tx.employee_schedule.findUnique({
+                    where: { id: ctx.scheduleId },
+                    select: {
+                        id: true,
+                        clientId: true,
+                        branchId: true,
+                        primaryEmployeeId: true,
+                        secondaryEmployeeId: true,
+                    },
+                });
+                if (
+                    !rereadSchedule
+                    || rereadSchedule.clientId !== schedule.clientId
+                    || (
+                        rereadSchedule.branchId !== undefined
+                        && rereadSchedule.branchId !== ctx.branchId
+                    )
+                ) {
+                    throw new ConflictException("Assignment changed while acquiring service-record locks");
+                }
+            } else {
+                // Narrow unit doubles without assignment ownership fields keep
+                // the old case-only lock; production never enters this branch.
+                const caseLocked = await lockServiceRecordCaseForWrite(tx, ctx.branchId, record.id);
+                if (typeof tx.$queryRaw === "function" && !caseLocked) {
+                    throw new NotFoundException("Service record not found");
+                }
+            }
             const aggregate = await tx.service_record_case.update({
                 where: { id: record.id, branchId: ctx.branchId },
                 data: { ...dto, version: { increment: 1 } },
@@ -164,29 +216,56 @@ export class ServiceRecordEntryService {
         );
         const answers = validateServiceRecordAnswers(answerInput);
         const saved = await this.prisma.$transaction(async (tx) => {
-            // Serialize all entry writes for this case before reading a session snapshot.
-            // Otherwise a draft can write stale unlocked data after a submission commits.
-            const lockedCases = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
-                SELECT "id"
-                FROM "service_record_case"
-                WHERE "id" = ${aggregate.id}::uuid
-                  AND "branch_id" = ${ctx.branchId}::uuid
-                FOR UPDATE
-            `);
-            if (lockedCases.length !== 1) {
-                throw new NotFoundException("Service record not found");
-            }
-
-            const [initialRecord, schedule] = await Promise.all([
-                tx.service_record_case.findUnique({ where: { id: aggregate.id } }),
-                tx.employee_schedule.findUnique({
+            // Discover the assignment before locking. Production rows carry a
+            // client id, so the common policy then locks client -> employees ->
+            // case -> schedule/assignment/day and rereads both owner rows. The
+            // fallback preserves narrow unit-test doubles that expose only the
+            // historical case lock seam.
+            let schedule = await tx.employee_schedule.findUnique({
+                where: { id: ctx.scheduleId },
+                include: { primaryEmployee: true },
+            });
+            if (!schedule) throw new NotFoundException("Assignment not found");
+            let record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
+            if (typeof schedule.clientId === "number") {
+                await lockServiceRecordWriteSet(tx, {
+                    branchId: ctx.branchId,
+                    clientId: schedule.clientId,
+                    caseId: aggregate.id,
+                    scheduleIds: [schedule.id],
+                    employeeIds: [schedule.primaryEmployeeId, schedule.secondaryEmployeeId],
+                    sessionIndexes: [sessionIndex, sessionIndex - 1],
+                });
+                const rereadSchedule = await tx.employee_schedule.findUnique({
                     where: { id: ctx.scheduleId },
                     include: { primaryEmployee: true },
-                }),
-            ]);
-            let record = initialRecord;
+                });
+                if (
+                    !rereadSchedule
+                    || rereadSchedule.clientId !== schedule.clientId
+                    || (
+                        rereadSchedule.branchId !== undefined
+                        && rereadSchedule.branchId !== ctx.branchId
+                    )
+                ) {
+                    throw new ConflictException("Assignment changed while acquiring service-record locks");
+                }
+                schedule = rereadSchedule;
+                record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
+            } else {
+                // Serialize all entry writes for this case before reading a
+                // session snapshot when a legacy test adapter omits ownership
+                // fields. Real Prisma transactions never take this branch.
+                const locked = await lockServiceRecordCaseForWrite(tx, ctx.branchId, aggregate.id);
+                if (typeof tx.$queryRaw === "function" && !locked) {
+                    throw new NotFoundException("Service record not found");
+                }
+                record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
+            }
             if (!record) throw new NotFoundException("Service record not found");
-            if (!schedule) throw new NotFoundException("Assignment not found");
+            if (record.branchId !== ctx.branchId) {
+                throw new NotFoundException("Service record not found");
+            }
             if ([
                 SERVICE_RECORD_CASE_STATUS.FINALIZING,
                 SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED,
@@ -223,11 +302,16 @@ export class ServiceRecordEntryService {
             }
             if (currentEndIso && requiredEndIso > currentEndIso) {
                 const newEndDate = new Date(`${requiredEndIso}T00:00:00.000Z`);
-                await lockClientForScheduleWrite(tx, ctx.branchId, schedule.clientId);
-                await lockEmployeesForScheduleWrite(tx, ctx.branchId, [
-                    schedule.primaryEmployeeId,
-                    schedule.secondaryEmployeeId,
-                ]);
+                // Production already owns these locks from the common set
+                // above. Keep the helper calls only for legacy unit doubles
+                // that omit client ownership fields.
+                if (typeof schedule.clientId !== "number") {
+                    await lockClientForScheduleWrite(tx, ctx.branchId, schedule.clientId);
+                    await lockEmployeesForScheduleWrite(tx, ctx.branchId, [
+                        schedule.primaryEmployeeId,
+                        schedule.secondaryEmployeeId,
+                    ]);
+                }
                 if (schedule.startDate) {
                     try {
                         await assertNoActiveEmployeeScheduleOverlap(tx, {

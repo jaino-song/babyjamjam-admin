@@ -451,6 +451,65 @@ describe("ServiceRecordLifecycleService", () => {
         });
     });
 
+    it("locks client-owned rows before the mirror generation fence on the complete transaction surface", async () => {
+        const transactionClient = {
+            $queryRaw: jest.fn().mockImplementation(async (query: { strings?: string[] }) => {
+                const sql = query.strings?.join(" ") ?? "";
+                return sql.includes("detail_source_updated_date") ? [] : [{ id: 1 }];
+            }),
+            client: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 1,
+                    branchId: rawQueryBranchId,
+                }),
+                updateMany: jest.fn(),
+            },
+            employee_schedule: {
+                findMany: jest.fn().mockResolvedValue([{
+                    id: 10,
+                    primaryEmployeeId: 20,
+                    secondaryEmployeeId: null,
+                }]),
+            },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: rawQueryCaseId,
+                    branchId: rawQueryBranchId,
+                    clientId: 1,
+                }),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+                callback(transactionClient)),
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+
+        await expect(service.syncEndDateFromMirroredContract({
+            branchId: rawQueryBranchId,
+            clientId: 1,
+            endDate: date("2026-07-20"),
+            documentId: rawQueryDocumentId,
+            detailSourceUpdatedDate: new Date("2026-07-30T01:00:00.000Z"),
+            detailSyncedAt: new Date("2026-07-30T01:01:00.000Z"),
+        })).resolves.toBe(false);
+
+        const lockTables = transactionClient.$queryRaw.mock.calls
+            .map(([query]) => (query as { strings?: string[] }).strings?.join(" ").toLowerCase() ?? "")
+            .filter((query) => query.includes("for update"))
+            .map((query) => query.match(/from\s+"?([a-z_]+)"?/)?.[1] ?? "unknown");
+        expect(lockTables.slice(0, 7)).toEqual([
+            "client",
+            "employee",
+            "service_record_case",
+            "employee_schedule",
+            "service_record_assignment",
+            "service_record_day",
+            "eformsign_doc",
+        ]);
+        expect(transactionClient.client.updateMany).not.toHaveBeenCalled();
+    });
+
     it("does not let a stale mirror version update a client after the parent-row fence loses", async () => {
         const transactionClient = {
             $queryRaw: jest.fn().mockResolvedValue([]),

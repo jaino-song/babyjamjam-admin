@@ -29,7 +29,7 @@ describe("CreateEmployeeScheduleUsecase assignment eligibility", () => {
 
     const createHarness = (employees: EmployeeCandidate[]) => {
         const transaction = {
-            $queryRaw: jest.fn().mockResolvedValue([]),
+            $queryRaw: jest.fn().mockResolvedValue([{ id: baseParams.clientId }]),
             client: {
                 findFirst: jest.fn().mockResolvedValue({ id: baseParams.clientId }),
             },
