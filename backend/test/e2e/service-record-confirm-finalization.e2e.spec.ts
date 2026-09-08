@@ -409,6 +409,14 @@ describeE2E("service-record finalization eligibility and frozen input (real disp
         expect(blocked.status).toBe("requires_attention");
         expect(blocked.payload).toEqual(frozen.payload);
         expect(blocked.payloadFingerprint).toBe(frozen.payloadFingerprint);
+        // Isolate the actual retention query to this ancient synthetic row;
+        // other retained fixtures use modern completion timestamps.
+        await prisma.eformsign_document_job.update({ where: { id: frozen.id }, data: {
+            completedAt: new Date("0101-01-01T00:00:00.000Z"),
+        } });
+        expect(await repository.deleteExpiredTerminal(new Date("0102-01-01T00:00:00.000Z"))).toBe(0);
+        expect((await prisma.eformsign_document_job.findUniqueOrThrow({ where: { id: frozen.id } })).payload)
+            .toEqual(frozen.payload);
         await expect(claimFinalizationCase(finalizer, fixture.record.id, fixture.branch.id, new Date()))
             .resolves.toMatchObject({ claimed: false, blockedGeneration: true });
         expect(await prisma.eformsign_document_job.count({ where: { requestKey } })).toBe(1);
