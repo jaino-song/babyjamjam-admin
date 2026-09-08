@@ -16,6 +16,7 @@ import {
     CreateServiceRecordEditDraftDto,
     DiscardServiceRecordEditDraftDto,
     PreviewServiceRecordEditDraftDto,
+    RetryServiceRecordDocumentDto,
     UpdateServiceRecordEditDraftDto,
 } from "interface/dto/admin-service-record-edit.dto";
 
@@ -42,6 +43,32 @@ export class AdminServiceRecordController {
         @Param("clientId", ParseIntPipe) clientId: number,
     ) {
         return this.adminServiceRecordService.getClientEditor(tenant.branchId, clientId);
+    }
+
+    @Get("clients/:clientId/revisions")
+    @UseGuards(OwnerOrAdminGuard)
+    getRevisionHistory(
+        @CurrentTenant() tenant: VerifiedTenantPrincipal,
+        @Param("clientId", ParseIntPipe) clientId: number,
+    ) {
+        return this.adminServiceRecordService.getRevisionHistory(tenant.branchId, clientId);
+    }
+
+    @Post("revisions/:revisionId/documents/:documentStateId/retry")
+    @UseGuards(OwnerOrAdminGuard)
+    retryRevisionDocument(
+        @CurrentTenant() tenant: VerifiedTenantPrincipal,
+        @Param("revisionId") revisionId: string,
+        @Param("documentStateId") documentStateId: string,
+        @Body() body: RetryServiceRecordDocumentDto,
+    ) {
+        return this.adminServiceRecordService.retryRevisionDocument(
+            tenant.branchId,
+            revisionId,
+            documentStateId,
+            body.expectedGeneration,
+            tenant.userId,
+        );
     }
 
     @Post("client/:clientId/draft")

@@ -6,6 +6,7 @@ import { validate } from "class-validator";
 import {
     ConfirmServiceRecordEditDraftDto,
     CreateServiceRecordEditDraftDto,
+    RetryServiceRecordDocumentDto,
     UpdateServiceRecordEditDraftDto,
 } from "interface/dto/admin-service-record-edit.dto";
 
@@ -72,5 +73,18 @@ describe("admin service-record edit DTOs", () => {
         });
         expect(errors.some((error) => error.property === "previewId")).toBe(true);
         expect(errors.some((error) => error.property === "idempotencyKey")).toBe(true);
+    });
+
+    it("accepts only a bounded retry generation and rejects forged scope fields", async () => {
+        await expect(validationErrors(RetryServiceRecordDocumentDto, {
+            expectedGeneration: "generation-1",
+        })).resolves.toEqual([]);
+
+        const errors = await validationErrors(RetryServiceRecordDocumentDto, {
+            expectedGeneration: "   ",
+            branchId: "forged-branch",
+        });
+        expect(errors.some((error) => error.property === "expectedGeneration")).toBe(true);
+        expect(errors.some((error) => error.property === "branchId")).toBe(true);
     });
 });

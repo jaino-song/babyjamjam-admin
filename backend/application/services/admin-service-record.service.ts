@@ -1,4 +1,12 @@
-import { ForbiddenException, Inject, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import {
+    ConflictException,
+    ForbiddenException,
+    Inject,
+    Injectable,
+    Logger,
+    NotFoundException,
+    Optional,
+} from "@nestjs/common";
 import { message_log, message_trigger_job, Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
@@ -31,6 +39,12 @@ import {
     AdminServiceRecordTokenDto,
     AdminServiceRecordTokenState,
 } from "interface/dto/admin-service-record.dto";
+import type {
+    ServiceRecordRevisionDocumentOperation,
+    ServiceRecordRevisionDocumentStatus,
+    ServiceRecordRevisionDocumentSummary,
+    ServiceRecordRevisionHistoryResponse,
+} from "interface/dto/admin-service-record-edit.dto";
 
 type ScheduleForOverview = Prisma.employee_scheduleGetPayload<{
     include: {
@@ -193,6 +207,63 @@ export class AdminServiceRecordService {
         const overview = await this.getClientOverview(branchId, clientId, { includeSignatures: true });
         const scheduleProjection = await this.loadScheduleProjection(branchId, clientId);
         return { ...overview, scheduleProjection };
+    }
+
+    /** Read append-only revision history and safe document-operation state. */
+    async getRevisionHistory(
+        branchId: string,
+        clientId: number,
+    ): Promise<ServiceRecordRevisionHistoryResponse> {
+        await this.assertClientBelongsToBranch(branchId, clientId);
+        const repository = this.getRevisionStatusRepository();
+        const result = await repository.listRevisionHistory(branchId, clientId);
+        if (result === null) throw new NotFoundException("Service record case not found");
+        return normalizeRevisionHistoryResponse(result);
+    }
+
+    /**
+     * Queue a retry for one existing operation generation. The retry path is
+     * intentionally CAS-shaped: a stale generation or an active/unknown
+     * provider outcome is a conflict, never a blind resend.
+     */
+    async retryRevisionDocument(
+        branchId: string,
+        revisionId: string,
+        documentStateId: string,
+        expectedGeneration: string,
+        actorUserId: string,
+    ): Promise<ServiceRecordRevisionDocumentSummary> {
+        const normalizedRevisionId = normalizePathIdentifier(revisionId, "revisionId");
+        const normalizedDocumentStateId = normalizePathIdentifier(documentStateId, "documentStateId");
+        const normalizedGeneration = normalizeGeneration(expectedGeneration);
+        const repository = this.getRevisionStatusRepository();
+        const state = await repository.findRevisionDocumentStateForBranch(
+            branchId,
+            normalizedRevisionId,
+            normalizedDocumentStateId,
+        );
+        if (state === null) throw new NotFoundException("Revision document not found");
+        if (state.generation !== normalizedGeneration) {
+            throw revisionDocumentConflict("REVISION_DOCUMENT_GENERATION_STALE");
+        }
+
+        void actorUserId;
+        const result = await repository.retryRevisionDocumentState({
+            branchId,
+            clientId: state.clientId,
+            revisionId: normalizedRevisionId,
+            stateId: normalizedDocumentStateId,
+            expectedGeneration: normalizedGeneration,
+        });
+        if (result === null) throw revisionDocumentConflict("REVISION_DOCUMENT_RETRY_CONFLICT");
+        return normalizeRevisionDocumentSummaryResult(result);
+    }
+
+    private getRevisionStatusRepository(): IServiceRecordEditRepository {
+        if (!this.editRepository) {
+            throw new ConflictException({ code: "REVISION_DOCUMENT_STATE_UNAVAILABLE" });
+        }
+        return this.editRepository;
     }
 
     private async loadScheduleProjection(
@@ -517,6 +588,181 @@ export class AdminServiceRecordService {
             return [];
         }
     }
+}
+
+const SAFE_DOCUMENT_OPERATIONS = new Set<string>([
+    "record_snapshot",
+    "contract_period",
+    "receipt_refresh",
+]);
+const SAFE_DOCUMENT_STATUSES = new Set<string>([
+    "not_required",
+    "waiting_for_completion",
+    "waiting_for_signature",
+    "capability_unverified",
+    "manual_review",
+    "pending",
+    "processing",
+    "unknown",
+    "failed",
+    "completed",
+]);
+
+function asRows(value: unknown): Record<string, unknown>[] {
+    if (!Array.isArray(value)) return [];
+    return value.filter((item): item is Record<string, unknown> => (
+        typeof item === "object" && item !== null && !Array.isArray(item)
+    ));
+}
+
+function readField(value: unknown, names: string[]): unknown {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const row = value as Record<string, unknown>;
+    for (const name of names) {
+        if (name in row) return row[name];
+    }
+    return undefined;
+}
+
+function readStringField(value: unknown, names: string[]): string | null {
+    const field = readField(value, names);
+    return typeof field === "string" && field.length > 0 ? field : null;
+}
+
+function readNullableStringField(value: unknown, names: string[]): string | null {
+    const field = readField(value, names);
+    return field === null || field === undefined ? null : readStringField(value, names);
+}
+
+function readPositiveIntegerField(value: unknown, names: string[]): number | null {
+    const field = readField(value, names);
+    return typeof field === "number" && Number.isSafeInteger(field) && field > 0 ? field : null;
+}
+
+function readNonNegativeIntegerField(value: unknown, names: string[]): number | null {
+    const field = readField(value, names);
+    return typeof field === "number" && Number.isSafeInteger(field) && field >= 0 ? field : null;
+}
+
+function asObject(value: unknown): Record<string, unknown> | null {
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+function normalizeIsoDate(value: unknown): string | null {
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString();
+    if (typeof value !== "string" || Number.isNaN(Date.parse(value))) return null;
+    return new Date(value).toISOString();
+}
+
+function normalizePathIdentifier(value: string, field: string): string {
+    if (typeof value !== "string" || value.length === 0 || value.length > 255) {
+        throw new NotFoundException(`${field} not found`);
+    }
+    return value;
+}
+
+function normalizeGeneration(value: string): string {
+    if (typeof value !== "string" || value.trim().length === 0 || value.length > 128) {
+        throw new ConflictException({ code: "REVISION_DOCUMENT_GENERATION_INVALID" });
+    }
+    return value;
+}
+
+function revisionDocumentConflict(code: string): ConflictException {
+    return new ConflictException({ code });
+}
+
+function normalizeRevisionHistoryResponse(value: unknown): ServiceRecordRevisionHistoryResponse {
+    const row = asObject(value);
+    if (!row || !Array.isArray(row["revisions"])) {
+        throw new Error("Invalid service-record revision history response");
+    }
+    const caseId = readStringField(row, ["caseId", "case_id"]);
+    const caseVersion = readNonNegativeIntegerField(row, ["caseVersion", "case_version"]);
+    if (!caseId || caseVersion === null) throw new Error("Invalid service-record revision history response");
+    const currentRevisionId = readNullableStringField(row, ["currentRevisionId", "current_revision_id"]);
+    const currentUsableRevisionId = readNullableStringField(row, [
+        "currentUsableRevisionId",
+        "current_usable_revision_id",
+    ]);
+    const revisions = asRows(row["revisions"]).map((revision) => {
+        const id = readStringField(revision, ["id"]);
+        const revisionNumber = readPositiveIntegerField(revision, ["revisionNumber", "revision_number"]);
+        const confirmedAt = normalizeIsoDate(readField(revision, ["confirmedAt", "confirmed_at"]));
+        if (!id || revisionNumber === null || !confirmedAt) {
+            throw new Error("Invalid service-record revision summary response");
+        }
+        const documents = Array.isArray(revision["documents"])
+            ? revision["documents"].map(normalizeRevisionDocumentSummary)
+            : [];
+        return {
+            id,
+            revisionNumber,
+            confirmedAt,
+            isCurrent: readField(revision, ["isCurrent", "is_current"]) === true,
+            documents,
+        };
+    });
+    return {
+        caseId,
+        caseVersion,
+        currentRevisionId,
+        currentUsableRevisionId,
+        revisions,
+    };
+}
+
+function normalizeRevisionDocumentSummary(value: unknown): ServiceRecordRevisionDocumentSummary {
+    const row = asObject(value);
+    if (!row) throw new Error("Invalid service-record revision document response");
+    const id = readStringField(row, ["id", "documentStateId", "document_state_id"]);
+    const generation = readStringField(row, ["generation"]);
+    if (!id || !generation) throw new Error("Invalid service-record revision document response");
+    const operation = normalizeRevisionDocumentOperation(readField(row, ["operation"]));
+    const status = normalizeRevisionDocumentStatus(readField(row, ["status"]));
+    const directCanRetry = readField(row, ["canRetry", "can_retry"]);
+    const reasonCode = normalizeReasonCode(readField(row, [
+        "reasonCode",
+        "reason_code",
+        "lastErrorCode",
+        "last_error_code",
+    ]));
+    return {
+        id,
+        operation,
+        generation,
+        status,
+        documentVersion: readPositiveIntegerField(row, ["documentVersion", "document_version"]),
+        canRetry: directCanRetry === true,
+        reasonCode,
+    };
+}
+
+function normalizeRevisionDocumentSummaryResult(value: unknown): ServiceRecordRevisionDocumentSummary {
+    const row = asObject(value);
+    if (!row) throw new Error("Invalid service-record revision document response");
+    const candidate = asObject(row["document"]) ?? row;
+    return normalizeRevisionDocumentSummary(candidate);
+}
+
+function normalizeRevisionDocumentOperation(value: unknown): ServiceRecordRevisionDocumentOperation {
+    if (typeof value !== "string" || !SAFE_DOCUMENT_OPERATIONS.has(value)) {
+        throw new Error("Invalid service-record revision document operation");
+    }
+    return value as ServiceRecordRevisionDocumentOperation;
+}
+
+function normalizeRevisionDocumentStatus(value: unknown): ServiceRecordRevisionDocumentStatus {
+    return typeof value === "string" && SAFE_DOCUMENT_STATUSES.has(value)
+        ? value as ServiceRecordRevisionDocumentStatus
+        : "unknown";
+}
+
+function normalizeReasonCode(value: unknown): string | null {
+    if (typeof value !== "string" || value.length === 0) return null;
+    return /^[A-Z0-9][A-Z0-9_.:-]{0,79}$/.test(value) ? value : null;
 }
 
 function isPendingEformsignServiceRecordColumnError(error: unknown): boolean {

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import { ClientDetailPanel } from "../ClientDetailPanel";
@@ -21,6 +21,18 @@ jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
 
 jest.mock("@/features/service-records/hooks/use-service-records", () => ({
     useClientServiceRecords: () => ({ data: undefined, isError: false, isLoading: false }),
+    useClientServiceRecordRevisionHistory: () => ({
+        data: undefined,
+        isError: false,
+        isLoading: false,
+        isFetching: false,
+        refetch: jest.fn(),
+    }),
+    useRetryServiceRecordDocument: () => ({
+        isPending: false,
+        variables: undefined,
+        mutateAsync: jest.fn(),
+    }),
 }));
 
 jest.mock("@/hooks/use-toast", () => ({
@@ -130,6 +142,25 @@ describe("ClientDetailPanel employee phones", () => {
         expect(screen.getByText("010-1111-2222")).toBeInTheDocument();
         expect(screen.getByText("보조 담당 인력 연락처")).toBeInTheDocument();
         expect(screen.getByText("010-3333-4444")).toBeInTheDocument();
+    });
+
+    it("invalidates service-record and client date sources when the tab regains focus", () => {
+        const { queryClient } = renderPanel();
+        const invalidateQueries = jest.spyOn(queryClient, "invalidateQueries");
+
+        act(() => {
+            window.dispatchEvent(new Event("focus"));
+        });
+
+        expect(invalidateQueries).toHaveBeenCalledWith({
+            queryKey: ["service-records", "client-overview", 1],
+        });
+        expect(invalidateQueries).toHaveBeenCalledWith({
+            queryKey: ["service-records", "revision-history", 1],
+        });
+        expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["clients"] });
+        expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["clients", "detail", 1] });
+        expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["dashboard", "overview"] });
     });
 
     it("should show employee phone rows with a dash when phone numbers are missing", () => {
