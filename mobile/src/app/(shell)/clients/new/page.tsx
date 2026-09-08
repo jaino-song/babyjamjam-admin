@@ -247,6 +247,10 @@ export default function NewClientPage() {
   const lastHydratedIdRef = useRef<number | null>(null);
   const lastHydratedContractDocIdRef = useRef<string | null>(null);
   const hasUserEditedServicePeriodRef = useRef(false);
+  const previousServicePeriodRef = useRef<{
+    startDate: string;
+    duration: number | null | undefined;
+  } | null>(null);
   const submissionInFlightRef = useRef(false);
 
   const { data: editingContractDocument } = useQuery({
@@ -312,6 +316,7 @@ export default function NewClientPage() {
     lastHydratedIdRef.current = null;
     lastHydratedContractDocIdRef.current = null;
     hasUserEditedServicePeriodRef.current = false;
+    previousServicePeriodRef.current = null;
     submissionInFlightRef.current = false;
     setPendingDurationConfirmation(null);
     reset();
@@ -338,6 +343,7 @@ export default function NewClientPage() {
     }
 
     hasUserEditedServicePeriodRef.current = false;
+    previousServicePeriodRef.current = null;
     setPendingDurationConfirmation(null);
     reset();
 
@@ -377,6 +383,7 @@ export default function NewClientPage() {
     if (lastHydratedIdRef.current === editingClient.id) return;
     lastHydratedIdRef.current = editingClient.id;
     hasUserEditedServicePeriodRef.current = false;
+    previousServicePeriodRef.current = null;
 
     setField("name", editingClient.name);
     setField("birthday", editingClient.birthday ?? "");
@@ -422,6 +429,7 @@ export default function NewClientPage() {
 
     lastHydratedContractDocIdRef.current = editingClient.eDocId;
     hasUserEditedServicePeriodRef.current = false;
+    previousServicePeriodRef.current = null;
 
     const matchedVoucherPrice = hasPricePrefill
       ? findVoucherPriceByAmounts(allVoucherPrices, prefill)
@@ -677,7 +685,15 @@ export default function NewClientPage() {
   // 시작일(YYYY-MM-DD) + 바우처 기간이 정해지면 평일(주말+한국 공휴일 제외) 기준으로 종료일 자동 계산.
   // 사용자가 종료일을 수동 편집해도 startDate/duration이 다시 바뀌어야만 덮어쓴다.
   useEffect(() => {
-    if (!store.startDate || !effectiveDuration) return;
+    const previousServicePeriod = previousServicePeriodRef.current;
+    const servicePeriodChanged = previousServicePeriod === null
+      || previousServicePeriod.startDate !== store.startDate
+      || previousServicePeriod.duration !== effectiveDuration;
+    previousServicePeriodRef.current = {
+      startDate: store.startDate,
+      duration: effectiveDuration,
+    };
+    if (!servicePeriodChanged || !store.startDate || !effectiveDuration) return;
     // Only once the whole date has been typed — a half-entered one would
     // otherwise keep recomputing the end date under the user's cursor.
     if (!isStrictIsoDate(store.startDate)) return;
@@ -688,7 +704,7 @@ export default function NewClientPage() {
     if (!endIso) return;
     if (store.endDate === endIso) return;
     setField("endDate", endIso);
-  }, [effectiveDuration, setField, store.startDate]);
+  }, [effectiveDuration, setField, store.endDate, store.startDate]);
 
   useEffect(() => {
     if (pendingDurationConfirmation === null) return;
