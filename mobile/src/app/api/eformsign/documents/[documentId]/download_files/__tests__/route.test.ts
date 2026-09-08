@@ -63,6 +63,69 @@ describe("eformsign document download route", () => {
         expect(outputPdf.getPageCount()).toBe(1);
     });
 
+    it("forwards receipt PNG bytes without PDF extraction or a filename override", async () => {
+        const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
+        mockServerGet.mockResolvedValue({
+            status: 200,
+            headers: { "content-type": "image/png" },
+            data: png,
+        });
+
+        const response = await GET(
+            createRequest("http://localhost/api/eformsign/documents/doc-1/download_files?fileType=document&format=receipt-png"),
+            { params: Promise.resolve({ documentId: "doc-1" }) },
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.headers.get("Content-Type")).toBe("image/png");
+        expect(response.headers.get("Content-Disposition")).toBe("attachment");
+        expect(new Uint8Array(await response.arrayBuffer())).toEqual(png);
+        expect(mockServerGet).toHaveBeenCalledWith(
+            "/api/documents/doc-1/download_files",
+            expect.objectContaining({ params: { fileType: "document", format: "receipt-png" } }),
+        );
+    });
+
+    it("rejects a receipt PNG request when upstream returns a non-PNG MIME type", async () => {
+        mockServerGet.mockResolvedValue({
+            status: 200,
+            headers: { "content-type": "application/pdf" },
+            data: await createPdf(8),
+        });
+
+        const response = await GET(
+            createRequest("http://localhost/api/eformsign/documents/doc-1/download_files?format=receipt-png"),
+            { params: Promise.resolve({ documentId: "doc-1" }) },
+        );
+
+        expect(response.status).toBe(502);
+        await expect(response.json()).resolves.toEqual({ error: "영수증 이미지 생성에 실패했습니다." });
+    });
+
+    it("keeps ordinary full PDF downloads inline", async () => {
+        const sourcePdf = await createPdf(8);
+        mockServerGet.mockResolvedValue({
+            status: 200,
+            headers: { "content-type": "application/pdf" },
+            data: sourcePdf,
+        });
+
+        const response = await GET(
+            createRequest("http://localhost/api/eformsign/documents/doc-1/download_files?fileType=document"),
+            { params: Promise.resolve({ documentId: "doc-1" }) },
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.headers.get("Content-Type")).toBe("application/pdf");
+        expect(response.headers.get("Content-Disposition")).toContain("inline;");
+        expect(mockServerGet).toHaveBeenCalledWith(
+            "/api/documents/doc-1/download_files",
+            expect.objectContaining({ params: { fileType: "document" } }),
+        );
+        const outputPdf = await PDFDocument.load(await response.arrayBuffer());
+        expect(outputPdf.getPageCount()).toBe(8);
+    });
+
     it("rejects page requests beyond the PDF page count", async () => {
         const sourcePdf = await createPdf(2);
         mockServerGet.mockResolvedValue({

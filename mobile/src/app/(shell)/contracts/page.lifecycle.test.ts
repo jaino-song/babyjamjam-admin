@@ -74,4 +74,22 @@ describe("mobile contracts action lifecycle", () => {
       "...(isServiceRecord\n                    ? []\n                    : [\n                        {\n                          label: \"영수증 문자\",",
     );
   });
+
+  it("routes both prefill flows through the shared contract transformer and keeps service dates on the existing normalizer", () => {
+    expect(source).toContain("return buildContractClientPrefill({");
+    expect(source).toContain("return buildContractCreationPrefillFromClient({");
+    expect(source).toContain("birthday: documentFieldValue(doc, [\"생년월일\"");
+    expect(source).toContain("clientPrefill,");
+    expect(source).toContain("const dueDate = normalizeDateToYymmdd(");
+    expect(source).toContain("const startDate = normalizeDateToYymmdd(");
+    expect(source).toContain("const endDate = normalizeDateToYymmdd(");
+    expect(source).toContain("dueDate: yymmddPrefillToIso(clientPrefill.dueDate),");
+    expect(source).toContain("setPrefillClient(buildClientPrefillFromContract(doc));");
+    expect(source).toContain(
+      "prefillContractCreation(buildContractCreationPrefillFromContract(doc, metadata, employees));",
+    );
+    expect(source).toContain("url: receiptDownloadUrl,\n      fileName: receiptFilename,");
+    expect(source).toContain("fileName: receiptFilename,");
+    expect(source).toContain("onDownload: (url, fileName) => downloadReceiptPng(url, fileName),");
+  });
 });

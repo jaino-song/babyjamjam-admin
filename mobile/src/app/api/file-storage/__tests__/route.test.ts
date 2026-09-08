@@ -240,11 +240,14 @@ describe("file-storage API routes", () => {
     expect(mockPut).not.toHaveBeenCalled();
   });
 
-  it("preserves backend delete error status and sanitizes payload", async () => {
+  it("forwards a safe backend delete message while omitting diagnostics", async () => {
     mockDelete.mockRejectedValue({
       response: {
         status: 409,
-        data: { error: "document is locked" },
+        data: {
+          error: "document is locked",
+          diagnostics: { apiKey: "sk_test_secret", query: "SELECT * FROM Document" },
+        },
       },
     });
 
@@ -254,7 +257,33 @@ describe("file-storage API routes", () => {
     );
 
     expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to delete document" });
+    const body = await response.json();
+    expect(body).toEqual({ error: "document is locked" });
+    expect(JSON.stringify(body)).not.toContain("sk_test_secret");
+    expect(JSON.stringify(body)).not.toContain("SELECT * FROM Document");
+  });
+
+  it.each([
+    [400, "Invalid API key: sk_test_secret"],
+    [500, "PrismaClientKnownRequestError: SELECT * FROM Document"],
+  ])("suppresses unsafe delete diagnostics from %i responses", async (status, message) => {
+    mockDelete.mockRejectedValue({
+      response: {
+        status,
+        data: { message, diagnostics: { apiKey: "sk_test_secret" } },
+      },
+    });
+
+    const response = await deleteFile(
+      createGetRequest("/api/file-storage/files/file_123"),
+      { params: Promise.resolve({ fileId: "file_123" }) },
+    );
+
+    expect(response.status).toBe(status);
+    const body = await response.json();
+    expect(body).toEqual({ error: "Failed to delete document" });
+    expect(JSON.stringify(body)).not.toContain(message);
+    expect(JSON.stringify(body)).not.toContain("sk_test_secret");
   });
 
   it("rejects unsafe download IDs before proxying", async () => {
