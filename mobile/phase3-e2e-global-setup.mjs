@@ -1,8 +1,6 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-
-const authPath = path.join(os.tmpdir(), "babyjamjam-mobile-phase3-auth.json");
+import { phase3AuthStorageStatePath } from "./phase3-e2e-auth-path.mjs";
 
 function base64Url(value) {
   return Buffer.from(value).toString("base64url");
@@ -23,7 +21,8 @@ export default async function globalSetup() {
     "fixture",
   ].join(".");
 
-  fs.writeFileSync(authPath, JSON.stringify({
+  fs.mkdirSync(path.dirname(phase3AuthStorageStatePath), { recursive: true });
+  fs.writeFileSync(phase3AuthStorageStatePath, JSON.stringify({
     cookies: [
       {
         name: "auth_token",
@@ -58,6 +57,4 @@ export default async function globalSetup() {
     ],
     origins: [],
   }));
-
-  process.env.PHASE3_AUTH_STORAGE_STATE = authPath;
 }

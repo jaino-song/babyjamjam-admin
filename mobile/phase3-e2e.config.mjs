@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, devices } from "@playwright/test";
+import { phase3AuthStorageStatePath } from "./phase3-e2e-auth-path.mjs";
 
 const configDir = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_E2E_PORT = 4317;
@@ -63,7 +64,7 @@ export default defineConfig({
   reporter: process.env.PHASE3_REPORTER ?? [["list"], ["html", { outputFolder: "phase3-report", open: "never" }]],
   use: {
     baseURL,
-    storageState: process.env.PHASE3_AUTH_STORAGE_STATE ?? "/tmp/babyjamjam-mobile-phase3-auth.json",
+    storageState: phase3AuthStorageStatePath,
     trace: "retain-on-failure",
     ...devices["Desktop Chrome"],
   },
