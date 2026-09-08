@@ -1,6 +1,6 @@
 # Phase5 local verification
 
-Status: local implementation integrated; independent Phase5 audit pending. Phase4 same-session Sol/high audit SHIP at1913ef766; external Phase0 capability remains unverified. No vendor, SMS, production storage or environment database calls authorized in this phase.
+Status: independent Phase5 audit REVISE; three verified findings are being corrected in two parallel units. Phase4 same-session Sol/high audit SHIP at1913ef766; external Phase0 capability remains unverified. No vendor, SMS, production storage or environment database calls authorized in this phase.
 
 Four isolated units start together from integration1913ef766: `phase5-record-generation` / `unit/admin-service-record-5-generation`, `phase5-contract-sync` / `unit/admin-service-record-5-contract`, `phase5-receipt-refresh` / `unit/admin-service-record-5-receipt`, `phase5-editor-status` / `unit/admin-service-record-5-ui`. All under `/Users/jaino/Development/babyjamjam-admin/`; base branch `admin-service-record-editor`. Runtime Luna/max, local. Parent integrates shared checkpoints and generates client; linked dependencies are read-only to workers. One integrated Sol/high phase audit follows required checks.
 
@@ -59,3 +59,5 @@ Phase6 actual HTTP guards and dedicated mock browser evidence remain pending, an
 - Full focused PG matrix initially52 PASS/1 FAIL (`/tmp/bjj-phase5-pg-matrix-pre-facts.log`): contract resume fixture appended revision without marking it current. Corrected synthetic currentRevisionId to match real ownership requirements; exact contract suite3/3 PASS (`/tmp/bjj-phase5-contract-resume-context-green.log`). Production current-revision gate retained.
 
 - 0051fd257 locked source capture/planner and internal-resume separation integrated. Final parent exact PostgreSQL matrix8 suites58/58 PASS (`/tmp/bjj-phase5-final-pg-matrix.log`); exact service/repository/policy/module unit matrix10 suites154/154 PASS (`/tmp/bjj-phase5-final-unit-matrix.log`); normal backend `tsc --noEmit` PASS (`/tmp/bjj-phase5-final-backend-types.log`). Counts overlap earlier checkpoint results and are not additive. Phase5 independent Sol/high audit starts after this integrated checkpoint. Phase6 not started.
+
+- Independent Sol/high audit at82a2594d5: REVISE, three verified defects (legacy contract completion stale pointer/date writes; empty production target date-field mapping; display-label workflow authority). Exact report: phase5-final-audit.md. Corrections run in parallel audit-events and audit-fields units. Phase6 remains blocked on Phase5 SHIP; production activation limitations remain explicit.
