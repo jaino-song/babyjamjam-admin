@@ -1186,6 +1186,13 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         caseId: string,
         clientId: number,
     ): Promise<void> {
+        // Legacy create/finalize jobs do not carry a case id in their payload.
+        // lockConfirmTargets already locked every eformsign job owned by this
+        // branch/client, so use that durable ownership fence instead of a
+        // payload-only case predicate that would let an active provider job
+        // race confirmation. `caseId` remains part of the private seam for
+        // callers/tests and the parent case is already locked above.
+        void caseId;
         const transaction = tx as OptionalQueryTransaction;
         if (typeof transaction.$queryRaw === "function") {
             // Once a provider worker has crossed its irreversible boundary,
@@ -1198,12 +1205,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 FROM "eformsign_document_job"
                 WHERE branch_id = ${branchId}::uuid
                   AND client_id = ${clientId}
+                  AND job_type IN ('create_document', 'finalize_document')
                   AND status IN ('processing', 'reconciling')
                   AND progress_step IN ('creating', 'sent')
-                  AND (
-                      payload->'context'->>'serviceRecordCaseId' = ${caseId}
-                      OR payload->>'serviceRecordCaseId' = ${caseId}
-                  )
                 FOR UPDATE
             `);
             if (inFlightDocuments.length > 0) {
@@ -1236,11 +1240,8 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     updated_at = now()
                 WHERE branch_id = ${branchId}::uuid
                   AND client_id = ${clientId}
+                  AND job_type IN ('create_document', 'finalize_document')
                   AND status IN ('queued', 'processing', 'reconciling')
-                  AND (
-                      payload->'context'->>'serviceRecordCaseId' = ${caseId}
-                      OR payload->>'serviceRecordCaseId' = ${caseId}
-                  )
             `);
             await transaction.$queryRaw(Prisma.sql`
                 UPDATE "message_trigger_job"
@@ -1248,6 +1249,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     canceled_at = now(),
                     cancel_reason = 'SERVICE_RECORD_REVISION_SUPERSEDED',
                     canceled_by_user = false,
+                    claim_token = NULL,
                     updated_at = now()
                 WHERE branch_id = ${branchId}::uuid
                   AND client_id = ${clientId}
@@ -1269,6 +1271,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             where: {
                 branchId,
                 clientId,
+                jobType: { in: ["create_document", "finalize_document"] },
                 status: { in: ["processing", "reconciling"] },
                 progressStep: { in: ["creating", "sent"] },
             },
@@ -1307,6 +1310,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 canceledAt: new Date(),
                 cancelReason: "SERVICE_RECORD_REVISION_SUPERSEDED",
                 canceledByUser: false,
+                claimToken: null,
             },
         });
     }
@@ -1355,16 +1359,25 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 ORDER BY CASE WHEN request_key = ${plan.documentJob.requestKey} THEN 0 ELSE 1 END
                 LIMIT 1
             `);
-            if (!existing[0] || (existing[0].request_key === plan.documentJob.requestKey
-                && existing[0].payload_fingerprint !== payloadFingerprint)) {
+            if (!existing[0]
+                || existing[0].request_key !== plan.documentJob.requestKey
+                || existing[0].payload_fingerprint !== payloadFingerprint) {
                 throw new ServiceRecordEditConflictError("The revision document job key was reused with different input");
             }
             return;
         }
         const delegate = tx.eformsign_document_job;
-        const existing = await delegate.findFirst({ where: { requestKey: plan.documentJob.requestKey } });
+        const existing = await delegate.findFirst({
+            where: {
+                OR: [
+                    { requestKey: plan.documentJob.requestKey },
+                    { activeKey: plan.documentJob.activeKey },
+                ],
+            },
+        });
         if (existing) {
-            if (existing.payloadFingerprint !== payloadFingerprint) {
+            if (existing.requestKey !== plan.documentJob.requestKey
+                || existing.payloadFingerprint !== payloadFingerprint) {
                 throw new ServiceRecordEditConflictError("The revision document job key was reused with different input");
             }
             return;

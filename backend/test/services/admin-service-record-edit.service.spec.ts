@@ -125,6 +125,44 @@ function previewSourceSnapshot(): ServiceRecordEditSource {
     };
 }
 
+function completeSourceSnapshot(): ServiceRecordEditSource {
+    const base = previewSourceSnapshot();
+    const assignment = base.assignments[0]!;
+    const dates = ["2026-09-01", "2026-09-02", "2026-09-03"];
+    return {
+        ...base,
+        caseLifecycle: {
+            status: "READY_TO_FINALIZE",
+            completedAt: null,
+            finalizationDueAt: null,
+            finalizationStartedAt: null,
+            finalizedAt: null,
+            documentsCompletedAt: null,
+        },
+        startDate: dates[0]!,
+        endDate: dates.at(-1)!,
+        sessions: dates.map((serviceDate, index) => ({
+            ...base.sessions[0]!,
+            id: `day-${index + 1}`,
+            sourceRowId: `day-${index + 1}`,
+            sessionIndex: index + 1,
+            rawCaseSessionIndex: index + 1,
+            rawSessionIndex: index + 1,
+            serviceDate,
+            ambiguous: false,
+        })),
+        plannedSessions: dates.map((serviceDate, index) => ({
+            sessionIndex: index + 1,
+            serviceDate,
+            originalDate: serviceDate,
+            assignmentId: assignment.id,
+            scheduleId: assignment.scheduleId,
+            employeeId: assignment.employeeId,
+            provenanceVersion: "case-7",
+        })),
+    };
+}
+
 function realisticAnswers() {
     return {
         perineum: ["이상없음"],
@@ -164,6 +202,7 @@ function createHarness(options: {
             changes: { header: { momName: "저장됨" } },
         })),
         discardDraft: jest.fn().mockResolvedValue(draft({ status: "DISCARDED", draftVersion: 2 })),
+        confirmDraft: jest.fn(),
     };
     const service = new AdminServiceRecordEditService(repository as never);
     return { service, repository };
@@ -485,7 +524,7 @@ describe("AdminServiceRecordEditService", () => {
         expect(result.previewId).toMatch(/^srp_[a-f0-9]{64}$/);
         const changed = { ...source, documentScope: {
             ...source.documentScope,
-            contract: { currentDocumentId: "contract-doc-2", stage: "completed" },
+            contract: { currentDocumentId: "contract-doc-2", stage: "completed" as const },
         } };
         const changedHarness = createHarness({ source: changed });
         const changedStarted = await changedHarness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
@@ -538,5 +577,135 @@ describe("AdminServiceRecordEditService", () => {
 
         expect(result.sourceCaseVersion).toBe(original.caseVersion + 1);
         expect(result.blockingReasons).toEqual([]);
+    });
+
+    it("captures complete signed provenance and marks incomplete sources partial", async () => {
+        const source = completeSourceSnapshot();
+        const harness = createHarness({ source });
+        const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+        if (!started.draft) throw new Error("expected a draft");
+        const activeDraft = { ...started.draft, changes: { header: { momName: "수정 산모" } } };
+        harness.repository.findDraftById.mockResolvedValue(activeDraft);
+        harness.repository.loadSource.mockResolvedValue(source);
+        const preview = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+        });
+        const response = {
+            status: "confirmed" as const,
+            caseId: CASE_ID,
+            clientId: CLIENT_ID,
+            draftId: DRAFT_ID,
+            draftVersion: 2,
+            caseVersion: 8,
+            revisionId: "55555555-5555-4555-8555-555555555555",
+            revisionNumber: 1,
+            documentStatus: "capability_unverified" as const,
+            confirmedAt: "2026-09-08T01:02:03.000Z",
+        };
+        harness.repository.confirmDraft.mockResolvedValue(response);
+        await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+            previewId: preview.previewId,
+            idempotencyKey: "11111111-1111-4111-8111-111111111111",
+        });
+        const input = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
+            prepare: (snapshot: { draft: typeof activeDraft; source: ServiceRecordEditSource }) => unknown;
+        };
+        const plan = input.prepare({ draft: activeDraft, source });
+        if (!plan || typeof plan !== "object") throw new Error("expected confirmation plan");
+        const typedPlan = plan as {
+            documentJob: { payload: Record<string, unknown> } | null;
+            revision: { payload: Record<string, unknown> } | null;
+            documentStatus: string;
+        };
+        expect(typedPlan.documentStatus).toBe("capability_unverified");
+        expect(typedPlan.documentJob?.payload["completeness"]).toBe("complete");
+        expect(typedPlan.revision?.payload).toEqual(expect.objectContaining({
+            completeness: "complete",
+            caseLifecycle: expect.objectContaining({ status: "READY_TO_FINALIZE" }),
+            sessions: expect.arrayContaining([
+                expect.objectContaining({
+                    clientSignature: "data:image/png;base64,aGVsbG8=",
+                    employeeNameSnapshot: "제공자",
+                    momApproval: "approved",
+                    locked: true,
+                    submittedAt: "2026-09-01T04:00:00.000Z",
+                }),
+            ]),
+        }));
+
+        const incompleteSource = {
+            ...source,
+            sessions: source.sessions.slice(0, 2),
+        };
+        const incompleteHarness = createHarness({ source: incompleteSource });
+        const incompleteStarted = await incompleteHarness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+        if (!incompleteStarted.draft) throw new Error("expected an incomplete draft");
+        const incompleteDraft = { ...incompleteStarted.draft, changes: { header: { momName: "수정 산모" } } };
+        incompleteHarness.repository.findDraftById.mockResolvedValue(incompleteDraft);
+        incompleteHarness.repository.loadSource.mockResolvedValue(incompleteSource);
+        const incompletePreview = await incompleteHarness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: incompleteDraft.draftVersion,
+        });
+        incompleteHarness.repository.confirmDraft.mockResolvedValue(response);
+        await incompleteHarness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: incompleteDraft.draftVersion,
+            previewId: incompletePreview.previewId,
+            idempotencyKey: "22222222-2222-4222-8222-222222222222",
+        });
+        const incompleteInput = incompleteHarness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
+            prepare: (snapshot: { draft: typeof incompleteDraft; source: ServiceRecordEditSource }) => unknown;
+        };
+        const incompletePlan = incompleteInput.prepare({ draft: incompleteDraft, source: incompleteSource }) as {
+            documentJob: { payload: Record<string, unknown> } | null;
+            documentStatus: string;
+        };
+        expect(incompletePlan.documentStatus).toBe("waiting_for_completion");
+        expect(incompletePlan.documentJob?.payload["completeness"]).toBe("partial");
+    });
+
+    it("forwards the server preview and idempotency contract to the repository", async () => {
+        const harness = createHarness();
+        const response = {
+            status: "confirmed" as const,
+            caseId: CASE_ID,
+            clientId: CLIENT_ID,
+            draftId: DRAFT_ID,
+            draftVersion: 2,
+            caseVersion: 8,
+            revisionId: "55555555-5555-4555-8555-555555555555",
+            revisionNumber: 1,
+            documentStatus: "capability_unverified" as const,
+            confirmedAt: "2026-09-08T01:02:03.000Z",
+        };
+        harness.repository.confirmDraft.mockResolvedValue(response);
+
+        await expect(harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: 1,
+            previewId: `srp_${"a".repeat(64)}`,
+            idempotencyKey: "11111111-1111-4111-8111-111111111111",
+        })).resolves.toEqual(response);
+
+        expect(harness.repository.confirmDraft).toHaveBeenCalledWith(expect.objectContaining({
+            branchId: BRANCH_ID,
+            draftId: DRAFT_ID,
+            expectedDraftVersion: 1,
+            previewId: `srp_${"a".repeat(64)}`,
+            idempotencyKey: "11111111-1111-4111-8111-111111111111",
+            actorUserId: ACTOR_ID,
+            requestFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+            prepare: expect.any(Function),
+        }));
+    });
+
+    it("rejects a forged confirmation identifier before opening the repository boundary", async () => {
+        const harness = createHarness();
+
+        await expect(harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: 1,
+            previewId: "preview-from-client",
+            idempotencyKey: "11111111-1111-4111-8111-111111111111",
+        })).rejects.toBeInstanceOf(BadRequestException);
+        expect(harness.repository.confirmDraft).not.toHaveBeenCalled();
     });
 });

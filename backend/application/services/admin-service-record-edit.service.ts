@@ -176,6 +176,73 @@ function documentStatusForSource(source: ServiceRecordEditSource): ServiceRecord
     }
 }
 
+const COMPLETE_SERVICE_RECORD_CASE_STATUSES = new Set([
+    "READY_TO_FINALIZE",
+    "FINALIZING",
+    "FINALIZATION_FAILED",
+    "DOCUMENTS_CREATED",
+    "COMPLETED",
+]);
+
+/**
+ * A confirm may create a revision while later sessions are still unwritten.
+ * Only a source that carries every submitted/signature-bearing row and an
+ * observed lifecycle completion state can be handed to a complete document
+ * generation worker.  The check is deliberately fail-closed: N, duration,
+ * and the editor's planned vector are never inferred from one another.
+ */
+function revisionCompleteness(source: ServiceRecordEditSource): "complete" | "partial" {
+    const required = source.requiredSessionCount;
+    if (
+        !Number.isInteger(required)
+        || required === null
+        || required < 1
+    ) {
+        return "partial";
+    }
+    if (
+        source.sessions.length !== required
+        || !COMPLETE_SERVICE_RECORD_CASE_STATUSES.has(source.caseLifecycle?.status ?? "")
+        || (source.signatureMetadata && source.signatureMetadata.evidence !== "observed")
+    ) {
+        return "partial";
+    }
+
+    const seen = new Set<number>();
+    const completeHeader = Object.values(source.header).every((value) => Boolean(value?.trim()));
+    if (!completeHeader) return "partial";
+
+    for (const day of source.sessions) {
+        if (
+            day.ambiguous
+            || !Number.isInteger(day.sessionIndex)
+            || day.sessionIndex < 1
+            || day.sessionIndex > required
+            || seen.has(day.sessionIndex)
+            || !day.locked
+            || !day.submittedAt
+            || !day.clientSignature
+            || !day.clientSignedAt
+            || day.momApproval !== "approved"
+            || !Number.isInteger(day.employeeId)
+            || (day.employeeId ?? 0) < 1
+            || !Number.isInteger(day.scheduleId)
+            || (day.scheduleId ?? 0) < 1
+            || !day.employeeNameSnapshot
+            || !Number.isInteger(day.formVersion)
+            || day.formVersion < 1
+        ) {
+            return "partial";
+        }
+        seen.add(day.sessionIndex);
+    }
+
+    for (let sessionIndex = 1; sessionIndex <= required; sessionIndex += 1) {
+        if (!seen.has(sessionIndex)) return "partial";
+    }
+    return "complete";
+}
+
 @Injectable()
 export class AdminServiceRecordEditService {
     constructor(
@@ -446,23 +513,31 @@ export class AdminServiceRecordEditService {
         });
 
         const plannedSessions = jsonValue(provisional.after.sessions);
+        const beforeByIndex = new Map(provisional.before.sessions.map((entry) => [entry.sessionIndex, entry]));
         const effectiveRows = source.sessions.map((day) => {
             const update = sessions.find((session) => session.sourceRowId === day.sourceRowId);
+            const original = beforeByIndex.get(day.sessionIndex)?.originalDate ?? day.serviceDate;
             return {
                 sourceRowId: day.sourceRowId,
                 sessionIndex: day.sessionIndex,
                 serviceDate: update?.serviceDate ?? day.serviceDate,
+                originalDate: original,
                 answers: update?.answers ?? day.answers,
                 etcService: update?.etcService ?? day.etcService,
                 notes: update?.notes ?? day.notes,
                 paymentConfirmed: update?.paymentConfirmed ?? day.paymentConfirmed,
+                locked: day.locked,
+                momApproval: day.momApproval,
                 employeeId: day.employeeId,
+                employeeNameSnapshot: day.employeeNameSnapshot,
                 scheduleId: day.scheduleId,
                 formVersion: day.formVersion,
+                clientSignature: day.clientSignature,
                 submittedAt: day.submittedAt,
                 clientSignedAt: day.clientSignedAt,
             };
         });
+        const completeness = revisionCompleteness(source);
         const revisionPayload = jsonValue({
             caseId: source.caseId,
             clientId: source.client.id,
@@ -470,18 +545,22 @@ export class AdminServiceRecordEditService {
             startDate: provisional.after.startDate,
             endDate: provisional.after.endDate,
             formVersion: source.formVersion,
+            caseLifecycle: source.caseLifecycle,
             header,
             plannedSessions,
             sessions: effectiveRows,
             signatureMetadata: provisional.signatureMetadata,
             documentScope: provisional.documentScope,
+            completeness,
         });
         const revisionFingerprint = createHash("sha256")
             .update(stableStringify(revisionPayload))
             .digest("hex");
         const changed = provisional.contentChanges.headerChanged
             || provisional.contentChanges.changedSessionIndexes.length > 0;
-        const documentStatus = documentStatusForSource(source);
+        const documentStatus = completeness === "partial"
+            ? "waiting_for_completion"
+            : documentStatusForSource(source);
         const dispatchContext: ServiceRecordRevisionDispatchContext | null = changed
             ? {
                 branchId,
@@ -511,8 +590,9 @@ export class AdminServiceRecordEditService {
                     context: dispatchContext,
                     immutablePayload: revisionPayload,
                     payloadFingerprint: revisionFingerprint,
-                    completeness: "complete",
-                    manualReviewRequired: documentStatus === "capability_unverified",
+                    completeness,
+                    manualReviewRequired: completeness === "partial"
+                        || documentStatus === "capability_unverified",
                     periodChanged: provisional.after.startDate !== source.startDate
                         || provisional.after.endDate !== source.endDate,
                 },
