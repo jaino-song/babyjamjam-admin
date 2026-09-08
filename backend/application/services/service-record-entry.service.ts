@@ -12,6 +12,7 @@ import {
     lockClientForScheduleWrite,
     lockEmployeesForScheduleWrite,
 } from "application/policies/employee-schedule-invariants.policy";
+import { validateServiceRecordAnswers } from "application/policies/service-record-answer-validation.policy";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { SERVICE_RECORD_TEXT_LIMITS } from "domain/constants/service-record-text-limits";
 import { addBusinessDaysKr } from "domain/utils/business-days";
@@ -27,24 +28,6 @@ import {
     SERVICE_RECORD_CASE_STATUS,
     ServiceRecordLifecycleService,
 } from "./service-record-lifecycle.service";
-
-const MAX_ANSWERS_BYTES = 16 * 1024;
-const ANSWER_KEYS = new Set([
-    "perineum",
-    "breast",
-    "excretion",
-    "sitzBath",
-    "meals_meal",
-    "meals_snack",
-    "temperature_temp",
-    "sleep",
-    "breastFeeding_count",
-    "formulaFeeding_count",
-    "formulaFeeding_ml",
-    "stool",
-    "stool_color",
-    "bath",
-]);
 
 function toIso(d: Date): string {
     return d.toISOString().slice(0, 10);
@@ -170,7 +153,16 @@ export class ServiceRecordEntryService {
      */
     async upsertSession(ctx: ServiceRecordTokenContext, sessionIndex: number, dto: UpsertSessionDto, lock: boolean) {
         const aggregate = await this.resolveCase(ctx);
-        const answers = this.validateAnswers(dto.answers ?? {});
+        // The public mobile form historically mirrors its flat draft into the
+        // `answers` object, so the two adjacent free-form fields and payment
+        // flag arrive there as well as their dedicated DTO properties. Keep
+        // that wire shape compatible while sending only the canonical 14
+        // structured answer keys through the shared validator.
+        const answerInput = Object.fromEntries(
+            Object.entries(dto.answers ?? {})
+                .filter(([key]) => !["etcService", "notes", "paymentConfirmed"].includes(key)),
+        );
+        const answers = validateServiceRecordAnswers(answerInput);
         const saved = await this.prisma.$transaction(async (tx) => {
             // Serialize all entry writes for this case before reading a session snapshot.
             // Otherwise a draft can write stale unlocked data after a submission commits.
@@ -473,31 +465,6 @@ export class ServiceRecordEntryService {
             record.deliveryType,
             record.babyWeight,
         ].every((value) => Boolean(value?.trim()));
-    }
-
-    private validateAnswers(raw: Record<string, unknown>): Record<string, unknown> {
-        if (Buffer.byteLength(JSON.stringify(raw), "utf8") > MAX_ANSWERS_BYTES) {
-            throw new BadRequestException("제공기록 입력값이 너무 큽니다.");
-        }
-        const answers: Record<string, unknown> = {};
-        for (const [key, value] of Object.entries(raw)) {
-            if (["etcService", "notes", "paymentConfirmed"].includes(key)) continue;
-            if (!ANSWER_KEYS.has(key)) {
-                throw new BadRequestException(`Unknown service-record field: ${key}`);
-            }
-            if (Array.isArray(value)) {
-                if (value.length > 8 || value.some((item) => typeof item !== "string" || item.length > 80)) {
-                    throw new BadRequestException(`Invalid service-record field: ${key}`);
-                }
-                answers[key] = value;
-                continue;
-            }
-            if (!["string", "number", "boolean"].includes(typeof value) || (typeof value === "string" && value.length > 500)) {
-                throw new BadRequestException(`Invalid service-record field: ${key}`);
-            }
-            answers[key] = value;
-        }
-        return answers;
     }
 
     private trimNullable(value: string | null | undefined, maxLength: number): string | null {

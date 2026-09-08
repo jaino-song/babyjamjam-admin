@@ -132,6 +132,108 @@ describe("ServiceRecordEditRepository", () => {
         expect(service_record_edit_draft.findFirst).toHaveBeenCalledTimes(2);
     });
 
+    it("captures a normalized source snapshot and preserves duplicate session provenance", async () => {
+        const sourceDay = {
+            id: "day-1",
+            branchId,
+            scheduleId: 55,
+            caseSessionIndex: 1,
+            sessionIndex: 1,
+            employeeNameSnapshot: "제공자",
+            formVersion: 3,
+            serviceDate: new Date("2026-09-08T00:00:00.000Z"),
+            answers: { perineum: ["이상없음"] },
+            etcService: null,
+            notes: null,
+            paymentConfirmed: false,
+            momApproval: "approved",
+            clientSignature: "signature",
+            clientSignedAt: new Date("2026-09-08T03:00:00.000Z"),
+            locked: true,
+            submittedAt: new Date("2026-09-08T04:00:00.000Z"),
+            employeeId: 9,
+        };
+        const legacyDay = {
+            ...sourceDay,
+            id: "day-legacy",
+            caseSessionIndex: null,
+            serviceDate: new Date("2026-09-09T00:00:00.000Z"),
+            answers: { breast: ["울혈"] },
+        };
+        const client = {
+            findFirst: jest.fn()
+                .mockResolvedValueOnce({ id: 101 })
+                .mockResolvedValueOnce({
+                    id: 101,
+                    branchId,
+                    name: "산모",
+                    duration: 10,
+                    startDate: new Date("2026-09-08T00:00:00.000Z"),
+                    endDate: new Date("2026-09-22T00:00:00.000Z"),
+                    serviceStatus: "in_progress",
+                }),
+        };
+        const service_record_case = {
+            findFirst: jest.fn().mockResolvedValue({
+                id: caseId,
+                clientId: 101,
+                version: 4,
+                formVersion: 3,
+                requiredSessionCount: 2,
+                startDate: new Date("2026-09-08T00:00:00.000Z"),
+                endDate: new Date("2026-09-09T00:00:00.000Z"),
+                momName: "산모",
+                momBirth: "900101",
+                babyName: "아기",
+                babyBirth: "260901",
+                deliveryType: "자연분만",
+                babyWeight: "3.2",
+                plannedSessions: [{ sessionIndex: 1, serviceDate: "2026-09-08" }],
+                days: [sourceDay, legacyDay],
+            }),
+        };
+        const employee_schedule = {
+            findMany: jest.fn().mockResolvedValue([{
+                id: 55,
+                branchId,
+                startDate: new Date("2026-09-08T00:00:00.000Z"),
+                endDate: new Date("2026-09-22T00:00:00.000Z"),
+                replaced: false,
+                terminatedAt: null,
+                primaryEmployeeId: 9,
+                secondaryEmployeeId: null,
+                primaryEmployee: { name: "제공자" },
+                serviceRecordAssignment: null,
+            }]),
+        };
+        const tx = { client, service_record_case, employee_schedule };
+        const prisma = transactionalPrisma(tx);
+        const repository = new ServiceRecordEditRepository(prisma as never);
+
+        const snapshot = await repository.loadSource(branchId, { clientId: 101 });
+        expect(snapshot).toMatchObject({
+            caseId: caseId,
+            client: { id: 101, duration: 10, startDate: "2026-09-08", endDate: "2026-09-22" },
+            sessions: [
+                expect.objectContaining({
+                    sourceRowId: "day-1",
+                    rawCaseSessionIndex: 1,
+                    rawSessionIndex: 1,
+                    serviceDate: "2026-09-08",
+                }),
+                expect.objectContaining({
+                    sourceRowId: "day-legacy",
+                    rawCaseSessionIndex: null,
+                    rawSessionIndex: 1,
+                    serviceDate: "2026-09-09",
+                }),
+            ],
+        });
+        expect(snapshot?.sessions.every((session) => session.ambiguous)).toBe(true);
+        expect(snapshot?.sessions[0]?.clientSignedAt).toBe("2026-09-08T03:00:00.000Z");
+        expect(prisma.$transaction).toHaveBeenCalled();
+    });
+
     it("does not probe or create a draft when the case is foreign to the requested branch", async () => {
         const service_record_edit_draft = {
             findFirst: jest.fn(),

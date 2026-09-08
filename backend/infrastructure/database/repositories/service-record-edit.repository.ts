@@ -13,6 +13,9 @@ import {
     type IServiceRecordEditRepository,
     type ServiceRecordEditDraft,
     type ServiceRecordEditJsonValue,
+    type ServiceRecordEditSource,
+    type ServiceRecordEditSourceAssignment,
+    type ServiceRecordEditSourceDay,
     type ServiceRecordRevision,
     type UpdateServiceRecordEditDraftInput,
 } from "domain/repositories/service-record-edit.repository.interface";
@@ -38,6 +41,26 @@ function toPrismaJson(value: ServiceRecordEditJsonValue): Prisma.InputJsonValue 
     // Prisma-free while allowing the adapter to pass its recursive value type
     // to Prisma's generated input type.
     return value as unknown as Prisma.InputJsonValue;
+}
+
+function toDomainJson(value: Prisma.JsonValue): ServiceRecordEditJsonValue {
+    if (value === null) return null;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
+    if (Array.isArray(value)) return value.map((item) => toDomainJson(item));
+    return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => {
+            if (item === undefined) throw new Error("Unexpected undefined JSON value");
+            return [key, toDomainJson(item)];
+        }),
+    );
+}
+
+function dateOnly(value: Date | null | undefined): string | null {
+    return value ? value.toISOString().slice(0, 10) : null;
+}
+
+function instant(value: Date | null | undefined): string | null {
+    return value ? value.toISOString() : null;
 }
 
 function toDraft(row: DraftRow): ServiceRecordEditDraft {
@@ -171,6 +194,203 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             },
         });
         return row ? toDraft(row) : null;
+    }
+
+    async findDraftById(branchId: string, draftId: string): Promise<ServiceRecordEditDraft | null> {
+        const row = await this.prisma.service_record_edit_draft.findFirst({
+            where: { id: draftId, branchId },
+        });
+        return row ? toDraft(row) : null;
+    }
+
+    async loadSource(
+        branchId: string,
+        target: { clientId?: number; caseId?: string },
+    ): Promise<ServiceRecordEditSource | null> {
+        return this.prisma.$transaction(async (tx) => {
+            if (target.clientId === undefined && target.caseId === undefined) return null;
+            let clientId = target.clientId;
+            if (clientId !== undefined) {
+                const ownedClient = await tx.client.findFirst({
+                    where: { id: clientId, branchId },
+                    select: { id: true },
+                });
+                if (!ownedClient) return null;
+            }
+
+            const record = await tx.service_record_case.findFirst({
+                where: {
+                    branchId,
+                    ...(target.caseId ? { id: target.caseId } : {}),
+                    ...(clientId !== undefined ? { clientId } : {}),
+                },
+                select: {
+                    id: true,
+                    clientId: true,
+                    version: true,
+                    formVersion: true,
+                    requiredSessionCount: true,
+                    startDate: true,
+                    endDate: true,
+                    momName: true,
+                    momBirth: true,
+                    babyName: true,
+                    babyBirth: true,
+                    deliveryType: true,
+                    babyWeight: true,
+                    plannedSessions: true,
+                    days: {
+                        orderBy: [
+                            { caseSessionIndex: "asc" },
+                            { sessionIndex: "asc" },
+                            { id: "asc" },
+                        ],
+                        select: {
+                            id: true,
+                            branchId: true,
+                            scheduleId: true,
+                            caseSessionIndex: true,
+                            sessionIndex: true,
+                            employeeNameSnapshot: true,
+                            formVersion: true,
+                            serviceDate: true,
+                            answers: true,
+                            etcService: true,
+                            notes: true,
+                            paymentConfirmed: true,
+                            momApproval: true,
+                            clientSignature: true,
+                            clientSignedAt: true,
+                            locked: true,
+                            submittedAt: true,
+                            employeeId: true,
+                        },
+                    },
+                },
+            });
+            if (!record || record.clientId === null) return null;
+            clientId = record.clientId;
+
+            const client = await tx.client.findFirst({
+                where: { id: record.clientId, branchId },
+                select: {
+                    id: true,
+                    branchId: true,
+                    name: true,
+                    duration: true,
+                    startDate: true,
+                    endDate: true,
+                    serviceStatus: true,
+                },
+            });
+            if (!client) return null;
+
+            const schedules = await tx.employee_schedule.findMany({
+                where: { branchId, clientId },
+                orderBy: { id: "asc" },
+                select: {
+                    id: true,
+                    branchId: true,
+                    startDate: true,
+                    endDate: true,
+                    replaced: true,
+                    terminatedAt: true,
+                    primaryEmployeeId: true,
+                    secondaryEmployeeId: true,
+                    primaryEmployee: { select: { name: true } },
+                    serviceRecordAssignment: {
+                        select: {
+                            id: true,
+                            branchId: true,
+                            serviceRecordCaseId: true,
+                            scheduleId: true,
+                            employeeId: true,
+                            startDate: true,
+                            endDate: true,
+                            employeeNameSnapshot: true,
+                        },
+                    },
+                },
+            });
+
+            const rawSessions = record.days.map((day) => ({
+                id: day.id,
+                branchId: day.branchId,
+                sourceRowId: day.id,
+                scheduleId: day.scheduleId,
+                sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
+                rawCaseSessionIndex: day.caseSessionIndex,
+                rawSessionIndex: day.sessionIndex,
+                serviceDate: dateOnly(day.serviceDate) ?? "",
+                answers: toDomainJson(day.answers),
+                etcService: day.etcService,
+                notes: day.notes,
+                paymentConfirmed: day.paymentConfirmed,
+                momApproval: day.momApproval,
+                clientSignature: day.clientSignature,
+                clientSignedAt: instant(day.clientSignedAt),
+                locked: day.locked,
+                submittedAt: instant(day.submittedAt),
+                employeeId: day.employeeId,
+                employeeNameSnapshot: day.employeeNameSnapshot,
+                formVersion: day.formVersion,
+            } satisfies Omit<ServiceRecordEditSourceDay, "ambiguous">));
+            const sessionIndexCounts = new Map<number, number>();
+            for (const session of rawSessions) {
+                sessionIndexCounts.set(session.sessionIndex, (sessionIndexCounts.get(session.sessionIndex) ?? 0) + 1);
+            }
+            const sessions: ServiceRecordEditSourceDay[] = rawSessions.map((session) => ({
+                ...session,
+                ambiguous: (sessionIndexCounts.get(session.sessionIndex) ?? 0) > 1,
+            }));
+
+            const assignments: ServiceRecordEditSourceAssignment[] = schedules.map((schedule) => ({
+                id: schedule.serviceRecordAssignment?.id ?? null,
+                branchId: schedule.serviceRecordAssignment?.branchId ?? schedule.branchId ?? null,
+                serviceRecordCaseId: schedule.serviceRecordAssignment?.serviceRecordCaseId ?? null,
+                scheduleId: schedule.id,
+                employeeId: schedule.serviceRecordAssignment?.employeeId ?? schedule.primaryEmployeeId,
+                startDate: dateOnly(schedule.serviceRecordAssignment?.startDate ?? schedule.startDate) ?? "",
+                endDate: dateOnly(schedule.serviceRecordAssignment?.endDate ?? schedule.endDate) ?? "",
+                replaced: schedule.replaced,
+                employeeName: schedule.serviceRecordAssignment?.employeeNameSnapshot ?? schedule.primaryEmployee.name,
+                scheduleStartDate: dateOnly(schedule.startDate) ?? "",
+                scheduleEndDate: dateOnly(schedule.endDate) ?? "",
+                scheduleTerminatedAt: instant(schedule.terminatedAt),
+                primaryEmployeeId: schedule.primaryEmployeeId,
+                secondaryEmployeeId: schedule.secondaryEmployeeId ?? null,
+                primaryEmployeeName: schedule.primaryEmployee.name,
+            }));
+
+            return {
+                caseId: record.id,
+                caseVersion: record.version,
+                formVersion: record.formVersion,
+                requiredSessionCount: record.requiredSessionCount,
+                startDate: dateOnly(record.startDate),
+                endDate: dateOnly(record.endDate),
+                header: {
+                    momName: record.momName,
+                    momBirth: record.momBirth,
+                    babyName: record.babyName,
+                    babyBirth: record.babyBirth,
+                    deliveryType: record.deliveryType,
+                    babyWeight: record.babyWeight,
+                },
+                sessions,
+                assignments,
+                plannedSessions: record.plannedSessions === null ? null : toDomainJson(record.plannedSessions),
+                client: {
+                    id: client.id,
+                    branchId: client.branchId,
+                    name: client.name,
+                    duration: client.duration,
+                    startDate: dateOnly(client.startDate),
+                    endDate: dateOnly(client.endDate),
+                    serviceStatus: client.serviceStatus,
+                },
+            };
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
     }
 
     async updateDraft(input: UpdateServiceRecordEditDraftInput): Promise<ServiceRecordEditDraft> {
