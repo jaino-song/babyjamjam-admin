@@ -324,6 +324,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             initializeLifecycle: !options.linkExistingOnly,
             existingClientBranchId,
             existingClientId,
+            observedSourceBranchId: document.branchId,
         });
         if (
             result.status === "created"
@@ -485,6 +486,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         applyMessageAutomation: boolean;
         intentAt: Date;
         expectedMirrorGeneration?: ExpectedEformsignMirrorGeneration;
+        observedSourceBranchId?: string | null;
         initializeLifecycle: boolean;
         existingClientBranchId: string | null;
         existingClientId?: number;
@@ -536,6 +538,22 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                         if (!document) return { status: "no_match" };
                         if (this.isServiceRecord(document)) return { status: "skipped" };
                         if (document.clientId !== null) return { status: "already_linked" };
+
+                        // A serializable retry must retain the original
+                        // branch observation. If a concurrent claimant moved
+                        // a branchless mirror (or changed its owning branch)
+                        // while this attempt was waiting, do not recalculate
+                        // tenant policy from the new row and accidentally
+                        // return disabled/created. The original generation
+                        // fence is stale; fail closed and let reconciliation
+                        // retry against the new snapshot.
+                        if (
+                            params.expectedMirrorGeneration
+                            && params.observedSourceBranchId !== undefined
+                            && document.branchId !== params.observedSourceBranchId
+                        ) {
+                            throw new MirrorGenerationConflict();
+                        }
 
                         // For a complete Prisma transaction the document is
                         // only discovered above. Client/schedule/case ids are
@@ -1594,5 +1612,12 @@ function isRetryableTransactionError(error: unknown): boolean {
     if (typeof error !== "object" || error === null || !("code" in error)) {
         return false;
     }
-    return error.code === "P2002" || error.code === "P2034";
+    if (error.code === "P2002" || error.code === "P2034") {
+        return true;
+    }
+    // PostgreSQL serializable conflicts raised by a raw query are wrapped by
+    // Prisma as P2010 with the native SQLSTATE in meta.code.
+    return error.code === "P2010"
+        && typeof (error as { meta?: unknown }).meta === "object"
+        && (error as { meta?: { code?: unknown } }).meta?.code === "40001";
 }

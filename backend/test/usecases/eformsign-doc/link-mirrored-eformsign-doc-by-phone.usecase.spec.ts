@@ -971,6 +971,36 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(31, expect.anything());
     });
 
+    it("retries a raw PostgreSQL serialization conflict from the mirror fence", async () => {
+        const document = mirroredDocument({
+            branchId: "branch-1",
+            customerPhone: "01012345678",
+            detailPayload: contractDetail(),
+        });
+        const { transaction, prisma, usecase } = setup(document);
+        transaction.client.findMany.mockResolvedValue([]);
+        let transactionAttempts = 0;
+        prisma.$transaction.mockImplementation(async (
+            work: (candidate: typeof transaction) => Promise<unknown>,
+        ) => {
+            transactionAttempts += 1;
+            if (transactionAttempts === 1) {
+                throw {
+                    code: "P2010",
+                    meta: {
+                        code: "40001",
+                    },
+                };
+            }
+            return work(transaction);
+        });
+
+        await expect(usecase.execute("doc-1")).resolves.toBe("created");
+
+        expect(transactionAttempts).toBe(2);
+        expect(transaction.client.create).toHaveBeenCalledTimes(1);
+    });
+
     it("does not mutate a stale mirror generation after the parent-row fence loses", async () => {
         const document = mirroredDocument({
             branchId: "branch-1",
