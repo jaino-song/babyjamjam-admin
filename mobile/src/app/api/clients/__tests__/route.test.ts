@@ -38,10 +38,17 @@ function createRequest(path: string, init: { method?: string; body?: BodyInit; h
 }
 
 describe("client API routes", () => {
+  let consoleErrorSpy: jest.SpyInstance;
+
   beforeEach(() => {
     mockGet.mockReset();
     mockPatch.mockReset();
     mockPost.mockReset();
+    consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleErrorSpy.mockRestore();
   });
 
   it("preserves backend status and payload when listing clients", async () => {
@@ -169,6 +176,53 @@ describe("client API routes", () => {
       message: "이미 같은 전화번호의 고객이 있습니다.",
       clientId: 73,
     });
+  });
+
+  it.each([
+    {
+      message: "Bearer upstream-secret",
+      clientId: 73,
+      internal: "should not reach the client",
+    },
+    {
+      message: "SELECT * FROM Client WHERE id = 73",
+      clientId: 73,
+      diagnostics: { query: "SELECT * FROM Client WHERE id = 73" },
+    },
+    {
+      error: "Internal stack trace at /workspace/apps/api/client.service.ts:73",
+      clientId: 73,
+      internal: "should not reach the client",
+    },
+  ])("suppresses unsafe non-Prisma 409 conflict payloads (%o)", async (data) => {
+    mockPost.mockRejectedValue({
+      response: {
+        status: 409,
+        data,
+      },
+    });
+
+    const response = await createClient(
+      createRequest("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Baby Kim",
+          careCenter: false,
+          voucherClient: true,
+          breastPump: false,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body).toEqual({ error: "Failed to create client" });
+    expect(JSON.stringify(body)).not.toContain("upstream-secret");
+    expect(JSON.stringify(body)).not.toContain("SELECT * FROM Client");
+    expect(JSON.stringify(body)).not.toContain("clientId");
+    expect(JSON.stringify(body)).not.toContain("internal");
+    expect(JSON.stringify(body)).not.toContain("/workspace/apps/api");
   });
 
   it("preserves Prisma metadata for a message-less phone conflict", async () => {
