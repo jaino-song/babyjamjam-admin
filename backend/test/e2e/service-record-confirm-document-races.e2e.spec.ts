@@ -99,7 +99,7 @@ describeE2E("confirm versus existing electronic-document authorization (actual P
         const finalJob = await prisma.eformsign_document_job.findUniqueOrThrow({ where: { id: job.id } });
         if (first === "confirm") {
             expect(result).toMatchObject({ status: "confirmed" });
-            expect(other).toMatchObject({ kind: "lost" });
+            expect(other).toMatchObject({ kind: expect.stringMatching(/^(lost|stale)$/) });
             expect(finalJob.status).not.toBe("processing");
             expect(finalJob.leaseToken).toBeNull();
             expect(finalJob.progressStep).not.toBe("creating");

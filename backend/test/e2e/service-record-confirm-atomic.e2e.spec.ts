@@ -159,6 +159,33 @@ describeE2E("atomic service-record confirmation (real disposable PostgreSQL)", (
         expect(days[2]?.notes).toBe("Confirmed content");
     });
 
+    it("persists explicitly edited future content without inventing a submission or signature", async () => {
+        const { fixture, draft } = await prepare(false);
+        const saved = await service.updateDraft(fixture.branch.id, draft.id, fixture.actorUserId, {
+            expectedDraftVersion: draft.draftVersion,
+            changes: { sessions: [{ sessionIndex: 4, notes: "Administrator future note" }] },
+        });
+        const preview = await service.previewDraft(fixture.branch.id, draft.id, fixture.actorUserId, {
+            expectedDraftVersion: saved.draft!.draftVersion,
+        });
+        expect(preview.blockingReasons).toEqual([]);
+        const result = await service.confirmDraft(fixture.branch.id, draft.id, fixture.actorUserId, {
+            expectedDraftVersion: saved.draft!.draftVersion, previewId: preview.previewId, idempotencyKey: randomUUID(),
+        });
+        expect(result.status).toBe("confirmed");
+        const day = await prisma.service_record_day.findUnique({ where: {
+            serviceRecordCaseId_caseSessionIndex: { serviceRecordCaseId: fixture.record.id, caseSessionIndex: 4 },
+        } });
+        expect(day).toMatchObject({ notes: "Administrator future note", locked: false,
+            submittedAt: null, clientSignature: null, clientSignedAt: null,
+            scheduleId: fixture.schedule.id, employeeId: fixture.employee.id,
+            serviceDate: new Date("2026-09-10T00:00:00Z"),
+        });
+        expect(await prisma.service_record_day.count({ where: { serviceRecordCaseId: fixture.record.id } })).toBe(4);
+        expect(await prisma.client.findUniqueOrThrow({ where: { id: fixture.client.id } }))
+            .toMatchObject({ endDate: fixture.client.endDate, duration: 15, actualPrice: "600000" });
+    });
+
     it("persists a replayable no-change result without a revision or document job", async () => {
         const { fixture, draft, request } = await prepare(false);
         const first = await service.confirmDraft(fixture.branch.id, draft.id, fixture.actorUserId, request);
