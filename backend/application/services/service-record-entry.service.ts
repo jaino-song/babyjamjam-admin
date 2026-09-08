@@ -179,6 +179,44 @@ export class ServiceRecordEntryService {
                     throw new NotFoundException("Service record not found");
                 }
             }
+            // The pre-transaction checks above are only an early rejection.
+            // The client/case lock can wait behind a submit or finalization,
+            // so reread both the case status and locked-day set before the
+            // first header or legacy-row write.
+            const rereadRecord = typeof tx.service_record_case?.findUnique === "function"
+                ? await tx.service_record_case.findUnique({
+                    where: { id: record.id },
+                })
+                : record;
+            if (
+                !rereadRecord
+                || (
+                    rereadRecord.branchId !== undefined
+                    && rereadRecord.branchId !== ctx.branchId
+                )
+            ) {
+                throw new ConflictException("Service record changed while acquiring write locks");
+            }
+            const dayDelegate = tx.service_record_day as unknown as {
+                count?: (args: unknown) => Promise<number>;
+            } | undefined;
+            const rereadLockedCount = typeof dayDelegate?.count === "function"
+                ? await dayDelegate.count({
+                    where: { serviceRecordCaseId: record.id, branchId: ctx.branchId, locked: true },
+                })
+                : 0;
+            if (rereadLockedCount > 0) {
+                throw new ConflictException({ code: "SERVICE_RECORD_HEADER_LOCKED" });
+            }
+            if ([
+                SERVICE_RECORD_CASE_STATUS.FINALIZING,
+                SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED,
+                SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED,
+                SERVICE_RECORD_CASE_STATUS.COMPLETED,
+            ].includes(rereadRecord.status as never)) {
+                throw new ConflictException({ code: "SERVICE_RECORD_FINALIZED" });
+            }
+
             const aggregate = await tx.service_record_case.update({
                 where: { id: record.id, branchId: ctx.branchId },
                 data: { ...dto, version: { increment: 1 } },

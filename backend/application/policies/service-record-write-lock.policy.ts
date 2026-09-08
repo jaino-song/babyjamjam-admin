@@ -159,6 +159,27 @@ export async function lockEformsignDocumentByIdForWrite(
     return rows.length === 1;
 }
 
+/**
+ * Lock a schedule-change request after its client-owned rows have been
+ * serialized. Requests are mutable workflow state, so every approve/reject
+ * writer must reread the row after this lock before deciding its transition.
+ */
+export async function lockScheduleChangeRequestForWrite(
+    transaction: ServiceRecordWriteTransaction,
+    branchId: string,
+    requestId: string,
+): Promise<boolean> {
+    if (typeof transaction.$queryRaw !== "function") return false;
+    const rows = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        SELECT "id"
+        FROM "schedule_change_request"
+        WHERE "id" = ${requestId}::uuid
+          AND "branch_id" = ${branchId}::uuid
+        FOR UPDATE
+    `);
+    return rows.length === 1;
+}
+
 export type ServiceRecordWriteLockSet = {
     branchId: string;
     clientId: number;

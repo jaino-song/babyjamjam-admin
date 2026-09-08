@@ -8,7 +8,10 @@ import { EFORMSIGN_COMPLETED_STATUS_CODES } from "domain/constants/eformsign-doc
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { countBusinessDaysKr } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
+import {
+    lockServiceRecordCaseForWrite,
+    lockServiceRecordWriteSet,
+} from "application/policies/service-record-write-lock.policy";
 
 export const SERVICE_RECORD_CASE_STATUS = {
     WAITING_FOR_DETAILS: "WAITING_FOR_DETAILS",
@@ -792,7 +795,69 @@ export class ServiceRecordLifecycleService {
     }
 
     async recompute(serviceRecordCaseId: string, tx?: Prisma.TransactionClient) {
-        const db = tx ?? this.prisma;
+        // A root recompute is itself a business write. Discover only the
+        // owning identifiers before opening the transaction, then acquire the
+        // complete client -> employees -> case -> schedules/assignments/days
+        // set before rereading the case that supplies the derived status. A
+        // caller-owned transaction has already established (or deliberately
+        // owns) that order, so it must never start a nested root transaction.
+        if (!tx && typeof this.prisma.$transaction === "function") {
+            const discovered = await this.prisma.service_record_case.findUnique({
+                where: { id: serviceRecordCaseId },
+                select: { id: true, branchId: true, clientId: true, status: true },
+            });
+            if (!discovered) throw new NotFoundException("Service record not found");
+
+            // Finalization/termination states are terminal for lifecycle
+            // recompute and contain no later client/employee write. Returning
+            // the current snapshot keeps those paths read-only and avoids
+            // taking a client lock after a terminal case has been claimed.
+            if (
+                IMMUTABLE_FINALIZATION_STATUSES.has(discovered.status)
+                || discovered.status === SERVICE_RECORD_CASE_STATUS.MIGRATION_REVIEW_REQUIRED
+                || discovered.status === SERVICE_RECORD_CASE_STATUS.TERMINATED_REVIEW_REQUIRED
+            ) {
+                return this.recomputeInTransaction(serviceRecordCaseId, this.prisma);
+            }
+
+            // A legacy case can outlive its client because the client relation
+            // is nullable. It still needs an owning transaction before this
+            // recompute writes. There is no client row to serialize in that
+            // shape, so lock the branch-scoped case itself and keep the path
+            // case-only. Narrow doubles without a usable branch retain their
+            // direct seam because they cannot represent this database state.
+            const discoveredClientId = discovered.clientId;
+            if (typeof discoveredClientId !== "number") {
+                if (typeof discovered.branchId === "string") {
+                    return this.prisma.$transaction(async (transaction) => {
+                        const caseLocked = await lockServiceRecordCaseForWrite(
+                            transaction,
+                            discovered.branchId,
+                            serviceRecordCaseId,
+                        );
+                        if (typeof transaction.$queryRaw === "function" && !caseLocked) {
+                            throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+                        }
+                        return this.recomputeInTransaction(serviceRecordCaseId, transaction);
+                    });
+                }
+                return this.recomputeInTransaction(serviceRecordCaseId, this.prisma);
+            }
+
+            return this.prisma.$transaction(async (transaction) => {
+                await lockServiceRecordWriteSet(transaction, {
+                    branchId: discovered.branchId,
+                    clientId: discoveredClientId,
+                    caseId: serviceRecordCaseId,
+                });
+                return this.recomputeInTransaction(serviceRecordCaseId, transaction);
+            });
+        }
+
+        return this.recomputeInTransaction(serviceRecordCaseId, tx ?? this.prisma);
+    }
+
+    private async recomputeInTransaction(serviceRecordCaseId: string, db: DbClient) {
         const record = await db.service_record_case.findUnique({
             where: { id: serviceRecordCaseId },
             include: {

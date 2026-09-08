@@ -951,4 +951,83 @@ describe("ServiceRecordLifecycleService", () => {
             }),
         }));
     });
+
+    it("owns a root recompute transaction before deriving a writable status", async () => {
+        const staleRecord = {
+            id: "case-1",
+            branchId: rawQueryBranchId,
+            clientId: 1,
+            status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
+            startDate: date("2026-08-03"),
+            endDate: date("2026-08-10"),
+            requiredSessionCount: 1,
+            finalizationDueAt: new Date("2026-08-10T11:00:00.000Z"),
+            completedAt: null,
+            momName: null,
+            momBirth: null,
+            babyName: null,
+            babyBirth: null,
+            deliveryType: null,
+            babyWeight: null,
+            assignments: [],
+            days: [],
+        };
+        const freshRecord = {
+            ...staleRecord,
+            momName: "산모",
+            momBirth: "900101",
+            babyName: "아기",
+            babyBirth: "260701",
+            deliveryType: "자연분만",
+            babyWeight: "3.2",
+            assignments: [{ schedule: { replaced: false } }],
+            days: [{
+                caseSessionIndex: 1,
+                serviceDate: date("2026-08-03"),
+                locked: true,
+                momApproval: "approved",
+            }],
+        };
+        const transaction = {
+            $queryRaw: jest.fn().mockResolvedValue([{ id: rawQueryCaseId }]),
+            client: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 1,
+                    branchId: rawQueryBranchId,
+                }),
+            },
+            employee: {},
+            employee_schedule: {
+                findMany: jest.fn().mockResolvedValue([]),
+            },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(freshRecord),
+                update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...freshRecord, ...data })),
+            },
+            service_record_assignment: {},
+            service_record_day: {},
+            eformsign_doc: {},
+        };
+        const prisma = {
+            $transaction: jest.fn((callback: (tx: typeof transaction) => Promise<unknown>) =>
+                callback(transaction)),
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(staleRecord),
+                update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...staleRecord, ...data })),
+            },
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+
+        await service.recompute(staleRecord.id);
+
+        expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+        const lockQueries = transaction.$queryRaw.mock.calls
+            .map(([query]) => (query as { strings?: string[] }).strings?.join(" ").toLowerCase() ?? "")
+            .filter((query) => query.includes("for update"));
+        expect(lockQueries[0]).toContain("from \"client\"");
+        expect(transaction.service_record_case.update).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE }),
+        }));
+        expect(prisma.service_record_case.update).not.toHaveBeenCalled();
+    });
 });
