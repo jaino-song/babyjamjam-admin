@@ -939,11 +939,11 @@
         "74:10-74:15|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "1189:25-1194:26|rawUiElement",
-        "1246:15-1251:16|rawUiElement",
-        "1254:15-1259:16|rawUiElement",
-        "917:13-923:14|rawUiElement",
-        "929:13-935:14|rawUiElement"
+        "1190:25-1195:26|rawUiElement",
+        "1250:15-1255:16|rawUiElement",
+        "1258:15-1263:16|rawUiElement",
+        "918:13-924:14|rawUiElement",
+        "930:13-936:14|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/clients/page.tsx": {
