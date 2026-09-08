@@ -69,3 +69,18 @@ None.
 ### Activation limitations
 
 Phase0 production activation remains intentionally unverified and revision-bound dispatch remains fail-closed with zero external calls ([sb.eformsign-document-job.repository.ts:243](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/infrastructure/database/repositories/sb.eformsign-document-job.repository.ts:243), [eformsign-doc.module.ts:180](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/module/eformsign-doc.module.ts:180)). Phase6 HTTP-guard and browser verification also remains pending.
+## Same-session residual review at77629a7ed
+
+Model: gpt-5.6-sol | Effort: high
+
+REVISE — local Phase5
+
+### Verified defect
+
+- [link-mirrored-eformsign-doc-by-phone.usecase.ts:1224](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/usecases/eformsign-doc/link-mirrored-eformsign-doc-by-phone.usecase.ts:1224): when the new revision fence returns `ambiguous` for a stale assigned contract, `repairAssignedDocument` still unconditionally invokes `ensureServiceRecordLifecycle` at line 1225. Normal completed reconciliation supplies only `suppressOutboundAutomation`, not `linkExistingOnly` ([eformsign-document-mirror.service.ts:599](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/eformsign-document-mirror.service.ts:599)), so webhook/poller/finalizer execution reaches this branch. On a non-finalized case, `ensureForClient` upserts the current case and increments its version ([service-record-lifecycle.service.ts:324](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-lifecycle.service.ts:324)) before the later end-date fence rejects the stale document. Repeated stale retries can repeatedly advance case version and invalidate draft/confirmation CAS despite the event being rejected. Gate lifecycle initialization on a successful `linked`/`already_linked` result and add production-shaped PG coverage without `linkExistingOnly`.
+
+The supplied PG scenario does not catch this: it explicitly sets `linkExistingOnly: true` ([service-record-mirrored-contract-event-fence.e2e.spec.ts:300](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/test/e2e/service-record-mirrored-contract-event-fence.e2e.spec.ts:300)), which disables the unconditional lifecycle call.
+
+The requested atomic `client.eDocId`, revision, and end-date fences themselves are correctly present, including the deterministic pointer-change race. Explicit `documentKind: contract` also remains eligible without label-derived authority. No additional hypothesis is reported.
+
+Phase0 production activation remains deliberately unverified and fail-closed; this is not a Phase5 defect. Phase6 real HTTP-guard and browser verification remains pending.

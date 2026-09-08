@@ -131,6 +131,8 @@ function createMirrorLinker(prisma: PrismaClient): LinkMirroredEformsignDocByPho
         prisma as unknown as PrismaService,
         config,
         settings as never,
+        undefined,
+        new ServiceRecordLifecycleService(prisma as unknown as PrismaService),
     );
 }
 
@@ -297,13 +299,11 @@ describeE2E("mirrored contract completion event ownership fence (real disposable
             fixture,
             STALE_END_DATE,
         );
-        // linkExistingOnly retains the existing owner claim but skips a second
-        // pointer mutation, allowing the reconciler's real lifecycle fence to
-        // observe the newer pointer and revision under its transaction lock.
+        // Match normal mirror completion: lifecycle initialization is enabled.
         await expect(reconciler.execute({
             documentId: oldDocument.documentId,
             detail: oldDocument.detail,
-            options: { linkExistingOnly: true, suppressOutboundAutomation: true },
+            options: { suppressOutboundAutomation: true },
         })).resolves.toBe("ambiguous");
 
         expect(syncClientEndDateUsecase.executeFromDocument).toHaveBeenCalledTimes(1);
@@ -356,7 +356,7 @@ describeE2E("mirrored contract completion event ownership fence (real disposable
         await expect(reconciler.execute({
             documentId: legacyDocument.documentId,
             detail: legacyDocument.detail,
-            options: { linkExistingOnly: true, suppressOutboundAutomation: true },
+            options: { suppressOutboundAutomation: true },
         })).resolves.toBe("linked");
 
         await expect(prisma.client.findUniqueOrThrow({ where: { id: fixture.client.id } }))
@@ -390,11 +390,12 @@ describeE2E("mirrored contract completion event ownership fence (real disposable
             data: { currentRevisionId: pendingRevision.id, endDate: REVISED_END_DATE },
         });
 
+        const beforeCase = await prisma.service_record_case.findUniqueOrThrow({ where: { id: fixture.record.id } });
         const { reconciler } = createReconciler(prisma, fixture, ORIGINAL_END_DATE);
         await expect(reconciler.execute({
             documentId: originalDocument.documentId,
             detail: originalDocument.detail,
-            options: { linkExistingOnly: true, suppressOutboundAutomation: true },
+            options: { suppressOutboundAutomation: true },
         })).resolves.toBe("ambiguous");
 
         await expect(prisma.client.findUniqueOrThrow({ where: { id: fixture.client.id } }))
@@ -407,6 +408,8 @@ describeE2E("mirrored contract completion event ownership fence (real disposable
                 currentRevisionId: pendingRevision.id,
                 endDate: REVISED_END_DATE,
             });
+        expect(await prisma.service_record_case.findUniqueOrThrow({ where: { id: fixture.record.id } }))
+            .toEqual(beforeCase);
     });
 
     it("does not let an old revision replace a newer pointer even with a newer created date", async () => {
@@ -490,7 +493,7 @@ describeE2E("mirrored contract completion event ownership fence (real disposable
         const reconciliation = reconciler.execute({
             documentId: oldDocument.documentId,
             detail: oldDocument.detail,
-            options: { linkExistingOnly: true, suppressOutboundAutomation: true },
+            options: { suppressOutboundAutomation: true },
         });
 
         try {
