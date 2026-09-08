@@ -279,6 +279,8 @@ describeE2E("service-record finalization eligibility and frozen input (real disp
             completeness: "complete",
             manualReviewRequired: true,
             generation: expect.any(String),
+            documentStateId: expect.any(String),
+            documentVersion: expect.any(Number),
             immutablePayload: expect.any(Object),
             payloadFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/i),
             context: expect.objectContaining({
@@ -287,6 +289,15 @@ describeE2E("service-record finalization eligibility and frozen input (real disp
                 plannedSessionCount: ORIGINAL_THIRTEEN_DATES.length,
             }),
         }));
+        const generationIdentity = firstPayload as { documentStateId: string; documentVersion: number };
+        expect(generationIdentity.documentVersion).toBeGreaterThan(0);
+        const generationState = await prisma.service_record_revision_document_state.findUniqueOrThrow({
+            where: { id: generationIdentity.documentStateId },
+        });
+        expect(generationState).toMatchObject({
+            revisionId: confirmed.revisionId,
+            documentVersion: generationIdentity.documentVersion,
+        });
         expect(JSON.stringify((firstPayload as { immutablePayload?: unknown }).immutablePayload))
             .toContain("complete-13");
 
