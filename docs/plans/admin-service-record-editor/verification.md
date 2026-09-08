@@ -13,7 +13,7 @@
 | frontend 회귀/타입/빌드/UI architecture gate | worker 전체209 suites1294 tests 및 각 검사 | PASS |
 | mobile 생산 빌드 | 명령 범위 `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:3999 pnpm build` | PASS, 최초 값 누락 실패 별도. 실제API 없는 정적 렌더 로그는 외부 검증 아님 |
 | backend 전체 TypeScript | 기존 receipt helper/spec의5개 오류를 별도 baseline에서 재현 | FAIL, Task5.4에서 수정 필요 |
-| 공통 쓰기 잠금/owning transaction, 삭제·교체·mirror generation 재검증 | 통합3bfc3d862: backend12 suites472 tests, guarded PG7 tests; worker build/lint PASS | 기존 테스트 PASS, Sol FINAL FIX_REQUIRED/HIGH, 지적7건 보완 중; 아직 감사 통과 아님 |
+| 공통 쓰기 잠금/owning transaction, 삭제·교체·mirror generation 재검증 | 통합1fcbb6f75: backend12 suites483 tests, guarded PG3 suites19 tests; worker build/lint PASS | 보완 통합 검사 PASS, Sol FINAL 재감사 중; 아직 감사 통과 아님 |
 | 초기 N13/duration15/가격15일 유지, 영업일 뒤 회차 이동, 원본 날짜 보존 | 승인된 Phase3 수락 조건 | NOT RUN |
 | 확정 트랜잭션/미리보기 결속/중복 확정/동시 발송 차단 | 승인된 Phase4 수락 조건 | NOT RUN |
 | 계약·영수증 동일기간/수령일·금액 보존/완료계약 신규서명 문서/실제PDF 검증 후 pointer CAS | 승인된 Phase5 수락 조건 | NOT RUN, 외부 capability 미검증 상태 유지 |
@@ -23,17 +23,17 @@
 
 ## Task3.0 Sol FINAL 보완 기준
 
-감사 소스는 통합3bfc3d862/worker d7aad5c6a다. 결과는 **FIX_REQUIRED / HIGH**이며 설계 재계획은 필요하지 않다. 아래 실제 PostgreSQL 경합 검사가 통과하고 재감사에서 해소되기 전에는3.1 구현으로 넘어가지 않는다. 기존472개 단위검사와PG7개만으로 아래 항목을 통과했다고 판단하지 않는다.
+감사 소스는 통합3bfc3d862/worker d7aad5c6a다. 결과는 **FIX_REQUIRED / HIGH**이며 설계 재계획은 필요하지 않다. 아래 실제 PostgreSQL 경합 검사가 통과하고 재감사에서 해소되기 전에는3.1 구현으로 넘어가지 않는다. 기존472개 단위검사와PG7개만으로 아래 항목을 통과했다고 판단하지 않는다. 보완 통합1fcbb6f75에서 메인이 정확한 파일을 지정해 단위483개와PG19개를 재실행했고 모두 통과했다. 결과 로그는 `/tmp/bjj-task3-integrated-unit.log`, `/tmp/bjj-task3-integrated-pg.log`다. 기존 무잠금 root recompute로의 임시 치환은 실제PG에서 READY_TO_FINALIZE 대신 IN_PROGRESS가 되는 의미 있는 red를 재현했고 복구했다. 다른 새PG 사례의 옛 소스 red를 실행했다고 주장하지 않는다.
 
 | 지적 | 필수 회귀 | 현재 상태 |
 |---|---|---|
-| root recompute가 잠금 전 기록으로 상태를 덮음 | 마지막 제출과 경쟁해 최신 READY_TO_FINALIZE 유지 | 보완 중, 새 검사 미완료 |
-| saveHeader의 잠금 후 제출/완료 조건 미검사 | 대기 중 제출/최종화가 완료되면 header 무변경 | 보완 중, 새 검사 미완료 |
-| client.update의 이전 기간/주소 및 제출 검증 | 대기 중 새 잠금 기록이 생기면 부적합 기간 거부; 최신 고객 값 사용 | 보완 중, 새 검사 미완료 |
-| NULL branch mirror가 대상 지점 조건으로 차단 | 기존 고객 연결/자동 등록 모두 실제 SQL로 정상 연결; generation/소유권 변경은 거부 | 보완 중, 새 검사 미완료 |
-| schedule request의 승인/거절/stale 무조건 전환 | 중복 승인과 승인/거절 경쟁에서 한 번만 결정; 승인된 요청을 stale로 덮지 않음 | 보완 중, 새 검사 미완료 |
-| requestReplacement가 이전 종료일/주소 사용 | 고객 변경 대기 후 새 고객 기간/주소로 배정 생성 | 보완 중, 새 검사 미완료 |
-| 과거 직원 잠금을 case 뒤에서 추가 | 두 고객과 과거/현재/신규 직원의 barrier 경합에서 전체 정렬 집합으로 완료 | 보완 중, 새 검사 미완료 |
+| root recompute가 잠금 전 기록으로 상태를 덮음 | 마지막 제출과 경쟁해 최신 READY_TO_FINALIZE 유지 | 통합 실제 PG 통과, Sol 재감사 대기 |
+| saveHeader의 잠금 후 제출/완료 조건 미검사 | 대기 중 제출/최종화가 완료되면 header 무변경 | 통합 실제 PG 통과, Sol 재감사 대기 |
+| client.update의 이전 기간/주소 및 제출 검증 | 대기 중 새 잠금 기록이 생기면 부적합 기간 거부; 최신 고객 값 사용 | 통합 실제 PG 통과, Sol 재감사 대기 |
+| NULL branch mirror가 대상 지점 조건으로 차단 | 기존 고객 연결/자동 등록 모두 실제 SQL로 정상 연결; generation/소유권 변경은 거부 | 통합 실제 PG 통과, Sol 재감사 대기 |
+| schedule request의 승인/거절/stale 무조건 전환 | 중복 승인과 승인/거절 경쟁에서 한 번만 결정; 승인된 요청을 stale로 덮지 않음 | 통합 실제 PG 통과, Sol 재감사 대기 |
+| requestReplacement가 이전 종료일/주소 사용 | 고객 변경 대기 후 새 고객 기간/주소로 배정 생성 | 통합 실제 PG 통과, Sol 재감사 대기 |
+| 과거 직원 잠금을 case 뒤에서 추가 | 두 고객과 과거/현재/신규 직원의 barrier 경합에서 전체 정렬 집합으로 완료 | 통합 실제 PG 통과, Sol 재감사 대기 |
 
 ## Phase3 독립 기대값 (제품 검사 전)
 

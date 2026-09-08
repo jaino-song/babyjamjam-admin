@@ -434,3 +434,6 @@
 
 - Test worker0f430116f의 최종 보고에서 예기치 않은 넓은 Jest 실행을 확인했다. `--runTestsByPath` 없이 `--testPathIgnorePatterns=a^`와 경로를 넘긴 명령이 무관 suite들을 실행해 중단됐다. 후속 정확한 파일 명령은7개 skipped(실제PG 미실행)다. 부모는 해당 worker rollout의 관측 출력에서 mock 오류 및 agent/auth e2e의 import 단계 실패를 확인했고, 실제 DB 작업의 증거는 찾지 못했다. 네트워크 추적이 없어 최초 프로세스 전체의 외부 접속 부재는 증명할 수 없으므로 no-DB-contact라는 초기 worker 주장을 채택하지 않는다. 해당 넓은 실행을 PASS 증거에서 제외한다. 재실행/운영조회 없이 앞으로 runTestsByPath와 정확한 격리 URL을 함께 명시한다. 원본 로그: /Users/jaino/.codex/sessions/2026/09/08/rollout-2026-09-08T13-48-00-01a07f58-2d59-71a0-be1e-caa218845770.jsonl의581~605행.
 - Worker가 root recompute를 이전 무잠금 파생 경로로 임시 치환해 실제 PG에서 의미 있는 red를 재현했다: 예상 READY_TO_FINALIZE 대신 IN_PROGRESS로 덮였다. fixture/type 오류가 아닌 업무 상태 assertion 실패다. 임시 치환은 복구하며 현재 제품 경로의5/5 green과 구분한다.
+
+- Task3.0 최종 보완72fe56c1e(원래 source branch 유지 및 raw Prisma P2010/meta40001의 기존 유한 DB 재시도 포함)를1fcbb6f75로 통합했다. 테스트 전용 unit0f430116f과 corrections unit은 모두 clean 상태에서 병합 후 제거하고 branch도 안전 삭제했다. Worker354→마지막355 단위, PG19, build, lint0오류/79기존경고를 보고했다.
+- 메인 통합 재검사: exact --runTestsByPath로12 suites483/483, exact guarded loopback PG3 suites19/19 PASS. 로그 /tmp/bjj-task3-integrated-unit.log 및 /tmp/bjj-task3-integrated-pg.log. PG 임시 소유권은 부모에게 반환됐고 새 테스트는 개인정보 없는 합성 fixture를 정리했다. Sol/high FINAL을 공식 CLI read-only/never로 frozen1fcbb6f75에서 시작했다. Task3.1은 이 감사 결과 전에는 시작하지 않는다.
