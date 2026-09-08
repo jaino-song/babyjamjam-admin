@@ -214,6 +214,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                     documentId,
                     clientId: assignedClientId,
                     branchId: document.branchId,
+                    observedSourceBranchId: document.branchId,
                     expectedMirrorGeneration,
                 });
                 if (!postLinkApplied) return "mirror_not_ready";
@@ -292,6 +293,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                 documentId,
                 clientId: result.createdClientId,
                 branchId: result.createdBranchId,
+                observedSourceBranchId: document.branchId,
                 expectedMirrorGeneration,
                 creation: {
                     branchId: result.createdBranchId,
@@ -361,6 +363,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         documentId: string;
         clientId: number;
         branchId?: string | null;
+        observedSourceBranchId?: string | null;
         expectedMirrorGeneration?: ExpectedEformsignMirrorGeneration;
         creation?: {
             branchId: string;
@@ -385,6 +388,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                 params.documentId,
                 params.expectedMirrorGeneration,
                 params.branchId,
+                params.observedSourceBranchId,
             )) {
                 return false;
             }
@@ -518,6 +522,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                     params.documentId,
                                     params.expectedMirrorGeneration,
                                     locked.branchId,
+                                    document.branchId,
                                 )) {
                                     throw new MirrorGenerationConflict();
                                 }
@@ -674,6 +679,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                 params.documentId,
                                 params.expectedMirrorGeneration,
                                 creationBranchId,
+                                document.branchId,
                             )) {
                                 throw new MirrorGenerationConflict();
                             }
@@ -1076,6 +1082,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                     document.documentId,
                     expectedMirrorGeneration,
                     locked.branchId,
+                    document.branchId,
                 )) {
                     return "mirror_not_ready";
                 }
@@ -1147,8 +1154,17 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         documentId: string,
         expectedMirrorGeneration?: ExpectedEformsignMirrorGeneration,
         branchId?: string | null,
+        observedSourceBranchId?: string | null,
     ): Promise<boolean> {
         if (!expectedMirrorGeneration) return true;
+        const sourceBranchId = observedSourceBranchId === undefined
+            ? branchId
+            : observedSourceBranchId;
+        const sourceBranchFence = sourceBranchId === undefined
+            ? Prisma.empty
+            : sourceBranchId === null
+                ? Prisma.sql`AND doc.branch_id IS NULL`
+                : Prisma.sql`AND doc.branch_id = ${sourceBranchId}::uuid`;
         const readinessFence = expectedMirrorGeneration.readiness === "detail"
             ? Prisma.sql`AND doc.detail_payload IS NOT NULL`
             : Prisma.sql`
@@ -1172,7 +1188,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             SELECT doc.id
             FROM eformsign_doc AS doc
             WHERE doc.document_id = ${documentId}
-              ${branchId ? Prisma.sql`AND doc.branch_id = ${branchId}::uuid` : Prisma.empty}
+              ${sourceBranchFence}
               AND doc.detail_source_updated_date = ${expectedMirrorGeneration.detailSourceUpdatedDate}
               AND doc.detail_synced_at = ${expectedMirrorGeneration.detailSyncedAt}
               AND doc.permanent_purge_requested_at IS NULL

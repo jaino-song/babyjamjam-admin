@@ -1045,3 +1045,59 @@ describe("UpsertSessionDto service-record text limits", () => {
         expect(errors.some((error) => error.property === property)).toBe(true);
     });
 });
+
+describe("ServiceRecordEntryService.saveHeader", () => {
+    it("revalidates the case status after the owning lock and performs no writes when finalized", async () => {
+        const aggregate = createRecord({ status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS });
+        const transactionRecord = createRecord({ status: SERVICE_RECORD_CASE_STATUS.FINALIZING });
+        const transaction = {
+            $queryRaw: jest.fn().mockResolvedValue([{ id: CASE_ID }]),
+            employee_schedule: {
+                findUnique: jest.fn().mockResolvedValue(null),
+            },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(transactionRecord),
+                update: jest.fn().mockResolvedValue(transactionRecord),
+            },
+            service_record_day: {
+                count: jest.fn().mockResolvedValue(0),
+            },
+            service_record: {
+                upsert: jest.fn().mockResolvedValue({ ...transactionRecord, scheduleId: context.scheduleId }),
+            },
+        };
+        const prisma = {
+            service_record_case: {
+                findFirst: jest.fn().mockResolvedValue(aggregate),
+            },
+            service_record_day: {
+                count: jest.fn().mockResolvedValue(0),
+            },
+            $transaction: jest.fn((callback: (tx: typeof transaction) => Promise<unknown>) =>
+                callback(transaction)),
+        };
+        const lifecycle = {
+            recompute: jest.fn().mockResolvedValue(transactionRecord),
+        };
+        const service = new ServiceRecordEntryService(
+            prisma as unknown as PrismaService,
+            {} as ServiceRecordTokenService,
+            lifecycle as unknown as ServiceRecordLifecycleService,
+        );
+
+        await expect(service.saveHeader(context, {
+            momName: "산모",
+            momBirth: "900101",
+            babyName: "아기",
+            babyBirth: "260701",
+            deliveryType: "자연분만",
+            babyWeight: "3.2",
+        })).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_FINALIZED" },
+        });
+
+        expect(transaction.service_record_case.update).not.toHaveBeenCalled();
+        expect(transaction.service_record.upsert).not.toHaveBeenCalled();
+        expect(lifecycle.recompute).not.toHaveBeenCalled();
+    });
+});

@@ -248,6 +248,39 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         });
     });
 
+    it("claims a branchless existing-client mirror when the observed source generation is current", async () => {
+        const document = mirroredDocument({ branchId: null, clientId: null });
+        const { transaction, usecase } = setup(document);
+        const tx = transaction as typeof transaction & {
+            employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
+            service_record_case: { findUnique: jest.Mock };
+        };
+        tx.employee_schedule.findMany = jest.fn().mockResolvedValue([]);
+        tx.service_record_case = {
+            findUnique: jest.fn().mockResolvedValue(null),
+        };
+        transaction.$queryRaw.mockImplementation((query: { strings?: string[] }) => {
+            const sql = query.strings?.join(" ").toLowerCase() ?? "";
+            if (sql.includes("from eformsign_doc as doc")) {
+                return Promise.resolve(sql.includes("branch_id is null") ? [{ id: 11 }] : []);
+            }
+            return Promise.resolve([{ id: 11 }]);
+        });
+
+        await expect(usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
+            .resolves.toBe("linked");
+
+        expect(transaction.eformsign_doc.updateMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: {
+                    branchId: "branch-1",
+                    clientId: 21,
+                    documentKind: "contract",
+                },
+            }),
+        );
+    });
+
     it("limits a completed-status mirror to an existing client without completion effects", async () => {
         const document = mirroredDocument({ statusType: "072" });
         const {
@@ -504,6 +537,51 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         });
         expect(serviceRecordLifecycle.ensureForClient)
             .toHaveBeenCalledWith(31, expect.anything());
+    });
+
+    it("auto-registers a branchless contract only after the observed generation and ownership fence", async () => {
+        const document = mirroredDocument({
+            branchId: null,
+            customerPhone: "01012345678",
+            detailPayload: contractDetail(),
+            templateId: "contract-template",
+        });
+        const {
+            transaction,
+            settings,
+            usecase,
+        } = setup(document);
+        transaction.client.findMany.mockResolvedValue([]);
+        const tx = transaction as typeof transaction & {
+            employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
+            service_record_case: { findUnique: jest.Mock };
+        };
+        tx.employee_schedule.findMany = jest.fn().mockResolvedValue([]);
+        tx.service_record_case = {
+            findUnique: jest.fn().mockResolvedValue(null),
+        };
+        settings.getEformsignTemplateBranch.mockResolvedValue({
+            branchId: "branch-1",
+            effectiveFrom: new Date("2026-07-01T00:00:00.000Z"),
+        });
+        transaction.$queryRaw.mockImplementation((query: { strings?: string[] }) => {
+            const sql = query.strings?.join(" ").toLowerCase() ?? "";
+            if (sql.includes("from eformsign_doc as doc")) {
+                return Promise.resolve(sql.includes("branch_id is null") ? [{ id: 11 }] : []);
+            }
+            return Promise.resolve([{ id: 11 }]);
+        });
+
+        await expect(usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
+            .resolves.toBe("created");
+
+        expect(transaction.client.create).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ branchId: "branch-1" }),
+        }));
+        expect(transaction.eformsign_doc.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({ branchId: null, clientId: null }),
+            data: expect.objectContaining({ branchId: "branch-1", clientId: 31 }),
+        }));
     });
 
     it("resolves the area from the contract template name", async () => {

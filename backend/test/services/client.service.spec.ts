@@ -1,4 +1,4 @@
-import { BadRequestException, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 
 import { ClientService } from "../../application/services/client.service";
@@ -1498,6 +1498,31 @@ describe("ClientService", () => {
         });
 
         describe("given existing client and no employee change", () => {
+            it("revalidates a service-period change inside the owning transaction", async () => {
+                const existingClient = createClientEntity();
+                findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+                serviceRecordLifecycleService.validatePeriodChange.mockImplementation(
+                    async (_params: unknown, transaction?: unknown) => {
+                        if (transaction) {
+                            throw new ConflictException({ code: "SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION" });
+                        }
+                    },
+                );
+
+                await expect(service.update(branchId, existingClient.id, {
+                    endDate: "2026-05-01",
+                })).rejects.toMatchObject({
+                    response: { code: "SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION" },
+                });
+
+                expect(serviceRecordLifecycleService.validatePeriodChange).toHaveBeenCalledWith(
+                    expect.objectContaining({ clientId: existingClient.id }),
+                    expect.anything(),
+                );
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
+            });
+
             it("should update client without creating new schedule", async () => {
                 // Arrange
                 const existingClient = createClientEntity();
@@ -1620,7 +1645,15 @@ describe("ClientService", () => {
 
                 await service.update(branchId, existingClient.id, { name: "새 고객 이름" });
 
-                expect(prismaService.employee_schedule.findMany).not.toHaveBeenCalled();
+                expect(prismaService.employee_schedule.findMany).toHaveBeenCalledWith({
+                    where: { branchId, clientId: existingClient.id },
+                    select: {
+                        id: true,
+                        primaryEmployeeId: true,
+                        secondaryEmployeeId: true,
+                    },
+                    orderBy: { id: "asc" },
+                });
                 expect(messageAutomationIntentService.persistScheduleIntent).not.toHaveBeenCalled();
             });
 
@@ -2059,6 +2092,35 @@ describe("ClientService", () => {
         });
 
         describe("given existing client and primary employee change", () => {
+            it("discovers historical schedules before locking the case or writing a replacement", async () => {
+                const existingClient = createClientEntity();
+                findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+                prismaService.employee_schedule.findMany.mockResolvedValue([
+                    { id: 1, primaryEmployeeId: 1, secondaryEmployeeId: null },
+                    { id: 10, primaryEmployeeId: 3, secondaryEmployeeId: null },
+                ]);
+                prismaService.employee_schedule.findFirst.mockResolvedValue({
+                    id: 10,
+                    clientId: existingClient.id,
+                    primaryEmployeeId: 3,
+                    secondaryEmployeeId: null,
+                });
+                prismaService.employee_schedule.create.mockResolvedValue({ id: 20, clientId: existingClient.id });
+
+                await service.update(branchId, existingClient.id, { primaryEmployeeId: 4 });
+
+                expect(prismaService.employee_schedule.findMany).toHaveBeenCalledWith({
+                    where: { branchId, clientId: existingClient.id },
+                    select: {
+                        id: true,
+                        primaryEmployeeId: true,
+                        secondaryEmployeeId: true,
+                    },
+                    orderBy: { id: "asc" },
+                });
+                expect(prismaService.employee_schedule.create).toHaveBeenCalled();
+            });
+
             it("should mark old schedule as replaced and create new schedule", async () => {
                 // Arrange
                 const existingClient = createClientEntity();
@@ -3223,6 +3285,35 @@ describe("ClientService", () => {
     // requestReplacement
     // ============================================
     describe("requestReplacement", () => {
+        it("derives replacement timing and address from the client reread after locking", async () => {
+            jest.useFakeTimers().setSystemTime(new Date("2024-03-15T01:00:00.000Z"));
+            try {
+                const staleClient = createClientEntity();
+                staleClient.address = "stale address";
+                staleClient.endDate = new Date("2024-03-20T00:00:00.000Z");
+                const lockedClient = createClientEntity();
+                lockedClient.address = "locked address";
+                lockedClient.endDate = new Date("2024-06-01T00:00:00.000Z");
+                findClientByIdUsecase.execute.mockResolvedValue(staleClient);
+                prismaService.client.findUnique.mockResolvedValue(lockedClient);
+                prismaService.employee_schedule.findFirst.mockResolvedValue(null);
+                prismaService.employee_schedule.create.mockResolvedValue({ id: 90, clientId: lockedClient.id });
+
+                await service.requestReplacement(branchId, lockedClient.id, 7);
+
+                expect(prismaService.client.findUnique).toHaveBeenCalled();
+                expect(prismaService.employee_schedule.create).toHaveBeenCalledWith({
+                    data: expect.objectContaining({
+                        workAddress: "locked address",
+                        startDate: new Date("2024-03-15T01:00:00.000Z"),
+                        endDate: new Date("2024-06-01T00:00:00.000Z"),
+                    }),
+                });
+            } finally {
+                jest.useRealTimers();
+            }
+        });
+
         it("rejects employees outside the client branch", async () => {
             findClientByIdUsecase.execute.mockResolvedValue(createClientEntity());
             prismaService.employee.findMany.mockResolvedValue([]);

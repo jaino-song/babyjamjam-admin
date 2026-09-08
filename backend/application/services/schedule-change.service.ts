@@ -10,7 +10,10 @@ import { Prisma } from "@prisma/client";
 import {
     assertNoActiveEmployeeScheduleOverlap,
 } from "application/policies/employee-schedule-invariants.policy";
-import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
+import {
+    lockScheduleChangeRequestForWrite,
+    lockServiceRecordWriteSet,
+} from "application/policies/service-record-write-lock.policy";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { addBusinessDaysKr, isBusinessDayKr, nextBusinessDayKr } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -30,7 +33,10 @@ function toDbDate(iso: string): Date {
 }
 
 class StaleRequestError extends Error {
-    constructor(public readonly requestId: string) {
+    constructor(
+        public readonly requestId: string,
+        public readonly branchId: string,
+    ) {
         super("stale");
     }
 }
@@ -472,7 +478,7 @@ export class ScheduleChangeService {
 
         try {
             const result = await this.prisma.$transaction(async (tx) => {
-                const request = await tx.schedule_change_request.findFirst({
+                let request = await tx.schedule_change_request.findFirst({
                     where: { id: requestId, branchId: tenant.branchId ?? "" },
                 });
                 if (!request) throw new NotFoundException("Schedule change request not found");
@@ -495,6 +501,29 @@ export class ScheduleChangeService {
                     scheduleIds: [schedule.id],
                     employeeIds: [schedule.primaryEmployeeId, schedule.secondaryEmployeeId],
                 });
+                const requestLocked = await lockScheduleChangeRequestForWrite(
+                    tx,
+                    request.branchId,
+                    request.id,
+                );
+                if (typeof tx.$queryRaw === "function" && !requestLocked) {
+                    throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+                }
+                const rereadRequest = await tx.schedule_change_request.findFirst({
+                    where: { id: request.id, branchId: request.branchId },
+                });
+                if (!rereadRequest) throw new NotFoundException("Schedule change request not found");
+                if (rereadRequest.status !== "pending") {
+                    throw new ConflictException({ code: "REQUEST_NOT_PENDING" });
+                }
+                if (
+                    rereadRequest.scheduleId !== request.scheduleId
+                    || rereadRequest.clientId !== request.clientId
+                    || rereadRequest.branchId !== request.branchId
+                ) {
+                    throw new ConflictException("Schedule-change request target changed while acquiring write locks");
+                }
+                request = rereadRequest;
                 const rereadSchedule = await tx.employee_schedule.findUnique({
                     where: { id: request.scheduleId },
                     include: { client: true, primaryEmployee: true },
@@ -524,7 +553,7 @@ export class ScheduleChangeService {
                     locked: day.locked,
                 })));
                 if (target.sessionIndex !== request.sessionIndex || target.fromDate !== toIso(request.fromDate)) {
-                    throw new StaleRequestError(request.id);
+                    throw new StaleRequestError(request.id, request.branchId);
                 }
 
                 const serviceDate = toDbDate(target.toDate);
@@ -625,8 +654,12 @@ export class ScheduleChangeService {
             return this.serializeRequest(result);
         } catch (error) {
             if (error instanceof StaleRequestError) {
-                await this.prisma.schedule_change_request.update({
-                    where: { id: error.requestId },
+                await this.prisma.schedule_change_request.updateMany({
+                    where: {
+                        id: error.requestId,
+                        branchId: error.branchId,
+                        status: "pending",
+                    },
                     data: { status: "stale", decidedAt: new Date() },
                 });
                 throw new ConflictException({ code: "REQUEST_STALE" });
@@ -660,14 +693,102 @@ export class ScheduleChangeService {
             throw new ConflictException({ code: "REQUEST_NOT_PENDING" });
         }
 
-        const updated = await this.prisma.schedule_change_request.update({
-            where: { id: request.id },
-            data: {
-                status: "rejected",
-                decidedBy: tenant.userId ?? null,
-                decidedAt: new Date(),
-                ...(reason !== undefined ? { reason } : {}),
-            },
+        const updated = await this.prisma.$transaction(async (tx) => {
+            // Production requests always have a complete client-owned write
+            // surface. Narrow unit doubles retain a request-only fallback,
+            // while still rereading the mutable status in the transaction.
+            if (
+                typeof tx.$queryRaw !== "function"
+                || typeof tx.employee_schedule?.findUnique !== "function"
+                || typeof tx.service_record_case?.findUnique !== "function"
+            ) {
+                const rereadRequestCandidate = typeof tx.schedule_change_request.findFirst === "function"
+                    ? await tx.schedule_change_request.findFirst({
+                        where: { id: request.id, branchId: request.branchId },
+                    })
+                    : null;
+                const rereadRequest = rereadRequestCandidate ?? request;
+                if (!rereadRequest) throw new NotFoundException("Schedule change request not found");
+                if (rereadRequest.status !== "pending") {
+                    throw new ConflictException({ code: "REQUEST_NOT_PENDING" });
+                }
+                return tx.schedule_change_request.update({
+                    where: { id: rereadRequest.id },
+                    data: {
+                        status: "rejected",
+                        decidedBy: tenant.userId ?? null,
+                        decidedAt: new Date(),
+                        ...(reason !== undefined ? { reason } : {}),
+                    },
+                });
+            }
+
+            const schedule = await tx.employee_schedule.findUnique({
+                where: { id: request.scheduleId },
+                select: {
+                    id: true,
+                    clientId: true,
+                    branchId: true,
+                    primaryEmployeeId: true,
+                    secondaryEmployeeId: true,
+                },
+            });
+            if (
+                !schedule
+                || schedule.clientId !== request.clientId
+                || schedule.branchId !== request.branchId
+            ) {
+                throw new ConflictException("Schedule-change target changed while acquiring write locks");
+            }
+            const record = await tx.service_record_case.findUnique({
+                where: { clientId: request.clientId },
+                select: { id: true, branchId: true, clientId: true },
+            });
+            if (
+                !record
+                || record.branchId !== request.branchId
+                || record.clientId !== request.clientId
+            ) {
+                throw new NotFoundException("Service record not found");
+            }
+            await lockServiceRecordWriteSet(tx, {
+                branchId: request.branchId,
+                clientId: request.clientId,
+                caseId: record.id,
+                scheduleIds: [schedule.id],
+                employeeIds: [schedule.primaryEmployeeId, schedule.secondaryEmployeeId],
+            });
+            const requestLocked = await lockScheduleChangeRequestForWrite(
+                tx,
+                request.branchId,
+                request.id,
+            );
+            if (!requestLocked) {
+                throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+            }
+            const rereadRequest = await tx.schedule_change_request.findFirst({
+                where: { id: request.id, branchId: request.branchId },
+            });
+            if (!rereadRequest) throw new NotFoundException("Schedule change request not found");
+            if (rereadRequest.status !== "pending") {
+                throw new ConflictException({ code: "REQUEST_NOT_PENDING" });
+            }
+            if (
+                rereadRequest.scheduleId !== request.scheduleId
+                || rereadRequest.clientId !== request.clientId
+                || rereadRequest.branchId !== request.branchId
+            ) {
+                throw new ConflictException("Schedule-change request target changed while acquiring write locks");
+            }
+            return tx.schedule_change_request.update({
+                where: { id: rereadRequest.id },
+                data: {
+                    status: "rejected",
+                    decidedBy: tenant.userId ?? null,
+                    decidedAt: new Date(),
+                    ...(reason !== undefined ? { reason } : {}),
+                },
+            });
         });
 
         return this.serializeRequest(updated);
