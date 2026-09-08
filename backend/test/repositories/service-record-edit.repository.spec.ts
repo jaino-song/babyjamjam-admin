@@ -1,4 +1,8 @@
 import { ServiceRecordEditNotFoundError } from "domain/errors/service-record-edit.error";
+import type {
+    ServiceRecordEditConfirmPlan,
+    ServiceRecordEditSource,
+} from "domain/repositories/service-record-edit.repository.interface";
 import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
 
 const branchId = "11111111-1111-4111-8111-111111111111";
@@ -70,6 +74,87 @@ const sqlTextWithValues = (value: unknown): string => {
 function transactionalPrisma<T extends Record<string, unknown>>(transactionClient: T) {
     return {
         $transaction: jest.fn(async (callback: (client: T) => Promise<unknown>) => callback(transactionClient)),
+    };
+}
+
+function futureSource(): ServiceRecordEditSource {
+    const assignmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    return {
+        caseId,
+        caseVersion: 7,
+        formVersion: 3,
+        caseLifecycle: {
+            status: "IN_PROGRESS",
+            completedAt: null,
+            finalizationDueAt: null,
+            finalizationStartedAt: null,
+            finalizedAt: null,
+            documentsCompletedAt: null,
+        },
+        requiredSessionCount: 2,
+        startDate: "2026-09-01",
+        endDate: "2026-09-02",
+        header: {
+            momName: "산모",
+            momBirth: "900101",
+            babyName: "아기",
+            babyBirth: "260901",
+            deliveryType: "자연분만",
+            babyWeight: "3.2",
+        },
+        sessions: [{
+            id: "day-1",
+            branchId,
+            sourceRowId: "day-1",
+            scheduleId: 55,
+            sessionIndex: 1,
+            rawCaseSessionIndex: 1,
+            rawSessionIndex: 1,
+            ambiguous: false,
+            serviceDate: "2026-09-01",
+            answers: {},
+            etcService: null,
+            notes: null,
+            paymentConfirmed: false,
+            momApproval: null,
+            clientSignature: null,
+            clientSignedAt: null,
+            locked: false,
+            submittedAt: null,
+            employeeId: 9,
+            employeeNameSnapshot: "제공자",
+            formVersion: 3,
+        }],
+        assignments: [{
+            id: assignmentId,
+            branchId,
+            serviceRecordCaseId: caseId,
+            scheduleId: 55,
+            employeeId: 9,
+            startDate: "2026-09-01",
+            endDate: "2026-09-02",
+            replaced: false,
+            employeeName: "제공자",
+            scheduleStartDate: "2026-09-01",
+            scheduleEndDate: "2026-09-02",
+            scheduleTerminatedAt: null,
+            primaryEmployeeId: 9,
+            secondaryEmployeeId: null,
+            primaryEmployeeName: "제공자",
+        }],
+        plannedSessions: [
+            { sessionIndex: 1, serviceDate: "2026-09-01" },
+            { sessionIndex: 2, serviceDate: "2026-09-02" },
+        ],
+        client: {
+            id: 101,
+            branchId,
+            name: "산모",
+            duration: 2,
+            startDate: "2026-09-01",
+            endDate: "2026-09-02",
+            serviceStatus: "in_progress",
+        },
     };
 }
 
@@ -553,6 +638,115 @@ describe("ServiceRecordEditRepository", () => {
                 draftVersion: { increment: 1 },
             }),
         }));
+    });
+
+    it("creates an unlocked future day from the canonical confirmation plan", async () => {
+        const source = futureSource();
+        const activeDraft = draftRow({ sourceCaseVersion: source.caseVersion });
+        const service_record_edit_draft = {
+            findFirst: jest.fn().mockResolvedValue(activeDraft),
+            updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        };
+        const service_record_day = {
+            updateMany: jest.fn(),
+            create: jest.fn().mockResolvedValue({ id: "future-day" }),
+        };
+        const tx = {
+            $queryRaw: jest.fn().mockResolvedValue([]),
+            service_record_edit_draft,
+            service_record_case: {
+                update: jest.fn().mockResolvedValue({ version: source.caseVersion + 1 }),
+            },
+            client: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+            service_record_day,
+            service_record_token: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        };
+        const prisma = transactionalPrisma(tx);
+        const repository = new ServiceRecordEditRepository(prisma as never);
+        const internals = repository as unknown as {
+            findDraftByIdWithClient: jest.Mock;
+            loadSourceWithClient: jest.Mock;
+        };
+        jest.spyOn(internals, "findDraftByIdWithClient").mockResolvedValue(activeDraft);
+        jest.spyOn(internals, "loadSourceWithClient").mockResolvedValue(source);
+
+        const plan: ServiceRecordEditConfirmPlan = {
+            status: "confirmed",
+            sourceFingerprint: "a".repeat(64),
+            caseId,
+            clientId: source.client.id,
+            formVersion: source.formVersion,
+            requiredSessionCount: source.requiredSessionCount,
+            startDate: source.startDate,
+            endDate: source.endDate,
+            header: source.header,
+            plannedSessions: source.plannedSessions,
+            sessions: [],
+            newSessions: [{
+                sourceRowId: "55555555-5555-4555-8555-555555555555",
+                sessionIndex: 2,
+                serviceDate: "2026-09-02",
+                originalDate: "2026-09-02",
+                assignmentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                provenanceVersion: "case-7",
+                answers: {},
+                etcService: null,
+                notes: "관리자 미래 메모",
+                paymentConfirmed: false,
+                momApproval: null,
+                clientSignature: null,
+                clientSignedAt: null,
+                locked: false,
+                submittedAt: null,
+                scheduleId: 55,
+                employeeId: 9,
+                employeeNameSnapshot: "제공자",
+                formVersion: 3,
+            }],
+            assignments: [],
+            revision: null,
+            dispatchContext: null,
+            documentStatus: "capability_unverified",
+            documentJob: null,
+        };
+
+        await expect(repository.confirmDraft({
+            branchId,
+            draftId,
+            expectedDraftVersion: activeDraft.draftVersion,
+            previewId: `srp_${"a".repeat(64)}`,
+            idempotencyKey: "66666666-6666-4666-8666-666666666666",
+            requestFingerprint: "b".repeat(64),
+            actorUserId: actorId,
+            prepare: () => plan,
+        })).resolves.toMatchObject({
+            status: "confirmed",
+            caseId,
+            draftId,
+            revisionId: null,
+        });
+
+        expect(service_record_day.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({
+                id: "55555555-5555-4555-8555-555555555555",
+                branchId,
+                serviceRecordCaseId: caseId,
+                caseSessionIndex: 2,
+                sessionIndex: 2,
+                serviceDate: new Date("2026-09-02T00:00:00.000Z"),
+                scheduleId: 55,
+                employeeId: 9,
+                employeeNameSnapshot: "제공자",
+                formVersion: 3,
+                notes: "관리자 미래 메모",
+                locked: false,
+                submittedAt: null,
+                clientSignature: null,
+                clientSignedAt: null,
+                momApproval: null,
+            }),
+        });
+        expect(service_record_day.updateMany).not.toHaveBeenCalled();
     });
 
     it("allocates the next revision number under a case lock and never updates a prior revision", async () => {

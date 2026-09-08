@@ -9,6 +9,7 @@ const CASE_ID = "22222222-2222-4222-8222-222222222222";
 const DRAFT_ID = "33333333-3333-4333-8333-333333333333";
 const ACTOR_ID = "44444444-4444-4444-8444-444444444444";
 const CLIENT_ID = 101;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function sourceSnapshot(overrides: Record<string, unknown> = {}): ServiceRecordEditSource {
     return {
@@ -110,6 +111,14 @@ function previewSourceSnapshot(): ServiceRecordEditSource {
     const dates = ["2026-09-01", "2026-09-02", "2026-09-03"];
     return {
         ...base,
+        caseLifecycle: {
+            status: "IN_PROGRESS",
+            completedAt: null,
+            finalizationDueAt: null,
+            finalizationStartedAt: null,
+            finalizedAt: null,
+            documentsCompletedAt: null,
+        },
         startDate: dates[0]!,
         endDate: dates.at(-1)!,
         assignments: [assignment],
@@ -477,6 +486,239 @@ describe("AdminServiceRecordEditService", () => {
         expect(atomicRepository.loadDraftWithSource).toHaveBeenCalledWith(BRANCH_ID, DRAFT_ID);
         expect(harness.repository.findDraftById).not.toHaveBeenCalled();
         expect(harness.repository.loadSource).toHaveBeenCalledTimes(1);
+    });
+
+    it("plans explicit future content with canonical provenance in the immutable revision", async () => {
+        const source = previewSourceSnapshot();
+        const harness = createHarness({ source });
+        const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+        if (!started.draft) throw new Error("expected a draft");
+        const activeDraft = {
+            ...started.draft,
+            changes: { sessions: [{ sessionIndex: 2, answers: {}, notes: "관리자 미래 메모" }] },
+        };
+        harness.repository.findDraftById.mockResolvedValue(activeDraft);
+        harness.repository.loadSource.mockResolvedValue(source);
+        const preview = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+        });
+        const response = {
+            status: "confirmed" as const,
+            caseId: CASE_ID,
+            clientId: CLIENT_ID,
+            draftId: DRAFT_ID,
+            draftVersion: 2,
+            caseVersion: 8,
+            revisionId: "55555555-5555-4555-8555-555555555555",
+            revisionNumber: 1,
+            documentStatus: "capability_unverified" as const,
+            confirmedAt: "2026-09-08T01:02:03.000Z",
+        };
+        harness.repository.confirmDraft.mockResolvedValue(response);
+
+        await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+            previewId: preview.previewId,
+            idempotencyKey: "11111111-1111-4111-8111-111111111111",
+        });
+
+        const input = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
+            prepare: (snapshot: { draft: typeof activeDraft; source: ServiceRecordEditSource }) => unknown;
+        };
+        const plan = input.prepare({ draft: activeDraft, source }) as {
+            status: "confirmed" | "no_changes";
+            sessions: Array<Record<string, unknown>>;
+            newSessions: Array<Record<string, unknown>>;
+            revision: { payload: Record<string, unknown> } | null;
+        };
+        expect(plan.status).toBe("confirmed");
+        expect(plan.sessions).toHaveLength(1);
+        expect(plan.newSessions).toHaveLength(1);
+        const future = plan.newSessions[0]!;
+        expect(future).toMatchObject({
+            sessionIndex: 2,
+            serviceDate: "2026-09-02",
+            originalDate: "2026-09-02",
+            assignmentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            provenanceVersion: "case-7",
+            answers: {},
+            etcService: null,
+            notes: "관리자 미래 메모",
+            paymentConfirmed: false,
+            momApproval: null,
+            clientSignature: null,
+            clientSignedAt: null,
+            locked: false,
+            submittedAt: null,
+            scheduleId: 55,
+            employeeId: 9,
+            employeeNameSnapshot: "제공자",
+            formVersion: 3,
+        });
+        expect(future["sourceRowId"]).toEqual(expect.stringMatching(UUID_PATTERN));
+        expect(plan.revision?.payload).toEqual(expect.objectContaining({
+            completeness: "partial",
+            sessions: expect.arrayContaining([
+                expect.objectContaining({
+                    sourceRowId: future["sourceRowId"],
+                    sessionIndex: 2,
+                    notes: "관리자 미래 메모",
+                    locked: false,
+                    submittedAt: null,
+                    clientSignature: null,
+                    clientSignedAt: null,
+                    employeeId: 9,
+                    scheduleId: 55,
+                    formVersion: 3,
+                }),
+            ]),
+            newSessions: expect.arrayContaining([
+                expect.objectContaining({
+                    sourceRowId: future["sourceRowId"],
+                    sessionIndex: 2,
+                    notes: "관리자 미래 메모",
+                }),
+            ]),
+        }));
+    });
+
+    it.each([
+        ["session-index-only", { sessions: [{ sessionIndex: 2 }] }],
+        ["date-only", { sessions: [{ sessionIndex: 2, serviceDate: "2026-09-02" }] }],
+        ["blank-note", { sessions: [{ sessionIndex: 2, notes: "" }] }],
+    ])("keeps an ineffective future patch a no-op (%s)", async (_label, changes) => {
+        const source = previewSourceSnapshot();
+        const harness = createHarness({ source });
+        const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+        if (!started.draft) throw new Error("expected a draft");
+        const activeDraft = { ...started.draft, changes };
+        harness.repository.findDraftById.mockResolvedValue(activeDraft);
+        harness.repository.loadSource.mockResolvedValue(source);
+        const preview = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+        });
+        harness.repository.confirmDraft.mockResolvedValue({
+            status: "confirmed" as const,
+            caseId: CASE_ID,
+            clientId: CLIENT_ID,
+            draftId: DRAFT_ID,
+            draftVersion: 2,
+            caseVersion: 8,
+            revisionId: "55555555-5555-4555-8555-555555555555",
+            revisionNumber: 1,
+            documentStatus: "capability_unverified" as const,
+            confirmedAt: "2026-09-08T01:02:03.000Z",
+        });
+        await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+            previewId: preview.previewId,
+            idempotencyKey: "11111111-1111-4111-8111-111111111111",
+        });
+        const input = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
+            prepare: (snapshot: { draft: typeof activeDraft; source: ServiceRecordEditSource }) => unknown;
+        };
+        const plan = input.prepare({ draft: activeDraft, source }) as {
+            status: "confirmed" | "no_changes";
+            newSessions: Array<Record<string, unknown>>;
+            revision: unknown;
+        };
+        expect(plan.status).toBe("no_changes");
+        expect(plan.newSessions).toEqual([]);
+        expect(plan.revision).toBeNull();
+    });
+
+    it("keeps an explicit blank content clear in the durable revision payload", async () => {
+        const source = previewSourceSnapshot();
+        source.sessions[0] = { ...source.sessions[0]!, notes: "기존 메모" };
+        const harness = createHarness({ source });
+        const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+        if (!started.draft) throw new Error("expected a draft");
+        const activeDraft = {
+            ...started.draft,
+            changes: { sessions: [{ sessionIndex: 1, notes: "" }] },
+        };
+        harness.repository.findDraftById.mockResolvedValue(activeDraft);
+        harness.repository.loadSource.mockResolvedValue(source);
+        const preview = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+        });
+        harness.repository.confirmDraft.mockResolvedValue({
+            status: "confirmed" as const,
+            caseId: CASE_ID,
+            clientId: CLIENT_ID,
+            draftId: DRAFT_ID,
+            draftVersion: 2,
+            caseVersion: 8,
+            revisionId: "55555555-5555-4555-8555-555555555555",
+            revisionNumber: 1,
+            documentStatus: "capability_unverified" as const,
+            confirmedAt: "2026-09-08T01:02:03.000Z",
+        });
+        await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+            previewId: preview.previewId,
+            idempotencyKey: "11111111-1111-4111-8111-111111111111",
+        });
+        const input = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
+            prepare: (snapshot: { draft: typeof activeDraft; source: ServiceRecordEditSource }) => unknown;
+        };
+        const plan = input.prepare({ draft: activeDraft, source }) as {
+            sessions: Array<Record<string, unknown>>;
+            revision: { payload: Record<string, unknown> } | null;
+        };
+        expect(plan.sessions).toEqual([expect.objectContaining({ sourceRowId: "day-1", notes: "" })]);
+        expect(plan.revision?.payload).toEqual(expect.objectContaining({
+            sessions: expect.arrayContaining([
+                expect.objectContaining({ sourceRowId: "day-1", notes: "" }),
+            ]),
+        }));
+    });
+
+    it("fails closed when future content lacks canonical employee ownership", async () => {
+        const source = previewSourceSnapshot();
+        source.assignments = [{
+            ...source.assignments[0]!,
+            employeeName: null,
+            primaryEmployeeName: null,
+        }];
+        const harness = createHarness({ source });
+        const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+        if (!started.draft) throw new Error("expected a draft");
+        const activeDraft = {
+            ...started.draft,
+            changes: { sessions: [{ sessionIndex: 2, notes: "관리자 미래 메모" }] },
+        };
+        harness.repository.findDraftById.mockResolvedValue(activeDraft);
+        harness.repository.loadSource.mockResolvedValue(source);
+        const preview = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+        });
+        harness.repository.confirmDraft.mockResolvedValue({
+            status: "confirmed" as const,
+            caseId: CASE_ID,
+            clientId: CLIENT_ID,
+            draftId: DRAFT_ID,
+            draftVersion: 2,
+            caseVersion: 8,
+            revisionId: "55555555-5555-4555-8555-555555555555",
+            revisionNumber: 1,
+            documentStatus: "capability_unverified" as const,
+            confirmedAt: "2026-09-08T01:02:03.000Z",
+        });
+        await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+            previewId: preview.previewId,
+            idempotencyKey: "11111111-1111-4111-8111-111111111111",
+        });
+        const input = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
+            prepare: (snapshot: { draft: typeof activeDraft; source: ServiceRecordEditSource }) => unknown;
+        };
+        expect(() => input.prepare({ draft: activeDraft, source })).toThrow(ConflictException);
+        expect(() => input.prepare({ draft: activeDraft, source })).toThrow(
+            expect.objectContaining({ response: expect.objectContaining({
+                code: "SERVICE_RECORD_FUTURE_SESSION_PROVENANCE_UNAVAILABLE",
+            }) }),
+        );
     });
 
     it("binds signature and document metadata into the preview identifier", async () => {
