@@ -3,6 +3,10 @@ import { getClientConflictPayload } from "@babyjamjam/shared";
 import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
 import {
+    getSafeApiDisplayMessage,
+    sanitizeApiDisplayMessage,
+} from "@/lib/errors/safe-api-error-message";
+import {
     backendJsonResponse,
     errorResponse,
     getAuthHeaders,
@@ -89,7 +93,16 @@ export async function POST(request: NextRequest) {
             ? null
             : getClientConflictPayload(error);
         if (conflict) {
-            return NextResponse.json(conflict, { status: 409 });
+            const safeMessage = getSafeApiDisplayMessage(error);
+            if (safeMessage) {
+                return NextResponse.json(
+                    {
+                        message: sanitizeApiDisplayMessage(safeMessage),
+                        ...(conflict.clientId === undefined ? {} : { clientId: conflict.clientId }),
+                    },
+                    { status: 409 },
+                );
+            }
         }
         return errorResponse(error, "create client");
     }
