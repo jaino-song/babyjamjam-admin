@@ -59,19 +59,20 @@ describeE2E("service-record edit persistence (real PostgreSQL)", () => {
     });
 
     afterEach(async () => {
+        if (!prisma) return;
+        // Revisions are append-only and deliberately cannot be deleted by a
+        // test cleanup query. Keep those disposable rows, while removing the
+        // mutable fixtures that do not participate in the retention guard.
         await prisma.service_record_day.deleteMany({ where: { branchId: { in: [branchId, foreignBranchId] } } });
         await prisma.service_record_edit_draft.deleteMany({ where: { branchId: { in: [branchId, foreignBranchId] } } });
-        await prisma.service_record_revision.deleteMany({ where: { branchId: { in: [branchId, foreignBranchId] } } });
-        await prisma.service_record_case.deleteMany({ where: { branchId: { in: [branchId, foreignBranchId] } } });
     });
 
     afterAll(async () => {
         if (!prisma) return;
-        await prisma.service_record_day.deleteMany({ where: { branchId: { in: [branchId, foreignBranchId] } } });
-        await prisma.service_record_edit_draft.deleteMany({ where: { branchId: { in: [branchId, foreignBranchId] } } });
-        await prisma.service_record_revision.deleteMany({ where: { branchId: { in: [branchId, foreignBranchId] } } });
-        await prisma.service_record_case.deleteMany({ where: { branchId: { in: [branchId, foreignBranchId] } } });
-        await prisma.branch.deleteMany({ where: { id: { in: [branchId, foreignBranchId] } } });
+        // The two databases are disposable task targets. Disconnect without
+        // attempting to delete revision-backed cases or branches: the
+        // append-only trigger is part of the production contract and must
+        // remain enabled during this proof.
         await prisma.$disconnect();
     });
 
@@ -291,6 +292,41 @@ describeE2E("service-record edit persistence (real PostgreSQL)", () => {
         await expect(prisma.service_record_revision.count({ where: { serviceRecordCaseId: serviceCase.id } })).resolves.toBe(0);
     });
 
+    it("rejects direct cross-branch draft and revision inserts", async () => {
+        const serviceCase = await prisma.service_record_case.create({ data: { branchId } });
+
+        await expect(prisma.service_record_edit_draft.create({
+            data: {
+                branchId: foreignBranchId,
+                serviceRecordCaseId: serviceCase.id,
+                createdByUserId: actorId(),
+                updatedByUserId: actorId(),
+                sourceCaseVersion: 1,
+                sourceFingerprint: "cross-branch-draft",
+                sourceSnapshot: {},
+                changes: {},
+                draftVersion: 1,
+                status: "ACTIVE",
+            },
+        })).rejects.toThrow();
+
+        await expect(prisma.service_record_revision.create({
+            data: {
+                branchId: foreignBranchId,
+                serviceRecordCaseId: serviceCase.id,
+                revisionNumber: 1,
+                confirmedByUserId: actorId(),
+                payload: {},
+                plannedSessions: [],
+                provenance: {},
+                formVersionAtConfirm: 1,
+            },
+        })).rejects.toThrow();
+
+        await expect(prisma.service_record_edit_draft.count({ where: { serviceRecordCaseId: serviceCase.id } })).resolves.toBe(0);
+        await expect(prisma.service_record_revision.count({ where: { serviceRecordCaseId: serviceCase.id } })).resolves.toBe(0);
+    });
+
     it("appends an immutable revision under a parent lock", async () => {
         const serviceCase = await prisma.service_record_case.create({ data: { branchId, version: 8 } });
         const appended = await repository.appendRevision({
@@ -336,6 +372,33 @@ describeE2E("service-record edit persistence (real PostgreSQL)", () => {
         await expect(repository.appendRevision(input)).resolves.toMatchObject({ revisionNumber: 1 });
         await expect(repository.appendRevision({ ...input, actorUserId: actorId() }))
             .resolves.toMatchObject({ revisionNumber: 2 });
+    });
+
+    it("allocates contiguous revision numbers for truly concurrent appenders", async () => {
+        const serviceCase = await prisma.service_record_case.create({ data: { branchId } });
+        const writes = await Promise.all(
+            Array.from({ length: 4 }, (_, index) => repository.appendRevision({
+                branchId,
+                serviceRecordCaseId: serviceCase.id,
+                actorUserId: actorId(),
+                payload: { writer: index },
+                plannedSessions: [],
+                provenance: { writer: index },
+                formVersionAtConfirm: 1,
+            })),
+        );
+
+        expect(writes.map(({ revisionNumber }) => revisionNumber).sort((a, b) => a - b)).toEqual([1, 2, 3, 4]);
+        await expect(prisma.service_record_revision.findMany({
+            where: { branchId, serviceRecordCaseId: serviceCase.id },
+            orderBy: { revisionNumber: "asc" },
+            select: { revisionNumber: true },
+        })).resolves.toEqual([
+            { revisionNumber: 1 },
+            { revisionNumber: 2 },
+            { revisionNumber: 3 },
+            { revisionNumber: 4 },
+        ]);
     });
 
     it("pins revision pointers to the same branch and case", async () => {
