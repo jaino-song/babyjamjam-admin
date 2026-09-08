@@ -410,3 +410,6 @@
 - Task3.1 사전 확인: lifecycle.ensureForClient는 client.duration을 fallback으로 사용하고 upsert의 create/update 모두 requiredSessionCount에 대입하므로, 저장된 N13을 duration15로 덮을 수 있다. recompute는 record.requiredSessionCount를 fallback으로 사용한다. 이전 scout의 “duration 초기화만 overwrite” 결론은 채택하지 않는다. 현재 mobile public page는664줄이며 과거911줄 등의 위치도 증거로 사용하지 않는다. 이 경로의 기존 N 보존은3.1 회귀 조건이다.
 
 - Task3.0 범위 보완: terminateService/completeReplacement가 호출하는 UpdateClientUsecase와 client repository는 자체 트랜잭션 소유 경계라, service만 감싸면 중첩 저장이 된다. 동일 트랜잭션 전달을 위한 usecase/interface/sb.client.repository 세 경로를 승인된3.0 Paths에 추가했다. 기존 업무 로직과 duration/가격/N 의미는 유지한다.
+
+- Phase4 사전 소유 경계 조사(구현 아님): 기존 문자 job은 소문자 `pending/processing/dispatching/sent/failed/canceled`를 사용하며 message-trigger.service의 authorizeClaimedJobForDispatch 트랜잭션이 claim token을 재검사한 뒤 dispatching을 저장한다. 현재 원본 fence는 EMPLOYEE_ASSIGNED schedule에 한정되어 revision/기간/문서 동기화 검사로 확장해야 한다. eformsign job은 queued/processing/reconciling/completed/failed/requires_attention이며 동일 dispatching 경계가 이미 있다고 가정하지 않는다. 메인이 실제 소스를 재확인했다.
+- 기존 persistClientIntent/persistScheduleIntent는 TransactionClient를 받는다. service-record token expiry는 자체20시 KST 정책이며 계약 자동 완료17시 설정과 구분한다. revision.appendRevision은 현재 자체 트랜잭션을 여므로4.1의 typed owning UoW 확장이 필요하다. 영수증 토큰 만료는 이 변경 대상이 아니다.
