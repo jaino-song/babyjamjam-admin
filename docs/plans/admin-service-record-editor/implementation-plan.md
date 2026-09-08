@@ -218,6 +218,8 @@ N은 지원하는 달력의 완전한 시작/종료일이 있을 때만 초기�
   **추가 Paths:** `backend/application/services/client.service.ts`, `backend/application/services/employee-schedule.service.ts`, `backend/application/usecases/employee-schedule/create-employee-schedule.usecase.ts`, `backend/application/usecases/employee-schedule/update-employee-schedule.usecase.ts`, `backend/application/usecases/eformsign-doc/link-mirrored-eformsign-doc-by-phone.usecase.ts`, `backend/infrastructure/database/repositories/sb.employee-schedule.repository.ts`, `backend/application/policies/service-record-write-lock.policy.ts`, 관련 service/usecase/repository/integration 테스트
   **Depends:** Task 2.2, Task 2.A
 
+Phase3 달력 검증 보정: 공통 한국 영업일 표 자체도 공식 월력요항/임시공휴일 공고와 대조한다. 현재 표의 2024-10-01 및 2025-01-27/06-03 누락, 2026-09-28 오등록, 2027 대체공휴일 누락/오등록을 공식 근거로 보완하고 calendar version을 올린다. 근거 URL과 변경 날짜를 검증 문서에 기록한다. 기존 확정 N/예정 벡터/day는 달력 변경만으로 재생성하지 않으며 모순되는 legacy 원본은 조회/초안을 보존한 채 확정을 차단한다. 명시적 날짜 이동/새 서비스 초기화만 보정된 달력을 쓰고, original date는 유지한다. shared 소유 계산과 backend vendor 산출물 및 각 소비자 회귀 테스트가 Task3.1 소유 경로에 포함된다.
+
 - **Task 3.1: 날짜 변경 계산과 서버 미리보기** (feature, high)
   - 기존 `schedule-change`의 영업일 계산·배정 충돌 검사·클라이언트/직원 잠금 정책을 재사용한다. 다만 현재 ‘잠금되지 않은 뒤 회차만 이동’과 ‘종료일 연장’ 전용 부분을 그대로 호출하지 않는다.
   - 서버가 before/after 날짜, 기록 필드 변경, 시작·종료일, 영향받는 배정, 서명 처리, 재생성할 문서 범위를 반환한다. 초안에 반영된 현재 전체 날짜 벡터를 기준으로 선택 회차의 기존 날짜와 새 날짜 차이를 계산해 해당 회차 이후에 한 번 적용한다. 입력 필드 PATCH 재시도는 draftVersion 조건으로 중복 이동을 막는다. 여러 회차를 고친 뒤 원본으로 되돌리는 경우도 벡터 차이를 미리보기에 표시한다. 연속 영업일로 재배열하지 않아 원래의 불규칙 간격을 유지한다.
