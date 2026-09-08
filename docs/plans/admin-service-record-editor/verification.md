@@ -144,7 +144,7 @@ The exact-path PG logs above are the result artifacts for the historical SHIP ev
 ### Same-session audit corrections — evidence ready, verdict pending
 
 - Different-payload rejection is mapped above to the actual mismatch assertion inside the existing named atomic test. A standalone test with that title was not invented.
-- Twelve historical PG commands/cwds were recovered from original exec launch inputs and preserved in `phase6-historical-pg-commands.json`; no historical DB command was replayed.
+- Eleven historical exact PG commands/cwds were recovered and preserved in `phase6-historical-pg-commands.json`. The twelfth, stale-lifecycle artifact retains only its cwd/result; its accepted exact command is unavailable and no exact-command provenance is claimed. No historical DB command was replayed.
 - Both JWT expiration and persisted-session expiration are now separately exercised. Final18-case suite passed twice sequentially with a firmly expired JWT fixture (`fbb91879a`): `/tmp/bjj-phase6-http-expiry-final1.log`, `/tmp/bjj-phase6-http-expiry-final2.log`. The original one-off403 response, diagnostic18PASS, and unproven cause remain recorded in `phase6-final-audit.md`; production authentication was not changed and the401 assertion was retained.
 - Root `pnpm build` and `pnpm lint` were rerun at final code/test checkpoint `fbb91879a` in a fresh no-env unit with local dependency clones. Accepted artifacts: `/tmp/bjj-phase6-release-check-build.log`, `/tmp/bjj-phase6-release-check-lint.log`. Build allowed only loopback with fixed synthetic API/DB values and blank Sentry credentials; lint denied networking. Backend dist and frontend/mobile BUILD_ID outputs were nonempty. Subsequent changes are documentation only.
 
