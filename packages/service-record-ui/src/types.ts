@@ -64,6 +64,8 @@ export interface SignatureSlotProps {
 export interface ServiceRecordWizardSlots {
     provider?: (props: ProviderSlotProps) => ReactNode;
     signature?: (props: SignatureSlotProps) => ReactNode;
+    /** Optional authenticated administrator controls. Public flows do not render this slot. */
+    adminToolbar?: ReactNode;
     overviewSupplemental?: ReactNode;
     submitModal?: ReactNode;
     scheduleChangeModal?: ReactNode;
@@ -88,6 +90,10 @@ export interface ServiceRecordWizardProps {
      * read-only and every recorded session navigable.
      */
     readOnly?: boolean;
+    /** Explicit opt-in for the authenticated administrator editor. */
+    adminMode?: boolean;
+    /** Session indexes whose values differ from the source record in a draft. */
+    changedSessionIndexes?: ReadonlySet<number>;
     clientSignature: string | null;
     busy: boolean;
     isRecordFinalized: boolean;

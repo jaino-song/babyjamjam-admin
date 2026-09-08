@@ -7,6 +7,7 @@ import {
     ServiceRecordAdminWizard,
     type AdminServiceRecordEditorOverview,
 } from "./ServiceRecordAdminWizard";
+import type { AdminServiceRecordEditState } from "@/features/service-records/types";
 
 function makeSession(
     sessionIndex: number,
@@ -110,6 +111,34 @@ const overview = {
     ],
 } as unknown as AdminServiceRecordEditorOverview;
 
+function makeDraftState(
+    changes: Record<string, unknown> = {},
+    draftVersion = 1,
+): AdminServiceRecordEditState {
+    return {
+        draft: {
+            id: "draft-1",
+            branchId: "branch-1",
+            serviceRecordCaseId: "case-1",
+            sourceCaseVersion: 1,
+            sourceFingerprint: "source-1",
+            sourceSnapshot: {},
+            changes,
+            draftVersion,
+            status: "ACTIVE",
+            createdByUserId: "admin-1",
+            updatedByUserId: "admin-1",
+            discardedByUserId: null,
+            createdAt: "2026-07-01T00:00:00.000Z",
+            updatedAt: "2026-07-01T00:00:00.000Z",
+            discardedAt: null,
+        },
+        sourceChanged: false,
+        sourceCaseVersion: 1,
+        sourceFingerprint: "source-1",
+    };
+}
+
 describe("ServiceRecordAdminWizard", () => {
     it("keeps an assignment collision as a selectable supplemental record", () => {
         const view = buildAdminServiceRecordView(overview);
@@ -153,14 +182,14 @@ describe("ServiceRecordAdminWizard", () => {
             }),
         ]));
 
-        const { container } = render(<ServiceRecordAdminWizard overview={overviewWithLegacyRow} />);
+        const { container } = render(<ServiceRecordAdminWizard clientId="42" overview={overviewWithLegacyRow} />);
         fireEvent.click(screen.getByRole("button", { name: /5회차/ }));
         expect(container).toHaveTextContent("5회차 ·");
         expect(container).toHaveTextContent("2026.07.20");
     });
 
     it("renders all sessions as navigable read-only days and preserves out-of-period dates", () => {
-        const { container } = render(<ServiceRecordAdminWizard overview={overview} />);
+        const { container } = render(<ServiceRecordAdminWizard clientId="42" overview={overview} />);
 
         const dayButtons = container.querySelectorAll('[data-slot="day"]');
         expect(dayButtons).toHaveLength(3);
@@ -171,7 +200,7 @@ describe("ServiceRecordAdminWizard", () => {
     });
 
     it("disables every form control and submit action while keeping four-page navigation active", () => {
-        const { container } = render(<ServiceRecordAdminWizard overview={overview} />);
+        const { container } = render(<ServiceRecordAdminWizard clientId="42" overview={overview} />);
         fireEvent.click(container.querySelectorAll('[data-slot="day"]')[2]);
 
         for (let page = 0; page < 3; page += 1) {
@@ -188,7 +217,7 @@ describe("ServiceRecordAdminWizard", () => {
     });
 
     it("shows an existing signature and allows a supplemental assignment to be selected", () => {
-        const { container } = render(<ServiceRecordAdminWizard overview={overview} />);
+        const { container } = render(<ServiceRecordAdminWizard clientId="42" overview={overview} />);
         const supplemental = screen.getByRole("button", { name: /1회차 · 배정 #7/ });
         fireEvent.click(supplemental);
         expect(container).toHaveTextContent("2026.07.12");
@@ -223,6 +252,136 @@ describe("ServiceRecordAdminViewer", () => {
         expect(global.fetch).toHaveBeenCalledWith(
             "/api/admin/service-records/client/42/editor",
             expect.objectContaining({ cache: "no-store" }),
+        );
+    });
+});
+
+describe("administrator draft editing", () => {
+    const originalFetch = global.fetch;
+
+    afterEach(() => {
+        global.fetch = originalFetch;
+        jest.restoreAllMocks();
+    });
+
+    it("starts a draft explicitly before enabling canonical edits", async () => {
+        global.fetch = jest.fn().mockResolvedValue({
+            ok: true,
+            status: 201,
+            json: async () => makeDraftState(),
+        });
+        const { container } = render(<ServiceRecordAdminWizard clientId="42" overview={overview} />);
+
+        expect(screen.getByText("초안 없음")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "초안 저장" }));
+
+        await waitFor(() => expect(screen.getByText("저장됨")).toBeInTheDocument());
+        expect(global.fetch).toHaveBeenCalledWith(
+            "/api/admin/service-records/client/42/draft",
+            expect.objectContaining({ method: "POST", body: "{}" }),
+        );
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[0]);
+        expect(container.querySelectorAll("input:not([disabled]), textarea:not([disabled])").length).toBeGreaterThan(0);
+    });
+
+    it("resumes changed sessions and lets admins navigate incomplete submitted pages", () => {
+        const resumed = makeDraftState({ sessions: [{ sessionIndex: 1, answers: { perineum: [] } }] });
+        const { container } = render(
+            <ServiceRecordAdminWizard clientId="42" overview={overview} initialDraftState={resumed} />,
+        );
+
+        expect(container).toHaveTextContent("초안 변경");
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[0]);
+        const next = screen.getByRole("button", { name: "다음" });
+        expect(next).not.toBeDisabled();
+    });
+
+    it("saves only draft changes with the current CAS version and keeps source data immutable", async () => {
+        const initial = makeDraftState();
+        const saved = makeDraftState({ sessions: [{ sessionIndex: 1, serviceDate: "2026-07-16" }] }, 2);
+        global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => saved });
+        const { container } = render(
+            <ServiceRecordAdminWizard clientId="42" overview={overview} initialDraftState={initial} />,
+        );
+
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[0]);
+        const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
+        fireEvent.change(dateInput, { target: { value: "2026-07-16" } });
+        fireEvent.click(screen.getByRole("button", { name: "초안 저장" }));
+
+        await waitFor(() => expect(screen.getByText("저장됨")).toBeInTheDocument());
+        expect(global.fetch).toHaveBeenCalledWith(
+            "/api/admin/service-records/drafts/draft-1",
+            expect.objectContaining({
+                method: "PATCH",
+                body: JSON.stringify({
+                    expectedDraftVersion: 1,
+                    changes: { sessions: [{ sessionIndex: 1, serviceDate: "2026-07-16" }] },
+                }),
+            }),
+        );
+        expect(overview.record?.sessions[0].serviceDate).toBe("2026-07-11");
+    });
+
+    it("keeps the active-day input on 409 until an explicit latest-draft reload", async () => {
+        const latest = makeDraftState({ sessions: [{ sessionIndex: 1, serviceDate: "2026-07-18" }] }, 3);
+        global.fetch = jest.fn().mockResolvedValue({
+            ok: false,
+            status: 409,
+            json: async () => ({
+                code: "SERVICE_RECORD_EDIT_DRAFT_CONFLICT",
+                latestDraft: latest.draft,
+                sourceChanged: true,
+                sourceCaseVersion: 2,
+                sourceFingerprint: "source-2",
+            }),
+        });
+        const { container } = render(
+            <ServiceRecordAdminWizard clientId="42" overview={overview} initialDraftState={makeDraftState()} />,
+        );
+
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[0]);
+        const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
+        fireEvent.change(dateInput, { target: { value: "2026-07-17" } });
+        fireEvent.click(screen.getByRole("button", { name: "초안 저장" }));
+
+        await waitFor(() => expect(screen.getByText(/다른 관리자의 변경으로 저장되지 않았습니다/)).toBeInTheDocument());
+        expect(dateInput).toHaveValue("2026-07-17");
+        fireEvent.click(screen.getByRole("button", { name: "최신 초안 불러오기" }));
+        expect(container.querySelector('input[type="date"]')).toHaveValue("2026-07-18");
+        expect(screen.getByText("저장됨")).toBeInTheDocument();
+    });
+
+    it("keeps local input on permission failure and discards with compare-and-swap", async () => {
+        const fetchMock = jest.fn()
+            .mockResolvedValueOnce({
+                ok: false,
+                status: 403,
+                json: async () => ({ code: "FORBIDDEN" }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ ...makeDraftState({}, 2), draft: { ...makeDraftState({}, 2).draft, status: "DISCARDED" } }),
+            });
+        global.fetch = fetchMock;
+        const { container } = render(
+            <ServiceRecordAdminWizard clientId="42" overview={overview} initialDraftState={makeDraftState()} />,
+        );
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[0]);
+        const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
+        fireEvent.change(dateInput, { target: { value: "2026-07-17" } });
+        fireEvent.click(screen.getByRole("button", { name: "초안 저장" }));
+        await waitFor(() => expect(screen.getByText("초안 접근 권한이 없습니다. 현재 입력은 유지됩니다.")).toBeInTheDocument());
+        expect(container.querySelector('input[type="date"]')).toHaveValue("2026-07-17");
+
+        fireEvent.click(screen.getByRole("button", { name: "초안 취소" }));
+        const modalButtons = screen.getAllByRole("button", { name: "초안 취소" });
+        fireEvent.click(modalButtons[modalButtons.length - 1]);
+        await waitFor(() => expect(screen.getByText("초안 없음")).toBeInTheDocument());
+        expect(fetchMock).toHaveBeenLastCalledWith(
+            "/api/admin/service-records/drafts/draft-1/discard",
+            expect.objectContaining({ method: "POST", body: JSON.stringify({ expectedDraftVersion: 1 }) }),
         );
     });
 });
