@@ -426,3 +426,8 @@
 - Sol Task3.0 FINAL 확정: FIX_REQUIRED/HIGH, 총7건. 앞5건에 requestReplacement의 잠금 전 기간/주소 사용과 client 배정 경로의 과거 직원 잠금 누락을 추가했다. 승인뿐 아니라 거절/stale도 pending 조건의 단일 전환이 필요하다. 기존 client의 직접 case 잠금 반환값 무시도 공통 helper 전환으로 해소한다. Terminal case/doc 완료 경로는 이후 client/직원 잠금이 없는 것으로 확인됐다. 설계는 유효하며 재계획 없이7개 보정과 실제 PG 경합 회귀를 수행한다. Luna/max에 전체 최종 기준을 전달했다.
 
 - Task3.0 보완 중간 결과: worker의 의미 있는 실패 재현을 보정한 뒤 관련 5개 Jest suite 353개가 통과했다. 불완전한 mock의 TypeError는 결함 재현 근거에서 제외했다. 실제 PG의 7개 감사 경합 기준은 아직 검사 중이며, 이 단위 테스트 결과를 최종 감사 통과로 취급하지 않는다. 부모 코드 확인에서 case.clientId가 nullable이며 고객 삭제 시 SetNull인 점을 확인하여, root recompute의 고객 없는 실제 행도 mock 전용 fallback으로 무잠금 갱신하지 않도록 보완을 요청했다.
+
+- Task3.0 보완 중간 코드 eab71fff3을 고정했다(아직 통합/감사 완료 아님). 실제 PG 회귀 작성은 별도 unit `task-3-0-race-tests`, branch `unit/admin-service-record-3-0-race-tests`에서 문서 NULL 지점 연결과 승인/거절 경쟁 테스트만 Luna/max가 담당하도록 분할했다. 기존 corrections worker가 제출/상태/기간/교체/과거 직원 경쟁을 담당하며, PG 실행 권한은 기존 worker 한 명만 보유한다. 두 unit의 변경 경로는 분리하고 외부 DB/문서/문자 호출은 하지 않는다.
+
+- Task3.0 예비 Sol/high 코드 감사는 앱 에이전트 생성 한도 때문에 공식 Codex CLI의 read-only/never, gpt-5.6-sol/high로 실행했다. 소스 eab71fff3 기준 FIX_REQUIRED: (1) NULL 지점 문서 claim 완료 뒤 최초 NULL 소유권으로 재확인하는 모순, (2) 지점 미지정 문서의 전역 전화번호 검색이 템플릿/작성자가 지정한 지점과 다른 고객을 선택할 수 있음. 첫 항목은 worker가 destination 및 doc/client 소유권 재검사로 보완했고, 두 번째는 목적 지점 결정과 명시적 고객/지점 범위로 수정 중이다. 다른 원래 지적6개는 구조적으로 해소됐으나 실제 PG 검증과 최종 통합 감사는 아직 필요하다. CLI 결과는 /tmp/bjj-task3-sol-review-result.txt, 실행 세션 01a07f62-3e3c-7290-9e7a-2af4c84cac49.
+- 추가 lifecycle/client PG5개는 green이지만, 부모 검토에서 경쟁 메서드 호출 직후 release하는 검사가 이전 읽기 완료를 보장하지 않는 점을 발견했다. operation별 backend PID/관측 read barrier로 강화한 재실행도5/5 통과했다. 원래 동작의 의미 있는 red 확인은 별도 결과로 요구했으며, mock 오류 또는 임의 연결 대기를 회귀 근거로 인정하지 않는다.
