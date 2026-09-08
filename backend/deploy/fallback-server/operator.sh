@@ -13,6 +13,7 @@ readonly BUNDLE_MANIFEST="$ARTIFACT_ROOT/bundle.manifest"
 readonly INSTALLED_OPERATOR="/usr/local/sbin/babyjamjam-fallback-server"
 readonly STATE_ROOT="/opt/babyjamjam-fallback-server"
 readonly STATE_DIRECTORY="$STATE_ROOT/state"
+readonly SHUTDOWN_POLICY_FILE="$STATE_ROOT/automatic-shutdown-policy"
 readonly ENV_FILE="$STATE_ROOT/backend.env"
 readonly APPROVED_DB_REF_HASH_FILE="$STATE_ROOT/approved-production-db-ref.sha256"
 readonly TEMPORARY_ACTIVE_APPROVAL_FILE="$STATE_ROOT/temporary-active-approval"
@@ -74,6 +75,7 @@ usage() {
     cat >&2 <<'EOF'
 Usage:
   babyjamjam-fallback-server status
+  babyjamjam-fallback-server adopt-persistent-active
   babyjamjam-fallback-server deploy <40-character-commit-sha> <sha256-image-digest>
   babyjamjam-fallback-server temporary-active <40-character-commit-sha> <sha256-image-digest>
   babyjamjam-fallback-server extend-temporary-active <40-character-commit-sha> <sha256-image-digest>
@@ -91,6 +93,30 @@ EOF
 die() {
     echo "$*" >&2
     exit 1
+}
+
+# Persistent operation is an explicit root-owned host policy, never a caller env.
+automatic_shutdown_disabled() {
+    [[ -e "$SHUTDOWN_POLICY_FILE" || -L "$SHUTDOWN_POLICY_FILE" ]] || return 1
+    [[ -f "$SHUTDOWN_POLICY_FILE" && ! -L "$SHUTDOWN_POLICY_FILE" \
+        && "$(/usr/bin/stat -c '%U:%G:%a' "$SHUTDOWN_POLICY_FILE")" == "root:root:400" \
+        && "$(/usr/bin/cat "$SHUTDOWN_POLICY_FILE")" == "disabled" \
+        && "$(/usr/bin/wc -l <"$SHUTDOWN_POLICY_FILE")" -eq 1 ]] \
+        || die "The automatic shutdown policy is invalid."
+}
+
+verify_shutdown_masks() {
+    local unit
+    for unit in babyjamjam-fallback-temporary-active-{guard,stop}.{service,timer}; do
+        [[ -L "/etc/systemd/system/$unit" \
+            && "$(/usr/bin/readlink "/etc/systemd/system/$unit")" == /dev/null \
+            && "$(/usr/bin/systemctl is-enabled "$unit" 2>/dev/null || true)" == masked ]] || return 1
+        ! /usr/bin/systemctl is-active --quiet "$unit" || return 1
+    done
+}
+
+active_restart_policy() {
+    if automatic_shutdown_disabled; then printf '%s' unless-stopped; else printf '%s' no; fi
 }
 
 require_root() {
@@ -146,8 +172,6 @@ validate_bundle() {
     compose_digest="$(sha256_file "$COMPOSE_FILE")"
     active_compose_digest="$(sha256_file "$ACTIVE_COMPOSE_FILE")"
     identity_digest="$(sha256_file "$DB_IDENTITY_HELPER")"
-    guard_service_digest="$(sha256_file /etc/systemd/system/babyjamjam-fallback-temporary-active-guard.service)"
-    guard_timer_digest="$(sha256_file /etc/systemd/system/babyjamjam-fallback-temporary-active-guard.timer)"
     /usr/bin/grep -Fqx "operator.sh=$operator_digest" "$BUNDLE_MANIFEST" \
         || die "The installed Fallback Server operator does not match its manifest."
     /usr/bin/grep -Fqx "compose.yml=$compose_digest" "$BUNDLE_MANIFEST" \
@@ -156,10 +180,16 @@ validate_bundle() {
         || die "The temporary-active Compose artifact does not match its manifest."
     /usr/bin/grep -Fqx "production-db-identity.sh=$identity_digest" "$BUNDLE_MANIFEST" \
         || die "The Production DB identity helper does not match its manifest."
-    /usr/bin/grep -Fqx "systemd/babyjamjam-fallback-temporary-active-guard.service=$guard_service_digest" "$BUNDLE_MANIFEST" \
-        || die "The temporary-active expiry guard service does not match its manifest."
-    /usr/bin/grep -Fqx "systemd/babyjamjam-fallback-temporary-active-guard.timer=$guard_timer_digest" "$BUNDLE_MANIFEST" \
-        || die "The temporary-active expiry guard timer does not match its manifest."
+    if automatic_shutdown_disabled; then
+        verify_shutdown_masks || die "Automatic shutdown must remain masked and inactive."
+    else
+        guard_service_digest="$(sha256_file /etc/systemd/system/babyjamjam-fallback-temporary-active-guard.service)"
+        guard_timer_digest="$(sha256_file /etc/systemd/system/babyjamjam-fallback-temporary-active-guard.timer)"
+        /usr/bin/grep -Fqx "systemd/babyjamjam-fallback-temporary-active-guard.service=$guard_service_digest" "$BUNDLE_MANIFEST" \
+            || die "The temporary-active expiry guard service does not match its manifest."
+        /usr/bin/grep -Fqx "systemd/babyjamjam-fallback-temporary-active-guard.timer=$guard_timer_digest" "$BUNDLE_MANIFEST" \
+            || die "The temporary-active expiry guard timer does not match its manifest."
+    fi
     [[ "$(/usr/bin/wc -l <"$BUNDLE_MANIFEST")" -eq 6 ]] \
         || die "The Fallback Server bundle manifest is incomplete."
 }
@@ -292,6 +322,7 @@ compose() {
 
 active_compose() {
     /usr/bin/env \
+        ACTIVE_RESTART_POLICY="$(active_restart_policy)" \
         BACKEND_ENV_FILE="$ENV_FILE" \
         BACKEND_IMAGE="$LOCAL_IMAGE_REPOSITORY" \
         BACKEND_IMAGE_TAG="$1" \
@@ -334,10 +365,15 @@ validate_temporary_active_approval() {
         && "$condition_hash" =~ ^[0-9a-f]{64}$ && "$issued" =~ ^[0-9]{10,}$ \
         && "$nonce" =~ ^[a-f0-9]{32,128}$ && "$expiry" =~ ^[0-9]{10,}$ ]] || die "The temporary-active approval artifact schema is invalid."
     now="$(/usr/bin/date +%s)"
-    (( issued <= now + 60 && issued <= expiry && expiry > now + 300 && expiry - issued <= 172800 )) \
-        || die "The temporary-active approval timing is invalid."
-    [[ ! -f "$APPROVAL_NONCES_FILE" ]] || ! /usr/bin/grep -Fqx "$nonce" "$APPROVAL_NONCES_FILE" \
-        || die "The temporary-active approval nonce was already used."
+    if [[ "${3:-}" == existing-policy ]] && automatic_shutdown_disabled; then
+        (( issued <= now + 60 && issued <= expiry && expiry - issued <= 172800 )) \
+            || die "The existing active approval timing is invalid."
+    else
+        (( issued <= now + 60 && issued <= expiry && expiry > now + 300 && expiry - issued <= 172800 )) \
+            || die "The temporary-active approval timing is invalid."
+        [[ ! -f "$APPROVAL_NONCES_FILE" ]] || ! /usr/bin/grep -Fqx "$nonce" "$APPROVAL_NONCES_FILE" \
+            || die "The temporary-active approval nonce was already used."
+    fi
     [[ "$approval_tag" == "$1" && "$approval_digest" == "$2" ]] \
         || die "The temporary-active approval does not match the requested immutable release."
     /usr/bin/grep -Fqx "$approval_db_hash" "$APPROVED_DB_REF_HASH_FILE" \
@@ -423,6 +459,7 @@ cleanup_active_after_failure() {
 }
 
 guard_expiry() {
+    automatic_shutdown_disabled && return 0
     local expiry now tag mode container_id gates
     mode="$(read_state runtime-mode || true)"
     if [[ "$mode" != "temporary-active" ]]; then
@@ -462,6 +499,7 @@ guard_expiry() {
 
 try_schedule_temporary_expiry_stop() {
     local expiry="$1"
+    if automatic_shutdown_disabled; then verify_shutdown_masks; return; fi
     clear_temporary_expiry_timer
     /usr/bin/systemd-run --unit="$TEMPORARY_STOP_UNIT" --on-calendar="@$expiry" \
         --timer-property=Persistent=true --service-type=oneshot "$INSTALLED_OPERATOR" stop >/dev/null \
@@ -604,6 +642,7 @@ verify_temporary_active_runtime() {
 }
 
 verify_temporary_guard() {
+    if automatic_shutdown_disabled; then verify_shutdown_masks; return; fi
     /usr/bin/systemctl is-enabled --quiet "$TEMPORARY_GUARD_TIMER" \
         && /usr/bin/systemctl is-active --quiet "$TEMPORARY_GUARD_TIMER"
 }
@@ -630,6 +669,34 @@ restore_temporary_extension() {
     try_schedule_temporary_expiry_stop "$expiry" \
         && write_state temporary-active-expiry "$expiry" \
         && write_state temporary-active-linkage "$linkage"
+}
+
+# Reconcile an already running host after an explicitly requested no-shutdown
+# recovery. Reuse the protected release/evidence; never invent approval inputs.
+adopt_persistent_active_release() {
+    local tag digest container approval_data egress nonce incident evidence lease
+    automatic_shutdown_disabled || die "Persistent operation requires the protected shutdown policy."
+    verify_shutdown_masks || die "All automatic shutdown units must remain masked and inactive."
+    validate_env_file
+    validate_production_db_identity
+    tag="$(read_state current-image-tag)"
+    digest="$(read_state current-image-digest)"
+    validate_release "$tag" "$digest"
+    container="$(container_id_for "$tag")"
+    [[ -n "$(discover_running_api_container)" ]] || die "The active API is not unique."
+    verify_active_container_health "$container" || die "The active API is not healthy."
+    verify_temporary_active_runtime "$tag"
+    verify_image_identity "$tag" "$digest" "$(running_image_id_for "$container")"
+    lease="$(lease_status_fields)"
+    /usr/bin/grep -Fqx 'lease_mode=required' <<<"$lease" \
+        && /usr/bin/grep -Fqx 'lease_held=true' <<<"$lease" || die "The active host does not hold the scheduler lease."
+    approval_data="$(validate_temporary_active_approval "$tag" "$digest" existing-policy)"
+    read -r egress nonce incident evidence <<<"$approval_data"
+    verify_approved_egress "$egress" "$tag"
+    write_state temporary-active-expiry "$(approval_value expires_at_unix)"
+    write_state temporary-active-linkage "$incident $evidence $nonce"
+    write_state runtime-mode temporary-active
+    status_release
 }
 
 extend_temporary_active_release() {
@@ -691,7 +758,7 @@ extend_temporary_active_release() {
         "environment=fallback-server" \
         "temporary_active_extended=true" \
         "container_restarted=false" \
-        "expiry_stop_scheduled=true" \
+        "expiry_stop_scheduled=$(automatic_shutdown_disabled && printf false || printf true)" \
         "public_routing=not_managed"
 }
 
@@ -734,8 +801,8 @@ replace_temporary_active_release() {
     new_expiry="$(approval_value expires_at_unix)"
     now="$(current_unix_time)"
     [[ "$old_tag" =~ $SHA_PATTERN && "$old_digest" =~ $DIGEST_PATTERN \
-        && "$old_expiry" =~ ^[0-9]{10,}$ && "$new_expiry" =~ ^[0-9]{10,}$ \
-        && "$now" -lt "$old_expiry" && "$old_expiry" -lt "$new_expiry" ]] \
+        && "$old_expiry" =~ ^[0-9]{10,}$ && "$new_expiry" =~ ^[0-9]{10,}$ ]] \
+        && { automatic_shutdown_disabled || [[ "$now" -lt "$old_expiry" && "$old_expiry" -lt "$new_expiry" ]]; } \
         || die "The replacement approval must extend a live temporary-active window."
     [[ "$old_tag" != "$commit_sha" || "$old_digest" != "$image_digest" ]] \
         || die "The replacement release already matches the active runtime."
@@ -791,7 +858,7 @@ replace_temporary_active_release() {
         "temporary_active_replaced=true" \
         "image_preloaded=true" \
         "container_restarted=true" \
-        "expiry_stop_scheduled=true" \
+        "expiry_stop_scheduled=$(automatic_shutdown_disabled && printf false || printf true)" \
         "public_routing=not_managed"
 }
 
@@ -842,7 +909,7 @@ temporary_activate_release() {
     printf '%s\n' \
         "environment=fallback-server" \
         "temporary_active=true" \
-        "expiry_stop_scheduled=true" \
+        "expiry_stop_scheduled=$(automatic_shutdown_disabled && printf false || printf true)" \
         "public_routing=not_managed"
 }
 
@@ -946,7 +1013,7 @@ status_release() {
         [[ "$(read_state temporary-active-linkage || true)" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}[[:space:]][0-9a-f]{64}[[:space:]][a-f0-9]{32,128}$ ]] \
             || die "Temporary-active approval linkage is missing or invalid."
         now="$(/usr/bin/date +%s)"
-        [[ "$expiry" =~ ^[0-9]{10,}$ && "$now" -lt "$expiry" ]] || die "Temporary-active approval is expired."
+        [[ "$expiry" =~ ^[0-9]{10,}$ ]] && { automatic_shutdown_disabled || [[ "$now" -lt "$expiry" ]]; } || die "Temporary-active approval is expired."
         verify_temporary_guard || die "Temporary-active guard is not enabled and active."
         verify_temporary_active_runtime "$commit_sha"
     elif [[ "$runtime_mode" == "passive" ]]; then
@@ -968,6 +1035,7 @@ status_release() {
         "production_db_identity=ok" \
         "public_routing=not_managed" \
         "runtime_mode=$runtime_mode" \
+        "automatic_shutdown=$(automatic_shutdown_disabled && printf disabled || printf enabled)" \
         "schedulers_enabled=$([[ "$runtime_mode" == temporary-active ]] && printf true || printf false)" \
         "document_jobs_accepting=$([[ "$runtime_mode" == temporary-active ]] && printf true || printf false)" \
         "document_jobs_worker=$([[ "$runtime_mode" == temporary-active ]] && printf true || printf false)" \
@@ -1022,6 +1090,10 @@ main() {
     /usr/bin/flock -w 5 9 || die "Another Fallback Server operation is active."
 
     case "$action" in
+        adopt-persistent-active)
+            [[ "$#" -eq 1 ]] || { usage; exit 1; }
+            adopt_persistent_active_release
+            ;;
         status)
             [[ "$#" -eq 1 ]] || { usage; exit 1; }
             status_release

@@ -202,4 +202,42 @@ lease_out="$(lease_status_fields)"
 [[ "$lease_out" == $'lease_mode=required\nlease_held=false' ]] \
     || fail "lease fields emitted malformed lines for a multi-line body: $lease_out"
 
+# A persistent host can replace an old release after its historical approval
+# expired. It still preloads images and rolls back a failed new runtime.
+automatic_shutdown_disabled(){ return 0; }
+replace_old_expiry="$((test_now - 3600))"
+pull_release_image(){ printf 'pull:%s\n' "$1" >>"$TMP/replace.calls"; }
+verify_temporary_active_runtime(){ printf 'runtime:%s\n' "$1" >>"$TMP/replace.calls"; }
+: >"$TMP/replace.calls"
+replace_temporary_active_release "$replace_target_tag" "$replace_target_digest" >"$TMP/replace.out"
+grep -Fqx 'expiry_stop_scheduled=false' "$TMP/replace.out" || fail 'persistent deployment reports an expiry timer'
+grep -Fqx "write:current-image-tag:$replace_target_tag" "$TMP/replace.calls" || fail 'persistent replacement failed'
+verify_temporary_active_runtime(){ [[ "$1" == "$replace_source_tag" ]]; }
+: >"$TMP/replace.calls"
+if ( replace_temporary_active_release "$replace_target_tag" "$replace_target_digest" ) >/dev/null 2>&1; then
+    fail 'persistent deployment accepted an unhealthy target'
+fi
+grep -Fqx "compose:$replace_source_tag:up -d --no-build --no-deps --force-recreate api" "$TMP/replace.calls" || fail 'persistent rollback missing'
+automatic_shutdown_disabled(){ return 1; }
+if ( replace_temporary_active_release "$replace_target_tag" "$replace_target_digest" ) >/dev/null 2>&1; then
+    fail 'temporary deployment accepted expired source approval'
+fi
+
+# Exercise the real timer functions in a fresh shell, overriding only policy
+# and mask observations: no systemd operation may be reached on this branch.
+bash -c '
+    source "$1"
+    automatic_shutdown_disabled(){ return 0; }
+    verify_shutdown_masks(){ return 0; }
+    clear_temporary_expiry_timer(){ exit 91; }
+    read_state(){ exit 92; }
+    try_schedule_temporary_expiry_stop 1000000000
+    verify_temporary_guard
+    guard_expiry
+    [[ "$(active_restart_policy)" == unless-stopped ]]
+    verify_shutdown_masks(){ return 1; }
+    if try_schedule_temporary_expiry_stop 1000000000; then exit 93; fi
+    if verify_temporary_guard; then exit 94; fi
+' _ "$COPY" || fail 'persistent operation touched timers or accepted an unmasked unit'
+
 echo 'Fallback temporary-active behavioral tests passed'
