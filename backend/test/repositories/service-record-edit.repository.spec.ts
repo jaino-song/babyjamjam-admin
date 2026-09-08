@@ -179,6 +179,12 @@ describe("ServiceRecordEditRepository", () => {
                 clientId: 101,
                 version: 4,
                 formVersion: 3,
+                status: "IN_PROGRESS",
+                completedAt: null,
+                finalizationDueAt: null,
+                finalizationStartedAt: null,
+                finalizedAt: null,
+                documentsCompletedAt: null,
                 requiredSessionCount: 2,
                 startDate: new Date("2026-09-08T00:00:00.000Z"),
                 endDate: new Date("2026-09-09T00:00:00.000Z"),
@@ -213,6 +219,14 @@ describe("ServiceRecordEditRepository", () => {
         const snapshot = await repository.loadSource(branchId, { clientId: 101 });
         expect(snapshot).toMatchObject({
             caseId: caseId,
+            caseLifecycle: {
+                status: "IN_PROGRESS",
+                completedAt: null,
+                finalizationDueAt: null,
+                finalizationStartedAt: null,
+                finalizedAt: null,
+                documentsCompletedAt: null,
+            },
             client: { id: 101, duration: 10, startDate: "2026-09-08", endDate: "2026-09-22" },
             sessions: [
                 expect.objectContaining({
@@ -245,6 +259,12 @@ describe("ServiceRecordEditRepository", () => {
                 clientId: 101,
                 version: 8,
                 formVersion: 4,
+                status: "COMPLETED",
+                completedAt: new Date("2026-09-09T05:00:00.000Z"),
+                finalizationDueAt: new Date("2026-09-10T05:00:00.000Z"),
+                finalizationStartedAt: new Date("2026-09-10T06:00:00.000Z"),
+                finalizedAt: new Date("2026-09-10T07:00:00.000Z"),
+                documentsCompletedAt: new Date("2026-09-10T08:00:00.000Z"),
                 currentRevisionId,
                 currentUsableRevisionId: currentRevisionId,
                 currentUsableDocumentVersion: 2,
@@ -334,6 +354,14 @@ describe("ServiceRecordEditRepository", () => {
             draft: { id: draftId, draftVersion: 1 },
             source: {
                 caseId,
+                caseLifecycle: {
+                    status: "COMPLETED",
+                    completedAt: "2026-09-09T05:00:00.000Z",
+                    finalizationDueAt: "2026-09-10T05:00:00.000Z",
+                    finalizationStartedAt: "2026-09-10T06:00:00.000Z",
+                    finalizedAt: "2026-09-10T07:00:00.000Z",
+                    documentsCompletedAt: "2026-09-10T08:00:00.000Z",
+                },
                 documentScope: {
                     evidence: "observed",
                     serviceRecordSnapshot: {
@@ -600,5 +628,35 @@ describe("ServiceRecordEditRepository", () => {
         expect(tx.service_record_revision.create).toHaveBeenNthCalledWith(2, expect.objectContaining({
             data: expect.objectContaining({ revisionNumber: 2 }),
         }));
+    });
+
+    it("does not supersede a document job after its provider dispatch is irreversible", async () => {
+        const tx = {
+            $queryRaw: jest.fn().mockResolvedValueOnce([{ id: "document-job-1" }]),
+        };
+        const repository = new ServiceRecordEditRepository({} as never);
+
+        await expect((repository as unknown as {
+            invalidateSupersededJobs: (client: unknown, branch: string, serviceCase: string, clientId: number) => Promise<void>;
+        }).invalidateSupersededJobs(tx, branchId, caseId, 101)).rejects.toThrow(
+            "A service-record document dispatch is already irreversible",
+        );
+        expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not cancel a message job after it enters dispatching", async () => {
+        const tx = {
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([{ id: "message-job-1" }]),
+        };
+        const repository = new ServiceRecordEditRepository({} as never);
+
+        await expect((repository as unknown as {
+            invalidateSupersededJobs: (client: unknown, branch: string, serviceCase: string, clientId: number) => Promise<void>;
+        }).invalidateSupersededJobs(tx, branchId, caseId, 101)).rejects.toThrow(
+            "A service-record message dispatch is already irreversible",
+        );
+        expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
     });
 });

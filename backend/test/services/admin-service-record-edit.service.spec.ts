@@ -164,6 +164,7 @@ function createHarness(options: {
             changes: { header: { momName: "저장됨" } },
         })),
         discardDraft: jest.fn().mockResolvedValue(draft({ status: "DISCARDED", draftVersion: 2 })),
+        confirmDraft: jest.fn(),
     };
     const service = new AdminServiceRecordEditService(repository as never);
     return { service, repository };
@@ -485,7 +486,7 @@ describe("AdminServiceRecordEditService", () => {
         expect(result.previewId).toMatch(/^srp_[a-f0-9]{64}$/);
         const changed = { ...source, documentScope: {
             ...source.documentScope,
-            contract: { currentDocumentId: "contract-doc-2", stage: "completed" },
+            contract: { currentDocumentId: "contract-doc-2", stage: "completed" as const },
         } };
         const changedHarness = createHarness({ source: changed });
         const changedStarted = await changedHarness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
@@ -538,5 +539,50 @@ describe("AdminServiceRecordEditService", () => {
 
         expect(result.sourceCaseVersion).toBe(original.caseVersion + 1);
         expect(result.blockingReasons).toEqual([]);
+    });
+
+    it("forwards the server preview and idempotency contract to the repository", async () => {
+        const harness = createHarness();
+        const response = {
+            status: "confirmed" as const,
+            caseId: CASE_ID,
+            clientId: CLIENT_ID,
+            draftId: DRAFT_ID,
+            draftVersion: 2,
+            caseVersion: 8,
+            revisionId: "55555555-5555-4555-8555-555555555555",
+            revisionNumber: 1,
+            documentStatus: "capability_unverified" as const,
+            confirmedAt: "2026-09-08T01:02:03.000Z",
+        };
+        harness.repository.confirmDraft.mockResolvedValue(response);
+
+        await expect(harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: 1,
+            previewId: `srp_${"a".repeat(64)}`,
+            idempotencyKey: "11111111-1111-4111-8111-111111111111",
+        })).resolves.toEqual(response);
+
+        expect(harness.repository.confirmDraft).toHaveBeenCalledWith(expect.objectContaining({
+            branchId: BRANCH_ID,
+            draftId: DRAFT_ID,
+            expectedDraftVersion: 1,
+            previewId: `srp_${"a".repeat(64)}`,
+            idempotencyKey: "11111111-1111-4111-8111-111111111111",
+            actorUserId: ACTOR_ID,
+            requestFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+            prepare: expect.any(Function),
+        }));
+    });
+
+    it("rejects a forged confirmation identifier before opening the repository boundary", async () => {
+        const harness = createHarness();
+
+        await expect(harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: 1,
+            previewId: "preview-from-client",
+            idempotencyKey: "11111111-1111-4111-8111-111111111111",
+        })).rejects.toBeInstanceOf(BadRequestException);
+        expect(harness.repository.confirmDraft).not.toHaveBeenCalled();
     });
 });
