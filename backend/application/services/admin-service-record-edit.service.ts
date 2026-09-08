@@ -791,6 +791,7 @@ export class AdminServiceRecordEditService {
                 operation: "contract_period",
                 immutableInput: jsonValue({
                     kind: "contract_period",
+                    businessFingerprint: revisionFingerprint,
                     sourceDocumentId: contractDocumentId,
                     sourceStage: documentScope.contract.stage,
                     sourceEvidence: documentScope.evidence,
@@ -835,6 +836,7 @@ export class AdminServiceRecordEditService {
                 operation: "receipt_refresh",
                 immutableInput: jsonValue({
                     kind: "receipt_refresh",
+                    businessFingerprint: revisionFingerprint,
                     expected: {
                         serviceStartDate: provisional.after.startDate,
                         serviceEndDate: provisional.after.endDate,

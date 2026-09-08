@@ -199,6 +199,25 @@ export interface ServiceRecordRevisionDispatchContext {
     lifecycleStatus: string;
     formVersion: number;
 }
+/**
+ * Existing eformsign job payload for the two non-renderer revision
+ * operations. The state IDs and generations are server-pinned; workers must
+ * resolve their immutable inputs from those rows under the owning lock.
+ */
+export interface ServiceRecordRevisionOperationJobPayload {
+    kind: "service_record_revision_operations";
+    context: ServiceRecordRevisionDispatchContext;
+    operations: {
+        contract?: {
+            documentStateId: string;
+            generation: string;
+        };
+        receipt?: {
+            documentStateId: string;
+            expectedGeneration: string;
+        };
+    };
+}
 /** Durable document-generation states understood by dispatch adapters. */
 export type ServiceRecordRevisionDocumentSyncStatus = "not_required" | "pending" | "waiting_for_completion" | "capability_unverified" | "completed" | "failed" | "unknown";
 export type ServiceRecordDispatchAuthorizationKind = "allow" | "stale" | "lost";
