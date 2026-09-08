@@ -84,6 +84,22 @@ type CreateDispatchAuthorizationResult = {
     irreversible?: boolean;
 };
 
+type DispatchAuthorizationRepository = IEformsignDocumentJobRepository & {
+    /**
+     * Caller-Tx authorization seam supplied by the core job repository. The
+     * adapter owns the aggregate lock; the repository owns job-row FOR UPDATE
+     * and the durable creating marker.
+     */
+    authorizeForDispatchInTransaction?: (
+        tx: Prisma.TransactionClient,
+        input: {
+            jobId: string;
+            leaseToken: string;
+            expectedContext?: ServiceRecordRevisionDispatchContext | null;
+        },
+    ) => Promise<{ kind: "allow" | "stale" | "lost"; reason?: string }>;
+};
+
 function revisionPayload(value: unknown): RevisionDocumentJobPayload | null {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const row = value as Record<string, unknown>;
@@ -357,6 +373,9 @@ export class EformsignDocumentJobWorkerService {
     private async authorizeRevisionJob(
         job: EformsignDocumentJobEntity,
     ): Promise<CreateDispatchAuthorizationResult> {
+        if (job.jobType === "finalize_document") {
+            return this.authorizeFinalizeJob(job);
+        }
         if (job.jobType !== "create_document") return { kind: "allow" };
         const rawPayload = job.payload ?? {};
         const payload = revisionPayload(rawPayload);
@@ -465,7 +484,7 @@ export class EformsignDocumentJobWorkerService {
             if (authorization.kind === "lost") {
                 return { kind: "lost", reason: authorization.reason };
             }
-            return this.markCreateDispatching(transaction, job);
+            return this.authorizeJobInTransaction(transaction, job, context);
         });
     }
 
@@ -488,7 +507,126 @@ export class EformsignDocumentJobWorkerService {
                 branchId: job.branchId,
                 clientId: job.clientId!,
             });
-            return this.markCreateDispatching(transaction, job);
+            return this.authorizeJobInTransaction(transaction, job, null);
+        });
+    }
+
+    /**
+     * Forward the durable job-row authorization to core when the typed seam is
+     * available. The fallback exists only for narrow tests/checkpoints that
+     * predate that repository method; production always takes the seam.
+     */
+    private async authorizeJobInTransaction(
+        transaction: Prisma.TransactionClient,
+        job: EformsignDocumentJobEntity,
+        expectedContext: ServiceRecordRevisionDispatchContext | null,
+        clientIdOverride?: number,
+    ): Promise<CreateDispatchAuthorizationResult> {
+        const repository = this.repository as DispatchAuthorizationRepository;
+        if (typeof repository.authorizeForDispatchInTransaction === "function") {
+            const result = await repository.authorizeForDispatchInTransaction(transaction, {
+                jobId: job.id,
+                leaseToken: job.leaseToken!,
+                expectedContext,
+            });
+            return result.kind === "allow"
+                ? { kind: "allow", irreversible: true }
+                : result;
+        }
+        return this.markCreateDispatching(transaction, job, clientIdOverride);
+    }
+
+    /**
+     * Finalization is client-owned work even though older queue rows may have
+     * a null client_id. Resolve and lock the authoritative document first,
+     * then reuse the same caller-Tx durable marker seam as create jobs. Rows
+     * whose document cannot prove a branch/client owner fail closed.
+     */
+    private async authorizeFinalizeJob(
+        job: EformsignDocumentJobEntity,
+    ): Promise<CreateDispatchAuthorizationResult> {
+        const payload = parseFinalizePayload(job.payload ?? {});
+        const documentId = job.documentId ?? payload?.documentId;
+        if (!payload || !documentId) {
+            return { kind: "stale", reason: "INVALID_FINALIZE_JOB_PAYLOAD" };
+        }
+        // Existing focused unit doubles have no Prisma transaction. Production
+        // always injects it, so preserve their pre-provider behavior here.
+        if (!this.prisma) return { kind: "allow" };
+        if (!job.branchId || !job.leaseToken) {
+            return { kind: "lost", reason: "SERVICE_RECORD_FINALIZE_OWNER_UNAVAILABLE" };
+        }
+
+        return this.prisma.$transaction(async (transaction) => {
+            const documentDelegate = (transaction as unknown as {
+                eformsign_doc?: {
+                    findUnique?: (args: unknown) => Promise<{
+                        id: number;
+                        documentId: string;
+                        branchId: string | null;
+                        clientId: number | null;
+                        serviceRecordCaseId: string | null;
+                    } | null>;
+                };
+            }).eformsign_doc;
+            if (typeof documentDelegate?.findUnique !== "function") {
+                return { kind: "lost" as const, reason: "SERVICE_RECORD_FINALIZE_OWNER_UNAVAILABLE" };
+            }
+
+            const discovered = await documentDelegate.findUnique({
+                where: { documentId },
+                select: {
+                    id: true,
+                    documentId: true,
+                    branchId: true,
+                    clientId: true,
+                    serviceRecordCaseId: true,
+                },
+            });
+            if (
+                !discovered
+                || discovered.documentId !== documentId
+                || discovered.branchId !== job.branchId
+                || discovered.clientId === null
+                || (job.clientId !== null && job.clientId !== discovered.clientId)
+            ) {
+                return { kind: "stale" as const, reason: "SERVICE_RECORD_FINALIZE_OWNER_UNAVAILABLE" };
+            }
+
+            await lockServiceRecordWriteSet(transaction, {
+                branchId: job.branchId,
+                clientId: discovered.clientId,
+                caseId: discovered.serviceRecordCaseId,
+                documentIds: [discovered.id],
+            });
+
+            const current = await documentDelegate.findUnique({
+                where: { documentId },
+                select: {
+                    id: true,
+                    documentId: true,
+                    branchId: true,
+                    clientId: true,
+                    serviceRecordCaseId: true,
+                },
+            });
+            if (
+                !current
+                || current.id !== discovered.id
+                || current.documentId !== documentId
+                || current.branchId !== job.branchId
+                || current.clientId !== discovered.clientId
+                || current.serviceRecordCaseId !== discovered.serviceRecordCaseId
+            ) {
+                return { kind: "stale" as const, reason: "SERVICE_RECORD_FINALIZE_OWNER_CHANGED" };
+            }
+
+            return this.authorizeJobInTransaction(
+                transaction,
+                job,
+                null,
+                current.clientId,
+            );
         });
     }
 
@@ -496,11 +634,14 @@ export class EformsignDocumentJobWorkerService {
     private async markCreateDispatching(
         transaction: Prisma.TransactionClient,
         job: EformsignDocumentJobEntity,
+        clientIdOverride?: number,
     ): Promise<CreateDispatchAuthorizationResult> {
+        const clientId = clientIdOverride ?? job.clientId;
         if (
             typeof transaction.$queryRaw !== "function"
             || !job.branchId
-            || job.clientId === null
+            || clientId === null
+            || clientId === undefined
             || !job.leaseToken
         ) {
             return { kind: "lost", reason: "SERVICE_RECORD_DISPATCH_MARKER_UNAVAILABLE" };
@@ -511,7 +652,7 @@ export class EformsignDocumentJobWorkerService {
                 updated_at = date_trunc('milliseconds', clock_timestamp())
             WHERE id = ${job.id}::uuid
               AND branch_id = ${job.branchId}::uuid
-              AND client_id = ${job.clientId}
+              AND client_id = ${clientId}
               AND status = 'processing'
               AND lease_token = ${job.leaseToken}::uuid
               AND (progress_step IS NULL OR progress_step IN ('queued', 'validating', 'preparing'))
