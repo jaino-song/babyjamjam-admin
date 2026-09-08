@@ -423,6 +423,12 @@ Phase 5 입력 감사 보정: 로컬 구현과 외부 활성화의 조건을 분
 | 고정 제공 일수 유실 또는 수령일 변경 | 중 / 상 | N개 고유 영업일 불변식과 수령일/금액 전후 비교 |
 | 신규 migration과 구배포 혼재 | 중 / 상 | 추가형 schema·기존 버전 읽기, 구버전 writer가 새 revision을 오염시키지 못함 |
 
+Phase6 입력 감사 보정: 실제 로컬 HTTP 요청을 Supertest로 보내고 좁은 Nest TestingModule에서 실제 JwtGuard/JwtStrategy/TenantGuard/OwnerOrAdminGuard를 실행한다. 테스트용 서명 JWT와 세션·지점 멤버십은 허용된 격리 PostgreSQL에만 만들고 401, 만료/폐기·잘못된 세션, 비관리자403, 정상owner/admin, 비활성/없는멤버십, 타지점404, body/query branch위조를 검증한다. 실제 bootstrap과 같은 GlobalValidationPipe의 whitelist/forbidNonWhitelisted/transform 설정도 사용해 위조 필드가 조용히 삭제된 테스트로 통과하지 않게 한다. AppModule·scheduler·vendor module을 시작하지 않는다.
+
+`verification.md`는 요구 불변식마다 정확한 테스트 이름·명령·결과·artifact를 연결한다. duration15/N13과 price/grant/actualPrice 보존, 본인부담금 수령일/금액 보존, 전후 영업일 이동·휴일·불규칙 간격·정확히N일, 초안 재개/CAS/오래된preview/같은키재전송/다른payload거부/no-op확정, entry/일정변경/배정/lifecycle/finalization/message/receipt/documentworker/webhook/poller 각각의 경합, 오래된PDF거부/부분청크실패/revision·문서·token참조CAS를 별도 행으로 기록한다. 전체 테스트 개수만으로 누락된 근거를 대체하지 않는다.
+
+일반 hermetic test/lint/type/build는 live flag를 해제한 환경에서 실행한다. DB 검사는 호출 전 URL의 loopback host·전용port·허용된 disposable DB이름·전용user를 확인하는 전용 runner로만 실행하고 DATABASE_URL/DIRECT_URL 모두 같은 승인 대상으로 지정한다. 브라우저는 기본 Playwright globalSetup을 사용하지 않는 전용 config에서 mock 인증과 관련 API 전부 interception을 적용한다. 실 `/api/auth/login`이나 vendor 요청에 fallback하지 않는다. 가짜 PDF adapter와 로컬 mock 브라우저 결과는 로컬 동작의 증거로만 기록한다. Phase0 외부 활성화 검증과 공식 Chrome 수락 검증은 미검증/사용불가 상태를 명시하며 로컬 PASS로 대체하지 않는다. 알려진 기존 receipt helper5개 타입 오류는5.4에서 해소한 뒤에만 전체 backend type-check PASS로 표시한다.
+
 - **Task 6.1: 전체 통합 검증** (test, high)
   - 격리 로컬 DB·가짜 전자문서 제공자로 경쟁 조건과 장애를 재현한다. 실 고객 데이터나 실제 문자 발송으로 테스트하지 않는다.
   - 저장소의 `pnpm test`, `pnpm lint`, `pnpm -r --if-present run type-check`, `pnpm build`, `pnpm lint:ui-architecture`를 실행한다. 기존 실패가 있으면 변경 영향과 분리해 기록하고 완료로 감추지 않는다.
@@ -430,6 +436,7 @@ Phase 5 입력 감사 보정: 로컬 구현과 외부 활성화의 조건을 분
 
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/docs/plans/admin-service-record-editor/verification.md`, 전체 변경 파일은 검사 대상으로 읽기  
+  **추가 Paths:** `backend/test/e2e/admin-service-record-edit-http.e2e.spec.ts`, `backend/test/e2e/helpers/admin-service-record-edit-http.helper.ts`, `backend/scripts/run-admin-service-record-edit-e2e.mjs`, `backend/package.json` (전용 guarded runner script만), `frontend/tests/admin-service-record-editor.spec.ts`, `frontend/playwright.service-record-local.config.ts`, `frontend/package.json` (필요한 로컬 mock 검사 script만), 해당 test helper/runner의 테스트. 기존 실제 guard/strategy 및 저장소는 테스트 주입·호출 대상으로만 사용하고 이 task에서 제품 구현을 임의 변경하지 않는다. 제품 결함은 소유 task로 반환한다.
   **Depends:** Task 5.2, Task 5.A
 
 - **Task 6.2: 독립 최종 검토** (test, high)
@@ -444,7 +451,7 @@ Phase 5 입력 감사 보정: 로컬 구현과 외부 활성화의 조건을 분
 원본 문서와 수정 이력을 보존한 채 기능을 켜고 끌 수 있게 배포한다.
 
 - **Task 7.1: 검증된 변경을 환경별로 반영** (infra, high)
-  - 각 standard task는 승인된 계획의 전용 unit worktree에서 순차 실행하고 integration worktree로 합친 뒤 정리한다. 현재는 강하게 연결된 변경이므로 구현 병렬 배치를 두지 않는다. package·tsconfig·schema 변경은 이 계획의 명시된 범위로 검토받는다.
+  - 각 standard task는 승인된 계획의 전용 unit worktree에서 순차 실행하고 integration worktree로 합친 뒤 정리한다. Task2.2는 위에서 승인한 고정 API 계약 아래 backend/UI 두 unit을 병행하고 backend 먼저 통합한다. 그 외 강하게 연결된 단계는 명시한 의존성에 따라 순차 실행한다. package·tsconfig·schema 변경은 이 계획의 명시된 범위로 검토받는다.
   - 코드 검증 후 commit/push, 사용자 승인 후 `dev` 병합. `preview`에서 migration·실제 인증·격리된 전자문서 생성과 복구를 확인한 동일 변경만 별도 승인 후 production으로 반영한다. 원격 문서가 알림을 발송하는 경로라면 발송 대상을 명시하고 승인 없이 시험 발송하지 않는다.
   - 문제 발생 시 신규 관리자 편집·확정 진입을 차단한다. 기존 문서·확정 이력·초안은 보존하고 생성 중 작업은 동일 revision으로 재개한다. 이미 확정된 데이터를 구코드 배포로 되돌렸다고 주장하지 않는다. 새 버전 문서가 생긴 후에는 revision을 모르는 구 writer를 다시 켜지 않는다.
 
