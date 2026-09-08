@@ -94,7 +94,8 @@ describe("ServiceRecordFinalizationService revised generation", () => {
             id: revisionId,
             revisionNumber: 2,
             payload: {
-                sessions: [{ sessionIndex: 1, originalDate: "2026-09-07" }],
+                plannedSessions: [{ sessionIndex: 1, originalDate: "2026-09-07" }],
+                sessions: [],
             },
         };
         const tx = {
