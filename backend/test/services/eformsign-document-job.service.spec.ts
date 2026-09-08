@@ -30,7 +30,7 @@ const validContractData = {
 };
 
 function buildService() {
-    const repository = { enqueue: jest.fn() };
+    const repository = { enqueue: jest.fn(), enqueueInTransaction: jest.fn() };
     const documents = { findByDocumentId: jest.fn() };
     const clients = { findById: jest.fn() };
     const service = new EformsignDocumentJobService(
@@ -42,6 +42,32 @@ function buildService() {
 }
 
 describe("EformsignDocumentJobService", () => {
+    it("delegates caller-owned transaction enqueues without opening a nested transaction", async () => {
+        const { service, repository } = buildService();
+        const tx = { marker: "caller-transaction" };
+        const result = { job: { id: "job-transaction" }, existing: false };
+        repository.enqueueInTransaction.mockResolvedValue(result);
+
+        await expect(service.enqueueInTransaction(tx as never, {
+            branchId,
+            clientId: 7,
+            jobType: "create_document",
+            source: "staff",
+            requestKey: "revision-request-1",
+            activeKey: "revision-active-1",
+            payload: { kind: "service_record_revision" },
+            payloadFingerprint: "a".repeat(64),
+        })).resolves.toEqual(result);
+
+        expect(repository.enqueueInTransaction).toHaveBeenCalledWith(tx, expect.objectContaining({
+            branchId,
+            clientId: 7,
+            requestKey: "revision-request-1",
+            activeKey: "revision-active-1",
+        }));
+        expect(repository.enqueue).not.toHaveBeenCalled();
+    });
+
     it("refuses finalization when the authenticated branch does not own the document", async () => {
         const { service, repository, documents } = buildService();
         documents.findByDocumentId.mockResolvedValue(null);
