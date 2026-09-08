@@ -17,6 +17,11 @@ import {
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { addBusinessDaysKr, isBusinessDayKr, nextBusinessDayKr } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import {
+    shiftServiceRecordScheduleSuffix,
+    validateServiceRecordScheduleVector,
+    type ServiceRecordPlannedSession,
+} from "@babyjamjam/shared/utils/service-record-schedule";
 import { MessageTriggerService } from "./message-trigger.service";
 import {
     ServiceRecordTokenService,
@@ -30,6 +35,96 @@ function toIso(d: Date): string {
 
 function toDbDate(iso: string): Date {
     return new Date(iso + "T00:00:00.000Z");
+}
+
+interface ServiceRecordForChange {
+    requiredSessionCount?: number | null;
+    plannedSessions?: Prisma.JsonValue | null;
+}
+
+/** Parse only a complete authoritative vector; legacy rows use the old path. */
+function plannedSessionVector(
+    raw: Prisma.JsonValue | null | undefined,
+    requiredSessionCount: number | null | undefined,
+): ServiceRecordPlannedSession[] | null {
+    if (raw === null || raw === undefined) return null;
+    const values = Array.isArray(raw)
+        ? raw
+        : typeof raw === "object" && raw !== null && !Array.isArray(raw)
+            ? ((raw as Record<string, Prisma.JsonValue>)["sessions"]
+                ?? (raw as Record<string, Prisma.JsonValue>)["entries"]
+                ?? (raw as Record<string, Prisma.JsonValue>)["plannedSessions"])
+            : null;
+    if (!Array.isArray(values)) return null;
+
+    const entries: ServiceRecordPlannedSession[] = [];
+    for (const value of values) {
+        if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+        const row = value as Record<string, Prisma.JsonValue>;
+        const provenance = typeof row["provenance"] === "object" && row["provenance"] !== null && !Array.isArray(row["provenance"])
+            ? row["provenance"] as Record<string, Prisma.JsonValue>
+            : null;
+        const sessionIndex = row["sessionIndex"];
+        const serviceDate = row["serviceDate"];
+        const originalDate = row["originalDate"];
+        const assignmentId = row["assignmentId"];
+        const scheduleId = row["scheduleId"] ?? provenance?.["scheduleId"];
+        const employeeId = row["employeeId"] ?? provenance?.["employeeId"];
+        const provenanceVersion = row["provenanceVersion"]
+            ?? provenance?.["version"]
+            ?? row["version"];
+        if (
+            typeof sessionIndex !== "number"
+            || !Number.isInteger(sessionIndex)
+            || typeof serviceDate !== "string"
+            || typeof originalDate !== "string"
+            || typeof assignmentId !== "string"
+            || typeof scheduleId !== "number"
+            || !Number.isInteger(scheduleId)
+            || typeof employeeId !== "number"
+            || !Number.isInteger(employeeId)
+            || (typeof provenanceVersion !== "string" && typeof provenanceVersion !== "number")
+        ) {
+            return null;
+        }
+        entries.push({
+            sessionIndex,
+            serviceDate,
+            originalDate,
+            assignmentId,
+            scheduleId,
+            employeeId,
+            provenanceVersion: String(provenanceVersion),
+        });
+    }
+
+    try {
+        return validateServiceRecordScheduleVector(entries, requiredSessionCount ?? undefined);
+    } catch {
+        return null;
+    }
+}
+
+function canonicalPlannedSessions(record: ServiceRecordForChange): ServiceRecordPlannedSession[] | null {
+    return plannedSessionVector(record.plannedSessions, record.requiredSessionCount);
+}
+
+function shiftCanonicalPlan(
+    record: ServiceRecordForChange,
+    sessionIndex: number,
+    newDate: string,
+): ServiceRecordPlannedSession[] | null {
+    const hasPersistedPlan = record.plannedSessions !== null && record.plannedSessions !== undefined;
+    const planned = canonicalPlannedSessions(record);
+    if (!hasPersistedPlan) return null;
+    if (!planned) {
+        throw new ConflictException({ code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" });
+    }
+    try {
+        return shiftServiceRecordScheduleSuffix(planned, sessionIndex, newDate).entries;
+    } catch {
+        throw new BadRequestException({ code: "INVALID_SCHEDULE_DATE" });
+    }
 }
 
 class StaleRequestError extends Error {
@@ -89,8 +184,14 @@ export class ScheduleChangeService {
         schedule: ScheduleForChange,
         client: ClientForChange,
         days: ServiceRecordDayForChange[],
+        record?: ServiceRecordForChange,
     ): { sessionIndex: number; fromDate: string; toDate: string; newEndDate: string } {
-        const totalSessions = client.duration;
+        const hasPersistedPlan = record?.plannedSessions !== null && record?.plannedSessions !== undefined;
+        const planned = record ? canonicalPlannedSessions(record) : null;
+        if (hasPersistedPlan && !planned) {
+            throw new ConflictException({ code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" });
+        }
+        const totalSessions = record?.requiredSessionCount ?? client.duration;
         if (!totalSessions || totalSessions <= 0) {
             throw new BadRequestException("Client has no session duration");
         }
@@ -103,7 +204,13 @@ export class ScheduleChangeService {
 
         const currentRow = days.find((row) => row.sessionIndex === sessionIndex);
         let fromDate: string;
-        if (currentRow) {
+        if (planned) {
+            const plannedRow = planned.find((row) => row.sessionIndex === sessionIndex);
+            if (!plannedRow) {
+                throw new ConflictException({ code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" });
+            }
+            fromDate = plannedRow.serviceDate;
+        } else if (currentRow) {
             fromDate = toIso(currentRow.serviceDate);
         } else {
             const previousRow = days.find((row) => row.sessionIndex === sessionIndex - 1);
@@ -161,7 +268,7 @@ export class ScheduleChangeService {
             sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
             serviceDate: day.serviceDate,
             locked: day.locked,
-        })));
+        })), record);
 
         return {
             sessionIndex: target.sessionIndex,
@@ -196,7 +303,7 @@ export class ScheduleChangeService {
             sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
             serviceDate: day.serviceDate,
             locked: day.locked,
-        })));
+        })), record);
         if (!schedule.endDate) {
             throw new BadRequestException("Assignment has no end date");
         }
@@ -253,7 +360,7 @@ export class ScheduleChangeService {
             sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
             serviceDate: day.serviceDate,
             locked: day.locked,
-        })));
+        })), record);
 
         return {
             sessionIndex: target.sessionIndex,
@@ -269,7 +376,11 @@ export class ScheduleChangeService {
     ) {
         const branchId = tenant.branchId ?? "";
         const selectedDateValue = toDbDate(selectedDate);
-        if (Number.isNaN(selectedDateValue.getTime()) || toIso(selectedDateValue) !== selectedDate) {
+        if (
+            Number.isNaN(selectedDateValue.getTime())
+            || toIso(selectedDateValue) !== selectedDate
+            || !isBusinessDayKr(selectedDate)
+        ) {
             throw new BadRequestException({ code: "INVALID_SCHEDULE_DATE" });
         }
 
@@ -333,41 +444,64 @@ export class ScheduleChangeService {
                     sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
                     serviceDate: day.serviceDate,
                     locked: day.locked,
-                })));
+                })), record);
                 if (selectedDate <= target.fromDate) {
                     throw new ConflictException({ code: "SCHEDULE_DATE_NOT_POSTPONED" });
                 }
 
-                const totalSessions = schedule.client.duration;
+                const shiftedPlannedSessions = shiftCanonicalPlan(
+                    record,
+                    target.sessionIndex,
+                    selectedDate,
+                );
+                const totalSessions = record.requiredSessionCount ?? schedule.client.duration;
                 if (!totalSessions || totalSessions <= 0) {
                     throw new BadRequestException("Client has no session duration");
                 }
-                const newEndDateIso = addBusinessDaysKr(
-                    selectedDate,
-                    totalSessions - target.sessionIndex,
-                );
+                const newEndDateIso = shiftedPlannedSessions
+                    ? shiftedPlannedSessions[shiftedPlannedSessions.length - 1]!.serviceDate
+                    : addBusinessDaysKr(selectedDate, totalSessions - target.sessionIndex);
                 const newEndDate = toDbDate(newEndDateIso);
 
-                await tx.service_record_day.upsert({
-                    where: {
-                        serviceRecordCaseId_caseSessionIndex: {
+                if (shiftedPlannedSessions) {
+                    await tx.service_record_case.update({
+                        where: { id: record.id, branchId },
+                        data: {
+                            plannedSessions: shiftedPlannedSessions as unknown as Prisma.InputJsonValue,
+                            version: { increment: 1 },
+                        },
+                    });
+                    const targetRow = days.find((day) =>
+                        (day.caseSessionIndex ?? day.sessionIndex) === target.sessionIndex,
+                    );
+                    if (targetRow && !targetRow.locked) {
+                        await tx.service_record_day.update({
+                            where: { id: targetRow.id },
+                            data: { serviceDate: selectedDateValue },
+                        });
+                    }
+                } else {
+                    await tx.service_record_day.upsert({
+                        where: {
+                            serviceRecordCaseId_caseSessionIndex: {
+                                serviceRecordCaseId: record.id,
+                                caseSessionIndex: target.sessionIndex,
+                            },
+                        },
+                        update: { serviceDate: selectedDateValue },
+                        create: {
+                            branchId,
+                            scheduleId,
                             serviceRecordCaseId: record.id,
                             caseSessionIndex: target.sessionIndex,
+                            employeeId: schedule.primaryEmployeeId,
+                            employeeNameSnapshot: schedule.primaryEmployee.name,
+                            formVersion: record.formVersion,
+                            sessionIndex: target.sessionIndex,
+                            serviceDate: selectedDateValue,
                         },
-                    },
-                    update: { serviceDate: selectedDateValue },
-                    create: {
-                        branchId,
-                        scheduleId,
-                        serviceRecordCaseId: record.id,
-                        caseSessionIndex: target.sessionIndex,
-                        employeeId: schedule.primaryEmployeeId,
-                        employeeNameSnapshot: schedule.primaryEmployee.name,
-                        formVersion: record.formVersion,
-                        sessionIndex: target.sessionIndex,
-                        serviceDate: selectedDateValue,
-                    },
-                });
+                    });
+                }
 
                 const unlockedRows = await tx.service_record_day.findMany({
                     where: {
@@ -378,12 +512,16 @@ export class ScheduleChangeService {
                     orderBy: { caseSessionIndex: "asc" },
                 });
                 for (const row of unlockedRows) {
+                    const rowSessionIndex = row.caseSessionIndex ?? row.sessionIndex;
+                    const plannedRow = shiftedPlannedSessions?.find(
+                        (entry) => entry.sessionIndex === rowSessionIndex,
+                    );
                     await tx.service_record_day.update({
                         where: { id: row.id },
                         data: {
-                            serviceDate: toDbDate(addBusinessDaysKr(
+                            serviceDate: toDbDate(plannedRow?.serviceDate ?? addBusinessDaysKr(
                                 selectedDate,
-                                (row.caseSessionIndex ?? row.sessionIndex) - target.sessionIndex,
+                                rowSessionIndex - target.sessionIndex,
                             )),
                         },
                     });
@@ -551,32 +689,56 @@ export class ScheduleChangeService {
                     sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
                     serviceDate: day.serviceDate,
                     locked: day.locked,
-                })));
+                })), record);
                 if (target.sessionIndex !== request.sessionIndex || target.fromDate !== toIso(request.fromDate)) {
                     throw new StaleRequestError(request.id, request.branchId);
                 }
 
                 const serviceDate = toDbDate(target.toDate);
-                await tx.service_record_day.upsert({
-                    where: {
-                        serviceRecordCaseId_caseSessionIndex: {
+                const shiftedPlannedSessions = shiftCanonicalPlan(
+                    record,
+                    target.sessionIndex,
+                    target.toDate,
+                );
+                if (shiftedPlannedSessions) {
+                    await tx.service_record_case.update({
+                        where: { id: record.id, branchId: request.branchId },
+                        data: {
+                            plannedSessions: shiftedPlannedSessions as unknown as Prisma.InputJsonValue,
+                            version: { increment: 1 },
+                        },
+                    });
+                    const targetRow = days.find((day) =>
+                        (day.caseSessionIndex ?? day.sessionIndex) === target.sessionIndex,
+                    );
+                    if (targetRow && !targetRow.locked) {
+                        await tx.service_record_day.update({
+                            where: { id: targetRow.id },
+                            data: { serviceDate },
+                        });
+                    }
+                } else {
+                    await tx.service_record_day.upsert({
+                        where: {
+                            serviceRecordCaseId_caseSessionIndex: {
+                                serviceRecordCaseId: record.id,
+                                caseSessionIndex: target.sessionIndex,
+                            },
+                        },
+                        update: { serviceDate },
+                        create: {
+                            branchId: request.branchId,
+                            scheduleId: request.scheduleId,
                             serviceRecordCaseId: record.id,
                             caseSessionIndex: target.sessionIndex,
+                            employeeId: schedule.primaryEmployeeId,
+                            employeeNameSnapshot: schedule.primaryEmployee.name,
+                            formVersion: record.formVersion,
+                            sessionIndex: target.sessionIndex,
+                            serviceDate,
                         },
-                    },
-                    update: { serviceDate },
-                    create: {
-                        branchId: request.branchId,
-                        scheduleId: request.scheduleId,
-                        serviceRecordCaseId: record.id,
-                        caseSessionIndex: target.sessionIndex,
-                        employeeId: schedule.primaryEmployeeId,
-                        employeeNameSnapshot: schedule.primaryEmployee.name,
-                        formVersion: record.formVersion,
-                        sessionIndex: target.sessionIndex,
-                        serviceDate,
-                    },
-                });
+                    });
+                }
 
                 const unlockedRows = await tx.service_record_day.findMany({
                     where: {
@@ -587,20 +749,26 @@ export class ScheduleChangeService {
                     orderBy: { caseSessionIndex: "asc" },
                 });
                 for (const row of unlockedRows) {
+                    const rowSessionIndex = row.caseSessionIndex ?? row.sessionIndex;
+                    const plannedRow = shiftedPlannedSessions?.find(
+                        (entry) => entry.sessionIndex === rowSessionIndex,
+                    );
                     await tx.service_record_day.update({
                         where: { id: row.id },
                         data: {
-                            serviceDate: toDbDate(
-                                addBusinessDaysKr(
-                                    target.toDate,
-                                    (row.caseSessionIndex ?? row.sessionIndex) - target.sessionIndex,
-                                ),
-                            ),
+                            serviceDate: toDbDate(plannedRow?.serviceDate ?? addBusinessDaysKr(
+                                target.toDate,
+                                rowSessionIndex - target.sessionIndex,
+                            )),
                         },
                     });
                 }
 
-                const newEndDate = toDbDate(target.newEndDate);
+                const newEndDate = toDbDate(
+                    shiftedPlannedSessions
+                        ? shiftedPlannedSessions[shiftedPlannedSessions.length - 1]!.serviceDate
+                        : target.newEndDate,
+                );
                 if (schedule.startDate) {
                     await assertNoActiveEmployeeScheduleOverlap(tx, {
                         branchId: request.branchId,

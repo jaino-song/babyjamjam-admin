@@ -33,6 +33,7 @@ const createMockPrismaService = () => ({
     service_record_case: {
         findFirst: jest.fn(),
         findUnique: jest.fn().mockResolvedValue({ id: "case-1", formVersion: 1 }),
+        update: jest.fn(),
     },
     client: {
         update: jest.fn(),
@@ -107,6 +108,16 @@ const createRequest = (overrides: Record<string, unknown> = {}) => ({
     decidedAt: null,
     ...overrides,
 });
+
+const createPlannedSessions = (dates: string[]) => dates.map((serviceDate, offset) => ({
+    sessionIndex: offset + 1,
+    serviceDate,
+    originalDate: serviceDate,
+    assignmentId: `assignment-${offset + 1}`,
+    scheduleId: SCHEDULE_ID,
+    employeeId: 5,
+    provenanceVersion: "revision-1",
+}));
 
 const expectConflictCode = async (
     action: () => Promise<unknown>,
@@ -184,6 +195,30 @@ describe("ScheduleChangeService", () => {
 
             await expect(service.preview(ctx)).resolves.toEqual({
                 sessionIndex: 3,
+                fromDate: "2026-07-03",
+                toDate: "2026-07-06",
+            });
+        });
+
+        it("uses the case N and canonical planned date for an irregular future vector", async () => {
+            prismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule({
+                client: { id: CLIENT_ID, duration: 15 },
+            }));
+            prismaService.service_record_case.findUnique.mockResolvedValue({
+                id: "case-1",
+                requiredSessionCount: 3,
+                plannedSessions: createPlannedSessions([
+                    "2026-07-01",
+                    "2026-07-03",
+                    "2026-07-07",
+                ]),
+            });
+            prismaService.service_record_day.findMany.mockResolvedValue([
+                createDay(1, "2026-07-01", true),
+            ]);
+
+            await expect(service.preview(ctx)).resolves.toEqual({
+                sessionIndex: 2,
                 fromDate: "2026-07-03",
                 toDate: "2026-07-06",
             });
@@ -394,6 +429,76 @@ describe("ScheduleChangeService", () => {
             });
         });
 
+        it("shifts the canonical vector without inventing day rows and keeps N separate from duration", async () => {
+            const plannedSessions = createPlannedSessions([
+                "2026-07-01",
+                "2026-07-03",
+                "2026-07-07",
+            ]);
+            txPrismaService.employee_schedule.findFirst.mockResolvedValue(createSchedule({
+                endDate: toDbDate("2026-07-07"),
+                client: { id: CLIENT_ID, duration: 15 },
+            }));
+            txPrismaService.service_record_case.findFirst.mockResolvedValue({
+                id: "case-1",
+                branchId: BRANCH_ID,
+                clientId: CLIENT_ID,
+                formVersion: 1,
+                requiredSessionCount: 3,
+                plannedSessions,
+            });
+            txPrismaService.schedule_change_request.findFirst.mockResolvedValue(null);
+            txPrismaService.service_record_day.findMany
+                .mockResolvedValueOnce([createDay(1, "2026-07-01", true)])
+                .mockResolvedValueOnce([]);
+            txPrismaService.service_record_case.update.mockResolvedValue({
+                id: "case-1",
+                requiredSessionCount: 3,
+                plannedSessions,
+            });
+            txPrismaService.schedule_change_request.create.mockResolvedValue(createRequest({
+                status: "approved",
+                sessionIndex: 2,
+                fromDate: toDbDate("2026-07-03"),
+                toDate: toDbDate("2026-07-06"),
+                oldEndDate: toDbDate("2026-07-07"),
+                newEndDate: toDbDate("2026-07-08"),
+                decidedBy: USER_ID,
+                decidedAt: toDbDate("2026-07-02"),
+            }));
+
+            await expect(
+                service.applyAdminChange(SCHEDULE_ID, "2026-07-06", tenant),
+            ).resolves.toMatchObject({
+                status: "approved",
+                sessionIndex: 2,
+                fromDate: "2026-07-03",
+                toDate: "2026-07-06",
+                newEndDate: "2026-07-08",
+            });
+
+            expect(txPrismaService.service_record_day.upsert).not.toHaveBeenCalled();
+            expect(txPrismaService.service_record_case.update).toHaveBeenCalledWith({
+                where: { id: "case-1", branchId: BRANCH_ID },
+                data: expect.objectContaining({
+                    version: { increment: 1 },
+                    plannedSessions: [
+                        expect.objectContaining({ sessionIndex: 1, serviceDate: "2026-07-01" }),
+                        expect.objectContaining({ sessionIndex: 2, serviceDate: "2026-07-06" }),
+                        expect.objectContaining({ sessionIndex: 3, serviceDate: "2026-07-08" }),
+                    ],
+                }),
+            });
+            expect(txPrismaService.employee_schedule.update).toHaveBeenCalledWith({
+                where: { id: SCHEDULE_ID },
+                data: { endDate: toDbDate("2026-07-08") },
+            });
+            expect(txPrismaService.client.update).toHaveBeenCalledWith({
+                where: { id: CLIENT_ID },
+                data: { endDate: toDbDate("2026-07-08") },
+            });
+        });
+
         it("should supersede a pending request when an admin applies a schedule change directly", async () => {
             const pendingRequest = createRequest({
                 fromDate: toDbDate("2026-07-20"),
@@ -552,6 +657,73 @@ describe("ScheduleChangeService", () => {
                 true,
             );
             expect(events).toEqual(["transaction:start", "transaction:commit", "sync"]);
+        });
+
+        it("approves against the canonical vector and does not create an unwritten target row", async () => {
+            const plannedSessions = createPlannedSessions([
+                "2026-07-01",
+                "2026-07-03",
+                "2026-07-07",
+            ]);
+            txPrismaService.schedule_change_request.findFirst.mockResolvedValue(createRequest({
+                sessionIndex: 2,
+                fromDate: toDbDate("2026-07-03"),
+                toDate: toDbDate("2026-07-06"),
+            }));
+            txPrismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule({
+                endDate: toDbDate("2026-07-07"),
+                client: { id: CLIENT_ID, duration: 15 },
+            }));
+            txPrismaService.service_record_case.findUnique.mockResolvedValue({
+                id: "case-1",
+                branchId: BRANCH_ID,
+                clientId: CLIENT_ID,
+                formVersion: 1,
+                requiredSessionCount: 3,
+                plannedSessions,
+            });
+            txPrismaService.service_record_day.findMany
+                .mockResolvedValueOnce([createDay(1, "2026-07-01", true)])
+                .mockResolvedValueOnce([]);
+            txPrismaService.service_record_case.update.mockResolvedValue({
+                id: "case-1",
+                requiredSessionCount: 3,
+                plannedSessions,
+            });
+            txPrismaService.schedule_change_request.update.mockResolvedValue(createRequest({
+                status: "approved",
+                sessionIndex: 2,
+                fromDate: toDbDate("2026-07-03"),
+                toDate: toDbDate("2026-07-06"),
+                newEndDate: toDbDate("2026-07-08"),
+                decidedBy: USER_ID,
+                decidedAt: toDbDate("2026-07-02"),
+            }));
+
+            await expect(service.approve("request-1", tenant)).resolves.toMatchObject({
+                status: "approved",
+                sessionIndex: 2,
+                fromDate: "2026-07-03",
+                toDate: "2026-07-06",
+                newEndDate: "2026-07-08",
+            });
+
+            expect(txPrismaService.service_record_day.upsert).not.toHaveBeenCalled();
+            expect(txPrismaService.service_record_case.update).toHaveBeenCalledWith({
+                where: { id: "case-1", branchId: BRANCH_ID },
+                data: expect.objectContaining({
+                    version: { increment: 1 },
+                    plannedSessions: [
+                        expect.objectContaining({ sessionIndex: 1, serviceDate: "2026-07-01" }),
+                        expect.objectContaining({ sessionIndex: 2, serviceDate: "2026-07-06" }),
+                        expect.objectContaining({ sessionIndex: 3, serviceDate: "2026-07-08" }),
+                    ],
+                }),
+            });
+            expect(txPrismaService.employee_schedule.update).toHaveBeenCalledWith({
+                where: { id: SCHEDULE_ID },
+                data: { endDate: toDbDate("2026-07-08") },
+            });
         });
 
         it("approval resyncs client trigger rules after the transaction commits", async () => {

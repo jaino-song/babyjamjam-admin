@@ -262,6 +262,9 @@ export class ServiceRecordLifecycleService {
         const sessionCount = existing
             ? existing.requiredSessionCount
             : deriveInitialSessionCount({ startDate: client.startDate, endDate: client.endDate });
+        const immutableFinalized = Boolean(
+            existing && IMMUTABLE_FINALIZATION_STATUSES.has(existing.status),
+        );
         // A new client without a nominal duration may still be initialized
         // from its complete service period. Never derive a nominal duration
         // from an existing case's N.
@@ -299,14 +302,24 @@ export class ServiceRecordLifecycleService {
             },
             update: {
                 branchId,
-                startDate: client.startDate,
-                endDate: client.endDate,
-                requiredSessionCount: sessionCount,
-                finalizationDueAt,
-                ...(existing && IMMUTABLE_FINALIZATION_STATUSES.has(existing.status) ? {} : { status }),
-                version: { increment: 1 },
+                ...(immutableFinalized
+                    ? {}
+                    : {
+                        startDate: client.startDate,
+                        endDate: client.endDate,
+                        requiredSessionCount: sessionCount,
+                        finalizationDueAt,
+                        status,
+                        version: { increment: 1 },
+                    }),
             },
         });
+
+        // Finalization claims freeze the case's source, assignments, and
+        // planned vector. Lifecycle repair may still be invoked by an older
+        // writer after that claim, but it must not reproject mutable client or
+        // schedule fields onto the immutable case.
+        if (immutableFinalized) return record;
 
         for (const schedule of client.employeeSchedules) {
             await db.service_record_assignment.upsert({

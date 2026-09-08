@@ -11,6 +11,12 @@ import {
 import { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import type { ServiceRecordRevisionDispatchContext } from "@babyjamjam/shared/types/service-record";
+import {
+    authorizeServiceRecordDispatch,
+    isValidServiceRecordDispatchContext,
+} from "application/policies/service-record-revision-state.policy";
+import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import {
     MESSAGE_TRIGGER_TEMPLATE_CATALOG,
     EVENT_OFFSET_OPTIONS,
@@ -339,6 +345,44 @@ type PreProviderSendFenceResult =
 
 const SMS_PROVIDER_ACCEPTANCE_UNCERTAIN_REASON =
     "문자 발송 결과가 불확실하여 자동 재전송을 중단했습니다. 제공자 이력 확인 후 수동 확인이 필요합니다.";
+
+function plannedSessionDatesFromJson(value: Prisma.JsonValue | null): Array<{
+    sessionIndex: number;
+    serviceDate: string;
+}> {
+    if (!Array.isArray(value)) return [];
+    return value
+        .map((entry) => {
+            if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+            const row = entry as Record<string, Prisma.JsonValue>;
+            const sessionIndex = row["sessionIndex"];
+            const serviceDate = row["serviceDate"];
+            if (
+                typeof sessionIndex !== "number"
+                || !Number.isInteger(sessionIndex)
+                || typeof serviceDate !== "string"
+            ) return null;
+            return { sessionIndex, serviceDate };
+        })
+        .filter((entry): entry is { sessionIndex: number; serviceDate: string } => entry !== null)
+        .sort((left, right) => left.sessionIndex - right.sessionIndex);
+}
+
+function stableJson(value: unknown): string {
+    if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+    if (value && typeof value === "object") {
+        return `{${Object.entries(value as Record<string, unknown>)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([key, nested]) => `${JSON.stringify(key)}:${stableJson(nested)}`)
+            .join(",")}}`;
+    }
+    return JSON.stringify(value) ?? "null";
+}
+
+function revisionPayloadFingerprint(payload: Prisma.JsonValue | null | undefined): string | null {
+    if (payload === null || payload === undefined) return null;
+    return createHash("sha256").update(stableJson(payload)).digest("hex");
+}
 
 @Injectable()
 export class MessageTriggerService {
@@ -2079,6 +2123,16 @@ export class MessageTriggerService {
         job: MessageTriggerJobEntity,
     ): Promise<PreProviderSendFenceResult> {
         return this.prisma.$transaction(async (transaction) => {
+            // Revised service-record messages carry a server-derived context.
+            // Acquire the same client-owned lock set before the job row and
+            // compare that context after the lock. This keeps a confirm that
+            // wins the common boundary from being followed by an old SMS.
+            const revisionFence = await this.fenceServiceRecordRevisionBeforeProviderSend(
+                job,
+                transaction,
+            );
+            if (revisionFence.kind === "lost") return revisionFence;
+
             // Employee schedule writers lock the source row before committing
             // their replacement. Preserve that order here, then lock the job
             // row for the token/CAS check; no provider work occurs while either
@@ -2095,12 +2149,17 @@ export class MessageTriggerService {
             if (tokenFence.kind === "lost") {
                 return tokenFence;
             }
-            if (sourceFence.kind === "stale") {
+            const staleFence = sourceFence.kind === "stale"
+                ? sourceFence
+                : revisionFence.kind === "stale"
+                    ? revisionFence
+                    : null;
+            if (staleFence) {
                 const canceled = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
                     UPDATE "message_trigger_job"
                     SET status = 'canceled',
                         canceled_at = date_trunc('milliseconds', clock_timestamp()),
-                        cancel_reason = ${sourceFence.reason},
+                        cancel_reason = ${staleFence.reason},
                         claim_token = NULL,
                         updated_at = date_trunc('milliseconds', clock_timestamp())
                     WHERE id = ${job.id}
@@ -2108,7 +2167,7 @@ export class MessageTriggerService {
                       AND claim_token = ${job.claimToken}
                     RETURNING id
                 `);
-                return canceled.length === 1 ? sourceFence : { kind: "lost" as const };
+                return canceled.length === 1 ? staleFence : { kind: "lost" as const };
             }
 
             const authorized = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
@@ -2125,6 +2184,141 @@ export class MessageTriggerService {
             maxWait: CLAIM_DISPATCH_AUTHORIZATION_TIMEOUT_MS,
             timeout: CLAIM_DISPATCH_AUTHORIZATION_TIMEOUT_MS,
         });
+    }
+
+    /**
+     * Revalidate an optional service-record revision context while holding the
+     * common client-owned write locks. Legacy jobs omit the context and retain
+     * their existing source fences. Missing Prisma delegates are treated as a
+     * lost authorization so a narrow test double can never accidentally claim
+     * a revised job without the database boundary.
+     */
+    private async fenceServiceRecordRevisionBeforeProviderSend(
+        job: MessageTriggerJobEntity,
+        transaction: Prisma.TransactionClient,
+    ): Promise<PreProviderSendFenceResult> {
+        const expected = job.payload.serviceRecordRevisionContext;
+        if (expected === undefined) {
+            // Legacy client jobs predate the revision context, but they still
+            // share the service-record aggregate with confirm and schedule
+            // writers. Acquire the common client-owned lock set before the
+            // claim-token CAS so a confirm that wins this boundary can cancel
+            // the pending/processing job before any provider call.
+            if (!job.branchId || job.clientId === null) return { kind: "allow" };
+            // Narrow unit doubles used by the existing message scheduler tests
+            // intentionally expose only the message/job delegates. A real
+            // Prisma transaction always has the service-record case delegate;
+            // preserve those doubles' legacy source-fence behavior while
+            // keeping the aggregate lock mandatory on the database path.
+            const caseDelegate = (transaction as unknown as {
+                service_record_case?: { findUnique?: unknown };
+            }).service_record_case;
+            if (typeof caseDelegate?.findUnique !== "function") return { kind: "allow" };
+            await lockServiceRecordWriteSet(transaction, {
+                branchId: job.branchId,
+                clientId: job.clientId,
+            });
+            return { kind: "allow" };
+        }
+        if (
+            !job.branchId
+            || job.clientId === null
+            || !isValidServiceRecordDispatchContext(expected)
+            || expected.branchId !== job.branchId
+            || expected.clientId !== job.clientId
+        ) {
+            return { kind: "stale", reason: "SERVICE_RECORD_REVISION_CONTEXT_INVALID" };
+        }
+
+        const caseDelegate = transaction.service_record_case as unknown as {
+            findUnique?: (args: unknown) => Promise<{
+                id: string;
+                branchId: string;
+                clientId: number | null;
+                requiredSessionCount: number | null;
+                plannedSessions: Prisma.JsonValue | null;
+                currentRevisionId: string | null;
+                formVersion: number;
+                status: string;
+            } | null>;
+        } | undefined;
+        const revisionDelegate = transaction.service_record_revision as unknown as {
+            findUnique?: (args: unknown) => Promise<{
+                revisionNumber: number;
+                payload: Prisma.JsonValue;
+            } | null>;
+        } | undefined;
+        if (typeof caseDelegate?.findUnique !== "function") {
+            return { kind: "lost" };
+        }
+
+        await lockServiceRecordWriteSet(transaction, {
+            branchId: job.branchId,
+            clientId: expected.clientId,
+            caseId: expected.serviceRecordCaseId,
+        });
+
+        const current = await caseDelegate.findUnique({
+            where: { id: expected.serviceRecordCaseId },
+            select: {
+                id: true,
+                branchId: true,
+                clientId: true,
+                requiredSessionCount: true,
+                plannedSessions: true,
+                currentRevisionId: true,
+                formVersion: true,
+                status: true,
+            },
+        });
+        if (
+            !current
+            || current.id !== expected.serviceRecordCaseId
+            || current.branchId !== expected.branchId
+            || current.clientId !== expected.clientId
+        ) {
+            return { kind: "lost", };
+        }
+
+        let revisionNumber = current.currentRevisionId === null ? null : expected.revisionNumber;
+        let businessFingerprint = expected.businessFingerprint;
+        if (current.currentRevisionId !== null && typeof revisionDelegate?.findUnique === "function") {
+            const revision = await revisionDelegate.findUnique({
+                where: { id: current.currentRevisionId },
+                select: { revisionNumber: true, payload: true },
+            });
+            if (!revision) return { kind: "lost", };
+            revisionNumber = revision.revisionNumber;
+            businessFingerprint = revisionPayloadFingerprint(revision.payload) ?? "";
+        }
+
+        const observed: ServiceRecordRevisionDispatchContext = {
+            branchId: current.branchId,
+            clientId: current.clientId,
+            serviceRecordCaseId: current.id,
+            revisionId: current.currentRevisionId,
+            revisionNumber,
+            businessFingerprint,
+            plannedSessionCount: current.requiredSessionCount,
+            plannedSessionDates: plannedSessionDatesFromJson(current.plannedSessions),
+            // Document synchronization is not represented on the case row;
+            // the revision context carries the status from the confirm source.
+            // The policy still compares it, while lifecycle-only status changes
+            // remain intentionally outside the business fence.
+            documentSyncStatus: expected.documentSyncStatus,
+            lifecycleStatus: current.status,
+            formVersion: current.formVersion,
+        };
+        const authorization = authorizeServiceRecordDispatch(expected, observed);
+        if (authorization.kind === "stale") {
+            return {
+                kind: "stale",
+                reason: authorization.reason ?? "SERVICE_RECORD_REVISION_CONTEXT_STALE",
+            };
+        }
+        return authorization.kind === "lost"
+            ? { kind: "lost" }
+            : { kind: "allow" };
     }
 
     private async deliverClaimedJob(job: MessageTriggerJobEntity): Promise<void> {

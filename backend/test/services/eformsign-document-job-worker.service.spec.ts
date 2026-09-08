@@ -75,6 +75,7 @@ function buildWorker(overrides: {
     finalize?: Record<string, jest.Mock>;
     reconciliation?: Record<string, jest.Mock>;
     schedulerLease?: ReturnType<typeof createSchedulerLeaseMock>;
+    prisma?: { $transaction: jest.Mock };
 } = {}) {
     const repository = {
         recoverStale: jest.fn().mockResolvedValue([]),
@@ -114,8 +115,9 @@ function buildWorker(overrides: {
         { findByDocumentId: jest.fn().mockResolvedValue({ documentId: "doc" }) } as never,
         { findById: jest.fn().mockResolvedValue({ id: 7 }) } as never,
         schedulerLease,
+        overrides.prisma as never,
     );
-    return { worker, repository, dispatch, finalize, reconciliation, autoFinalizeScheduler, schedulerLease };
+    return { worker, repository, dispatch, finalize, reconciliation, autoFinalizeScheduler, schedulerLease, prisma: overrides.prisma };
 }
 
 describe("EformsignDocumentJobWorkerService", () => {
@@ -246,6 +248,64 @@ describe("EformsignDocumentJobWorkerService", () => {
             "sent",
         );
         expect(reconciliation.reconcile).toHaveBeenCalled();
+    });
+
+    it("does not call eformsign for a revision whose capability is unverified", async () => {
+        const claimed = job({
+            payload: {
+                kind: "service_record_revision",
+                revisionId: "revision-1",
+                revisionNumber: 1,
+                context: {
+                    branchId,
+                    clientId: 7,
+                    serviceRecordCaseId: "00000000-0000-0000-0000-000000000020",
+                    revisionId: "00000000-0000-0000-0000-000000000021",
+                    revisionNumber: 1,
+                    businessFingerprint: "a".repeat(64),
+                    plannedSessionCount: null,
+                    plannedSessionDates: [],
+                    documentSyncStatus: "capability_unverified",
+                    lifecycleStatus: "IN_PROGRESS",
+                    formVersion: 1,
+                },
+                immutablePayload: {},
+                payloadFingerprint: "b".repeat(64),
+                completeness: "complete",
+            },
+        });
+        const { worker, repository, dispatch } = buildWorker({
+            repository: { claimDue: jest.fn().mockResolvedValue([claimed]) },
+        });
+
+        await worker.processDueJobs();
+
+        expect(dispatch.execute).not.toHaveBeenCalled();
+        expect(repository.markRequiresAttention).toHaveBeenCalledWith(
+            claimed.id,
+            claimed.leaseToken,
+            "SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED",
+        );
+    });
+
+    it("commits the legacy create marker under the transaction before dispatch", async () => {
+        const claimed = job();
+        const transaction = {
+            $queryRaw: jest.fn().mockResolvedValue([{ id: claimed.id }]),
+        };
+        const prisma = {
+            $transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>) => callback(transaction)),
+        };
+        const { worker } = buildWorker({ prisma });
+
+        const authorization = await (worker as unknown as {
+            authorizeRevisionJob: (job: EformsignDocumentJobEntity) => Promise<unknown>;
+        }).authorizeRevisionJob(claimed);
+
+        expect(authorization).toEqual({ kind: "allow", irreversible: true });
+        expect(transaction.$queryRaw).toHaveBeenCalled();
+        const markerQuery = transaction.$queryRaw.mock.calls.at(-1)?.[0];
+        expect(markerQuery?.strings?.join(" ")).toContain("progress_step = 'creating'");
     });
 
     it("persists progress and sends a heartbeat while a provider operation is running", async () => {
