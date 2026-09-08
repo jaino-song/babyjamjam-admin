@@ -112,6 +112,47 @@ describeE2E("atomic service-record confirmation (real disposable PostgreSQL)", (
         })).rejects.toBeInstanceOf(ConflictException);
     });
 
+    it("allows a second revision while keeping first dates and earlier confirmation replay immutable", async () => {
+        const { fixture, draft, request } = await prepare();
+        const first = await service.confirmDraft(fixture.branch.id, draft.id, fixture.actorUserId, request);
+        const originalRevision = await prisma.service_record_revision.findUniqueOrThrow({
+            where: { id: first.revisionId! },
+        });
+        const resumed = await service.startDraft(fixture.branch.id, fixture.client.id, fixture.actorUserId, {});
+        expect(resumed.draft?.id).not.toBe(draft.id);
+        const next = resumed.draft!;
+        const changed = await service.updateDraft(fixture.branch.id, next.id, fixture.actorUserId, {
+            expectedDraftVersion: next.draftVersion,
+            changes: {},
+            dateMove: { sessionIndex: 3, toDate: "2026-09-09" },
+        });
+        const preview = await service.previewDraft(fixture.branch.id, next.id, fixture.actorUserId, {
+            expectedDraftVersion: changed.draft!.draftVersion,
+        });
+        expect(preview.blockingReasons).toEqual([]);
+        expect(preview.after.sessions.map((entry) => entry.originalDate)).toEqual(ORIGINAL_THIRTEEN_DATES);
+        expect(preview.after.sessions.map((entry) => entry.serviceDate)).toEqual(ORIGINAL_THIRTEEN_DATES);
+        const second = await service.confirmDraft(fixture.branch.id, next.id, fixture.actorUserId, {
+            expectedDraftVersion: changed.draft!.draftVersion,
+            previewId: preview.previewId,
+            idempotencyKey: randomUUID(),
+        });
+        expect(second.revisionNumber).toBe(first.revisionNumber! + 1);
+        expect(second.revisionId).not.toBe(first.revisionId);
+        expect(await prisma.service_record_revision.findUniqueOrThrow({ where: { id: first.revisionId! } }))
+            .toEqual(originalRevision);
+        expect(await service.confirmDraft(fixture.branch.id, draft.id, fixture.actorUserId, request)).toEqual(first);
+        expect(await prisma.client.findUniqueOrThrow({ where: { id: fixture.client.id } }))
+            .toMatchObject({ endDate: fixture.client.endDate, duration: 15, actualPrice: "600000" });
+        const days = await prisma.service_record_day.findMany({
+            where: { serviceRecordCaseId: fixture.record.id }, orderBy: { caseSessionIndex: "asc" },
+        });
+        expect(days).toHaveLength(3);
+        expect(days.map((entry) => entry.serviceDate.toISOString().slice(0, 10)))
+            .toEqual(ORIGINAL_THIRTEEN_DATES.slice(0, 3));
+        expect(days[2]?.notes).toBe("Confirmed content");
+    });
+
     it("persists a replayable no-change result without a revision or document job", async () => {
         const { fixture, draft, request } = await prepare(false);
         const first = await service.confirmDraft(fixture.branch.id, draft.id, fixture.actorUserId, request);
