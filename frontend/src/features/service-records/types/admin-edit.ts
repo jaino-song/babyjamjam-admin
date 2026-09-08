@@ -22,6 +22,11 @@ export interface AdminServiceRecordEditSessionChanges {
     paymentConfirmed?: boolean;
 }
 
+export interface AdminServiceRecordEditDateMove {
+    sessionIndex: number;
+    toDate: string;
+}
+
 export interface AdminServiceRecordEditChanges {
     header?: AdminServiceRecordEditHeaderChanges;
     sessions?: AdminServiceRecordEditSessionChanges[];

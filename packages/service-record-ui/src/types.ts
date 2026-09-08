@@ -61,11 +61,26 @@ export interface SignatureSlotProps {
     locked: boolean;
 }
 
+export interface ServiceDateDisplaySlotProps {
+    "data-component": string;
+    sessionIndex: number;
+    serviceDate: string;
+}
+
+export interface ServiceDateEditorSlotProps extends ServiceDateDisplaySlotProps {
+    disabled: boolean;
+    onOpen: () => void;
+}
+
 export interface ServiceRecordWizardSlots {
     provider?: (props: ProviderSlotProps) => ReactNode;
     signature?: (props: SignatureSlotProps) => ReactNode;
     /** Optional authenticated administrator controls. Public flows do not render this slot. */
     adminToolbar?: ReactNode;
+    /** Optional administrator-only date display override; public defaults stay unchanged. */
+    serviceDateDisplay?: (props: ServiceDateDisplaySlotProps) => ReactNode;
+    /** Optional administrator-only date editor trigger; public date input stays unchanged. */
+    serviceDateEditor?: (props: ServiceDateEditorSlotProps) => ReactNode;
     overviewSupplemental?: ReactNode;
     submitModal?: ReactNode;
     scheduleChangeModal?: ReactNode;
@@ -110,6 +125,8 @@ export interface ServiceRecordWizardProps {
     onSaveHeader: () => void | Promise<void>;
     onOpenDay: (day: number, editExisting?: boolean) => void;
     onOpenScheduleChangePreview: () => void | Promise<void>;
+    /** Optional administrator-only date editor trigger. Public flows do not use it. */
+    onOpenServiceDateEditor?: (sessionIndex: number) => void;
     onServiceDateChange: (next: string) => void;
     onFieldChange: (key: string, value: unknown) => void;
     onToggleMulti: (key: string, option: string) => void;

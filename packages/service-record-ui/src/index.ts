@@ -18,6 +18,8 @@ export type {
     PendingServiceDate,
     ProviderSlotProps,
     ScheduleChangePreview,
+    ServiceDateDisplaySlotProps,
+    ServiceDateEditorSlotProps,
     ServiceRecordContext,
     ServiceRecordScreen,
     ServiceRecordSession,

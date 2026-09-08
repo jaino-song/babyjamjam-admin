@@ -8,6 +8,7 @@ import { serverAPIClient } from "@/lib/api/server";
 import { GET as getDraft, POST as startDraft } from "./client/[clientId]/draft/route";
 import { PATCH as updateDraft } from "./drafts/[draftId]/route";
 import { POST as discardDraft } from "./drafts/[draftId]/discard/route";
+import { POST as previewDraft } from "./drafts/[draftId]/preview/route";
 
 jest.mock("@/lib/api/server", () => ({
     serverAPIClient: {
@@ -116,6 +117,37 @@ describe("service-record draft proxy routes", () => {
             { expectedDraftVersion: 2 },
             { headers: { Authorization: "Bearer token-1" } },
         );
+    });
+
+    it("forwards read-only preview requests with the draft version", async () => {
+        mockPost.mockResolvedValue({ status: 200, data: { previewId: "preview-1", blockingReasons: [] } });
+
+        const response = await previewDraft(
+            createRequest("/api/admin/service-records/drafts/draft%2F1/preview", "POST", { expectedDraftVersion: 3 }),
+            { params: Promise.resolve({ draftId: "draft/1" }) },
+        );
+
+        expect(response.status).toBe(200);
+        expect(mockPost).toHaveBeenCalledWith(
+            "/admin/service-records/drafts/draft%2F1/preview",
+            { expectedDraftVersion: 3 },
+            { headers: { Authorization: "Bearer token-1" } },
+        );
+    });
+
+    it("rejects unauthenticated and malformed preview requests before upstream", async () => {
+        const unauthenticated = await previewDraft(
+            createRequest("/api/admin/service-records/drafts/draft-1/preview", "POST", { expectedDraftVersion: 1 }, false),
+            { params: Promise.resolve({ draftId: "draft-1" }) },
+        );
+        const malformed = await previewDraft(
+            createRequest("/api/admin/service-records/drafts/draft-1/preview", "POST", "{invalid"),
+            { params: Promise.resolve({ draftId: "draft-1" }) },
+        );
+
+        expect(unauthenticated.status).toBe(401);
+        expect(malformed.status).toBe(400);
+        expect(mockPost).not.toHaveBeenCalled();
     });
 
     it.each([403, 404, 409])("preserves upstream status %s for CAS operations", async (status) => {
