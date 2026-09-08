@@ -21,6 +21,13 @@ const UNINFORMATIVE_MESSAGES = new Set([
     "gateway timeout",
 ]);
 
+const SQL_IDENTIFIER = String.raw`(?:["'\x60][^"'\x60]+["'\x60]|[a-z_][\w$]*(?:\s*\.\s*(?:["'\x60][^"'\x60]+["'\x60]|[a-z_][\w$]*))?)`;
+const SQL_SELECT_FROM_PATTERN = new RegExp(
+    String.raw`\bselect\s+(?<projection>\*|${SQL_IDENTIFIER}(?:\s*,\s*${SQL_IDENTIFIER})*)\s+from\s+(?<table>${SQL_IDENTIFIER})(?<tail>[\s\S]*)`,
+    "i",
+);
+const SQL_CLAUSE_PATTERN = /\b(?:where\s+[a-z_][\w$.'"\x60]*\s*(?:=|<>|!=|<=|>=|<|>|\bis\b|\bin\b|\blike\b)|join\s+[a-z_][\w$.'"\x60]*\s+on\b|group\s+by\s+[a-z_][\w$.'"\x60]*|order\s+by\s+[a-z_][\w$.'"\x60]*|having\s+[a-z_][\w$.'"\x60]*\s*(?:=|<>|!=|<=|>=|<|>|\bis\b|\bin\b|\blike\b)|limit\s+\d+|offset\s+\d+|union(?:\s+all)?\s+select)/i;
+
 /**
  * Keep ordinary validation text visible while rejecting technical diagnostics
  * and value-bearing credentials that should never be shown to an operator.
@@ -28,7 +35,6 @@ const UNINFORMATIVE_MESSAGES = new Set([
 const UNSAFE_SERVER_MESSAGE_PATTERNS = [
     /\bprisma(?:client)?\b/i,
     /\b(?:sqlstate\s*[:=]?\s*[0-9a-z-]{3,}|sql\s+(?:error|exception|query|statement|syntax))\b/i,
-    /\bselect\s+\*\s+from\s+[a-z_][\w.$]*\b/i,
     /\b(?:insert\s+into|update\s+[a-z_][\w.$]*\s+set|delete\s+from\s+[a-z_][\w.$]*)\b/i,
     /\b(?:stack\s*trace|node_modules|referenceerror|typeerror|syntaxerror|econn(?:refused|reset|aborted))\b/i,
     /\bupstream\s+(?:error|failure|rejected)\b/i,
@@ -60,6 +66,21 @@ function isUninformative(message: string): boolean {
 function isUnsafeServerMessage(message: string, status: number | undefined): boolean {
     if (status !== undefined && status >= 500) {
         return true;
+    }
+
+    const selectMatch = SQL_SELECT_FROM_PATTERN.exec(message);
+    if (selectMatch?.groups) {
+        const projection = selectMatch.groups.projection;
+        const table = selectMatch.groups.table;
+        const tail = selectMatch.groups.tail;
+        const hasProjectionList = projection.includes(",");
+        const hasQuotedIdentifier = /["'\x60]/.test(`${projection}${table}`);
+        const hasSqlClause = SQL_CLAUSE_PATTERN.test(tail);
+        const hasStatementTerminator = tail.includes(";");
+
+        if (projection === "*" || hasProjectionList || hasQuotedIdentifier || hasSqlClause || hasStatementTerminator) {
+            return true;
+        }
     }
 
     return UNSAFE_SERVER_MESSAGE_PATTERNS.some((pattern) => pattern.test(message));

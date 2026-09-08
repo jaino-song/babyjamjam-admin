@@ -158,6 +158,17 @@ describe("getErrorMessage", () => {
         expect(getErrorMessage(error, "ko", FALLBACK_KEY)).toBe(fallback);
     });
 
+    it.each([
+        "SELECT phone FROM Client WHERE id = 73",
+        "SELECT phone, email FROM Client WHERE id = 73",
+        'SELECT "phone", "email" FROM "Client" WHERE "id" = 73',
+    ])("rejects SQL diagnostics from a 4xx response %p", (serverMessage) => {
+        const error = axiosError(409, { message: serverMessage, clientId: 73 });
+
+        expect(getApiDisplayMessage(error)).toBeNull();
+        expect(getErrorMessage(error, "ko", FALLBACK_KEY)).toBe(fallback);
+    });
+
     it("uses the localized fallback when the payload has no usable text", () => {
         expect(getErrorMessage(axiosError(500, {}), "ko", FALLBACK_KEY)).toBe(fallback);
         expect(getErrorMessage(axiosError(400, { message: ["", 42, null], error: "   " }), "ko", FALLBACK_KEY)).toBe(
