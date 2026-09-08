@@ -42,6 +42,20 @@ Additional product RED evidence: canonical owned legacy jobs with a null client 
 
 The future-content correction is integrated at `9f1e56d5f`. The final affected service/repository/worker unit run passes 77 tests in four suites (`/tmp/bjj-phase4-final-corrections-unit.log`). Fourteen actual PostgreSQL atomic/rollback tests pass (`/tmp/bjj-phase4-future-content-pg.log`), including explicit future draft persistence, immutable partial payload, duplicate retry, clearing an existing note, and rollback after successful future-day insertion. Scoped lint passes (`/tmp/bjj-phase4-future-content-lint.log`, `/tmp/bjj-phase4-corrections-lint.log`). Backend TypeScript has exactly the same five known receipt-helper errors (`/tmp/bjj-phase4-final-backend-types.log`). A parent test initially supplied null despite its string DTO and expected null normalization for an empty string; it now submits the valid empty-string input and verifies matching empty persisted/history values. This test correction is separate from the production null-presence mapping fix.
 
-Final actual PostgreSQL verification passes all seven suites and 29 tests at the corrected integrated production tree (`/tmp/bjj-phase4-final-postgres.log`). This includes all provider/message/eDoc dispatch orders, legacy null ownership, source snapshots, atomic/idempotency and nine after-write rollback boundaries. The one integrated Sol/high audit is next. Phase5 implementation remains gated on its result.
+Final actual PostgreSQL verification passes all seven suites and 29 tests at the corrected integrated production tree (`/tmp/bjj-phase4-final-postgres.log`). This includes all provider/message/eDoc dispatch orders, legacy null ownership, source snapshots, atomic/idempotency and nine after-write rollback boundaries. The one integrated Sol/high audit returned NO_SHIP at `d067ee717`; see `phase4-audit.md`. Phase5 implementation remains gated. Five load-bearing findings are being corrected in parallel; this is correction/residual review of the same phase audit, not task-level audits.
 
 Browser runtime, actual HTTP JWT/tenant authorization, full user flow and comprehensive contract/receipt synchronization are later Phase5/6 acceptance work. Phase0 remains unverified; new revision external operations remain fail-closed. No deployment or environment merge is claimed.
+
+## Audit correction worktrees
+
+All three unit branches start from integration branch `admin-service-record-editor` at `d067ee717`. Workers are Luna/max; parent owns integration and actual PostgreSQL.
+
+| Unit name | Absolute path | Branch | Ownership |
+|---|---|---|---|
+| phase4-audit-core | `/Users/jaino/Development/babyjamjam-admin/phase4-audit-core` | `unit/admin-service-record-4-audit-core` | Independent capability gate, later immutable finalization, current readiness, transactional reevaluation intents, eDoc authoritative sync state |
+| phase4-audit-delivery | `/Users/jaino/Development/babyjamjam-admin/phase4-audit-delivery` | `unit/admin-service-record-4-audit-delivery` | Prepare receipt before authorization; SMS authoritative sync reread; frozen prepared send |
+| phase4-audit-provider | `/Users/jaino/Development/babyjamjam-admin/phase4-audit-provider` | `unit/admin-service-record-4-audit-provider` | Distinguish absent legacy vector from invalid/revised missing vector |
+
+Actual PostgreSQL RED for the provider-context finding: four failures (three malformed persisted vectors and revised missing vector), two compatibility/valid-vector passes, `/tmp/bjj-phase4-provider-context-red.log`. This is a production-service GET test with synthetic disposable fixtures, not HTTP authorization proof.
+
+Finalization-policy clarification: existing lifecycle marks a fully submitted/approved/header-complete record READY immediately. `finalizationDueAt` drives incomplete AWAITING_COMPLETION; it is not a new universal hold on complete records. Corrections preserve that existing policy and the separate contract completion deadline while rejecting stale READY from incomplete or invalid current source.
