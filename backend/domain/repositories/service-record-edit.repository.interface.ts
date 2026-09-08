@@ -1,7 +1,11 @@
 import type {
     ServiceRecordEditDocumentScope,
     ServiceRecordEditSignatureMetadata,
+    ServiceRecordEditConfirmDocumentStatus,
+    ServiceRecordEditConfirmResponse,
+    ServiceRecordRevisionDispatchContext,
 } from "@babyjamjam/shared/types/service-record";
+import type { Prisma } from "@prisma/client";
 
 /** JSON value shape kept in the domain boundary so this port does not import Prisma. */
 export type ServiceRecordEditJsonValue =
@@ -92,7 +96,7 @@ export interface ServiceRecordEditSource {
     };
 }
 
-export type ServiceRecordEditDraftStatus = "ACTIVE" | "DISCARDED";
+export type ServiceRecordEditDraftStatus = "ACTIVE" | "DISCARDED" | "CONFIRMED";
 
 export interface ServiceRecordEditDraft {
     id: string;
@@ -110,6 +114,11 @@ export interface ServiceRecordEditDraft {
     createdAt: Date;
     updatedAt: Date;
     discardedAt: Date | null;
+    confirmedByUserId: string | null;
+    confirmedAt: Date | null;
+    confirmationIdempotencyKey: string | null;
+    confirmationFingerprint: string | null;
+    confirmationResponse: ServiceRecordEditJsonValue | null;
 }
 
 export interface ServiceRecordRevision {
@@ -164,6 +173,76 @@ export interface AppendServiceRecordRevisionInput {
     snapshotReference?: string | null;
 }
 
+export interface ServiceRecordEditConfirmSnapshot {
+    draft: ServiceRecordEditDraft;
+    source: ServiceRecordEditSource;
+}
+
+export interface ServiceRecordEditConfirmSessionUpdate {
+    sourceRowId: string;
+    serviceDate: string;
+    answers: ServiceRecordEditJsonValue;
+    etcService: string | null;
+    notes: string | null;
+    paymentConfirmed: boolean;
+}
+
+export interface ServiceRecordEditConfirmAssignmentUpdate {
+    assignmentId: string | null;
+    scheduleId: number | null;
+    startDate: string;
+    endDate: string;
+}
+
+export interface ServiceRecordEditConfirmDocumentJobPlan {
+    requestKey: string;
+    activeKey: string;
+    payload: Record<string, unknown>;
+    payloadFingerprint: string;
+    documentId?: string | null;
+}
+
+/**
+ * A fully server-derived write plan. The repository computes no business
+ * values from user input; it only applies this plan after taking the common
+ * ownership locks and rereading the draft/source.
+ */
+export interface ServiceRecordEditConfirmPlan {
+    status: "confirmed" | "no_changes";
+    sourceFingerprint: string;
+    caseId: string;
+    clientId: number;
+    formVersion: number;
+    requiredSessionCount: number | null;
+    startDate: string | null;
+    endDate: string | null;
+    header: ServiceRecordEditSource["header"];
+    plannedSessions: ServiceRecordEditJsonValue | null;
+    sessions: ServiceRecordEditConfirmSessionUpdate[];
+    assignments: ServiceRecordEditConfirmAssignmentUpdate[];
+    revision: AppendServiceRecordRevisionInput | null;
+    dispatchContext: ServiceRecordRevisionDispatchContext | null;
+    documentStatus: ServiceRecordEditConfirmDocumentStatus;
+    documentJob: ServiceRecordEditConfirmDocumentJobPlan | null;
+}
+
+export interface ServiceRecordEditConfirmInput {
+    branchId: string;
+    draftId: string;
+    expectedDraftVersion: number;
+    previewId: string;
+    idempotencyKey: string;
+    requestFingerprint: string;
+    actorUserId: string;
+    prepare: (snapshot: ServiceRecordEditConfirmSnapshot) =>
+        | ServiceRecordEditConfirmPlan
+        | Promise<ServiceRecordEditConfirmPlan>;
+}
+
+export interface ServiceRecordEditTransactionContext {
+    readonly tx: Prisma.TransactionClient;
+}
+
 export interface IServiceRecordEditRepository {
     /** Return the one active draft, creating it atomically when absent. */
     createOrResumeDraft(input: CreateServiceRecordEditDraftInput): Promise<ServiceRecordEditDraft>;
@@ -187,6 +266,12 @@ export interface IServiceRecordEditRepository {
     discardDraft(input: DiscardServiceRecordEditDraftInput): Promise<ServiceRecordEditDraft>;
     /** Append an immutable revision, allocating the next case-local number under a row lock. */
     appendRevision(input: AppendServiceRecordRevisionInput): Promise<ServiceRecordRevision>;
+    /**
+     * Confirm one active draft atomically. The repository owns the typed
+     * Prisma transaction and invokes `prepare` only after the common lock
+     * order and fresh source reread have completed.
+     */
+    confirmDraft(input: ServiceRecordEditConfirmInput): Promise<ServiceRecordEditConfirmResponse>;
 }
 
 export const SERVICE_RECORD_EDIT_REPOSITORY = "SERVICE_RECORD_EDIT_REPOSITORY";
