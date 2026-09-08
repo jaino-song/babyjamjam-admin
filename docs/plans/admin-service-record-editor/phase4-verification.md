@@ -84,3 +84,9 @@ The residual audit remained NO_SHIP at `2616eaa10`; its exact findings are prese
 - Rollback comparisons now include all branch/client message-job rows, explicitly proving no residual intent rows after the injected post-upsert failure.
 
 Final integrated correction check: all11 exact confirmation suites pass58/58 (`/tmp/bjj-phase4-residual-integrated-postgres.log`), including the target guard suite; this is not58 live database scenarios. Counts above overlap and are not summed. Changed parent proof ESLint passes (`/tmp/bjj-phase4-residual-proof-lint.log`). The five receipt-helper TypeScript baseline errors are still deferred to the explicitly owned Phase5 receipt task. Phase5 is not activated pending the same Sol/high audit session's residual recheck. Existing active-key semantics remain; Phase5 generation-state work must verify manual-review/superseded generations and multiple revisions without assuming current tests prove completed electronic document regeneration.
+
+## Residual2 historical compatibility proof
+
+Sol/high residual2 found no new production defect, but retained NO_SHIP for two historical compatibility proof gaps. Added an actual PostgreSQL historical revision-prefixed NULL-payload recovery test: real recoverStale transitions to reconciling, worker refuses with requires_attention/INVALID_SERVICE_RECORD_REVISION_JOB_PAYLOAD before any target, custody, dispatch, finalization or reconciliation calls. Added explicit non-null legacy payload redaction assertion to each confirm-wins document race.
+
+Exact changed suites: finalization and document-races, 15/15 PASS, `/tmp/bjj-phase4-residual2-proof.log`. Previous integrated 58/58 evidence remains; these overlap and are not added. No production change, external call, HTTP/browser or official PDF proof. Same phase audit residual closure pending.

@@ -1,0 +1,32 @@
+Model: gpt-5.6-sol | Effort: high.
+
+NO_SHIP
+
+The production corrections appear correct, but two required historical/compatibility branches remain unproved. These are proof gaps, not observed code defects.
+
+1. A fully redacted recovered revision job is not directly exercised.
+
+The worker correctly identifies revision jobs by request-key prefix even when payload identity is absent, then blocks before ownership/custody/reconciliation ([eformsign-document-job-worker.service.ts:134](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/eformsign-document-job-worker.service.ts:134), [eformsign-document-job-worker.service.ts:525](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/eformsign-document-job-worker.service.ts:525)). However:
+
+- The focused malformed-payload test still supplies `kind` and `revisionId` ([eformsign-document-job-worker.service.spec.ts:352](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/test/services/eformsign-document-job-worker.service.spec.ts:352)).
+- The actual-PostgreSQL recovery sequence starts with the intact frozen payload ([service-record-confirm-finalization.e2e.spec.ts:371](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/test/e2e/service-record-confirm-finalization.e2e.spec.ts:371)).
+
+Remaining scenario: a historical `reconciling` row created before this correction has a revision-prefixed request key but `payload = NULL`. No test directly proves that recovery reaches `requires_attention` with zero target/custody/reconciliation calls.
+
+2. Legacy terminal payload redaction is inspected but not proven by the new actual-PG sequence.
+
+All direct writers correctly preserve only revision payloads and otherwise select `NULL`: reconciliation, completion, recovery, terminal transitions, retention, and admin supersession ([sb.eformsign-document-job.repository.ts:615](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/infrastructure/database/repositories/sb.eformsign-document-job.repository.ts:615), [sb.eformsign-document-job.repository.ts:653](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/infrastructure/database/repositories/sb.eformsign-document-job.repository.ts:653), [sb.eformsign-document-job.repository.ts:715](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/infrastructure/database/repositories/sb.eformsign-document-job.repository.ts:715), [service-record-edit.repository.ts:1538](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/infrastructure/database/repositories/service-record-edit.repository.ts:1538)).
+
+But the retention proof creates the expired legacy job without a payload ([service-record-confirm-finalization.e2e.spec.ts:418](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/test/e2e/service-record-confirm-finalization.e2e.spec.ts:418)), while the actual-PG document race creates a non-null legacy payload but never asserts its removal after cancellation ([service-record-confirm-document-races.e2e.spec.ts:71](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/test/e2e/service-record-confirm-document-races.e2e.spec.ts:71), [service-record-confirm-document-races.e2e.spec.ts:99](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/test/e2e/service-record-confirm-document-races.e2e.spec.ts:99)). The repository unit only inspects mocked SQL shape.
+
+The other residual closures are satisfied:
+
+- Revision payload preservation through real worker refusal, recovery, retry, retention, and later admin supersession is covered ([service-record-confirm-finalization.e2e.spec.ts:363](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/test/e2e/service-record-confirm-finalization.e2e.spec.ts:363), [service-record-confirm-finalization.e2e.spec.ts:432](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/test/e2e/service-record-confirm-finalization.e2e.spec.ts:432)).
+- Updated end-date status/deadline consistency and fail-closed revised vectors are implemented and exercised ([service-record-lifecycle.service.ts:924](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-lifecycle.service.ts:924), [service-record-finalization.service.ts:230](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-finalization.service.ts:230), [service-record-confirm-finalization.e2e.spec.ts:322](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/test/e2e/service-record-confirm-finalization.e2e.spec.ts:322)).
+- Pre-preparation and post-preparation fences, including the claimed legacy loser, are actual-PG transition tests with fake delivery adapters ([message-trigger.service.ts:2163](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/message-trigger.service.ts:2163), [message-trigger.service.ts:2293](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/message-trigger.service.ts:2293), [service-record-confirm-receipt-preparation.e2e.spec.ts:69](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/test/e2e/service-record-confirm-receipt-preparation.e2e.spec.ts:69)).
+- Rollback now compares every branch/client message-intent row ([service-record-confirm-rollback.e2e.spec.ts:88](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/test/e2e/service-record-confirm-rollback.e2e.spec.ts:88), [service-record-confirm-rollback.e2e.spec.ts:149](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/test/e2e/service-record-confirm-rollback.e2e.spec.ts:149)).
+
+Recorded evidence is 58 assertions across 11 named suites—not 58 live-database scenarios. Focused worker/delivery counts overlap and are not added. The five receipt-helper type errors remain documented baseline errors ([phase4-verification.md:81](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/docs/plans/admin-service-record-editor/phase4-verification.md:81)).
+
+No vendor/PDF/SMS/HTTP/browser proof is established. Phase 0 remains unverified and Phase 5 remains unimplemented.
+

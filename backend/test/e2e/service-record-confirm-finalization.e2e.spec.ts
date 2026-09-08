@@ -429,6 +429,40 @@ describeE2E("service-record finalization eligibility and frozen input (real disp
         expect(await prisma.eformsign_document_job.count({ where: { requestKey } })).toBe(1);
     });
 
+    it("blocks a historical redacted revision recovery before target or custody reads", async () => {
+        const fixture = await createServiceRecordConfirmFixture(prisma);
+        const row = await prisma.eformsign_document_job.create({ data: {
+            branchId: fixture.branch.id, clientId: fixture.client.id, jobType: "create_document",
+            source: "staff", status: "processing", payload: Prisma.DbNull,
+            requestKey: `service-record-initial-finalization:${randomUUID()}`,
+            leaseToken: randomUUID(), progressStep: "creating",
+            heartbeatAt: new Date("0101-01-01T00:00:00.000Z"),
+        } });
+        const repository = new SbEformsignDocumentJobRepository(prisma as unknown as PrismaService);
+        const recovered = await repository.recoverStale(new Date("0102-01-01T00:00:00.000Z"));
+        expect(recovered.find((job) => job.id === row.id)).toMatchObject({ status: "reconciling", payload: null });
+        const scoped = new Proxy(repository, { get(target, property, receiver) {
+            if (property === "deleteExpiredTerminal") return async () => 0;
+            if (property === "recoverStale") return async () => recovered.filter((job) => job.id === row.id);
+            if (property === "claimDue") return async () => [];
+            const value: unknown = Reflect.get(target, property, receiver);
+            return typeof value === "function" ? value.bind(target) : value;
+        } });
+        const external = jest.fn(() => { throw new Error("Unexpected target, custody, or provider call"); });
+        const forbidden = new Proxy({}, { get: () => external });
+        const worker = new EformsignDocumentJobWorkerService(
+            new ConfigService({ EFORMSIGN_DOCUMENT_JOBS_WORKER_ENABLED: "true" }), scoped,
+            forbidden as never, forbidden as never, forbidden as never,
+            { recordTerminalFailure: jest.fn() } as never,
+            forbidden as never, forbidden as never, { holdsLease: () => true } as never,
+        );
+        await worker.processDueJobs();
+        expect(external).not.toHaveBeenCalled();
+        expect(await prisma.eformsign_document_job.findUniqueOrThrow({ where: { id: row.id } }))
+            .toMatchObject({ status: "requires_attention", payload: null,
+                lastErrorCode: "INVALID_SERVICE_RECORD_REVISION_JOB_PAYLOAD" });
+    });
+
     it("preserves a frozen complete payload when another admin revision supersedes its queued job", async () => {
         const fixture = await createServiceRecordConfirmFixture(prisma);
         const first = await confirmAdminDateMove(prisma, fixture);

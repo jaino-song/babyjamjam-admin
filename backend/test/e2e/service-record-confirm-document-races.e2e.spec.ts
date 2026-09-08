@@ -102,6 +102,7 @@ describeE2E("confirm versus existing electronic-document authorization (actual P
             expect(other).toMatchObject({ kind: expect.stringMatching(/^(lost|stale)$/) });
             expect(finalJob.status).not.toBe("processing");
             expect(finalJob.leaseToken).toBeNull();
+            expect(finalJob.payload).toBeNull();
             expect(finalJob.progressStep).not.toBe("creating");
         } else {
             expect(result).toMatchObject({ kind: "allow" });
