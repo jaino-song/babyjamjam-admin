@@ -1381,6 +1381,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             },
             select: {
                 id: true,
+                branch: { select: { name: true } },
                 clientId: true,
                 version: true,
                 formVersion: true,
@@ -1536,6 +1537,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             caseId: record.id,
             caseVersion: record.version,
             formVersion: record.formVersion,
+            branchName: record.branch?.name ?? null,
             caseLifecycle: {
                 status: record.status,
                 completedAt: instant(record.completedAt),

@@ -106,6 +106,7 @@ function sourceFingerprint(source: SourceSnapshot): string {
     // fingerprint. A status-only transition must not invalidate a draft.
     const fingerprintPayload = jsonValue({
         caseId: source.caseId,
+        branchName: source.branchName ?? null,
         formVersion: source.formVersion,
         requiredSessionCount: source.requiredSessionCount,
         startDate: source.startDate,
@@ -688,6 +689,7 @@ export class AdminServiceRecordEditService {
         const completeness = revisionCompleteness(source);
         const revisionPayload = jsonValue({
             caseId: source.caseId,
+            branchName: source.branchName,
             clientId: source.client.id,
             requiredSessionCount: provisional.requiredSessionCount,
             startDate: provisional.after.startDate,

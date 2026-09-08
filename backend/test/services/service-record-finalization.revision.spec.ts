@@ -12,6 +12,7 @@ function source() {
     return {
         id: caseId,
         branchId,
+        branchName: "테스트 지점",
         clientId,
         status: "READY_TO_FINALIZE",
         nextAttemptAt: null,

@@ -88,6 +88,8 @@ export interface ServiceRecordEditSource {
     caseId: string;
     caseVersion: number;
     formVersion: number;
+    /** Server-observed branch name frozen with revision document inputs. */
+    branchName?: string | null;
     caseLifecycle: ServiceRecordEditCaseLifecycle;
     requiredSessionCount: number | null;
     startDate: string | null;
