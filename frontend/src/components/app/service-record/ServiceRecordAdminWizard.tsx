@@ -950,9 +950,9 @@ export function ServiceRecordAdminWizard({
         const originalDate = originalDateForSession(sessionIndex);
         const changed = Boolean(originalDate && revisedDate && originalDate !== revisedDate);
         return (
-            <span data-component={dataComponent} data-slot="date-display">
-                <span data-slot="revised-date">{formatShortDate(revisedDate)}</span>
-                {changed ? <span data-slot="original-date">원본 {formatShortDate(originalDate)}</span> : null}
+            <span data-component={dataComponent} data-slot="date-display" className="admin-date-display">
+                <span data-slot="revised-date" className="admin-date-display-revised">{formatShortDate(revisedDate)}</span>
+                {changed ? <span data-slot="original-date" className="admin-date-display-original">원본 {formatShortDate(originalDate)}</span> : null}
             </span>
         );
     }, [originalDateForSession]);

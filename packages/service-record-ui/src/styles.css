@@ -38,6 +38,9 @@
 .srec .text-back{display:block;border:0;border-radius:0;background:transparent;color:var(--primary);font:inherit;font-size:13px;font-weight:700;margin:0 0 10px;padding:4px 0;text-align:left;cursor:pointer}
 .srec .text-back:focus-visible{outline:2px solid var(--primary);outline-offset:3px}
 .srec .datechip{display:inline-block;font-size:12px;font-weight:700;background:#eaf1ff;color:var(--primary);border-radius:99px;padding:4px 12px;margin-bottom:10px}
+.srec .admin-date-display{display:inline-flex;align-items:baseline;column-gap:4px;row-gap:1px;flex-wrap:wrap;vertical-align:baseline}
+.srec .admin-date-display-revised,.srec .admin-date-display-original{white-space:nowrap}
+.srec .admin-date-display-original{display:inline-block}
 .srec .dateinput{height:44px;padding-block:0;font-size:15px}
 .srec .notice{display:flex;align-items:flex-start;background:#fff7ec;border:1px solid #f0dcc0;color:var(--warn);font-size:12.5px;border-radius:10px;padding:10px 12px;margin-bottom:12px}
 .srec .handover{display:flex;align-items:flex-start;background:#eef5ff;border:1px solid #c7dafa;border-radius:12px;padding:12px 14px;margin-bottom:10px;font-size:13px;color:var(--primary)}
