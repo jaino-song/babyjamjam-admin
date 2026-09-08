@@ -445,3 +445,8 @@
 ### 실행 방식 수정 — Phase 내부 병렬 구현, Phase 단위 감사
 
 사용자가 task별 직렬 실행·검수로 인한 지연을 지적하고 같은 Phase의 task들을 병렬 구현한 뒤 Phase마다 검증하도록 명시했다. 이 지시는 기존 task 직렬 실행 문구를 대체한다. Luna/max worker의 파일 소유권과 API·데이터 계약을 먼저 고정하고 같은 Phase에서 병렬 구현한다. task별 검증은 담당 변경의 집중 테스트로 제한하며 별도의 Sol 감사와 전체 통합 테스트를 반복하지 않는다. Phase의 모든 변경을 통합한 뒤 한 번의 통합 검증과 Sol/high 독립 감사를 수행하고 다음 Phase로 진행한다. 현재 Phase3 서버 계산과 날짜 선택 UI는 분리된 unit에서 병행 중이며 서버 계약 고정 시 나머지 wizard/API 연결도 병행한다. 외부 실행·환경 브랜치 병합·배포 권한 및 Phase0 미확인 경계는 바꾸지 않는다.
+
+
+### Phase3 병렬 구현 checkpoint 공유
+
+서버 worker의 공통 타입·영업일 v2·부호 있는 이동/벡터 함수 checkpoint `db611b42c`를 integration 및 wizard unit에 공유했다. 서버 정책/API/N 초기화 작업은 계속 진행 중이다. 날짜 UI worker의 `aba1d25b7`는 제어형 대화상자·테스트·manifest만 포함하며 집중 Jest7/7, ESLint, frontend TypeScript, UI architecture, frontend build exit0을 보고했다. 빌드는 기존 dynamic-cookie/invalid-URL 로그를 남겼으므로 외부 연결 부재의 증거로 해석하지 않는다. 실제 API/DB/브라우저 검증이 아니며 Phase3 전체 완료도 아니다. 날짜 UI를 integration 및 wizard unit에 공유한 뒤 깨끗한 해당 unit/branch를 제거했다. wizard worker는 공유 계약으로 서버 작업과 병렬 구현한다. Phase3 통합 검증 및 Sol/high 감사는 모든 구현을 합친 뒤 한 번 수행한다.
