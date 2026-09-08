@@ -5,6 +5,8 @@ import { AdminServiceRecordEditService } from "application/services/admin-servic
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { MessageTriggerTemplateKey, MessageTriggerRecipientType } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { getClientAutomationIntentDedupeKey, getScheduleAutomationIntentDedupeKey,
+    MESSAGE_AUTOMATION_INTENT_RETRY_REASON } from "domain/constants/message-automation-intent";
 import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
 import {
     assertApprovedServiceRecordConfirmDatabaseTarget, createApprovedServiceRecordConfirmClient,
@@ -94,6 +96,21 @@ describeE2E("confirm versus legacy SMS authorization (actual PostgreSQL)", () =>
             expect(result).toMatchObject({ status: "confirmed" });
             expect(other).toMatchObject({ kind: "lost" });
             expect(finalJob).toMatchObject({ status: "canceled", claimToken: null });
+            const intents = await prisma.message_trigger_job.findMany({ where: {
+                branchId: fixture.branch.id, clientId: fixture.client.id,
+                dedupeKey: { in: [getClientAutomationIntentDedupeKey(fixture.branch.id, fixture.client.id),
+                    getScheduleAutomationIntentDedupeKey(fixture.branch.id, fixture.schedule.id)] },
+            } });
+            expect(intents).toHaveLength(2);
+            expect(intents).toEqual(expect.arrayContaining([
+                expect.objectContaining({ status: "failed", cancelReason: MESSAGE_AUTOMATION_INTENT_RETRY_REASON,
+                    dedupeKey: getClientAutomationIntentDedupeKey(fixture.branch.id, fixture.client.id),
+                    payload: expect.objectContaining({ templateVariables: expect.objectContaining({
+                        intentKind: "client", includePast: "false", suppressGreeting: "true",
+                    }) }) }),
+                expect.objectContaining({ status: "failed", cancelReason: MESSAGE_AUTOMATION_INTENT_RETRY_REASON,
+                    dedupeKey: getScheduleAutomationIntentDedupeKey(fixture.branch.id, fixture.schedule.id) }),
+            ]));
         } else {
             expect(result).toMatchObject({ kind: "allow" });
             expect(other).toBeInstanceOf(ConflictException);

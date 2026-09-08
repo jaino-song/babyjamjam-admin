@@ -20,7 +20,8 @@ type FaultBoundary =
     | "schedule"
     | "revision"
     | "draft"
-    | "job";
+    | "job"
+    | "intent";
 
 function rawSqlContains(args: unknown, needle: string): boolean {
     if (!args || typeof args !== "object" || !("strings" in args)) return false;
@@ -51,6 +52,7 @@ describeE2E("service-record confirmation rollback (real disposable PostgreSQL)",
         "revision",
         "draft",
         "job",
+        "intent",
     ])("rolls back every owning write when the %s boundary fails", async (boundary) => {
         // Fixtures intentionally remain in the disposable task database. The
         // helper's signed rows and any revision history are part of the
@@ -116,6 +118,7 @@ describeE2E("service-record confirmation rollback (real disposable PostgreSQL)",
                             revision: "service_record_revision:create",
                             draft: "service_record_edit_draft:updateMany",
                             job: "never:never",
+                            intent: "message_trigger_job:upsert",
                         }[boundary];
                     if (injectFailure && hit) {
                         faultReached = true;
