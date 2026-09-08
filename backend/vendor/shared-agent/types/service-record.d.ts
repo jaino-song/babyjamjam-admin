@@ -58,6 +58,55 @@ export interface ServiceRecordEditPreviewBlockingReason {
     sessionIndex?: number;
     assignmentId?: string;
 }
+export type ServiceRecordEditEvidence = "observed" | "unverified";
+/**
+ * Metadata-only treatment for signatures already captured on a service day.
+ * The signature payload itself never crosses the preview contract; later
+ * confirmation preserves the stored signature and submission timestamps while
+ * allowing the displayed service date to change.
+ */
+export type ServiceRecordEditSignatureTreatment = "preserve_existing" | "manual_review";
+export interface ServiceRecordEditSignatureSessionMetadata {
+    sessionIndex: number;
+    hasSignature: boolean;
+    signedAt: string | null;
+    submittedAt: string | null;
+}
+export interface ServiceRecordEditSignatureMetadata {
+    treatment: ServiceRecordEditSignatureTreatment;
+    evidence: ServiceRecordEditEvidence;
+    sessions: ServiceRecordEditSignatureSessionMetadata[];
+}
+export interface ServiceRecordEditDocumentChunk {
+    documentId: string;
+    snapshotVersion: number | null;
+    snapshotChunkIndex: number | null;
+}
+export interface ServiceRecordEditDocumentScope {
+    evidence: ServiceRecordEditEvidence;
+    serviceRecordSnapshot: {
+        documentIds: string[];
+        snapshotVersion: number | null;
+        chunks: ServiceRecordEditDocumentChunk[];
+    };
+    currentRevision: {
+        id: string | null;
+        revisionNumber: number | null;
+        formVersion: number | null;
+    };
+    form: {
+        version: number | null;
+    };
+    contract: {
+        currentDocumentId: string | null;
+        stage: string | null;
+    };
+}
+/** Full planned vector exposed by the read-only editor endpoint. */
+export interface ServiceRecordScheduleProjection {
+    entries: ServiceRecordPlannedSession[];
+    blockingReasons: ServiceRecordEditPreviewBlockingReason[];
+}
 export interface ServiceRecordEditPreviewAssignmentRange {
     assignmentId: string;
     scheduleId: number;
@@ -94,6 +143,8 @@ export interface ServiceRecordEditPreviewResponse {
     contentChanges: ServiceRecordEditPreviewContentChanges;
     impactedAssignments: string[];
     blockingReasons: ServiceRecordEditPreviewBlockingReason[];
+    signatureMetadata: ServiceRecordEditSignatureMetadata;
+    documentScope: ServiceRecordEditDocumentScope;
 }
 export interface SignatureDocStatus {
     documentId: string;
@@ -139,6 +190,7 @@ export interface ServiceRecordAssignment {
 export interface ServiceRecordOverview {
     record?: ServiceRecordCase | null;
     assignments: ServiceRecordAssignment[];
+    scheduleProjection?: ServiceRecordScheduleProjection;
 }
 export interface SendServiceRecordLinkResponse {
     ok: boolean;
