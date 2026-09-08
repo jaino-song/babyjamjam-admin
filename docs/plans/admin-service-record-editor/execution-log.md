@@ -459,3 +459,8 @@
 Phase 단위 Sol/high read-only 감사는 CLI runtime header에서 model gpt-5.6-sol, effort high, sandbox read-only를 확인했으며 session01a07fe2-3dc1-7ed1-9f02-609c05688e3e가 exit0으로 종료됐다. 판정 FIX_REQUIRED, HIGH4/MEDIUM2. 원문은 phase3-sol-audit.md에 보존한다. 미작성 회차 날짜/원본 표시, 날짜저장 실패 시 선택 유지, 서명·문서 영향 preview 결속, unsupported legacy 조회 오류, 부분손상 preview200의 fail-closed 처리, preview/PATCH 버전 경쟁을 보완한다.
 
 phase3-corrections-backend와 phase3-corrections-ui를 c8c7dd60e에서 분기했고 Luna/max 두 worker가 병렬 수정한다. backend worker는 관리자 editor presentation/source/shared metadata/preview read fence 및 테스트를, UI worker는 canonical vector 소비/실패 선택 보존/엄격 normalization/metadata 표시 및 테스트를 소유한다. 필요한 DTO checkpoint만 공유하며 task별 감사는 없다. 보완을 합친 뒤 해당6건의 해소 여부를 Sol이 확인한다. Phase4 구현은 이 phase gate 이후 시작한다.
+
+
+### Phase3 잔여 검토 — 네 항목 해소, parser 보완
+
+통합06c0877ca에서 backend54/frontend36 집중 검사가 통과했다. 첫 backend 시도는 오래된 설치 타입으로 컴파일 실패했으며 offline frozen relink 후 통과했다. 새 실제PG preview/PATCH 경합 증거는 없다. Sol/high 잔여 검토는 원래6항목 중1/2/4/6을 해소했고3/5의 shared stage union과 preview normalizer 경계만 남겼다. 전체 감사는 반복하지 않는다. 원문은 phase3-sol-residual-audit.md에 보존한다. dedicated unit phase3-parser-correction (branch unit/admin-service-record-3-parser, base06c0877ca)에 기존 Luna/max worker를 재배정했다. 정확한 stage 검증, blocked-vector 예외 범위, 현재 날짜 중복, 원본 날짜 범위, 0-based chunk index를 보정하며 영향받는 parser 검사만 수행한다. Phase4는 잔여 검토 통과 후 시작한다.
