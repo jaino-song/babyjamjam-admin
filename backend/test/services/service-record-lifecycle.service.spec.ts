@@ -714,6 +714,148 @@ describe("ServiceRecordLifecycleService", () => {
         expect(ensureSpy).not.toHaveBeenCalled();
     });
 
+    it("does not persist a ready mirror when the client pointer belongs to a newer revision", async () => {
+        const currentRevisionId = "77777777-7777-4777-8777-777777777777";
+        const transactionClient = {
+            $queryRaw: jest.fn().mockImplementation(async (query: { strings?: string[] }) => {
+                const sql = query.strings?.join(" ") ?? "";
+                if (sql.includes("detail_source_updated_date")) {
+                    return [{
+                        id: 7,
+                        clientId: 1,
+                        branchId: rawQueryBranchId,
+                        serviceRecordCaseId: rawQueryCaseId,
+                        revisionId: null,
+                    }];
+                }
+                if (sql.includes("e_doc_id")) {
+                    return [{ id: 1, eDocId: "newer-contract", branchId: rawQueryBranchId }];
+                }
+                if (sql.includes("current_revision_id")) {
+                    return [{
+                        id: rawQueryCaseId,
+                        branchId: rawQueryBranchId,
+                        clientId: 1,
+                        currentRevisionId,
+                        currentUsableRevisionId: currentRevisionId,
+                        currentUsableDocumentVersion: 2,
+                    }];
+                }
+                return [{ id: 7 }];
+            }),
+            eformsign_doc: {
+                findFirst: jest.fn().mockResolvedValue({ id: 7 }),
+            },
+            client: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 1,
+                    branchId: rawQueryBranchId,
+                    eDocId: "newer-contract",
+                }),
+                updateMany: jest.fn(),
+            },
+            employee_schedule: { findMany: jest.fn().mockResolvedValue([]) },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: rawQueryCaseId,
+                    branchId: rawQueryBranchId,
+                    clientId: 1,
+                }),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+                callback(transactionClient)),
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const persistSpy = jest.spyOn(
+            service as unknown as { syncEndDateFromContractInTransaction: jest.Mock },
+            "syncEndDateFromContractInTransaction",
+        ).mockResolvedValue(undefined);
+
+        await expect(service.syncEndDateFromMirroredContract({
+            branchId: rawQueryBranchId,
+            clientId: 1,
+            endDate: date("2026-08-14"),
+            documentId: rawQueryDocumentId,
+            detailSourceUpdatedDate: new Date("2026-07-30T01:00:00.000Z"),
+            detailSyncedAt: new Date("2026-07-30T01:01:00.000Z"),
+        })).resolves.toBe(false);
+
+        expect(persistSpy).not.toHaveBeenCalled();
+        expect(transactionClient.client.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("persists a ready mirrored contract only when the current pointer and legacy revision state agree", async () => {
+        const transactionClient = {
+            $queryRaw: jest.fn().mockImplementation(async (query: { strings?: string[] }) => {
+                const sql = query.strings?.join(" ") ?? "";
+                if (sql.includes("detail_source_updated_date")) {
+                    return [{
+                        id: 7,
+                        clientId: 1,
+                        branchId: rawQueryBranchId,
+                        serviceRecordCaseId: rawQueryCaseId,
+                        revisionId: null,
+                    }];
+                }
+                if (sql.includes("e_doc_id")) {
+                    return [{ id: 1, eDocId: rawQueryDocumentId, branchId: rawQueryBranchId }];
+                }
+                if (sql.includes("current_revision_id")) {
+                    return [{
+                        id: rawQueryCaseId,
+                        branchId: rawQueryBranchId,
+                        clientId: 1,
+                        currentRevisionId: null,
+                        currentUsableRevisionId: null,
+                        currentUsableDocumentVersion: null,
+                    }];
+                }
+                return [{ id: 7 }];
+            }),
+            eformsign_doc: {
+                findFirst: jest.fn().mockResolvedValue({ id: 7 }),
+            },
+            client: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 1,
+                    branchId: rawQueryBranchId,
+                    eDocId: rawQueryDocumentId,
+                }),
+                updateMany: jest.fn(),
+            },
+            employee_schedule: { findMany: jest.fn().mockResolvedValue([]) },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: rawQueryCaseId,
+                    branchId: rawQueryBranchId,
+                    clientId: 1,
+                }),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+                callback(transactionClient)),
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const persistSpy = jest.spyOn(
+            service as unknown as { syncEndDateFromContractInTransaction: jest.Mock },
+            "syncEndDateFromContractInTransaction",
+        ).mockResolvedValue(undefined);
+
+        await expect(service.syncEndDateFromMirroredContract({
+            branchId: rawQueryBranchId,
+            clientId: 1,
+            endDate: date("2026-08-14"),
+            documentId: rawQueryDocumentId,
+            detailSourceUpdatedDate: new Date("2026-07-30T01:00:00.000Z"),
+            detailSyncedAt: new Date("2026-07-30T01:01:00.000Z"),
+        })).resolves.toBe(true);
+
+        expect(persistSpy).toHaveBeenCalledTimes(1);
+    });
+
     it("completes a service-record case idempotently when every locked snapshot is in the completed set", async () => {
         const transactionClient = {
             eformsign_doc: {

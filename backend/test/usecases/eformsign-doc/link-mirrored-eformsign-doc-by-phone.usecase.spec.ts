@@ -447,6 +447,158 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(21, transaction);
     });
 
+    it("does not claim an older mirrored revision before document or client pointer writes", async () => {
+        const document = mirroredDocument({
+            branchId: "branch-1",
+            clientId: 21,
+            serviceRecordCaseId: "case-1",
+            revisionId: "revision-old",
+        });
+        const { transaction, usecase } = setup(document);
+        const tx = transaction as typeof transaction & {
+            employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
+            service_record_case: { findUnique: jest.Mock };
+        };
+        tx.employee_schedule.findMany = jest.fn().mockResolvedValue([]);
+        tx.service_record_case = {
+            findUnique: jest.fn().mockResolvedValue({
+                id: "case-1",
+                branchId: "branch-1",
+                clientId: 21,
+                currentRevisionId: "revision-current",
+                currentUsableRevisionId: "revision-current",
+                currentUsableDocumentVersion: 2,
+            }),
+        };
+
+        const linkExistingClient = (usecase as unknown as {
+            linkExistingClient: (
+                transaction: unknown,
+                document: unknown,
+                client: unknown,
+            ) => Promise<string>;
+        }).linkExistingClient.bind(usecase);
+
+        await expect(linkExistingClient(transaction, document, {
+            id: 21,
+            branchId: "branch-1",
+            eDocId: "current-document",
+        })).resolves.toBe("ambiguous");
+
+        expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        expect(transaction.client.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("allows a mirrored document whose revision is the locked current case revision", async () => {
+        const document = mirroredDocument({
+            branchId: "branch-1",
+            clientId: 21,
+            serviceRecordCaseId: "case-1",
+            revisionId: "revision-current",
+        });
+        const { transaction, usecase } = setup(document);
+        const tx = transaction as typeof transaction & {
+            employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
+            service_record_case: { findUnique: jest.Mock };
+        };
+        tx.employee_schedule.findMany = jest.fn().mockResolvedValue([]);
+        tx.service_record_case = {
+            findUnique: jest.fn().mockResolvedValue({
+                id: "case-1",
+                branchId: "branch-1",
+                clientId: 21,
+                currentRevisionId: "revision-current",
+                currentUsableRevisionId: "revision-current",
+                currentUsableDocumentVersion: 2,
+            }),
+        };
+
+        const linkExistingClient = (usecase as unknown as {
+            linkExistingClient: (
+                transaction: unknown,
+                document: unknown,
+                client: unknown,
+            ) => Promise<string>;
+        }).linkExistingClient.bind(usecase);
+
+        await expect(linkExistingClient(transaction, document, {
+            id: 21,
+            branchId: "branch-1",
+            eDocId: null,
+        })).resolves.toBe("linked");
+
+        expect(transaction.eformsign_doc.updateMany).toHaveBeenCalled();
+        expect(transaction.client.updateMany).toHaveBeenCalledWith({
+            where: {
+                id: 21,
+                branchId: "branch-1",
+                eDocId: null,
+            },
+            data: { eDocId: "doc-1" },
+        });
+    });
+
+    it("uses current revision identity to replace an older pointer even when its created date is later", async () => {
+        const document = mirroredDocument({
+            branchId: "branch-1",
+            clientId: 21,
+            serviceRecordCaseId: "case-1",
+            revisionId: "revision-current",
+            createdDate: new Date("2026-07-01T00:00:00.000Z"),
+        });
+        const { transaction, usecase } = setup(document);
+        const tx = transaction as typeof transaction & {
+            employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
+            service_record_case: { findUnique: jest.Mock };
+        };
+        tx.employee_schedule.findMany = jest.fn().mockResolvedValue([]);
+        tx.service_record_case = {
+            findUnique: jest.fn().mockResolvedValue({
+                id: "case-1",
+                branchId: "branch-1",
+                clientId: 21,
+                currentRevisionId: "revision-current",
+                currentUsableRevisionId: "revision-current",
+                currentUsableDocumentVersion: 2,
+            }),
+        };
+        transaction.eformsign_doc.findUnique.mockImplementation(({ where }) =>
+            Promise.resolve(
+                where.documentId === document.documentId
+                    ? document
+                    : {
+                        createdDate: new Date("2026-08-01T00:00:00.000Z"),
+                        revisionId: "revision-old",
+                        serviceRecordCaseId: "case-1",
+                        branchId: "branch-1",
+                        clientId: 21,
+                    },
+            ));
+
+        const linkExistingClient = (usecase as unknown as {
+            linkExistingClient: (
+                transaction: unknown,
+                document: unknown,
+                client: unknown,
+            ) => Promise<string>;
+        }).linkExistingClient.bind(usecase);
+
+        await expect(linkExistingClient(transaction, document, {
+            id: 21,
+            branchId: "branch-1",
+            eDocId: "older-document",
+        })).resolves.toBe("linked");
+
+        expect(transaction.client.updateMany).toHaveBeenCalledWith({
+            where: {
+                id: 21,
+                branchId: "branch-1",
+                eDocId: "older-document",
+            },
+            data: { eDocId: "doc-1" },
+        });
+    });
+
     it("repairs the client contract pointer for an already assigned document", async () => {
         const document = mirroredDocument({
             branchId: "branch-1",
