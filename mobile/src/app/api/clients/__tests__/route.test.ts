@@ -4,6 +4,7 @@
 import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
+import { getErrorMessage } from "@/lib/errors/api-error-mapper";
 import { GET as getClients, POST as createClient } from "../route";
 import { GET as getClient, PATCH as updateClient, DELETE as deleteClient } from "../[id]/route";
 import { PATCH as terminateClient } from "../[id]/terminate/route";
@@ -110,6 +111,34 @@ describe("client API routes", () => {
     expect(mockPost).toHaveBeenCalledWith("/clients", payload, expect.any(Object));
   });
 
+  it("surfaces a safe backend validation message through the client error mapper", async () => {
+    const message = "duration must equal the Korean business-day count (15) for the submitted service period";
+    mockPost.mockRejectedValue({
+      response: {
+        status: 400,
+        data: { message, error: "Bad Request" },
+      },
+    });
+
+    const response = await createClient(
+      createRequest("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Baby Kim",
+          careCenter: false,
+          voucherClient: true,
+          breastPump: false,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body).toEqual({ error: message });
+    expect(getErrorMessage({ response: { status: 400, data: body } }, "ko")).toBe(message);
+  });
+
   it("preserves the safe duplicate-client conflict payload", async () => {
     mockPost.mockRejectedValue({
       response: {
@@ -140,6 +169,43 @@ describe("client API routes", () => {
       message: "이미 같은 전화번호의 고객이 있습니다.",
       clientId: 73,
     });
+  });
+
+  it("preserves Prisma metadata for a message-less phone conflict", async () => {
+    mockPost.mockRejectedValue({
+      response: {
+        status: 409,
+        data: {
+          code: "P2002",
+          error: "Conflict",
+          field: "phone",
+        },
+      },
+    });
+
+    const response = await createClient(
+      createRequest("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Baby Kim",
+          careCenter: false,
+          voucherClient: true,
+          breastPump: false,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body).toEqual({
+      error: "Failed to create client",
+      code: "P2002",
+      field: "phone",
+    });
+    expect(getErrorMessage({ response: { status: 409, data: body } }, "ko")).toBe(
+      "이미 등록된 연락처입니다. 다른 연락처를 입력해주세요.",
+    );
   });
 
   it("rejects invalid client detail IDs before proxying", async () => {
