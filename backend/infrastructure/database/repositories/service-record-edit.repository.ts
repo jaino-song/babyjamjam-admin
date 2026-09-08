@@ -53,6 +53,7 @@ import type {
     ServiceRecordRevisionDispatchContext,
     ServiceRecordRevisionDocumentOperation,
     ServiceRecordRevisionDocumentStatus,
+    ServiceRecordRevisionOperationJobPayload,
     ServiceRecordRevisionHistoryResponse,
 } from "@babyjamjam/shared/types/service-record";
 
@@ -1121,7 +1122,9 @@ function isRevisionDocumentJobPayload(value: unknown): boolean {
         }
     }
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
-    return (parsed as Record<string, unknown>)["kind"] === "service_record_revision";
+    const kind = (parsed as Record<string, unknown>)["kind"];
+    return kind === "service_record_revision"
+        || kind === "service_record_revision_operations";
 }
 
 /**
@@ -1175,6 +1178,72 @@ type BlockingRevisionDocumentStateRow = {
 /** Stable conflict code surfaced when a current revision operation is unresolved. */
 class ServiceRecordRevisionOperationUnresolvedError extends ServiceRecordEditConflictError {
     readonly code = "SERVICE_RECORD_REVISION_OPERATION_UNRESOLVED";
+}
+
+function operationRevisionDispatchContext(
+    state: ServiceRecordRevisionDocumentState,
+): ServiceRecordRevisionDispatchContext | null {
+    const immutableInput = state.immutableInput;
+    if (!immutableInput || typeof immutableInput !== "object" || Array.isArray(immutableInput)) return null;
+    const revision = immutableInput["revision"];
+    if (!revision || typeof revision !== "object" || Array.isArray(revision)) return null;
+    const immutable = immutableInput as Record<string, unknown>;
+    const source = revision as Record<string, unknown>;
+    const businessFingerprint = immutable["businessFingerprint"] ?? source["businessFingerprint"];
+    const requiredSessionCount = source["requiredSessionCount"];
+    const plannedSessions = source["plannedSessions"];
+    const formVersion = source["formVersion"];
+    const lifecycle = source["caseLifecycle"];
+    if (typeof businessFingerprint !== "string" || !/^[0-9a-f]{64}$/i.test(businessFingerprint)) return null;
+    if (requiredSessionCount !== null
+        && (typeof requiredSessionCount !== "number" || !Number.isInteger(requiredSessionCount) || requiredSessionCount < 1)) {
+        return null;
+    }
+    if (!Array.isArray(plannedSessions)) return null;
+    const plannedSessionDates = plannedSessions
+        .map((entry): { sessionIndex: number; serviceDate: string } | null => {
+            if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+            const row = entry as Record<string, unknown>;
+            return typeof row["sessionIndex"] === "number"
+                && Number.isInteger(row["sessionIndex"])
+                && typeof row["serviceDate"] === "string"
+                && /^\d{4}-\d{2}-\d{2}$/.test(row["serviceDate"])
+                ? { sessionIndex: row["sessionIndex"], serviceDate: row["serviceDate"] }
+                : null;
+        });
+    if (plannedSessionDates.some((entry) => entry === null)) return null;
+    const normalizedDates = plannedSessionDates as Array<{ sessionIndex: number; serviceDate: string }>;
+    normalizedDates.sort((left, right) => left.sessionIndex - right.sessionIndex);
+    const expectedCount = requiredSessionCount === null ? 0 : requiredSessionCount;
+    if (normalizedDates.length !== expectedCount
+        || normalizedDates.some((entry, index) => entry.sessionIndex !== index + 1)) {
+        return null;
+    }
+    const lifecycleRecord = lifecycle && typeof lifecycle === "object" && !Array.isArray(lifecycle)
+        ? lifecycle as Record<string, unknown>
+        : null;
+    if (!lifecycleRecord
+        || typeof lifecycleRecord["status"] !== "string"
+        || typeof formVersion !== "number"
+        || !Number.isInteger(formVersion)
+        || formVersion < 1) {
+        return null;
+    }
+    const documentSyncStatus: ServiceRecordRevisionDispatchContext["documentSyncStatus"] =
+        source["completeness"] === "partial" ? "waiting_for_completion" : "capability_unverified";
+    return {
+        branchId: state.branchId,
+        clientId: state.clientId,
+        serviceRecordCaseId: state.serviceRecordCaseId,
+        revisionId: state.revisionId,
+        revisionNumber: null,
+        businessFingerprint,
+        plannedSessionCount: requiredSessionCount as number | null,
+        plannedSessionDates: normalizedDates,
+        documentSyncStatus,
+        lifecycleStatus: lifecycleRecord["status"],
+        formVersion,
+    };
 }
 
 /**
@@ -2226,7 +2295,24 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             RETURNING ${revisionDocumentStateColumns}
         `);
         const row = updated[0];
-        return row ? toRevisionDocumentState(row) : current;
+        const retried = row ? toRevisionDocumentState(row) : null;
+        if (retried
+            && (retried.operation === "contract_period" || retried.operation === "receipt_refresh")) {
+            const dispatchContext = operationRevisionDispatchContext(retried);
+            if (dispatchContext) {
+                await this.enqueueRevisionOperationJob(
+                    context.tx,
+                    {
+                        branchId: retried.branchId,
+                        clientId: retried.clientId,
+                    },
+                    dispatchContext,
+                    { revisionId: retried.revisionId, revisionNumber: dispatchContext.revisionNumber },
+                    [{ operation: retried.operation, state: retried }],
+                );
+            }
+        }
+        return retried ?? current;
     }
 
     async allocateServiceRecordRevisionDocumentVersion(
@@ -2715,11 +2801,15 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             const auxiliaryOperations = [plan.contractOperation, plan.receiptOperation]
                 .filter((operation): operation is ServiceRecordEditConfirmOperationPlan => operation !== null
                     && operation !== undefined);
+            const persistedAuxiliaryStates: Array<{
+                operation: ServiceRecordEditConfirmOperationPlan["operation"];
+                state: ServiceRecordRevisionDocumentState;
+            }> = [];
             for (const operation of auxiliaryOperations) {
                 if (!revision) {
                     throw new ServiceRecordEditConflictError("Revision operation state requires a persisted revision");
                 }
-                await this.createRevisionDocumentStateInTransaction({ tx }, {
+                const state = await this.createRevisionDocumentStateInTransaction({ tx }, {
                     branchId: input.branchId,
                     clientId: source.client.id,
                     serviceRecordCaseId: source.caseId,
@@ -2739,6 +2829,26 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     status: operation.status,
                     lastErrorCode: operation.lastErrorCode ?? null,
                 });
+                persistedAuxiliaryStates.push({ operation: operation.operation, state });
+            }
+            if (revision && plan.dispatchContext) {
+                const queuedStates = persistedAuxiliaryStates.filter(({ state }) => state.status === "pending");
+                if (queuedStates.length > 0) {
+                    await this.enqueueRevisionOperationJob(
+                        tx,
+                        {
+                            branchId: input.branchId,
+                            clientId: source.client.id,
+                            actorUserId: input.actorUserId,
+                        },
+                        plan.dispatchContext,
+                        {
+                            revisionId: revision.id,
+                            revisionNumber: revision.revisionNumber,
+                        },
+                        queuedStates,
+                    );
+                }
             }
         }
 
@@ -2961,7 +3071,10 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     active_key = NULL,
                     payload = CASE
                         WHEN jsonb_typeof(job.payload) = 'object'
-                            AND job.payload->>'kind' = 'service_record_revision' THEN job.payload
+                            AND (
+                                job.payload->>'kind' = 'service_record_revision'
+                                OR job.payload->>'kind' = 'service_record_revision_operations'
+                            ) THEN job.payload
                         ELSE NULL
                     END,
                     heartbeat_at = NULL,
@@ -3168,6 +3281,157 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 payload: payload as unknown as Prisma.InputJsonValue,
                 payloadFingerprint,
                 createdByUserId: input.actorUserId,
+            },
+        });
+    }
+
+    /**
+     * Queue one existing-job route for provider-independent contract/receipt
+     * operations. Only states that are actually pending are included; manual
+     * review and not-required markers remain durable state without an
+     * executable provider job. State IDs/generations are the sole operation
+     * references, so a worker must reload immutable input before processing.
+     */
+    private async enqueueRevisionOperationJob(
+        tx: Prisma.TransactionClient,
+        owner: { branchId: string; clientId: number; actorUserId?: string | null },
+        dispatchContext: ServiceRecordRevisionDispatchContext,
+        revision: { revisionId: string; revisionNumber: number | null },
+        states: Array<{
+            operation: ServiceRecordEditConfirmOperationPlan["operation"];
+            state: ServiceRecordRevisionDocumentState;
+        }>,
+    ): Promise<void> {
+        const operations: ServiceRecordRevisionOperationJobPayload["operations"] = {};
+        for (const { operation, state } of states) {
+            if (operation === "contract_period") {
+                operations.contract = { documentStateId: state.id, generation: state.generation };
+            } else if (operation === "receipt_refresh") {
+                operations.receipt = { documentStateId: state.id, expectedGeneration: state.generation };
+            }
+        }
+        if (!operations.contract && !operations.receipt) return;
+        const context = {
+            ...dispatchContext,
+            revisionId: revision.revisionId,
+            revisionNumber: revision.revisionNumber,
+        } satisfies ServiceRecordRevisionDispatchContext;
+        const payload = {
+            kind: "service_record_revision_operations",
+            context,
+            operations,
+        } satisfies ServiceRecordRevisionOperationJobPayload;
+        const payloadFingerprint = jsonFingerprint(payload as unknown as ServiceRecordEditJsonValue);
+        const operationKey = Object.keys(operations).sort().join("+");
+        const requestKey = `service-record-revision-operations:${revision.revisionId}:${operationKey}`;
+        const activeKey = `service-record-revision-operations:${dispatchContext.serviceRecordCaseId}:${operationKey}`;
+        const transaction = tx as OptionalQueryTransaction;
+        if (typeof transaction.$queryRaw === "function") {
+            const inserted = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                INSERT INTO "eformsign_document_job" (
+                    branch_id, client_id, job_type, source, status, request_key,
+                    active_key, payload, payload_fingerprint, created_by_user_id
+                ) VALUES (
+                    ${owner.branchId}::uuid, ${owner.clientId}, 'create_document', 'staff', 'queued',
+                    ${requestKey}, ${activeKey}, ${JSON.stringify(payload)}::jsonb,
+                    ${payloadFingerprint}, ${owner.actorUserId ?? null}::uuid
+                )
+                ON CONFLICT DO NOTHING
+                RETURNING id
+            `);
+            if (inserted.length > 0) return;
+            const existing = await transaction.$queryRaw<Array<{
+                id: string;
+                branch_id: string;
+                client_id: number | null;
+                request_key: string;
+                active_key: string | null;
+                payload_fingerprint: string | null;
+                status: string;
+            }>>(Prisma.sql`
+                SELECT id, branch_id, client_id, request_key, active_key,
+                       payload_fingerprint, status
+                FROM "eformsign_document_job"
+                WHERE request_key = ${requestKey}
+                   OR active_key = ${activeKey}
+                ORDER BY CASE WHEN request_key = ${requestKey} THEN 0 ELSE 1 END
+                LIMIT 1
+            `);
+            if (!existing[0]
+                || existing[0].branch_id !== owner.branchId
+                || existing[0].client_id !== owner.clientId
+                || existing[0].request_key !== requestKey
+                || existing[0].payload_fingerprint !== payloadFingerprint) {
+                throw new ServiceRecordEditConflictError(
+                    "The revision operation job key was reused with different input",
+                );
+            }
+            if (existing[0].status === "failed" || existing[0].status === "requires_attention") {
+                await transaction.$queryRaw(Prisma.sql`
+                    UPDATE "eformsign_document_job"
+                    SET status = 'queued',
+                        active_key = ${activeKey},
+                        progress_step = 'queued',
+                        next_attempt_at = now(),
+                        last_error_code = NULL,
+                        completed_at = NULL,
+                        heartbeat_at = NULL,
+                        lease_token = NULL,
+                        updated_at = now()
+                    WHERE id = ${existing[0].id}::uuid
+                      AND branch_id = ${owner.branchId}::uuid
+                      AND client_id = ${owner.clientId}
+                      AND status IN ('failed', 'requires_attention')
+                `);
+            }
+            return;
+        }
+
+        const delegate = tx.eformsign_document_job;
+        const existing = await delegate.findFirst({
+            where: { OR: [{ requestKey }, { activeKey }] },
+        });
+        if (existing) {
+            if (existing.requestKey !== requestKey || existing.payloadFingerprint !== payloadFingerprint) {
+                throw new ServiceRecordEditConflictError(
+                    "The revision operation job key was reused with different input",
+                );
+            }
+            if (existing.status === "failed" || existing.status === "requires_attention") {
+                await delegate.updateMany({
+                    where: {
+                        id: existing.id,
+                        branchId: owner.branchId,
+                        clientId: owner.clientId,
+                        status: { in: ["failed", "requires_attention"] },
+                    },
+                    data: {
+                        status: "queued",
+                        activeKey,
+                        progressStep: "queued",
+                        nextAttemptAt: new Date(),
+                        lastErrorCode: null,
+                        completedAt: null,
+                        heartbeatAt: null,
+                        leaseToken: null,
+                    },
+                });
+            }
+            return;
+        }
+        await delegate.create({
+            data: {
+                branchId: owner.branchId,
+                clientId: dispatchContext.clientId,
+                documentId: null,
+                jobType: "create_document",
+                source: "staff",
+                status: "queued",
+                requestKey,
+                activeKey,
+                payload: payload as unknown as Prisma.InputJsonValue,
+                payloadFingerprint,
+                createdByUserId: owner.actorUserId ?? null,
             },
         });
     }
