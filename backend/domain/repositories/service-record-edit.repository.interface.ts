@@ -216,6 +216,41 @@ export interface RetryServiceRecordRevisionDocumentInput {
     expectedGeneration: string;
 }
 
+/**
+ * Allocate the immutable snapshot version for one revision generation. The
+ * caller supplies the state generation and the version it observed; the
+ * repository allocates under the common case lock and returns the persisted
+ * value so renderer retries never recompute it from live rows.
+ */
+export interface AllocateServiceRecordRevisionDocumentVersionInput {
+    branchId: string;
+    clientId: number;
+    serviceRecordCaseId: string;
+    revisionId: string;
+    documentStateId: string;
+    generation: string;
+    expectedDocumentVersion: number | null;
+}
+
+/**
+ * Promote a fully rendered revision snapshot in one owning transaction. The
+ * repository verifies the persisted chunk/document set instead of trusting
+ * the renderer's supplied identifiers before advancing current usable
+ * pointers and operation state.
+ */
+export interface PromoteServiceRecordRevisionSnapshotInput {
+    branchId: string;
+    clientId: number;
+    serviceRecordCaseId: string;
+    revisionId: string;
+    revisionNumber: number;
+    documentStateId: string;
+    generation: string;
+    documentVersion: number;
+    chunkCount: number;
+    documentIds: string[];
+}
+
 export interface CreateServiceRecordEditDraftInput {
     branchId: string;
     serviceRecordCaseId: string;
@@ -423,6 +458,24 @@ export interface IServiceRecordEditRepository {
         context: ServiceRecordEditTransactionContext,
         input: RetryServiceRecordRevisionDocumentInput,
     ): Promise<ServiceRecordRevisionDocumentState | null>;
+    /** Allocate/replay one case-local snapshot version under the common lock. */
+    allocateServiceRecordRevisionDocumentVersion(
+        input: AllocateServiceRecordRevisionDocumentVersionInput,
+    ): Promise<number>;
+    /** Same allocator boundary for a caller-owned transaction. */
+    allocateServiceRecordRevisionDocumentVersionInTransaction(
+        context: ServiceRecordEditTransactionContext,
+        input: AllocateServiceRecordRevisionDocumentVersionInput,
+    ): Promise<number>;
+    /** Promote a complete chunk/document set and advance usable pointers atomically. */
+    promoteServiceRecordRevisionSnapshot(
+        input: PromoteServiceRecordRevisionSnapshotInput,
+    ): Promise<boolean>;
+    /** Same promotion boundary for a caller-owned transaction. */
+    promoteServiceRecordRevisionSnapshotInTransaction(
+        context: ServiceRecordEditTransactionContext,
+        input: PromoteServiceRecordRevisionSnapshotInput,
+    ): Promise<boolean>;
     /**
      * Confirm one active draft atomically. The repository owns the typed
      * Prisma transaction and invokes `prepare` only after the common lock

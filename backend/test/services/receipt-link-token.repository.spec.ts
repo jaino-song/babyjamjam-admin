@@ -169,6 +169,159 @@ describe("SbReceiptLinkTokenRepository", () => {
         }));
     });
 
+    it("promotes only the frozen active tokens after state proof and current contract checks", async () => {
+        const prisma = makeFakePrisma();
+        const repository = new SbReceiptLinkTokenRepository(prisma as never);
+        const branchId = "11111111-1111-4111-8111-111111111111";
+        const caseId = "22222222-2222-4222-8222-222222222222";
+        const revisionId = "33333333-3333-4333-8333-333333333333";
+        const stateId = "44444444-4444-4444-8444-444444444444";
+        const tokenIds = [
+            "55555555-5555-4555-8555-555555555555",
+            "66666666-6666-4666-8666-666666666666",
+        ];
+        const now = new Date("2026-09-08T03:00:00.000Z");
+        const proof = {
+            officialPdfSha256: "a".repeat(64),
+            verifiedAt: now.toISOString(),
+            pageCount: 1,
+            scope: {
+                branchId,
+                clientId: 7,
+                revisionId,
+                documentId: "target-document",
+                generation: "generation-1",
+                mirrorGeneration: "mirror-1",
+                templateId: "template-1",
+                templateVersion: "v3",
+            },
+            expected: { serviceStartDate: "2026-08-01", serviceEndDate: "2026-08-14", receivedDate: "2026-08-02", amount: "123000" },
+            artifact: { storagePath: "receipts/new.png", contentSha256: "b".repeat(64), byteSize: 9 },
+        };
+        prisma.__tx.$queryRaw
+            .mockResolvedValueOnce([{ eDocId: "target-document" }])
+            .mockResolvedValueOnce([{ currentRevisionId: revisionId }])
+            .mockResolvedValueOnce([{ id: revisionId }])
+            .mockResolvedValueOnce([{
+                version: 1,
+                operation: "receipt_refresh",
+                generation: "generation-1",
+                sourceDocumentId: "original-document",
+                targetDocumentId: "target-document",
+                documentVersion: 3,
+                templateId: "template-1",
+                templateVersion: "v3",
+                mirrorGeneration: "mirror-1",
+                outputProof: proof,
+                status: "processing",
+            }])
+            .mockResolvedValueOnce([{ id: 99, documentId: "target-document" }])
+            .mockResolvedValueOnce(tokenIds.map((id) => ({
+                id,
+                eformsignDocId: 42,
+                branchId,
+                clientId: 7,
+                active: true,
+                expiresAt: new Date("2026-09-30T00:00:00.000Z"),
+            })))
+            .mockResolvedValueOnce([{ version: 2 }]);
+        prisma.__tx.receipt_link_token.updateMany.mockResolvedValue({ count: tokenIds.length });
+
+        const result = await repository.promoteReceiptRevisionArtifact({
+            branchId,
+            clientId: 7,
+            serviceRecordCaseId: caseId,
+            revisionId,
+            documentStateId: stateId,
+            expectedGeneration: "generation-1",
+            expectedStateVersion: 1,
+            targetDocumentId: "target-document",
+            documentVersion: 3,
+            templateId: "template-1",
+            templateVersion: "v3",
+            mirrorGeneration: "mirror-1",
+            eformsignDocId: 42,
+            tokenIds,
+            storagePath: "receipts/new.png",
+            contentSha256: "b".repeat(64),
+            byteSize: 9,
+            proof,
+            now,
+        });
+
+        expect(result).toEqual({ disposition: "promoted", tokenIds, stateVersion: 2 });
+        expect(prisma.__tx.receipt_link_token.updateMany).toHaveBeenCalledWith({
+            where: expect.objectContaining({ id: { in: tokenIds }, active: true }),
+            data: { storagePath: "receipts/new.png", contentSha256: "b".repeat(64), byteSize: 9 },
+        });
+        const updateData = prisma.__tx.receipt_link_token.updateMany.mock.calls[0]?.[0]?.data as Record<string, unknown>;
+        expect(updateData).not.toHaveProperty("accessTokenHash");
+        expect(updateData).not.toHaveProperty("expiresAt");
+    });
+
+    it("returns stale without touching token artifacts when a frozen token is no longer active", async () => {
+        const prisma = makeFakePrisma();
+        const repository = new SbReceiptLinkTokenRepository(prisma as never);
+        const branchId = "11111111-1111-4111-8111-111111111111";
+        const caseId = "22222222-2222-4222-8222-222222222222";
+        const revisionId = "33333333-3333-4333-8333-333333333333";
+        const stateId = "44444444-4444-4444-8444-444444444444";
+        const tokenId = "55555555-5555-4555-8555-555555555555";
+        const now = new Date("2026-09-08T03:00:00.000Z");
+        const proof = {
+            officialPdfSha256: "a".repeat(64), verifiedAt: now.toISOString(), pageCount: 1,
+            scope: {
+                branchId,
+                clientId: 7,
+                revisionId,
+                documentId: "target-document",
+                generation: "generation-1",
+                mirrorGeneration: "mirror-1",
+                templateId: "template-1",
+                templateVersion: "v3",
+            },
+            expected: { serviceStartDate: "2026-08-01", serviceEndDate: "2026-08-14", receivedDate: "2026-08-02", amount: "123000" },
+            artifact: { storagePath: "receipts/new.png", contentSha256: "b".repeat(64), byteSize: 9 },
+        };
+        prisma.__tx.$queryRaw
+            .mockResolvedValueOnce([{ eDocId: "target-document" }])
+            .mockResolvedValueOnce([{ currentRevisionId: revisionId }])
+            .mockResolvedValueOnce([{ id: revisionId }])
+            .mockResolvedValueOnce([{
+                version: 1, operation: "receipt_refresh", generation: "generation-1", sourceDocumentId: "original-document",
+                targetDocumentId: "target-document", documentVersion: 3, templateId: "template-1", templateVersion: "v3",
+                mirrorGeneration: "mirror-1", outputProof: proof, status: "processing",
+            }])
+            .mockResolvedValueOnce([{ id: 99, documentId: "target-document" }])
+            .mockResolvedValueOnce([{
+                id: tokenId, eformsignDocId: 42, branchId, clientId: 7, active: false,
+                expiresAt: new Date("2026-09-30T00:00:00.000Z"),
+            }]);
+
+        const result = await repository.promoteReceiptRevisionArtifact({
+            branchId, clientId: 7, serviceRecordCaseId: caseId, revisionId, documentStateId: stateId,
+            expectedGeneration: "generation-1", expectedStateVersion: 1, targetDocumentId: "target-document",
+            documentVersion: 3, templateId: "template-1", templateVersion: "v3", mirrorGeneration: "mirror-1",
+            eformsignDocId: 42, tokenIds: [tokenId], storagePath: "receipts/new.png", contentSha256: "b".repeat(64),
+            byteSize: 9, proof, now,
+        });
+
+        expect(result).toMatchObject({ disposition: "stale" });
+        expect(prisma.__tx.receipt_link_token.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("fails closed before opening a transaction for a malformed promotion envelope", async () => {
+        const prisma = makeFakePrisma();
+        const repository = new SbReceiptLinkTokenRepository(prisma as never);
+
+        const result = await repository.promoteReceiptRevisionArtifact({
+            targetDocumentId: undefined,
+        } as never);
+
+        expect(result).toEqual({ disposition: "stale", tokenIds: [], stateVersion: null });
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
     it("restores a legacy reissued URL with the service-end expiry and requires fresh authentication", async () => {
         const prisma = makeFakePrisma();
         const repository = new SbReceiptLinkTokenRepository(prisma as never);
