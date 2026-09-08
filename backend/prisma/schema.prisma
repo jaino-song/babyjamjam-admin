@@ -1211,13 +1211,16 @@ model service_record_case {
   editDrafts            service_record_edit_draft[]
   revisions             service_record_revision[]
 
-  // The following pointers are intentionally nullable. Existing cases and
-  // legacy snapshot chunks are not backfilled or rewired by the revision
-  // foundation migration.
+  // Revision pointers are intentionally nullable. Existing cases and legacy
+  // snapshot chunks are not backfilled or rewired by the editor foundation.
   plannedSessions                 Json?    @map("planned_sessions")
-  currentContent                  Json?    @map("current_content")
-  currentUsableDocumentPointer   String?  @map("current_usable_document_pointer") @db.VarChar(255)
+  currentRevisionId               String?  @map("current_revision_id") @db.Uuid
+  currentUsableRevisionId         String?  @map("current_usable_revision_id") @db.Uuid
+  currentUsableDocumentVersion    Int?     @map("current_usable_document_version")
+  currentRevision                 service_record_revision? @relation("service_record_case_current_revision", fields: [branchId, id, currentRevisionId], references: [branchId, serviceRecordCaseId, id], onDelete: NoAction, onUpdate: NoAction)
+  currentUsableRevision           service_record_revision? @relation("service_record_case_current_usable_revision", fields: [branchId, id, currentUsableRevisionId], references: [branchId, serviceRecordCaseId, id], onDelete: NoAction, onUpdate: NoAction)
 
+  @@unique([branchId, id], map: "uniq_service_record_case_branch_id")
   @@index([branchId, status], map: "idx_service_record_case_branch_status")
   @@index([status, finalizationDueAt], map: "idx_service_record_case_finalization_due")
 }
@@ -1243,7 +1246,7 @@ model service_record_edit_draft {
   updatedAt             DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   discardedAt           DateTime?           @map("discarded_at") @db.Timestamptz(6)
   branch                branch              @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  serviceRecordCase     service_record_case @relation(fields: [serviceRecordCaseId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  serviceRecordCase     service_record_case @relation(fields: [branchId, serviceRecordCaseId], references: [branchId, id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([branchId, serviceRecordCaseId, status], map: "idx_service_record_edit_draft_branch_case_status")
   @@index([serviceRecordCaseId, status], map: "idx_service_record_edit_draft_case_status")
@@ -1265,8 +1268,11 @@ model service_record_revision {
   formVersionAtConfirm Int                 @map("form_version_at_confirm")
   snapshotReference     String?             @map("snapshot_reference") @db.VarChar(255)
   branch                branch              @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  serviceRecordCase     service_record_case @relation(fields: [serviceRecordCaseId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  serviceRecordCase     service_record_case @relation(fields: [branchId, serviceRecordCaseId], references: [branchId, id], onDelete: NoAction, onUpdate: NoAction)
+  currentRevisionCases  service_record_case[] @relation("service_record_case_current_revision")
+  currentUsableRevisionCases service_record_case[] @relation("service_record_case_current_usable_revision")
 
+  @@unique([branchId, serviceRecordCaseId, id], map: "uniq_service_record_revision_branch_case_id")
   @@unique([serviceRecordCaseId, revisionNumber], map: "uniq_service_record_revision_case_number")
   @@index([branchId, serviceRecordCaseId], map: "idx_service_record_revision_branch_case")
 }

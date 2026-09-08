@@ -245,11 +245,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
 
     async appendRevision(
         input: AppendServiceRecordRevisionInput,
-        transaction?: unknown,
     ): Promise<ServiceRecordRevision> {
-        if (transaction !== undefined) {
-            return this.appendRevisionWithClient(transaction as RevisionClient, input);
-        }
         return this.prisma.$transaction((tx) => this.appendRevisionWithClient(tx, input));
     }
 
@@ -277,7 +273,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             },
             orderBy: { revisionNumber: "desc" },
         });
-        const revisionNumber = input.revisionNumber ?? ((latest?.revisionNumber ?? 0) + 1);
+        const revisionNumber = (latest?.revisionNumber ?? 0) + 1;
         if (!Number.isInteger(revisionNumber) || revisionNumber < 1) {
             throw new ServiceRecordEditConflictError("Revision number must be a positive integer");
         }
