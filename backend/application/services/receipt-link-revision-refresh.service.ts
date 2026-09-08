@@ -384,6 +384,7 @@ export class ReceiptLinkRevisionRefreshService {
                     revisionId: input.revisionId,
                     stateId: state.id,
                     expectedGeneration: input.expectedGeneration,
+                    enqueueJob: false,
                 });
                 if (!retried) return stateResult(null, REASON_STATE_CAS_LOST);
                 state = retried as ReceiptLinkRevisionRefreshState;

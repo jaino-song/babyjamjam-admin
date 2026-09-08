@@ -16,6 +16,13 @@ import {
     ServiceRecordEditNotFoundError,
 } from "domain/errors/service-record-edit.error";
 import {
+    buildServiceRecordContractRevisionSnapshot,
+} from "application/services/service-record-revision-document-coordinator.service";
+import {
+    captureServiceRecordRevisionFacts,
+    type ServiceRecordRevisionFactsResult,
+} from "application/policies/service-record-revision-facts.policy";
+import {
     SERVICE_RECORD_EDIT_REPOSITORY,
     type CreateServiceRecordEditDraftInput,
     type IServiceRecordEditRepository,
@@ -28,6 +35,7 @@ import {
     type ServiceRecordEditJsonValue,
     type ServiceRecordEditSource,
     type ServiceRecordEditSourceDay,
+    type ServiceRecordEditRevisionFactsSource,
 } from "domain/repositories/service-record-edit.repository.interface";
 import type {
     ServiceRecordEditConfirmDocumentStatus,
@@ -519,9 +527,10 @@ export class AdminServiceRecordEditService {
                 idempotencyKey: dto.idempotencyKey,
                 requestFingerprint,
                 actorUserId,
-                prepare: ({ draft, source }) => this.buildConfirmPlan({
+                prepare: ({ draft, source, revisionFactsSource }) => this.buildConfirmPlan({
                     draft,
                     source,
+                    revisionFactsSource,
                     branchId,
                     draftId,
                     actorUserId,
@@ -540,12 +549,13 @@ export class AdminServiceRecordEditService {
     private buildConfirmPlan(args: {
         draft: ServiceRecordEditDraft;
         source: SourceSnapshot;
+        revisionFactsSource?: ServiceRecordEditRevisionFactsSource;
         branchId: string;
         draftId: string;
         actorUserId: string;
         previewId: string;
     }): ServiceRecordEditConfirmPlan {
-        const { draft, source, branchId, draftId, actorUserId, previewId } = args;
+        const { draft, source, revisionFactsSource, branchId, draftId, actorUserId, previewId } = args;
         if (draft.status !== "ACTIVE") {
             throw new ConflictException({ code: "SERVICE_RECORD_DRAFT_CLOSED" });
         }
@@ -777,7 +787,29 @@ export class AdminServiceRecordEditService {
         const documentScope = provisional.documentScope;
         const contractDocumentId = documentScope.contract.currentDocumentId;
         const contractScopeKnown = documentScope.evidence === "observed";
-        const contractFactsAvailable = false;
+        // Contract/receipt facts are captured by the repository only after the
+        // common document locks.  A missing carrier or a malformed provider
+        // detail remains manual review; it must never be replaced with
+        // duration, pricing, client, or live-provider defaults.
+        const targetPeriod = {
+            startDate: provisional.after.startDate,
+            endDate: provisional.after.endDate,
+            receiptPeriod: provisional.after.startDate && provisional.after.endDate
+                ? `${provisional.after.startDate}~${provisional.after.endDate}`
+                : "",
+            fields: {},
+        };
+        const factsResult: ServiceRecordRevisionFactsResult = periodChanged && revisionFactsSource
+            ? captureServiceRecordRevisionFacts({
+                document: revisionFactsSource.document,
+                receiptTokens: revisionFactsSource.receiptTokens,
+                targetPeriod,
+            })
+            : { facts: null, receiptInput: null, missingFacts: [] };
+        const builtContractSnapshot = factsResult.facts
+            ? buildServiceRecordContractRevisionSnapshot(factsResult.facts)
+            : { snapshot: null, reason: null };
+        const contractFactsAvailable = builtContractSnapshot.snapshot !== null;
         // An observed null pointer proves that this client has no linked
         // contract.  An unverified scope is an unknown source and must remain
         // a manual-review marker whenever the period changes.
@@ -786,37 +818,48 @@ export class AdminServiceRecordEditService {
         const contractOperationStatus: ServiceRecordEditConfirmOperationPlan["status"] = contractRequiresSync
             ? contractFactsAvailable ? "pending" : "manual_review"
             : "not_required";
+        const contractSnapshot = builtContractSnapshot.snapshot;
         const contractOperation: ServiceRecordEditConfirmOperationPlan | null = changed
             ? {
                 operation: "contract_period",
-                immutableInput: jsonValue({
-                    kind: "contract_period",
-                    businessFingerprint: revisionFingerprint,
-                    sourceDocumentId: contractDocumentId,
-                    sourceStage: documentScope.contract.stage,
-                    sourceEvidence: documentScope.evidence,
-                    targetPeriod: {
-                        startDate: provisional.after.startDate,
-                        endDate: provisional.after.endDate,
-                    },
-                    periodChanged,
-                    revision: revisionPayload,
-                }),
+                immutableInput: jsonValue(contractSnapshot && contractFactsAvailable
+                    ? {
+                        ...contractSnapshot,
+                        kind: "contract_period",
+                        businessFingerprint: revisionFingerprint,
+                        periodChanged,
+                        revision: revisionPayload,
+                    }
+                    : {
+                        kind: "contract_period",
+                        businessFingerprint: revisionFingerprint,
+                        sourceDocumentId: contractDocumentId,
+                        sourceStage: documentScope.contract.stage,
+                        sourceEvidence: documentScope.evidence,
+                        targetPeriod: {
+                            startDate: provisional.after.startDate,
+                            endDate: provisional.after.endDate,
+                        },
+                        periodChanged,
+                        revision: revisionPayload,
+                    }),
                 status: contractOperationStatus,
                 step: contractOperationStatus,
                 lastErrorCode: contractRequiresSync && !contractFactsAvailable
                     ? "SERVICE_RECORD_CONTRACT_FACTS_UNAVAILABLE"
                     : null,
-                documentVersion: null,
-                sourceDocumentId: contractDocumentId,
+                documentVersion: contractSnapshot?.original.documentVersion ?? null,
+                sourceDocumentId: contractSnapshot?.original.documentId ?? contractDocumentId,
                 targetDocumentId: null,
-                templateId: null,
-                templateVersion: null,
-                workflowScope: jsonValue({
-                    stage: documentScope.contract.stage,
-                    evidence: documentScope.evidence,
-                }),
-                mirrorGeneration: null,
+                templateId: contractSnapshot?.original.templateId ?? null,
+                templateVersion: contractSnapshot?.original.templateVersion ?? null,
+                workflowScope: contractSnapshot
+                    ? jsonValue(contractSnapshot.original.workflowScope)
+                    : jsonValue({
+                        stage: documentScope.contract.stage,
+                        evidence: documentScope.evidence,
+                    }),
+                mirrorGeneration: contractSnapshot?.original.mirrorGeneration ?? null,
             }
             : null;
 
@@ -828,50 +871,59 @@ export class AdminServiceRecordEditService {
         // unverified receipt scope remains unknown when the period changes.
         const receiptRequiresSync = periodChanged
             && (!receiptScopeKnown || receiptTokenIds.length > 0);
+        const receiptInput = factsResult.receiptInput;
         const receiptOperationStatus: ServiceRecordEditConfirmOperationPlan["status"] = receiptRequiresSync
-            ? "manual_review"
+            ? receiptInput ? "pending" : "manual_review"
             : "not_required";
         const receiptOperation: ServiceRecordEditConfirmOperationPlan | null = changed
             ? {
                 operation: "receipt_refresh",
-                immutableInput: jsonValue({
-                    kind: "receipt_refresh",
-                    businessFingerprint: revisionFingerprint,
-                    expected: {
-                        serviceStartDate: provisional.after.startDate,
-                        serviceEndDate: provisional.after.endDate,
-                        receivedDate: null,
-                        amount: null,
-                    },
-                    tokens: {
-                        eformsignDocId: receiptScope?.eformsignDocId ?? null,
-                        tokenIds: receiptTokenIds,
-                    },
-                    source: {
-                        documentId: receiptScope?.sourceDocumentId ?? null,
-                        documentVersion: null,
-                        templateId: null,
-                        templateVersion: null,
-                        mirrorGeneration: null,
-                    },
-                    periodChanged,
-                    revision: revisionPayload,
-                }),
+                immutableInput: jsonValue(receiptInput
+                    ? {
+                        kind: "receipt_refresh",
+                        businessFingerprint: revisionFingerprint,
+                        ...receiptInput,
+                        periodChanged,
+                        revision: revisionPayload,
+                    }
+                    : {
+                        kind: "receipt_refresh",
+                        businessFingerprint: revisionFingerprint,
+                        expected: {
+                            serviceStartDate: provisional.after.startDate,
+                            serviceEndDate: provisional.after.endDate,
+                            receivedDate: null,
+                            amount: null,
+                        },
+                        tokens: {
+                            eformsignDocId: receiptScope?.eformsignDocId ?? null,
+                            tokenIds: receiptTokenIds,
+                        },
+                        source: {
+                            documentId: receiptScope?.sourceDocumentId ?? null,
+                            documentVersion: null,
+                            templateId: null,
+                            templateVersion: null,
+                            mirrorGeneration: null,
+                        },
+                        periodChanged,
+                        revision: revisionPayload,
+                    }),
                 status: receiptOperationStatus,
                 step: receiptOperationStatus,
-                lastErrorCode: receiptRequiresSync
+                lastErrorCode: receiptRequiresSync && !receiptInput
                     ? "SERVICE_RECORD_RECEIPT_FACTS_UNAVAILABLE"
                     : null,
-                documentVersion: null,
-                sourceDocumentId: receiptScope?.sourceDocumentId ?? null,
+                documentVersion: receiptInput?.source.documentVersion ?? null,
+                sourceDocumentId: receiptInput?.source.documentId ?? receiptScope?.sourceDocumentId ?? null,
                 targetDocumentId: null,
-                templateId: null,
-                templateVersion: null,
+                templateId: receiptInput?.source.templateId ?? null,
+                templateVersion: receiptInput?.source.templateVersion ?? null,
                 workflowScope: jsonValue({
                     evidence: receiptScope?.evidence ?? "unverified",
                     eformsignDocId: receiptScope?.eformsignDocId ?? null,
                 }),
-                mirrorGeneration: null,
+                mirrorGeneration: receiptInput?.source.mirrorGeneration ?? null,
             }
             : null;
 

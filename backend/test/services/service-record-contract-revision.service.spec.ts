@@ -511,6 +511,7 @@ describe("ServiceRecordContractRevisionService", () => {
             revisionId: REVISION_ID,
             stateId: "state-1",
             expectedGeneration: GENERATION,
+            enqueueJob: false,
         });
     });
 

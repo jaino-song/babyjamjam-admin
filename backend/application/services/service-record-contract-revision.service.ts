@@ -415,6 +415,7 @@ export class ServiceRecordContractRevisionService {
                 revisionId: input.revisionId,
                 stateId: state.id,
                 expectedGeneration: input.generation,
+                enqueueJob: false,
             });
             if (!retried) return stateResult(null, REASON_STATE_CAS_LOST);
             state = retried;
