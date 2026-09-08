@@ -652,7 +652,10 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                     throw new MirrorGenerationConflict();
                                 }
                                 const linked = await this.linkExistingClient(transaction, current, locked.client);
-                                if (params.initializeLifecycle) {
+                                if (
+                                    params.initializeLifecycle
+                                    && (linked === "linked" || linked === "already_linked")
+                                ) {
                                     await this.ensureServiceRecordLifecycle(matched.id, transaction, true);
                                 }
                                 return { status: linked };
@@ -662,7 +665,10 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                 document,
                                 matches[0]!,
                             );
-                            if (params.initializeLifecycle) {
+                            if (
+                                params.initializeLifecycle
+                                && (linked === "linked" || linked === "already_linked")
+                            ) {
                                 await this.ensureServiceRecordLifecycle(
                                     matches[0]!.id,
                                     transaction,
@@ -1222,7 +1228,10 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                     return "ambiguous";
                 }
                 const linked = await this.linkExistingClient(transaction, current, locked.client);
-                if (initializeLifecycle) {
+                if (
+                    initializeLifecycle
+                    && (linked === "linked" || linked === "already_linked")
+                ) {
                     await this.ensureServiceRecordLifecycle(document.clientId, transaction, true);
                 }
                 return linked;
@@ -1257,7 +1266,10 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                 return "ambiguous";
             }
             const linked = await this.linkExistingClient(transaction, document, client);
-            if (initializeLifecycle) {
+            if (
+                initializeLifecycle
+                && (linked === "linked" || linked === "already_linked")
+            ) {
                 await this.ensureServiceRecordLifecycle(document.clientId, transaction, true);
             }
             return linked;

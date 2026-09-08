@@ -626,7 +626,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             branchId: "branch-1",
             clientId: 21,
         });
-        const { transaction, usecase } = setup(document);
+        const { transaction, serviceRecordLifecycle, usecase } = setup(document);
 
         await expect(usecase.execute("doc-1")).resolves.toBe("linked");
 
@@ -646,6 +646,40 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             },
             data: { eDocId: "doc-1" },
         });
+        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(21, transaction);
+    });
+
+    it("does not initialize lifecycle when an assigned mirror repair is ambiguous", async () => {
+        const document = mirroredDocument({
+            branchId: "branch-1",
+            clientId: 21,
+        });
+        const { transaction, serviceRecordLifecycle, usecase } = setup(document);
+        transaction.client.findUnique.mockResolvedValueOnce({
+            id: 21,
+            branchId: null,
+            eDocId: null,
+        });
+
+        const repairAssignedDocument = (usecase as unknown as {
+            repairAssignedDocument: (
+                document: unknown,
+                expectedMirrorGeneration?: unknown,
+                initializeLifecycle?: boolean,
+            ) => Promise<string>;
+        }).repairAssignedDocument.bind(usecase);
+
+        await expect(repairAssignedDocument({
+            id: document.id,
+            documentId: document.documentId,
+            branchId: document.branchId,
+            clientId: document.clientId,
+            serviceRecordCaseId: document.serviceRecordCaseId,
+            revisionId: null,
+            createdDate: document.createdDate,
+        })).resolves.toBe("ambiguous");
+
+        expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
     });
 
     it("does not repair an assigned document after the expected mirror generation loses its fence", async () => {
