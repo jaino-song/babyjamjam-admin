@@ -1,6 +1,6 @@
 # 구현 검증 현황
 
-2026-09-09 로컬 통합 기준. Phase4는 `1913ef766`, Phase5는 `535a7f2db`에서 Sol/high 독립 감사 SHIP으로 종료했다. Phase6 실제 HTTP 권한·로컬 mock 화면 통합 검증은 완료했고 독립 감사의 근거 보완을 진행 중이다. 아래 과거 단계별 결과는 당시 증거이며 최신 판정은 각 phase 감사 문서를 따른다.
+2026-09-09 로컬 통합 기준. Phase4는 `1913ef766`, Phase5는 `535a7f2db`에서 Sol/high 독립 감사 SHIP으로 종료했다. Phase6 실제 HTTP 권한·로컬 mock 화면 통합 검증과 Sol/high 독립 감사를 완료했으며 `1247195f6`에서 LOCAL SHIP으로 종료했다. 실제 외부 활성화·환경 브랜치 병합·배포는 미실행이며 외부 연동 차단은 유지한다. 아래 과거 단계별 결과는 당시 증거이며 최신 판정은 각 phase 감사 문서를 따른다.
 
 과거 단계 기록: 2026-09-08 로컬 통합 기준. Phase1·2 구현/통합 검사와 Sol 최종 감사를 완료했다. Task3.0 저장 경계 변경을 통합했고 Task3.0 좁은 Sol 최종 감사도 통과했다. Phase3 통합 집중 검사207개와 보완 backend54/frontend36 및 최종 parser15개가 통과했고 Sol 잔여 감사는61a672cab에서 SHIP으로 종료됐다. Phase3~6 전체 구현 또는 외부 연동 완료를 뜻하지 않는다. 과거 화면 초안 기록은 아래에 별도 보존한다.
 
@@ -19,7 +19,7 @@
 | 초기 N/duration 분리, 영업일 뒤 회차 이동, 관리자 날짜/미리보기 | 통합 c8c7dd60e: backend86/shared44/PG19/frontend55/mobile3, 총207 PASS | SHIP: 최초6건 단계적 해소, 최종61a672cab. 보완 backend54/frontend36/parser15 PASS. PG19는 기존 쓰기 경합 회귀이며 새 preview 경합 증거는 아님 |
 | 확정 트랜잭션/미리보기 결속/중복 확정/동시 발송 차단 | `phase4-final-audit.md`, `1913ef766` | local SHIP; 외부 활성화와 구분 |
 | 계약·영수증 동일기간/수령일·금액 보존/완료계약 새 문서·pointer CAS | `phase5-verification.md`, `phase5-final-audit.md`, `535a7f2db` | local SHIP; PDF는 합성 로컬 자료이며 실제 외부 capability 미검증·차단 유지 |
-| 실제 JWT/session/tenant 권한 HTTP+격리PG, 구 writer들과 경합 | HTTP18PASS ×2 `/tmp/bjj-phase6-http-expiry-final1.log`, `/tmp/bjj-phase6-http-expiry-final2.log`; writer 경합은 아래 매핑 | 실행 완료; 같은 Sol 감사 세션의 최종 판정 대기 |
+| 실제 JWT/session/tenant 권한 HTTP+격리PG, 구 writer들과 경합 | HTTP18PASS ×2 `/tmp/bjj-phase6-http-expiry-final1.log`, `/tmp/bjj-phase6-http-expiry-final2.log`; writer 경합은 아래 매핑 | PASS; Sol/high LOCAL Phase6 SHIP (`1247195f6`) |
 
 승인된 검사는 격리 로컬 DB와 모의 외부 제공자를 사용한다. 별도 테스트 worker의 잘못 지정된 Jest 명령이 한 차례 넓은 범위를 실행해 중단됐다. 확인된 출력은 모의 테스트 및 실행 전 오류이며 실제 DB 작업은 확인되지 않았지만, 해당 프로세스 전체의 외부 접속 부재는 증명하지 못했다. 이 실행은 통과 근거에서 제외하고 후속 검사는 정확한 파일과 두 loopback DB URL을 명시한다. 과거 Phase0 진단 원장과 불확실한 요청 결과를 재시도하지 않았다. 공식 Chrome 검증과 API 모의응답 브라우저 검증을 동일한 증거로 취급하지 않는다.
 
@@ -141,7 +141,7 @@ The map below transcribes prior Phase4/5 SHIP evidence and the frozen Phase6 man
 
 The exact-path PG logs above are the result artifacts for the historical SHIP evidence; `phase6-historical-pg-commands.json` provides the recovered recorded shell invocations and cwd, except `bjj-phase5-stale-lifecycle-green.log`: its accepted exact command is unavailable (JSON command is null). The rejected typo invocation has been removed; no exact-command provenance is claimed for that artifact. These are retained execution records, not new runs. The Phase6 PDF correction is separately frozen as `phase6-test-commands.json#pdf-extractor-correction` with `NODE_OPTIONS=--experimental-vm-modules`; recorded result is 12 PASS in `/tmp/bjj-phase6-pdf-verifier-vm.log`.
 
-### Same-session audit corrections — evidence ready, verdict pending
+### Same-session audit corrections — closed, LOCAL Phase6 SHIP
 
 - Different-payload rejection is mapped above to the actual mismatch assertion inside the existing named atomic test. A standalone test with that title was not invented.
 - Eleven historical exact PG commands/cwds were recovered and preserved in `phase6-historical-pg-commands.json`. The twelfth, stale-lifecycle artifact retains only its cwd/result; its accepted exact command is unavailable and no exact-command provenance is claimed. No historical DB command was replayed.
