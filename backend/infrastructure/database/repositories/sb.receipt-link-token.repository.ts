@@ -552,7 +552,7 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
                     active,
                     expires_at AS "expiresAt"
                 FROM receipt_link_token
-                WHERE id IN (${Prisma.join(input.tokenIds)})
+                WHERE id IN (${Prisma.join(input.tokenIds.map((id) => Prisma.sql`${id}::uuid`))})
                 ORDER BY id
                 FOR UPDATE
             `);
