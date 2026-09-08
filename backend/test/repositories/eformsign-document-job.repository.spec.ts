@@ -143,7 +143,7 @@ describe("SbEformsignDocumentJobRepository", () => {
         expect(queryRaw).toHaveBeenCalledTimes(2);
         expect(sqlText(queryRaw.mock.calls[0][0])).toContain("FOR UPDATE");
         expect(sqlText(queryRaw.mock.calls[1][0])).toContain("progress_step = 'creating'");
-        expect(sqlText(queryRaw.mock.calls[1][0])).toContain("status IN ('processing', 'reconciling')");
+        expect(sqlText(queryRaw.mock.calls[1][0])).toContain("status = 'processing'");
     });
 
     it("returns stale without claiming when the locked revision context changed", async () => {
@@ -168,6 +168,7 @@ describe("SbEformsignDocumentJobRepository", () => {
         { status: "failed", lease_token: dispatchLeaseToken, progress_step: "preparing" },
         { status: "processing", lease_token: "00000000-0000-4000-8000-000000000098", progress_step: "preparing" },
         { status: "processing", lease_token: dispatchLeaseToken, progress_step: "creating" },
+        { status: "reconciling", lease_token: dispatchLeaseToken, progress_step: "reconciling" },
     ])("fails closed for a non-dispatchable job state %#", async (state) => {
         queryRaw.mockResolvedValueOnce([row({
             id: dispatchJobId,

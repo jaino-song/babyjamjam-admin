@@ -48,6 +48,13 @@ function uniqueError(): Error {
     return Object.assign(new Error("duplicate active draft"), { code: "P2002" });
 }
 
+const sqlText = (value: unknown): string => {
+    if (value && typeof value === "object" && "strings" in value) {
+        return ((value as { strings: string[] }).strings ?? []).join("");
+    }
+    return String(value);
+};
+
 function transactionalPrisma<T extends Record<string, unknown>>(transactionClient: T) {
     return {
         $transaction: jest.fn(async (callback: (client: T) => Promise<unknown>) => callback(transactionClient)),
@@ -658,5 +665,27 @@ describe("ServiceRecordEditRepository", () => {
             "A service-record message dispatch is already irreversible",
         );
         expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+    });
+
+    it("fences legacy client-owned eform jobs without payload case metadata and clears message claims", async () => {
+        const tx = {
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([]),
+        };
+        const repository = new ServiceRecordEditRepository({} as never);
+
+        await expect((repository as unknown as {
+            invalidateSupersededJobs: (client: unknown, branch: string, serviceCase: string, clientId: number) => Promise<void>;
+        }).invalidateSupersededJobs(tx, branchId, caseId, 101)).resolves.toBeUndefined();
+
+        expect(tx.$queryRaw).toHaveBeenCalledTimes(4);
+        const documentUpdate = sqlText(tx.$queryRaw.mock.calls[2]?.[0]);
+        expect(documentUpdate).toContain("job_type IN ('create_document', 'finalize_document')");
+        expect(documentUpdate).not.toContain("payload->'context'");
+        const messageUpdate = sqlText(tx.$queryRaw.mock.calls[3]?.[0]);
+        expect(messageUpdate).toContain("claim_token = NULL");
     });
 });

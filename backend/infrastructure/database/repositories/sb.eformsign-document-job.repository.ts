@@ -117,10 +117,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         `);
         const current = rows[0];
         if (!current) return { kind: "lost", reason: "job_not_found" } as const;
-        if (
-            current.status !== "processing"
-            && current.status !== "reconciling"
-        ) {
+        if (current.status !== "processing") {
             return { kind: "lost", reason: "job_not_active" } as const;
         }
         if (current.lease_token !== input.leaseToken) {
@@ -148,7 +145,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
             SET progress_step = 'creating', heartbeat_at = now(), updated_at = now()
             WHERE id = ${input.jobId}::uuid
               AND lease_token = ${input.leaseToken}::uuid
-              AND status IN ('processing', 'reconciling')
+              AND status = 'processing'
               AND COALESCE(progress_step, '') NOT IN ('creating', 'sent')
             RETURNING id
         `);
