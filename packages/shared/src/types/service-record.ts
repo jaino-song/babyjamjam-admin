@@ -113,9 +113,11 @@ export interface ServiceRecordEditDocumentScope {
     };
     contract: {
         currentDocumentId: string | null;
-        stage: string | null;
+        stage: ServiceRecordEditContractStage;
     };
 }
+
+export type ServiceRecordEditContractStage = "completed" | "rejected" | "in_progress" | "unknown" | null;
 
 /** Full planned vector exposed by the read-only editor endpoint. */
 export interface ServiceRecordScheduleProjection {

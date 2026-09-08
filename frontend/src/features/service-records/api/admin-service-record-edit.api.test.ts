@@ -234,12 +234,12 @@ describe("admin service-record edit API adapter", () => {
                 serviceRecordSnapshot: { documentIds: [], snapshotVersion: null, chunks: [] },
                 currentRevision: { id: null, revisionNumber: null, formVersion: null },
                 form: { version: null },
-                contract: { currentDocumentId: null, stage: "unknown" },
+                contract: { currentDocumentId: null, stage: null },
             },
         }));
         expect(explicitUnverified.blockingReasons).toEqual([]);
         expect(explicitUnverified.signatureMetadata.evidence).toBe("unverified");
-        expect(explicitUnverified.documentScope.contract.stage).toBe("unknown");
+        expect(explicitUnverified.documentScope.contract.stage).toBeNull();
     });
 
     it("keeps a legitimate blocked projection without replacing its server reasons", () => {
@@ -256,6 +256,79 @@ describe("admin service-record edit API adapter", () => {
         ]);
         expect(preview.before.sessions).toEqual([]);
         expect(preview.after.sessions).toEqual([]);
+    });
+
+    it("does not waive malformed metadata, rejects duplicate current dates, and accepts shifted originals and chunk index zero", () => {
+        const { signatureMetadata, documentScope, ...withoutMetadata } = strictPreview();
+        expect(signatureMetadata).toBeDefined();
+        expect(documentScope).toBeDefined();
+        const blockedMissingMetadata = normalizeAdminServiceRecordEditPreview({
+            ...withoutMetadata,
+            before: { startDate: null, endDate: null, sessions: [] },
+            after: { startDate: null, endDate: null, sessions: [] },
+            provenance: [],
+            blockingReasons: [{ code: "UNSUPPORTED_SESSION_COUNT", message: "회차 수를 확인할 수 없습니다." }],
+        });
+        expect(blockedMissingMetadata.blockingReasons.map((reason) => reason.code)).toEqual([
+            "UNSUPPORTED_SESSION_COUNT",
+            "INVALID_PREVIEW_RESPONSE",
+        ]);
+
+        const { sourceFingerprint: _sourceFingerprint, ...withoutSourceFingerprint } = strictPreview();
+        const blockedMissingEnvelope = normalizeAdminServiceRecordEditPreview({
+            ...withoutSourceFingerprint,
+            before: { startDate: null, endDate: null, sessions: [] },
+            after: { startDate: null, endDate: null, sessions: [] },
+            provenance: [],
+            blockingReasons: [{ code: "UNSUPPORTED_SESSION_COUNT", message: "회차 수를 확인할 수 없습니다." }],
+        });
+        expect(blockedMissingEnvelope.blockingReasons.map((reason) => reason.code)).toEqual([
+            "UNSUPPORTED_SESSION_COUNT",
+            "INVALID_PREVIEW_RESPONSE",
+        ]);
+
+        const duplicateSessions = [...strictPreview().before.sessions];
+        duplicateSessions[12] = {
+            ...duplicateSessions[12],
+            serviceDate: duplicateSessions[11].serviceDate,
+        };
+        const duplicateDates = normalizeAdminServiceRecordEditPreview(strictPreview({
+            before: { ...strictPreview().before, sessions: duplicateSessions },
+        }));
+        expect(duplicateDates.blockingReasons.map((reason) => reason.code)).toContain("INVALID_PREVIEW_RESPONSE");
+
+        const shiftedAfterSessions = strictPreview().after.sessions.map((session) => ({
+            ...session,
+            serviceDate: `2026-07-${String(session.sessionIndex + 1).padStart(2, "0")}`,
+        }));
+        const shifted = normalizeAdminServiceRecordEditPreview(strictPreview({
+            after: { startDate: "2026-07-02", endDate: "2026-07-21", sessions: shiftedAfterSessions },
+            provenance: [{
+                ...strictPreview().provenance[0],
+                startDate: "2026-07-02",
+                endDate: "2026-07-21",
+            }],
+            documentScope: {
+                ...strictMetadata.documentScope,
+                serviceRecordSnapshot: {
+                    ...strictMetadata.documentScope.serviceRecordSnapshot,
+                    chunks: [{ documentId: "doc-1", snapshotVersion: 2, snapshotChunkIndex: 0 }],
+                },
+            },
+        }));
+        expect(shifted.blockingReasons).toEqual([]);
+        expect(shifted.after.sessions[0]).toEqual(expect.objectContaining({
+            serviceDate: "2026-07-02",
+            originalDate: "2026-07-01",
+        }));
+
+        const invalidStage = normalizeAdminServiceRecordEditPreview(strictPreview({
+            documentScope: {
+                ...strictMetadata.documentScope,
+                contract: { currentDocumentId: "contract-1", stage: "sent" },
+            },
+        }));
+        expect(invalidStage.blockingReasons.map((reason) => reason.code)).toContain("INVALID_PREVIEW_RESPONSE");
     });
 
     it("normalizes a discarded draft without applying provenance fields", () => {

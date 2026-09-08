@@ -22,6 +22,7 @@ import {
 } from "domain/repositories/service-record-edit.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import type {
+    ServiceRecordEditContractStage,
     ServiceRecordEditDocumentChunk,
     ServiceRecordEditDocumentScope,
     ServiceRecordEditSignatureMetadata,
@@ -105,7 +106,7 @@ type DocumentScopeRow = {
     createdDate: Date;
 };
 
-function contractStage(document: DocumentScopeRow): string {
+function contractStage(document: DocumentScopeRow): Exclude<ServiceRecordEditContractStage, null> {
     const status = normalizeEformsignStatusCode(document.statusType);
     if (["003", "012", "022", "032", "050", "062", "072", "092"].includes(status)) {
         return "completed";
