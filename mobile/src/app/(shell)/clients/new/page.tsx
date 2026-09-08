@@ -445,23 +445,23 @@ export default function NewClientPage() {
       prefill.secondaryEmployeeName,
       prefill.secondaryEmployeePhone,
     );
+    const hydratedStore = useClientWizardStore.getState();
 
-    if (!store.birthday && prefill.birthday) setField("birthday", prefill.birthday);
-    if (!store.dueDate && prefill.dueDate) setField("dueDate", toIsoDate(prefill.dueDate));
-    if (!store.address && prefill.address) setField("address", prefill.address);
-    if (!store.phone && prefill.phone) setField("phone", prefill.phone);
-    if (!store.type && voucherType) setField("type", voucherType);
-    if (store.duration == null && voucherDuration != null) setField("duration", voucherDuration);
-    if (!store.fullPrice && prefill.fullPrice) setField("fullPrice", prefill.fullPrice);
-    if (!store.grant && prefill.grant) setField("grant", prefill.grant);
-    if (!store.actualPrice && prefill.actualPrice) setField("actualPrice", prefill.actualPrice);
-    if (!store.startDate && prefill.startDate) setField("startDate", toIsoDate(prefill.startDate));
-    if (!store.endDate && prefill.endDate && !hasUserEditedServicePeriodRef.current) {
+    if (!hydratedStore.birthday && prefill.birthday) setField("birthday", prefill.birthday);
+    if (!hydratedStore.dueDate && prefill.dueDate) setField("dueDate", toIsoDate(prefill.dueDate));
+    if (!hydratedStore.address && prefill.address) setField("address", prefill.address);
+    if (!hydratedStore.phone && prefill.phone) setField("phone", prefill.phone);
+    if (!hydratedStore.type && voucherType) setField("type", voucherType);
+    if (hydratedStore.duration == null && voucherDuration != null) setField("duration", voucherDuration);
+    if (!hydratedStore.fullPrice && prefill.fullPrice) setField("fullPrice", prefill.fullPrice);
+    if (!hydratedStore.grant && prefill.grant) setField("grant", prefill.grant);
+    if (!hydratedStore.actualPrice && prefill.actualPrice) setField("actualPrice", prefill.actualPrice);
+    if (!hydratedStore.startDate && prefill.startDate) setField("startDate", toIsoDate(prefill.startDate));
+    if (!hydratedStore.endDate && prefill.endDate && !hasUserEditedServicePeriodRef.current) {
       setField("endDate", toIsoDate(prefill.endDate));
     }
-    if (store.primaryEmployeeId == null && primaryEmployee) setField("primaryEmployeeId", primaryEmployee.id);
-    if (store.secondaryEmployeeId == null && secondaryEmployee) setField("secondaryEmployeeId", secondaryEmployee.id);
-
+    if (hydratedStore.primaryEmployeeId == null && primaryEmployee) setField("primaryEmployeeId", primaryEmployee.id);
+    if (hydratedStore.secondaryEmployeeId == null && secondaryEmployee) setField("secondaryEmployeeId", secondaryEmployee.id);
     if (hasPricePrefill) {
       setPricesManuallyEdited(true);
     }
