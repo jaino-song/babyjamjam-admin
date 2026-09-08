@@ -182,6 +182,24 @@ function createHarness(options: {
     };
 }
 
+function createContextPrisma(record: ReturnType<typeof createRecord>) {
+    return {
+        service_record_case: {
+            findFirst: jest.fn().mockResolvedValue(record),
+            findUnique: jest.fn().mockResolvedValue({ ...record, days: [] }),
+        },
+        employee_schedule: {
+            findUnique: jest.fn().mockResolvedValue({
+                client: { id: 100, name: "고객" },
+                primaryEmployee: { id: 20, name: "제공자" },
+            }),
+        },
+        schedule_change_request: {
+            findFirst: jest.fn().mockResolvedValue(null),
+        },
+    };
+}
+
 function createConcurrentHarness() {
     type SessionWrite = Partial<ReturnType<typeof createDay>> & { locked: boolean };
 
@@ -322,21 +340,7 @@ describe("ServiceRecordEntryService planned-session dates", () => {
 
     it("exposes the complete persisted planned vector, including future unwritten sessions", async () => {
         const record = createRecord({ plannedSessions });
-        const prisma = {
-            service_record_case: {
-                findFirst: jest.fn().mockResolvedValue({ ...record, days: [] }),
-                findUnique: jest.fn().mockResolvedValue({ ...record, days: [] }),
-            },
-            employee_schedule: {
-                findUnique: jest.fn().mockResolvedValue({
-                    client: { id: 100, name: "고객" },
-                    primaryEmployee: { id: 20, name: "제공자" },
-                }),
-            },
-            schedule_change_request: {
-                findFirst: jest.fn().mockResolvedValue(null),
-            },
-        };
+        const prisma = createContextPrisma(record);
         const service = new ServiceRecordEntryService(
             prisma as unknown as PrismaService,
             {} as ServiceRecordTokenService,
@@ -349,6 +353,46 @@ describe("ServiceRecordEntryService planned-session dates", () => {
             sessionIndex,
             serviceDate,
         })));
+    });
+
+    it("fails closed when a persisted planned vector is malformed instead of omitting it", async () => {
+        const record = createRecord({ plannedSessions: plannedSessions.slice(0, -1) });
+        const service = new ServiceRecordEntryService(
+            createContextPrisma(record) as unknown as PrismaService,
+            {} as ServiceRecordTokenService,
+            {} as ServiceRecordLifecycleService,
+        );
+
+        await expect(service.getContext(context)).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" },
+        });
+    });
+
+    it("keeps the legacy provider date fallback only for an unrevisioned absent vector", async () => {
+        const record = createRecord({ plannedSessions: null });
+        const service = new ServiceRecordEntryService(
+            createContextPrisma(record) as unknown as PrismaService,
+            {} as ServiceRecordTokenService,
+            {} as ServiceRecordLifecycleService,
+        );
+
+        const result = await service.getContext(context);
+
+        expect(result.plannedSessionDates).toBeUndefined();
+        expect(result.totalSessions).toBe(record.requiredSessionCount);
+    });
+
+    it("fails closed when a revision pointer has no persisted planned vector", async () => {
+        const record = createRecord({ plannedSessions: null, currentRevisionId: "revision-1" });
+        const service = new ServiceRecordEntryService(
+            createContextPrisma(record) as unknown as PrismaService,
+            {} as ServiceRecordTokenService,
+            {} as ServiceRecordLifecycleService,
+        );
+
+        await expect(service.getContext(context)).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" },
+        });
     });
 
     it("rejects provider dates that disagree with the canonical vector before any period write", async () => {
@@ -365,6 +409,26 @@ describe("ServiceRecordEntryService planned-session dates", () => {
         expect(upsert).not.toHaveBeenCalled();
         expect(scheduleUpdate).not.toHaveBeenCalled();
         expect(transactionClient.client.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects provider writes when the persisted planned vector is malformed", async () => {
+        const transactionRecord = createRecord({ plannedSessions: plannedSessions.slice(0, -1) });
+        const { service, upsert } = createHarness({ transactionRecord });
+
+        await expect(service.upsertSession(context, 1, createDto(), false)).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" },
+        });
+        expect(upsert).not.toHaveBeenCalled();
+    });
+
+    it("rejects provider writes when a revised case has no planned vector", async () => {
+        const transactionRecord = createRecord({ plannedSessions: null, currentRevisionId: "revision-1" });
+        const { service, upsert } = createHarness({ transactionRecord });
+
+        await expect(service.upsertSession(context, 1, createDto(), false)).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" },
+        });
+        expect(upsert).not.toHaveBeenCalled();
     });
 
     it("persists a provider submission only when its date matches the canonical vector", async () => {
