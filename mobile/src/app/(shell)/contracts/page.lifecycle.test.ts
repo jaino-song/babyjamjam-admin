@@ -88,5 +88,8 @@ describe("mobile contracts action lifecycle", () => {
     expect(source).toContain(
       "prefillContractCreation(buildContractCreationPrefillFromContract(doc, metadata, employees));",
     );
+    expect(source).toContain("url: receiptDownloadUrl,\n      fileName: receiptFilename,");
+    expect(source).toContain("fileName: receiptFilename,");
+    expect(source).toContain("onDownload: (url, fileName) => downloadReceiptPng(url, fileName),");
   });
 });

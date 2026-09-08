@@ -118,6 +118,7 @@ import {
 } from "@/lib/contracts/contract-client-prefill";
 import {
   RECEIPT_SHARE_ERROR_MESSAGE,
+  downloadReceiptPng,
   getReceiptFileName,
   shareReceiptPng,
 } from "@/lib/contracts/receipt-share";
@@ -1333,7 +1334,7 @@ function ContractDetailContent({
       fileName: receiptFilename,
       navigatorObject: typeof navigator === "undefined" ? undefined : navigator,
       fileConstructor: typeof File === "undefined" ? undefined : File,
-      onDownload: () => window.location.assign(receiptDownloadUrl),
+      onDownload: (url, fileName) => downloadReceiptPng(url, fileName),
       onError: (message) =>
         toast({
           variant: "destructive",

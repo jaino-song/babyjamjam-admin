@@ -1,5 +1,6 @@
 import {
   RECEIPT_SHARE_ERROR_MESSAGE,
+  downloadReceiptPng,
   getReceiptFileName,
   shareReceiptPng,
   type ReceiptFileConstructor,
@@ -46,8 +47,31 @@ describe("shareReceiptPng", () => {
     });
 
     expect(result).toBe("downloaded");
-    expect(onDownload).toHaveBeenCalledTimes(1);
+    expect(onDownload).toHaveBeenCalledWith("/receipt.png", fileName);
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("wires the receipt URL and customer filename to a browser download", () => {
+    const click = jest.fn();
+    const remove = jest.fn();
+    const anchor = { href: "", download: "", click, remove };
+    const appendChild = jest.fn();
+    const documentObject = {
+      createElement: jest.fn().mockReturnValue(anchor),
+      body: { appendChild },
+    };
+
+    downloadReceiptPng(
+      "/receipt.png",
+      fileName,
+      documentObject as unknown as Pick<Document, "createElement" | "body">,
+    );
+
+    expect(documentObject.createElement).toHaveBeenCalledWith("a");
+    expect(anchor).toMatchObject({ href: "/receipt.png", download: fileName });
+    expect(appendChild).toHaveBeenCalledWith(anchor);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledTimes(1);
   });
 
   it("shares the fetched PNG with a PNG file name and MIME type", async () => {

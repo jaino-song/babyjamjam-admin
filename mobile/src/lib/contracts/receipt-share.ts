@@ -24,6 +24,7 @@ export type ReceiptFileConstructor = new (
 ) => File;
 
 export type ReceiptShareOutcome = "shared" | "downloaded" | "cancelled" | "failed";
+export type ReceiptDownloadHandler = (url: string, fileName: string) => void;
 
 interface ShareReceiptPngOptions {
   url: string;
@@ -31,12 +32,32 @@ interface ShareReceiptPngOptions {
   navigatorObject?: ReceiptShareNavigator;
   fileConstructor?: ReceiptFileConstructor;
   fetchImpl?: typeof fetch;
-  onDownload: () => void;
+  onDownload: ReceiptDownloadHandler;
   onError: (message: string) => void;
 }
 
 function isAbortError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "name" in error && error.name === "AbortError";
+}
+
+/** Downloads a receipt with the customer-specific filename when file sharing is unavailable. */
+export function downloadReceiptPng(
+  url: string,
+  fileName: string,
+  documentObject: Pick<Document, "createElement" | "body"> | undefined =
+    typeof document === "undefined" ? undefined : document,
+): void {
+  if (!documentObject) {
+    if (typeof window !== "undefined") window.location.assign(url);
+    return;
+  }
+
+  const anchor = documentObject.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  documentObject.body?.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
 }
 
 /**
@@ -58,7 +79,7 @@ export async function shareReceiptPng({
     !navigatorObject.canShare ||
     !fileConstructor
   ) {
-    onDownload();
+    onDownload(url, fileName);
     return "downloaded";
   }
 
@@ -68,12 +89,12 @@ export async function shareReceiptPng({
       files: [new fileConstructor([""], fileName, { type: RECEIPT_PNG_MIME_TYPE })],
     });
   } catch {
-    onDownload();
+    onDownload(url, fileName);
     return "downloaded";
   }
 
   if (!canShareReceiptFile) {
-    onDownload();
+    onDownload(url, fileName);
     return "downloaded";
   }
 
@@ -89,7 +110,7 @@ export async function shareReceiptPng({
     });
 
     if (!navigatorObject.canShare({ files: [receiptFile] })) {
-      onDownload();
+      onDownload(url, fileName);
       return "downloaded";
     }
 
