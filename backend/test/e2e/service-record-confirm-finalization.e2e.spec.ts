@@ -79,17 +79,7 @@ function createFinalizer(prisma: PrismaClient) {
         new SbEformsignDocRepository(prisma as unknown as PrismaService),
         new SbClientRepository(prisma as unknown as PrismaService),
     );
-    // The optional job-service dependency was added to the finalizer after
-    // the legacy three-argument constructor. Keep this test source compatible
-    // with the pre-checkpoint unit while passing the real repositories when
-    // the corrected service is integrated.
-    const Finalizer = ServiceRecordFinalizationService as unknown as new (
-        db: PrismaService,
-        lifecycleService: ServiceRecordLifecycleService,
-        snapshotUsecase: CreateAndSendServiceRecordSnapshotUsecase,
-        documentJobService: EformsignDocumentJobService,
-    ) => ServiceRecordFinalizationService;
-    const finalizer = new Finalizer(
+    const finalizer = new ServiceRecordFinalizationService(
         prisma as unknown as PrismaService,
         lifecycle,
         snapshot,

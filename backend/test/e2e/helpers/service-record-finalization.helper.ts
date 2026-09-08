@@ -58,15 +58,15 @@ export async function completeServiceRecordFinalizationCase(
 
     const currentCase = await prisma.service_record_case.findUniqueOrThrow({
         where: { id: fixture.record.id },
-        select: { plannedSessionDates: true },
+        select: { plannedSessions: true },
     });
-    const plannedDates = Array.isArray(currentCase.plannedSessionDates)
-        ? currentCase.plannedSessionDates.map((entry, index) => {
+    const plannedDates = Array.isArray(currentCase.plannedSessions)
+        ? currentCase.plannedSessions.map((entry, index) => {
             if (!entry || typeof entry !== "object" || Array.isArray(entry)
-                || entry.sessionIndex !== index + 1 || typeof entry.serviceDate !== "string") {
+                || entry["sessionIndex"] !== index + 1 || typeof entry["serviceDate"] !== "string") {
                 throw new Error("Invalid finalization fixture planned vector");
             }
-            return entry.serviceDate;
+            return entry["serviceDate"];
         })
         : [...ORIGINAL_THIRTEEN_DATES];
     if (plannedDates.length !== ORIGINAL_THIRTEEN_DATES.length) {
