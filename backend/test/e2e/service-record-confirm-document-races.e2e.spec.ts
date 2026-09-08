@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { ConflictException } from "@nestjs/common";
-import { clientLock, reached } from "./helpers/service-record-confirm-race.helper";
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
-import { MessageTriggerService } from "application/services/message-trigger.service";
-import { MessageTriggerTemplateKey, MessageTriggerRecipientType } from "domain/constants/message-trigger-catalog";
-import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { EformsignDocumentJobWorkerService } from "application/services/eformsign-document-job-worker.service";
+import { EformsignDocumentJobEntity } from "domain/entities/eformsign-document-job.entity";
 import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
+import { SbEformsignDocumentJobRepository } from "infrastructure/database/repositories/sb.eformsign-document-job.repository";
+import { clientLock, reached } from "./helpers/service-record-confirm-race.helper";
 import {
     assertApprovedServiceRecordConfirmDatabaseTarget, createApprovedServiceRecordConfirmClient,
     createServiceRecordConfirmFixture, serviceRecordConfirmBarrier,
@@ -17,18 +17,20 @@ function edit(prisma: unknown) {
     return new AdminServiceRecordEditService(new ServiceRecordEditRepository(prisma as never));
 }
 
-// Actual production authorization transaction only. This suite never invokes
-// delivery; focused unit tests verify the caller sends only after allow.
-function authorize(prisma: unknown, job: MessageTriggerJobEntity) {
-    const forbidden = new Proxy({}, { get: () => { throw new Error("Unexpected non-DB collaborator"); } });
-    const service = new MessageTriggerService(prisma as never, forbidden as never, forbidden as never,
-        forbidden as never, forbidden as never, forbidden as never, forbidden as never, forbidden as never);
-    return (service as unknown as {
-        authorizeClaimedJobForDispatch(job: MessageTriggerJobEntity): Promise<{ kind: string }>;
-    }).authorizeClaimedJobForDispatch(job);
+// Only the actual production pre-provider transaction is invoked. No worker
+// interval, browser, reconciliation, headless service or vendor is started.
+function authorize(prisma: unknown, job: EformsignDocumentJobEntity) {
+    const forbidden = new Proxy({}, { get: () => { throw new Error("Unexpected external collaborator"); } });
+    const worker = new EformsignDocumentJobWorkerService(forbidden as never,
+        new SbEformsignDocumentJobRepository(prisma as never), forbidden as never, forbidden as never,
+        forbidden as never, forbidden as never, forbidden as never, forbidden as never, forbidden as never,
+        prisma as never);
+    return (worker as unknown as {
+        authorizeRevisionJob(job: EformsignDocumentJobEntity): Promise<{ kind: string }>;
+    }).authorizeRevisionJob(job);
 }
 
-describeE2E("confirm versus legacy SMS authorization (actual PostgreSQL)", () => {
+describeE2E("confirm versus existing electronic-document authorization (actual PostgreSQL)", () => {
     let prisma: ReturnType<typeof createApprovedServiceRecordConfirmClient>;
     beforeAll(async () => {
         assertApprovedServiceRecordConfirmDatabaseTarget();
@@ -37,8 +39,22 @@ describeE2E("confirm versus legacy SMS authorization (actual PostgreSQL)", () =>
     });
     afterAll(async () => { await prisma?.$disconnect(); });
 
-    it.each(["confirm", "dispatch"] as const)("%s wins the common client lock", async (first) => {
+    it.each([
+        ["confirm", "create_document"], ["dispatch", "create_document"],
+        ["confirm", "finalize_document"], ["dispatch", "finalize_document"],
+    ] as const)("%s wins against %s", async (first, jobType) => {
         const fixture = await createServiceRecordConfirmFixture(prisma);
+        const documentId = jobType === "finalize_document" ? `synthetic-${randomUUID()}` : null;
+        if (documentId) {
+            await prisma.eformsign_doc.create({ data: {
+                branchId: fixture.branch.id, clientId: fixture.client.id, documentId, documentKind: "contract",
+                createdDate: new Date("2026-09-01T00:00:00Z"), updatedDate: new Date("2026-09-01T00:00:00Z"),
+                expiredDate: new Date("2026-12-31T00:00:00Z"), statusType: "070", statusDetail: "070",
+                stepType: "06", stepIndex: "3", stepName: "Synthetic provider review",
+                stepRecipientType: "group", stepRecipientName: "Synthetic provider", stepRecipientSms: "",
+            } });
+            await prisma.client.update({ where: { id: fixture.client.id }, data: { eDocId: documentId } });
+        }
         const service = edit(prisma);
         const started = await service.startDraft(fixture.branch.id, fixture.client.id, fixture.actorUserId, {});
         const draft = started.draft!;
@@ -52,23 +68,14 @@ describeE2E("confirm versus legacy SMS authorization (actual PostgreSQL)", () =>
         expect(preview.blockingReasons).toEqual([]);
         const request = { expectedDraftVersion: changed.draft!.draftVersion,
             previewId: preview.previewId, idempotencyKey: randomUUID() };
-        const rule = await prisma.message_trigger_rule.create({ data: {
-            branchId: fixture.branch.id, name: "Isolated confirm race", eventType: "SERVICE_END",
-            offsetType: "BEFORE", recipientType: "CLIENT", templateKey: "SERVICE_END_REMINDER",
+        const payload = { clientId: fixture.client.id, ...(documentId ? { documentId } : {}) };
+        const row = await prisma.eformsign_document_job.create({ data: {
+            branchId: fixture.branch.id, clientId: fixture.client.id, jobType,
+            documentId, source: "staff", status: "processing", requestKey: randomUUID(),
+            activeKey: randomUUID(), leaseToken: randomUUID(), payload, createdByUserId: fixture.actorUserId,
         } });
-        const payload = { memberId: String(fixture.client.id), recipientName: "Synthetic client",
-            recipientPhone: "00000000000", templateVariables: { endDate: "2026-09-23" } };
-        const row = await prisma.message_trigger_job.create({ data: {
-            branchId: fixture.branch.id, ruleId: rule.id, status: "processing", scheduledFor: new Date(),
-            clientId: fixture.client.id, employeeScheduleId: fixture.schedule.id, recipientType: "CLIENT",
-            templateKey: "SERVICE_END_REMINDER", dedupeKey: randomUUID(), claimToken: randomUUID(), payload,
-        } });
-        const job = new MessageTriggerJobEntity(
-            row.id, row.branchId, row.ruleId, "processing", row.scheduledFor, row.sentAt,
-            row.canceledAt, row.cancelReason, row.clientId, row.employeeScheduleId,
-            MessageTriggerRecipientType.CLIENT, row.recipientPhone, MessageTriggerTemplateKey.SERVICE_END_REMINDER,
-            row.dedupeKey, payload, row.attempts, row.nextAttemptAt, row.createdAt, row.updatedAt, row.claimToken,
-        );
+        const job = new EformsignDocumentJobEntity({ ...row, jobType, source: "staff", status: "processing",
+            payload, autoFinalizeOutcomeAttempts: null });
         const held = serviceRecordConfirmBarrier();
         const release = serviceRecordConfirmBarrier();
         const attempted = serviceRecordConfirmBarrier();
@@ -89,15 +96,17 @@ describeE2E("confirm versus legacy SMS authorization (actual PostgreSQL)", () =>
         const result = await winner;
         const other = await loser;
         if (boundaryError) throw boundaryError;
-        const finalJob = await prisma.message_trigger_job.findUniqueOrThrow({ where: { id: job.id } });
+        const finalJob = await prisma.eformsign_document_job.findUniqueOrThrow({ where: { id: job.id } });
         if (first === "confirm") {
             expect(result).toMatchObject({ status: "confirmed" });
             expect(other).toMatchObject({ kind: "lost" });
-            expect(finalJob).toMatchObject({ status: "canceled", claimToken: null });
+            expect(finalJob.status).not.toBe("processing");
+            expect(finalJob.leaseToken).toBeNull();
+            expect(finalJob.progressStep).not.toBe("creating");
         } else {
             expect(result).toMatchObject({ kind: "allow" });
             expect(other).toBeInstanceOf(ConflictException);
-            expect(finalJob).toMatchObject({ status: "dispatching", claimToken: job.claimToken });
+            expect(finalJob).toMatchObject({ status: "processing", progressStep: "creating", leaseToken: job.leaseToken });
             expect(await prisma.service_record_edit_draft.findUniqueOrThrow({ where: { id: draft.id } }))
                 .toMatchObject({ status: "ACTIVE" });
             expect(await prisma.client.findUniqueOrThrow({ where: { id: fixture.client.id } }))

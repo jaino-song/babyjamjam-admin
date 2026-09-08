@@ -40,7 +40,7 @@ function queryText(query: unknown): string {
  * proceed to its next query.
  */
 function wrapTransaction(tx: Prisma.TransactionClient, hooks: LockHooks): Prisma.TransactionClient {
-    const queryRaw = tx.$queryRaw as unknown as (...args: unknown[]) => Promise<unknown>;
+    const queryRaw = tx.$queryRaw.bind(tx) as unknown as (...args: unknown[]) => Promise<unknown>;
     let clientLockObserved = false;
     return new Proxy(tx, {
         get(target, property, receiver) {
@@ -48,7 +48,7 @@ function wrapTransaction(tx: Prisma.TransactionClient, hooks: LockHooks): Prisma
                 return async (...args: unknown[]) => {
                     const text = queryText(args[0]);
                     const clientLock = !clientLockObserved
-                        && text.includes('from "client"')
+                        && /from\s+"?client"?\s/.test(text)
                         && text.includes("for update");
                     if (clientLock) {
                         clientLockObserved = true;

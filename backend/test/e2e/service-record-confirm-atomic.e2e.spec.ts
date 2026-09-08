@@ -63,6 +63,12 @@ describeE2E("atomic service-record confirmation (real disposable PostgreSQL)", (
         expect(first).toEqual(concurrent);
         expect(first).toMatchObject({ status: "confirmed", caseId: fixture.record.id, clientId: fixture.client.id });
         expect(first.revisionId).toBeTruthy();
+        expect(first.documentStatus).toBe("waiting_for_completion");
+        const revision = await prisma.service_record_revision.findUniqueOrThrow({ where: { id: first.revisionId! } });
+        expect(revision.payload).toMatchObject({ completeness: "partial", sessions: expect.arrayContaining([
+            expect.objectContaining({ sessionIndex: 3, clientSignature: fixture.days[2]?.clientSignature,
+                employeeNameSnapshot: fixture.days[2]?.employeeNameSnapshot, locked: true }),
+        ]) });
         const [client, record, schedule, assignment, days, revisionCount, jobCount] = await Promise.all([
             prisma.client.findUniqueOrThrow({ where: { id: fixture.client.id } }),
             prisma.service_record_case.findUniqueOrThrow({ where: { id: fixture.record.id } }),
