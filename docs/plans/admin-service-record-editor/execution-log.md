@@ -437,3 +437,6 @@
 
 - Task3.0 최종 보완72fe56c1e(원래 source branch 유지 및 raw Prisma P2010/meta40001의 기존 유한 DB 재시도 포함)를1fcbb6f75로 통합했다. 테스트 전용 unit0f430116f과 corrections unit은 모두 clean 상태에서 병합 후 제거하고 branch도 안전 삭제했다. Worker354→마지막355 단위, PG19, build, lint0오류/79기존경고를 보고했다.
 - 메인 통합 재검사: exact --runTestsByPath로12 suites483/483, exact guarded loopback PG3 suites19/19 PASS. 로그 /tmp/bjj-task3-integrated-unit.log 및 /tmp/bjj-task3-integrated-pg.log. PG 임시 소유권은 부모에게 반환됐고 새 테스트는 개인정보 없는 합성 fixture를 정리했다. Sol/high FINAL을 공식 CLI read-only/never로 frozen1fcbb6f75에서 시작했다. Task3.1은 이 감사 결과 전에는 시작하지 않는다.
+
+- Sol/high Task3.0 FINAL SHIP, confidence High, 차단 지적 없음. 원래7개 잠금/재조회 경합, NULL 소유권과 목적지 고객/지점 확인, 지점 제한 조회, 최초 소유권을 보존하는 유한 DB 재시도 및 실제 PG barrier 증거를 확인했다. frozen1fcbb6f75, 결과 /tmp/bjj-task3-sol-final-result.txt, CLI 세션01a07f88-3025-7dd2-a5b0-68b34efc9e05. 연결 재시도가 있었으나 모델 변경 없이 완료됐다. Task3.1 착수 조건 충족이며 전체 기능/외부PDF 완료를 뜻하지 않는다.
+- Task3.1은 기존 승인 범위 안에서 backend/shared 날짜·N·preview 계약을 먼저 구현하고, 고정된 계약 위에 frontend 날짜 편집/미리보기를 연결한다. 각각 Luna/max 전용 unit, Phase3 전체 Sol/high 감사는 두 부분 통합 뒤 수행한다. 현재 lifecycle255~304는 여전히 client.duration을 fallback으로 N을 upsert하므로 기존 N 보존이라는 scout 결론을 채택하지 않는다. 이 실제 clobber를 이번 단계에서 수정한다.
