@@ -2218,17 +2218,15 @@ export class MessageTriggerService {
      * it only holds the common aggregate locks for the authoritative reread,
      * then commits and releases them before rendering/upload/token work.
      *
-     * Legacy SMS jobs have no revision context and retain their established
-     * one-step preparation path. Their existing post-preparation claim fence
-     * remains responsible for cancellation races.
+     * Legacy SMS jobs have no revision context, so the source helper keeps
+     * their established common-lock behavior and the claim-token check still
+     * protects the preparation boundary. Their existing post-preparation
+     * claim fence remains responsible for cancellation races after a source
+     * change during preparation.
      */
     private async authorizeClaimedJobBeforePreparation(
         job: MessageTriggerJobEntity,
     ): Promise<PreProviderSendFenceResult> {
-        if (job.payload.serviceRecordRevisionContext === undefined) {
-            return { kind: "allow" };
-        }
-
         return this.prisma.$transaction(async (transaction) => {
             const revisionFence = await this.fenceServiceRecordRevisionBeforeProviderSend(
                 job,
