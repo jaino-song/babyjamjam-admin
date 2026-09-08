@@ -1,6 +1,7 @@
 import {
     getExpectedSessionDateFromRecords,
     shiftServiceRecordScheduleSuffix,
+    validateServiceRecordScheduleVector,
 } from "./service-record-schedule";
 
 describe("getExpectedSessionDateFromRecords", () => {
@@ -84,5 +85,19 @@ describe("shiftServiceRecordScheduleSuffix", () => {
             3,
             "2026-09-11",
         )).toThrow();
+    });
+
+    it("orders a shuffled valid vector by session index before checking chronology", () => {
+        const shuffled = [vector[1]!, vector[0]!, ...vector.slice(2)];
+        expect(validateServiceRecordScheduleVector(shuffled, vector.length).map(({ sessionIndex }) => sessionIndex))
+            .toEqual(vector.map(({ sessionIndex }) => sessionIndex));
+
+        const invertedByIndex = [
+            { ...vector[0]!, serviceDate: "2026-09-08" },
+            { ...vector[1]!, serviceDate: "2026-09-07" },
+            ...vector.slice(2),
+        ];
+        expect(() => validateServiceRecordScheduleVector(invertedByIndex, vector.length))
+            .toThrow(/not after the previous session/);
     });
 });

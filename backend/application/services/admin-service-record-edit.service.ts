@@ -6,6 +6,12 @@ import {
     validateServiceRecordEditText,
 } from "application/policies/service-record-answer-validation.policy";
 import {
+    buildServiceRecordEditPreview,
+    normalizeServiceRecordEditChanges,
+    ServiceRecordScheduleValidationError,
+    type ServiceRecordEditDateMove,
+} from "application/policies/service-record-edit-preview.policy";
+import {
     ServiceRecordEditConflictError,
     ServiceRecordEditNotFoundError,
 } from "domain/errors/service-record-edit.error";
@@ -23,6 +29,7 @@ import type {
     AdminServiceRecordEditStateDto,
     CreateServiceRecordEditDraftDto,
     DiscardServiceRecordEditDraftDto,
+    PreviewServiceRecordEditDraftDto,
     UpdateServiceRecordEditDraftDto,
 } from "interface/dto/admin-service-record-edit.dto";
 
@@ -158,8 +165,22 @@ export class AdminServiceRecordEditService {
         dto: UpdateServiceRecordEditDraftDto,
     ): Promise<AdminServiceRecordEditStateDto> {
         const target = await this.resolveDraftTarget(branchId, draftId);
-        const changes = this.validateChanges(dto.changes, target.loaded.source);
-        if (!changes) throw new BadRequestException("Draft changes are required");
+        const validatedChanges = this.validateChanges(dto.changes, target.loaded.source);
+        if (!validatedChanges) throw new BadRequestException("Draft changes are required");
+        let changes: ServiceRecordEditJsonObject;
+        try {
+            changes = normalizeServiceRecordEditChanges(
+                target.loaded.source,
+                target.draft.changes,
+                validatedChanges,
+                dto.dateMove as ServiceRecordEditDateMove | undefined,
+            ).changes;
+        } catch (error) {
+            if (error instanceof ServiceRecordScheduleValidationError) {
+                throw new BadRequestException({ code: error.code, message: error.message, sessionIndex: error.sessionIndex });
+            }
+            throw error;
+        }
 
         let draft: ServiceRecordEditDraft;
         try {
@@ -178,6 +199,50 @@ export class AdminServiceRecordEditService {
         }
         const latest = await this.loadSource(branchId, { caseId: target.loaded.source.caseId });
         return this.state(draft, latest);
+    }
+
+    async previewDraft(
+        branchId: string,
+        draftId: string,
+        _actorUserId: string,
+        dto: PreviewServiceRecordEditDraftDto,
+    ) {
+        const target = await this.resolveDraftTarget(branchId, draftId);
+        if (target.draft.status !== "ACTIVE") {
+            throw new ConflictException({ code: "SERVICE_RECORD_DRAFT_CLOSED" });
+        }
+        if (target.draft.draftVersion !== dto.expectedDraftVersion) {
+            await this.throwConflictWithLatest(
+                branchId,
+                target.loaded.source.caseId,
+                draftId,
+                new ServiceRecordEditConflictError("The service-record draft version is stale"),
+            );
+        }
+        if (target.draft.sourceFingerprint !== target.loaded.fingerprint) {
+            throw new ConflictException({
+                code: "SERVICE_RECORD_SOURCE_CHANGED",
+                sourceChanged: true,
+                sourceCaseVersion: target.loaded.source.caseVersion,
+                sourceFingerprint: target.loaded.fingerprint,
+                draft: mapDraft(target.draft),
+            });
+        }
+
+        const provisional = buildServiceRecordEditPreview({
+            draftId,
+            draftVersion: target.draft.draftVersion,
+            sourceCaseVersion: target.loaded.source.caseVersion,
+            sourceFingerprint: target.loaded.fingerprint,
+            source: target.loaded.source,
+            changes: target.draft.changes,
+            previewId: "pending",
+        });
+        const { previewId: _provisionalPreviewId, ...previewValues } = provisional;
+        void _provisionalPreviewId;
+        const previewFingerprint = jsonValue(previewValues);
+        const previewId = `srp_${createHash("sha256").update(stableStringify(previewFingerprint)).digest("hex")}`;
+        return { ...provisional, previewId };
     }
 
     async discardDraft(
@@ -335,11 +400,14 @@ export class AdminServiceRecordEditService {
         return value;
     }
 
-    private async resolveDraftTarget(branchId: string, draftId: string): Promise<{ loaded: LoadedSource }> {
+    private async resolveDraftTarget(
+        branchId: string,
+        draftId: string,
+    ): Promise<{ loaded: LoadedSource; draft: ServiceRecordEditDraft }> {
         if (!UUID_PATTERN.test(draftId)) throw new NotFoundException("Service-record draft not found");
         const draft = await this.repository.findDraftById(branchId, draftId);
         if (!draft) throw new NotFoundException("Service-record draft not found");
-        return { loaded: await this.loadSource(branchId, { caseId: draft.serviceRecordCaseId }) };
+        return { draft, loaded: await this.loadSource(branchId, { caseId: draft.serviceRecordCaseId }) };
     }
 
     private async loadSource(

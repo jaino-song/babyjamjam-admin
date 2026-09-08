@@ -74,6 +74,16 @@ export class CreateServiceRecordEditDraftDto {
 }
 
 /** Body used for compare-and-swap draft saves. */
+export class ServiceRecordEditDateMoveDto {
+    @IsInt()
+    @Min(1)
+    sessionIndex!: number;
+
+    @IsString()
+    @Matches(/^\d{4}-\d{2}-\d{2}$/)
+    toDate!: string;
+}
+
 export class UpdateServiceRecordEditDraftDto {
     @IsInt()
     @Min(1)
@@ -82,6 +92,19 @@ export class UpdateServiceRecordEditDraftDto {
     @ValidateNested()
     @Type(() => ServiceRecordEditChangesDto)
     changes!: ServiceRecordEditChangesDto;
+
+    /** A single server-normalized suffix move; never inferred from snapshots. */
+    @IsOptional()
+    @ValidateNested()
+    @Type(() => ServiceRecordEditDateMoveDto)
+    dateMove?: ServiceRecordEditDateMoveDto;
+}
+
+/** Body used for a read-only authoritative preview. */
+export class PreviewServiceRecordEditDraftDto {
+    @IsInt()
+    @Min(1)
+    expectedDraftVersion!: number;
 }
 
 /** Body used for compare-and-swap draft discard. */

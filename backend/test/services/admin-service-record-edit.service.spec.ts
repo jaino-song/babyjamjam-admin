@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, NotFoundException } from "@nest
 
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import { ServiceRecordEditConflictError } from "domain/errors/service-record-edit.error";
+import type { ServiceRecordEditSource } from "domain/repositories/service-record-edit.repository.interface";
 
 const BRANCH_ID = "11111111-1111-4111-8111-111111111111";
 const CASE_ID = "22222222-2222-4222-8222-222222222222";
@@ -9,7 +10,7 @@ const DRAFT_ID = "33333333-3333-4333-8333-333333333333";
 const ACTOR_ID = "44444444-4444-4444-8444-444444444444";
 const CLIENT_ID = 101;
 
-function sourceSnapshot(overrides: Record<string, unknown> = {}) {
+function sourceSnapshot(overrides: Record<string, unknown> = {}): ServiceRecordEditSource {
     return {
         caseId: CASE_ID,
         caseVersion: 7,
@@ -78,7 +79,7 @@ function sourceSnapshot(overrides: Record<string, unknown> = {}) {
             serviceStatus: "in_progress",
         },
         ...overrides,
-    };
+    } as unknown as ServiceRecordEditSource;
 }
 
 function draft(overrides: Record<string, unknown> = {}) {
@@ -99,6 +100,28 @@ function draft(overrides: Record<string, unknown> = {}) {
         updatedAt: new Date("2026-09-08T00:00:00.000Z"),
         discardedAt: null,
         ...overrides,
+    };
+}
+
+function previewSourceSnapshot(): ServiceRecordEditSource {
+    const base = sourceSnapshot();
+    const assignmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const assignment = { ...base.assignments[0]!, id: assignmentId };
+    const dates = ["2026-09-01", "2026-09-02", "2026-09-03"];
+    return {
+        ...base,
+        startDate: dates[0]!,
+        endDate: dates.at(-1)!,
+        assignments: [assignment],
+        plannedSessions: dates.map((serviceDate, index) => ({
+            sessionIndex: index + 1,
+            serviceDate,
+            originalDate: serviceDate,
+            assignmentId,
+            scheduleId: assignment.scheduleId,
+            employeeId: assignment.employeeId,
+            provenanceVersion: "case-7",
+        })),
     };
 }
 
@@ -382,5 +405,71 @@ describe("AdminServiceRecordEditService", () => {
             changes: { header: { momName: "수정" } },
         })).rejects.toBeInstanceOf(NotFoundException);
         expect(harness.repository.updateDraft).not.toHaveBeenCalled();
+    });
+
+    it("builds a read-only preview from the full authoritative planned vector", async () => {
+        const harness = createHarness({ source: previewSourceSnapshot() });
+        const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+        if (!started.draft) throw new Error("expected a draft");
+        const activeDraft = {
+            ...started.draft,
+            changes: { sessions: [{ sessionIndex: 2, notes: "수정" }] },
+        };
+        harness.repository.findDraftById.mockResolvedValue(activeDraft);
+
+        const result = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+        });
+
+        expect(result.previewId).toMatch(/^srp_[a-f0-9]{64}$/);
+        expect(result.draftId).toBe(DRAFT_ID);
+        expect(result.draftVersion).toBe(1);
+        expect(result.requiredSessionCount).toBe(3);
+        expect(result.before.sessions).toHaveLength(3);
+        expect(result.after.sessions).toHaveLength(3);
+        expect(result.contentChanges.changedSessionIndexes).toEqual([2]);
+        expect(result.blockingReasons).toEqual([]);
+        expect(harness.repository.updateDraft).not.toHaveBeenCalled();
+    });
+
+    it("binds a preview to the current source fingerprint and rejects stale drafts", async () => {
+        const changedSource = previewSourceSnapshot();
+        const harness = createHarness({
+            source: changedSource,
+            targetDraft: draft({ sourceFingerprint: "old-source" }),
+        });
+
+        await expect(harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: 1,
+        })).rejects.toMatchObject({
+            response: expect.objectContaining({ code: "SERVICE_RECORD_SOURCE_CHANGED", sourceChanged: true }),
+        });
+
+        const stale = createHarness({
+            source: changedSource,
+            targetDraft: draft({ draftVersion: 1 }),
+        });
+        stale.repository.findDraft.mockResolvedValue(draft({ draftVersion: 2 }));
+        await expect(stale.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: 2,
+        })).rejects.toMatchObject({
+            response: expect.objectContaining({ code: "SERVICE_RECORD_EDIT_CONFLICT" }),
+        });
+    });
+
+    it("uses the latest lifecycle-only case version without rebasing a matching draft", async () => {
+        const original = previewSourceSnapshot();
+        const harness = createHarness({ source: original });
+        const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+        if (!started.draft) throw new Error("expected a draft");
+        harness.repository.findDraftById.mockResolvedValue(started.draft);
+        harness.repository.loadSource.mockResolvedValue({ ...original, caseVersion: original.caseVersion + 1 });
+
+        const result = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: started.draft.draftVersion,
+        });
+
+        expect(result.sourceCaseVersion).toBe(original.caseVersion + 1);
+        expect(result.blockingReasons).toEqual([]);
     });
 });

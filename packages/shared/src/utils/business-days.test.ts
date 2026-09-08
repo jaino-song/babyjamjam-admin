@@ -8,6 +8,7 @@ import {
     isBusinessDayKr,
     KR_HOLIDAYS,
     nextBusinessDayKr,
+    shiftBusinessDaysKr,
     UnsupportedKoreanHolidayYearError,
 } from "./business-days";
 
@@ -128,9 +129,19 @@ describe("nextBusinessDayKr / addBusinessDaysKr", () => {
 });
 
 describe("shiftBusinessDaysKr", () => {
-    it("supports signed forward and reverse shifts across a corrected holiday", async () => {
-        const { shiftBusinessDaysKr } = await import("./business-days");
-        expect(shiftBusinessDaysKr("2027-04-30", 1)).toBe("2027-05-04");
-        expect(shiftBusinessDaysKr("2027-05-04", -1)).toBe("2027-04-30");
+    it.each([
+        ["2024-09-30", "2024-10-02"],
+        ["2025-01-24", "2025-01-31"],
+        ["2025-06-02", "2025-06-04"],
+        ["2026-09-23", "2026-09-28"],
+        ["2026-12-31", "2027-01-04"],
+        ["2027-04-30", "2027-05-04"],
+        ["2027-06-04", "2027-06-07"],
+        ["2027-07-16", "2027-07-20"],
+        ["2027-10-08", "2027-10-12"],
+        ["2027-12-24", "2027-12-28"],
+    ])("shifts +1 and reverses across the approved boundary %s -> %s", (base, expected) => {
+        expect(shiftBusinessDaysKr(base, 1)).toBe(expected);
+        expect(shiftBusinessDaysKr(expected, -1)).toBe(base);
     });
 });
