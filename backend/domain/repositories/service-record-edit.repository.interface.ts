@@ -6,7 +6,7 @@ import type {
     ServiceRecordRevisionDispatchContext,
     ServiceRecordRevisionDocumentOperation,
     ServiceRecordRevisionDocumentStatus,
-    ServiceRecordRevisionDocumentState,
+    ServiceRecordRevisionDocumentState as SharedServiceRecordRevisionDocumentState,
     ServiceRecordRevisionHistoryResponse,
 } from "@babyjamjam/shared/types/service-record";
 import type { Prisma } from "@prisma/client";
@@ -23,6 +23,9 @@ export type ServiceRecordEditJsonValue =
 export type ServiceRecordEditJsonObject = {
     [key: string]: ServiceRecordEditJsonValue;
 };
+
+/** Storage-facing state is shared with adapter workers without importing Prisma. */
+export type ServiceRecordRevisionDocumentState = SharedServiceRecordRevisionDocumentState;
 
 /** Immutable source rows captured for a draft in one repeatable-read snapshot. */
 export interface ServiceRecordEditSourceDay {
@@ -171,6 +174,7 @@ export interface CreateServiceRecordRevisionDocumentStateInput {
     templateVersion?: string | null;
     workflowScope?: ServiceRecordEditJsonValue | null;
     mirrorGeneration?: string | null;
+    outputProof?: ServiceRecordEditJsonValue | null;
     step?: string;
     status?: ServiceRecordRevisionDocumentStatus;
     attempts?: number;
@@ -191,12 +195,16 @@ export interface AdvanceServiceRecordRevisionDocumentStateInput {
     nextAttemptAt?: Date | null;
     lastErrorCode?: string | null;
     documentVersion?: number | null;
+    expectedDocumentVersion?: number | null;
     sourceDocumentId?: string | null;
     targetDocumentId?: string | null;
+    expectedTargetDocumentId?: string | null;
     templateId?: string | null;
     templateVersion?: string | null;
     workflowScope?: ServiceRecordEditJsonValue | null;
     mirrorGeneration?: string | null;
+    expectedMirrorGeneration?: string | null;
+    outputProof?: ServiceRecordEditJsonValue | null;
 }
 
 /** A retry only reopens the existing generation; it never allocates a revision. */

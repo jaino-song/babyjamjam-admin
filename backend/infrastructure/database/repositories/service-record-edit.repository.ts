@@ -1,6 +1,5 @@
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { createHash } from "node:crypto";
 
 import {
     ServiceRecordEditConflictError,
@@ -24,13 +23,23 @@ import {
     type ServiceRecordEditSourceAssignment,
     type ServiceRecordEditSourceDay,
     type ServiceRecordRevision,
+    type ServiceRecordRevisionDocumentState,
+    type CreateServiceRecordRevisionDocumentStateInput,
+    type AdvanceServiceRecordRevisionDocumentStateInput,
+    type RetryServiceRecordRevisionDocumentInput,
+    type ServiceRecordEditTransactionContext,
     type UpdateServiceRecordEditDraftInput,
 } from "domain/repositories/service-record-edit.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 import {
     persistClientMessageAutomationIntent,
     persistScheduleMessageAutomationIntent,
 } from "application/services/message-automation-intent-writer";
+import {
+    SERVICE_RECORD_REVISION_DOCUMENT_OPERATIONS,
+    SERVICE_RECORD_REVISION_DOCUMENT_STATUSES,
+} from "@babyjamjam/shared/types/service-record";
 import type {
     ServiceRecordEditContractStage,
     ServiceRecordEditDocumentChunk,
@@ -38,6 +47,9 @@ import type {
     ServiceRecordEditSignatureMetadata,
     ServiceRecordEditConfirmResponse,
     ServiceRecordRevisionDispatchContext,
+    ServiceRecordRevisionDocumentOperation,
+    ServiceRecordRevisionDocumentStatus,
+    ServiceRecordRevisionHistoryResponse,
 } from "@babyjamjam/shared/types/service-record";
 
 type DraftRow = Prisma.service_record_edit_draftGetPayload<Record<string, never>>;
@@ -354,7 +366,7 @@ function canonicalize(value: unknown): unknown {
 }
 
 function jsonFingerprint(value: unknown): string {
-    return createHash("sha256").update(JSON.stringify(canonicalize(value))).digest("hex");
+    return sha256CanonicalJson(value);
 }
 
 function sameSortedNumbers(left: number[], right: number[]): boolean {
@@ -366,6 +378,246 @@ function sameSortedNumbers(left: number[], right: number[]): boolean {
 type OptionalQueryTransaction = Prisma.TransactionClient & {
     $queryRaw?: <T = unknown>(query: Prisma.Sql) => Promise<T>;
 };
+
+type RevisionDocumentStateRow = {
+    id: string;
+    branchId: string;
+    clientId: number;
+    serviceRecordCaseId: string;
+    revisionId: string;
+    operation: string;
+    generation: string;
+    immutableInput: unknown;
+    inputFingerprint: string;
+    documentVersion: number | null;
+    sourceDocumentId: string | null;
+    targetDocumentId: string | null;
+    templateId: string | null;
+    templateVersion: string | null;
+    workflowScope: unknown;
+    mirrorGeneration: string | null;
+    outputProof: unknown;
+    step: string;
+    status: string;
+    attempts: number;
+    nextAttemptAt: Date | string | null;
+    lastErrorCode: string | null;
+    version: number;
+    createdAt: Date | string;
+    updatedAt: Date | string;
+};
+
+function revisionDocumentOperation(value: string): ServiceRecordRevisionDocumentOperation {
+    if (!(SERVICE_RECORD_REVISION_DOCUMENT_OPERATIONS as readonly string[]).includes(value)) {
+        throw new ServiceRecordEditConflictError("Unknown revision document operation");
+    }
+    return value as ServiceRecordRevisionDocumentOperation;
+}
+
+function revisionDocumentStatus(value: string): ServiceRecordRevisionDocumentStatus {
+    if (!(SERVICE_RECORD_REVISION_DOCUMENT_STATUSES as readonly string[]).includes(value)) {
+        throw new ServiceRecordEditConflictError("Unknown revision document status");
+    }
+    return value as ServiceRecordRevisionDocumentStatus;
+}
+
+function jsonObjectOrConflict(value: unknown, field: string): Record<string, unknown> {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new ServiceRecordEditConflictError(`Revision document ${field} is invalid`);
+    }
+    return value as Record<string, unknown>;
+}
+
+function stateDate(value: Date | string | null): string | null {
+    if (value === null) return null;
+    const parsed = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+        throw new ServiceRecordEditConflictError("Revision document timestamp is invalid");
+    }
+    return parsed.toISOString();
+}
+
+function toRevisionDocumentState(row: RevisionDocumentStateRow): ServiceRecordRevisionDocumentState {
+    const immutableInput = jsonObjectOrConflict(row.immutableInput, "immutable input");
+    const inputFingerprint = row.inputFingerprint.trim();
+    stateFingerprint(inputFingerprint);
+    if (jsonFingerprint(immutableInput) !== inputFingerprint.toLowerCase()) {
+        throw new ServiceRecordEditConflictError("Revision document fingerprint does not match immutable input");
+    }
+    return {
+        id: row.id,
+        branchId: row.branchId,
+        clientId: row.clientId,
+        serviceRecordCaseId: row.serviceRecordCaseId,
+        revisionId: row.revisionId,
+        operation: revisionDocumentOperation(row.operation),
+        generation: row.generation,
+        immutableInput,
+        inputFingerprint,
+        documentVersion: row.documentVersion,
+        sourceDocumentId: row.sourceDocumentId,
+        targetDocumentId: row.targetDocumentId,
+        templateId: row.templateId,
+        templateVersion: row.templateVersion,
+        workflowScope: row.workflowScope === null
+            ? null
+            : jsonObjectOrConflict(row.workflowScope, "workflow scope"),
+        mirrorGeneration: row.mirrorGeneration,
+        outputProof: row.outputProof === null
+            ? null
+            : jsonObjectOrConflict(row.outputProof, "output proof"),
+        step: row.step,
+        status: revisionDocumentStatus(row.status),
+        attempts: row.attempts,
+        nextAttemptAt: stateDate(row.nextAttemptAt),
+        lastErrorCode: row.lastErrorCode,
+        version: row.version,
+        createdAt: stateDate(row.createdAt) ?? "",
+        updatedAt: stateDate(row.updatedAt) ?? "",
+    };
+}
+
+function stateFingerprint(value: string): void {
+    if (!/^[0-9a-f]{64}$/i.test(value)) {
+        throw new ServiceRecordEditConflictError("Revision document fingerprint is invalid");
+    }
+}
+
+function assertStateInput(input: CreateServiceRecordRevisionDocumentStateInput): void {
+    if (!UUID_PATTERN.test(input.branchId)
+        || !UUID_PATTERN.test(input.serviceRecordCaseId)
+        || !UUID_PATTERN.test(input.revisionId)
+        || !Number.isInteger(input.clientId)
+        || input.clientId < 1) {
+        throw new ServiceRecordEditConflictError("Revision document ownership is invalid");
+    }
+    if (!input.generation || input.generation.length > 128) {
+        throw new ServiceRecordEditConflictError("Revision document generation is invalid");
+    }
+    stateFingerprint(input.inputFingerprint);
+    if (jsonFingerprint(input.immutableInput) !== input.inputFingerprint.toLowerCase()) {
+        throw new ServiceRecordEditConflictError("Revision document fingerprint does not match immutable input");
+    }
+    revisionDocumentOperation(input.operation);
+    revisionDocumentStatus(input.status ?? "pending");
+    if (!input.immutableInput || typeof input.immutableInput !== "object" || Array.isArray(input.immutableInput)) {
+        throw new ServiceRecordEditConflictError("Revision document immutable input is invalid");
+    }
+}
+
+function assertUuid(value: string, field: string): void {
+    if (!UUID_PATTERN.test(value)) {
+        throw new ServiceRecordEditConflictError(`Revision document ${field} is invalid`);
+    }
+}
+
+function assertClientId(value: number): void {
+    if (!Number.isInteger(value) || value < 1) {
+        throw new ServiceRecordEditConflictError("Revision document client is invalid");
+    }
+}
+
+function jsonSql(value: ServiceRecordEditJsonValue | null | undefined): Prisma.Sql {
+    if (value === undefined || value === null) return Prisma.sql`NULL`;
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) {
+        throw new ServiceRecordEditConflictError("Revision document JSON input is invalid");
+    }
+    return Prisma.sql`${serialized}::jsonb`;
+}
+
+function nullableSql(value: string | null | undefined): Prisma.Sql {
+    if (value === undefined || value === null) return Prisma.sql`NULL`;
+    return Prisma.sql`${value}`;
+}
+
+function nullableDateSql(value: Date | null | undefined): Prisma.Sql {
+    if (value === undefined || value === null) return Prisma.sql`NULL`;
+    if (Number.isNaN(value.getTime())) {
+        throw new ServiceRecordEditConflictError("Revision document retry timestamp is invalid");
+    }
+    return Prisma.sql`${value}`;
+}
+
+function canRetryRevisionDocumentState(row: Pick<RevisionDocumentStateRow, "status" | "step">): boolean {
+    return (row.status === "failed" || row.status === "manual_review")
+        && !["creating", "sent", "reconciling", "unknown"].includes(row.step);
+}
+
+async function rawStateQuery<T>(
+    client: Prisma.TransactionClient | PrismaService,
+    query: Prisma.Sql,
+): Promise<T> {
+    const queryClient = client as unknown as {
+        $queryRaw?: <R = unknown>(statement: Prisma.Sql) => Promise<R>;
+    };
+    if (typeof queryClient.$queryRaw !== "function") {
+        throw new ServiceRecordEditConflictError("Revision document state storage is unavailable");
+    }
+    return queryClient.$queryRaw<T>(query);
+}
+
+const revisionDocumentStateColumns = Prisma.sql`
+    id,
+    branch_id AS "branchId",
+    client_id AS "clientId",
+    service_record_case_id AS "serviceRecordCaseId",
+    revision_id AS "revisionId",
+    operation,
+    generation,
+    immutable_input AS "immutableInput",
+    input_fingerprint AS "inputFingerprint",
+    document_version AS "documentVersion",
+    source_document_id AS "sourceDocumentId",
+    target_document_id AS "targetDocumentId",
+    template_id AS "templateId",
+    template_version AS "templateVersion",
+    workflow_scope AS "workflowScope",
+    mirror_generation AS "mirrorGeneration",
+    output_proof AS "outputProof",
+    step,
+    status,
+    attempts,
+    next_attempt_at AS "nextAttemptAt",
+    last_error_code AS "lastErrorCode",
+    version,
+    created_at AS "createdAt",
+    updated_at AS "updatedAt"
+`;
+
+async function selectRevisionDocumentState(
+    client: Prisma.TransactionClient | PrismaService,
+    scope: {
+        branchId: string;
+        clientId: number;
+        serviceRecordCaseId?: string;
+        revisionId?: string;
+        stateId?: string;
+        generation?: string;
+        forUpdate?: boolean;
+    },
+): Promise<RevisionDocumentStateRow[]> {
+    const lock = scope.forUpdate ? Prisma.sql` FOR UPDATE` : Prisma.empty;
+    return rawStateQuery<RevisionDocumentStateRow[]>(client, Prisma.sql`
+        SELECT ${revisionDocumentStateColumns}
+        FROM "service_record_revision_document_state" AS state
+        INNER JOIN "service_record_case" AS owner_case
+            ON owner_case.branch_id = state.branch_id
+           AND owner_case.id = state.service_record_case_id
+           AND owner_case.client_id = state.client_id
+        INNER JOIN "service_record_revision" AS owner_revision
+            ON owner_revision.branch_id = state.branch_id
+           AND owner_revision.service_record_case_id = state.service_record_case_id
+           AND owner_revision.id = state.revision_id
+        WHERE state.branch_id = ${scope.branchId}::uuid
+          AND state.client_id = ${scope.clientId}
+          ${scope.serviceRecordCaseId === undefined ? Prisma.empty : Prisma.sql`AND state.service_record_case_id = ${scope.serviceRecordCaseId}::uuid`}
+          ${scope.revisionId === undefined ? Prisma.empty : Prisma.sql`AND state.revision_id = ${scope.revisionId}::uuid`}
+          ${scope.stateId === undefined ? Prisma.empty : Prisma.sql`AND state.id = ${scope.stateId}::uuid`}
+          ${scope.generation === undefined ? Prisma.empty : Prisma.sql`AND state.generation = ${scope.generation}`}
+        ORDER BY state.created_at ASC, state.id ASC${lock}
+    `);
+}
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -1137,6 +1389,408 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             }
             throw error;
         }
+    }
+
+    async listRevisionHistory(
+        branchId: string,
+        clientId: number,
+    ): Promise<ServiceRecordRevisionHistoryResponse | null> {
+        assertUuid(branchId, "branch");
+        assertClientId(clientId);
+        return this.prisma.$transaction(
+            (tx) => this.listRevisionHistoryWithClient(tx, branchId, clientId),
+            { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+        );
+    }
+
+    private async listRevisionHistoryWithClient(
+        tx: Prisma.TransactionClient,
+        branchId: string,
+        clientId: number,
+    ): Promise<ServiceRecordRevisionHistoryResponse | null> {
+        const cases = await rawStateQuery<Array<{
+            caseId: string;
+            caseVersion: number;
+            currentRevisionId: string | null;
+            currentUsableRevisionId: string | null;
+        }>>(tx, Prisma.sql`
+            SELECT
+                id AS "caseId",
+                version AS "caseVersion",
+                current_revision_id AS "currentRevisionId",
+                current_usable_revision_id AS "currentUsableRevisionId"
+            FROM "service_record_case"
+            WHERE branch_id = ${branchId}::uuid
+              AND client_id = ${clientId}
+            LIMIT 1
+        `);
+        const ownerCase = cases[0];
+        if (!ownerCase) return null;
+
+        const revisions = await rawStateQuery<Array<{
+            id: string;
+            revisionNumber: number;
+            confirmedAt: Date | string;
+        }>>(tx, Prisma.sql`
+            SELECT
+                id,
+                revision_number AS "revisionNumber",
+                confirmed_at AS "confirmedAt"
+            FROM "service_record_revision"
+            WHERE branch_id = ${branchId}::uuid
+              AND service_record_case_id = ${ownerCase.caseId}::uuid
+            ORDER BY revision_number DESC, id DESC
+        `);
+        const states = await selectRevisionDocumentState(tx, {
+            branchId,
+            clientId,
+            serviceRecordCaseId: ownerCase.caseId,
+        });
+        const documentsByRevision = new Map<string, ServiceRecordRevisionDocumentState[]>();
+        for (const row of states) {
+            const state = toRevisionDocumentState(row);
+            const existing = documentsByRevision.get(state.revisionId) ?? [];
+            existing.push(state);
+            documentsByRevision.set(state.revisionId, existing);
+        }
+
+        return {
+            caseId: ownerCase.caseId,
+            caseVersion: ownerCase.caseVersion,
+            currentRevisionId: ownerCase.currentRevisionId,
+            currentUsableRevisionId: ownerCase.currentUsableRevisionId,
+            revisions: revisions.map((revision) => ({
+                id: revision.id,
+                revisionNumber: revision.revisionNumber,
+                confirmedAt: stateDate(revision.confirmedAt) ?? "",
+                isCurrent: revision.id === ownerCase.currentRevisionId,
+                documents: (documentsByRevision.get(revision.id) ?? [])
+                    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+                    .map((state) => ({
+                        id: state.id,
+                        operation: state.operation,
+                        generation: state.generation,
+                        status: state.status,
+                        documentVersion: state.documentVersion,
+                        canRetry: canRetryRevisionDocumentState(state),
+                        reasonCode: state.lastErrorCode,
+                    })),
+            })),
+        };
+    }
+
+    async findRevisionDocumentState(
+        branchId: string,
+        clientId: number,
+        revisionId: string,
+        stateId: string,
+    ): Promise<ServiceRecordRevisionDocumentState | null> {
+        assertUuid(branchId, "branch");
+        assertClientId(clientId);
+        assertUuid(revisionId, "revision");
+        assertUuid(stateId, "state");
+        const rows = await selectRevisionDocumentState(this.prisma, {
+            branchId,
+            clientId,
+            revisionId,
+            stateId,
+        });
+        const row = rows[0];
+        return row ? toRevisionDocumentState(row) : null;
+    }
+
+    async createRevisionDocumentState(
+        input: CreateServiceRecordRevisionDocumentStateInput,
+    ): Promise<ServiceRecordRevisionDocumentState> {
+        assertStateInput(input);
+        return this.prisma.$transaction((tx) => this.createRevisionDocumentStateInTransaction({ tx }, input));
+    }
+
+    async createRevisionDocumentStateInTransaction(
+        context: ServiceRecordEditTransactionContext,
+        input: CreateServiceRecordRevisionDocumentStateInput,
+    ): Promise<ServiceRecordRevisionDocumentState> {
+        assertStateInput(input);
+        const status = input.status ?? "pending";
+        const rows = await rawStateQuery<RevisionDocumentStateRow[]>(context.tx, Prisma.sql`
+            INSERT INTO "service_record_revision_document_state" (
+                branch_id,
+                client_id,
+                service_record_case_id,
+                revision_id,
+                operation,
+                generation,
+                immutable_input,
+                input_fingerprint,
+                document_version,
+                source_document_id,
+                target_document_id,
+                template_id,
+                template_version,
+                workflow_scope,
+                mirror_generation,
+                output_proof,
+                step,
+                status,
+                attempts,
+                next_attempt_at,
+                last_error_code
+            ) VALUES (
+                ${input.branchId}::uuid,
+                ${input.clientId},
+                ${input.serviceRecordCaseId}::uuid,
+                ${input.revisionId}::uuid,
+                ${input.operation},
+                ${input.generation},
+                ${jsonSql(input.immutableInput)},
+                ${input.inputFingerprint},
+                ${input.documentVersion ?? null},
+                ${input.sourceDocumentId ?? null},
+                ${input.targetDocumentId ?? null},
+                ${input.templateId ?? null},
+                ${input.templateVersion ?? null},
+                ${jsonSql(input.workflowScope)},
+                ${input.mirrorGeneration ?? null},
+                ${jsonSql(input.outputProof)},
+                ${input.step ?? "pending"},
+                ${status},
+                ${input.attempts ?? 0},
+                ${input.nextAttemptAt ?? null},
+                ${input.lastErrorCode ?? null}
+            )
+            ON CONFLICT DO NOTHING
+            RETURNING ${revisionDocumentStateColumns}
+        `);
+        const row = rows[0];
+        if (row) return toRevisionDocumentState(row);
+
+        // A repeated generation is idempotent only when every server-owned
+        // identity value matches.  The unique generation constraint also
+        // protects against a different branch/client attempting to reuse it;
+        // the scoped read deliberately returns no row for that case.
+        const existingRows = await selectRevisionDocumentState(context.tx, {
+            branchId: input.branchId,
+            clientId: input.clientId,
+            revisionId: input.revisionId,
+            generation: input.generation,
+        });
+        const existing = existingRows[0];
+        if (!existing) {
+            throw new ServiceRecordEditConflictError("Revision document generation is already owned");
+        }
+        const existingState = toRevisionDocumentState(existing);
+        if (existingState.serviceRecordCaseId !== input.serviceRecordCaseId
+            || existingState.operation !== input.operation
+            || existingState.inputFingerprint !== input.inputFingerprint.toLowerCase()
+            || JSON.stringify(canonicalize(existingState.immutableInput))
+                !== JSON.stringify(canonicalize(input.immutableInput))) {
+            throw new ServiceRecordEditConflictError("Revision document generation was reused with different input");
+        }
+        return existingState;
+    }
+
+    async advanceRevisionDocumentState(
+        input: AdvanceServiceRecordRevisionDocumentStateInput,
+    ): Promise<ServiceRecordRevisionDocumentState | null> {
+        assertUuid(input.branchId, "branch");
+        assertClientId(input.clientId);
+        assertUuid(input.stateId, "state");
+        if (!input.expectedGeneration || !Number.isInteger(input.expectedVersion) || input.expectedVersion < 0) {
+            throw new ServiceRecordEditConflictError("Revision document CAS input is invalid");
+        }
+        revisionDocumentStatus(input.status);
+        if (!input.step || input.step.length > 80) {
+            throw new ServiceRecordEditConflictError("Revision document step is invalid");
+        }
+        return this.prisma.$transaction((tx) => this.advanceRevisionDocumentStateInTransaction({ tx }, input));
+    }
+
+    async advanceRevisionDocumentStateInTransaction(
+        context: ServiceRecordEditTransactionContext,
+        input: AdvanceServiceRecordRevisionDocumentStateInput,
+    ): Promise<ServiceRecordRevisionDocumentState | null> {
+        assertUuid(input.branchId, "branch");
+        assertClientId(input.clientId);
+        assertUuid(input.stateId, "state");
+        if (!input.expectedGeneration || !Number.isInteger(input.expectedVersion) || input.expectedVersion < 0) {
+            throw new ServiceRecordEditConflictError("Revision document CAS input is invalid");
+        }
+        revisionDocumentStatus(input.status);
+        if (!input.step || input.step.length > 80) {
+            throw new ServiceRecordEditConflictError("Revision document step is invalid");
+        }
+        const rows = await selectRevisionDocumentState(context.tx, {
+            branchId: input.branchId,
+            clientId: input.clientId,
+            stateId: input.stateId,
+            generation: input.expectedGeneration,
+            forUpdate: true,
+        });
+        const currentRow = rows[0];
+        if (!currentRow || currentRow.version !== input.expectedVersion) return null;
+        const current = toRevisionDocumentState(currentRow);
+
+        const assertImmutableMatch = (
+            supplied: unknown,
+            existing: unknown,
+            field: string,
+        ): void => {
+            if (supplied === undefined) return;
+            if (JSON.stringify(canonicalize(supplied)) !== JSON.stringify(canonicalize(existing))) {
+                throw new ServiceRecordEditConflictError(`Revision document ${field} is immutable`);
+            }
+        };
+        assertImmutableMatch(input.sourceDocumentId, current.sourceDocumentId, "source document");
+        assertImmutableMatch(input.templateId, current.templateId, "template");
+        assertImmutableMatch(input.templateVersion, current.templateVersion, "template version");
+        assertImmutableMatch(input.workflowScope, current.workflowScope, "workflow scope");
+
+        if (input.expectedDocumentVersion !== undefined
+            && current.documentVersion !== input.expectedDocumentVersion) return null;
+        if (input.expectedTargetDocumentId !== undefined
+            && current.targetDocumentId !== input.expectedTargetDocumentId) return null;
+        if (input.expectedMirrorGeneration !== undefined
+            && current.mirrorGeneration !== input.expectedMirrorGeneration) return null;
+
+        const nextDocumentVersion = input.documentVersion === undefined
+            ? current.documentVersion
+            : input.documentVersion;
+        if (input.documentVersion !== undefined
+            && current.documentVersion !== null
+            && input.documentVersion !== current.documentVersion) {
+            throw new ServiceRecordEditConflictError("Revision document version is immutable");
+        }
+        const nextTargetDocumentId = input.targetDocumentId === undefined
+            ? current.targetDocumentId
+            : input.targetDocumentId;
+        if (input.targetDocumentId !== undefined
+            && current.targetDocumentId !== null
+            && input.targetDocumentId !== current.targetDocumentId) {
+            throw new ServiceRecordEditConflictError("Revision document target is immutable");
+        }
+        const nextMirrorGeneration = input.mirrorGeneration === undefined
+            ? current.mirrorGeneration
+            : input.mirrorGeneration;
+        if (input.mirrorGeneration !== undefined
+            && current.mirrorGeneration !== null
+            && input.mirrorGeneration !== current.mirrorGeneration) {
+            throw new ServiceRecordEditConflictError("Revision document mirror generation is immutable");
+        }
+        const nextOutputProof = input.outputProof === undefined
+            ? current.outputProof
+            : input.outputProof;
+        if (input.outputProof !== undefined
+            && current.outputProof !== null
+            && JSON.stringify(canonicalize(input.outputProof))
+                !== JSON.stringify(canonicalize(current.outputProof))) {
+            throw new ServiceRecordEditConflictError("Revision document output proof is immutable");
+        }
+        const attempts = input.attempts ?? current.attempts;
+        if (!Number.isInteger(attempts) || attempts < current.attempts) {
+            throw new ServiceRecordEditConflictError("Revision document attempts cannot move backwards");
+        }
+        const nextAttemptAtSql = input.nextAttemptAt === undefined
+            ? Prisma.sql`next_attempt_at`
+            : input.nextAttemptAt === null
+                ? Prisma.sql`NULL`
+                : nullableDateSql(input.nextAttemptAt);
+        const lastErrorSql = input.lastErrorCode === undefined
+            ? Prisma.sql`last_error_code`
+            : nullableSql(input.lastErrorCode);
+        const documentVersionSql = nextDocumentVersion === null
+            ? Prisma.sql`NULL`
+            : Prisma.sql`${nextDocumentVersion}`;
+        const targetDocumentIdSql = nextTargetDocumentId === null
+            ? Prisma.sql`NULL`
+            : Prisma.sql`${nextTargetDocumentId}`;
+        const mirrorGenerationSql = nextMirrorGeneration === null
+            ? Prisma.sql`NULL`
+            : Prisma.sql`${nextMirrorGeneration}`;
+        const outputProofSql = nextOutputProof === null
+            ? Prisma.sql`NULL`
+            : jsonSql(nextOutputProof as unknown as ServiceRecordEditJsonValue);
+        const updated = await rawStateQuery<RevisionDocumentStateRow[]>(context.tx, Prisma.sql`
+            UPDATE "service_record_revision_document_state"
+            SET step = ${input.step},
+                status = ${input.status},
+                attempts = ${attempts},
+                next_attempt_at = ${nextAttemptAtSql},
+                last_error_code = ${lastErrorSql},
+                document_version = ${documentVersionSql},
+                target_document_id = ${targetDocumentIdSql},
+                mirror_generation = ${mirrorGenerationSql},
+                output_proof = ${outputProofSql},
+                version = version + 1,
+                updated_at = now()
+            WHERE id = ${input.stateId}::uuid
+              AND branch_id = ${input.branchId}::uuid
+              AND client_id = ${input.clientId}
+              AND generation = ${input.expectedGeneration}
+              AND version = ${input.expectedVersion}
+            RETURNING ${revisionDocumentStateColumns}
+        `);
+        const row = updated[0];
+        return row ? toRevisionDocumentState(row) : null;
+    }
+
+    async retryRevisionDocumentState(
+        input: RetryServiceRecordRevisionDocumentInput,
+    ): Promise<ServiceRecordRevisionDocumentState | null> {
+        assertUuid(input.branchId, "branch");
+        assertClientId(input.clientId);
+        assertUuid(input.revisionId, "revision");
+        assertUuid(input.stateId, "state");
+        if (!input.expectedGeneration) {
+            throw new ServiceRecordEditConflictError("Revision document generation is required");
+        }
+        return this.prisma.$transaction((tx) => this.retryRevisionDocumentStateInTransaction({ tx }, input));
+    }
+
+    async retryRevisionDocumentStateInTransaction(
+        context: ServiceRecordEditTransactionContext,
+        input: RetryServiceRecordRevisionDocumentInput,
+    ): Promise<ServiceRecordRevisionDocumentState | null> {
+        assertUuid(input.branchId, "branch");
+        assertClientId(input.clientId);
+        assertUuid(input.revisionId, "revision");
+        assertUuid(input.stateId, "state");
+        if (!input.expectedGeneration) {
+            throw new ServiceRecordEditConflictError("Revision document generation is required");
+        }
+        const rows = await selectRevisionDocumentState(context.tx, {
+            branchId: input.branchId,
+            clientId: input.clientId,
+            revisionId: input.revisionId,
+            stateId: input.stateId,
+            generation: input.expectedGeneration,
+            forUpdate: true,
+        });
+        const currentRow = rows[0];
+        if (!currentRow) return null;
+        const current = toRevisionDocumentState(currentRow);
+        if (!canRetryRevisionDocumentState(currentRow)) return current;
+
+        const updated = await rawStateQuery<RevisionDocumentStateRow[]>(context.tx, Prisma.sql`
+            UPDATE "service_record_revision_document_state"
+            SET step = 'retry_requested',
+                status = 'pending',
+                attempts = attempts + 1,
+                next_attempt_at = NULL,
+                last_error_code = NULL,
+                version = version + 1,
+                updated_at = now()
+            WHERE id = ${input.stateId}::uuid
+              AND branch_id = ${input.branchId}::uuid
+              AND client_id = ${input.clientId}
+              AND revision_id = ${input.revisionId}::uuid
+              AND generation = ${input.expectedGeneration}
+              AND version = ${current.version}
+              AND status IN ('failed', 'manual_review')
+              AND step NOT IN ('creating', 'sent', 'reconciling', 'unknown')
+            RETURNING ${revisionDocumentStateColumns}
+        `);
+        const row = updated[0];
+        return row ? toRevisionDocumentState(row) : current;
     }
 
     async confirmDraft(input: ServiceRecordEditConfirmInput): Promise<ServiceRecordEditConfirmResponse> {
