@@ -25,6 +25,7 @@ import {
     SERVICE_RECORD_EDIT_REPOSITORY,
     type IServiceRecordEditRepository,
     type ServiceRecordEditJsonValue,
+    type ServiceRecordRevisionDocumentState,
 } from "domain/repositories/service-record-edit.repository.interface";
 
 const CASE_BATCH_SIZE = 10;
@@ -117,6 +118,14 @@ function isoTimestamp(value: Date | null | undefined): string | null {
 
 function randomGenerationId(): string {
     return randomUUID();
+}
+
+function payloadDocumentVersion(payload: Record<string, unknown> | null | undefined): number {
+    const value = payload?.["documentVersion"];
+    if (!Number.isInteger(value) || (value as number) < 1) {
+        throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED" });
+    }
+    return value as number;
 }
 
 /**
@@ -726,14 +735,19 @@ export class ServiceRecordFinalizationService {
                 && typeof existingImmutablePayload === "object"
                 && !Array.isArray(existingImmutablePayload)
             ) {
-                await this.ensureInitialFinalizationState(
+                const existingDocumentVersion = payloadDocumentVersion(existingPayload);
+                const existingState = await this.ensureInitialFinalizationState(
                     tx,
                     source,
                     revisionId,
                     existingGeneration,
                     existingImmutablePayload as Record<string, unknown>,
                     requestKey,
+                    existingDocumentVersion,
                 );
+                if (existingState && existingState.documentVersion !== existingDocumentVersion) {
+                    throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED" });
+                }
             }
             this.assertFrozenGenerationJob(existing, source, revisionId, requestKey);
             return;
@@ -771,13 +785,31 @@ export class ServiceRecordFinalizationService {
         const generation = randomGenerationId();
         const immutablePayload = this.buildInitialFinalizationPayload(source, revision, generation);
         const payloadFingerprint = sha256CanonicalJson(immutablePayload);
-        const documentStateId = await this.ensureInitialFinalizationState(
+        if (!this.editRepository) {
+            throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE" });
+        }
+        const documentState = await this.ensureInitialFinalizationState(
             tx,
             source,
             revisionId,
             generation,
             immutablePayload,
             requestKey,
+        );
+        if (!documentState) {
+            throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE" });
+        }
+        const documentVersion = await this.editRepository.allocateServiceRecordRevisionDocumentVersionInTransaction(
+            { tx },
+            {
+                branchId: source.branchId,
+                clientId: source.clientId,
+                serviceRecordCaseId: source.id,
+                revisionId,
+                documentStateId: documentState.id,
+                generation,
+                expectedDocumentVersion: null,
+            },
         );
         const plannedSessionDates = source.days
             .map((day) => ({
@@ -809,8 +841,9 @@ export class ServiceRecordFinalizationService {
             payloadFingerprint,
             completeness: "complete" as const,
             manualReviewRequired: true,
+            documentVersion,
             snapshotReference: requestKey,
-            ...(documentStateId ? { documentStateId } : {}),
+            documentStateId: documentState.id,
         };
 
         const result = await this.documentJobService.enqueueInTransaction(tx, {
@@ -845,9 +878,10 @@ export class ServiceRecordFinalizationService {
         generation: string,
         immutablePayload: Record<string, unknown>,
         requestKey: string,
-    ): Promise<string | null> {
+        documentVersion?: number | null,
+    ): Promise<ServiceRecordRevisionDocumentState | null> {
         if (!this.editRepository || source.clientId === null) return null;
-        const state = await this.editRepository.createRevisionDocumentStateInTransaction({ tx }, {
+        return this.editRepository.createRevisionDocumentStateInTransaction({ tx }, {
             branchId: source.branchId,
             clientId: source.clientId,
             serviceRecordCaseId: source.id,
@@ -856,6 +890,7 @@ export class ServiceRecordFinalizationService {
             generation,
             immutableInput: immutablePayload as unknown as ServiceRecordEditJsonValue,
             inputFingerprint: sha256CanonicalJson(immutablePayload),
+            documentVersion,
             workflowScope: {
                 requestKey,
                 generationKind: "INITIAL_FINALIZATION",
@@ -865,7 +900,6 @@ export class ServiceRecordFinalizationService {
             status: "capability_unverified",
             lastErrorCode: "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED",
         });
-        return state.id;
     }
 
     private buildInitialFinalizationPayload(
@@ -984,6 +1018,8 @@ export class ServiceRecordFinalizationService {
             || payload["revisionId"] !== revisionId
             || payload["completeness"] !== "complete"
             || payload["manualReviewRequired"] !== true
+            || !Number.isInteger(payload["documentVersion"])
+            || (payload["documentVersion"] as number) < 1
             || typeof payload["payloadFingerprint"] !== "string"
             || !/^[0-9a-f]{64}$/i.test(payload["payloadFingerprint"])
             || typeof payload["generation"] !== "string"
