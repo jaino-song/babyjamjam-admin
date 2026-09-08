@@ -630,6 +630,8 @@ model branch {
   serviceRecordCases            service_record_case[]
   serviceRecordAssignments      service_record_assignment[]
   serviceRecordSnapshotChunks   service_record_snapshot_chunk[]
+  serviceRecordEditDrafts       service_record_edit_draft[]
+  serviceRecordRevisions         service_record_revision[]
   scheduleChangeRequests        schedule_change_request[]
   authSessions                  auth_session[]
   agentSessions                 agent_session[]
@@ -1206,9 +1208,67 @@ model service_record_case {
   legacyHeaders         service_record[]
   snapshotChunks        service_record_snapshot_chunk[]
   eformsignDocs         eformsign_doc[]
+  editDrafts            service_record_edit_draft[]
+  revisions             service_record_revision[]
+
+  // The following pointers are intentionally nullable. Existing cases and
+  // legacy snapshot chunks are not backfilled or rewired by the revision
+  // foundation migration.
+  plannedSessions                 Json?    @map("planned_sessions")
+  currentContent                  Json?    @map("current_content")
+  currentUsableDocumentPointer   String?  @map("current_usable_document_pointer") @db.VarChar(255)
 
   @@index([branchId, status], map: "idx_service_record_case_branch_status")
   @@index([status, finalizationDueAt], map: "idx_service_record_case_finalization_due")
+}
+
+/// Branch-scoped, durable working copy for the future administrator editor.
+/// Actor ids are scalar audit snapshots on purpose: deleting a user must not
+/// erase or block this history. The source fields and snapshot are written only
+/// when a draft is first created; CAS updates change `changes` and its version.
+model service_record_edit_draft {
+  id                    String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId              String              @map("branch_id") @db.Uuid
+  serviceRecordCaseId   String              @map("service_record_case_id") @db.Uuid
+  createdByUserId       String              @map("created_by_user_id") @db.Uuid
+  updatedByUserId       String              @map("updated_by_user_id") @db.Uuid
+  discardedByUserId     String?             @map("discarded_by_user_id") @db.Uuid
+  sourceCaseVersion     Int                 @map("source_case_version")
+  sourceFingerprint     String              @map("source_fingerprint")
+  sourceSnapshot        Json                @map("source_snapshot") @db.JsonB
+  changes               Json                @default("{}") @db.JsonB
+  draftVersion          Int                 @default(1) @map("draft_version")
+  status                String              @default("ACTIVE") @db.VarChar(20)
+  createdAt             DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  discardedAt           DateTime?           @map("discarded_at") @db.Timestamptz(6)
+  branch                branch              @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  serviceRecordCase     service_record_case @relation(fields: [serviceRecordCaseId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([branchId, serviceRecordCaseId, status], map: "idx_service_record_edit_draft_branch_case_status")
+  @@index([serviceRecordCaseId, status], map: "idx_service_record_edit_draft_case_status")
+}
+
+/// Append-only immutable copy of a confirmed editor payload. Document
+/// generation state belongs to a later, separate model; this row is never
+/// updated after insertion.
+model service_record_revision {
+  id                    String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId              String              @map("branch_id") @db.Uuid
+  serviceRecordCaseId   String              @map("service_record_case_id") @db.Uuid
+  revisionNumber        Int                 @map("revision_number")
+  confirmedByUserId     String              @map("confirmed_by_user_id") @db.Uuid
+  confirmedAt           DateTime            @default(now()) @map("confirmed_at") @db.Timestamptz(6)
+  payload               Json                @db.JsonB
+  plannedSessions       Json                @map("planned_sessions") @db.JsonB
+  provenance            Json                @db.JsonB
+  formVersionAtConfirm Int                 @map("form_version_at_confirm")
+  snapshotReference     String?             @map("snapshot_reference") @db.VarChar(255)
+  branch                branch              @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  serviceRecordCase     service_record_case @relation(fields: [serviceRecordCaseId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([serviceRecordCaseId, revisionNumber], map: "uniq_service_record_revision_case_number")
+  @@index([branchId, serviceRecordCaseId], map: "idx_service_record_revision_branch_case")
 }
 
 /// Assignment history for a client-owned service record.
