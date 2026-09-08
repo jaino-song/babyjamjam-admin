@@ -149,6 +149,8 @@ Phase2 입력 검토 보정: 저장소 구현은 기존 `backend/infrastructure/
   **추가 Paths:** `backend/domain/repositories/service-record-edit.repository.interface.ts`, `backend/module/service-record-entry.module.ts`, `backend/infrastructure/tenant/tenant-models.generated.ts`, `backend/infrastructure/database/repositories/sb.eformsign-document-mirror.repository.ts`, `backend/test/repositories/`, 새 DTO/저장소와 같은 디렉터리의 테스트, `backend/test/e2e/admin-service-record-edit-persistence.e2e.spec.ts`, `backend/test/e2e/helpers/service-record-edit-persistence.helper.ts`
   **Depends:** Task 1.2, Task 1.A
 
+Task2.1 독립 감사 보정(2.2 unit의 별도 audit-fix commit으로 먼저 반영): case의 중복 `current_content` JSON 및 불명확한 문자열 참조 대신 `currentRevisionId`, `currentUsableRevisionId`, `currentUsableDocumentVersion`을 사용한다. 문서 version은 snapshot 발행 version이며 같은 의미의 별도 값을 중복 저장하지 않는다. usable 두 값은 함께 null이거나 revision+양수 version이어야 한다. draft/revision의 `(caseId, branchId)`와 현재/사용 가능 revision 참조는 DB composite FK로 같은 case·branch만 허용한다. legacy는 null을 유지한다. 신규 보정 migration은 기존 임시 참조에 값이 있으면 조용히 삭제하지 않고 중단한다. revisionNumber 입력 override를 제거하고 case 잠금에서 항상 다음 번호를 할당한다. 임의 unknown transaction 입력은 제거하고 이 단계에서는 저장소가 자체 트랜잭션만 사용한다. Task4.1에서 동일 확정 트랜잭션에 연결할 때에는 실제 활성 트랜잭션만 나타내는 통제된 typed context를 추가하며 root Prisma client를 넘겨 잠금을 무력화할 수 없게 한다. 직접 외지점 insert/다른 case pointer, 동시 연속 revision 번호, legacy null/재실행/schema diff를 격리 DB로 검증한다. 보정 schema·신규 migration·관련 port/repository/테스트는 이 별도 commit의 허용 경로다.
+
 - **Task 2.2: 임시저장·재개·취소를 화면에 연결** (feature, med)
   - 회차별 저장은 draft만 수정한다. 확정된 일정·공개 제공기록지·문서·현황 카드는 그대로 유지한다. 변경된 회차와 마지막 저장 상태를 표시한다.
   - 같은 지점 관리자가 함께 작업하며 초안 버전이 오래된 저장을 409로 거부하고 서버 변경을 보여준다. 저장 전 입력은 잃지 않도록 유지한다. 원본이 바뀌어도 초안을 자동 삭제하거나 자동 확정하지 않는다.
