@@ -93,6 +93,7 @@ function createFinalizer(prisma: PrismaClient) {
 async function confirmAdminDateMove(
     prisma: PrismaClient,
     fixture: Awaited<ReturnType<typeof createServiceRecordConfirmFixture>>,
+    notes = "admin partial revision",
 ) {
     const editor = new AdminServiceRecordEditService(
         new ServiceRecordEditRepository(prisma as unknown as PrismaService),
@@ -111,7 +112,7 @@ async function confirmAdminDateMove(
         fixture.actorUserId,
         {
             expectedDraftVersion: draft.draftVersion,
-            changes: { sessions: [{ sessionIndex: 3, notes: "admin partial revision" }] },
+            changes: { sessions: [{ sessionIndex: 3, notes }] },
             dateMove: { sessionIndex: 3, toDate: "2026-09-11" },
         },
     );
@@ -414,12 +415,36 @@ describeE2E("service-record finalization eligibility and frozen input (real disp
         await prisma.eformsign_document_job.update({ where: { id: frozen.id }, data: {
             completedAt: new Date("0101-01-01T00:00:00.000Z"),
         } });
-        expect(await repository.deleteExpiredTerminal(new Date("0102-01-01T00:00:00.000Z"))).toBe(0);
+        const expiringLegacy = await prisma.eformsign_document_job.create({ data: {
+            branchId: fixture.branch.id, clientId: fixture.client.id, jobType: "create_document",
+            source: "staff", status: "failed", requestKey: `synthetic-retention:${randomUUID()}`,
+            completedAt: new Date("0101-01-01T00:00:00.000Z"),
+        } });
+        expect(await repository.deleteExpiredTerminal(new Date("0102-01-01T00:00:00.000Z"))).toBe(1);
+        expect(await prisma.eformsign_document_job.findUnique({ where: { id: expiringLegacy.id } })).toBeNull();
         expect((await prisma.eformsign_document_job.findUniqueOrThrow({ where: { id: frozen.id } })).payload)
             .toEqual(frozen.payload);
         await expect(claimFinalizationCase(finalizer, fixture.record.id, fixture.branch.id, new Date()))
             .resolves.toMatchObject({ claimed: false, blockedGeneration: true });
         expect(await prisma.eformsign_document_job.count({ where: { requestKey } })).toBe(1);
+    });
+
+    it("preserves a frozen complete payload when another admin revision supersedes its queued job", async () => {
+        const fixture = await createServiceRecordConfirmFixture(prisma);
+        const first = await confirmAdminDateMove(prisma, fixture);
+        await completeServiceRecordFinalizationCase(prisma, fixture);
+        const { finalizer, lifecycle } = createFinalizer(prisma);
+        await lifecycle.recompute(fixture.record.id);
+        await claimFinalizationCase(finalizer, fixture.record.id, fixture.branch.id, new Date());
+        const requestKey = `service-record-initial-finalization:${first.revisionId}`;
+        const frozen = await prisma.eformsign_document_job.findUniqueOrThrow({ where: { requestKey } });
+        const next = await confirmAdminDateMove(prisma, fixture, "next confirmed revision");
+        expect(next.revisionId).not.toBe(first.revisionId);
+        const superseded = await prisma.eformsign_document_job.findUniqueOrThrow({ where: { requestKey } });
+        expect(superseded.payload).toEqual(frozen.payload);
+        expect(superseded.payloadFingerprint).toBe(frozen.payloadFingerprint);
+        expect(superseded).toMatchObject({ status: "failed", activeKey: null,
+            lastErrorCode: "SERVICE_RECORD_REVISION_SUPERSEDED" });
     });
 
 });
