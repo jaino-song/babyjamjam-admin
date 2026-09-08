@@ -163,7 +163,7 @@ describeE2E("atomic service-record confirmation (real disposable PostgreSQL)", (
         const { fixture, draft } = await prepare(false);
         const saved = await service.updateDraft(fixture.branch.id, draft.id, fixture.actorUserId, {
             expectedDraftVersion: draft.draftVersion,
-            changes: { sessions: [{ sessionIndex: 4, notes: "Administrator future note" }] },
+            changes: { sessions: [{ sessionIndex: 1, notes: null }, { sessionIndex: 4, notes: "Administrator future note" }] },
         });
         const preview = await service.previewDraft(fixture.branch.id, draft.id, fixture.actorUserId, {
             expectedDraftVersion: saved.draft!.draftVersion,
@@ -186,12 +186,14 @@ describeE2E("atomic service-record confirmation (real disposable PostgreSQL)", (
         expect(await prisma.service_record_day.count({ where: { serviceRecordCaseId: fixture.record.id } })).toBe(4);
         const revision = await prisma.service_record_revision.findUniqueOrThrow({ where: { id: result.revisionId! } });
         expect(revision.payload).toMatchObject({ completeness: "partial", sessions: expect.arrayContaining([
+            expect.objectContaining({ sessionIndex: 1, notes: null }),
             expect.objectContaining({ sessionIndex: 4, notes: "Administrator future note", locked: false,
                 submittedAt: null, clientSignature: null, clientSignedAt: null }),
         ]) });
         const existingDays = await prisma.service_record_day.findMany({
             where: { id: { in: fixture.days.map((entry) => entry.id) } }, orderBy: { caseSessionIndex: "asc" },
         });
+        expect(existingDays[0]?.notes).toBeNull();
         for (const [index, existing] of existingDays.entries()) {
             expect(existing).toMatchObject({ id: fixture.days[index]!.id,
                 clientSignature: fixture.days[index]!.clientSignature,
