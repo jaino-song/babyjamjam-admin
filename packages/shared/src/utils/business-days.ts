@@ -6,7 +6,7 @@
  * is therefore unsafe. Add a complete year and bump the version before that
  * year is used in production.
  */
-export const KOREAN_HOLIDAY_CALENDAR_VERSION = "kr-public-holidays-2024-2027.v1" as const;
+export const KOREAN_HOLIDAY_CALENDAR_VERSION = "kr-public-holidays-2024-2027.v2" as const;
 
 export const KOREAN_HOLIDAY_CALENDAR: Readonly<Record<number, readonly string[]>> = {
     // 2024
@@ -21,6 +21,7 @@ export const KOREAN_HOLIDAY_CALENDAR: Readonly<Record<number, readonly string[]>
         "2024-06-06", // Memorial Day
         "2024-08-15", // Liberation Day
         "2024-09-16", "2024-09-17", "2024-09-18", // Chuseok
+        "2024-10-01", // Temporary public holiday
         "2024-10-03", // National Foundation Day
         "2024-10-09", // Hangeul Day
         "2024-12-25", // Christmas
@@ -28,10 +29,12 @@ export const KOREAN_HOLIDAY_CALENDAR: Readonly<Record<number, readonly string[]>
     // 2025
     2025: [
         "2025-01-01", // New Year's Day
+        "2025-01-27", // Temporary public holiday before Seollal
         "2025-01-28", "2025-01-29", "2025-01-30", // Seollal
         "2025-03-01", "2025-03-03", // Independence Movement Day + substitute
         "2025-05-01", // Labor Day
         "2025-05-05", "2025-05-06", // Children's Day/Buddha's Birthday + substitute
+        "2025-06-03", // Presidential election
         "2025-06-06", // Memorial Day
         "2025-08-15", // Liberation Day
         "2025-10-03", // National Foundation Day
@@ -53,7 +56,7 @@ export const KOREAN_HOLIDAY_CALENDAR: Readonly<Record<number, readonly string[]>
         "2026-07-17", // Constitution Day
         "2026-08-15", // Liberation Day
         "2026-08-17", // substitute holiday
-        "2026-09-24", "2026-09-25", "2026-09-26", "2026-09-28", // Chuseok + substitute
+        "2026-09-24", "2026-09-25", "2026-09-26", // Chuseok
         "2026-10-03", "2026-10-05", // National Foundation Day + substitute
         "2026-10-09", // Hangeul Day
         "2026-12-25", // Christmas
@@ -64,15 +67,18 @@ export const KOREAN_HOLIDAY_CALENDAR: Readonly<Record<number, readonly string[]>
         "2027-02-06", "2027-02-07", "2027-02-08", "2027-02-09", // Seollal + substitute
         "2027-03-01", // Independence Movement Day
         "2027-05-01", // Labor Day
+        "2027-05-03", // Substitute holiday for Labor Day
         "2027-05-05", // Children's Day
         "2027-05-13", // Buddha's Birthday
-        "2027-06-06", "2027-06-07", // Memorial Day + substitute
+        "2027-06-06", // Memorial Day
         "2027-07-17", // Constitution Day
+        "2027-07-19", // Substitute holiday for Constitution Day
         "2027-08-15", "2027-08-16", // Liberation Day + substitute
         "2027-09-14", "2027-09-15", "2027-09-16", // Chuseok
         "2027-10-03", "2027-10-04", // National Foundation Day + substitute
         "2027-10-09", // Hangeul Day
-        "2027-12-25", // Christmas
+        "2027-10-11", // Substitute holiday for Hangeul Day
+        "2027-12-25", "2027-12-27", // Christmas + substitute
     ],
 };
 
@@ -256,6 +262,31 @@ export function addBusinessDaysKr(iso: string, n: number): string {
     }
 
     return cursor;
+}
+
+/**
+ * Applies a signed business-day offset using the authoritative Korean
+ * calendar. Unlike addBusinessDaysKr this helper is intended for editor
+ * suffix moves, where a reverse move must restore the original vector.
+ */
+export function shiftBusinessDaysKr(iso: string, offset: number): string {
+    const parsed = parseIsoDate(iso);
+    if (!parsed) throw new Error(`Invalid Korean calendar date: ${iso}`);
+    assertSupportedIsoYear(iso);
+    if (!Number.isInteger(offset)) {
+        throw new Error(`Business-day offset must be an integer: ${offset}`);
+    }
+    if (offset === 0) return iso;
+
+    const direction = offset > 0 ? 1 : -1;
+    let remaining = Math.abs(offset);
+    const cursor = new Date(parsed);
+    while (remaining > 0) {
+        cursor.setUTCDate(cursor.getUTCDate() + direction);
+        const cursorIso = isoFromUtcDate(cursor);
+        if (isBusinessDayKr(cursorIso)) remaining -= 1;
+    }
+    return isoFromUtcDate(cursor);
 }
 
 export function countBusinessDaysKr(startISO: string, endISO: string): number | null {
