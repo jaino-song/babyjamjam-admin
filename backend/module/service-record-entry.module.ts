@@ -21,6 +21,8 @@ import { MessageAutomationIntentService } from "application/services/message-aut
 import { ServiceRecordSecurityEventService } from "application/services/service-record-security-event.service";
 import { RateLimitGuard } from "infrastructure/auth/rate-limit.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
+import { SERVICE_RECORD_EDIT_REPOSITORY } from "domain/repositories/service-record-edit.repository.interface";
+import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
 
 /**
  * No-login daily service-record capture (BJJ-247).
@@ -45,12 +47,14 @@ import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
         RateLimitGuard,
         OwnerOrAdminGuard,
         ServiceRecordGuard,
+        { provide: SERVICE_RECORD_EDIT_REPOSITORY, useClass: ServiceRecordEditRepository },
     ],
     exports: [
         ServiceRecordTokenService,
         ServiceRecordLinkService,
         ServiceRecordLifecycleService,
         MessageAutomationIntentService,
+        SERVICE_RECORD_EDIT_REPOSITORY,
     ],
 })
 export class ServiceRecordEntryModule {}
