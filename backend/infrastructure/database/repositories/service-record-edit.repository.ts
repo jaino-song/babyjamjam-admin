@@ -2262,9 +2262,38 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         if (!input.expectedGeneration) {
             throw new ServiceRecordEditConflictError("Revision document generation is required");
         }
+
+        // Discover the owning case before taking the mutable state lock.  The
+        // common writer order is case first, then document state; retrying an
+        // auxiliary operation must follow that order as well so a stale
+        // operation cannot strand itself in `pending` while another revision
+        // becomes current.  Record-snapshot retries retain the legacy path
+        // because their provider job does not enqueue through this operation
+        // route.
+        const discoveredRows = await selectRevisionDocumentStateForBranch(context.tx, {
+            branchId: input.branchId,
+            revisionId: input.revisionId,
+            stateId: input.stateId,
+        });
+        const discoveredRow = discoveredRows[0];
+        if (!discoveredRow) return null;
+        const isAuxiliaryOperation = discoveredRow.operation === "contract_period"
+            || discoveredRow.operation === "receipt_refresh";
+        if (isAuxiliaryOperation) {
+            const ownerCase = await selectRevisionGenerationCase(context.tx, {
+                branchId: input.branchId,
+                clientId: input.clientId,
+                serviceRecordCaseId: discoveredRow.serviceRecordCaseId,
+            });
+            if (!ownerCase || ownerCase.currentRevisionId !== input.revisionId) {
+                throw new ServiceRecordEditConflictError("Revision document revision is no longer current");
+            }
+        }
+
         const rows = await selectRevisionDocumentState(context.tx, {
             branchId: input.branchId,
             clientId: input.clientId,
+            serviceRecordCaseId: discoveredRow.serviceRecordCaseId,
             revisionId: input.revisionId,
             stateId: input.stateId,
             generation: input.expectedGeneration,
@@ -2274,6 +2303,13 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         if (!currentRow) return null;
         const current = toRevisionDocumentState(currentRow);
         if (!canRetryRevisionDocumentState(currentRow)) return current;
+        if (isAuxiliaryOperation && !operationRevisionDispatchContext(current)) {
+            // Validate all server-owned dispatch inputs before changing the
+            // status.  A malformed legacy state must remain inspectable and
+            // retryable according to its prior status rather than becoming a
+            // pending row with no job or coordinator context.
+            throw new ServiceRecordEditConflictError("Revision operation dispatch context is unavailable");
+        }
 
         const updated = await rawStateQuery<RevisionDocumentStateRow[]>(context.tx, Prisma.sql`
             UPDATE "service_record_revision_document_state"
@@ -2299,18 +2335,19 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         if (retried
             && (retried.operation === "contract_period" || retried.operation === "receipt_refresh")) {
             const dispatchContext = operationRevisionDispatchContext(retried);
-            if (dispatchContext) {
-                await this.enqueueRevisionOperationJob(
-                    context.tx,
-                    {
-                        branchId: retried.branchId,
-                        clientId: retried.clientId,
-                    },
-                    dispatchContext,
-                    { revisionId: retried.revisionId, revisionNumber: dispatchContext.revisionNumber },
-                    [{ operation: retried.operation, state: retried }],
-                );
+            if (!dispatchContext) {
+                throw new ServiceRecordEditConflictError("Revision operation dispatch context is unavailable");
             }
+            await this.enqueueRevisionOperationJob(
+                context.tx,
+                {
+                    branchId: retried.branchId,
+                    clientId: retried.clientId,
+                },
+                dispatchContext,
+                { revisionId: retried.revisionId, revisionNumber: dispatchContext.revisionNumber },
+                [{ operation: retried.operation, state: retried }],
+            );
         }
         return retried ?? current;
     }
@@ -2362,7 +2399,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             return current.documentVersion;
         }
 
-        const maxRows = await rawStateQuery<Array<{ maxVersion: number | null }>>(context.tx, Prisma.sql`
+        const maxRows = await rawStateQuery<Array<{ maxVersion: number | bigint | null }>>(context.tx, Prisma.sql`
             SELECT GREATEST(
                 COALESCE((
                     SELECT MAX(snapshot_version)
@@ -2387,8 +2424,13 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 COALESCE(${ownerCase.currentUsableDocumentVersion}, 0)
             ) AS "maxVersion"
         `);
-        const maxVersion = maxRows[0]?.maxVersion ?? 0;
-        if (!Number.isInteger(maxVersion) || maxVersion < 0 || maxVersion >= 2_147_483_647) {
+        const rawMaxVersion = maxRows[0]?.maxVersion;
+        const maxVersion = rawMaxVersion === null || rawMaxVersion === undefined
+            ? 0
+            : typeof rawMaxVersion === "bigint"
+                ? Number(rawMaxVersion)
+                : rawMaxVersion;
+        if (!Number.isSafeInteger(maxVersion) || maxVersion < 0 || maxVersion >= 2_147_483_647) {
             throw new ServiceRecordEditConflictError("Revision document version cannot be allocated");
         }
         const nextVersion = maxVersion > 0 ? maxVersion + 1 : ownerCase.formVersion;
@@ -2436,11 +2478,19 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
 
         const ownerCase = await selectRevisionGenerationCase(context.tx, input);
         if (!ownerCase || ownerCase.currentRevisionId !== input.revisionId) return false;
-        if (
-            (ownerCase.currentUsableRevisionId !== null && ownerCase.currentUsableRevisionId !== input.revisionId)
-            || (ownerCase.currentUsableDocumentVersion !== null
-                && ownerCase.currentUsableDocumentVersion !== input.documentVersion)
-        ) return false;
+        if (ownerCase.currentUsableRevisionId === input.revisionId) {
+            if (ownerCase.currentUsableDocumentVersion !== null
+                && ownerCase.currentUsableDocumentVersion !== input.documentVersion) return false;
+        } else if (ownerCase.currentUsableRevisionId !== null) {
+            // A newer current revision may replace an older usable revision,
+            // but it cannot move the pointer backwards.  The case row is
+            // already locked, so this comparison is the authoritative CAS
+            // against the observed predecessor generation.
+            if (ownerCase.currentUsableDocumentVersion === null
+                || input.documentVersion <= ownerCase.currentUsableDocumentVersion) return false;
+        } else if (ownerCase.currentUsableDocumentVersion !== null) {
+            return false;
+        }
 
         const revisionRows = await rawStateQuery<Array<{ revisionNumber: number }>>(context.tx, Prisma.sql`
             SELECT revision_number AS "revisionNumber"
@@ -2518,8 +2568,19 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
               AND client_id = ${input.clientId}
               AND id = ${input.serviceRecordCaseId}::uuid
               AND current_revision_id = ${input.revisionId}::uuid
-              AND (current_usable_revision_id IS NULL OR current_usable_revision_id = ${input.revisionId}::uuid)
-              AND (current_usable_document_version IS NULL OR current_usable_document_version = ${input.documentVersion})
+              AND (
+                    current_usable_revision_id IS NULL
+                    OR (
+                        current_usable_revision_id = ${input.revisionId}::uuid
+                        AND current_usable_document_version = ${input.documentVersion}
+                    )
+                    OR (
+                        current_usable_revision_id IS NOT NULL
+                        AND current_usable_revision_id <> ${input.revisionId}::uuid
+                        AND current_usable_document_version IS NOT NULL
+                        AND current_usable_document_version < ${input.documentVersion}
+                    )
+              )
             RETURNING id
         `);
         if (pointerRows.length !== 1) return false;

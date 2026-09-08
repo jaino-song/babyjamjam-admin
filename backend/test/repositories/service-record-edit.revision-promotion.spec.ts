@@ -184,7 +184,10 @@ describe("ServiceRecordEditRepository revision snapshot version/promotion seams"
         const allocatedState = stateRow({ documentVersion: 3, version: 1 });
         const harness = transactionHarness([
             ...allocatorRows(pendingState).slice(0, 12),
-            [{ maxVersion: 2 }],
+            // PostgreSQL returns MAX(integer) through the raw driver as a
+            // bigint in the real adapter. Keep this fixture honest so the
+            // allocator cannot regress to a number-only cast.
+            [{ maxVersion: 2n }],
             [allocatedState],
             [{ id: "66666666-6666-4666-8666-666666666666", payload: { kind: "service_record_revision", generation: "generation-1" } }],
             [],
@@ -197,6 +200,32 @@ describe("ServiceRecordEditRepository revision snapshot version/promotion seams"
         const sqlCalls = harness.queryRaw.mock.calls.map(([query]) => sqlText(query));
         expect(sqlCalls.some((query) => query.includes("GREATEST"))).toBe(true);
         expect(sqlCalls.some((query) => query.includes("payload_fingerprint"))).toBe(true);
+    });
+
+    it("rejects an auxiliary retry before changing state when its dispatch context is incomplete", async () => {
+        const invalidState = stateRow({
+            operation: "contract_period",
+            status: "manual_review",
+            step: "preflight_failed",
+        });
+        const harness = transactionHarness([
+            [invalidState], // branch-scoped discovery
+            [ownerCase()], // current revision lock
+            [invalidState], // state reread under the owner lock
+        ]);
+        const repository = new ServiceRecordEditRepository(harness.prisma as never);
+
+        await expect(repository.retryRevisionDocumentState({
+            branchId,
+            clientId,
+            revisionId,
+            stateId,
+            expectedGeneration: invalidState.generation as string,
+        })).rejects.toThrow("Revision operation dispatch context is unavailable");
+        expect(harness.queryRaw).toHaveBeenCalledTimes(3);
+        expect(harness.queryRaw.mock.calls.map(([query]) => sqlText(query))
+            .some((query) => query.includes('UPDATE "service_record_revision_document_state"')))
+            .toBe(false);
     });
 
     it("refuses pointer promotion until every persisted chunk/document is complete", async () => {
