@@ -13,7 +13,7 @@
 | frontend 회귀/타입/빌드/UI architecture gate | worker 전체209 suites1294 tests 및 각 검사 | PASS |
 | mobile 생산 빌드 | 명령 범위 `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:3999 pnpm build` | PASS, 최초 값 누락 실패 별도. 실제API 없는 정적 렌더 로그는 외부 검증 아님 |
 | backend 전체 TypeScript | 기존 receipt helper/spec의5개 오류를 별도 baseline에서 재현 | FAIL, Task5.4에서 수정 필요 |
-| 공통 쓰기 잠금/owning transaction, 삭제·교체·mirror generation 재검증 | 통합3bfc3d862: backend12 suites472 tests, guarded PG7 tests; worker build/lint PASS | 테스트 PASS, Task3.0 Sol FINAL 진행 중 |
+| 공통 쓰기 잠금/owning transaction, 삭제·교체·mirror generation 재검증 | 통합3bfc3d862: backend12 suites472 tests, guarded PG7 tests; worker build/lint PASS | 기존 테스트 PASS, Sol 지적5건 보완 중; 아직 감사 통과 아님 |
 | 초기 N13/duration15/가격15일 유지, 영업일 뒤 회차 이동, 원본 날짜 보존 | 승인된 Phase3 수락 조건 | NOT RUN |
 | 확정 트랜잭션/미리보기 결속/중복 확정/동시 발송 차단 | 승인된 Phase4 수락 조건 | NOT RUN |
 | 계약·영수증 동일기간/수령일·금액 보존/완료계약 신규서명 문서/실제PDF 검증 후 pointer CAS | 승인된 Phase5 수락 조건 | NOT RUN, 외부 capability 미검증 상태 유지 |
