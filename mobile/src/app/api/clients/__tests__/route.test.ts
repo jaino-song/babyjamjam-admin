@@ -179,6 +179,24 @@ describe("client API routes", () => {
   });
 
   it.each([
+    [400, "SELECT 1 FROM clients"],
+    [409, "SELECT id + 1 FROM clients"],
+    [422, "SELECT CASE WHEN id = 1 THEN 'one' ELSE 'other' END FROM clients"],
+  ] as const)("does not expose SQL diagnostics in a %i BFF response", async (status, message) => {
+    mockGet.mockRejectedValue({
+      response: {
+        status,
+        data: { message },
+      },
+    });
+
+    const response = await getClients(createRequest("/api/clients"));
+
+    expect(response.status).toBe(status);
+    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch clients" });
+  });
+
+  it.each([
     {
       message: "Bearer upstream-secret",
       clientId: 73,
@@ -211,6 +229,30 @@ describe("client API routes", () => {
     },
     {
       message: "SELECT COUNT(*) FROM Client",
+      clientId: 73,
+    },
+    {
+      message: "SELECT 1 FROM clients",
+      clientId: 73,
+    },
+    {
+      message: "SELECT id + 1 FROM clients",
+      clientId: 73,
+    },
+    {
+      message: "SELECT 'client' AS label FROM clients",
+      clientId: 73,
+    },
+    {
+      message: "SELECT CASE WHEN id = 1 THEN 'one' ELSE 'other' END FROM clients",
+      clientId: 73,
+    },
+    {
+      message: "SELECT CAST(id AS TEXT) AS label FROM clients",
+      clientId: 73,
+    },
+    {
+      message: "SELECT (COALESCE(id, 0) + 1) AS next_id FROM clients",
       clientId: 73,
     },
     {
