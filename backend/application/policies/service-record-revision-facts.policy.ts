@@ -1,11 +1,6 @@
 import {
-    EFORMSIGN_COMPLETED_STATUS_CODES,
-    TERMINAL_STATUS_CODES,
-} from "domain/constants/eformsign-doc-status.constants";
-import {
     normalizeEformsignStatusCode,
     normalizeEformsignStepType,
-    isProviderReviewWorkflowStep,
 } from "domain/utils/eformsign-status-code";
 import type {
     ServiceRecordRevisionContractLockedFacts,
@@ -116,6 +111,16 @@ const SOURCE_END_ALIASES = [
     "endDate",
     "contractEndDate",
 ] as const;
+const SOURCE_START_PART_ALIASES = {
+    year: ["계약 시작 년도", "계약시작년도", "서비스 시작 년도", "서비스시작년도", "startYear"],
+    month: ["계약 시작 월", "계약시작월", "서비스 시작 월", "서비스시작월", "startMonth"],
+    day: ["계약 시작 일", "계약시작일", "서비스 시작 일", "서비스시작일", "startDay"],
+} as const;
+const SOURCE_END_PART_ALIASES = {
+    year: ["계약 종료 년도", "계약종료년도", "서비스 종료 년도", "서비스종료년도", "endYear"],
+    month: ["계약 종료 월", "계약종료월", "서비스 종료 월", "서비스종료월", "endMonth"],
+    day: ["계약 종료 일", "계약종료일", "서비스 종료 일", "서비스종료일", "endDay"],
+} as const;
 const PERIOD_ALIASES = [
     "계약 기간",
     "계약기간",
@@ -739,46 +744,134 @@ function observedStatusValue(
     return value;
 }
 
+function structuredRecipientType(
+    document: ServiceRecordRevisionFactsDocument,
+    detail: JsonRecord,
+): { value: string | null; ambiguous: boolean } {
+    const candidates: Candidate[] = [];
+    if (own(document, "stepRecipientType")) {
+        const value = stringValue(document.stepRecipientType);
+        if (value) candidates.push({ value, source: "document.stepRecipientType" });
+    }
+    const currentStatus = isRecord(detail["current_status"])
+        ? detail["current_status"]
+        : isRecord(detail["currentStatus"]) ? detail["currentStatus"] : null;
+    const recipients = currentStatus?.["step_recipients"];
+    if (Array.isArray(recipients)) {
+        for (const [index, recipient] of recipients.entries()) {
+            if (!isRecord(recipient)) continue;
+            const value = stringValue(firstKnownValue(recipient, ["recipient_type", "recipientType"]));
+            if (value) candidates.push({ value, source: `detail.current_status.step_recipients.${index}` });
+        }
+    }
+    const explicit = explicitPathCandidates(detail, [
+        ["stepRecipientType"],
+        ["step_recipient_type"],
+        ["current_status", "stepRecipientType"],
+        ["current_status", "step_recipient_type"],
+    ]);
+    candidates.push(...explicit.filter(({ value }) => stringValue(value) !== null));
+    const resolved = resolveCandidates(candidates);
+    return {
+        value: resolved.present ? stringValue(resolved.value) : null,
+        ambiguous: resolved.ambiguous,
+    };
+}
+
+function structuredSavePermission(
+    detail: JsonRecord,
+): { value: boolean | null; present: boolean; ambiguous: boolean } {
+    const candidates = explicitPathCandidates(detail, [
+        ["savePermission"],
+        ["save_permission"],
+        ["canSave"],
+        ["can_save"],
+        ["permissions", "save"],
+        ["permissions", "canSave"],
+        ["permissions", "can_save"],
+        ["current_status", "savePermission"],
+        ["current_status", "save_permission"],
+        ["current_status", "canSave"],
+        ["current_status", "can_save"],
+        ["current_status", "permissions", "save"],
+        ["current_status", "permissions", "canSave"],
+        ["current_status", "permissions", "can_save"],
+    ]);
+    const currentStatus = isRecord(detail["current_status"])
+        ? detail["current_status"]
+        : isRecord(detail["currentStatus"]) ? detail["currentStatus"] : null;
+    const recipients = currentStatus?.["step_recipients"];
+    if (Array.isArray(recipients)) {
+        for (const [index, recipient] of recipients.entries()) {
+            if (!isRecord(recipient)) continue;
+            for (const key of ["savePermission", "save_permission", "canSave", "can_save"]) {
+                if (own(recipient, key)) candidates.push({ value: recipient[key], source: `detail.current_status.step_recipients.${index}.${key}` });
+            }
+        }
+    }
+    if (candidates.some(({ value }) => typeof value !== "boolean")) {
+        return { value: null, present: true, ambiguous: true };
+    }
+    const values = [...new Set(candidates.map(({ value }) => value as boolean))];
+    return {
+        value: values.length === 1 ? values[0]! : null,
+        present: candidates.length > 0,
+        ambiguous: values.length > 1,
+    };
+}
+
 function deriveStage(
     document: ServiceRecordRevisionFactsDocument,
     detail: JsonRecord,
     statusType: string | null,
     stepType: string | null,
-    stepName: string | null,
     missing: string[],
 ): ServiceRecordContractRevisionWorkflowStage | null {
     if (own(document, "stage")) {
-        if (!isStage(document.stage)) addMissing(missing, "sourceDocument.stage");
-        else return document.stage;
+        if (!isStage(document.stage)) {
+            addMissing(missing, "sourceDocument.stage");
+            return null;
+        }
+        return document.stage;
     }
     const detailStage = resolveCandidates(explicitPathCandidates(detail, [
-        ["stage"],
-        ["workflowStage"],
-        ["workflow_stage"],
-        ["metadata", "stage"],
+        ["adapterVerifiedStage"],
+        ["adapter_verified_stage"],
+        ["verifiedStage"],
+        ["verified_stage"],
+        ["metadata", "adapterVerifiedStage"],
+        ["metadata", "adapter_verified_stage"],
+        ["metadata", "verifiedStage"],
+        ["metadata", "verified_stage"],
     ]));
     if (detailStage.present) {
         if (!isStage(detailStage.value) || detailStage.ambiguous) {
             addMissing(missing, "sourceDocument.stage");
-        } else {
-            return detailStage.value;
+            return null;
         }
+        return detailStage.value;
     }
-    if (!statusType || !stepType || !stepName) {
+    const recipientType = structuredRecipientType(document, detail);
+    const savePermission = structuredSavePermission(detail);
+    if (!statusType || !stepType || !recipientType.value || recipientType.ambiguous
+        || !savePermission.present || savePermission.ambiguous || savePermission.value !== true) {
         addMissing(missing, "sourceDocument.stage");
         return null;
     }
-    if (EFORMSIGN_COMPLETED_STATUS_CODES.has(statusType)) return "completed";
-    if (statusType === "070" && isProviderReviewWorkflowStep({ stepType, stepName })) {
+    // Status, recipient type, and an explicit provider save permission are
+    // accepted only as a structured adapter observation. A display label is
+    // never used as workflow authority.
+    if (statusType === "070" && stepType === "06") {
         return "provider_review";
     }
-    const providerStep = /(제공기관|관리자|담당자|provider|manager|staff)/i.test(stepName);
-    const customerStep = /(이용자|고객|산모|participant|customer)/i.test(stepName);
-    if (stepType === "05" && providerStep) return "provider_participant";
-    if (stepType === "05" && customerStep && ["001", "002", "010", "020", "030", "043", "060", "063", "064"].includes(statusType)) {
-        return "signature_pending";
+    if (stepType === "05") {
+        if (recipientType.value === "05" && ["060", "063", "064"].includes(statusType)) {
+            return "provider_participant";
+        }
+        if (recipientType.value === "02" && ["001", "002", "010", "020", "030", "043", "060", "063", "064"].includes(statusType)) {
+            return "signature_pending";
+        }
     }
-    if (TERMINAL_STATUS_CODES.has(statusType)) return "unsupported";
     addMissing(missing, "sourceDocument.stage");
     return null;
 }
@@ -856,6 +949,249 @@ function resolveSourceFields(
     return collection;
 }
 
+export interface ServiceRecordRevisionTargetFieldMapResult {
+    fields: Record<string, string> | null;
+    missingFacts: string[];
+}
+
+type DatePartAliases = {
+    year: readonly string[];
+    month: readonly string[];
+    day: readonly string[];
+};
+
+function semanticFields(
+    collection: FieldCollection,
+    aliases: readonly string[],
+): Array<{ id: string; value: string }> {
+    const normalizedAliases = new Set(aliases.map(normalizeIdentifier));
+    return [...collection.normalized.values()]
+        .filter(({ id }) => normalizedAliases.has(normalizeIdentifier(id)))
+        .map(({ id, value }) => ({ id, value }));
+}
+
+function parseCandidateDates(
+    candidates: readonly { id: string; value: string }[],
+): { value: string | null; ambiguous: boolean } {
+    const values = candidates.map(({ value }) => parseStrictDate(value));
+    if (values.some((value) => value === null)) return { value: null, ambiguous: true };
+    const unique = [...new Set(values.filter((value): value is string => value !== null))];
+    return { value: unique.length === 1 ? unique[0]! : null, ambiguous: unique.length > 1 };
+}
+
+function formatDateLike(raw: string, target: string): string | null {
+    const value = raw.trim();
+    if (/^\d{8}$/.test(value)) return target.replace(/-/g, "");
+    const separated = value.match(/^(\d{4})([-/.])(\d{1,2})\2(\d{1,2})$/);
+    if (separated) {
+        return `${target.slice(0, 4)}${separated[2]}${target.slice(5, 7)}${separated[2]}${target.slice(8, 10)}`;
+    }
+    const korean = value.match(/^(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일$/);
+    if (korean) {
+        return `${target.slice(0, 4)}년${Number(target.slice(5, 7))}월${Number(target.slice(8, 10))}일`;
+    }
+    return null;
+}
+
+function formatDatePart(raw: string, target: string, part: keyof DatePartAliases): string | null {
+    const value = raw.trim();
+    const digits = value.replace(/\D/g, "");
+    if (part === "year") {
+        if (digits.length === 2) return target.slice(2, 4);
+        if (digits.length === 4) return target.slice(0, 4);
+        return null;
+    }
+    if (!/^\d{1,2}$/.test(digits)) return null;
+    const targetValue = part === "month" ? target.slice(5, 7) : target.slice(8, 10);
+    return digits.length === 1 ? String(Number(targetValue)) : targetValue;
+}
+
+const PERIOD_DATE_PATTERN = /\d{4}(?:\D*\d{1,2}){2}/g;
+
+function formatPeriodLike(raw: string, startDate: string, endDate: string): string | null {
+    const matches = raw.match(PERIOD_DATE_PATTERN) ?? [];
+    if (matches.length !== 2) return null;
+    let index = 0;
+    let malformed = false;
+    const formatted = raw.replace(PERIOD_DATE_PATTERN, (date) => {
+        const target = index === 0 ? startDate : endDate;
+        index += 1;
+        const result = formatDateLike(date, target);
+        if (!result) malformed = true;
+        return result ?? date;
+    });
+    return malformed || index !== 2 ? null : formatted;
+}
+
+function addDateRoleFields(
+    targetFields: Record<string, string>,
+    collection: FieldCollection,
+    role: "startDate" | "endDate",
+    targetDate: string,
+    aliases: readonly string[],
+    partAliases: DatePartAliases,
+    combinedPeriodSource: string | null,
+    missing: string[],
+): boolean {
+    const directCandidates = semanticFields(collection, aliases);
+    const direct = directCandidates.filter(({ value }) => parseStrictDate(value) !== null);
+    const malformedDirect = directCandidates.filter(({ value }) => {
+        const trimmed = value.trim();
+        return parseStrictDate(value) === null && !/^\d{1,2}$/.test(trimmed);
+    });
+    const parts = {
+        year: semanticFields(collection, partAliases.year),
+        month: semanticFields(collection, partAliases.month),
+        // Full-date aliases such as `계약 시작일` normalize to the same key as
+        // the day-part alias `계약 시작 일`. Keep a parseable full date on the
+        // direct path and leave only a short numeric value for the part path.
+        day: semanticFields(collection, partAliases.day).filter(({ value }) => parseStrictDate(value) === null),
+    };
+    const hasAnyParts = Object.values(parts).some((values) => values.length > 0);
+    const hasAllParts = Object.values(parts).every((values) => values.length > 0);
+    const directParsed = parseCandidateDates(direct);
+    const partParsed = hasAllParts
+        ? parseDateParts(collection, partAliases)
+        : { value: null, ambiguous: false };
+
+    if (direct.length === 0 && !hasAllParts && combinedPeriodSource === null) {
+        addMissing(missing, `targetPeriod.fields.${role}`);
+        return false;
+    }
+    if (malformedDirect.length > 0 || directParsed.ambiguous || partParsed.ambiguous || (directParsed.value && partParsed.value && directParsed.value !== partParsed.value)) {
+        addMissing(missing, `targetPeriod.fields.${role}.ambiguous`);
+        return false;
+    }
+    if (hasAnyParts && !hasAllParts) {
+        addMissing(missing, `targetPeriod.fields.${role}`);
+        return false;
+    }
+    for (const field of direct) {
+        const formatted = formatDateLike(field.value, targetDate);
+        if (!formatted) {
+            addMissing(missing, `targetPeriod.fields.${role}`);
+            return false;
+        }
+        targetFields[field.id] = formatted;
+    }
+    for (const part of ["year", "month", "day"] as const) {
+        for (const field of parts[part]) {
+            const formatted = formatDatePart(field.value, targetDate, part);
+            if (!formatted) {
+                addMissing(missing, `targetPeriod.fields.${role}`);
+                return false;
+            }
+            targetFields[field.id] = formatted;
+        }
+    }
+    return true;
+}
+
+/**
+ * Build only the provider field IDs needed for a period update. IDs come from
+ * the locked provider field records; no field name or value is invented.
+ */
+export function buildServiceRecordRevisionTargetFieldMap(
+    document: ServiceRecordRevisionFactsDocument | null,
+    startDate: string | null,
+    endDate: string | null,
+): ServiceRecordRevisionTargetFieldMapResult {
+    const missing: string[] = [];
+    if (!document || !isDateOnly(startDate) || !isDateOnly(endDate) || startDate > endDate) {
+        addMissing(missing, "targetPeriod.startDate", "targetPeriod.endDate");
+        return { fields: null, missingFacts: missing };
+    }
+    const detail = isRecord(document.detailPayload) ? document.detailPayload : null;
+    if (!detail) {
+        addMissing(missing, "sourceDocument.detailPayload");
+        return { fields: null, missingFacts: missing };
+    }
+    const collection = resolveSourceFields(document, detail, missing);
+    if (collection.malformed || collection.conflicts.size > 0 || Object.keys(collection.values).length === 0) {
+        return { fields: null, missingFacts: [...new Set(missing)] };
+    }
+
+    const fields: Record<string, string> = {};
+    const period = semanticFields(collection, PERIOD_ALIASES);
+    const parsedPeriods = period.map(({ value }) => parsePeriod(value));
+    const periodValues = [...new Set(
+        parsedPeriods
+            .filter((value): value is { start: string; end: string } => Boolean(value.start && value.end))
+            .map((value) => `${value.start}~${value.end}`),
+    )];
+    const combinedPeriodStart = periodValues.length === 1 ? periodValues[0]!.split("~")[0]! : null;
+    const combinedPeriodEnd = periodValues.length === 1 ? periodValues[0]!.split("~")[1]! : null;
+    if (period.length === 0) {
+        addMissing(missing, "targetPeriod.fields.receiptPeriod");
+    }
+    if (period.length > 0 && (periodValues.length !== 1 || parsedPeriods.some((value) => !value.start || !value.end))) {
+        addMissing(missing, "targetPeriod.fields.receiptPeriod");
+    }
+    const startValid = addDateRoleFields(
+        fields,
+        collection,
+        "startDate",
+        startDate,
+        SOURCE_START_ALIASES,
+        SOURCE_START_PART_ALIASES,
+        combinedPeriodStart,
+        missing,
+    );
+    const endValid = addDateRoleFields(
+        fields,
+        collection,
+        "endDate",
+        endDate,
+        SOURCE_END_ALIASES,
+        SOURCE_END_PART_ALIASES,
+        combinedPeriodEnd,
+        missing,
+    );
+    for (const field of period) {
+        const formatted = formatPeriodLike(field.value, startDate, endDate);
+        if (!formatted) {
+            addMissing(missing, "targetPeriod.fields.receiptPeriod");
+            continue;
+        }
+        fields[field.id] = formatted;
+    }
+    const valid = startValid && endValid && period.length > 0
+        && period.every(({ id }) => typeof fields[id] === "string" && fields[id]!.trim().length > 0)
+        && Object.keys(fields).length > 0;
+    return {
+        fields: valid ? fields : null,
+        missingFacts: [...new Set(missing)],
+    };
+}
+
+function hasSemanticTargetDateFields(
+    fields: Record<string, unknown>,
+    aliases: readonly string[],
+    partAliases: DatePartAliases,
+): boolean {
+    const keys = new Set(Object.keys(fields).map(normalizeIdentifier));
+    const hasDirect = aliases.some((alias) => keys.has(normalizeIdentifier(alias)));
+    const hasParts = (["year", "month", "day"] as const).every((part) => (
+        partAliases[part].some((alias) => keys.has(normalizeIdentifier(alias)))
+    ));
+    return hasDirect || hasParts;
+}
+
+function hasRequiredTargetFieldMap(
+    fields: Readonly<Record<string, unknown>>,
+    missing: string[],
+): boolean {
+    const period = PERIOD_ALIASES.some((alias) => (
+        Object.keys(fields).some((fieldId) => normalizeIdentifier(fieldId) === normalizeIdentifier(alias))
+    ));
+    const start = period || hasSemanticTargetDateFields(fields, SOURCE_START_ALIASES, SOURCE_START_PART_ALIASES);
+    const end = period || hasSemanticTargetDateFields(fields, SOURCE_END_ALIASES, SOURCE_END_PART_ALIASES);
+    if (!start) addMissing(missing, "targetPeriod.fields.startDate");
+    if (!end) addMissing(missing, "targetPeriod.fields.endDate");
+    if (!period) addMissing(missing, "targetPeriod.fields.receiptPeriod");
+    return start && end && period;
+}
+
 function validTargetPeriod(
     target: ServiceRecordRevisionContractLockedFacts["targetPeriod"],
     missing: string[],
@@ -876,9 +1212,14 @@ function validTargetPeriod(
         || target.receiptPeriod !== `${target.startDate}~${target.endDate}`) {
         addMissing(missing, "targetPeriod.receiptPeriod");
     }
-    if (!target || !isRecord(target.fields)
-        || Object.values(target.fields).some((value) => typeof value !== "string")) {
+    const fields = target && isRecord(target.fields) ? target.fields : null;
+    if (!fields
+        || Object.keys(fields).length === 0
+        || Object.values(fields).some((value) => typeof value !== "string" || value.trim().length === 0)) {
         addMissing(missing, "targetPeriod.fields");
+    }
+    if (fields && Object.keys(fields).length > 0 && Object.values(fields).every((value) => typeof value === "string" && value.trim().length > 0)) {
+        hasRequiredTargetFieldMap(fields, missing);
     }
     return Boolean(
         target
@@ -888,7 +1229,9 @@ function validTargetPeriod(
         && isNonEmptyString(target.receiptPeriod)
         && target.receiptPeriod === `${target.startDate}~${target.endDate}`
         && isRecord(target.fields)
-        && Object.values(target.fields).every((value) => typeof value === "string"),
+        && Object.keys(target.fields).length > 0
+        && Object.values(target.fields).every((value) => typeof value === "string" && value.trim().length > 0)
+        && hasRequiredTargetFieldMap(target.fields, []),
     );
 }
 
@@ -995,7 +1338,7 @@ export function captureServiceRecordRevisionFacts(
         missing,
     );
     const workflowScope = resolveWorkflowScope(document, observed, missing);
-    const stage = deriveStage(document, detail, statusType, stepType, stepName, missing);
+    const stage = deriveStage(document, detail, statusType, stepType, missing);
     const participant = deriveParticipant(document, detail, sourceFields, missing);
     const allowedFieldIds = resolveAllowedFieldIds(document, detail, missing);
 
@@ -1004,7 +1347,7 @@ export function captureServiceRecordRevisionFacts(
         sourceFields,
         "startDate",
         SOURCE_START_ALIASES,
-        { year: ["계약 시작 년도", "계약시작년도", "서비스 시작 년도", "서비스시작년도", "startYear"], month: ["계약 시작 월", "계약시작월", "서비스 시작 월", "서비스시작월", "startMonth"], day: ["계약 시작 일", "계약시작일", "서비스 시작 일", "서비스시작일", "startDay"] },
+        SOURCE_START_PART_ALIASES,
         missing,
     );
     const sourceEndDate = readDateFact(
@@ -1012,7 +1355,7 @@ export function captureServiceRecordRevisionFacts(
         sourceFields,
         "endDate",
         SOURCE_END_ALIASES,
-        { year: ["계약 종료 년도", "계약종료년도", "서비스 종료 년도", "서비스종료년도", "endYear"], month: ["계약 종료 월", "계약종료월", "서비스 종료 월", "서비스종료월", "endMonth"], day: ["계약 종료 일", "계약종료일", "서비스 종료 일", "서비스종료일", "endDay"] },
+        SOURCE_END_PART_ALIASES,
         missing,
     );
     const periodField = readField(sourceFields, PERIOD_ALIASES);

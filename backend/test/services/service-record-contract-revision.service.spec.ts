@@ -252,6 +252,26 @@ describe("ServiceRecordContractRevisionService", () => {
         }));
     });
 
+    it("rejects an empty target field map instead of treating it as a successful update", async () => {
+        const current = snapshot({}, {
+            fields: {},
+        });
+        const { service, provider, dispatch, repository } = setup(current);
+
+        const result = await service.processOperation(input(current));
+
+        expect(result.status).toBe("manual_review");
+        expect(result.reason).toBe("CONTRACT_REVISION_INPUT_INVALID");
+        expect(provider.inspectDocument).not.toHaveBeenCalled();
+        expect(provider.updateParticipantFields).not.toHaveBeenCalled();
+        expect(provider.createReplacementDocument).not.toHaveBeenCalled();
+        expect(dispatch.claim).not.toHaveBeenCalled();
+        expect(repository.advanceRevisionDocumentState).toHaveBeenCalledWith(expect.objectContaining({
+            status: "manual_review",
+            lastErrorCode: "CONTRACT_REVISION_INPUT_INVALID",
+        }));
+    });
+
     it("fails closed for missing original receipt date or amount without filling defaults", async () => {
         for (const field of ["receivedDate", "receivedAmount"] as const) {
             const current = snapshot({ [field]: null });

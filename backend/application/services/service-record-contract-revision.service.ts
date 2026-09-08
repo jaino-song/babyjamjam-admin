@@ -308,7 +308,8 @@ function hasForbiddenField(fieldId: string): boolean {
 
 function fieldsAreRecord(value: unknown): value is Record<string, string> {
     return isRecord(value)
-        && Object.entries(value).every(([key, fieldValue]) => isNonEmptyString(key) && typeof fieldValue === "string");
+        && Object.keys(value).length > 0
+        && Object.entries(value).every(([key, fieldValue]) => isNonEmptyString(key) && isNonEmptyString(fieldValue));
 }
 
 function asJsonValue(value: unknown): ServiceRecordEditJsonValue {
@@ -901,7 +902,9 @@ export class ServiceRecordContractRevisionService {
         observation: ServiceRecordContractRevisionDocumentObservation,
         snapshot: ServiceRecordContractRevisionSnapshot,
     ): boolean {
-        return Object.entries(snapshot.target.fields).every(([fieldId, value]) => observation.fields[fieldId] === value);
+        const desiredFields = Object.entries(snapshot.target.fields);
+        return desiredFields.length > 0
+            && desiredFields.every(([fieldId, value]) => observation.fields[fieldId] === value);
     }
 
     private async claim(

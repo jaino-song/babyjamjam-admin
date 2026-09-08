@@ -2,7 +2,10 @@ import { BadRequestException, ConflictException, NotFoundException } from "@nest
 
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import { ServiceRecordEditConflictError } from "domain/errors/service-record-edit.error";
-import type { ServiceRecordEditSource } from "domain/repositories/service-record-edit.repository.interface";
+import type {
+    ServiceRecordEditRevisionFactsSource,
+    ServiceRecordEditSource,
+} from "domain/repositories/service-record-edit.repository.interface";
 
 const BRANCH_ID = "11111111-1111-4111-8111-111111111111";
 const CASE_ID = "22222222-2222-4222-8222-222222222222";
@@ -131,6 +134,53 @@ function previewSourceSnapshot(): ServiceRecordEditSource {
             employeeId: assignment.employeeId,
             provenanceVersion: "case-7",
         })),
+    };
+}
+
+function observedRevisionFactsSource(): ServiceRecordEditRevisionFactsSource {
+    return {
+        document: {
+            documentId: "contract-document-1",
+            branchId: BRANCH_ID,
+            clientId: CLIENT_ID,
+            documentVersion: null,
+            templateId: "contract-template",
+            templateVersion: "v12",
+            mirrorGeneration: "mirror-generation-7",
+            statusType: "070",
+            stepType: "06",
+            stepIndex: "3",
+            stepName: "표시용 단계 이름",
+            stage: "provider_review",
+            workflowScope: {
+                statusType: "070",
+                stepType: "06",
+                stepIndex: "3",
+                stepName: "표시용 단계 이름",
+            },
+            allowedFieldIds: ["이용자 성명", "계약 시작일", "계약 종료일", "서비스 기간", "본인부담금 수령일", "본인부담금"],
+            detailPayload: {
+                id: "contract-document-1",
+                template: { id: "contract-template", name: "계약서" },
+                current_status: {
+                    status_type: "070",
+                    step_type: "06",
+                    step_index: "3",
+                    step_name: "표시용 단계 이름",
+                    step_recipients: [],
+                },
+                fields: [
+                    { id: "이용자 성명", value: "산모", type: "text" },
+                    { id: "계약 시작일", value: "2026-09-01", type: "date" },
+                    { id: "계약 종료일", value: "2026-09-03", type: "date" },
+                    { id: "서비스 기간", value: "20260901 ~ 20260903", type: "text" },
+                    { id: "본인부담금 수령일", value: "2026-08-31", type: "date" },
+                    { id: "본인부담금", value: "462000", type: "number" },
+                ],
+                recipients: [{ recipient_type: "02", id: "customer@example.com", name: "산모" }],
+            },
+        },
+        receiptTokens: [],
     };
 }
 
@@ -580,6 +630,92 @@ describe("AdminServiceRecordEditService", () => {
                 }),
             ]),
         }));
+    });
+
+    it("builds observed contract date fields on the real confirm-planner path", async () => {
+        const source = previewSourceSnapshot();
+        source.documentScope = {
+            evidence: "observed",
+            serviceRecordSnapshot: {
+                documentIds: [],
+                snapshotVersion: null,
+                chunks: [],
+            },
+            currentRevision: { id: null, revisionNumber: null, formVersion: null },
+            form: { version: source.formVersion },
+            contract: { currentDocumentId: "contract-document-1", stage: "in_progress" },
+            receipt: {
+                evidence: "observed",
+                eformsignDocId: null,
+                tokenIds: [],
+                sourceDocumentId: "contract-document-1",
+            },
+        };
+        const harness = createHarness({ source });
+        const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+        if (!started.draft) throw new Error("expected a draft");
+        const activeDraft = {
+            ...started.draft,
+            changes: { sessions: [{ sessionIndex: 3, serviceDate: "2026-09-04" }] },
+        };
+        harness.repository.findDraftById.mockResolvedValue(activeDraft);
+        harness.repository.loadSource.mockResolvedValue(source);
+        const preview = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+        });
+        harness.repository.confirmDraft.mockResolvedValue({
+            status: "confirmed" as const,
+            caseId: CASE_ID,
+            clientId: CLIENT_ID,
+            draftId: DRAFT_ID,
+            draftVersion: 2,
+            caseVersion: 8,
+            revisionId: "55555555-5555-4555-8555-555555555555",
+            revisionNumber: 1,
+            documentStatus: "capability_unverified" as const,
+            confirmedAt: "2026-09-08T01:02:03.000Z",
+        });
+
+        await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+            previewId: preview.previewId,
+            idempotencyKey: "11111111-1111-4111-8111-111111111111",
+        });
+
+        const input = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
+            prepare: (snapshot: {
+                draft: typeof activeDraft;
+                source: ServiceRecordEditSource;
+                revisionFactsSource?: ServiceRecordEditRevisionFactsSource;
+            }) => unknown;
+        };
+        const plan = input.prepare({
+            draft: activeDraft,
+            source,
+            revisionFactsSource: observedRevisionFactsSource(),
+        }) as {
+            contractOperation: {
+                status: string;
+                immutableInput: Record<string, unknown>;
+            } | null;
+        };
+        expect(plan.contractOperation?.status).toBe("pending");
+        expect(plan.contractOperation?.immutableInput).toEqual(expect.objectContaining({
+            target: expect.objectContaining({
+                startDate: "2026-09-01",
+                endDate: "2026-09-04",
+                receiptPeriod: "2026-09-01~2026-09-04",
+                fields: {
+                    "계약 시작일": "2026-09-01",
+                    "계약 종료일": "2026-09-04",
+                    "서비스 기간": "20260901 ~ 20260904",
+                },
+            }),
+        }));
+        const immutableInput = plan.contractOperation?.immutableInput;
+        const target = immutableInput?.["target"] as Record<string, unknown> | undefined;
+        expect(target?.["fields"]).not.toHaveProperty("본인부담금 수령일");
+        expect(target?.["fields"]).not.toHaveProperty("본인부담금");
     });
 
     it.each([

@@ -19,6 +19,7 @@ import {
     buildServiceRecordContractRevisionSnapshot,
 } from "application/services/service-record-revision-document-coordinator.service";
 import {
+    buildServiceRecordRevisionTargetFieldMap,
     captureServiceRecordRevisionFacts,
     type ServiceRecordRevisionFactsResult,
 } from "application/policies/service-record-revision-facts.policy";
@@ -791,13 +792,20 @@ export class AdminServiceRecordEditService {
         // common document locks.  A missing carrier or a malformed provider
         // detail remains manual review; it must never be replaced with
         // duration, pricing, client, or live-provider defaults.
+        const targetFieldMap = periodChanged && revisionFactsSource
+            ? buildServiceRecordRevisionTargetFieldMap(
+                revisionFactsSource.document,
+                provisional.after.startDate,
+                provisional.after.endDate,
+            )
+            : { fields: null, missingFacts: [] };
         const targetPeriod = {
             startDate: provisional.after.startDate,
             endDate: provisional.after.endDate,
             receiptPeriod: provisional.after.startDate && provisional.after.endDate
                 ? `${provisional.after.startDate}~${provisional.after.endDate}`
                 : "",
-            fields: {},
+            fields: targetFieldMap.fields ?? {},
         };
         const factsResult: ServiceRecordRevisionFactsResult = periodChanged && revisionFactsSource
             ? captureServiceRecordRevisionFacts({
