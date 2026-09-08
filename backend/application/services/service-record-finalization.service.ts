@@ -65,6 +65,7 @@ type FinalizationAssignmentSnapshot = {
 type FinalizationCaseSnapshot = {
     id: string;
     branchId: string;
+    branchName: string | null;
     clientId: number | null;
     status: string;
     nextAttemptAt: Date | null;
@@ -233,6 +234,7 @@ function revisionOriginalDateRows(payload: Prisma.JsonValue): Prisma.JsonValue[]
 }
 
 function isCompleteFinalizationSource(record: FinalizationCaseSnapshot): boolean {
+    if (!record.branchName?.trim()) return false;
     const required = record.requiredSessionCount;
     if (!Number.isInteger(required) || required === null || required < 1) return false;
     if (record.days.length !== required) return false;
@@ -609,11 +611,12 @@ export class ServiceRecordFinalizationService {
             findUnique?: (args: unknown) => Promise<FinalizationCaseSnapshot | null>;
         } | undefined;
         if (typeof delegate?.findUnique !== "function") return null;
-        return delegate.findUnique({
+        const row = await delegate.findUnique({
             where: { id: caseId },
             select: {
                 id: true,
                 branchId: true,
+                branch: { select: { name: true } },
                 clientId: true,
                 status: true,
                 nextAttemptAt: true,
@@ -682,6 +685,12 @@ export class ServiceRecordFinalizationService {
                 },
             },
         });
+        if (!row) return null;
+        const branch = (row as unknown as { branch?: { name?: unknown } | null }).branch;
+        return {
+            ...(row as unknown as Omit<FinalizationCaseSnapshot, "branchName">),
+            branchName: typeof branch?.name === "string" ? branch.name : null,
+        };
     }
 
     /**
@@ -893,6 +902,7 @@ export class ServiceRecordFinalizationService {
             kind: "service_record_initial_finalization_input",
             generation,
             branchId: source.branchId,
+            branchName: source.branchName,
             caseId: source.id,
             clientId: source.clientId,
             revisionId: revision.id,
