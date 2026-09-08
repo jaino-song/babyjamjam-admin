@@ -75,6 +75,7 @@ function buildWorker(overrides: {
     finalize?: Record<string, jest.Mock>;
     reconciliation?: Record<string, jest.Mock>;
     schedulerLease?: ReturnType<typeof createSchedulerLeaseMock>;
+    revisionGenerator?: { executeRevision: jest.Mock };
 } = {}) {
     const repository = {
         recoverStale: jest.fn().mockResolvedValue([]),
@@ -111,6 +112,13 @@ function buildWorker(overrides: {
         findById: jest.fn().mockResolvedValue({ id: 7 }),
     };
     const schedulerLease = overrides.schedulerLease ?? createSchedulerLeaseMock();
+    const revisionGenerator = overrides.revisionGenerator ?? {
+        executeRevision: jest.fn().mockResolvedValue({
+            documentIds: ["revision-document-1"],
+            documentVersion: 3,
+            chunkCount: 1,
+        }),
+    };
     const worker = new EformsignDocumentJobWorkerService(
         new ConfigService({ EFORMSIGN_DOCUMENT_JOBS_WORKER_ENABLED: "true" }),
         repository as never,
@@ -121,6 +129,7 @@ function buildWorker(overrides: {
         eformsignDocRepository as never,
         clientRepository as never,
         schedulerLease,
+        revisionGenerator as never,
     );
     return {
         worker,
@@ -132,12 +141,66 @@ function buildWorker(overrides: {
         eformsignDocRepository,
         clientRepository,
         schedulerLease,
+        revisionGenerator,
     };
 }
 
 describe("EformsignDocumentJobWorkerService", () => {
     afterEach(() => {
         jest.useRealTimers();
+    });
+
+    it("routes a complete revision generation payload to the immutable renderer", async () => {
+        const claimed = job({
+            payload: {
+                kind: "service_record_revision",
+                context: {
+                    branchId,
+                    clientId: 7,
+                    serviceRecordCaseId: "00000000-0000-0000-0000-000000000011",
+                    revisionId: null,
+                    revisionNumber: null,
+                    businessFingerprint: "a".repeat(64),
+                    plannedSessionCount: 1,
+                    plannedSessionDates: [{ sessionIndex: 1, serviceDate: "2026-08-13" }],
+                    documentSyncStatus: "pending",
+                    lifecycleStatus: "READY_TO_FINALIZE",
+                    formVersion: 2,
+                },
+                immutablePayload: {
+                    kind: "service_record_revision_input",
+                    plannedSessions: [{ sessionIndex: 1, serviceDate: "2026-08-13" }],
+                },
+                payloadFingerprint: "b".repeat(64),
+                completeness: "complete",
+                documentStateId: "00000000-0000-0000-0000-000000000012",
+                documentVersion: 3,
+                snapshotReference: "service-record-revision:case:draft",
+                generation: "00000000-0000-0000-0000-000000000013",
+            },
+        });
+        const { worker, repository, dispatch, revisionGenerator } = buildWorker({
+            repository: { claimDue: jest.fn().mockResolvedValue([claimed]) },
+        });
+
+        await worker.processDueJobs();
+
+        expect(dispatch.execute).not.toHaveBeenCalled();
+        expect(revisionGenerator.executeRevision).toHaveBeenCalledWith(
+            expect.objectContaining({
+                generationKind: "REVISION_SNAPSHOT",
+                documentStateId: "00000000-0000-0000-0000-000000000012",
+                documentVersion: 3,
+                generation: "00000000-0000-0000-0000-000000000013",
+                immutablePayload: expect.objectContaining({ kind: "service_record_revision_input" }),
+            }),
+            workerPrincipal,
+        );
+        expect(repository.markCompleted).toHaveBeenCalledWith(
+            claimed.id,
+            claimed.leaseToken,
+            "revision-document-1",
+        );
     });
 
     it("reconciles a provider failure after the durable dispatch marker", async () => {

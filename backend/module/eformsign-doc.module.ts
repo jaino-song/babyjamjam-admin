@@ -68,6 +68,11 @@ import { FindClientByIdUsecase } from "application/usecases/client/find-client-b
 import { CreateEmployeeUsecase } from "application/usecases/employee/create-employee.usecase";
 import { EformsignDocumentJobService } from "application/services/eformsign-document-job.service";
 import { EformsignDocumentJobWorkerService } from "application/services/eformsign-document-job-worker.service";
+import {
+    SERVICE_RECORD_REVISION_GENERATION,
+} from "application/services/eformsign-document-job-worker.service";
+import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
+import { SERVICE_RECORD_EDIT_REPOSITORY } from "domain/repositories/service-record-edit.repository.interface";
 import { EformsignDocumentJobReconciliationService } from "application/services/eformsign-document-job-reconciliation.service";
 import { EFORMSIGN_DOCUMENT_JOB_REPOSITORY } from "domain/repositories/eformsign-document-job.repository.interface";
 import { EMPLOYEE_REPOSITORY } from "domain/repositories/employee.repository.interface";
@@ -146,6 +151,13 @@ import { EformsignDispatchBoundaryService } from "application/services/eformsign
         EformsignDocumentJobService,
         EformsignDocumentJobWorkerService,
         EformsignDocumentJobReconciliationService,
+        // The snapshot renderer owns the revision-generation implementation;
+        // the worker consumes it through a narrow token so legacy contract
+        // jobs never receive revision payloads as mutable contractData.
+        {
+            provide: SERVICE_RECORD_REVISION_GENERATION,
+            useExisting: CreateAndSendServiceRecordSnapshotUsecase,
+        },
         EformsignDispatchBoundaryService,
         // Repository bindings
         {
@@ -172,6 +184,14 @@ import { EformsignDispatchBoundaryService } from "application/services/eformsign
         {
             provide: EFORMSIGN_DOCUMENT_JOB_REPOSITORY,
             useClass: SbEformsignDocumentJobRepository,
+        },
+        // EformsignDocModule is also used as a standalone worker graph. Keep
+        // its snapshot renderer's transaction-bound repository available
+        // without importing ServiceRecordEntryModule (which imports this
+        // module and would create a cycle).
+        {
+            provide: SERVICE_RECORD_EDIT_REPOSITORY,
+            useClass: ServiceRecordEditRepository,
         },
         {
             provide: EFORMSIGN_DISPATCH_INTENT_REPOSITORY,
