@@ -190,6 +190,14 @@ describe("client API routes", () => {
       diagnostics: { query: "SELECT * FROM Client WHERE id = 73" },
     },
     {
+      message: "SELECT phone FROM Client WHERE id = 73",
+      clientId: 73,
+    },
+    {
+      message: 'SELECT "phone", "email" FROM "Client" WHERE "id" = 73',
+      clientId: 73,
+    },
+    {
       error: "Internal stack trace at /workspace/apps/api/client.service.ts:73",
       clientId: 73,
       internal: "should not reach the client",
