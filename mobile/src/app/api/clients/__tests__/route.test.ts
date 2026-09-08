@@ -194,7 +194,23 @@ describe("client API routes", () => {
       clientId: 73,
     },
     {
+      message: "SELECT phone FROM Client",
+      clientId: 73,
+    },
+    {
+      message: "SELECT phone FROM Client;",
+      clientId: 73,
+    },
+    {
       message: 'SELECT "phone", "email" FROM "Client" WHERE "id" = 73',
+      clientId: 73,
+    },
+    {
+      message: "SELECT count(*) FROM Client WHERE id = 73;",
+      clientId: 73,
+    },
+    {
+      message: "SELECT COUNT(*) FROM Client",
       clientId: 73,
     },
     {

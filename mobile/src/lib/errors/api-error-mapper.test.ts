@@ -160,8 +160,12 @@ describe("getErrorMessage", () => {
 
     it.each([
         "SELECT phone FROM Client WHERE id = 73",
+        "SELECT phone FROM Client",
+        "SELECT phone FROM Client;",
         "SELECT phone, email FROM Client WHERE id = 73",
         'SELECT "phone", "email" FROM "Client" WHERE "id" = 73',
+        "SELECT count(*) FROM Client WHERE id = 73;",
+        "SELECT COUNT(*) FROM Client",
     ])("rejects SQL diagnostics from a 4xx response %p", (serverMessage) => {
         const error = axiosError(409, { message: serverMessage, clientId: 73 });
 

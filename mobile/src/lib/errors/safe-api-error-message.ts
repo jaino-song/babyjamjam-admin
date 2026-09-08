@@ -21,12 +21,19 @@ const UNINFORMATIVE_MESSAGES = new Set([
     "gateway timeout",
 ]);
 
+/**
+ * Match a complete projection list followed by FROM and a complete table
+ * identifier. English text such as "Select a provider from the list." fails
+ * this grammar because "provider" cannot follow the first projection without
+ * a comma or FROM.
+ */
 const SQL_IDENTIFIER = String.raw`(?:["'\x60][^"'\x60]+["'\x60]|[a-z_][\w$]*(?:\s*\.\s*(?:["'\x60][^"'\x60]+["'\x60]|[a-z_][\w$]*))?)`;
+const SQL_FUNCTION = String.raw`[a-z_][\w$]*\s*\(\s*(?:(?:distinct\s+)?(?:\*|${SQL_IDENTIFIER})(?:\s*,\s*(?:${SQL_IDENTIFIER}|\*))*)?\s*\)`;
+const SQL_PROJECTION_EXPRESSION = String.raw`(?:${SQL_FUNCTION}|${SQL_IDENTIFIER}|(?:${SQL_IDENTIFIER}\s*\.\s*)?\*)`;
 const SQL_SELECT_FROM_PATTERN = new RegExp(
-    String.raw`\bselect\s+(?<projection>\*|${SQL_IDENTIFIER}(?:\s*,\s*${SQL_IDENTIFIER})*)\s+from\s+(?<table>${SQL_IDENTIFIER})(?<tail>[\s\S]*)`,
+    String.raw`\bselect\s+${SQL_PROJECTION_EXPRESSION}(?:\s*,\s*${SQL_PROJECTION_EXPRESSION})*\s+from\s+${SQL_IDENTIFIER}(?=\s|;|$)`,
     "i",
 );
-const SQL_CLAUSE_PATTERN = /\b(?:where\s+[a-z_][\w$.'"\x60]*\s*(?:=|<>|!=|<=|>=|<|>|\bis\b|\bin\b|\blike\b)|join\s+[a-z_][\w$.'"\x60]*\s+on\b|group\s+by\s+[a-z_][\w$.'"\x60]*|order\s+by\s+[a-z_][\w$.'"\x60]*|having\s+[a-z_][\w$.'"\x60]*\s*(?:=|<>|!=|<=|>=|<|>|\bis\b|\bin\b|\blike\b)|limit\s+\d+|offset\s+\d+|union(?:\s+all)?\s+select)/i;
 
 /**
  * Keep ordinary validation text visible while rejecting technical diagnostics
@@ -68,19 +75,8 @@ function isUnsafeServerMessage(message: string, status: number | undefined): boo
         return true;
     }
 
-    const selectMatch = SQL_SELECT_FROM_PATTERN.exec(message);
-    if (selectMatch?.groups) {
-        const projection = selectMatch.groups.projection;
-        const table = selectMatch.groups.table;
-        const tail = selectMatch.groups.tail;
-        const hasProjectionList = projection.includes(",");
-        const hasQuotedIdentifier = /["'\x60]/.test(`${projection}${table}`);
-        const hasSqlClause = SQL_CLAUSE_PATTERN.test(tail);
-        const hasStatementTerminator = tail.includes(";");
-
-        if (projection === "*" || hasProjectionList || hasQuotedIdentifier || hasSqlClause || hasStatementTerminator) {
-            return true;
-        }
+    if (SQL_SELECT_FROM_PATTERN.test(message)) {
+        return true;
     }
 
     return UNSAFE_SERVER_MESSAGE_PATTERNS.some((pattern) => pattern.test(message));
