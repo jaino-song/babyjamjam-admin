@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Interval } from "@nestjs/schedule";
 
@@ -30,8 +30,10 @@ import {
 import { createEformsignWorkerPrincipal } from "application/services/eformsign-credential-boundary.service";
 import { SchedulerLeaseService } from "application/services/scheduler-lease.service";
 import type {
+    ServiceRecordRevisionGenerationInput,
     ServiceRecordRevisionDispatchContext,
 } from "@babyjamjam/shared/types/service-record";
+import type { EformsignProviderPrincipal } from "application/services/eformsign-credential-boundary.service";
 import {
     isRevisionDocumentDispatchAllowed,
     isValidServiceRecordDispatchContext,
@@ -62,13 +64,15 @@ interface FinalizeDocumentJobPayload {
 
 type RevisionDocumentJobPayload = {
     kind: "service_record_revision";
-    generationKind?: "INITIAL_FINALIZATION";
+    generationKind?: "REVISION_SNAPSHOT" | "INITIAL_FINALIZATION";
     context: ServiceRecordRevisionDispatchContext;
     immutablePayload: Record<string, unknown>;
     payloadFingerprint: string;
     completeness: "complete";
     revisionId?: string;
     revisionNumber?: number;
+    documentStateId?: string;
+    documentVersion?: number;
     snapshotReference?: string | null;
     generation?: string | null;
     manualReviewRequired?: boolean;
@@ -84,6 +88,26 @@ type CreateDispatchAuthorizationResult = {
 const REVISION_JOB_KIND = "service_record_revision";
 const INITIAL_FINALIZATION_REQUEST_PREFIX = "service-record-initial-finalization:";
 const REVISION_REQUEST_PREFIX = "service-record-revision:";
+
+/**
+ * Narrow caller boundary for a frozen revision generation.  The renderer is
+ * provided by EformsignDocModule, but the job worker owns dispatch selection
+ * and never reaches into its implementation.  Keeping this as an optional
+ * token also leaves legacy test/module graphs fail-closed while a deployment
+ * rolls out the renderer provider.
+ */
+export const SERVICE_RECORD_REVISION_GENERATION = Symbol("SERVICE_RECORD_REVISION_GENERATION");
+
+export interface ServiceRecordRevisionGenerationPort {
+    executeRevision(
+        input: ServiceRecordRevisionGenerationInput,
+        principal: EformsignProviderPrincipal,
+    ): Promise<{
+        documentIds: string[];
+        documentVersion: number;
+        chunkCount: number;
+    }>;
+}
 
 function revisionPayload(value: unknown): RevisionDocumentJobPayload | null {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -110,6 +134,45 @@ function revisionPayload(value: unknown): RevisionDocumentJobPayload | null {
         && !Array.isArray(candidate.immutablePayload)
         ? candidate
         : null;
+}
+
+function toRevisionGenerationInput(
+    payload: RevisionDocumentJobPayload,
+): ServiceRecordRevisionGenerationInput | null {
+    const context = payload.context;
+    const documentStateId = payload.documentStateId;
+    const documentVersion = payload.documentVersion;
+    const snapshotReference = payload.snapshotReference;
+    const generation = payload.generation;
+    if (
+        typeof documentStateId !== "string"
+        || documentStateId.trim().length === 0
+        || typeof documentVersion !== "number"
+        || !Number.isInteger(documentVersion)
+        || documentVersion < 1
+        || typeof snapshotReference !== "string"
+        || snapshotReference.trim().length === 0
+        || typeof generation !== "string"
+        || generation.trim().length === 0
+        || typeof payload.payloadFingerprint !== "string"
+        || !/^[0-9a-f]{64}$/i.test(payload.payloadFingerprint)
+        || !payload.immutablePayload
+        || typeof payload.immutablePayload !== "object"
+        || Array.isArray(payload.immutablePayload)
+    ) {
+        return null;
+    }
+    return {
+        ...context,
+        generationKind: payload.generationKind ?? "REVISION_SNAPSHOT",
+        documentStateId,
+        documentVersion,
+        snapshotReference,
+        generation,
+        immutablePayload: payload.immutablePayload,
+        payloadFingerprint: payload.payloadFingerprint,
+        completeness: "complete",
+    };
 }
 
 function isRevisionJobMarker(value: unknown): boolean {
@@ -165,6 +228,9 @@ export class EformsignDocumentJobWorkerService {
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
         private readonly schedulerLease: SchedulerLeaseService,
+        @Optional()
+        @Inject(SERVICE_RECORD_REVISION_GENERATION)
+        private readonly revisionGenerator?: ServiceRecordRevisionGenerationPort,
     ) {}
 
     @Interval(WORKER_INTERVAL_MS)
@@ -258,9 +324,14 @@ export class EformsignDocumentJobWorkerService {
         );
         try {
             if (job.jobType === "create_document") {
-                await this.processCreation(job, (step) => {
+                const revision = revisionPayload(job.payload);
+                if (revision) {
+                    await this.processRevision(job, revision);
+                } else {
+                    await this.processCreation(job, (step) => {
                     latestProgressStep = step;
-                });
+                    });
+                }
             } else if (job.jobType === "finalize_document") {
                 await this.processFinalization(job, (step) => {
                     latestProgressStep = step;
@@ -278,6 +349,63 @@ export class EformsignDocumentJobWorkerService {
             await this.handleExecutionFailure(job, latestProgressStep);
         } finally {
             clearInterval(heartbeat);
+        }
+    }
+
+    /**
+     * A revision job carries a complete immutable generation input rather than
+     * legacy contractData.  Route it only through the renderer boundary after
+     * repository authorization has committed the durable `creating` marker;
+     * malformed/missing renderer wiring is a terminal attention outcome and
+     * never falls back to the mutable live-case renderer or contract sender.
+     */
+    private async processRevision(
+        job: EformsignDocumentJobEntity,
+        payload: RevisionDocumentJobPayload,
+    ): Promise<void> {
+        const leaseToken = job.leaseToken;
+        if (!leaseToken) return;
+        const input = toRevisionGenerationInput(payload);
+        if (!input || !this.revisionGenerator) {
+            const attention = await this.repository.markRequiresAttention(
+                job.id,
+                leaseToken,
+                !input
+                    ? "INVALID_SERVICE_RECORD_REVISION_JOB_PAYLOAD"
+                    : "SERVICE_RECORD_REVISION_RENDERER_UNAVAILABLE",
+            );
+            await this.recordAutoFinalizeTerminalOutcome(
+                job,
+                attention,
+                !input
+                    ? "INVALID_SERVICE_RECORD_REVISION_JOB_PAYLOAD"
+                    : "SERVICE_RECORD_REVISION_RENDERER_UNAVAILABLE",
+            );
+            return;
+        }
+
+        try {
+            const result = await this.revisionGenerator.executeRevision(
+                input,
+                createEformsignWorkerPrincipal(job.branchId),
+            );
+            if (!Number.isInteger(result.documentVersion) || result.documentVersion < 1
+                || !Number.isInteger(result.chunkCount) || result.chunkCount < 1
+                || !Array.isArray(result.documentIds)
+                || result.documentIds.length !== result.chunkCount
+                || result.documentIds.some((documentId) => typeof documentId !== "string" || documentId.length === 0)) {
+                throw new Error("SERVICE_RECORD_REVISION_RENDERER_RESULT_INVALID");
+            }
+            await this.repository.markCompleted(
+                job.id,
+                leaseToken,
+                result.documentIds[0],
+            );
+        } catch {
+            // A renderer failure after the durable marker cannot be retried as
+            // a new generation. Keep the existing job reconciliation path and
+            // immutable payload available for an operator/reconciler.
+            await this.markAndReconcile(job, "creating");
         }
     }
 
