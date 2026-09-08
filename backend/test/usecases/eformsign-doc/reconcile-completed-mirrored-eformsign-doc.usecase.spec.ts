@@ -112,6 +112,33 @@ describe("ReconcileCompletedMirroredEformsignDocUsecase", () => {
         });
     });
 
+    it("uses the current-contract fence for the legacy no-mirror-version fallback", async () => {
+        const fencedSync = jest.fn().mockResolvedValue(true);
+        (serviceRecordLifecycle as {
+            syncEndDateFromCurrentContract?: typeof fencedSync;
+        }).syncEndDateFromCurrentContract = fencedSync;
+
+        try {
+            await usecase.syncLinkedContract({
+                branchId: "branch-1",
+                documentId: "doc-1",
+                detail,
+            });
+
+            expect(fencedSync).toHaveBeenCalledWith({
+                branchId: "branch-1",
+                clientId: 71,
+                endDate: new Date("2026-08-14T00:00:00.000Z"),
+                documentId: "doc-1",
+            });
+            expect(serviceRecordLifecycle.syncEndDateFromContract).not.toHaveBeenCalled();
+        } finally {
+            delete (serviceRecordLifecycle as {
+                syncEndDateFromCurrentContract?: unknown;
+            }).syncEndDateFromCurrentContract;
+        }
+    });
+
     it("forwards automation suppression while retaining local persistence", async () => {
         await usecase.execute({
             documentId: "doc-1",

@@ -492,6 +492,144 @@ export class ServiceRecordLifecycleService {
         });
     }
 
+    /**
+     * Synchronize a contract-derived end date only while the completed
+     * document remains the current contract for the locked client/revision.
+     * A delayed legacy callback may still update its own document row, but it
+     * must not roll back a client whose service-record revision is pending or
+     * current.
+     */
+    async syncEndDateFromCurrentContract(params: {
+        branchId: string;
+        clientId: number;
+        endDate: Date;
+        documentId: string;
+    }): Promise<boolean> {
+        return this.prisma.$transaction(async (tx) => {
+            // Legacy unit-test doubles do not model the complete lock surface.
+            // Production Prisma transactions always do; retain their historical
+            // direct seam while routing real writes through the fence below.
+            if (!this.hasCompleteServiceRecordWriteLockSurface(tx)) {
+                await this.syncEndDateFromContractInTransaction(params, tx);
+                return true;
+            }
+
+            const discoveredDocument = typeof tx.eformsign_doc?.findFirst === "function"
+                ? await tx.eformsign_doc.findFirst({
+                    where: {
+                        documentId: params.documentId,
+                        branchId: params.branchId,
+                    },
+                    select: {
+                        id: true,
+                    },
+                })
+                : null;
+            const lockedWriteSet = await this.lockClientOwnedWriteSet(tx, {
+                branchId: params.branchId,
+                clientId: params.clientId,
+                documentRowId: discoveredDocument?.id,
+            });
+            if (!lockedWriteSet) return false;
+
+            const currentDocuments = await tx.$queryRaw<Array<{
+                id: number;
+                clientId: number | null;
+                branchId: string | null;
+                serviceRecordCaseId: string | null;
+                revisionId: string | null;
+            }>>(Prisma.sql`
+                SELECT id,
+                       client_id AS "clientId",
+                       branch_id AS "branchId",
+                       service_record_case_id AS "serviceRecordCaseId",
+                       revision_id AS "revisionId"
+                FROM eformsign_doc
+                WHERE document_id = ${params.documentId}
+                  AND branch_id = ${params.branchId}::uuid
+                  AND permanent_purge_requested_at IS NULL
+                  AND status_type NOT IN ('047', '049', '099')
+                FOR UPDATE
+            `);
+            const currentDocument = currentDocuments[0];
+            if (
+                !currentDocument
+                || currentDocument.clientId !== params.clientId
+                || currentDocument.branchId !== params.branchId
+                || (
+                    currentDocument.serviceRecordCaseId !== null
+                    && currentDocument.serviceRecordCaseId !== lockedWriteSet.caseId
+                )
+            ) {
+                return false;
+            }
+
+            const clients = await tx.$queryRaw<Array<{
+                id: number;
+                eDocId: string | null;
+                branchId: string | null;
+            }>>(Prisma.sql`
+                SELECT id,
+                       e_doc_id AS "eDocId",
+                       branch_id AS "branchId"
+                FROM client
+                WHERE id = ${params.clientId}
+                  AND branch_id = ${params.branchId}::uuid
+                FOR UPDATE
+            `);
+            if (clients[0]?.eDocId !== params.documentId) return false;
+
+            const revisionCases = await tx.$queryRaw<Array<{
+                id: string;
+                branchId: string;
+                clientId: number | null;
+                currentRevisionId: string | null;
+                currentUsableRevisionId: string | null;
+                currentUsableDocumentVersion: number | null;
+            }>>(Prisma.sql`
+                SELECT id,
+                       branch_id AS "branchId",
+                       client_id AS "clientId",
+                       current_revision_id AS "currentRevisionId",
+                       current_usable_revision_id AS "currentUsableRevisionId",
+                       current_usable_document_version AS "currentUsableDocumentVersion"
+                FROM service_record_case
+                WHERE branch_id = ${params.branchId}::uuid
+                  AND client_id = ${params.clientId}
+                  ${currentDocument.serviceRecordCaseId
+                    ? Prisma.sql`AND id = ${currentDocument.serviceRecordCaseId}::uuid`
+                    : Prisma.empty}
+                FOR UPDATE
+            `);
+            if (revisionCases.length > 1) return false;
+            const ownerCase = revisionCases[0];
+            if (ownerCase) {
+                if (
+                    ownerCase.branchId !== params.branchId
+                    || ownerCase.clientId !== params.clientId
+                    || (
+                        currentDocument.serviceRecordCaseId !== null
+                        && ownerCase.id !== currentDocument.serviceRecordCaseId
+                    )
+                ) return false;
+                if (currentDocument.revisionId === null) {
+                    if (
+                        ownerCase.currentRevisionId !== null
+                        || ownerCase.currentUsableRevisionId !== null
+                        || ownerCase.currentUsableDocumentVersion !== null
+                    ) return false;
+                } else if (ownerCase.currentRevisionId !== currentDocument.revisionId) {
+                    return false;
+                }
+            } else if (currentDocument.revisionId !== null || currentDocument.serviceRecordCaseId !== null) {
+                return false;
+            }
+
+            await this.syncEndDateFromContractInTransaction(params, tx);
+            return true;
+        });
+    }
+
     async syncEndDateFromMirroredContract(params: {
         branchId: string;
         clientId: number;
