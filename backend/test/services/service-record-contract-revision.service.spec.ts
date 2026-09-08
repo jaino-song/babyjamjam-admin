@@ -267,6 +267,60 @@ describe("ServiceRecordContractRevisionService", () => {
         }
     });
 
+    it("persists an explicitly null original document version without inventing a version", async () => {
+        const current = snapshot({ documentVersion: null });
+        const { service, repository } = setup(current);
+
+        const result = await service.processOperation(input(current, { capability: undefined }));
+
+        expect(result.status).toBe("capability_unverified");
+        expect(repository.createRevisionDocumentState).toHaveBeenCalledWith(expect.objectContaining({
+            documentVersion: null,
+        }));
+    });
+
+    it("accepts an explicitly null original document version when resuming persisted state", async () => {
+        const current = snapshot({ documentVersion: null });
+        const { service, repository } = setup(current);
+        repository.findRevisionDocumentState.mockResolvedValue(makeState(current));
+
+        const result = await service.processOperation(input(current, {
+            documentStateId: "state-1",
+            capability: undefined,
+        }));
+
+        expect(result.status).toBe("capability_unverified");
+        expect(repository.findRevisionDocumentState).toHaveBeenCalledWith(
+            BRANCH_ID,
+            CLIENT_ID,
+            REVISION_ID,
+            "state-1",
+        );
+    });
+
+    it("rejects an omitted original document version on resume", async () => {
+        const current = snapshot();
+        const persisted = JSON.parse(JSON.stringify(current)) as Record<string, unknown>;
+        const original = persisted["original"] as Record<string, unknown>;
+        delete original["documentVersion"];
+        const { service, provider, dispatch, repository } = setup(current);
+        repository.findRevisionDocumentState.mockResolvedValue(makeState(current, {
+            immutableInput: persisted,
+        }));
+
+        const result = await service.processOperation(input(current, {
+            documentStateId: "state-1",
+        }));
+
+        expect(result.status).toBe("manual_review");
+        expect(result.reason).toBe("CONTRACT_REVISION_INPUT_INVALID");
+        expect(provider.inspectDocument).not.toHaveBeenCalled();
+        expect(dispatch.claim).not.toHaveBeenCalled();
+        expect(repository.advanceRevisionDocumentState).toHaveBeenCalledWith(expect.objectContaining({
+            status: "manual_review",
+        }));
+    });
+
     it("rejects a target field that attempts to replace the preserved receipt facts", async () => {
         const current = snapshot({
             allowedFieldIds: [...ALLOWED_FIELDS, "receipt.receivedAmount"],
