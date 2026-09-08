@@ -399,3 +399,5 @@
 - 통합 mobile 빌드: 최초 필수 공개API주소 누락으로실패, 파일설정변경없이 명령범위 loopback3999 값을 지정한 재실행PASS(원격호출없음; 정적페이지의 예상ECONNREFUSED로그별도). Phase3 공휴일 보정 추가 Sol/high PLAN APPROVE: 정확한날짜membership/version/생성물parity/기존N·벡터·이력보존lifecycle회귀/모호legacy차단을 수용조건으로유지한다.
 
 - Phase2 Sol 감사에서 countSubKey가 임의 문자열·음수·정수항목소수를 허용하는차단지적을 받았다. 공통descriptor수치metadata와 관리자/공개제출검증을 함께보정하도록Luna/max에범위를배정했다. UI표시보정b46fcf034는별도unit에커밋되어메인브라우저403흐름3/3PASS,480px이미지직접확인으로 오류안내대비와편집상태표시를확인했다. 감사수치보정은같은corrections unit의다음별도commit으로진행한다.
+
+- Phase2 Sol/high FINAL FIX_REQUIRED: (1)수치하위값검증누락, (2)client.name업무지문누락. 두보정을진행한다. 추가로full-flow fixture두곳의stool:"정상"을실제UI값"정상변"으로보정한다. 기존harness의실제모듈/하드코딩branch/DB경계를임의실행하지않고동일payload단위회귀와이후Phase6격리HTTP로검증한다. UI라벨/대비보정은비차단관찰로분류됐으며별도수정완료다.
