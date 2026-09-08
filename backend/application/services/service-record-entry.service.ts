@@ -41,6 +41,11 @@ function toIso(d: Date): string {
     return d.toISOString().slice(0, 10);
 }
 
+type PlannedSessionVectorResult = {
+    state: "absent" | "valid" | "invalid";
+    entries: ServiceRecordPlannedSession[] | null;
+};
+
 /**
  * Read the persisted, complete planned-session vector without inventing
  * provenance or dates.  Provider callers only need the date projection, but
@@ -50,8 +55,8 @@ function toIso(d: Date): string {
 function plannedSessionVector(
     raw: Prisma.JsonValue | null | undefined,
     requiredSessionCount: number | null | undefined,
-): ServiceRecordPlannedSession[] | null {
-    if (raw === null || raw === undefined) return null;
+): PlannedSessionVectorResult {
+    if (raw === null || raw === undefined) return { state: "absent", entries: null };
     const values = Array.isArray(raw)
         ? raw
         : typeof raw === "object" && raw !== null && !Array.isArray(raw)
@@ -59,11 +64,13 @@ function plannedSessionVector(
                 ?? (raw as Record<string, Prisma.JsonValue>)["entries"]
                 ?? (raw as Record<string, Prisma.JsonValue>)["plannedSessions"])
             : null;
-    if (!Array.isArray(values)) return null;
+    if (!Array.isArray(values)) return { state: "invalid", entries: null };
 
     const entries: ServiceRecordPlannedSession[] = [];
     for (const value of values) {
-        if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+        if (typeof value !== "object" || value === null || Array.isArray(value)) {
+            return { state: "invalid", entries: null };
+        }
         const row = value as Record<string, Prisma.JsonValue>;
         const provenance = typeof row["provenance"] === "object" && row["provenance"] !== null && !Array.isArray(row["provenance"])
             ? row["provenance"] as Record<string, Prisma.JsonValue>
@@ -89,7 +96,7 @@ function plannedSessionVector(
             || !Number.isInteger(employeeId)
             || (typeof provenanceVersion !== "string" && typeof provenanceVersion !== "number")
         ) {
-            return null;
+            return { state: "invalid", entries: null };
         }
         entries.push({
             sessionIndex,
@@ -102,23 +109,34 @@ function plannedSessionVector(
         });
     }
     try {
-        return validateServiceRecordScheduleVector(
-            entries,
-            requiredSessionCount ?? undefined,
-        );
+        return {
+            state: "valid",
+            entries: validateServiceRecordScheduleVector(entries, requiredSessionCount ?? undefined),
+        };
     } catch {
-        return null;
+        return { state: "invalid", entries: null };
     }
 }
 
 function persistedPlannedSessionDates(
     raw: Prisma.JsonValue | null | undefined,
     requiredSessionCount: number | null | undefined,
-): Array<{ sessionIndex: number; serviceDate: string }> | null {
-    return plannedSessionVector(raw, requiredSessionCount)?.map(({ sessionIndex, serviceDate }) => ({
-        sessionIndex,
-        serviceDate,
-    })) ?? null;
+): PlannedSessionVectorResult {
+    return plannedSessionVector(raw, requiredSessionCount);
+}
+
+function hasAuthoritativeRevision(record: {
+    currentRevisionId?: string | null;
+    currentUsableRevisionId?: string | null;
+    currentUsableDocumentVersion?: number | null;
+}): boolean {
+    return record.currentRevisionId != null
+        || record.currentUsableRevisionId != null
+        || record.currentUsableDocumentVersion != null;
+}
+
+function plannedSessionDateUnavailable(): ConflictException {
+    return new ConflictException({ code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" });
 }
 
 /**
@@ -170,10 +188,19 @@ export class ServiceRecordEntryService {
         if (!schedule) throw new NotFoundException("Assignment not found");
         if (!record) throw new NotFoundException("Service record not found");
 
-        const plannedSessionDates = persistedPlannedSessionDates(
+        const persistedDates = persistedPlannedSessionDates(
             record.plannedSessions,
             record.requiredSessionCount,
         );
+        if (
+            persistedDates.state === "invalid"
+            || (persistedDates.state === "absent" && hasAuthoritativeRevision(record))
+        ) {
+            throw plannedSessionDateUnavailable();
+        }
+        const plannedSessionDates = persistedDates.state === "valid"
+            ? persistedDates.entries?.map(({ sessionIndex, serviceDate }) => ({ sessionIndex, serviceDate })) ?? null
+            : null;
 
         return {
             employee: { id: schedule.primaryEmployee.id, name: schedule.primaryEmployee.name },
@@ -420,14 +447,17 @@ export class ServiceRecordEntryService {
             // Check the persisted vector after the common lock/reread and
             // before any schedule/client extension so stale provider input can
             // never mutate derived periods first.
-            const plannedVector = plannedSessionVector(record.plannedSessions, total);
-            if (record.plannedSessions !== null && record.plannedSessions !== undefined) {
-                if (!plannedVector) {
-                    throw new ConflictException({ code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" });
-                }
-                const plannedDate = plannedVector.find((entry) => entry.sessionIndex === sessionIndex)?.serviceDate;
+            const persistedDates = plannedSessionVector(record.plannedSessions, total);
+            if (
+                persistedDates.state === "invalid"
+                || (persistedDates.state === "absent" && hasAuthoritativeRevision(record))
+            ) {
+                throw plannedSessionDateUnavailable();
+            }
+            if (persistedDates.state === "valid") {
+                const plannedDate = persistedDates.entries?.find((entry) => entry.sessionIndex === sessionIndex)?.serviceDate;
                 if (!plannedDate) {
-                    throw new ConflictException({ code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" });
+                    throw plannedSessionDateUnavailable();
                 }
                 if (toIso(serviceDate) !== plannedDate) {
                     throw new ConflictException({ code: "SERVICE_RECORD_PLANNED_DATE_STALE" });
