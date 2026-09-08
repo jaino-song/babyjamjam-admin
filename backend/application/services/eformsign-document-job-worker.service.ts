@@ -33,6 +33,11 @@ import type {
     ServiceRecordRevisionGenerationInput,
     ServiceRecordRevisionDispatchContext,
 } from "@babyjamjam/shared/types/service-record";
+import {
+    SERVICE_RECORD_REVISION_OPERATION_COORDINATOR,
+    type ServiceRecordRevisionDocumentCoordinatorProcessInput,
+    type ServiceRecordRevisionDocumentCoordinatorProcessResult,
+} from "application/services/service-record-revision-document-coordinator.service";
 import type { EformsignProviderPrincipal } from "application/services/eformsign-credential-boundary.service";
 import {
     isRevisionDocumentDispatchAllowed,
@@ -78,6 +83,36 @@ type RevisionDocumentJobPayload = {
     manualReviewRequired?: boolean;
 };
 
+type RevisionOperationContractDescriptor = {
+    documentStateId: string;
+    generation: string;
+};
+
+type RevisionOperationReceiptDescriptor = {
+    documentStateId: string;
+    expectedGeneration: string;
+};
+
+/**
+ * Operation jobs carry only persisted state identities and server-derived
+ * dispatch context. Immutable snapshots and capability evidence stay behind
+ * their operation services and are never accepted from a queued payload.
+ */
+export interface ServiceRecordRevisionOperationsJobPayload {
+    kind: "service_record_revision_operations";
+    context: ServiceRecordRevisionDispatchContext & { revisionId: string };
+    operations: {
+        contract?: RevisionOperationContractDescriptor;
+        receipt?: RevisionOperationReceiptDescriptor;
+    };
+}
+
+export interface ServiceRecordRevisionOperationCoordinatorPort {
+    process(
+        input: ServiceRecordRevisionDocumentCoordinatorProcessInput,
+    ): Promise<ServiceRecordRevisionDocumentCoordinatorProcessResult>;
+}
+
 type CreateDispatchAuthorizationResult = {
     kind: "allow" | "stale" | "lost";
     reason?: string;
@@ -86,8 +121,10 @@ type CreateDispatchAuthorizationResult = {
 };
 
 const REVISION_JOB_KIND = "service_record_revision";
+const REVISION_OPERATIONS_JOB_KIND = "service_record_revision_operations";
 const INITIAL_FINALIZATION_REQUEST_PREFIX = "service-record-initial-finalization:";
 const REVISION_REQUEST_PREFIX = "service-record-revision:";
+const REVISION_OPERATIONS_REQUEST_PREFIX = "service-record-revision-operations:";
 
 /**
  * Narrow caller boundary for a frozen revision generation.  The renderer is
@@ -136,6 +173,78 @@ function revisionPayload(value: unknown): RevisionDocumentJobPayload | null {
         : null;
 }
 
+function revisionOperationsPayload(value: unknown): ServiceRecordRevisionOperationsJobPayload | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const row = value as Record<string, unknown>;
+    if (row["kind"] !== REVISION_OPERATIONS_JOB_KIND) return null;
+
+    const context = row["context"];
+    if (
+        !context
+        || typeof context !== "object"
+        || Array.isArray(context)
+        || !isValidServiceRecordDispatchContext(context as ServiceRecordRevisionDispatchContext)
+    ) {
+        return null;
+    }
+    const revisionId = (context as Record<string, unknown>)["revisionId"];
+    if (typeof revisionId !== "string" || revisionId.trim().length === 0) return null;
+
+    const operations = row["operations"];
+    if (!operations || typeof operations !== "object" || Array.isArray(operations)) return null;
+    const operationRow = operations as Record<string, unknown>;
+
+    const contractValue = operationRow["contract"];
+    const contract = contractValue === undefined
+        ? undefined
+        : parseRevisionOperationContractDescriptor(contractValue);
+    if (contract === null) return null;
+
+    const receiptValue = operationRow["receipt"];
+    const receipt = receiptValue === undefined
+        ? undefined
+        : parseRevisionOperationReceiptDescriptor(receiptValue);
+    if (receipt === null) return null;
+    if (contract === undefined && receipt === undefined) return null;
+    if (contract && receipt && contract.generation === receipt.expectedGeneration) return null;
+
+    return {
+        kind: REVISION_OPERATIONS_JOB_KIND,
+        context: context as ServiceRecordRevisionOperationsJobPayload["context"],
+        operations: {
+            ...(contract ? { contract } : {}),
+            ...(receipt ? { receipt } : {}),
+        },
+    };
+}
+
+function parseRevisionOperationContractDescriptor(
+    value: unknown,
+): RevisionOperationContractDescriptor | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const row = value as Record<string, unknown>;
+    const documentStateId = row["documentStateId"];
+    const generation = row["generation"];
+    if (typeof documentStateId !== "string" || documentStateId.trim().length === 0) return null;
+    if (typeof generation !== "string" || generation.trim().length === 0) return null;
+    return { documentStateId: documentStateId.trim(), generation: generation.trim() };
+}
+
+function parseRevisionOperationReceiptDescriptor(
+    value: unknown,
+): RevisionOperationReceiptDescriptor | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const row = value as Record<string, unknown>;
+    const documentStateId = row["documentStateId"];
+    const expectedGeneration = row["expectedGeneration"];
+    if (typeof documentStateId !== "string" || documentStateId.trim().length === 0) return null;
+    if (typeof expectedGeneration !== "string" || expectedGeneration.trim().length === 0) return null;
+    return {
+        documentStateId: documentStateId.trim(),
+        expectedGeneration: expectedGeneration.trim(),
+    };
+}
+
 function toRevisionGenerationInput(
     payload: RevisionDocumentJobPayload,
 ): ServiceRecordRevisionGenerationInput | null {
@@ -180,6 +289,7 @@ function isRevisionJobMarker(value: unknown): boolean {
     const row = value as Record<string, unknown>;
     if (
         row["kind"] === REVISION_JOB_KIND
+        || row["kind"] === REVISION_OPERATIONS_JOB_KIND
         || row["generationKind"] === "INITIAL_FINALIZATION"
         || row["revisionId"] !== undefined
     ) {
@@ -197,7 +307,8 @@ function isRevisionJobMarker(value: unknown): boolean {
 function revisionRecoveryBlockReason(job: EformsignDocumentJobEntity): string | null {
     const revisionMarker = isRevisionJobMarker(job.payload)
         || job.requestKey.startsWith(INITIAL_FINALIZATION_REQUEST_PREFIX)
-        || job.requestKey.startsWith(REVISION_REQUEST_PREFIX);
+        || job.requestKey.startsWith(REVISION_REQUEST_PREFIX)
+        || job.requestKey.startsWith(REVISION_OPERATIONS_REQUEST_PREFIX);
     if (!revisionMarker) return null;
     return revisionPayload(job.payload)
         ? "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED"
@@ -231,6 +342,9 @@ export class EformsignDocumentJobWorkerService {
         @Optional()
         @Inject(SERVICE_RECORD_REVISION_GENERATION)
         private readonly revisionGenerator?: ServiceRecordRevisionGenerationPort,
+        @Optional()
+        @Inject(SERVICE_RECORD_REVISION_OPERATION_COORDINATOR)
+        private readonly revisionOperationCoordinator?: ServiceRecordRevisionOperationCoordinatorPort,
     ) {}
 
     @Interval(WORKER_INTERVAL_MS)
@@ -324,13 +438,18 @@ export class EformsignDocumentJobWorkerService {
         );
         try {
             if (job.jobType === "create_document") {
-                const revision = revisionPayload(job.payload);
-                if (revision) {
-                    await this.processRevision(job, revision);
+                const revisionOperations = revisionOperationsPayload(job.payload);
+                if (revisionOperations) {
+                    await this.processRevisionOperations(job, revisionOperations);
                 } else {
-                    await this.processCreation(job, (step) => {
-                    latestProgressStep = step;
-                    });
+                    const revision = revisionPayload(job.payload);
+                    if (revision) {
+                        await this.processRevision(job, revision);
+                    } else {
+                        await this.processCreation(job, (step) => {
+                            latestProgressStep = step;
+                        });
+                    }
                 }
             } else if (job.jobType === "finalize_document") {
                 await this.processFinalization(job, (step) => {
@@ -350,6 +469,79 @@ export class EformsignDocumentJobWorkerService {
         } finally {
             clearInterval(heartbeat);
         }
+    }
+
+    /**
+     * Revision operation jobs resume the persisted contract-period and receipt
+     * state rows through the coordinator. They must never fall through to the
+     * legacy mutable contract renderer or the immutable record renderer.
+     */
+    private async processRevisionOperations(
+        job: EformsignDocumentJobEntity,
+        payload: ServiceRecordRevisionOperationsJobPayload,
+    ): Promise<void> {
+        const leaseToken = job.leaseToken;
+        if (!leaseToken) return;
+        if (!this.revisionOperationCoordinator) {
+            const attention = await this.repository.markRequiresAttention(
+                job.id,
+                leaseToken,
+                "SERVICE_RECORD_REVISION_OPERATION_COORDINATOR_UNAVAILABLE",
+            );
+            await this.recordAutoFinalizeTerminalOutcome(
+                job,
+                attention,
+                "SERVICE_RECORD_REVISION_OPERATION_COORDINATOR_UNAVAILABLE",
+            );
+            return;
+        }
+
+        const input: ServiceRecordRevisionDocumentCoordinatorProcessInput = {
+            ...payload.context,
+            ...(payload.operations.contract ? { contract: payload.operations.contract } : {}),
+            ...(payload.operations.receipt ? { receipt: payload.operations.receipt } : {}),
+        };
+
+        let result: ServiceRecordRevisionDocumentCoordinatorProcessResult;
+        try {
+            result = await this.revisionOperationCoordinator.process(input);
+        } catch {
+            const attention = await this.repository.markRequiresAttention(
+                job.id,
+                leaseToken,
+                "SERVICE_RECORD_REVISION_OPERATION_COORDINATOR_FAILURE",
+            );
+            await this.recordAutoFinalizeTerminalOutcome(
+                job,
+                attention,
+                "SERVICE_RECORD_REVISION_OPERATION_COORDINATOR_FAILURE",
+            );
+            return;
+        }
+
+        if (!result || typeof result !== "object" || typeof result.status !== "string") {
+            const attention = await this.repository.markRequiresAttention(
+                job.id,
+                leaseToken,
+                "INVALID_SERVICE_RECORD_REVISION_OPERATION_RESULT",
+            );
+            await this.recordAutoFinalizeTerminalOutcome(
+                job,
+                attention,
+                "INVALID_SERVICE_RECORD_REVISION_OPERATION_RESULT",
+            );
+            return;
+        }
+
+        if (result.status === "completed" || result.status === "not_required") {
+            await this.repository.markCompleted(job.id, leaseToken, job.documentId ?? undefined);
+            return;
+        }
+
+        const reason = (typeof result.reason === "string" ? result.reason.trim() : "")
+            || `SERVICE_RECORD_REVISION_OPERATION_${result.status.toUpperCase()}`;
+        const attention = await this.repository.markRequiresAttention(job.id, leaseToken, reason);
+        await this.recordAutoFinalizeTerminalOutcome(job, attention, reason);
     }
 
     /**
@@ -490,6 +682,13 @@ export class EformsignDocumentJobWorkerService {
         if (!job.leaseToken) return { kind: "lost", reason: "invalid_job_claim" };
         if (job.jobType === "create_document") {
             const rawPayload = job.payload ?? {};
+            const operations = revisionOperationsPayload(rawPayload);
+            if (rawPayload["kind"] === REVISION_OPERATIONS_JOB_KIND) {
+                if (!operations) {
+                    return { kind: "stale", reason: "INVALID_SERVICE_RECORD_REVISION_OPERATION_JOB_PAYLOAD" };
+                }
+                return this.authorizeThroughRepository(job, operations.context);
+            }
             const payload = revisionPayload(rawPayload);
             if (payload?.generationKind === "INITIAL_FINALIZATION") {
                 // Initial revised finalization is a persisted manual-review

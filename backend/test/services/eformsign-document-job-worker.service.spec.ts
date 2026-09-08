@@ -1,6 +1,9 @@
 import { ConfigService } from "@nestjs/config";
 
-import { EformsignDocumentJobWorkerService } from "application/services/eformsign-document-job-worker.service";
+import {
+    EformsignDocumentJobWorkerService,
+    type ServiceRecordRevisionOperationCoordinatorPort,
+} from "application/services/eformsign-document-job-worker.service";
 import { EformsignDocumentJobEntity } from "domain/entities/eformsign-document-job.entity";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
 
@@ -69,6 +72,40 @@ function contractData() {
     };
 }
 
+function revisionOperationPayload(overrides: {
+    context?: Record<string, unknown>;
+    operations?: Record<string, unknown>;
+} = {}) {
+    return {
+        kind: "service_record_revision_operations",
+        context: {
+            branchId,
+            clientId: 7,
+            serviceRecordCaseId: "00000000-0000-0000-0000-000000000020",
+            revisionId: "00000000-0000-0000-0000-000000000021",
+            revisionNumber: 1,
+            businessFingerprint: "a".repeat(64),
+            plannedSessionCount: null,
+            plannedSessionDates: [],
+            documentSyncStatus: "waiting_for_completion",
+            lifecycleStatus: "IN_PROGRESS",
+            formVersion: 1,
+            ...overrides.context,
+        },
+        operations: {
+            contract: {
+                documentStateId: "00000000-0000-0000-0000-000000000022",
+                generation: "00000000-0000-0000-0000-000000000023",
+            },
+            receipt: {
+                documentStateId: "00000000-0000-0000-0000-000000000024",
+                expectedGeneration: "00000000-0000-0000-0000-000000000025",
+            },
+            ...overrides.operations,
+        },
+    };
+}
+
 function buildWorker(overrides: {
     repository?: Record<string, jest.Mock>;
     dispatch?: Record<string, jest.Mock>;
@@ -76,6 +113,7 @@ function buildWorker(overrides: {
     reconciliation?: Record<string, jest.Mock>;
     schedulerLease?: ReturnType<typeof createSchedulerLeaseMock>;
     revisionGenerator?: { executeRevision: jest.Mock };
+    revisionOperationCoordinator?: ServiceRecordRevisionOperationCoordinatorPort;
 } = {}) {
     const repository = {
         recoverStale: jest.fn().mockResolvedValue([]),
@@ -130,6 +168,7 @@ function buildWorker(overrides: {
         clientRepository as never,
         schedulerLease,
         revisionGenerator as never,
+        overrides.revisionOperationCoordinator as never,
     );
     return {
         worker,
@@ -142,6 +181,7 @@ function buildWorker(overrides: {
         clientRepository,
         schedulerLease,
         revisionGenerator,
+        revisionOperationCoordinator: overrides.revisionOperationCoordinator,
     };
 }
 
@@ -365,6 +405,149 @@ describe("EformsignDocumentJobWorkerService", () => {
         );
     });
 
+    it("routes partial revision operations to the coordinator with persisted state descriptors", async () => {
+        const payload = revisionOperationPayload();
+        const claimed = job({ payload });
+        const coordinator: ServiceRecordRevisionOperationCoordinatorPort = {
+            process: jest.fn().mockResolvedValue({
+                revisionGeneration: null,
+                status: "completed",
+                reason: null,
+                contract: null,
+                receipt: null,
+            }),
+        };
+        const { worker, repository, dispatch, finalize, revisionGenerator } = buildWorker({
+            repository: { claimDue: jest.fn().mockResolvedValue([claimed]) },
+            revisionOperationCoordinator: coordinator,
+        });
+
+        await worker.processDueJobs();
+
+        expect(repository.authorizeForDispatch).toHaveBeenCalledWith({
+            jobId: claimed.id,
+            leaseToken: claimed.leaseToken,
+            expectedContext: payload.context,
+        });
+        expect(coordinator.process).toHaveBeenCalledWith({
+            ...payload.context,
+            contract: payload.operations.contract,
+            receipt: payload.operations.receipt,
+        });
+        expect(dispatch.execute).not.toHaveBeenCalled();
+        expect(finalize.execute).not.toHaveBeenCalled();
+        expect(revisionGenerator.executeRevision).not.toHaveBeenCalled();
+        expect(repository.markCompleted).toHaveBeenCalledWith(
+            claimed.id,
+            claimed.leaseToken,
+            undefined,
+        );
+    });
+
+    it("does not route a stale operation claim to any renderer or coordinator", async () => {
+        const claimed = job({ payload: revisionOperationPayload() });
+        const coordinator: ServiceRecordRevisionOperationCoordinatorPort = {
+            process: jest.fn(),
+        };
+        const { worker, repository, dispatch, revisionGenerator } = buildWorker({
+            repository: {
+                claimDue: jest.fn().mockResolvedValue([claimed]),
+                authorizeForDispatch: jest.fn().mockResolvedValue({
+                    kind: "stale",
+                    reason: "revision_or_business_state_changed",
+                }),
+            },
+            revisionOperationCoordinator: coordinator,
+        });
+
+        await worker.processDueJobs();
+
+        expect(coordinator.process).not.toHaveBeenCalled();
+        expect(dispatch.execute).not.toHaveBeenCalled();
+        expect(revisionGenerator.executeRevision).not.toHaveBeenCalled();
+        expect(repository.markRequiresAttention).toHaveBeenCalledWith(
+            claimed.id,
+            claimed.leaseToken,
+            "revision_or_business_state_changed",
+        );
+    });
+
+    it("does not route an ownership-lost operation claim to any renderer or coordinator", async () => {
+        const claimed = job({ payload: revisionOperationPayload({ context: { clientId: 8 } }) });
+        const coordinator: ServiceRecordRevisionOperationCoordinatorPort = {
+            process: jest.fn(),
+        };
+        const { worker, repository, dispatch, revisionGenerator } = buildWorker({
+            repository: {
+                claimDue: jest.fn().mockResolvedValue([claimed]),
+                authorizeForDispatch: jest.fn().mockResolvedValue({
+                    kind: "lost",
+                    reason: "ownership_changed",
+                }),
+            },
+            revisionOperationCoordinator: coordinator,
+        });
+
+        await worker.processDueJobs();
+
+        expect(coordinator.process).not.toHaveBeenCalled();
+        expect(dispatch.execute).not.toHaveBeenCalled();
+        expect(revisionGenerator.executeRevision).not.toHaveBeenCalled();
+        expect(repository.markRequiresAttention).toHaveBeenCalledWith(
+            claimed.id,
+            claimed.leaseToken,
+            "ownership_changed",
+        );
+    });
+
+    it("fails closed for malformed operation descriptors without invoking the legacy creation path", async () => {
+        const claimed = job({
+            payload: revisionOperationPayload({
+                operations: {
+                    contract: {
+                        documentStateId: "state-only",
+                    },
+                },
+            }),
+        });
+        const coordinator: ServiceRecordRevisionOperationCoordinatorPort = {
+            process: jest.fn(),
+        };
+        const { worker, repository, dispatch, revisionGenerator } = buildWorker({
+            repository: { claimDue: jest.fn().mockResolvedValue([claimed]) },
+            revisionOperationCoordinator: coordinator,
+        });
+
+        await worker.processDueJobs();
+
+        expect(repository.authorizeForDispatch).not.toHaveBeenCalled();
+        expect(coordinator.process).not.toHaveBeenCalled();
+        expect(dispatch.execute).not.toHaveBeenCalled();
+        expect(revisionGenerator.executeRevision).not.toHaveBeenCalled();
+        expect(repository.markRequiresAttention).toHaveBeenCalledWith(
+            claimed.id,
+            claimed.leaseToken,
+            "INVALID_SERVICE_RECORD_REVISION_OPERATION_JOB_PAYLOAD",
+        );
+    });
+
+    it("fails closed when the operation coordinator is unavailable", async () => {
+        const claimed = job({ payload: revisionOperationPayload() });
+        const { worker, repository, dispatch, revisionGenerator } = buildWorker({
+            repository: { claimDue: jest.fn().mockResolvedValue([claimed]) },
+        });
+
+        await worker.processDueJobs();
+
+        expect(dispatch.execute).not.toHaveBeenCalled();
+        expect(revisionGenerator.executeRevision).not.toHaveBeenCalled();
+        expect(repository.markRequiresAttention).toHaveBeenCalledWith(
+            claimed.id,
+            claimed.leaseToken,
+            "SERVICE_RECORD_REVISION_OPERATION_COORDINATOR_UNAVAILABLE",
+        );
+    });
+
     it("blocks a recovered revision reconciliation before target or provider reads", async () => {
         const recovered = job({
             status: "reconciling",
@@ -431,6 +614,30 @@ describe("EformsignDocumentJobWorkerService", () => {
         await worker.processDueJobs();
 
         expect(reconciliation.reconcile).not.toHaveBeenCalled();
+        expect(repository.markRequiresAttention).toHaveBeenCalledWith(
+            recovered.id,
+            recovered.leaseToken,
+            "INVALID_SERVICE_RECORD_REVISION_JOB_PAYLOAD",
+        );
+    });
+
+    it("keeps a redacted operation job out of legacy reconciliation by its request namespace", async () => {
+        const recovered = job({
+            status: "reconciling",
+            progressStep: "creating",
+            requestKey: "service-record-revision-operations:revision-1:contract+receipt",
+            payload: null,
+        });
+        const { worker, repository, reconciliation, clientRepository } = buildWorker({
+            repository: {
+                recoverStale: jest.fn().mockResolvedValue([recovered]),
+            },
+        });
+
+        await worker.processDueJobs();
+
+        expect(reconciliation.reconcile).not.toHaveBeenCalled();
+        expect(clientRepository.findById).not.toHaveBeenCalled();
         expect(repository.markRequiresAttention).toHaveBeenCalledWith(
             recovered.id,
             recovered.leaseToken,
