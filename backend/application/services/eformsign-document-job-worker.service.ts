@@ -81,10 +81,14 @@ type CreateDispatchAuthorizationResult = {
     irreversible?: boolean;
 };
 
+const REVISION_JOB_KIND = "service_record_revision";
+const INITIAL_FINALIZATION_REQUEST_PREFIX = "service-record-initial-finalization:";
+const REVISION_REQUEST_PREFIX = "service-record-revision:";
+
 function revisionPayload(value: unknown): RevisionDocumentJobPayload | null {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const row = value as Record<string, unknown>;
-    if (row["kind"] !== "service_record_revision") return null;
+    if (row["kind"] !== REVISION_JOB_KIND) return null;
     const context = row["context"];
     if (!context || typeof context !== "object" || Array.isArray(context)) return null;
     const candidate = row as unknown as RevisionDocumentJobPayload;
@@ -106,6 +110,35 @@ function revisionPayload(value: unknown): RevisionDocumentJobPayload | null {
         && !Array.isArray(candidate.immutablePayload)
         ? candidate
         : null;
+}
+
+function isRevisionJobMarker(value: unknown): boolean {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const row = value as Record<string, unknown>;
+    if (
+        row["kind"] === REVISION_JOB_KIND
+        || row["generationKind"] === "INITIAL_FINALIZATION"
+        || row["revisionId"] !== undefined
+    ) {
+        return true;
+    }
+    const context = row["context"];
+    return Boolean(
+        context
+        && typeof context === "object"
+        && !Array.isArray(context)
+        && "revisionId" in (context as Record<string, unknown>),
+    );
+}
+
+function revisionRecoveryBlockReason(job: EformsignDocumentJobEntity): string | null {
+    const revisionMarker = isRevisionJobMarker(job.payload)
+        || job.requestKey.startsWith(INITIAL_FINALIZATION_REQUEST_PREFIX)
+        || job.requestKey.startsWith(REVISION_REQUEST_PREFIX);
+    if (!revisionMarker) return null;
+    return revisionPayload(job.payload)
+        ? "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED"
+        : "INVALID_SERVICE_RECORD_REVISION_JOB_PAYLOAD";
 }
 
 /**
@@ -479,10 +512,10 @@ export class EformsignDocumentJobWorkerService {
             progressStep ?? "reconciling",
         );
         if (!reconciling) return;
-        // markReconciling intentionally clears the persisted payload so a
-        // reconciling row cannot retain customer data. Keep the claimed copy
-        // in memory for this immediate provider lookup, otherwise creation
-        // matching loses its customer/template hints on the first pass.
+        // Legacy jobs may redact their payload on reconciliation. Revision
+        // jobs retain the immutable generation input in the repository, while
+        // this fallback keeps older adapters compatible with their claimed
+        // in-memory hints for the immediate reconciliation attempt.
         const reconciliationJob = reconciling && !reconciling.payload
             ? new EformsignDocumentJobEntity({ ...reconciling, payload: job.payload })
             : reconciling ?? job;
@@ -490,6 +523,20 @@ export class EformsignDocumentJobWorkerService {
     }
 
     private async reconcile(job: EformsignDocumentJobEntity): Promise<void> {
+        const revisionBlockReason = revisionRecoveryBlockReason(job);
+        if (revisionBlockReason) {
+            if (!job.leaseToken) {
+                this.logger.warn(`Eformsign revision job ${job.id} has no recovery lease`);
+                return;
+            }
+            const attention = await this.repository.markRequiresAttention(
+                job.id,
+                job.leaseToken,
+                revisionBlockReason,
+            );
+            await this.recordAutoFinalizeTerminalOutcome(job, attention, revisionBlockReason);
+            return;
+        }
         if (!(await this.ownsTarget(job))) {
             if (job.leaseToken) {
                 await this.repository.markRequiresAttention(

@@ -500,6 +500,19 @@ function assertFutureSessionPlan(
     }
 }
 
+function isRevisionDocumentJobPayload(value: unknown): boolean {
+    let parsed = value;
+    if (typeof value === "string") {
+        try {
+            parsed = JSON.parse(value) as unknown;
+        } catch {
+            return false;
+        }
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+    return (parsed as Record<string, unknown>)["kind"] === "service_record_revision";
+}
+
 /**
  * A historical eformsign job may have lost its client_id when the provider
  * finalization path was enqueued.  Such a row is owned only when its document
@@ -1527,7 +1540,11 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 SET status = 'failed',
                     last_error_code = 'SERVICE_RECORD_REVISION_SUPERSEDED',
                     active_key = NULL,
-                    payload = NULL,
+                    payload = CASE
+                        WHEN jsonb_typeof(job.payload) = 'object'
+                            AND job.payload->>'kind' = 'service_record_revision' THEN job.payload
+                        ELSE NULL
+                    END,
                     heartbeat_at = NULL,
                     lease_token = NULL,
                     completed_at = now(),
@@ -1552,7 +1569,12 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         }
         const fallback = tx as unknown as {
             eformsign_document_job?: {
-                findMany?: (args: unknown) => Promise<Array<{ id?: string; progressStep?: string; status?: string }>>;
+                findMany?: (args: unknown) => Promise<Array<{
+                    id?: string;
+                    progressStep?: string;
+                    status?: string;
+                    payload?: unknown;
+                }>>;
                 updateMany?: (args: unknown) => Promise<unknown>;
             };
             message_trigger_job?: {
@@ -1590,21 +1612,45 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 "A service-record message dispatch is already irreversible",
             );
         }
-        await fallback.eformsign_document_job?.updateMany?.({
+        const cancellableDocuments = await fallback.eformsign_document_job?.findMany?.({
             where: {
                 OR: ownedDocumentPredicate,
                 status: { in: ["queued", "processing", "reconciling"] },
             },
-            data: {
-                status: "failed",
-                lastErrorCode: "SERVICE_RECORD_REVISION_SUPERSEDED",
-                activeKey: null,
-                payload: null,
-                heartbeatAt: null,
-                leaseToken: null,
-                completedAt: new Date(),
-            },
-        });
+            select: { id: true, payload: true },
+        }) ?? [];
+        const revisionDocumentIds = cancellableDocuments
+            .filter((document): document is { id: string; payload?: unknown } => (
+                typeof document.id === "string"
+                && isRevisionDocumentJobPayload(document.payload)
+            ))
+            .map((document) => document.id);
+        const legacyDocumentIds = cancellableDocuments
+            .filter((document): document is { id: string; payload?: unknown } => (
+                typeof document.id === "string"
+                && !isRevisionDocumentJobPayload(document.payload)
+            ))
+            .map((document) => document.id);
+        const cancellationData = {
+            status: "failed",
+            lastErrorCode: "SERVICE_RECORD_REVISION_SUPERSEDED",
+            activeKey: null,
+            heartbeatAt: null,
+            leaseToken: null,
+            completedAt: new Date(),
+        };
+        if (revisionDocumentIds.length > 0) {
+            await fallback.eformsign_document_job?.updateMany?.({
+                where: { id: { in: revisionDocumentIds } },
+                data: cancellationData,
+            });
+        }
+        if (legacyDocumentIds.length > 0) {
+            await fallback.eformsign_document_job?.updateMany?.({
+                where: { id: { in: legacyDocumentIds } },
+                data: { ...cancellationData, payload: null },
+            });
+        }
         await fallback.message_trigger_job?.updateMany?.({
             where: { branchId, clientId, status: { in: ["pending", "processing"] } },
             data: {
