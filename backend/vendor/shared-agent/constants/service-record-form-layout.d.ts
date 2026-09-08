@@ -4,6 +4,8 @@ export interface ServiceRecordCountSubKey {
     key: string;
     label: string;
     unit: string;
+    min?: number;
+    step?: number;
 }
 export interface ServiceRecordFieldDescriptor {
     key: string;

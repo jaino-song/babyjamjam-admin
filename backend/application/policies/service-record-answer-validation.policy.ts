@@ -15,6 +15,10 @@ type AnswerDefinition = {
     key: string;
     kind: ServiceRecordFieldDescriptor["kind"] | "countSubKey" | "radioSubKey";
     options: readonly string[];
+    numeric?: {
+        min: number;
+        step: number;
+    };
 };
 
 function deriveAnswerDefinitions(): Map<string, AnswerDefinition> {
@@ -29,6 +33,7 @@ function deriveAnswerDefinitions(): Map<string, AnswerDefinition> {
                         key: subKey.key,
                         kind: "countSubKey",
                         options: [],
+                        numeric: { min: subKey.min ?? 0, step: subKey.step ?? 1 },
                     });
                 }
                 continue;
@@ -84,6 +89,40 @@ function assertString(value: unknown, key: string, maxLength = MAX_ANSWER_STRING
     return value;
 }
 
+function isNumericString(value: string): boolean {
+    return /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value);
+}
+
+function isStepAligned(value: number, step: number): boolean {
+    if (Number.isInteger(value)) return true;
+    const quotient = value / step;
+    const nearest = Math.round(quotient);
+    const tolerance = Number.EPSILON * Math.abs(quotient) * 10;
+    return Math.abs(quotient - nearest) <= tolerance;
+}
+
+function assertNumeric(value: unknown, key: string, numeric: { min: number; step: number }): string | number {
+    if (typeof value === "string") {
+        if (value.length > MAX_ANSWER_STRING_LENGTH) fail(`Invalid service-record field: ${key}`);
+        if (value === "") return value;
+        if (!isNumericString(value)) fail(`Invalid service-record field: ${key}`);
+    }
+
+    const parsed = typeof value === "number"
+        ? value
+        : typeof value === "string"
+            ? Number(value)
+            : Number.NaN;
+    if (!Number.isFinite(parsed) || parsed < numeric.min || !isStepAligned(parsed - numeric.min, numeric.step)) {
+        fail(`Invalid service-record field: ${key}`);
+    }
+    if (numeric.step === 1 && !Number.isSafeInteger(parsed)) {
+        fail(`Invalid service-record field: ${key}`);
+    }
+    if (typeof value === "number" || typeof value === "string") return value;
+    return fail(`Invalid service-record field: ${key}`);
+}
+
 function assertScalar(value: unknown, key: string): string | number {
     if (typeof value === "number") {
         if (!Number.isFinite(value)) fail(`Invalid service-record field: ${key}`);
@@ -119,7 +158,9 @@ function validateAnswerValue(key: string, value: unknown): unknown {
 
     if (definition.kind === "radioSubKey") return assertString(value, key, MAX_MULTI_VALUE_LENGTH);
 
-    if (definition.kind === "countSubKey") return assertScalar(value, key);
+    if (definition.kind === "countSubKey") {
+        return assertNumeric(value, key, definition.numeric ?? { min: 0, step: 1 });
+    }
 
     if (definition.kind === "check") {
         if (typeof value !== "boolean") fail(`Invalid service-record field: ${key}`);

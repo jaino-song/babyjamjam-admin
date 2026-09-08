@@ -325,7 +325,12 @@ describe("ServiceRecordEntryService.upsertSession", () => {
 
         await service.upsertSession(context, 1, createDto({
             answers: {
+                sitzBath: "실시",
+                sleep: "잘 잠",
+                stool: "정상변",
                 perineum: ["이상없음"],
+                meals_meal: "3",
+                temperature_temp: "36.7",
                 etcService: "flat 기타서비스",
                 notes: "flat 특이사항",
                 paymentConfirmed: true,
@@ -337,12 +342,37 @@ describe("ServiceRecordEntryService.upsertSession", () => {
 
         expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
             create: expect.objectContaining({
-                answers: { perineum: ["이상없음"] },
+                answers: {
+                    sitzBath: "실시",
+                    sleep: "잘 잠",
+                    stool: "정상변",
+                    perineum: ["이상없음"],
+                    meals_meal: "3",
+                    temperature_temp: "36.7",
+                },
                 etcService: "flat 기타서비스",
                 notes: "flat 특이사항",
                 paymentConfirmed: true,
             }),
         }));
+    });
+
+    it.each([
+        ["meals_meal", "1.5"],
+        ["temperature_temp", "36.75"],
+        ["meals_meal", "NaN"],
+    ])("rejects invalid numeric answer %s=%s before opening a write transaction", async (key, value) => {
+        const { service, prisma, upsert } = createHarness();
+
+        await expect(service.upsertSession(
+            context,
+            1,
+            createDto({ answers: { [key]: value } }),
+            false,
+        )).rejects.toBeInstanceOf(BadRequestException);
+
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+        expect(upsert).not.toHaveBeenCalled();
     });
 
     it.each([
