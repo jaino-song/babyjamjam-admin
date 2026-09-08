@@ -209,10 +209,20 @@ export interface ServiceRecordRevisionDispatchContext {
     businessFingerprint: string;
     plannedSessionCount: number | null;
     plannedSessionDates: Array<{ sessionIndex: number; serviceDate: string }>;
-    documentSyncStatus: string;
+    documentSyncStatus: ServiceRecordRevisionDocumentSyncStatus;
     lifecycleStatus: string;
     formVersion: number;
 }
+
+/** Durable document-generation states understood by dispatch adapters. */
+export type ServiceRecordRevisionDocumentSyncStatus =
+    | "not_required"
+    | "pending"
+    | "waiting_for_completion"
+    | "capability_unverified"
+    | "completed"
+    | "failed"
+    | "unknown";
 
 export type ServiceRecordDispatchAuthorizationKind = "allow" | "stale" | "lost";
 
@@ -225,6 +235,10 @@ export interface ServiceRecordDispatchAuthorizationResult {
 export interface ServiceRecordRevisionGenerationInput extends ServiceRecordRevisionDispatchContext {
     snapshotReference: string;
     generation: string;
+    /** Immutable complete input captured under the finalization lock. */
+    immutablePayload: Record<string, unknown>;
+    payloadFingerprint: string;
+    completeness: "complete";
 }
 
 export interface SignatureDocStatus {

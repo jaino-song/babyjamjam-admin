@@ -1,5 +1,6 @@
 import { BadRequestException, Inject, Injectable } from "@nestjs/common";
 import { createHash } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 
 import { ContractDataDto } from "application/dto/contract.dto";
 import {
@@ -40,6 +41,24 @@ export interface EnqueueFinalizeDocumentParams {
 export interface EnqueueDocumentJobResult {
     job: Awaited<ReturnType<IEformsignDocumentJobRepository["enqueue"]>>["job"];
     existing: boolean;
+}
+
+/**
+ * Caller-owned transaction boundary used by atomic service-record confirm
+ * and finalization. The payload is already server-derived; this method never
+ * opens a nested transaction or performs a provider/client lookup.
+ */
+export interface EnqueueEformsignDocumentJobInTransactionParams {
+    branchId: string;
+    clientId?: number | null;
+    documentId?: string | null;
+    jobType: "create_document" | "finalize_document";
+    source: EformsignDocumentJobSource;
+    requestKey: string;
+    activeKey: string;
+    payload: EformsignDocumentJobPayload;
+    payloadFingerprint: string;
+    createdByUserId?: string | null;
 }
 
 function assertContractDataPhones(contractData: ContractDataDto): void {
@@ -132,6 +151,29 @@ export class EformsignDocumentJobService {
             activeKey: `finalize:${params.documentId}`,
             payload,
             payloadFingerprint: sha256CanonicalJson(payload),
+            createdByUserId: params.createdByUserId,
+        });
+    }
+
+    /**
+     * Enqueue a provider intent without escaping the caller's transaction.
+     * Authorization and ownership are deliberately the caller's
+     * responsibility; no root repository or external API is reached here.
+     */
+    async enqueueInTransaction(
+        tx: Prisma.TransactionClient,
+        params: EnqueueEformsignDocumentJobInTransactionParams,
+    ): Promise<EnqueueDocumentJobResult> {
+        return this.repository.enqueueInTransaction(tx, {
+            branchId: params.branchId,
+            clientId: params.clientId,
+            documentId: params.documentId,
+            jobType: params.jobType,
+            source: params.source,
+            requestKey: params.requestKey,
+            activeKey: params.activeKey,
+            payload: params.payload,
+            payloadFingerprint: params.payloadFingerprint,
             createdByUserId: params.createdByUserId,
         });
     }

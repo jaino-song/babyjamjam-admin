@@ -1245,6 +1245,11 @@ model service_record_edit_draft {
   createdAt             DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   discardedAt           DateTime?           @map("discarded_at") @db.Timestamptz(6)
+  confirmedByUserId     String?             @map("confirmed_by_user_id") @db.Uuid
+  confirmedAt           DateTime?           @map("confirmed_at") @db.Timestamptz(6)
+  confirmationIdempotencyKey String?        @map("confirmation_idempotency_key") @db.Uuid
+  confirmationFingerprint String?           @map("confirmation_fingerprint") @db.Char(64)
+  confirmationResponse  Json?               @map("confirmation_response") @db.JsonB
   branch                branch              @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   serviceRecordCase     service_record_case @relation(fields: [branchId, serviceRecordCaseId], references: [branchId, id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_edit_draft_case_branch_fkey")
 
