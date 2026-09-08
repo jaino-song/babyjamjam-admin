@@ -1,12 +1,12 @@
 # 구현 검증 현황
 
-2026-09-08 로컬 통합 기준. Phase1 완료, Phase2 저장·화면 연결 구현/통합 검사 완료 및 Sol 최종 감사 진행 중이다. Phase3~6 전체 구현 또는 외부 연동 완료를 뜻하지 않는다. 과거 화면 초안 기록은 아래에 별도 보존한다.
+2026-09-08 로컬 통합 기준. Phase1·2 구현/통합 검사와 Sol 최종 감사를 완료했고 Phase3 구현을 시작한다. Phase3~6 전체 구현 또는 외부 연동 완료를 뜻하지 않는다. 과거 화면 초안 기록은 아래에 별도 보존한다.
 
 | 확인 대상 | 현재 증거 | 상태/한계 |
 |---|---|---|
 | 같은 전체 제공기록지 화면, 새 탭, 전체 회차/추가 과거 기록, 관리자 진입 | Phase1 Sol SHIP; 관리자 mock 브라우저24개(390/480/1280) | PASS, 실제 운영 인증 시험과 구분 |
 | 초안/revision 불변성, 같은 case/branch 참조, 활성 초안 unique, CAS, 연속 revision 번호 | Task2.1 PG empty/legacy 각11개, 메인 통합 legacy11개, Prisma diff empty; 보정 Sol SHIP | PASS, 자체 생성 loopback PostgreSQL만 사용 |
-| 초안 GET 무생성, 명시적 시작/재개, PATCH/취소, 원본 업무지문, 허용 입력 | 통합 backend6 suites72 tests, 생산 빌드/생성물 runtime import | PASS; Phase2 종합 감사 중 |
+| 초안 GET 무생성, 명시적 시작/재개, PATCH/취소, 원본 업무지문, 허용 입력 | 통합 backend6 suites72 tests, 생산 빌드/생성물 runtime import | PASS; Phase2 Sol SHIP |
 | proxy 입력/오류, 관리자 편집/충돌 처리 | 통합 frontend3 suites33 tests; malformed/null/array 요청 upstream 미호출 | PASS |
 | 초안 저장·새로고침 복원·취소, 완료된 부분기록 편집,409/403 입력 보존/명시적 최신값 복원 | `/tmp/bjj-admin-draft.config.cjs`, `/tmp/bjj-admin-draft-tests/admin-draft.spec.ts`, `/tmp/bjj-admin-draft-results` 총9개 | PASS, API 모의 응답 |
 | 기존 제공인력 제출/최종 제출/실패 보존 | `/tmp/bjj-service-record-draft-public.config.cjs`, mobile/tests/service-record-final-flow.spec.ts, `/tmp/bjj-service-record-draft-public-results` 총12개 | PASS, API 모의 응답. 첫 다른 worktree runner 호출은 미실행 오류 후 수정 |
