@@ -49,8 +49,16 @@ export function deriveServiceRecordDocumentSyncStatus(
     facts: ServiceRecordDocumentSyncFacts,
 ): ServiceRecordRevisionDocumentSyncStatus {
     const job = facts.revisionJob;
-    if (!job) return "unknown";
-    if (job.revisionId === null) return "not_required";
+    // A case with no current revision is the legacy path. A non-null usable
+    // pointer or revision-bearing job contradicts that identity and must not
+    // be allowed to downgrade the source to `not_required`.
+    if (facts.currentRevisionId === null) {
+        if (facts.currentUsableRevisionId !== null || Boolean(job && job.revisionId !== null)) {
+            return "unknown";
+        }
+        return "not_required";
+    }
+    if (!job || job.revisionId === null) return "unknown";
     if (
         typeof job.revisionId !== "string"
         || job.revisionId.length === 0
