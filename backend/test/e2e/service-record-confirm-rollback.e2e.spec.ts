@@ -85,7 +85,7 @@ describeE2E("service-record confirmation rollback (real disposable PostgreSQL)",
         );
         expect(preview.blockingReasons).toEqual([]);
 
-        const [beforeClient, beforeCase, beforeDays, beforeAssignment, beforeSchedule, beforeDraft, beforeRevisions, beforeDocumentJobs] = await Promise.all([
+        const [beforeClient, beforeCase, beforeDays, beforeAssignment, beforeSchedule, beforeDraft, beforeRevisions, beforeDocumentJobs, beforeMessageJobs] = await Promise.all([
             prisma.client.findUniqueOrThrow({ where: { id: fixture.client.id } }),
             prisma.service_record_case.findUniqueOrThrow({ where: { id: fixture.record.id } }),
             prisma.service_record_day.findMany({
@@ -97,6 +97,7 @@ describeE2E("service-record confirmation rollback (real disposable PostgreSQL)",
             prisma.service_record_edit_draft.findUniqueOrThrow({ where: { id: draft.id } }),
             prisma.service_record_revision.count({ where: { serviceRecordCaseId: fixture.record.id } }),
             prisma.eformsign_document_job.findMany({ where: { clientId: fixture.client.id }, select: { id: true } }),
+            prisma.message_trigger_job.findMany({ where: { branchId: fixture.branch.id, clientId: fixture.client.id }, orderBy: { id: "asc" } }),
         ]);
 
         let injectFailure = false;
@@ -145,7 +146,7 @@ describeE2E("service-record confirmation rollback (real disposable PostgreSQL)",
         )).rejects.toThrow(`ROLLBACK_AFTER_${boundary.toUpperCase()}_WRITE`);
         expect(faultReached).toBe(true);
 
-        const [afterClient, afterCase, afterDays, afterAssignment, afterSchedule, afterDraft, afterRevisions, afterDocumentJobs] = await Promise.all([
+        const [afterClient, afterCase, afterDays, afterAssignment, afterSchedule, afterDraft, afterRevisions, afterDocumentJobs, afterMessageJobs] = await Promise.all([
             prisma.client.findUniqueOrThrow({ where: { id: fixture.client.id } }),
             prisma.service_record_case.findUniqueOrThrow({ where: { id: fixture.record.id } }),
             prisma.service_record_day.findMany({
@@ -157,6 +158,7 @@ describeE2E("service-record confirmation rollback (real disposable PostgreSQL)",
             prisma.service_record_edit_draft.findUniqueOrThrow({ where: { id: draft.id } }),
             prisma.service_record_revision.count({ where: { serviceRecordCaseId: fixture.record.id } }),
             prisma.eformsign_document_job.findMany({ where: { clientId: fixture.client.id }, select: { id: true } }),
+            prisma.message_trigger_job.findMany({ where: { branchId: fixture.branch.id, clientId: fixture.client.id }, orderBy: { id: "asc" } }),
         ]);
 
         expect(afterClient).toEqual(beforeClient);
@@ -167,5 +169,6 @@ describeE2E("service-record confirmation rollback (real disposable PostgreSQL)",
         expect(afterDraft).toEqual(beforeDraft);
         expect(afterRevisions).toBe(beforeRevisions);
         expect(afterDocumentJobs).toEqual(beforeDocumentJobs);
+        expect(afterMessageJobs).toEqual(beforeMessageJobs);
     });
 });

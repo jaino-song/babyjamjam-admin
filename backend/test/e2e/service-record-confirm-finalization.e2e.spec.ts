@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { PrismaClient } from "@prisma/client";
+import { ConfigService } from "@nestjs/config";
+import { EformsignDocumentJobWorkerService } from "application/services/eformsign-document-job-worker.service";
+import { Prisma, PrismaClient } from "@prisma/client";
 
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import { EformsignDocumentJobService } from "application/services/eformsign-document-job.service";
@@ -316,4 +318,100 @@ describeE2E("service-record finalization eligibility and frozen input (real disp
         expect(jobs).toHaveLength(1);
         expect(JSON.stringify(jobs[0]?.payload)).toBe(frozenPayload);
     });
+    it("uses the updated future deadline when recomputing an incomplete stale READY case", async () => {
+        const fixture = await createServiceRecordConfirmFixture(prisma);
+        await confirmAdminDateMove(prisma, fixture);
+        await prisma.service_record_case.update({ where: { id: fixture.record.id }, data: {
+            status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE,
+            finalizationDueAt: new Date("2026-09-23T11:00:00.000Z"),
+        } });
+        const { lifecycle } = createFinalizer(prisma);
+        jest.useFakeTimers({ now: new Date("2026-09-24T00:00:00.000Z"), doNotFake: [
+            "nextTick", "queueMicrotask", "setImmediate", "clearImmediate", "setInterval", "clearInterval",
+            "setTimeout", "clearTimeout", "hrtime", "performance",
+        ] });
+        try {
+            const current = await lifecycle.recompute(fixture.record.id);
+            expect(current.status).toBe(SERVICE_RECORD_CASE_STATUS.IN_PROGRESS);
+            expect(current.finalizationDueAt?.toISOString()).toBe("2026-09-29T11:00:00.000Z");
+        } finally { jest.useRealTimers(); }
+    });
+
+    it.each(["missing", "malformed", "day_mismatch"] as const)("refuses a complete generation with a %s current vector", async (mode) => {
+        const fixture = await createServiceRecordConfirmFixture(prisma);
+        const confirmed = await confirmAdminDateMove(prisma, fixture);
+        await completeServiceRecordFinalizationCase(prisma, fixture);
+        const { finalizer, lifecycle } = createFinalizer(prisma);
+        await lifecycle.recompute(fixture.record.id);
+        const current = await prisma.service_record_case.findUniqueOrThrow({ where: { id: fixture.record.id } });
+        const vector = current.plannedSessions as Prisma.JsonArray;
+        const mismatched = vector.map((entry, index) => index === 0
+            ? { ...(entry as Prisma.JsonObject), serviceDate: "2026-09-08" } : entry);
+        await prisma.service_record_case.update({ where: { id: fixture.record.id }, data: {
+            plannedSessions: mode === "missing" ? Prisma.DbNull
+                : mode === "malformed" ? { broken: true } : mismatched as Prisma.InputJsonValue,
+        } });
+        const result = await claimFinalizationCase(finalizer, fixture.record.id, fixture.branch.id, new Date());
+        expect(result.claimed).toBe(false);
+        expect(result.blockedGeneration).toBe(true);
+        expect(await prisma.eformsign_document_job.count({ where: {
+            requestKey: `service-record-initial-finalization:${confirmed.revisionId}`,
+        } })).toBe(0);
+    });
+
+    it.each(["claimed", "recovered"] as const)("preserves frozen input through a %s worker refusal and a finalization retry", async (mode) => {
+        const fixture = await createServiceRecordConfirmFixture(prisma);
+        const confirmed = await confirmAdminDateMove(prisma, fixture);
+        await completeServiceRecordFinalizationCase(prisma, fixture);
+        const { finalizer, lifecycle } = createFinalizer(prisma);
+        await lifecycle.recompute(fixture.record.id);
+        await claimFinalizationCase(finalizer, fixture.record.id, fixture.branch.id, new Date());
+        const requestKey = `service-record-initial-finalization:${confirmed.revisionId}`;
+        const frozen = await prisma.eformsign_document_job.findUniqueOrThrow({ where: { requestKey } });
+        await prisma.eformsign_document_job.update({ where: { id: frozen.id }, data: {
+            status: "processing", leaseToken: randomUUID(),
+            progressStep: mode === "recovered" ? "creating" : null,
+            heartbeatAt: mode === "recovered" ? new Date("0101-01-01T00:00:00.000Z") : new Date(),
+        } });
+        const repository = new SbEformsignDocumentJobRepository(prisma as unknown as PrismaService);
+        // Restrict worker discovery to this synthetic fixture and disable
+        // unrelated retention. State transitions and ancient-cutoff recovery
+        // still execute the actual repository SQL on the disposable database.
+        const scoped = new Proxy(repository, { get(target, property, receiver) {
+            if (property === "deleteExpiredTerminal") return async () => 0;
+            if (property === "recoverStale") return () => mode === "recovered"
+                ? target.recoverStale(new Date("0102-01-01T00:00:00.000Z")) : Promise.resolve([]);
+            if (property === "claimDue") return async () => {
+                if (mode === "recovered") return [];
+                const job = await prisma.$transaction((tx) => target.findByRequestKeyInTransaction(tx, requestKey));
+                if (!job) throw new Error("Missing frozen worker fixture");
+                return [job];
+            };
+            const value: unknown = Reflect.get(target, property, receiver);
+            return typeof value === "function" ? value.bind(target) : value;
+        } });
+        const dispatch = { execute: jest.fn() };
+        const finalize = { execute: jest.fn() };
+        const reconciliation = { reconcile: jest.fn(async () => ({ status: "requires_attention" })) };
+        const worker = new EformsignDocumentJobWorkerService(
+            new ConfigService({ EFORMSIGN_DOCUMENT_JOBS_WORKER_ENABLED: "true" }), scoped,
+            dispatch as never, finalize as never, reconciliation as never,
+            { recordTerminalFailure: jest.fn() } as never,
+            new SbEformsignDocRepository(prisma as unknown as PrismaService),
+            new SbClientRepository(prisma as unknown as PrismaService),
+            { holdsLease: () => true } as never,
+        );
+        await worker.processDueJobs();
+        expect(dispatch.execute).not.toHaveBeenCalled();
+        expect(finalize.execute).not.toHaveBeenCalled();
+        expect(reconciliation.reconcile).not.toHaveBeenCalled();
+        const blocked = await prisma.eformsign_document_job.findUniqueOrThrow({ where: { id: frozen.id } });
+        expect(blocked.status).toBe("requires_attention");
+        expect(blocked.payload).toEqual(frozen.payload);
+        expect(blocked.payloadFingerprint).toBe(frozen.payloadFingerprint);
+        await expect(claimFinalizationCase(finalizer, fixture.record.id, fixture.branch.id, new Date()))
+            .resolves.toMatchObject({ claimed: false, blockedGeneration: true });
+        expect(await prisma.eformsign_document_job.count({ where: { requestKey } })).toBe(1);
+    });
+
 });

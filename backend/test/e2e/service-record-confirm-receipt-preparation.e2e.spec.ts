@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { Prisma } from "@prisma/client";
+import type { ServiceRecordRevisionDispatchContext } from "@babyjamjam/shared/types/service-record";
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "application/services/sms-trigger-delivery.service";
@@ -121,4 +123,31 @@ describeE2E("receipt preparation before atomic authorization (actual PostgreSQL)
             .not.toBe("dispatching");
         expect(await confirm()).toMatchObject({ status: "confirmed" });
     });
+    it.each(["stale", "capability_unverified"] as const)("rejects an already %s revision before any receipt preparation", async (mode) => {
+        const { fixture, jobs, job, confirm } = await setup();
+        await confirm();
+        const documentJob = await prisma.eformsign_document_job.findFirstOrThrow({
+            where: { clientId: fixture.client.id }, orderBy: { createdAt: "desc" },
+        });
+        const context = (documentJob.payload as unknown as { context: ServiceRecordRevisionDispatchContext }).context;
+        expect(context.revisionId).toBeTruthy();
+        // Simulate a retained/recovered queued job with its captured revision
+        // context. The real dispatcher must reject before touching the adapter.
+        await prisma.message_trigger_job.update({ where: { id: job.id }, data: {
+            status: "pending", canceledAt: null, cancelReason: null, claimToken: null,
+            payload: JSON.parse(JSON.stringify({ ...job.payload, serviceRecordRevisionContext: { ...context,
+                businessFingerprint: mode === "stale" ? "0".repeat(64) : context.businessFingerprint,
+            } })) as Prisma.InputJsonValue,
+        } });
+        const resumed = await jobs.findByIdInBranch(fixture.branch.id, job.id);
+        if (!resumed) throw new Error("Missing resumed receipt fixture");
+        const prepareJob = jest.fn(async () => ({ snapshot: Object.freeze({}), serializedSnapshot: "synthetic" }));
+        const sendPreparedJob = jest.fn(async () => true);
+        await dispatcher(jobs, { prepareJob, sendPreparedJob })(resumed, fixture.branch.id);
+        expect(prepareJob).not.toHaveBeenCalled();
+        expect(sendPreparedJob).not.toHaveBeenCalled();
+        expect((await prisma.message_trigger_job.findUniqueOrThrow({ where: { id: job.id } })).status)
+            .not.toBe("dispatching");
+    });
+
 });
