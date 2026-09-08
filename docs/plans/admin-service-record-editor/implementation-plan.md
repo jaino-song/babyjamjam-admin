@@ -183,6 +183,8 @@ Phase2 입력 검토 보정: 저장소 구현은 기존 `backend/infrastructure/
 
 Phase3 입력 감사 보정: 대상 식별자를 먼저 찾되 client 잠금 뒤 schedule을 다시 읽고, 기존/변경 직원의 합집합을 정렬해 잠근 뒤 case와 정렬된 schedule/assignment/day를 잠근다. 이후 branch·소유권·대상 집합을 재검사하고 쓴다. entry도 client/직원 전에 case를 잠그지 않는다. lifecycle의 업무 동기화는 이 경계 안에서 실행하거나 같은 원본 업무 지문의 CAS로 뒤늦은 덮어쓰기를 거절한다. 최종화의 case-only CAS는 이후 client/직원 잠금을 잡지 않는 종료 경로로만 허용한다. 실제 격리 PostgreSQL의 두 트랜잭션을 barrier로 반대 방향에서 진입시켜 유한 lock timeout 내 완료와 대상 집합 변경 재검증을 시험한다.
 
+Phase3 잠금 조사 추가 근거: `ServiceRecordLifecycleService.syncEndDateFromMirroredContract`는 현재 eformsign_doc를 먼저 잠근 뒤 client 업무 변경으로 이어진다. 이 경로도 식별자 조회 → client/직원/case → 문서/관련 작업 순서로 정렬하고 잠금 뒤 문서 연결·generation을 재확인한다. case/doc만 잠그는 snapshot 완료 경로는 뒤에서 client/직원 잠금을 얻지 않는 종료 경로로 제한한다. 관리자 확정과 mirrored contract 기간 동기화의 반대 진입 경쟁도 격리 DB 테스트에 포함한다.
+
 N은 지원하는 달력의 완전한 시작/종료일이 있을 때만 초기화한다. 초기화 후 duration이나 늘어난 외곽 기간으로 덮어쓰지 않는다. 근거가 없는 legacy/0영업일/지원하지 않는 달력은 회차를 합성하지 않고 수정 불가 사유를 표시한다. 예정 벡터는1..N 각 회차 하나이며 실제/예정 근거가 모순되면 확정을 막는다. 양수·음수 영업일 이동을 각 기존 날짜에 독립 적용해 불규칙 간격을 보존한다.
 
 미리보기 식별값은 draft ID/version, sourceFingerprint, 현재 case 잠금 version, N, 전후 날짜 벡터, 귀속 근거, 영향받는 배정 범위에 결속한다. 실제 업무 지문이 바뀌면409로 거절하며 식별값을 발급하지 않는다. 미리보기 전 lifecycle-only 변경은 최신 잠금 version을 사용하되, 미리보기 후 version 변경은 재미리보기를 요구한다. duration15/N13, legacy 귀속 모호함, 전후 이동·공휴일·연도 경계, 불규칙 간격, 미래 day 미생성, 지문/version 경합, 식별값 변조, 기존 고객 간 직원 일정 겹침 허용을 검증한다.
