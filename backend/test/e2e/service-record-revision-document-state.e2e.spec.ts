@@ -86,6 +86,10 @@ describeE2E("revision document state ownership and generation CAS (disposable Po
         expect(await repository.advanceRevisionDocumentState({ branchId: other.branch.id,
             clientId: input.clientId, stateId: state.id, expectedGeneration: state.generation,
             expectedVersion: state.version, step: "completed", status: "completed" })).toBeNull();
+        expect(await repository.findRevisionDocumentStateForBranch(input.branchId, input.revisionId, state.id))
+            .toMatchObject({ id: state.id, clientId: input.clientId });
+        expect(await repository.findRevisionDocumentStateForBranch(other.branch.id, input.revisionId, state.id)).toBeNull();
+        expect(await repository.findRevisionDocumentStateForBranch(input.branchId, randomUUID(), state.id)).toBeNull();
         const retained = await repository.findRevisionDocumentState(input.branchId, input.clientId, input.revisionId, state.id);
         expect(retained?.version).toBe(state.version);
     });
