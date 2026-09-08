@@ -415,6 +415,11 @@ describe("AdminServiceRecordEditService", () => {
             ...started.draft,
             changes: { sessions: [{ sessionIndex: 2, notes: "수정" }] },
         };
+        const atomicRepository = harness.repository as typeof harness.repository & { loadDraftWithSource: jest.Mock };
+        atomicRepository.loadDraftWithSource = jest.fn().mockResolvedValue({
+            draft: activeDraft,
+            source: previewSourceSnapshot(),
+        });
         harness.repository.findDraftById.mockResolvedValue(activeDraft);
 
         const result = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
@@ -430,6 +435,68 @@ describe("AdminServiceRecordEditService", () => {
         expect(result.contentChanges.changedSessionIndexes).toEqual([2]);
         expect(result.blockingReasons).toEqual([]);
         expect(harness.repository.updateDraft).not.toHaveBeenCalled();
+        expect(atomicRepository.loadDraftWithSource).toHaveBeenCalledWith(BRANCH_ID, DRAFT_ID);
+        expect(harness.repository.findDraftById).not.toHaveBeenCalled();
+        expect(harness.repository.loadSource).toHaveBeenCalledTimes(1);
+    });
+
+    it("binds signature and document metadata into the preview identifier", async () => {
+        const source = previewSourceSnapshot();
+        source.signatureMetadata = {
+            treatment: "preserve_existing",
+            evidence: "observed",
+            sessions: [{
+                sessionIndex: 1,
+                hasSignature: true,
+                signedAt: "2026-09-01T03:00:00.000Z",
+                submittedAt: "2026-09-01T04:00:00.000Z",
+            }],
+        };
+        source.documentScope = {
+            evidence: "observed",
+            serviceRecordSnapshot: {
+                documentIds: ["snapshot-doc-1"],
+                snapshotVersion: 3,
+                chunks: [{ documentId: "snapshot-doc-1", snapshotVersion: 3, snapshotChunkIndex: 0 }],
+            },
+            currentRevision: { id: "revision-1", revisionNumber: 2, formVersion: 3 },
+            form: { version: 3 },
+            contract: { currentDocumentId: "contract-doc-1", stage: "in_progress" },
+        };
+        const harness = createHarness({ source });
+        const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+        if (!started.draft) throw new Error("expected a draft");
+        expect(harness.repository.createOrResumeDraft).toHaveBeenCalledWith(expect.objectContaining({
+            sourceSnapshot: expect.objectContaining({
+                signatureMetadata: source.signatureMetadata,
+                documentScope: source.documentScope,
+            }),
+        }));
+        const activeDraft = { ...started.draft, changes: {} };
+        const atomicRepository = harness.repository as typeof harness.repository & { loadDraftWithSource: jest.Mock };
+        atomicRepository.loadDraftWithSource = jest.fn().mockResolvedValue({ draft: activeDraft, source });
+
+        const result = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+        });
+
+        expect(result.signatureMetadata).toEqual(source.signatureMetadata);
+        expect(result.documentScope).toEqual(source.documentScope);
+        expect(result.previewId).toMatch(/^srp_[a-f0-9]{64}$/);
+        const changed = { ...source, documentScope: {
+            ...source.documentScope,
+            contract: { currentDocumentId: "contract-doc-2", stage: "completed" },
+        } };
+        const changedHarness = createHarness({ source: changed });
+        const changedStarted = await changedHarness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+        if (!changedStarted.draft) throw new Error("expected a changed draft");
+        const changedDraft = { ...changedStarted.draft, changes: {} };
+        const changedAtomicRepository = changedHarness.repository as typeof changedHarness.repository & { loadDraftWithSource: jest.Mock };
+        changedAtomicRepository.loadDraftWithSource = jest.fn().mockResolvedValue({ draft: changedDraft, source: changed });
+        const changedPreview = await changedHarness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: changedDraft.draftVersion,
+        });
+        expect(changedPreview.previewId).not.toBe(result.previewId);
     });
 
     it("binds a preview to the current source fingerprint and rejects stale drafts", async () => {

@@ -7,11 +7,13 @@ import {
     shiftServiceRecordScheduleSuffix,
 } from "@babyjamjam/shared/utils/service-record-schedule";
 import type {
+    ServiceRecordEditDocumentScope,
     ServiceRecordEditPreviewAssignmentRange,
     ServiceRecordEditPreviewBlockingReason,
     ServiceRecordEditPreviewContentChanges,
     ServiceRecordEditPreviewResponse,
     ServiceRecordEditPreviewVector,
+    ServiceRecordEditSignatureMetadata,
     ServiceRecordPlannedSession,
 } from "@babyjamjam/shared/types/service-record";
 
@@ -629,6 +631,59 @@ function vectorDates(
     };
 }
 
+function signatureMetadataForPreview(
+    source: ServiceRecordEditSource,
+    blockingReasons: ServiceRecordEditPreviewBlockingReason[],
+): ServiceRecordEditSignatureMetadata {
+    const stored = source.signatureMetadata;
+    if (stored) {
+        return {
+            treatment: blockingReasons.length > 0 || stored.evidence === "unverified"
+                ? "manual_review"
+                : stored.treatment,
+            evidence: stored.evidence,
+            sessions: [...stored.sessions].sort((left, right) => left.sessionIndex - right.sessionIndex),
+        };
+    }
+
+    return {
+        treatment: blockingReasons.length > 0 ? "manual_review" : "preserve_existing",
+        evidence: "observed",
+        sessions: source.sessions
+            .map((session) => ({
+                sessionIndex: session.sessionIndex,
+                hasSignature: Boolean(session.clientSignature),
+                signedAt: session.clientSignedAt,
+                submittedAt: session.submittedAt,
+            }))
+            .sort((left, right) => left.sessionIndex - right.sessionIndex),
+    };
+}
+
+function documentScopeForPreview(source: ServiceRecordEditSource): ServiceRecordEditDocumentScope {
+    if (source.documentScope) return source.documentScope;
+    return {
+        evidence: "unverified",
+        serviceRecordSnapshot: {
+            documentIds: [],
+            snapshotVersion: null,
+            chunks: [],
+        },
+        currentRevision: {
+            id: null,
+            revisionNumber: null,
+            formVersion: null,
+        },
+        form: {
+            version: source.formVersion,
+        },
+        contract: {
+            currentDocumentId: null,
+            stage: null,
+        },
+    };
+}
+
 function previewRanges(entries: SharedPlannedSession[]): ServiceRecordEditPreviewAssignmentRange[] {
     const byAssignment = new Map<string, SharedPlannedSession[]>();
     for (const entry of entries) {
@@ -741,5 +796,7 @@ export function buildServiceRecordEditPreview(
         contentChanges: content,
         impactedAssignments: [...impactedAssignments].sort(),
         blockingReasons,
+        signatureMetadata: signatureMetadataForPreview(input.source, blockingReasons),
+        documentScope: documentScopeForPreview(input.source),
     };
 }

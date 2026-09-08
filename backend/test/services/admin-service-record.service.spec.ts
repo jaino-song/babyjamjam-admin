@@ -131,6 +131,13 @@ describe("AdminServiceRecordService", () => {
         await expect(service.getClientEditor("branch-1", 100)).resolves.toEqual({
             record: null,
             assignments: [],
+            scheduleProjection: {
+                entries: [],
+                blockingReasons: [{
+                    code: "EDITOR_PROJECTION_UNAVAILABLE",
+                    message: "서비스 예정 회차 근거를 확인할 수 없습니다.",
+                }],
+            },
         });
 
         expect(prisma.client.findFirst).toHaveBeenCalledWith({
@@ -139,6 +146,179 @@ describe("AdminServiceRecordService", () => {
         });
         expect(prisma.service_record_case.findFirst).toHaveBeenCalled();
         expect(prisma.employee_schedule.findMany).toHaveBeenCalled();
+    });
+
+    it("adds the canonical all-session projection for unwritten editor slots", async () => {
+        const prisma = createPrisma();
+        const assignmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        const source = {
+            caseId: "case-1",
+            caseVersion: 7,
+            formVersion: 3,
+            requiredSessionCount: 3,
+            startDate: "2026-09-01",
+            endDate: "2026-09-03",
+            header: {
+                momName: null,
+                momBirth: null,
+                babyName: null,
+                babyBirth: null,
+                deliveryType: null,
+                babyWeight: null,
+            },
+            sessions: [],
+            assignments: [{
+                id: assignmentId,
+                branchId: "branch-1",
+                serviceRecordCaseId: "case-1",
+                scheduleId: 55,
+                employeeId: 9,
+                startDate: "2026-09-01",
+                endDate: "2026-09-03",
+                replaced: false,
+                employeeName: "제공자",
+                scheduleStartDate: "2026-09-01",
+                scheduleEndDate: "2026-09-03",
+                scheduleTerminatedAt: null,
+                primaryEmployeeId: 9,
+                secondaryEmployeeId: null,
+                primaryEmployeeName: "제공자",
+            }],
+            plannedSessions: ["2026-09-01", "2026-09-02", "2026-09-03"].map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId,
+                scheduleId: 55,
+                employeeId: 9,
+                provenanceVersion: "case-7",
+            })),
+            client: {
+                id: 100,
+                branchId: "branch-1",
+                name: "김산모",
+                duration: 15,
+                startDate: "2026-09-01",
+                endDate: "2026-09-03",
+                serviceStatus: "in_progress",
+            },
+        };
+        prisma.client.findFirst.mockResolvedValue({ id: 100 });
+        prisma.service_record_case.findFirst.mockResolvedValue(null);
+        prisma.employee_schedule.findMany.mockResolvedValue([]);
+        const editRepository = { loadSource: jest.fn().mockResolvedValue(source) };
+        const service = new AdminServiceRecordService(
+            prisma as unknown as PrismaService,
+            createLinkService() as unknown as ServiceRecordLinkService,
+            createTriggerService() as unknown as MessageTriggerService,
+            undefined,
+            editRepository as never,
+        );
+
+        const overview = await service.getClientEditor("branch-1", 100);
+
+        expect(overview.scheduleProjection?.blockingReasons).toEqual([]);
+        expect(overview.scheduleProjection?.entries.map((entry) => entry.serviceDate)).toEqual([
+            "2026-09-01", "2026-09-02", "2026-09-03",
+        ]);
+        expect(overview.scheduleProjection?.entries[2]).toEqual(expect.objectContaining({
+            sessionIndex: 3,
+            originalDate: "2026-09-03",
+            assignmentId,
+            scheduleId: 55,
+            employeeId: 9,
+        }));
+        expect(editRepository.loadSource).toHaveBeenCalledWith("branch-1", { clientId: 100 });
+    });
+
+    it("keeps unsupported-year legacy cases viewable while blocking the canonical projection", async () => {
+        const prisma = createPrisma();
+        prisma.client.findFirst.mockResolvedValue({ id: 100 });
+        prisma.service_record_case.findFirst.mockResolvedValue({
+            id: "case-unsupported",
+            status: "IN_PROGRESS",
+            startDate: new Date("2028-01-03T00:00:00.000Z"),
+            endDate: new Date("2028-01-05T00:00:00.000Z"),
+            requiredSessionCount: null,
+            completedAt: null,
+            finalizationDueAt: null,
+            finalizedAt: null,
+            documentsCompletedAt: null,
+            lastError: null,
+            momName: "산모",
+            momBirth: null,
+            babyName: null,
+            babyBirth: null,
+            deliveryType: null,
+            babyWeight: null,
+            createdAt: new Date("2028-01-03T00:00:00.000Z"),
+            updatedAt: new Date("2028-01-03T00:00:00.000Z"),
+            days: [{
+                sessionIndex: 1,
+                caseSessionIndex: 1,
+                serviceDate: new Date("2028-01-03T00:00:00.000Z"),
+                locked: false,
+                submittedAt: null,
+                updatedAt: new Date("2028-01-03T00:00:00.000Z"),
+                answers: {},
+                etcService: null,
+                notes: null,
+                paymentConfirmed: false,
+                momApproval: null,
+                clientSignature: null,
+                clientSignedAt: null,
+                employeeId: null,
+                employeeNameSnapshot: null,
+                formVersion: 1,
+            }],
+        } as never);
+        prisma.employee_schedule.findMany.mockResolvedValue([]);
+        const editRepository = {
+            loadSource: jest.fn().mockResolvedValue({
+                caseId: "case-unsupported",
+                caseVersion: 1,
+                formVersion: 1,
+                requiredSessionCount: null,
+                startDate: "2028-01-03",
+                endDate: "2028-01-05",
+                header: {
+                    momName: "산모",
+                    momBirth: null,
+                    babyName: null,
+                    babyBirth: null,
+                    deliveryType: null,
+                    babyWeight: null,
+                },
+                sessions: [],
+                assignments: [],
+                plannedSessions: null,
+                client: {
+                    id: 100,
+                    branchId: "branch-1",
+                    name: "김산모",
+                    duration: null,
+                    startDate: "2028-01-03",
+                    endDate: "2028-01-05",
+                    serviceStatus: "in_progress",
+                },
+            }),
+        };
+        const service = new AdminServiceRecordService(
+            prisma as unknown as PrismaService,
+            createLinkService() as unknown as ServiceRecordLinkService,
+            createTriggerService() as unknown as MessageTriggerService,
+            undefined,
+            editRepository as never,
+        );
+
+        const overview = await service.getClientEditor("branch-1", 100);
+
+        expect(overview.record?.totalSessions).toBe(0);
+        expect(overview.record?.sessions).toHaveLength(1);
+        expect(overview.scheduleProjection?.entries).toEqual([]);
+        expect(overview.scheduleProjection?.blockingReasons).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: "INVALID_SESSION_COUNT" }),
+        ]));
     });
 
     it("returns not found for a foreign or missing client without reading records or invoking mutations", async () => {

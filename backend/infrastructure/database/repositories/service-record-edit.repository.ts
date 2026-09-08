@@ -6,6 +6,7 @@ import {
     ServiceRecordEditDraftConflictError,
     ServiceRecordEditNotFoundError,
 } from "domain/errors/service-record-edit.error";
+import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import {
     type AppendServiceRecordRevisionInput,
     type CreateServiceRecordEditDraftInput,
@@ -20,6 +21,11 @@ import {
     type UpdateServiceRecordEditDraftInput,
 } from "domain/repositories/service-record-edit.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import type {
+    ServiceRecordEditDocumentChunk,
+    ServiceRecordEditDocumentScope,
+    ServiceRecordEditSignatureMetadata,
+} from "@babyjamjam/shared/types/service-record";
 
 type DraftRow = Prisma.service_record_edit_draftGetPayload<Record<string, never>>;
 type RevisionRow = Prisma.service_record_revisionGetPayload<Record<string, never>>;
@@ -53,6 +59,216 @@ function toDomainJson(value: Prisma.JsonValue): ServiceRecordEditJsonValue {
             return [key, toDomainJson(item)];
         }),
     );
+}
+
+function signatureMetadata(
+    sessions: Array<Omit<ServiceRecordEditSourceDay, "ambiguous">>,
+): ServiceRecordEditSignatureMetadata {
+    return {
+        treatment: "preserve_existing",
+        evidence: "observed",
+        sessions: sessions
+            .map((session) => ({
+                sessionIndex: session.sessionIndex,
+                hasSignature: Boolean(session.clientSignature),
+                signedAt: session.clientSignedAt,
+                submittedAt: session.submittedAt,
+            }))
+            .sort((left, right) => left.sessionIndex - right.sessionIndex),
+    };
+}
+
+type DocumentScopeRecord = {
+    id: string;
+    formVersion: number;
+    currentRevisionId: string | null;
+    currentUsableRevisionId: string | null;
+    currentUsableDocumentVersion: number | null;
+};
+
+type DocumentScopeClient = {
+    id: number;
+    eDocId: string | null;
+};
+
+type DocumentScopeRow = {
+    documentId: string;
+    documentKind: string | null;
+    statusType: string;
+    clientId: number | null;
+    serviceRecordCaseId: string | null;
+    employeeScheduleId: number | null;
+    snapshotVersion: number | null;
+    snapshotChunkIndex: number | null;
+    stepName: string;
+    updatedDate: Date;
+    createdDate: Date;
+};
+
+function contractStage(document: DocumentScopeRow): string {
+    const status = normalizeEformsignStatusCode(document.statusType);
+    if (["003", "012", "022", "032", "050", "062", "072", "092"].includes(status)) {
+        return "completed";
+    }
+    if (["011", "021", "031", "040", "042", "045", "047", "049", "061", "071", "080"].includes(status)) {
+        return "rejected";
+    }
+    if (["001", "002", "010", "020", "030", "043", "060", "063", "064", "070"].includes(status)) {
+        return "in_progress";
+    }
+    return "unknown";
+}
+
+type RevisionScopeRow = {
+    id: string;
+    revisionNumber: number;
+    formVersionAtConfirm: number;
+};
+
+function unverifiedDocumentScope(formVersion: number | null): ServiceRecordEditDocumentScope {
+    return {
+        evidence: "unverified",
+        serviceRecordSnapshot: {
+            documentIds: [],
+            snapshotVersion: null,
+            chunks: [],
+        },
+        currentRevision: {
+            id: null,
+            revisionNumber: null,
+            formVersion: null,
+        },
+        form: { version: formVersion },
+        contract: {
+            currentDocumentId: null,
+            stage: null,
+        },
+    };
+}
+
+async function loadDocumentScope(
+    tx: Prisma.TransactionClient,
+    branchId: string,
+    record: DocumentScopeRecord,
+    client: DocumentScopeClient,
+    scheduleIds: number[],
+): Promise<ServiceRecordEditDocumentScope> {
+    const fallback = unverifiedDocumentScope(record.formVersion);
+    const documentDelegate = tx.eformsign_doc;
+    const revisionDelegate = tx.service_record_revision;
+    if (
+        typeof documentDelegate?.findMany !== "function"
+        || typeof revisionDelegate?.findMany !== "function"
+    ) {
+        return fallback;
+    }
+
+    let documents: DocumentScopeRow[];
+    let revisions: RevisionScopeRow[];
+    try {
+        [documents, revisions] = await Promise.all([
+            documentDelegate.findMany({
+                where: {
+                    branchId,
+                    OR: [
+                        { documentKind: "service_record_snapshot", serviceRecordCaseId: record.id },
+                        ...(scheduleIds.length > 0
+                            ? [{ documentKind: "service_record_snapshot", employeeScheduleId: { in: scheduleIds } }]
+                            : []),
+                        { documentKind: "contract", clientId: client.id },
+                    ],
+                },
+                select: {
+                    documentId: true,
+                    documentKind: true,
+                    statusType: true,
+                    clientId: true,
+                    serviceRecordCaseId: true,
+                    employeeScheduleId: true,
+                    snapshotVersion: true,
+                    snapshotChunkIndex: true,
+                    stepName: true,
+                    updatedDate: true,
+                    createdDate: true,
+                },
+                orderBy: [
+                    { updatedDate: "desc" },
+                    { createdDate: "desc" },
+                    { documentId: "asc" },
+                ],
+            }) as Promise<DocumentScopeRow[]>,
+            revisionDelegate.findMany({
+                where: {
+                    branchId,
+                    serviceRecordCaseId: record.id,
+                    ...(record.currentRevisionId || record.currentUsableRevisionId
+                        ? { id: { in: [record.currentRevisionId, record.currentUsableRevisionId].filter((id): id is string => id !== null) } }
+                        : { id: { in: [] } }),
+                },
+                select: {
+                    id: true,
+                    revisionNumber: true,
+                    formVersionAtConfirm: true,
+                },
+            }) as Promise<RevisionScopeRow[]>,
+        ]);
+    } catch {
+        return fallback;
+    }
+
+    const snapshots = documents.filter((document) => (
+        document.documentKind === "service_record_snapshot"
+        && (
+            document.serviceRecordCaseId === record.id
+            || (document.employeeScheduleId !== null && scheduleIds.includes(document.employeeScheduleId))
+        )
+    ));
+    const snapshotChunks: ServiceRecordEditDocumentChunk[] = snapshots
+        .map((document) => ({
+            documentId: document.documentId,
+            snapshotVersion: document.snapshotVersion,
+            snapshotChunkIndex: document.snapshotChunkIndex,
+        }))
+        .sort((left, right) => (
+            (left.snapshotVersion ?? 0) - (right.snapshotVersion ?? 0)
+            || (left.snapshotChunkIndex ?? 0) - (right.snapshotChunkIndex ?? 0)
+            || left.documentId.localeCompare(right.documentId)
+        ));
+    const snapshotVersions = snapshots
+        .map((document) => document.snapshotVersion)
+        .filter((version): version is number => Number.isInteger(version));
+    const currentRevision = revisions.find((revision) => revision.id === record.currentRevisionId)
+        ?? revisions.find((revision) => revision.id === record.currentUsableRevisionId);
+    const contractDocs = documents.filter((document) => (
+        document.documentKind === "contract" && document.clientId === client.id
+    ));
+    const exactContract = client.eDocId
+        ? contractDocs.find((document) => document.documentId === client.eDocId)
+        : undefined;
+    const currentContract = exactContract ?? (client.eDocId == null && contractDocs.length === 1 ? contractDocs[0] : undefined);
+    const contractIsUnverified = Boolean(
+        (client.eDocId && !exactContract)
+        || (!client.eDocId && contractDocs.length > 1),
+    );
+
+    return {
+        evidence: contractIsUnverified ? "unverified" : "observed",
+        serviceRecordSnapshot: {
+            documentIds: [...new Set(snapshots.map((document) => document.documentId))].sort(),
+            snapshotVersion: snapshotVersions.length > 0 ? Math.max(...snapshotVersions) : record.currentUsableDocumentVersion,
+            chunks: snapshotChunks,
+        },
+        currentRevision: {
+            id: currentRevision?.id ?? record.currentRevisionId ?? record.currentUsableRevisionId,
+            revisionNumber: currentRevision?.revisionNumber ?? null,
+            formVersion: currentRevision?.formVersionAtConfirm ?? null,
+        },
+        form: { version: record.formVersion },
+        contract: {
+            currentDocumentId: currentContract?.documentId ?? null,
+            stage: currentContract ? contractStage(currentContract) : null,
+        },
+    };
 }
 
 function dateOnly(value: Date | null | undefined): string | null {
@@ -203,194 +419,237 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         return row ? toDraft(row) : null;
     }
 
+    private async findDraftByIdWithClient(
+        client: DraftClient,
+        branchId: string,
+        draftId: string,
+    ): Promise<ServiceRecordEditDraft | null> {
+        const row = await client.service_record_edit_draft.findFirst({
+            where: { id: draftId, branchId },
+        });
+        return row ? toDraft(row) : null;
+    }
+
+    async loadDraftWithSource(
+        branchId: string,
+        draftId: string,
+    ): Promise<{ draft: ServiceRecordEditDraft; source: ServiceRecordEditSource } | null> {
+        return this.prisma.$transaction(async (tx) => {
+            const draft = await this.findDraftByIdWithClient(tx, branchId, draftId);
+            if (!draft) return null;
+            const source = await this.loadSourceWithClient(tx, branchId, { caseId: draft.serviceRecordCaseId });
+            return source ? { draft, source } : null;
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+    }
+
     async loadSource(
         branchId: string,
         target: { clientId?: number; caseId?: string },
     ): Promise<ServiceRecordEditSource | null> {
-        return this.prisma.$transaction(async (tx) => {
-            if (target.clientId === undefined && target.caseId === undefined) return null;
-            let clientId = target.clientId;
-            if (clientId !== undefined) {
-                const ownedClient = await tx.client.findFirst({
-                    where: { id: clientId, branchId },
-                    select: { id: true },
-                });
-                if (!ownedClient) return null;
-            }
+        return this.prisma.$transaction(
+            (tx) => this.loadSourceWithClient(tx, branchId, target),
+            { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+        );
+    }
 
-            const record = await tx.service_record_case.findFirst({
-                where: {
-                    branchId,
-                    ...(target.caseId ? { id: target.caseId } : {}),
-                    ...(clientId !== undefined ? { clientId } : {}),
-                },
-                select: {
-                    id: true,
-                    clientId: true,
-                    version: true,
-                    formVersion: true,
-                    requiredSessionCount: true,
-                    startDate: true,
-                    endDate: true,
-                    momName: true,
-                    momBirth: true,
-                    babyName: true,
-                    babyBirth: true,
-                    deliveryType: true,
-                    babyWeight: true,
-                    plannedSessions: true,
-                    days: {
-                        orderBy: [
-                            { caseSessionIndex: "asc" },
-                            { sessionIndex: "asc" },
-                            { id: "asc" },
-                        ],
-                        select: {
-                            id: true,
-                            branchId: true,
-                            scheduleId: true,
-                            caseSessionIndex: true,
-                            sessionIndex: true,
-                            employeeNameSnapshot: true,
-                            formVersion: true,
-                            serviceDate: true,
-                            answers: true,
-                            etcService: true,
-                            notes: true,
-                            paymentConfirmed: true,
-                            momApproval: true,
-                            clientSignature: true,
-                            clientSignedAt: true,
-                            locked: true,
-                            submittedAt: true,
-                            employeeId: true,
-                        },
+    private async loadSourceWithClient(
+        tx: Prisma.TransactionClient,
+        branchId: string,
+        target: { clientId?: number; caseId?: string },
+    ): Promise<ServiceRecordEditSource | null> {
+        if (target.clientId === undefined && target.caseId === undefined) return null;
+        let clientId = target.clientId;
+        if (clientId !== undefined) {
+            const ownedClient = await tx.client.findFirst({
+                where: { id: clientId, branchId },
+                select: { id: true },
+            });
+            if (!ownedClient) return null;
+        }
+
+        const record = await tx.service_record_case.findFirst({
+            where: {
+                branchId,
+                ...(target.caseId ? { id: target.caseId } : {}),
+                ...(clientId !== undefined ? { clientId } : {}),
+            },
+            select: {
+                id: true,
+                clientId: true,
+                version: true,
+                formVersion: true,
+                currentRevisionId: true,
+                currentUsableRevisionId: true,
+                currentUsableDocumentVersion: true,
+                requiredSessionCount: true,
+                startDate: true,
+                endDate: true,
+                momName: true,
+                momBirth: true,
+                babyName: true,
+                babyBirth: true,
+                deliveryType: true,
+                babyWeight: true,
+                plannedSessions: true,
+                days: {
+                    orderBy: [
+                        { caseSessionIndex: "asc" },
+                        { sessionIndex: "asc" },
+                        { id: "asc" },
+                    ],
+                    select: {
+                        id: true,
+                        branchId: true,
+                        scheduleId: true,
+                        caseSessionIndex: true,
+                        sessionIndex: true,
+                        employeeNameSnapshot: true,
+                        formVersion: true,
+                        serviceDate: true,
+                        answers: true,
+                        etcService: true,
+                        notes: true,
+                        paymentConfirmed: true,
+                        momApproval: true,
+                        clientSignature: true,
+                        clientSignedAt: true,
+                        locked: true,
+                        submittedAt: true,
+                        employeeId: true,
                     },
                 },
-            });
-            if (!record || record.clientId === null) return null;
-            clientId = record.clientId;
+            },
+        });
+        if (!record || record.clientId === null) return null;
+        clientId = record.clientId;
 
-            const client = await tx.client.findFirst({
-                where: { id: record.clientId, branchId },
-                select: {
-                    id: true,
-                    branchId: true,
-                    name: true,
-                    duration: true,
-                    startDate: true,
-                    endDate: true,
-                    serviceStatus: true,
-                },
-            });
-            if (!client) return null;
+        const client = await tx.client.findFirst({
+            where: { id: record.clientId, branchId },
+            select: {
+                id: true,
+                branchId: true,
+                name: true,
+                duration: true,
+                startDate: true,
+                endDate: true,
+                serviceStatus: true,
+                eDocId: true,
+            },
+        });
+        if (!client) return null;
 
-            const schedules = await tx.employee_schedule.findMany({
-                where: { branchId, clientId },
-                orderBy: { id: "asc" },
-                select: {
-                    id: true,
-                    branchId: true,
-                    startDate: true,
-                    endDate: true,
-                    replaced: true,
-                    terminatedAt: true,
-                    primaryEmployeeId: true,
-                    secondaryEmployeeId: true,
-                    primaryEmployee: { select: { name: true } },
-                    serviceRecordAssignment: {
-                        select: {
-                            id: true,
-                            branchId: true,
-                            serviceRecordCaseId: true,
-                            scheduleId: true,
-                            employeeId: true,
-                            startDate: true,
-                            endDate: true,
-                            employeeNameSnapshot: true,
-                        },
+        const schedules = await tx.employee_schedule.findMany({
+            where: { branchId, clientId },
+            orderBy: { id: "asc" },
+            select: {
+                id: true,
+                branchId: true,
+                startDate: true,
+                endDate: true,
+                replaced: true,
+                terminatedAt: true,
+                primaryEmployeeId: true,
+                secondaryEmployeeId: true,
+                primaryEmployee: { select: { name: true } },
+                serviceRecordAssignment: {
+                    select: {
+                        id: true,
+                        branchId: true,
+                        serviceRecordCaseId: true,
+                        scheduleId: true,
+                        employeeId: true,
+                        startDate: true,
+                        endDate: true,
+                        employeeNameSnapshot: true,
                     },
                 },
-            });
+            },
+        });
 
-            const rawSessions = record.days.map((day) => ({
-                id: day.id,
-                branchId: day.branchId,
-                sourceRowId: day.id,
-                scheduleId: day.scheduleId,
-                sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
-                rawCaseSessionIndex: day.caseSessionIndex,
-                rawSessionIndex: day.sessionIndex,
-                serviceDate: dateOnly(day.serviceDate) ?? "",
-                answers: toDomainJson(day.answers),
-                etcService: day.etcService,
-                notes: day.notes,
-                paymentConfirmed: day.paymentConfirmed,
-                momApproval: day.momApproval,
-                clientSignature: day.clientSignature,
-                clientSignedAt: instant(day.clientSignedAt),
-                locked: day.locked,
-                submittedAt: instant(day.submittedAt),
-                employeeId: day.employeeId,
-                employeeNameSnapshot: day.employeeNameSnapshot,
-                formVersion: day.formVersion,
-            } satisfies Omit<ServiceRecordEditSourceDay, "ambiguous">));
-            const sessionIndexCounts = new Map<number, number>();
-            for (const session of rawSessions) {
-                sessionIndexCounts.set(session.sessionIndex, (sessionIndexCounts.get(session.sessionIndex) ?? 0) + 1);
-            }
-            const sessions: ServiceRecordEditSourceDay[] = rawSessions.map((session) => ({
-                ...session,
-                ambiguous: (sessionIndexCounts.get(session.sessionIndex) ?? 0) > 1,
-            }));
+        const rawSessions = record.days.map((day) => ({
+            id: day.id,
+            branchId: day.branchId,
+            sourceRowId: day.id,
+            scheduleId: day.scheduleId,
+            sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
+            rawCaseSessionIndex: day.caseSessionIndex,
+            rawSessionIndex: day.sessionIndex,
+            serviceDate: dateOnly(day.serviceDate) ?? "",
+            answers: toDomainJson(day.answers),
+            etcService: day.etcService,
+            notes: day.notes,
+            paymentConfirmed: day.paymentConfirmed,
+            momApproval: day.momApproval,
+            clientSignature: day.clientSignature,
+            clientSignedAt: instant(day.clientSignedAt),
+            locked: day.locked,
+            submittedAt: instant(day.submittedAt),
+            employeeId: day.employeeId,
+            employeeNameSnapshot: day.employeeNameSnapshot,
+            formVersion: day.formVersion,
+        } satisfies Omit<ServiceRecordEditSourceDay, "ambiguous">));
+        const sessionIndexCounts = new Map<number, number>();
+        for (const session of rawSessions) {
+            sessionIndexCounts.set(session.sessionIndex, (sessionIndexCounts.get(session.sessionIndex) ?? 0) + 1);
+        }
+        const sessions: ServiceRecordEditSourceDay[] = rawSessions.map((session) => ({
+            ...session,
+            ambiguous: (sessionIndexCounts.get(session.sessionIndex) ?? 0) > 1,
+        }));
 
-            const assignments: ServiceRecordEditSourceAssignment[] = schedules.map((schedule) => ({
-                id: schedule.serviceRecordAssignment?.id ?? null,
-                branchId: schedule.serviceRecordAssignment?.branchId ?? schedule.branchId ?? null,
-                serviceRecordCaseId: schedule.serviceRecordAssignment?.serviceRecordCaseId ?? null,
-                scheduleId: schedule.id,
-                employeeId: schedule.serviceRecordAssignment?.employeeId ?? schedule.primaryEmployeeId,
-                startDate: dateOnly(schedule.serviceRecordAssignment?.startDate ?? schedule.startDate) ?? "",
-                endDate: dateOnly(schedule.serviceRecordAssignment?.endDate ?? schedule.endDate) ?? "",
-                replaced: schedule.replaced,
-                employeeName: schedule.serviceRecordAssignment?.employeeNameSnapshot ?? schedule.primaryEmployee.name,
-                scheduleStartDate: dateOnly(schedule.startDate) ?? "",
-                scheduleEndDate: dateOnly(schedule.endDate) ?? "",
-                scheduleTerminatedAt: instant(schedule.terminatedAt),
-                primaryEmployeeId: schedule.primaryEmployeeId,
-                secondaryEmployeeId: schedule.secondaryEmployeeId ?? null,
-                primaryEmployeeName: schedule.primaryEmployee.name,
-            }));
+        const assignments: ServiceRecordEditSourceAssignment[] = schedules.map((schedule) => ({
+            id: schedule.serviceRecordAssignment?.id ?? null,
+            branchId: schedule.serviceRecordAssignment?.branchId ?? schedule.branchId ?? null,
+            serviceRecordCaseId: schedule.serviceRecordAssignment?.serviceRecordCaseId ?? null,
+            scheduleId: schedule.id,
+            employeeId: schedule.serviceRecordAssignment?.employeeId ?? schedule.primaryEmployeeId,
+            startDate: dateOnly(schedule.serviceRecordAssignment?.startDate ?? schedule.startDate) ?? "",
+            endDate: dateOnly(schedule.serviceRecordAssignment?.endDate ?? schedule.endDate) ?? "",
+            replaced: schedule.replaced,
+            employeeName: schedule.serviceRecordAssignment?.employeeNameSnapshot ?? schedule.primaryEmployee.name,
+            scheduleStartDate: dateOnly(schedule.startDate) ?? "",
+            scheduleEndDate: dateOnly(schedule.endDate) ?? "",
+            scheduleTerminatedAt: instant(schedule.terminatedAt),
+            primaryEmployeeId: schedule.primaryEmployeeId,
+            secondaryEmployeeId: schedule.secondaryEmployeeId ?? null,
+            primaryEmployeeName: schedule.primaryEmployee.name,
+        }));
 
-            return {
-                caseId: record.id,
-                caseVersion: record.version,
-                formVersion: record.formVersion,
-                requiredSessionCount: record.requiredSessionCount,
-                startDate: dateOnly(record.startDate),
-                endDate: dateOnly(record.endDate),
-                header: {
-                    momName: record.momName,
-                    momBirth: record.momBirth,
-                    babyName: record.babyName,
-                    babyBirth: record.babyBirth,
-                    deliveryType: record.deliveryType,
-                    babyWeight: record.babyWeight,
-                },
-                sessions,
-                assignments,
-                plannedSessions: record.plannedSessions === null ? null : toDomainJson(record.plannedSessions),
-                client: {
-                    id: client.id,
-                    branchId: client.branchId,
-                    name: client.name,
-                    duration: client.duration,
-                    startDate: dateOnly(client.startDate),
-                    endDate: dateOnly(client.endDate),
-                    serviceStatus: client.serviceStatus,
-                },
-            };
-        }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+        const [sourceSignatureMetadata, documentScope] = await Promise.all([
+            Promise.resolve(signatureMetadata(rawSessions)),
+            loadDocumentScope(tx, branchId, record, client, schedules.map((schedule) => schedule.id)),
+        ]);
+
+        return {
+            caseId: record.id,
+            caseVersion: record.version,
+            formVersion: record.formVersion,
+            requiredSessionCount: record.requiredSessionCount,
+            startDate: dateOnly(record.startDate),
+            endDate: dateOnly(record.endDate),
+            header: {
+                momName: record.momName,
+                momBirth: record.momBirth,
+                babyName: record.babyName,
+                babyBirth: record.babyBirth,
+                deliveryType: record.deliveryType,
+                babyWeight: record.babyWeight,
+            },
+            sessions,
+            assignments,
+            plannedSessions: record.plannedSessions === null ? null : toDomainJson(record.plannedSessions),
+            signatureMetadata: sourceSignatureMetadata,
+            documentScope,
+            client: {
+                id: client.id,
+                branchId: client.branchId,
+                name: client.name,
+                duration: client.duration,
+                startDate: dateOnly(client.startDate),
+                endDate: dateOnly(client.endDate),
+                serviceStatus: client.serviceStatus,
+            },
+        };
     }
 
     async updateDraft(input: UpdateServiceRecordEditDraftInput): Promise<ServiceRecordEditDraft> {

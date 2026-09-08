@@ -111,6 +111,8 @@ function sourceFingerprint(source: SourceSnapshot): string {
         sessions: source.sessions,
         assignments: source.assignments,
         plannedSessions: source.plannedSessions,
+        signatureMetadata: source.signatureMetadata ?? null,
+        documentScope: source.documentScope ?? null,
     });
     return createHash("sha256").update(stableStringify(fingerprintPayload)).digest("hex");
 }
@@ -405,6 +407,14 @@ export class AdminServiceRecordEditService {
         draftId: string,
     ): Promise<{ loaded: LoadedSource; draft: ServiceRecordEditDraft }> {
         if (!UUID_PATTERN.test(draftId)) throw new NotFoundException("Service-record draft not found");
+        if (typeof this.repository.loadDraftWithSource === "function") {
+            const target = await this.repository.loadDraftWithSource(branchId, draftId);
+            if (!target) throw new NotFoundException("Service-record draft not found");
+            return {
+                draft: target.draft,
+                loaded: { source: target.source, fingerprint: sourceFingerprint(target.source) },
+            };
+        }
         const draft = await this.repository.findDraftById(branchId, draftId);
         if (!draft) throw new NotFoundException("Service-record draft not found");
         return { draft, loaded: await this.loadSource(branchId, { caseId: draft.serviceRecordCaseId }) };

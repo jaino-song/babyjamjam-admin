@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { ForbiddenException, Inject, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { message_log, message_trigger_job, Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
@@ -6,7 +6,14 @@ import {
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
 } from "domain/constants/service-record-link-message";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
-import { countBusinessDaysKr } from "domain/utils/business-days";
+import { countBusinessDaysKr, UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
+import {
+    resolveServiceRecordScheduleProjection,
+} from "application/policies/service-record-edit-preview.policy";
+import {
+    SERVICE_RECORD_EDIT_REPOSITORY,
+    type IServiceRecordEditRepository,
+} from "domain/repositories/service-record-edit.repository.interface";
 import { ServiceRecordLinkService } from "./service-record-link.service";
 import { MessageTriggerService } from "./message-trigger.service";
 import { ServiceRecordSecurityEventService } from "./service-record-security-event.service";
@@ -76,7 +83,15 @@ function servicePeriodSessionCount(
     const startDateIso = isoDate(startDate);
     const endDateIso = isoDate(endDate);
     if (!startDateIso || !endDateIso) return fallback ?? 0;
-    return countBusinessDaysKr(startDateIso, endDateIso) ?? fallback ?? 0;
+    try {
+        return countBusinessDaysKr(startDateIso, endDateIso) ?? fallback ?? 0;
+    } catch (error) {
+        // Unsupported legacy years remain viewable. A presentation total of
+        // zero means the authoritative N is unknown; the editor projection
+        // carries the explicit blocker and never invents a weekday fallback.
+        if (error instanceof UnsupportedKoreanHolidayYearError) return fallback ?? 0;
+        throw error;
+    }
 }
 
 @Injectable()
@@ -88,6 +103,9 @@ export class AdminServiceRecordService {
         private readonly serviceRecordLinkService: ServiceRecordLinkService,
         private readonly messageTriggerService: MessageTriggerService,
         @Optional() private readonly securityEventService?: ServiceRecordSecurityEventService,
+        @Optional()
+        @Inject(SERVICE_RECORD_EDIT_REPOSITORY)
+        private readonly editRepository?: IServiceRecordEditRepository,
     ) {}
 
     async getClientOverview(
@@ -172,7 +190,39 @@ export class AdminServiceRecordService {
      */
     async getClientEditor(branchId: string, clientId: number): Promise<AdminServiceRecordOverviewDto> {
         await this.assertClientBelongsToBranch(branchId, clientId);
-        return this.getClientOverview(branchId, clientId, { includeSignatures: true });
+        const overview = await this.getClientOverview(branchId, clientId, { includeSignatures: true });
+        const scheduleProjection = await this.loadScheduleProjection(branchId, clientId);
+        return { ...overview, scheduleProjection };
+    }
+
+    private async loadScheduleProjection(
+        branchId: string,
+        clientId: number,
+    ): Promise<NonNullable<AdminServiceRecordOverviewDto["scheduleProjection"]>> {
+        if (!this.editRepository) {
+            return {
+                entries: [],
+                blockingReasons: [{
+                    code: "EDITOR_PROJECTION_UNAVAILABLE",
+                    message: "서비스 예정 회차 근거를 확인할 수 없습니다.",
+                }],
+            };
+        }
+        const source = await this.editRepository.loadSource(branchId, { clientId });
+        if (!source) {
+            return {
+                entries: [],
+                blockingReasons: [{
+                    code: "SERVICE_RECORD_SOURCE_UNAVAILABLE",
+                    message: "서비스 제공기록 원본을 확인할 수 없습니다.",
+                }],
+            };
+        }
+        const projection = resolveServiceRecordScheduleProjection(source);
+        return {
+            entries: projection.entries,
+            blockingReasons: projection.blockingReasons,
+        };
     }
 
     private mapCase(

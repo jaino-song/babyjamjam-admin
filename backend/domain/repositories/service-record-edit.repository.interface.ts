@@ -1,3 +1,8 @@
+import type {
+    ServiceRecordEditDocumentScope,
+    ServiceRecordEditSignatureMetadata,
+} from "@babyjamjam/shared/types/service-record";
+
 /** JSON value shape kept in the domain boundary so this port does not import Prisma. */
 export type ServiceRecordEditJsonValue =
     | string
@@ -72,6 +77,10 @@ export interface ServiceRecordEditSource {
     sessions: ServiceRecordEditSourceDay[];
     assignments: ServiceRecordEditSourceAssignment[];
     plannedSessions: ServiceRecordEditJsonValue | null;
+    /** Server-observed signature timestamps/treatment; signature bytes stay in source day rows. */
+    signatureMetadata?: ServiceRecordEditSignatureMetadata;
+    /** Branch-scoped local document/revision scope captured with the source snapshot. */
+    documentScope?: ServiceRecordEditDocumentScope;
     client: {
         id: number;
         branchId: string | null;
@@ -162,6 +171,11 @@ export interface IServiceRecordEditRepository {
     findDraft(branchId: string, serviceRecordCaseId: string, draftId: string): Promise<ServiceRecordEditDraft | null>;
     /** Find a draft by id without exposing whether another branch owns it. */
     findDraftById(branchId: string, draftId: string): Promise<ServiceRecordEditDraft | null>;
+    /** Capture a draft and its branch-owned source in one repeatable-read operation. */
+    loadDraftWithSource(
+        branchId: string,
+        draftId: string,
+    ): Promise<{ draft: ServiceRecordEditDraft; source: ServiceRecordEditSource } | null>;
     /** Capture the branch-owned case, client, sessions, and assignments atomically. */
     loadSource(
         branchId: string,

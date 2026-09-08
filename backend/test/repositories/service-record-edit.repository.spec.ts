@@ -234,6 +234,131 @@ describe("ServiceRecordEditRepository", () => {
         expect(prisma.$transaction).toHaveBeenCalled();
     });
 
+    it("loads the draft and branch-owned source from one repeatable-read snapshot", async () => {
+        const currentRevisionId = "66666666-6666-4666-8666-666666666666";
+        const service_record_edit_draft = {
+            findFirst: jest.fn().mockResolvedValue(draftRow()),
+        };
+        const service_record_case = {
+            findFirst: jest.fn().mockResolvedValue({
+                id: caseId,
+                clientId: 101,
+                version: 8,
+                formVersion: 4,
+                currentRevisionId,
+                currentUsableRevisionId: currentRevisionId,
+                currentUsableDocumentVersion: 2,
+                requiredSessionCount: 1,
+                startDate: new Date("2026-09-08T00:00:00.000Z"),
+                endDate: new Date("2026-09-08T00:00:00.000Z"),
+                momName: "산모",
+                momBirth: null,
+                babyName: null,
+                babyBirth: null,
+                deliveryType: null,
+                babyWeight: null,
+                plannedSessions: [{
+                    sessionIndex: 1,
+                    serviceDate: "2026-09-08",
+                    originalDate: "2026-09-08",
+                    assignmentId: "assignment-1",
+                    scheduleId: 55,
+                    employeeId: 9,
+                    provenanceVersion: "case-8",
+                }],
+                days: [],
+            }),
+        };
+        const client = {
+            findFirst: jest.fn().mockResolvedValue({
+                id: 101,
+                branchId,
+                name: "산모",
+                duration: 1,
+                startDate: new Date("2026-09-08T00:00:00.000Z"),
+                endDate: new Date("2026-09-08T00:00:00.000Z"),
+                serviceStatus: "in_progress",
+                eDocId: "contract-1",
+            }),
+        };
+        const employee_schedule = { findMany: jest.fn().mockResolvedValue([]) };
+        const eformsign_doc = {
+            findMany: jest.fn().mockResolvedValue([
+                {
+                    documentId: "snapshot-1",
+                    documentKind: "service_record_snapshot",
+                    statusType: "050",
+                    clientId: 101,
+                    serviceRecordCaseId: caseId,
+                    employeeScheduleId: null,
+                    snapshotVersion: 2,
+                    snapshotChunkIndex: 0,
+                    stepName: "서비스 기록",
+                    updatedDate: new Date("2026-09-08T05:00:00.000Z"),
+                    createdDate: new Date("2026-09-08T04:00:00.000Z"),
+                },
+                {
+                    documentId: "contract-1",
+                    documentKind: "contract",
+                    statusType: "060",
+                    clientId: 101,
+                    serviceRecordCaseId: null,
+                    employeeScheduleId: null,
+                    snapshotVersion: null,
+                    snapshotChunkIndex: null,
+                    stepName: "이용자 서명",
+                    updatedDate: new Date("2026-09-08T03:00:00.000Z"),
+                    createdDate: new Date("2026-09-08T02:00:00.000Z"),
+                },
+            ]),
+        };
+        const service_record_revision = {
+            findMany: jest.fn().mockResolvedValue([{
+                id: currentRevisionId,
+                revisionNumber: 3,
+                formVersionAtConfirm: 4,
+            }]),
+        };
+        const tx = {
+            service_record_edit_draft,
+            service_record_case,
+            client,
+            employee_schedule,
+            eformsign_doc,
+            service_record_revision,
+        };
+        const prisma = transactionalPrisma(tx);
+        const repository = new ServiceRecordEditRepository(prisma as never);
+
+        await expect(repository.loadDraftWithSource(branchId, draftId)).resolves.toMatchObject({
+            draft: { id: draftId, draftVersion: 1 },
+            source: {
+                caseId,
+                documentScope: {
+                    evidence: "observed",
+                    serviceRecordSnapshot: {
+                        documentIds: ["snapshot-1"],
+                        snapshotVersion: 2,
+                        chunks: [{ documentId: "snapshot-1", snapshotVersion: 2, snapshotChunkIndex: 0 }],
+                    },
+                    currentRevision: { id: currentRevisionId, revisionNumber: 3, formVersion: 4 },
+                    form: { version: 4 },
+                    contract: { currentDocumentId: "contract-1", stage: "in_progress" },
+                },
+            },
+        });
+        expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+        expect(prisma.$transaction).toHaveBeenCalledWith(
+            expect.any(Function),
+            { isolationLevel: "RepeatableRead" },
+        );
+        expect(service_record_edit_draft.findFirst).toHaveBeenCalledTimes(1);
+        expect(service_record_case.findFirst).toHaveBeenCalledTimes(1);
+        expect(eformsign_doc.findMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({ branchId }),
+        }));
+    });
+
     it("does not probe or create a draft when the case is foreign to the requested branch", async () => {
         const service_record_edit_draft = {
             findFirst: jest.fn(),
