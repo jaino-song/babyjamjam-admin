@@ -422,3 +422,5 @@
 
 - Sol/high Task3.0 중간 감사에서5개 차단 문제를 확인했다: root recompute의 잠금 전 파생값으로 상태 덮기, saveHeader의 잠금 후 제출/완료 조건 미재검사, client.update의 잠금 후 기간 검증 누락, NULL branch 문서에 대상 지점 조건을 적용한 mirror 연결 거부, schedule request 중복 승인 뒤 무조건 stale 처리. 기존472+PG7 green은 이 다섯 경합/NULL 조건의 통과 증거가 아니다.
 - 보완 unit `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor-units/task-3-0-corrections`, branch `unit/admin-service-record-3-0-corrections`, base06a074ab3 생성/오프라인 설치 완료. Luna/max에5개 지적을 배정했다. 실제 PG red/green, NULL 문서 정상 연결과 소유권/generation 보호, 잠금 안 최신 상태 재검사를 요구했다. Task3.1은 감사 해소까지 보류한다. 기존 통합 소스는 변경하지 않고 보완 unit만 작성한다.
+
+- Sol Task3.0 FINAL 확정: FIX_REQUIRED/HIGH, 총7건. 앞5건에 requestReplacement의 잠금 전 기간/주소 사용과 client 배정 경로의 과거 직원 잠금 누락을 추가했다. 승인뿐 아니라 거절/stale도 pending 조건의 단일 전환이 필요하다. 기존 client의 직접 case 잠금 반환값 무시도 공통 helper 전환으로 해소한다. Terminal case/doc 완료 경로는 이후 client/직원 잠금이 없는 것으로 확인됐다. 설계는 유효하며 재계획 없이7개 보정과 실제 PG 경합 회귀를 수행한다. Luna/max에 전체 최종 기준을 전달했다.
