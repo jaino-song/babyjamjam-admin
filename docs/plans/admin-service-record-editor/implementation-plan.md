@@ -283,6 +283,22 @@ Task3.1 실행 분리: 날짜 계산·서버 계약과 API에 의존하지 않�
 
 한쪽만 저장되는 상태와 오래된 확인 창으로 덮어쓰는 일을 막는다.
 
+사용자의 병렬 실행 지시에 따라 아래 세 단위가 같은 Phase에서 함께 구현한다. 기존 Task4.1/4.2는 수락 범위 설명이며 task 사이 직렬 대기·개별 감사 문구는 이 실행 배치가 대체한다. API·파일 소유권은 `phase4-execution-contract.md`에 고정한다. Phase3 잔여 감사 통과 뒤 시작하고, 통합 후 Phase4 Sol/high 감사는 한 번 수행한다.
+
+**Run together:**
+
+- **확정 저장과 공통 계약** (feature, high)
+  - 확정 API·동일 요청 결과·전체 저장 트랜잭션·문서 작업 의도를 구현한다. 공통 타입/스키마/저장소 계약 checkpoint를 먼저 공유한다.
+  - **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer (phase3_lock_corrections) · **Model:** gpt-5.6-luna · **Effort:** max · **Paths:** 실행 계약의 CORE 소유 경로 · **Depends:** Phase3 SHIP
+- **기존 제공인력·일정·발송 경로 연결** (feature, high)
+  - 확정 날짜/N 보존, 제공인력의 오래된 날짜 저장 거절, 수정 확정과 발송의 동시 실행을 처리한다. 공통 계약이 필요한 부분 외의 변경은 서버 단위와 함께 진행한다.
+  - **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer (mirror_request_pg_races) · **Model:** gpt-5.6-luna · **Effort:** max · **Paths:** 실행 계약의 ADAPTERS 소유 경로 · **Depends:** Phase3 SHIP, 필요한 공통 계약 checkpoint
+- **수정 확정 화면과 공개 날짜 표시** (feature, med)
+  - 기존 버튼 위치에 확인 모달·동일 요청 재시도를 연결한다. 제공인력 화면의 미작성 회차도 서버의 수정 날짜 배열을 사용한다.
+  - **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer (sdk_capability_probe) · **Model:** gpt-5.6-luna · **Effort:** max · **Paths:** 실행 계약의 UI 소유 경로 · **Depends:** Phase3 SHIP, 고정 confirm API 계약
+
+진행 중 기록의 후속 제출은 기존 제공인력 귀속으로 계속 허용한다. 관리자 확정 revision은 당시 수정 이력으로 보존하고, 실제 최종화 조건이 충족될 때 공통 잠금 안에서 최신 revision에 연결된 완전한 문서 입력 사본을 별도로 고정한다. 이후 작업자/재시도는 그 사본만 사용하며 현재 case를 다시 읽어 내용을 재구성하지 않는다. 미작성 회차 때문에 영구적으로 미완성 문서가 고정되거나 관리자 이력을 덮어쓰는 일이 없어야 한다.
+
 Phase 4 입력 감사 보정: 확정 결과의 중복 방지와 발송 직전 경쟁을 DB에서 보장한다. 기존 job enqueue가 자체 트랜잭션을 여는 구조를 그대로 확정 안에서 호출하지 않는다. 호출자가 전달한 동일한 `Prisma.TransactionClient`를 사용하는 enqueue/token 변경 경계를 추가한다.
 
 확정 식별자는 case·draft·요청 키에 묶고 DB 고유 제약으로 보장한다. 확정 preview/request fingerprint와 결과를 영구 저장하여 같은 키·같은 내용은 동일 결과를 반환하고, 같은 키·다른 내용은 409로 거부한다. 변경 없는 확정도 결과를 저장하여 재시도가 revision을 만들지 않게 한다. revision 번호는 case 잠금 안에서 할당한다. client/case/N/plannedSessions, schedule/assignment/day, 수정 이력과 고정 snapshot, 초안 종료, 서비스 기록 링크 만료 변경, 메시지 무효화와 재평가 의도, 문서 작업 enqueue를 하나의 트랜잭션에 넣는다. 외부 API·스토리지·문자 호출은 트랜잭션 밖에서만 실행한다.

@@ -464,3 +464,8 @@ phase3-corrections-backend와 phase3-corrections-ui를 c8c7dd60e에서 분기했
 ### Phase3 잔여 검토 — 네 항목 해소, parser 보완
 
 통합06c0877ca에서 backend54/frontend36 집중 검사가 통과했다. 첫 backend 시도는 오래된 설치 타입으로 컴파일 실패했으며 offline frozen relink 후 통과했다. 새 실제PG preview/PATCH 경합 증거는 없다. Sol/high 잔여 검토는 원래6항목 중1/2/4/6을 해소했고3/5의 shared stage union과 preview normalizer 경계만 남겼다. 전체 감사는 반복하지 않는다. 원문은 phase3-sol-residual-audit.md에 보존한다. dedicated unit phase3-parser-correction (branch unit/admin-service-record-3-parser, base06c0877ca)에 기존 Luna/max worker를 재배정했다. 정확한 stage 검증, blocked-vector 예외 범위, 현재 날짜 중복, 원본 날짜 범위, 0-based chunk index를 보정하며 영향받는 parser 검사만 수행한다. Phase4는 잔여 검토 통과 후 시작한다.
+
+
+### Phase3 parser 최종 보완과 검증
+
+worker443473b23를 통합4b366b5c1로 병합하고 깨끗한 phase3-parser-correction unit/branch를 제거했다. shared stage union, envelope/metadata, 중복 날짜, 최초 날짜, after provenance 범위, chunk0 처리를 보완했다. worker shared type/runtime generation/frontend type 검사가 통과했고 메인 adapter9/9가 통과했다. Sol은 stage와 날짜/provenance/chunk 항목을 해소했으며, 빈 차단 응답에서 requiredSessionCount 누락/잘못된 값을 명시적null과 구분하지 않는 한 항목만 남겼다. 메인이 동일 전용 integration worktree에서6가지 malformed count 회귀를 추가해6실패/9통과의 의미 있는RED를 확인한 뒤 envelope 한 조건을 수정했다. 최종61a672cab에서15/15 GREEN, diff-check PASS. 이 한 항목만 Sol/high 읽기 전용 재확인 중이다. 원문 phase3-parser-audit.md. 새 실제PG 또는 외부 증거는 없다.
