@@ -469,3 +469,8 @@ phase3-corrections-backend와 phase3-corrections-ui를 c8c7dd60e에서 분기했
 ### Phase3 parser 최종 보완과 검증
 
 worker443473b23를 통합4b366b5c1로 병합하고 깨끗한 phase3-parser-correction unit/branch를 제거했다. shared stage union, envelope/metadata, 중복 날짜, 최초 날짜, after provenance 범위, chunk0 처리를 보완했다. worker shared type/runtime generation/frontend type 검사가 통과했고 메인 adapter9/9가 통과했다. Sol은 stage와 날짜/provenance/chunk 항목을 해소했으며, 빈 차단 응답에서 requiredSessionCount 누락/잘못된 값을 명시적null과 구분하지 않는 한 항목만 남겼다. 메인이 동일 전용 integration worktree에서6가지 malformed count 회귀를 추가해6실패/9통과의 의미 있는RED를 확인한 뒤 envelope 한 조건을 수정했다. 최종61a672cab에서15/15 GREEN, diff-check PASS. 이 한 항목만 Sol/high 읽기 전용 재확인 중이다. 원문 phase3-parser-audit.md. 새 실제PG 또는 외부 증거는 없다.
+
+
+### Phase3 완료, Phase4 병렬 착수
+
+61a672cab의 한 조건 보정에 대한 Sol/high 잔여 최종 판정은 SHIP이다. 원래6건을 모두 해소했으며 phase3-final-audit.md에 원문을 보존한다. 통합207 및 보완54/36, 마지막 parser15 PASS를 각각 구분해 유지한다. 실제PG preview/PATCH는 여전히 미실행이며 구조적 RepeatableRead 단위 증거만 있다. Phase4는 phase4-execution-contract.md의 고정 API/소유권에 따라 CORE/ADAPTERS/UI Luna/max3단위를 병렬 실행한다. 메인이 공통 checkpoint와 격리DB 통합 검증을 담당하고 단계별 Sol/high 감사만 수행한다. dev/main/preview, 외부 이폼사인·문자·Phase0 ledger는 변경하지 않는다.
