@@ -32,11 +32,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     if (!token) return jsonResponse({ error: "Unauthorized" }, 401);
     const { clientId } = await params;
     const body = await readJsonBody(request);
+    if (!body) return jsonResponse({ error: "Invalid JSON body" }, 400);
 
     try {
         const response = await serverAPIClient.post(
             `/admin/service-records/client/${encodeURIComponent(clientId)}/draft`,
-            body ?? {},
+            body,
             { headers: getAuthHeaders(token) },
         );
         return jsonResponse(response.data ?? {}, response.status);

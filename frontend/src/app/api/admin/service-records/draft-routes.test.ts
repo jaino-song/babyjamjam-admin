@@ -21,14 +21,26 @@ const mockGet = serverAPIClient.get as jest.Mock;
 const mockPost = serverAPIClient.post as jest.Mock;
 const mockPatch = serverAPIClient.patch as jest.Mock;
 
-function createRequest(path: string, method: string, body?: object, authenticated = true): NextRequest {
+function createRequest(
+    path: string,
+    method: string,
+    body?: object | string | null,
+    authenticated = true,
+): NextRequest {
+    const bodyValue = typeof body === "string"
+        ? body
+        : body === null
+            ? "null"
+            : body === undefined
+                ? undefined
+                : JSON.stringify(body);
     return new NextRequest(`http://localhost${path}`, {
         method,
         headers: {
             ...(authenticated ? { cookie: "auth_token=token-1" } : {}),
-            ...(body ? { "content-type": "application/json" } : {}),
+            ...(bodyValue !== undefined ? { "content-type": "application/json" } : {}),
         },
-        ...(body ? { body: JSON.stringify(body) } : {}),
+        ...(bodyValue !== undefined ? { body: bodyValue } : {}),
     });
 }
 
@@ -122,5 +134,61 @@ describe("service-record draft proxy routes", () => {
 
         expect(response.status).toBe(status);
         await expect(response.json()).resolves.toEqual({ code: `DRAFT_${status}` });
+    });
+
+    it.each([
+        ["start", "{invalid", "start"],
+        ["start", "42", "start"],
+        ["start", "null", "start"],
+        ["start", "[]", "start"],
+        ["update", "{invalid", "update"],
+        ["update", "42", "update"],
+        ["update", "null", "update"],
+        ["update", "[]", "update"],
+        ["discard", "{invalid", "discard"],
+        ["discard", "42", "discard"],
+        ["discard", "null", "discard"],
+        ["discard", "[]", "discard"],
+    ])("rejects %s mutation body %s before any upstream mutation", async (operation, rawBody) => {
+        const request = createRequest(
+            operation === "start"
+                ? "/api/admin/service-records/client/17/draft"
+                : "/api/admin/service-records/drafts/draft-1",
+            operation === "update" ? "PATCH" : "POST",
+            rawBody,
+        );
+        const response = operation === "start"
+            ? await startDraft(request, { params: Promise.resolve({ clientId: "17" }) })
+            : operation === "update"
+                ? await updateDraft(request, { params: Promise.resolve({ draftId: "draft-1" }) })
+                : await discardDraft(
+                    createRequest(
+                        "/api/admin/service-records/drafts/draft-1/discard",
+                        "POST",
+                        rawBody,
+                    ),
+                    { params: Promise.resolve({ draftId: "draft-1" }) },
+                );
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toEqual({ error: "Invalid JSON body" });
+        expect(mockPost).not.toHaveBeenCalled();
+        expect(mockPatch).not.toHaveBeenCalled();
+    });
+
+    it("accepts an omitted optional start body as an empty object", async () => {
+        mockPost.mockResolvedValue({ status: 201, data: { draft: { id: "draft-1" } } });
+
+        const response = await startDraft(
+            createRequest("/api/admin/service-records/client/17/draft", "POST"),
+            { params: Promise.resolve({ clientId: "17" }) },
+        );
+
+        expect(response.status).toBe(201);
+        expect(mockPost).toHaveBeenCalledWith(
+            "/admin/service-records/client/17/draft",
+            {},
+            { headers: { Authorization: "Bearer token-1" } },
+        );
     });
 });

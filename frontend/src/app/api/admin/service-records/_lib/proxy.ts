@@ -18,11 +18,20 @@ export function jsonResponse(body: unknown, status: number): NextResponse {
     });
 }
 
-export async function readJsonBody(request: NextRequest): Promise<unknown> {
+/**
+ * Parse a mutation body without letting malformed JSON become an empty start
+ * request. An omitted/whitespace-only body is the optional `{}` start body;
+ * every other non-object JSON value is rejected by the caller.
+ */
+export async function readJsonBody(request: NextRequest): Promise<Record<string, unknown> | null> {
+    const raw = await request.text();
+    if (!raw.trim()) return {};
     try {
-        return await request.json();
+        const parsed: unknown = JSON.parse(raw);
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+        return parsed as Record<string, unknown>;
     } catch {
-        return {};
+        return null;
     }
 }
 
