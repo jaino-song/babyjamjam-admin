@@ -7,6 +7,7 @@ import {
   type ContractMockDocument,
 } from "./helpers/contracts-api-mock";
 import { selectContractsSection } from "./helpers/contracts-ui";
+import { installPhase3ShellFixture } from "./helpers/phase3-fixtures";
 
 async function createPreviewPdf(): Promise<Buffer> {
   const pdfDocument = await PDFDocument.create();
@@ -383,7 +384,20 @@ async function routeDocumentDetails(page: Page, docs = [...MOCK_DOCUMENTS.docume
 
 async function routeDocumentPdfPreview(page: Page) {
   const pdfBody = await createPreviewPdf();
+  const receiptPngBody = Buffer.from(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360000000020001e221bc330000000049454e44ae426082",
+    "hex",
+  );
   await page.route("**/api/eformsign/documents/*/download_files**", async (route) => {
+    const requestUrl = new URL(route.request().url());
+    if (requestUrl.searchParams.get("format") === "receipt-png") {
+      await route.fulfill({
+        status: 200,
+        contentType: "image/png",
+        body: receiptPngBody,
+      });
+      return;
+    }
     await route.fulfill({
       status: 200,
       contentType: "application/pdf",
@@ -901,6 +915,7 @@ test.describe("Mobile contracts list rows", () => {
   });
 
   test("shows the PDF preview below contract actions", async ({ page }) => {
+    await installPhase3ShellFixture(page);
     await page.addInitScript(() => {
       Object.defineProperty(navigator, "canShare", {
         configurable: true,
@@ -952,8 +967,8 @@ test.describe("Mobile contracts list rows", () => {
     });
     expect(await sharedReceipt.jsonValue()).toMatchObject({
       count: 1,
-      name: "완료고객 계약서 영수증.pdf",
-      type: "application/pdf",
+      name: "완료고객 산모님 영수증.png",
+      type: "image/png",
     });
 
     await page.locator('[data-component="mobile_contracts_detail-sheet_stack_detail-page_actions_preview"]').click();
@@ -1012,8 +1027,8 @@ test.describe("Mobile contracts list rows", () => {
     await expect(backButton).toHaveText("돌아가기");
     await expect(receiptButton).toHaveText("영수증");
     await expect(downloadButton).toHaveText("다운로드");
-    await expect(receiptButton).toHaveAttribute("href", /\/api\/eformsign\/documents\/doc-completed\/download_files\?fileType=document&page=7$/);
-    await expect(receiptButton).toHaveAttribute("download", "완료고객 계약서 영수증.pdf");
+    await expect(receiptButton).toHaveAttribute("href", /\/api\/eformsign\/documents\/doc-completed\/download_files\?fileType=document&format=receipt-png$/);
+    await expect(receiptButton).toHaveAttribute("download", "완료고객 산모님 영수증.png");
     await expect(downloadButton).toHaveAttribute("href", /\/api\/eformsign\/documents\/doc-completed\/download_files\?fileType=document$/);
     await expect(downloadButton).toHaveAttribute("download", "완료고객 계약서.pdf");
     await expect(backButton).toHaveCSS("transition-property", "color, background-color, opacity, transform");

@@ -1795,6 +1795,21 @@
         ]
       },
       {
+        "name": "ListCountSkeleton",
+        "layer": "molecule",
+        "import": "@/components/app/mobile-redesign/primitives",
+        "file": "mobile/src/components/app/mobile-redesign/primitives.tsx",
+        "exports": [
+          "ListCountSkeleton"
+        ],
+        "replaces": [
+          "page-local list count loading placeholders"
+        ],
+        "requiredFor": [
+          "list count loading state"
+        ]
+      },
+      {
         "name": "ListPanel",
         "layer": "organism",
         "import": "@/components/app/v3",

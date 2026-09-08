@@ -81,8 +81,12 @@ export const employeeQueryKeys = {
     workHistory: (id: number) => [...employeeQueryKeys.detail(id), "work-history"] as const,
 };
 
+interface UseEmployeesOptions {
+    refetchOnMount?: boolean | "always";
+}
+
 // Fetch all employees
-export function useEmployees() {
+export function useEmployees({ refetchOnMount = true }: UseEmployeesOptions = {}) {
     return useQuery<Employee[]>({
         queryKey: employeeQueryKeys.lists(),
         queryFn: async () => {
@@ -95,6 +99,7 @@ export function useEmployees() {
             return [];
         },
         staleTime: 1000 * 60 * 10, // 10 minutes
+        refetchOnMount,
     });
 }
 

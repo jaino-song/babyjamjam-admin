@@ -4,6 +4,7 @@
 import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
+import { getErrorMessage } from "@/lib/errors/api-error-mapper";
 import {
   DELETE as deleteEmployee,
   GET as listEmployees,
@@ -94,6 +95,61 @@ describe("employee API routes", () => {
       "/employees",
       validCreatePayload,
       expect.anything(),
+    );
+  });
+
+  it("surfaces a safe backend validation message through the employee error mapper", async () => {
+    const message = "전화번호 형식이 올바르지 않습니다.";
+    mockPost.mockRejectedValue({
+      response: {
+        status: 400,
+        data: { message, error: "Bad Request" },
+      },
+    });
+
+    const response = await createEmployee(
+      createRequest("/api/employees", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(validCreatePayload),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body).toEqual({ error: message });
+    expect(getErrorMessage({ response: { status: 400, data: body } }, "ko")).toBe(message);
+  });
+
+  it("preserves message-less Prisma metadata for localized phone conflicts", async () => {
+    mockPost.mockRejectedValue({
+      response: {
+        status: 409,
+        data: {
+          code: "P2002",
+          error: "Conflict",
+          field: "phone",
+        },
+      },
+    });
+
+    const response = await createEmployee(
+      createRequest("/api/employees", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(validCreatePayload),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body).toEqual({
+      error: "Failed to create employee",
+      code: "P2002",
+      field: "phone",
+    });
+    expect(getErrorMessage({ response: { status: 409, data: body } }, "ko")).toBe(
+      "이미 등록된 연락처입니다. 다른 연락처를 입력해주세요.",
     );
   });
 

@@ -138,6 +138,45 @@ describe("ServiceRecordLifecycleService", () => {
         }));
     });
 
+    it.each([null, 15, 4])("uses actual remaining days with stored count %s without rewriting voucher duration", async (stored) => {
+        const record = { id: "case-1" };
+        const prisma = {
+            client: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 1, branchId: "branch-1", startDate: date("2026-09-03"),
+                    endDate: date("2026-09-08"), duration: 15,
+                    serviceStatus: "in_progress", employeeSchedules: [],
+                }),
+                updateMany: jest.fn(),
+            },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(stored === null ? null : {
+                    ...record, requiredSessionCount: stored, status: "IN_PROGRESS",
+                    startDate: date("2026-09-03"), endDate: date("2026-09-08"),
+                }),
+                upsert: jest.fn().mockResolvedValue(record),
+            },
+            service_record_token: { updateMany: jest.fn() },
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        jest.spyOn(service, "recompute").mockResolvedValue(record as never);
+        await service.ensureForClient(1);
+        expect(prisma.client.updateMany).not.toHaveBeenCalled();
+        expect(prisma.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
+            create: expect.objectContaining({ requiredSessionCount: 4 }),
+            update: expect.objectContaining({ requiredSessionCount: 4 }),
+        }));
+        if (stored !== null) {
+            prisma.client.findUnique.mockResolvedValue({
+                ...(await prisma.client.findUnique()), endDate: date("2026-09-09"),
+            });
+            await service.ensureForClient(1);
+            expect(prisma.service_record_case.upsert).toHaveBeenLastCalledWith(expect.objectContaining({
+                update: expect.objectContaining({ requiredSessionCount: 4 }),
+            }));
+        }
+    });
+
     it("fills a still-null client duration from the actual service period", async () => {
         const record = { id: "case-1" };
         const prisma = {
@@ -837,19 +876,15 @@ describe("ServiceRecordLifecycleService", () => {
         );
     });
 
-    it("moves a complete in-period record to READY_TO_FINALIZE while preserving outside rows", async () => {
-        jest.useFakeTimers({ now: new Date("2026-08-10T00:00:00.000Z") });
+    it("completes four transferred service days while preserving outside rows", async () => {
+        jest.useFakeTimers({ now: new Date("2026-09-08T00:00:00.000Z") });
         const record = {
             id: "case-1",
             status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
-            startDate: date("2026-08-03"),
-            endDate: date("2026-08-10"),
-            // requiredSessionCount is the stored, authoritative session
-            // count now (no longer re-derived from the dates every time),
-            // so it must already equal the actually recordable count for
-            // this test's "complete" case to hold.
-            requiredSessionCount: 6,
-            finalizationDueAt: new Date("2026-08-10T11:00:00.000Z"),
+            startDate: date("2026-09-03"),
+            endDate: date("2026-09-08"),
+            requiredSessionCount: 15,
+            finalizationDueAt: new Date("2026-09-08T11:00:00.000Z"),
             completedAt: null,
             momName: "산모",
             momBirth: "900101",
@@ -859,7 +894,7 @@ describe("ServiceRecordLifecycleService", () => {
             babyWeight: "3.2",
             assignments: [{ schedule: { replaced: false } }],
             days: [
-                ...["2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-10"]
+                ...["2026-09-03", "2026-09-04", "2026-09-07", "2026-09-08"]
                     .map((serviceDate, index) => ({
                         caseSessionIndex: index + 1,
                         serviceDate: date(serviceDate),
@@ -867,8 +902,8 @@ describe("ServiceRecordLifecycleService", () => {
                         momApproval: "approved",
                     })),
                 {
-                    caseSessionIndex: 7,
-                    serviceDate: date("2026-08-11"),
+                    caseSessionIndex: 5,
+                    serviceDate: date("2026-09-09"),
                     locked: true,
                     momApproval: "approved",
                 },
@@ -888,7 +923,7 @@ describe("ServiceRecordLifecycleService", () => {
             data: expect.objectContaining({
                 status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE,
                 completedAt: expect.any(Date),
-                requiredSessionCount: 6,
+                requiredSessionCount: 4,
             }),
         }));
     });
