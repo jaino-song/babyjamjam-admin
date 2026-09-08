@@ -308,6 +308,126 @@ describe("EformsignDocumentJobWorkerService", () => {
         expect(markerQuery?.strings?.join(" ")).toContain("progress_step = 'creating'");
     });
 
+    it("forwards revision authorization to the caller-transaction repository seam", async () => {
+        const context = {
+            branchId,
+            clientId: 7,
+            serviceRecordCaseId: "00000000-0000-0000-0000-000000000020",
+            revisionId: null,
+            revisionNumber: null,
+            businessFingerprint: "b".repeat(64),
+            plannedSessionCount: null,
+            plannedSessionDates: [],
+            documentSyncStatus: "pending" as const,
+            lifecycleStatus: "IN_PROGRESS",
+            formVersion: 1,
+        };
+        const claimed = job({
+            payload: {
+                kind: "service_record_revision",
+                context,
+                immutablePayload: { clientId: 7 },
+                payloadFingerprint: "c".repeat(64),
+                completeness: "complete",
+            },
+        });
+        const transaction = {
+            $queryRaw: jest.fn().mockResolvedValue([{ id: 7 }]),
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: context.serviceRecordCaseId,
+                    branchId,
+                    clientId: 7,
+                    requiredSessionCount: null,
+                    plannedSessions: null,
+                    currentRevisionId: null,
+                    formVersion: 1,
+                    status: "IN_PROGRESS",
+                }),
+            },
+        };
+        const authorizeForDispatchInTransaction = jest.fn().mockResolvedValue({ kind: "allow" });
+        const prisma = {
+            $transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>) => callback(transaction)),
+        };
+        const { worker, repository } = buildWorker({
+            repository: { authorizeForDispatchInTransaction },
+            prisma,
+        });
+
+        const authorization = await (worker as unknown as {
+            authorizeRevisionJob: (job: EformsignDocumentJobEntity) => Promise<unknown>;
+        }).authorizeRevisionJob(claimed);
+
+        expect(authorization).toEqual({ kind: "allow", irreversible: true });
+        expect(authorizeForDispatchInTransaction).toHaveBeenCalledWith(transaction, {
+            jobId: claimed.id,
+            leaseToken: claimed.leaseToken,
+            expectedContext: context,
+        });
+        expect(repository.markRequiresAttention).not.toHaveBeenCalled();
+    });
+
+    it("fails closed for an old finalize job whose document has no client owner", async () => {
+        const claimed = job({
+            clientId: null,
+            documentId: "legacy-finalize-document",
+            jobType: "finalize_document",
+            payload: { documentId: "legacy-finalize-document" },
+        });
+        const transaction = {
+            eformsign_doc: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 91,
+                    documentId: claimed.documentId,
+                    branchId,
+                    clientId: null,
+                    serviceRecordCaseId: null,
+                }),
+            },
+            $queryRaw: jest.fn(),
+        };
+        const prisma = {
+            $transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>) => callback(transaction)),
+        };
+        const authorizeForDispatchInTransaction = jest.fn();
+        const { worker } = buildWorker({
+            repository: { authorizeForDispatchInTransaction },
+            prisma,
+        });
+
+        const authorization = await (worker as unknown as {
+            authorizeRevisionJob: (job: EformsignDocumentJobEntity) => Promise<unknown>;
+        }).authorizeRevisionJob(claimed);
+
+        expect(authorization).toEqual({
+            kind: "stale",
+            reason: "SERVICE_RECORD_FINALIZE_OWNER_UNAVAILABLE",
+        });
+        expect(authorizeForDispatchInTransaction).not.toHaveBeenCalled();
+        expect(transaction.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it("keeps the durable creating marker when a later provider step reports progress", async () => {
+        const claimed = job({ progressStep: "creating" });
+        const { worker, repository } = buildWorker();
+        await (worker as unknown as {
+            recordProgress: (
+                jobId: string,
+                leaseToken: string,
+                step: string,
+                preserveDispatchMarker: boolean,
+            ) => Promise<void>;
+        }).recordProgress(claimed.id, claimed.leaseToken!, "info-inserted", true);
+
+        expect(repository.updateProgress).toHaveBeenCalledWith(
+            claimed.id,
+            claimed.leaseToken,
+            "creating",
+            expect.any(Date),
+        );
+    });
+
     it("persists progress and sends a heartbeat while a provider operation is running", async () => {
         jest.useFakeTimers();
         const claimed = job();
