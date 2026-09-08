@@ -213,15 +213,41 @@ test.describe("Phase 3.1 functional integration matrix", () => {
     await page.route("**/api/out-of-pocket-price-infos**", async (route) => {
       await route.fulfill(phase3Json([]));
     });
+    let resolveEformDocumentRequest!: () => void;
+    let releaseEformDocumentResponse!: () => void;
+    let resolveEformDocumentResponse!: () => void;
+    const eformDocumentRequest = new Promise<void>((resolve) => {
+      resolveEformDocumentRequest = resolve;
+    });
+    const eformDocumentRelease = new Promise<void>((resolve) => {
+      releaseEformDocumentResponse = resolve;
+    });
+    const eformDocumentResponse = new Promise<void>((resolve) => {
+      resolveEformDocumentResponse = resolve;
+    });
+
     await page.route("**/api/eformsign/documents/doc-42", async (route) => {
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      resolveEformDocumentRequest();
+      await eformDocumentRelease;
       await route.fulfill(
-        phase3Json({ id: "doc-42", fields: [{ id: "출산 예정일", value: "260611" }] }),
+        phase3Json({
+          id: "doc-42",
+          fields: [
+            { id: "출산 예정일", value: "260611" },
+            { id: "서비스 시작일", value: "2026-09-05" },
+            { id: "서비스 종료일", value: "2026-10-02" },
+          ],
+        }),
       );
+      resolveEformDocumentResponse();
     });
 
     await page.goto("/clients/new?clientId=42");
     await expect(page.locator(selector("mobile_clients-new_screen_root_page_navbar_title"))).toHaveText("고객 정보 수정");
+    // Hold the real document response open until the operator has cleared the
+    // already-populated end date. This handshake makes hydration ordering
+    // deterministic and avoids timing-based sleeps.
+    await eformDocumentRequest;
     await expect(page.locator(phase3Selectors.birthday)).toHaveValue("950414");
     await expect(page.locator(phase3Selectors.dueDate)).toHaveValue("2026-09-15");
     await advanceWizardStep(page);
@@ -229,11 +255,12 @@ test.describe("Phase 3.1 functional integration matrix", () => {
     await expect(page.locator(phase3Selectors.startDate)).toHaveValue("2026-09-03");
     await expect(page.locator(phase3Selectors.endDate)).toHaveValue("2026-09-30");
 
-    // The e-form document response is deliberately late. Clearing the end
-    // field after it has begun loading must not be replaced by hydration.
+    // The operator clears the field before the non-empty e-form end date is
+    // released. Hydration must not replace this explicit user edit.
     await page.locator(phase3Selectors.endDate).fill("");
     await expect(page.locator(phase3Selectors.endDate)).toHaveValue("");
-    await page.waitForTimeout(400);
+    releaseEformDocumentResponse();
+    await eformDocumentResponse;
     await expect(page.locator(phase3Selectors.startDate)).toHaveValue("2026-09-03");
     await expect(page.locator(phase3Selectors.endDate)).toHaveValue("");
   });

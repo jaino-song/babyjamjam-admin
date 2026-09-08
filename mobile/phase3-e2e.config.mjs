@@ -5,6 +5,12 @@ import { defineConfig, devices } from "@playwright/test";
 const configDir = path.dirname(fileURLToPath(import.meta.url));
 const e2ePort = process.env.E2E_PORT ?? "4317";
 const baseURL = process.env.BASE_URL ?? `http://localhost:${e2ePort}`;
+const parsedBaseURL = new URL(baseURL);
+const loopbackHosts = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+
+if (parsedBaseURL.protocol !== "http:" || !loopbackHosts.has(parsedBaseURL.hostname)) {
+  throw new Error(`Phase 3 synthetic E2E requires an HTTP loopback BASE_URL; received ${baseURL}`);
+}
 
 export default defineConfig({
   testDir: "./tests",
