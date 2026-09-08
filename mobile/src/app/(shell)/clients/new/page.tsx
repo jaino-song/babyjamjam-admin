@@ -24,6 +24,7 @@ import { api } from "@/lib/api/client";
 import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
 import { FormNativeSelect } from "@/components/app/ui/form-section";
+import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { TogglePill } from "@/components/app/ui/toggle-pill";
 import { Input } from "@/components/app/v3/Input";
 import { useEmployees, type Employee } from "@/hooks/useEmployees";
@@ -45,6 +46,7 @@ import { buildClientEditPrefillFromEformsignDocument } from "@/lib/eformsign/cli
 import { eformsignApi } from "@/services/api";
 import { cn } from "@/lib/utils";
 import { resolveVoucherLookupYear } from "./voucher-year";
+import { getServiceDateDurationCheck } from "./duration-mismatch";
 import styles from "./page.module.css";
 
 const PHONE_DUPLICATE_CHECK_MAX_RETRIES = 3;
@@ -200,7 +202,9 @@ export default function NewClientPage() {
   const createClient = useCreateClient();
   const updateClient = useUpdateClient();
   const { data: editingClient } = useClient(editingClientId ?? 0);
-  const { data: employees = [], isLoading: isEmployeesLoading } = useEmployees();
+  const { data: employees = [], isLoading: isEmployeesLoading } = useEmployees({
+    refetchOnMount: "always",
+  });
   const store = useClientWizardStore();
   const {
     currentStep,
@@ -238,9 +242,12 @@ export default function NewClientPage() {
   const [isPhoneDuplicate, setIsPhoneDuplicate] = useState(false);
   const [hasPhoneDuplicateCheckFailed, setHasPhoneDuplicateCheckFailed] = useState(false);
   const [lastCheckedPhoneDigits, setLastCheckedPhoneDigits] = useState<string | null>(null);
+  const [pendingDurationConfirmation, setPendingDurationConfirmation] = useState<string | null>(null);
   const lastInitializedFormKeyRef = useRef<string | null>(null);
   const lastHydratedIdRef = useRef<number | null>(null);
   const lastHydratedContractDocIdRef = useRef<string | null>(null);
+  const hasUserEditedServicePeriodRef = useRef(false);
+  const submissionInFlightRef = useRef(false);
 
   const { data: editingContractDocument } = useQuery({
     queryKey: ["eformsign-docs", "document", editingClient?.eDocId],
@@ -304,6 +311,9 @@ export default function NewClientPage() {
     lastInitializedFormKeyRef.current = formSessionKey;
     lastHydratedIdRef.current = null;
     lastHydratedContractDocIdRef.current = null;
+    hasUserEditedServicePeriodRef.current = false;
+    submissionInFlightRef.current = false;
+    setPendingDurationConfirmation(null);
     reset();
   }, [formSessionKey, reset]);
 
@@ -327,6 +337,8 @@ export default function NewClientPage() {
       return;
     }
 
+    hasUserEditedServicePeriodRef.current = false;
+    setPendingDurationConfirmation(null);
     reset();
 
     if (prefillClient.name !== undefined) setField("name", prefillClient.name);
@@ -364,6 +376,7 @@ export default function NewClientPage() {
     if (!editingClient) return;
     if (lastHydratedIdRef.current === editingClient.id) return;
     lastHydratedIdRef.current = editingClient.id;
+    hasUserEditedServicePeriodRef.current = false;
 
     setField("name", editingClient.name);
     setField("birthday", editingClient.birthday ?? "");
@@ -408,6 +421,7 @@ export default function NewClientPage() {
     }
 
     lastHydratedContractDocIdRef.current = editingClient.eDocId;
+    hasUserEditedServicePeriodRef.current = false;
 
     const matchedVoucherPrice = hasPricePrefill
       ? findVoucherPriceByAmounts(allVoucherPrices, prefill)
@@ -588,6 +602,15 @@ export default function NewClientPage() {
   }, [hasValidStoreDuration, store.actualPrice, store.fullPrice, store.grant, store.voucherClient, voucherPriceInfos]);
   const effectiveDuration = hasValidStoreDuration ? store.duration : inferredDurationFromPrices;
 
+  const serviceDateDurationCheck = useMemo(
+    () => getServiceDateDurationCheck(
+      isoOrNull(store.startDate),
+      isoOrNull(store.endDate),
+      effectiveDuration,
+    ),
+    [effectiveDuration, store.endDate, store.startDate],
+  );
+
   const selectedPriceInfo = useMemo(() => {
     if (!store.voucherClient) {
       return findOutOfPocketPriceInfo(outOfPocketPriceInfos, effectiveDuration);
@@ -658,12 +681,24 @@ export default function NewClientPage() {
     // Only once the whole date has been typed — a half-entered one would
     // otherwise keep recomputing the end date under the user's cursor.
     if (!isStrictIsoDate(store.startDate)) return;
+    // Existing and explicitly prefilled periods are authoritative until the
+    // operator changes the start date or duration in this form.
+    if (!hasUserEditedServicePeriodRef.current && store.endDate) return;
     const endIso = calcEndDateBusinessDays(store.startDate, effectiveDuration);
     if (!endIso) return;
+    if (store.endDate === endIso) return;
     setField("endDate", endIso);
-  }, [effectiveDuration, store.startDate, setField]);
+  }, [effectiveDuration, setField, store.startDate]);
+
+  useEffect(() => {
+    if (pendingDurationConfirmation === null) return;
+    if (pendingDurationConfirmation !== serviceDateDurationCheck.periodKey) {
+      setPendingDurationConfirmation(null);
+    }
+  }, [pendingDurationConfirmation, serviceDateDurationCheck.periodKey]);
 
   const handleTypeChange = (newType: string) => {
+    hasUserEditedServicePeriodRef.current = true;
     setField("type", newType);
     setField("duration", null);
     if (!pricesManuallyEdited) {
@@ -674,6 +709,7 @@ export default function NewClientPage() {
   };
 
   const handleVoucherYearChange = (newYear: string) => {
+    hasUserEditedServicePeriodRef.current = true;
     const parsedYear = Number(newYear);
     setVoucherYear(Number.isNaN(parsedYear) ? null : parsedYear);
     setField("duration", null);
@@ -685,11 +721,13 @@ export default function NewClientPage() {
   };
 
   const handlePriceChange = (field: "fullPrice" | "grant" | "actualPrice", value: string) => {
+    hasUserEditedServicePeriodRef.current = true;
     setPricesManuallyEdited(true);
     setField(field, value);
   };
 
   const handleVoucherClientChange = (voucherClient: boolean) => {
+    hasUserEditedServicePeriodRef.current = true;
     setPricesManuallyEdited(false);
     setField("voucherClient", voucherClient);
     setField("type", "");
@@ -761,8 +799,21 @@ export default function NewClientPage() {
     setCurrentStep(newStep);
   };
 
-  const handleComplete = async () => {
+  const handleComplete = async (confirmedPeriod?: string) => {
+    if (submissionInFlightRef.current) return;
     if (!validateStep(currentStep)) return;
+
+    const { hasMismatch, periodKey } = serviceDateDurationCheck;
+    if (hasMismatch && confirmedPeriod !== periodKey) {
+      setPendingDurationConfirmation(periodKey);
+      return;
+    }
+
+    const durationConfirmation = hasMismatch && confirmedPeriod === periodKey
+      ? { allowBusinessDayMismatch: true }
+      : {};
+    setPendingDurationConfirmation(null);
+    submissionInFlightRef.current = true;
 
     try {
       const dto: CreateClientDto = {
@@ -776,6 +827,7 @@ export default function NewClientPage() {
         secondaryEmployeeId: store.secondaryEmployeeId,
         type: store.voucherClient ? store.type || null : null,
         duration: effectiveDuration || null,
+        ...durationConfirmation,
         fullPrice: store.fullPrice || null,
         grant: store.voucherClient ? store.grant || null : "0",
         actualPrice: store.voucherClient ? store.actualPrice || null : store.fullPrice || null,
@@ -796,6 +848,9 @@ export default function NewClientPage() {
       router.push(clientsReturnHref);
     } catch (err: unknown) {
       showErrorToast(getErrorMessage(err, locale, "clients.form.error-save-failed"));
+    } finally {
+      submissionInFlightRef.current = false;
+      setPendingDurationConfirmation(null);
     }
   };
 
@@ -999,6 +1054,7 @@ export default function NewClientPage() {
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_duration-field_select-wrap"
                         value={effectiveDuration?.toString() || ""}
                         onValueChange={(value) => {
+                          hasUserEditedServicePeriodRef.current = true;
                           setField("duration", value ? Number(value) : null);
                           setPricesManuallyEdited(false);
                         }}
@@ -1033,6 +1089,7 @@ export default function NewClientPage() {
                     <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_employee-card_primary-field" label="제공인력 1">
                       <EmployeeAutocomplete
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_employee-card_primary-field_autocomplete"
+                        refreshOnMount
                         value={store.primaryEmployeeId}
                         onChange={(id) => setField("primaryEmployeeId", id)}
                         label=""
@@ -1047,6 +1104,7 @@ export default function NewClientPage() {
                     <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_employee-card_secondary-field" label="제공인력 2">
                       <EmployeeAutocomplete
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_employee-card_secondary-field_autocomplete"
+                        refreshOnMount
                         value={store.secondaryEmployeeId}
                         onChange={(id) => setField("secondaryEmployeeId", id)}
                         label=""
@@ -1145,7 +1203,10 @@ export default function NewClientPage() {
                       <Input
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_start-date-field_start-date-input"
                         value={store.startDate}
-                        onChange={(e) => setField("startDate", formatIsoDateInput(e.target.value))}
+                        onChange={(e) => {
+                          hasUserEditedServicePeriodRef.current = true;
+                          setField("startDate", formatIsoDateInput(e.target.value));
+                        }}
                         inputMode="numeric"
                         maxLength={10}
                         placeholder="YYYY-MM-DD"
@@ -1196,6 +1257,26 @@ export default function NewClientPage() {
         }}
         onSuccess={handleEmployeeCreated}
         assignmentLabel={employeeDialogTarget === "secondary" ? "제공인력 2에 배정" : "제공인력 1에 배정"}
+      />
+      <MobileTwoButtonModal
+        data-component="mobile_clients-new_screen_root_duration-confirmation"
+        open={pendingDurationConfirmation !== null}
+        title="서비스 기간 확인"
+        description="평일 기준으로 서비스 기간이 맞지 않습니다. 그래도 저장할까요?"
+        cancelLabel="취소"
+        confirmLabel="확인"
+        confirmVariant="default"
+        actionOrder="cancel-confirm"
+        loading={isSaving}
+        onOpenChange={(open) => {
+          if (!open) setPendingDurationConfirmation(null);
+        }}
+        onCancel={() => setPendingDurationConfirmation(null)}
+        onConfirm={() => {
+          if (pendingDurationConfirmation !== null) {
+            void handleComplete(pendingDurationConfirmation);
+          }
+        }}
       />
     </>
   );
