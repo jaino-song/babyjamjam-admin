@@ -76,6 +76,17 @@ export interface SmsTriggerDeliverySnapshot {
     readonly systemTemplateKey?: SystemTemplateKey;
 }
 
+/**
+ * The provider-bound values prepared before the dispatch authorization fence.
+ * `serializedSnapshot` is persisted on the trigger job before the common
+ * client/source lock is acquired so authorization can prove that the worker
+ * will send exactly the values that were prepared.
+ */
+export interface SmsTriggerDeliveryPreparation {
+    readonly snapshot: Readonly<SmsTriggerDeliverySnapshot>;
+    readonly serializedSnapshot: string;
+}
+
 interface ResolvedSmsTemplate {
     content: string;
     version: string;
@@ -396,6 +407,106 @@ export class SmsTriggerDeliveryService {
     }
 
     /**
+     * Prepare a provider-bound delivery before the caller commits its durable
+     * dispatch marker. Receipt/document enrichers run here, while the
+     * subsequent `sendPreparedJob` path is intentionally side-effect free
+     * until the caller has completed its atomic source/claim fence.
+     *
+     * The existing `sendJob` API remains unchanged for direct callers and
+     * retries. The message-trigger scheduler uses this two-step API so a
+     * failed preparation can never leave a job in `dispatching`.
+     */
+    async prepareJob(job: MessageTriggerJobEntity): Promise<SmsTriggerDeliveryPreparation | null> {
+        if (!job.branchId) {
+            throw new Error(`SMS trigger job ${job.id} is missing branchId`);
+        }
+
+        const config = SMS_TEMPLATE_DELIVERY[job.templateKey];
+        if (!config) {
+            return null;
+        }
+
+        const previousVariables = { ...job.payload.templateVariables };
+        const previousButtonUrl = job.payload.buttonUrl;
+        try {
+            // A staged snapshot is already approved and immutable. Validate
+            // its receipt capability without running a mutating enricher;
+            // the canonical snapshot check below still verifies the staged
+            // values against the current recipient/template contract.
+            const hasStagedSnapshot = this.hasStagedDeliverySnapshot(job);
+            const enricher = this.enricherRegistry?.get(job.templateKey) ?? null;
+            if (hasStagedSnapshot && job.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE) {
+                if (!enricher?.validateStagedSnapshot) {
+                    throw new SmsTriggerDeliverySkipError(
+                        "receipt_link_validation_unavailable",
+                        "승인된 영수증 링크를 확인할 수 없어 재시도하지 않았습니다",
+                    );
+                }
+                await enricher.validateStagedSnapshot(job);
+            } else if (!hasStagedSnapshot && enricher) {
+                await enricher.enrich(job);
+            }
+
+            const snapshot = await this.resolveDeliverySnapshot(job);
+            const serializedSnapshot = hasStagedSnapshot
+                ? job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE]
+                : this.serializeSnapshot(snapshot);
+            if (!serializedSnapshot) {
+                throw new Error("SMS delivery snapshot could not be serialized");
+            }
+
+            // Reuse the existing staged snapshot field as the durable frozen
+            // delivery payload. This makes retries consume the same prepared
+            // receipt/message values without introducing another queue or
+            // payload format.
+            job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] = serializedSnapshot;
+            return Object.freeze({ snapshot, serializedSnapshot });
+        } catch (error) {
+            // Preparation is provisional. Restore the payload so a failed
+            // receipt render/upload/token issuance leaves no staged snapshot
+            // or mutable URL for a later retry to mistake as authorized.
+            job.payload.templateVariables = previousVariables;
+            job.payload.buttonUrl = previousButtonUrl;
+
+            if (error instanceof SmsTriggerDeliverySkipError) {
+                job.cancel(`메시지 발송 건너뜀: ${error.message}`);
+                this.logger.warn(`[SMS Automation] ${job.templateKey} skipped for job ${job.id}: ${error.reason}`);
+                return null;
+            }
+            if (error instanceof MissingSmsTemplateVariablesError) {
+                job.cancel(`메시지 발송 건너뜀: 필수 정보 누락 (${error.variableKeys.join(", ")})`);
+                this.logger.warn(
+                    `[SMS Automation] ${job.templateKey} skipped for job ${job.id}: missing ${error.variableKeys.join(", ")}`,
+                );
+                return null;
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * Send the exact snapshot produced by `prepareJob`. No enricher,
+     * template lookup, receipt issuance, token minting, or fresh recipient
+     * resolution occurs after the caller's durable authorization fence.
+     */
+    async sendPreparedJob(
+        job: MessageTriggerJobEntity,
+        preparation: SmsTriggerDeliveryPreparation,
+    ): Promise<boolean> {
+        if (!job.branchId) {
+            throw new Error(`SMS trigger job ${job.id} is missing branchId`);
+        }
+        const config = SMS_TEMPLATE_DELIVERY[job.templateKey];
+        if (!config) {
+            return false;
+        }
+        if (job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] !== preparation.serializedSnapshot) {
+            throw new Error("SMS prepared delivery snapshot changed before provider dispatch");
+        }
+        return this.sendSmsJob(job, config, preparation.snapshot);
+    }
+
+    /**
      * True when this job's payload already carries a staged delivery snapshot
      * (SMS_DELIVERY_SNAPSHOT_VARIABLE) — i.e. an agent-approved retry whose message
      * body was already resolved, hashed, and approved before this dispatch.
@@ -407,9 +518,10 @@ export class SmsTriggerDeliveryService {
     private async sendSmsJob(
         job: MessageTriggerJobEntity,
         config: SmsTemplateDeliveryConfig,
+        preparedSnapshot?: Readonly<SmsTriggerDeliverySnapshot>,
     ): Promise<boolean> {
         const payload = job.payload;
-        const snapshot = await this.resolveDeliverySnapshot(job);
+        const snapshot = preparedSnapshot ?? await this.resolveDeliverySnapshot(job);
 
         const pendingAttempt = this.buildSmsLog({
             job,

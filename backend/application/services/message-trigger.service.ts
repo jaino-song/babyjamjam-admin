@@ -14,8 +14,11 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import type { ServiceRecordRevisionDispatchContext } from "@babyjamjam/shared/types/service-record";
 import {
     authorizeServiceRecordDispatch,
+    deriveServiceRecordDocumentSyncStatus,
     isValidServiceRecordDispatchContext,
+    isRevisionDocumentDispatchAllowed,
 } from "application/policies/service-record-revision-state.policy";
+import type { ServiceRecordDocumentSyncFacts } from "application/policies/service-record-revision-state.policy";
 import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import {
     MESSAGE_TRIGGER_TEMPLATE_CATALOG,
@@ -61,6 +64,10 @@ import {
     IMessageLogRepository,
 } from "domain/repositories/message-log.repository.interface";
 import { MessageTriggerDeliveryService } from "./message-trigger-delivery.service";
+import {
+    SMS_DELIVERY_SNAPSHOT_VARIABLE,
+    type SmsTriggerDeliveryPreparation,
+} from "./sms-trigger-delivery.service";
 import { hasColumn, hasTable } from "infrastructure/database/schema-capabilities";
 import { MessageSenderApprovalService } from "./message-sender-approval.service";
 import { buildSmsClientVariables } from "./sms-client-variables";
@@ -382,6 +389,40 @@ function stableJson(value: unknown): string {
 function revisionPayloadFingerprint(payload: Prisma.JsonValue | null | undefined): string | null {
     if (payload === null || payload === undefined) return null;
     return createHash("sha256").update(stableJson(payload)).digest("hex");
+}
+
+function revisionDocumentJobFacts(
+    row: {
+        payload: Prisma.JsonValue | null;
+        payload_fingerprint: string | null;
+        status: string;
+        progress_step: string | null;
+    } | null,
+): ServiceRecordDocumentSyncFacts["revisionJob"] {
+    if (!row) return null;
+    const payload = row.payload;
+    if (!payload || Array.isArray(payload) || typeof payload !== "object") {
+        return {
+            revisionId: null,
+            payloadFingerprint: row.payload_fingerprint,
+            status: row.status,
+            progressStep: row.progress_step,
+            completeness: null,
+            manualReviewRequired: true,
+        };
+    }
+    const record = payload as Record<string, Prisma.JsonValue>;
+    const completeness = record["completeness"] === "complete" || record["completeness"] === "partial"
+        ? record["completeness"]
+        : null;
+    return {
+        revisionId: typeof record["revisionId"] === "string" ? record["revisionId"] : null,
+        payloadFingerprint: row.payload_fingerprint,
+        status: row.status,
+        progressStep: row.progress_step,
+        completeness,
+        manualReviewRequired: record["manualReviewRequired"] === true,
+    };
 }
 
 @Injectable()
@@ -2091,7 +2132,50 @@ export class MessageTriggerService {
         }
 
         job.markProcessing(claimToken);
-        const authorization = await this.authorizeClaimedJobForDispatch(job);
+        // Keep narrow legacy test doubles and third-party in-process callers
+        // on the established one-step path until they provide the new
+        // preparation seam. The production MessageTriggerDeliveryService
+        // always exposes both methods, so real dispatches use the frozen
+        // snapshot boundary below.
+        const supportsPreparedDelivery = typeof (this.deliveryService as unknown as {
+            prepareJob?: unknown;
+            sendPreparedJob?: unknown;
+        }).prepareJob === "function"
+            && typeof (this.deliveryService as unknown as {
+                sendPreparedJob?: unknown;
+            }).sendPreparedJob === "function";
+        if (!supportsPreparedDelivery) {
+            const authorization = await this.authorizeClaimedJobForDispatch(job);
+            if (authorization.kind === "lost") {
+                return;
+            }
+            if (authorization.kind === "stale") {
+                job.cancel(authorization.reason);
+                await this.persistTriggerJobStatus(job, "persist stale trigger job");
+                return;
+            }
+            job.markDispatchAuthorized();
+            await this.deliverClaimedJob(job);
+            await this.persistTriggerJobStatus(job, "persist dispatched trigger job");
+            return;
+        }
+
+        const preparation = await this.prepareClaimedJob(job);
+        if (!preparation) {
+            // Preparation either canceled the job with a policy skip reason or
+            // recorded a failed/deferred state. In both cases the irreversible
+            // dispatching marker must remain untouched.
+            if (job.status === "processing") {
+                job.markFailed("Provider disabled or delivery failed");
+                await this.persistTriggerJobStatus(job, "persist unsupported trigger delivery");
+            }
+            return;
+        }
+        if (!(await this.persistPreparedDelivery(job))) {
+            return;
+        }
+
+        const authorization = await this.authorizeClaimedJobForDispatch(job, preparation);
         if (authorization.kind === "lost") {
             return;
         }
@@ -2109,8 +2193,45 @@ export class MessageTriggerService {
         // Provider delivery and its message_log writes must happen outside the
         // claim transaction so the FK insert cannot wait on a held row lock.
         job.markDispatchAuthorized();
-        await this.deliverClaimedJob(job);
+        await this.deliverClaimedJob(job, preparation);
         await this.persistTriggerJobStatus(job, "persist dispatched trigger job");
+    }
+
+    /**
+     * Prepare the exact provider payload while the claim is still reversible.
+     * A preparation failure is terminal/deferred at the job layer and never
+     * reaches the durable dispatch authorization transaction.
+     */
+    private async prepareClaimedJob(
+        job: MessageTriggerJobEntity,
+    ): Promise<SmsTriggerDeliveryPreparation | null> {
+        try {
+            return await this.deliveryService.prepareJob(job);
+        } catch (error) {
+            if (error instanceof TriggerJobDeferredError) {
+                job.defer(error.kind, error.message);
+            } else {
+                job.markFailed(error instanceof Error ? error.message : String(error));
+            }
+            await this.persistTriggerJobStatus(job, "persist failed trigger delivery preparation");
+            return null;
+        }
+    }
+
+    /**
+     * Persist the frozen delivery snapshot before any dispatch marker can be
+     * committed. If this write loses the claim, fail closed without opening a
+     * provider boundary.
+     */
+    private async persistPreparedDelivery(job: MessageTriggerJobEntity): Promise<boolean> {
+        try {
+            await this.jobRepository.update(job);
+            return true;
+        } catch (error) {
+            job.markFailed(error instanceof Error ? error.message : String(error));
+            await this.persistTriggerJobStatus(job, "persist failed frozen delivery snapshot");
+            return false;
+        }
     }
 
     /**
@@ -2121,6 +2242,7 @@ export class MessageTriggerService {
      */
     private async authorizeClaimedJobForDispatch(
         job: MessageTriggerJobEntity,
+        preparation?: SmsTriggerDeliveryPreparation,
     ): Promise<PreProviderSendFenceResult> {
         return this.prisma.$transaction(async (transaction) => {
             // Revised service-record messages carry a server-derived context.
@@ -2145,7 +2267,11 @@ export class MessageTriggerService {
                 return sourceFence;
             }
 
-            const tokenFence = await this.fenceClaimTokenBeforeProviderSend(job, transaction);
+            const tokenFence = await this.fenceClaimTokenBeforeProviderSend(
+                job,
+                transaction,
+                preparation?.serializedSnapshot,
+            );
             if (tokenFence.kind === "lost") {
                 return tokenFence;
             }
@@ -2238,6 +2364,8 @@ export class MessageTriggerService {
                 requiredSessionCount: number | null;
                 plannedSessions: Prisma.JsonValue | null;
                 currentRevisionId: string | null;
+                currentUsableRevisionId: string | null;
+                currentUsableDocumentVersion: number | null;
                 formVersion: number;
                 status: string;
             } | null>;
@@ -2267,6 +2395,8 @@ export class MessageTriggerService {
                 requiredSessionCount: true,
                 plannedSessions: true,
                 currentRevisionId: true,
+                currentUsableRevisionId: true,
+                currentUsableDocumentVersion: true,
                 formVersion: true,
                 status: true,
             },
@@ -2292,6 +2422,39 @@ export class MessageTriggerService {
             businessFingerprint = revisionPayloadFingerprint(revision.payload) ?? "";
         }
 
+        // The expected context's documentSyncStatus is only a captured input;
+        // derive the observed value from the locked, persisted revision job and
+        // current usable pointers. A job row without matching complete
+        // pointers is deliberately treated as unknown by the shared policy.
+        const revisionJobRows = typeof transaction.$queryRaw === "function"
+            ? await transaction.$queryRaw<Array<{
+                payload: Prisma.JsonValue | null;
+                payload_fingerprint: string | null;
+                status: string;
+                progress_step: string | null;
+            }>>(Prisma.sql`
+                SELECT payload,
+                       payload_fingerprint,
+                       status,
+                       progress_step
+                FROM "eformsign_document_job"
+                WHERE branch_id = ${expected.branchId}::uuid
+                  AND job_type = 'create_document'
+                  AND payload->'context'->>'serviceRecordCaseId' = ${expected.serviceRecordCaseId}
+                  AND payload->'context'->>'branchId' = ${expected.branchId}
+                  AND payload->'context'->>'clientId' = ${String(expected.clientId)}
+                ORDER BY created_at DESC
+                LIMIT 1
+                FOR UPDATE
+            `)
+            : [];
+        const observedDocumentSyncStatus = deriveServiceRecordDocumentSyncStatus({
+            currentRevisionId: current.currentRevisionId ?? null,
+            currentUsableRevisionId: current.currentUsableRevisionId ?? null,
+            currentUsableDocumentVersion: current.currentUsableDocumentVersion ?? null,
+            revisionJob: revisionDocumentJobFacts(revisionJobRows[0] ?? null),
+        });
+
         const observed: ServiceRecordRevisionDispatchContext = {
             branchId: current.branchId,
             clientId: current.clientId,
@@ -2301,15 +2464,17 @@ export class MessageTriggerService {
             businessFingerprint,
             plannedSessionCount: current.requiredSessionCount,
             plannedSessionDates: plannedSessionDatesFromJson(current.plannedSessions),
-            // Document synchronization is not represented on the case row;
-            // the revision context carries the status from the confirm source.
-            // The policy still compares it, while lifecycle-only status changes
-            // remain intentionally outside the business fence.
-            documentSyncStatus: expected.documentSyncStatus,
+            documentSyncStatus: observedDocumentSyncStatus,
             lifecycleStatus: current.status,
             formVersion: current.formVersion,
         };
         const authorization = authorizeServiceRecordDispatch(expected, observed);
+        if (authorization.kind === "allow" && !isRevisionDocumentDispatchAllowed(observed)) {
+            return {
+                kind: "stale",
+                reason: "SERVICE_RECORD_DOCUMENT_SYNC_UNVERIFIED",
+            };
+        }
         if (authorization.kind === "stale") {
             return {
                 kind: "stale",
@@ -2321,9 +2486,14 @@ export class MessageTriggerService {
             : { kind: "allow" };
     }
 
-    private async deliverClaimedJob(job: MessageTriggerJobEntity): Promise<void> {
+    private async deliverClaimedJob(
+        job: MessageTriggerJobEntity,
+        preparation?: SmsTriggerDeliveryPreparation,
+    ): Promise<void> {
         try {
-            const sent = await this.deliveryService.sendJob(job);
+            const sent = preparation
+                ? await this.deliveryService.sendPreparedJob(job, preparation)
+                : await this.deliveryService.sendJob(job);
             if (sent) {
                 job.markSent();
             } else if (job.status === "processing" || job.status === "dispatching") {
@@ -2549,6 +2719,7 @@ export class MessageTriggerService {
     private async fenceClaimTokenBeforeProviderSend(
         job: MessageTriggerJobEntity,
         transaction: Prisma.TransactionClient,
+        expectedPreparedSnapshot?: string,
     ): Promise<PreProviderSendFenceResult> {
         if (!job.claimToken) return { kind: "lost" };
 
@@ -2561,6 +2732,7 @@ export class MessageTriggerService {
             employee_schedule_id?: number | null;
             recipient_type?: string;
             template_key?: string;
+            payload?: Prisma.JsonValue | null;
         }>>(Prisma.sql`
             SELECT status,
                    claim_token,
@@ -2569,7 +2741,8 @@ export class MessageTriggerService {
                    client_id,
                    employee_schedule_id,
                    recipient_type,
-                   template_key
+                   template_key,
+                   payload
             FROM "message_trigger_job"
             WHERE id = ${job.id}
             FOR UPDATE
@@ -2587,6 +2760,25 @@ export class MessageTriggerService {
             || (current.template_key !== undefined && current.template_key !== job.templateKey)
         ) {
             return { kind: "lost" };
+        }
+
+        if (expectedPreparedSnapshot !== undefined) {
+            const persistedPayload = current.payload;
+            const persistedTemplateVariables = persistedPayload
+                && typeof persistedPayload === "object"
+                && !Array.isArray(persistedPayload)
+                && persistedPayload["templateVariables"]
+                && typeof persistedPayload["templateVariables"] === "object"
+                && !Array.isArray(persistedPayload["templateVariables"])
+                ? persistedPayload["templateVariables"]
+                : null;
+            const persistedSnapshot = persistedTemplateVariables
+                && typeof persistedTemplateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] === "string"
+                ? persistedTemplateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE]
+                : undefined;
+            if (persistedSnapshot !== expectedPreparedSnapshot) {
+                return { kind: "lost" };
+            }
         }
 
         return { kind: "allow" };
