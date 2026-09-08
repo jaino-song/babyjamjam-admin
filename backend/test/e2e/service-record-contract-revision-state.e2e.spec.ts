@@ -233,6 +233,7 @@ describeE2E("contract revision operation state (real disposable PostgreSQL)", ()
     it("persists an unverified operation without inspecting, dispatching, or mutating a provider document", async () => {
         const fixture = await createServiceRecordConfirmFixture(prisma);
         const current = contractSnapshot();
+        current.original.documentVersion = null;
         const revision = await appendRevision(fixture);
         const generation = randomUUID();
         const provider = makeProvider(current);
@@ -271,6 +272,7 @@ describeE2E("contract revision operation state (real disposable PostgreSQL)", ()
             immutableInput: current,
             inputFingerprint: sha256CanonicalJson(current),
             sourceDocumentId: current.original.documentId,
+            documentVersion: null,
             targetDocumentId: null,
             mirrorGeneration: current.original.mirrorGeneration,
             lastErrorCode: "CONTRACT_REVISION_CAPABILITY_UNVERIFIED",
