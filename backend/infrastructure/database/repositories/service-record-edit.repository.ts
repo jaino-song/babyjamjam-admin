@@ -653,6 +653,38 @@ async function selectRevisionDocumentState(
     `);
 }
 
+/**
+ * Resolve the owner from the branch-scoped case/revision joins instead of
+ * accepting a caller-provided client id. The retry endpoint uses this read
+ * before its client-scoped CAS, so an identifier from another branch or
+ * revision simply produces no row.
+ */
+async function selectRevisionDocumentStateForBranch(
+    client: Prisma.TransactionClient | PrismaService,
+    scope: {
+        branchId: string;
+        revisionId: string;
+        stateId: string;
+    },
+): Promise<RevisionDocumentStateRow[]> {
+    return rawStateQuery<RevisionDocumentStateRow[]>(client, Prisma.sql`
+        SELECT ${revisionDocumentStateSelectColumns}
+        FROM "service_record_revision_document_state" AS state
+        INNER JOIN "service_record_case" AS owner_case
+            ON owner_case.branch_id = state.branch_id
+           AND owner_case.id = state.service_record_case_id
+           AND owner_case.client_id = state.client_id
+        INNER JOIN "service_record_revision" AS owner_revision
+            ON owner_revision.branch_id = state.branch_id
+           AND owner_revision.service_record_case_id = state.service_record_case_id
+           AND owner_revision.id = state.revision_id
+        WHERE state.branch_id = ${scope.branchId}::uuid
+          AND state.revision_id = ${scope.revisionId}::uuid
+          AND state.id = ${scope.stateId}::uuid
+        LIMIT 1
+    `);
+}
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -1526,6 +1558,23 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         const rows = await selectRevisionDocumentState(this.prisma, {
             branchId,
             clientId,
+            revisionId,
+            stateId,
+        });
+        const row = rows[0];
+        return row ? toRevisionDocumentState(row) : null;
+    }
+
+    async findRevisionDocumentStateForBranch(
+        branchId: string,
+        revisionId: string,
+        stateId: string,
+    ): Promise<ServiceRecordRevisionDocumentState | null> {
+        assertUuid(branchId, "branch");
+        assertUuid(revisionId, "revision");
+        assertUuid(stateId, "state");
+        const rows = await selectRevisionDocumentStateForBranch(this.prisma, {
+            branchId,
             revisionId,
             stateId,
         });
