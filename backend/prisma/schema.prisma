@@ -1224,6 +1224,7 @@ model service_record_case {
   currentUsableRevision           service_record_revision? @relation("service_record_case_current_usable_revision", fields: [branchId, id, currentUsableRevisionId], references: [branchId, serviceRecordCaseId, id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_case_current_usable_revision_fkey")
 
   @@unique([branchId, id], map: "uniq_service_record_case_branch_id")
+  @@unique([branchId, clientId, id], map: "uniq_service_record_case_branch_client_id")
   @@index([branchId, status], map: "idx_service_record_case_branch_status")
   @@index([status, finalizationDueAt], map: "idx_service_record_case_finalization_due")
 }
@@ -1316,10 +1317,10 @@ model service_record_revision_document_state {
   updatedAt           DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   branch              branch   @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   client              client   @relation(fields: [clientId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  serviceRecordCase   service_record_case @relation(fields: [branchId, serviceRecordCaseId], references: [branchId, id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_revision_document_state_case_branch_fkey")
+  serviceRecordCase   service_record_case @relation(fields: [branchId, clientId, serviceRecordCaseId], references: [branchId, clientId, id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_revision_document_state_case_owner_fkey")
   revision            service_record_revision @relation(fields: [branchId, serviceRecordCaseId, revisionId], references: [branchId, serviceRecordCaseId, id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_revision_document_state_revision_fkey")
 
-  @@unique([branchId, revisionId, operation], map: "uniq_service_record_revision_document_state_operation")
+  @@index([branchId, revisionId, operation], map: "idx_service_record_revision_document_state_operation")
   @@unique([generation], map: "service_record_revision_document_state_generation_key")
   @@index([branchId, clientId, status], map: "idx_service_record_revision_document_state_owner_status")
   @@index([serviceRecordCaseId, revisionId], map: "idx_service_record_revision_document_state_case_revision")
