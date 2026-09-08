@@ -65,6 +65,20 @@ describeE2E("revision document version allocation and all-chunk promotion (dispo
         } });
     }
 
+    it("enforces revision owner links while retaining nullable legacy documents", async () => {
+        const data = await fixtureWithRevision();
+        const other = await fixtureWithRevision();
+        const linked = await document(data, 3, 1, data.revision.id);
+        await expect(prisma.eformsign_doc.update({ where: { id: linked.id },
+            data: { revisionId: other.revision.id } })).rejects.toThrow();
+        await expect(prisma.eformsign_doc.update({ where: { id: linked.id },
+            data: { branchId: null } })).rejects.toThrow();
+        expect(await prisma.eformsign_doc.findUniqueOrThrow({ where: { id: linked.id } }))
+            .toMatchObject({ revisionId: data.revision.id, branchId: data.scope.branchId });
+        const legacy = await document(data, 2, 1, null);
+        expect(legacy.revisionId).toBeNull();
+    });
+
     it("allocates after legacy version two once under concurrent requests", async () => {
         const data = await fixtureWithRevision();
         const legacy = await document(data, 2, 1, null);
