@@ -325,6 +325,8 @@ export interface ServiceRecordRevisionDocumentState {
     templateVersion: string | null;
     workflowScope: Record<string, unknown> | null;
     mirrorGeneration: string | null;
+    /** Server-produced semantic proof metadata; never provider credentials or raw bytes. */
+    outputProof: Record<string, unknown> | null;
     step: string;
     status: ServiceRecordRevisionDocumentStatus;
     attempts: number;

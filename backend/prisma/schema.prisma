@@ -1307,6 +1307,7 @@ model service_record_revision_document_state {
   templateVersion     String?  @map("template_version")
   workflowScope       Json?    @map("workflow_scope") @db.JsonB
   mirrorGeneration    String?  @map("mirror_generation")
+  outputProof         Json?    @map("output_proof") @db.JsonB
   step                String   @default("pending") @db.VarChar(80)
   status              String   @default("pending") @db.VarChar(32)
   attempts            Int      @default(0)
