@@ -9,6 +9,7 @@ import { GET as getDraft, POST as startDraft } from "./client/[clientId]/draft/r
 import { PATCH as updateDraft } from "./drafts/[draftId]/route";
 import { POST as discardDraft } from "./drafts/[draftId]/discard/route";
 import { POST as previewDraft } from "./drafts/[draftId]/preview/route";
+import { POST as confirmDraft } from "./drafts/[draftId]/confirm/route";
 
 jest.mock("@/lib/api/server", () => ({
     serverAPIClient: {
@@ -133,6 +134,52 @@ describe("service-record draft proxy routes", () => {
             { expectedDraftVersion: 3 },
             { headers: { Authorization: "Bearer token-1" } },
         );
+    });
+
+    it("forwards the exact preview-bound confirm body and preserves upstream status", async () => {
+        mockPost.mockResolvedValue({
+            status: 200,
+            data: {
+                status: "confirmed",
+                draftId: "draft/1",
+            },
+        });
+
+        const body = {
+            expectedDraftVersion: 3,
+            previewId: "preview-1",
+            idempotencyKey: "11111111-1111-4111-8111-111111111111",
+        };
+        const response = await confirmDraft(
+            createRequest("/api/admin/service-records/drafts/draft%2F1/confirm", "POST", body),
+            { params: Promise.resolve({ draftId: "draft/1" }) },
+        );
+
+        expect(response.status).toBe(200);
+        expect(mockPost).toHaveBeenCalledWith(
+            "/admin/service-records/drafts/draft%2F1/confirm",
+            body,
+            { headers: { Authorization: "Bearer token-1" } },
+        );
+    });
+
+    it("requires authentication and a JSON object before confirm upstream", async () => {
+        const unauthenticated = await confirmDraft(
+            createRequest("/api/admin/service-records/drafts/draft-1/confirm", "POST", {
+                expectedDraftVersion: 1,
+                previewId: "preview-1",
+                idempotencyKey: "11111111-1111-4111-8111-111111111111",
+            }, false),
+            { params: Promise.resolve({ draftId: "draft-1" }) },
+        );
+        const malformed = await confirmDraft(
+            createRequest("/api/admin/service-records/drafts/draft-1/confirm", "POST", "[]"),
+            { params: Promise.resolve({ draftId: "draft-1" }) },
+        );
+
+        expect(unauthenticated.status).toBe(401);
+        expect(malformed.status).toBe(400);
+        expect(mockPost).not.toHaveBeenCalled();
     });
 
     it("rejects unauthenticated and malformed preview requests before upstream", async () => {

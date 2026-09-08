@@ -176,6 +176,74 @@ function makeDraftState(
     };
 }
 
+const confirmPreviewResponse = {
+    previewId: "preview-confirm-1",
+    draftId: "draft-1",
+    draftVersion: 1,
+    sourceCaseVersion: 1,
+    sourceFingerprint: "source-1",
+    requiredSessionCount: 3,
+    calendarVersion: "kr-2026",
+    before: {
+        startDate: "2026-07-10",
+        endDate: "2026-07-14",
+        sessions: [1, 2, 3].map((sessionIndex) => ({
+            sessionIndex,
+            serviceDate: `2026-07-${String(9 + sessionIndex).padStart(2, "0")}`,
+            originalDate: `2026-07-${String(9 + sessionIndex).padStart(2, "0")}`,
+            assignmentId: "assignment-7",
+            scheduleId: 7,
+            employeeId: 7,
+            provenanceVersion: "projection-1",
+        })),
+    },
+    after: {
+        startDate: "2026-07-10",
+        endDate: "2026-07-14",
+        sessions: [1, 2, 3].map((sessionIndex) => ({
+            sessionIndex,
+            serviceDate: `2026-07-${String(9 + sessionIndex).padStart(2, "0")}`,
+            originalDate: `2026-07-${String(9 + sessionIndex).padStart(2, "0")}`,
+            assignmentId: "assignment-7",
+            scheduleId: 7,
+            employeeId: 7,
+            provenanceVersion: "projection-1",
+        })),
+    },
+    provenance: [{
+        assignmentId: "assignment-7",
+        scheduleId: 7,
+        employeeId: 7,
+        startDate: "2026-07-10",
+        endDate: "2026-07-14",
+        provenanceVersion: "projection-1",
+    }],
+    contentChanges: { headerChanged: false, changedSessionIndexes: [1] },
+    impactedAssignments: [],
+    blockingReasons: [],
+    signatureMetadata: { treatment: "preserve_existing", evidence: "observed", sessions: [] },
+    documentScope: {
+        evidence: "observed",
+        serviceRecordSnapshot: { documentIds: ["doc-1"], snapshotVersion: 1, chunks: [] },
+        currentRevision: { id: null, revisionNumber: null, formVersion: null },
+        form: { version: 1 },
+        contract: { currentDocumentId: "contract-1", stage: "in_progress" },
+    },
+};
+
+const confirmResult = {
+    status: "confirmed",
+    caseId: "case-1",
+    clientId: 42,
+    draftId: "draft-1",
+    draftVersion: 1,
+    caseVersion: 2,
+    revisionId: "revision-1",
+    revisionNumber: 1,
+    documentStatus: "waiting_for_completion",
+    confirmedAt: "2026-09-08T01:02:03.000Z",
+};
+
 describe("ServiceRecordAdminWizard", () => {
     it("keeps an assignment collision as a selectable supplemental record", () => {
         const view = buildAdminServiceRecordView(overview);
@@ -318,6 +386,12 @@ describe("administrator draft editing", () => {
     afterEach(() => {
         global.fetch = originalFetch;
         jest.restoreAllMocks();
+    });
+
+    it("keeps the overview confirm action visible and disabled until a changed draft exists", () => {
+        render(<ServiceRecordAdminWizard clientId="42" overview={overview} />);
+
+        expect(screen.getByRole("button", { name: "수정 확정" })).toBeDisabled();
     });
 
     it("starts a draft explicitly before enabling canonical edits", async () => {
@@ -520,7 +594,94 @@ describe("administrator draft editing", () => {
             }),
         );
         await waitFor(() => expect(screen.getByText("변경 전")).toBeInTheDocument());
-        expect(screen.queryByRole("button", { name: /확정|완료/ })).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "수정 확정" })).toBeInTheDocument();
+    });
+
+    it("confirms the preview with one durable result and exposes document processing status", async () => {
+        const fetchMock = jest.fn()
+            .mockResolvedValueOnce({ ok: true, status: 200, json: async () => confirmPreviewResponse })
+            .mockResolvedValueOnce({ ok: true, status: 200, json: async () => confirmResult });
+        global.fetch = fetchMock;
+
+        render(
+            <ServiceRecordAdminWizard
+                clientId="42"
+                overview={overview}
+                initialDraftState={makeDraftState({ sessions: [{ sessionIndex: 1, notes: "수정" }] })}
+            />,
+        );
+        fireEvent.click(screen.getByRole("button", { name: "변경 미리보기" }));
+        await waitFor(() => expect(screen.getByRole("button", { name: "수정 확정" })).toBeInTheDocument());
+
+        fireEvent.click(screen.getByRole("button", { name: "수정 확정" }));
+        await waitFor(() => expect(screen.getAllByText(/관리자 수정본이 확정되었습니다/).length).toBeGreaterThan(0));
+        expect(fetchMock).toHaveBeenNthCalledWith(
+            2,
+            "/api/admin/service-records/drafts/draft-1/confirm",
+            expect.objectContaining({
+                method: "POST",
+                body: expect.stringMatching(/"expectedDraftVersion":1.*"previewId":"preview-confirm-1".*"idempotencyKey":"[0-9a-f-]{36}"/),
+            }),
+        );
+        expect(screen.getAllByText(/전자문서 처리 대기 중/).length).toBeGreaterThan(0);
+        expect(screen.getByRole("button", { name: "수정 확정됨" })).toBeDisabled();
+    });
+
+    it("retries an unknown confirm response with the same idempotency key", async () => {
+        const fetchMock = jest.fn()
+            .mockResolvedValueOnce({ ok: true, status: 200, json: async () => confirmPreviewResponse })
+            .mockRejectedValueOnce(new TypeError("network unavailable"))
+            .mockResolvedValueOnce({ ok: true, status: 200, json: async () => confirmResult });
+        global.fetch = fetchMock;
+
+        render(
+            <ServiceRecordAdminWizard
+                clientId="42"
+                overview={overview}
+                initialDraftState={makeDraftState({ sessions: [{ sessionIndex: 1, notes: "수정" }] })}
+            />,
+        );
+        fireEvent.click(screen.getByRole("button", { name: "변경 미리보기" }));
+        await waitFor(() => expect(screen.getByRole("button", { name: "수정 확정" })).toBeInTheDocument());
+        fireEvent.click(screen.getByRole("button", { name: "수정 확정" }));
+        await waitFor(() => expect(screen.getByText(/같은 요청으로 다시 시도해 주세요/)).toBeInTheDocument());
+
+        fireEvent.click(screen.getByRole("button", { name: "수정 확정" }));
+        await waitFor(() => expect(screen.getAllByText(/관리자 수정본이 확정되었습니다/).length).toBeGreaterThan(0));
+
+        const firstBody = JSON.parse(fetchMock.mock.calls[1][1].body as string) as { idempotencyKey: string };
+        const retryBody = JSON.parse(fetchMock.mock.calls[2][1].body as string) as { idempotencyKey: string };
+        expect(firstBody.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
+        expect(retryBody.idempotencyKey).toBe(firstBody.idempotencyKey);
+    });
+
+    it("keeps inputs on stale confirm and requires a fresh preview before retrying", async () => {
+        const fetchMock = jest.fn()
+            .mockResolvedValueOnce({ ok: true, status: 200, json: async () => confirmPreviewResponse })
+            .mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({ code: "STALE_PREVIEW" }) })
+            .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ ...confirmPreviewResponse, previewId: "preview-confirm-2" }) });
+        global.fetch = fetchMock;
+
+        render(
+            <ServiceRecordAdminWizard
+                clientId="42"
+                overview={overview}
+                initialDraftState={makeDraftState({ sessions: [{ sessionIndex: 1, notes: "내 입력" }] })}
+            />,
+        );
+        fireEvent.click(screen.getByRole("button", { name: "변경 미리보기" }));
+        await waitFor(() => expect(screen.getByRole("button", { name: "수정 확정" })).toBeInTheDocument());
+        fireEvent.click(screen.getByRole("button", { name: "수정 확정" }));
+        await waitFor(() => expect(screen.getByText(/최신 미리보기를 다시 확인해 주세요/)).toBeInTheDocument());
+        expect(screen.getByRole("button", { name: "최신 미리보기" })).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "최신 미리보기" }));
+        await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+        expect(fetchMock).toHaveBeenNthCalledWith(
+            3,
+            "/api/admin/service-records/drafts/draft-1/preview",
+            expect.objectContaining({ method: "POST" }),
+        );
+        expect(screen.getByRole("dialog", { name: "초안 변경 미리보기" })).toBeInTheDocument();
     });
 
     it("keeps the pending date in the dialog after a permission failure until an explicit retry", async () => {

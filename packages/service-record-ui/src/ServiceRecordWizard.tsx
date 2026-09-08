@@ -265,6 +265,15 @@ function renderSignature(
     return signature(props);
 }
 
+function isValidDateOnly(value: string): boolean {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const [year, month, day] = value.split("-").map(Number);
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    return parsed.getUTCFullYear() === year
+        && parsed.getUTCMonth() === month - 1
+        && parsed.getUTCDate() === day;
+}
+
 export function ServiceRecordWizard({
     "data-component": dataComponent,
     screen,
@@ -309,12 +318,39 @@ export function ServiceRecordWizard({
     const currentDayPage = DAY_PAGES[pageIdx] ?? DAY_PAGES[0];
     const adminEditing = adminMode && !readOnly;
     const currentSession = context?.sessions.find((session) => session.sessionIndex === day);
-    const currentServiceDate = (draft._date as string | undefined) || defaultDate(day);
+    const plannedDateVectorProvided = context?.plannedSessionDates !== undefined;
+    const plannedDateVector = context?.plannedSessionDates;
+    const plannedDateVectorValid = !plannedDateVectorProvided || (
+        Array.isArray(plannedDateVector)
+        && plannedDateVector.length === (context?.totalSessions ?? 0)
+        && new Set(plannedDateVector.map((session) => session.sessionIndex)).size === plannedDateVector.length
+        && new Set(plannedDateVector.map((session) => session.serviceDate)).size === plannedDateVector.length
+        && plannedDateVector.every((session) => (
+                Number.isSafeInteger(session.sessionIndex)
+                && session.sessionIndex > 0
+                && session.sessionIndex <= (context?.totalSessions ?? 0)
+                && isValidDateOnly(session.serviceDate)
+            ))
+    );
+    const plannedDateBySession = plannedDateVectorValid
+        ? new Map(plannedDateVector?.map((session) => [session.sessionIndex, session.serviceDate]))
+        : null;
+    const plannedServiceDate = plannedDateBySession?.get(day);
+    const currentServiceDate = (draft._date as string | undefined)
+        || currentSession?.serviceDate?.slice(0, 10)
+        || plannedServiceDate
+        || (plannedDateVectorProvided ? "" : defaultDate(day));
     const isMomConfirmationPage = Boolean(currentDayPage.confirmation);
     const signatureValue = currentSession?.clientSignature ?? clientSignature;
     const isSignatureLocked = Boolean(currentSession?.clientSignature);
     const isHeaderComplete = HEADER_FIELDS.every((field) => hasDisplayValue(header[field.k]))
         && hasDisplayValue(header.deliveryType);
+    const plannedDateForSession = (sessionIndex: number): string | undefined => plannedDateBySession?.get(sessionIndex);
+    const displayDateForSession = (sessionIndex: number, session?: { serviceDate: string }): string => (
+        session?.serviceDate?.slice(0, 10)
+        || plannedDateForSession(sessionIndex)
+        || (plannedDateVectorProvided ? "" : defaultDate(sessionIndex))
+    );
     const isCurrentPageComplete = currentDayPage.items.every((index) => {
         const item = DAILY_ITEMS[index];
         return item ? isDailyItemComplete(item, draft) : false;
@@ -367,6 +403,11 @@ export function ServiceRecordWizard({
             </div>
             <div data-component={child(COMPONENT_SUFFIX.body)} data-slot="body" className={`body ${screen === "done" ? "completion-body" : ""}`}>
                 {screen === "loading" && <p data-slot="muted" className="muted">불러오는 중…</p>}
+                {context && plannedDateVectorProvided && !plannedDateVectorValid ? (
+                    <p data-component={child("body_planned-date-error")} data-slot="error" className="err" role="alert">
+                        서버 일정 정보를 확인할 수 없습니다. 새로고침 후 다시 시도해 주세요.
+                    </p>
+                ) : null}
 
                 {screen === "invalid" && (
                     <div data-component={child("body_invalid-center")} data-slot="center" className="center">
@@ -437,6 +478,7 @@ export function ServiceRecordWizard({
                                 const done = lockedDays.has(sessionIndex);
                                 const open = sessionIndex === nextOpenDay();
                                 const changed = Boolean(changedSessionIndexes?.has(sessionIndex));
+                                const serviceDate = displayDateForSession(sessionIndex, session);
                                 const className = adminEditing
                                     ? `day ${changed ? "current draft-changed" : "readonly"}`
                                     : done ? "day done" : readOnly ? "day readonly" : open ? "day current" : "day locked";
@@ -452,15 +494,9 @@ export function ServiceRecordWizard({
                                         <div data-component={child("body_day-grid_day_date")} data-slot="day-date" className="d">
                                             {renderServiceDateDisplay(
                                                 sessionIndex,
-                                                readOnly
-                                                    ? (session?.serviceDate.slice(0, 10) || defaultDate(sessionIndex))
-                                                : (done ? (session?.serviceDate.slice(0, 10) ?? "") : defaultDate(sessionIndex)),
+                                                serviceDate,
                                                 "body_day-grid_day_date-display",
-                                                formatShortDate(
-                                                    readOnly
-                                                        ? (session?.serviceDate.slice(0, 10) || defaultDate(sessionIndex))
-                                                        : (done ? (session?.serviceDate.slice(0, 10) ?? "") : defaultDate(sessionIndex)),
-                                                ),
+                                                formatShortDate(serviceDate),
                                             )}
                                         </div>
                                         <div data-component={child("body_day-grid_day_number")} data-slot="day-number" className="n">{sessionIndex}</div>
@@ -472,6 +508,11 @@ export function ServiceRecordWizard({
                             })}
                         </div>
                         {(readOnly || adminMode) && slots?.overviewSupplemental}
+                        {adminMode && slots?.adminConfirmAction ? (
+                            <div data-component={child("body_overview-actions")} data-slot="overview-actions" className="overview-actions">
+                                {slots.adminConfirmAction}
+                            </div>
+                        ) : null}
                         {!readOnly && !adminMode && lockedDays.size < context.totalSessions && (
                             <div data-component={child("body_overview-actions")} data-slot="overview-actions" className="overview-actions">
                                 <button data-slot="btn" className="btn primary" disabled={isRecordFinalized} onClick={() => onOpenDay(nextOpenDay())}>{lockedDays.size ? "다음 회차 입력" : "기록 시작"}</button>

@@ -161,6 +161,73 @@ describe("shared service-record UI contract", () => {
         expect(container.querySelector('[data-component="mobile_service-record_wizard_body_mom-sign"]')).toHaveTextContent("signature");
     });
 
+    it("uses the provider-safe planned date vector for unwritten days", () => {
+        const plannedContext = {
+            ...context,
+            plannedSessionDates: [
+                { sessionIndex: 1, serviceDate: "2026-07-17" },
+                { sessionIndex: 2, serviceDate: "2026-07-23" },
+            ],
+        };
+        const { container } = render(
+            <ServiceRecordWizard
+                {...makeProps({
+                    context: plannedContext,
+                    day: 2,
+                    editing: true,
+                    defaultDate: () => "2026-07-18",
+                })}
+            />,
+        );
+
+        expect(container).toHaveTextContent("2026.07.23");
+    });
+
+    it("fails closed for an invalid supplied date vector without recalculating a date", () => {
+        const plannedContext = {
+            ...context,
+            plannedSessionDates: [
+                { sessionIndex: 1, serviceDate: "2026-07-17" },
+                { sessionIndex: 2, serviceDate: "2026-02-30" },
+            ],
+        };
+        const { container } = render(
+            <ServiceRecordWizard
+                {...makeProps({
+                    context: plannedContext,
+                    day: 2,
+                    editing: true,
+                    defaultDate: () => "2026-07-18",
+                })}
+            />,
+        );
+
+        expect(container.querySelector('[role="alert"]')).toHaveTextContent("서버 일정 정보를 확인할 수 없습니다");
+        expect(container).not.toHaveTextContent("2026.07.18");
+    });
+
+    it("does not recalculate an invalid supplied vector in the overview", () => {
+        const plannedContext = {
+            ...context,
+            plannedSessionDates: [
+                { sessionIndex: 1, serviceDate: "2026-07-17" },
+                { sessionIndex: 2, serviceDate: "2026-02-30" },
+            ],
+        };
+        const { container } = render(
+            <ServiceRecordWizard
+                {...makeProps({
+                    context: plannedContext,
+                    screen: "overview",
+                    defaultDate: () => "2026-07-18",
+                })}
+            />,
+        );
+
+        expect(container.querySelector('[role="alert"]')).toHaveTextContent("서버 일정 정보를 확인할 수 없습니다");
+        expect(container).not.toHaveTextContent("2026.07.18");
+    });
+
     it("keeps the shared package free of app, persistence, and network imports", () => {
         const packageSourceRoot = resolve(__dirname, "../../../../../packages/service-record-ui/src");
         const source = ["ServiceRecordWizard.tsx", "form-definition.ts", "types.ts", "index.ts"]
