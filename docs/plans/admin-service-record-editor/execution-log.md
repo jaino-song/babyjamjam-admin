@@ -440,3 +440,8 @@
 
 - Sol/high Task3.0 FINAL SHIP, confidence High, 차단 지적 없음. 원래7개 잠금/재조회 경합, NULL 소유권과 목적지 고객/지점 확인, 지점 제한 조회, 최초 소유권을 보존하는 유한 DB 재시도 및 실제 PG barrier 증거를 확인했다. frozen1fcbb6f75, 결과 /tmp/bjj-task3-sol-final-result.txt, CLI 세션01a07f88-3025-7dd2-a5b0-68b34efc9e05. 연결 재시도가 있었으나 모델 변경 없이 완료됐다. Task3.1 착수 조건 충족이며 전체 기능/외부PDF 완료를 뜻하지 않는다.
 - Task3.1은 기존 승인 범위 안에서 backend/shared 날짜·N·preview 계약을 먼저 구현하고, 고정된 계약 위에 frontend 날짜 편집/미리보기를 연결한다. 각각 Luna/max 전용 unit, Phase3 전체 Sol/high 감사는 두 부분 통합 뒤 수행한다. 현재 lifecycle255~304는 여전히 client.duration을 fallback으로 N을 upsert하므로 기존 N 보존이라는 scout 결론을 채택하지 않는다. 이 실제 clobber를 이번 단계에서 수정한다.
+
+
+### 실행 방식 수정 — Phase 내부 병렬 구현, Phase 단위 감사
+
+사용자가 task별 직렬 실행·검수로 인한 지연을 지적하고 같은 Phase의 task들을 병렬 구현한 뒤 Phase마다 검증하도록 명시했다. 이 지시는 기존 task 직렬 실행 문구를 대체한다. Luna/max worker의 파일 소유권과 API·데이터 계약을 먼저 고정하고 같은 Phase에서 병렬 구현한다. task별 검증은 담당 변경의 집중 테스트로 제한하며 별도의 Sol 감사와 전체 통합 테스트를 반복하지 않는다. Phase의 모든 변경을 통합한 뒤 한 번의 통합 검증과 Sol/high 독립 감사를 수행하고 다음 Phase로 진행한다. 현재 Phase3 서버 계산과 날짜 선택 UI는 분리된 unit에서 병행 중이며 서버 계약 고정 시 나머지 wizard/API 연결도 병행한다. 외부 실행·환경 브랜치 병합·배포 권한 및 Phase0 미확인 경계는 바꾸지 않는다.
