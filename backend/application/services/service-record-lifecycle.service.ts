@@ -921,6 +921,13 @@ export class ServiceRecordLifecycleService {
             && submitted === usableRequired
             && hasCompleteHeader(record);
         const now = new Date();
+        // Derive the deadline from the freshly reread end date before choosing
+        // a status. A date move can leave the persisted deadline stale; using
+        // that old value for the branch below would mark a future incomplete
+        // case AWAITING_COMPLETION even though its new deadline has not passed.
+        const effectiveFinalizationDueAt = record.endDate
+            ? getServiceRecordFinalizationDueAt(record.endDate)
+            : null;
         const hasActiveAssignment = record.assignments.some((assignment) => assignment.schedule && !assignment.schedule.replaced);
         let status: ServiceRecordCaseStatus;
 
@@ -930,7 +937,7 @@ export class ServiceRecordLifecycleService {
             status = SERVICE_RECORD_CASE_STATUS.WAITING_FOR_ASSIGNMENT;
         } else if (complete) {
             status = SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE;
-        } else if (record.finalizationDueAt && record.finalizationDueAt <= now) {
+        } else if (effectiveFinalizationDueAt && effectiveFinalizationDueAt <= now) {
             status = SERVICE_RECORD_CASE_STATUS.AWAITING_COMPLETION;
         } else if (isoDate(record.startDate)! > todayKst(now)) {
             status = SERVICE_RECORD_CASE_STATUS.SCHEDULED;
@@ -947,9 +954,7 @@ export class ServiceRecordLifecycleService {
                 // through ensureForClient. Recompute the existing policy's
                 // due instant from the freshly locked case date so a stale
                 // READY/WAITING transition cannot retain the old deadline.
-                finalizationDueAt: record.endDate
-                    ? getServiceRecordFinalizationDueAt(record.endDate)
-                    : null,
+                finalizationDueAt: effectiveFinalizationDueAt,
                 requiredSessionCount: required,
                 version: { increment: 1 },
             },

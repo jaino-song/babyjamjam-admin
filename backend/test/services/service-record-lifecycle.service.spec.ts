@@ -1121,6 +1121,47 @@ describe("ServiceRecordLifecycleService", () => {
         }));
     });
 
+    it("uses the moved future end date before selecting an incomplete lifecycle status", async () => {
+        jest.useFakeTimers({ now: new Date("2026-09-08T00:00:00.000Z") });
+        const movedEndDate = date("2026-09-20");
+        const staleDeadline = new Date("2026-09-01T11:00:00.000Z");
+        const record = {
+            id: "case-moved-future",
+            status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE,
+            startDate: date("2026-09-01"),
+            endDate: movedEndDate,
+            requiredSessionCount: 13,
+            finalizationDueAt: staleDeadline,
+            completedAt: null,
+            momName: null,
+            momBirth: null,
+            babyName: null,
+            babyBirth: null,
+            deliveryType: null,
+            babyWeight: null,
+            assignments: [{ schedule: { replaced: false } }],
+            days: [],
+        };
+        const prisma = {
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(record),
+                update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...record, ...data })),
+            },
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+
+        const result = await service.recompute(record.id);
+        const effectiveDeadline = getServiceRecordFinalizationDueAt(movedEndDate);
+
+        expect(result.status).toBe(SERVICE_RECORD_CASE_STATUS.IN_PROGRESS);
+        expect(prisma.service_record_case.update).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({
+                status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
+                finalizationDueAt: effectiveDeadline,
+            }),
+        }));
+    });
+
     it("owns a root recompute transaction before deriving a writable status", async () => {
         const staleRecord = {
             id: "case-1",

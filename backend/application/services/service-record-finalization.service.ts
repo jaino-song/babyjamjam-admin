@@ -9,6 +9,10 @@ import {
     lockServiceRecordWriteSet,
 } from "application/policies/service-record-write-lock.policy";
 import {
+    validateServiceRecordScheduleVector,
+    type ServiceRecordPlannedSession,
+} from "@babyjamjam/shared/utils/service-record-schedule";
+import {
     SERVICE_RECORD_CASE_STATUS,
     ServiceRecordLifecycleService,
 } from "./service-record-lifecycle.service";
@@ -109,6 +113,108 @@ function randomGenerationId(): string {
     return randomUUID();
 }
 
+/**
+ * Parse only the persisted revised-case vector. The editor stores a flat,
+ * complete vector; wrappers, legacy date arrays, and missing ownership fields
+ * are intentionally rejected so finalization cannot freeze guessed input.
+ */
+function currentPlannedSessionVector(
+    raw: Prisma.JsonValue | null,
+    requiredSessionCount: number | null,
+): ServiceRecordPlannedSession[] | null {
+    if (
+        !Array.isArray(raw)
+        || !Number.isInteger(requiredSessionCount)
+        || requiredSessionCount === null
+        || requiredSessionCount < 1
+    ) {
+        return null;
+    }
+
+    const entries: ServiceRecordPlannedSession[] = [];
+    for (const value of raw) {
+        if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+        const row = value as Record<string, Prisma.JsonValue>;
+        const sessionIndex = row["sessionIndex"];
+        const serviceDate = row["serviceDate"];
+        const originalDate = row["originalDate"];
+        const assignmentId = row["assignmentId"];
+        const scheduleId = row["scheduleId"];
+        const employeeId = row["employeeId"];
+        const provenanceVersion = row["provenanceVersion"];
+        if (
+            typeof sessionIndex !== "number"
+            || !Number.isInteger(sessionIndex)
+            || typeof serviceDate !== "string"
+            || typeof originalDate !== "string"
+            || typeof assignmentId !== "string"
+            || assignmentId.trim().length === 0
+            || typeof scheduleId !== "number"
+            || !Number.isInteger(scheduleId)
+            || scheduleId < 1
+            || typeof employeeId !== "number"
+            || !Number.isInteger(employeeId)
+            || employeeId < 1
+            || typeof provenanceVersion !== "string"
+            || provenanceVersion.trim().length === 0
+        ) {
+            return null;
+        }
+        entries.push({
+            sessionIndex,
+            serviceDate,
+            originalDate,
+            assignmentId,
+            scheduleId,
+            employeeId,
+            provenanceVersion,
+        });
+    }
+
+    try {
+        return validateServiceRecordScheduleVector(entries, requiredSessionCount);
+    } catch {
+        return null;
+    }
+}
+
+function currentPlannedSessionsMatchDays(
+    record: FinalizationCaseSnapshot,
+    plannedSessions: ReadonlyArray<ServiceRecordPlannedSession>,
+): boolean {
+    if (record.days.length !== plannedSessions.length) return false;
+
+    const daysByIndex = new Map<number, FinalizationDaySnapshot>();
+    for (const day of record.days) {
+        const index = day.caseSessionIndex;
+        if (
+            typeof index !== "number"
+            || !Number.isInteger(index)
+            || index < 1
+            || daysByIndex.has(index)
+        ) {
+            return false;
+        }
+        daysByIndex.set(index, day);
+    }
+
+    return plannedSessions.every((planned) => {
+        const day = daysByIndex.get(planned.sessionIndex);
+        const assignment = record.assignments.find((candidate) => candidate.id === planned.assignmentId);
+        return Boolean(
+            day
+            && assignment
+            && day.caseSessionIndex === planned.sessionIndex
+            && day.serviceDate instanceof Date
+            && isoDate(day.serviceDate) === planned.serviceDate
+            && day.scheduleId === planned.scheduleId
+            && day.employeeId === planned.employeeId
+            && assignment.scheduleId === planned.scheduleId
+            && assignment.employeeId === planned.employeeId,
+        );
+    });
+}
+
 function revisionOriginalDateRows(payload: Prisma.JsonValue): Prisma.JsonValue[] | null {
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
     const row = payload as Record<string, Prisma.JsonValue>;
@@ -125,6 +231,8 @@ function isCompleteFinalizationSource(record: FinalizationCaseSnapshot): boolean
     const required = record.requiredSessionCount;
     if (!Number.isInteger(required) || required === null || required < 1) return false;
     if (record.days.length !== required) return false;
+    const plannedSessions = currentPlannedSessionVector(record.plannedSessions, required);
+    if (!plannedSessions || !currentPlannedSessionsMatchDays(record, plannedSessions)) return false;
     const completeHeader = [
         record.momName,
         record.momBirth,
@@ -579,6 +687,9 @@ export class ServiceRecordFinalizationService {
     ): Promise<void> {
         const revisionId = source.currentRevisionId;
         if (!revisionId || !source.clientId) {
+            throw new ConflictException({ code: "SERVICE_RECORD_REVISION_SOURCE_UNAVAILABLE" });
+        }
+        if (!isCompleteFinalizationSource(source)) {
             throw new ConflictException({ code: "SERVICE_RECORD_REVISION_SOURCE_UNAVAILABLE" });
         }
         if (!this.documentJobService) {
