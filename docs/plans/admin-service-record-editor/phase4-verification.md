@@ -16,7 +16,7 @@ Implementation used Luna/max lanes with disjoint ownership. There has been no ta
 | Frontend, mobile, shared TypeScript | PASS | `/tmp/bjj-phase4-frontend-types.log`, `/tmp/bjj-phase4-mobile-types.log`, `/tmp/bjj-phase4-packages-shared-types.log` |
 | Backend TypeScript | Only 5 known pre-Phase4 receipt diagnostic helper errors | `/tmp/bjj-phase4-backend-types.log` |
 | Frontend/mobile changed-file ESLint and UI architecture gate | PASS, existing baseline debt unchanged | `/tmp/bjj-phase4-frontend-lint.log`, `/tmp/bjj-phase4-mobile-lint.log`, `/tmp/bjj-phase4-ui-architecture.log` |
-| Changed backend ESLint | One new architecture error, correction active | `/tmp/bjj-phase4-backend-lint.log` |
+| Changed backend ESLint | Initial worker architecture error corrected in df201fae6; affected worker/repository lint passed, final integrated scope pending | `/tmp/bjj-phase4-backend-lint.log` |
 
 Total passing tests: 535. Counts do not include skipped tests or external/manual proofs.
 
@@ -36,6 +36,10 @@ Meaningful RED evidence preceded fixes: legacy SMS authorization lacked the comm
 
 ## Remaining before audit
 
-The eFormSign worker's new direct `PrismaService` import violates the existing application-layer import rule. Correction is isolated in `phase4-dispatch-storage-fix`, branch `unit/admin-service-record-4-dispatch-storage`, based on `f3e90d1e4`. Authorization storage/transactions must move behind the existing domain repository port; no allowlist or lint suppression is permitted. Re-run affected exact suites/PG boundaries after integration, then perform the integrated Sol/high audit.
+The eFormSign worker storage boundary correction `df201fae6` is integrated: authoritative dispatch transaction/locks moved behind the existing repository port. Nine actual PostgreSQL tests pass after this integration and the additional legacy-owner correction `d590d5b55` (`/tmp/bjj-phase4-owner-storage-verified.log`). These include create/finalize race orders and five null-client legacy document ownership cases. A lost-versus-stale test assertion was widened only to accept both safe cancellation outcomes; durable cancellation and no-dispatch assertions remain.
+
+Additional product RED evidence: canonical owned legacy jobs with a null client ID were omitted from confirmation guards, and explicit content changes to future sessions were accepted then lost. Legacy ownership is fixed and verified; future-content persistence is currently being corrected. The latter must create only the explicitly edited unsubmitted day draft, preserve real assignment provenance, never create signatures/submissions, and retain the previous zero-row behavior for date-only future changes. Parent tests now also require immutable partial history and rollback after a future-day insertion. Evidence: `/tmp/bjj-phase4-legacy-owner-red.log`, `/tmp/bjj-phase4-future-content-red.log`. The initial 535 count remains a checkpoint, not a claim that these newer tests already pass.
+
+After the future-content correction and affected checks, perform the one integrated Sol/high audit.
 
 Browser runtime, actual HTTP JWT/tenant authorization, full user flow and comprehensive contract/receipt synchronization are later Phase5/6 acceptance work. Phase0 remains unverified; new revision external operations remain fail-closed. No deployment or environment merge is claimed.

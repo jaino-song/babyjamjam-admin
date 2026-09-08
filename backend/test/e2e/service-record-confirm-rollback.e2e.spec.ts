@@ -15,6 +15,7 @@ type FaultBoundary =
     | "client"
     | "case"
     | "day"
+    | "future_day"
     | "assignment"
     | "schedule"
     | "revision"
@@ -44,6 +45,7 @@ describeE2E("service-record confirmation rollback (real disposable PostgreSQL)",
         "client",
         "case",
         "day",
+        "future_day",
         "assignment",
         "schedule",
         "revision",
@@ -69,7 +71,7 @@ describeE2E("service-record confirmation rollback (real disposable PostgreSQL)",
             fixture.actorUserId,
             {
                 expectedDraftVersion: draft.draftVersion,
-                changes: { sessions: [{ sessionIndex: 3, notes: "rollback content" }] },
+                changes: { sessions: [{ sessionIndex: boundary === "future_day" ? 4 : 3, notes: "rollback content" }] },
                 dateMove: { sessionIndex: 3, toDate: "2026-09-11" },
             },
         );
@@ -108,6 +110,7 @@ describeE2E("service-record confirmation rollback (real disposable PostgreSQL)",
                             client: "client:updateMany",
                             case: "service_record_case:update",
                             day: "service_record_day:updateMany",
+                            future_day: "service_record_day:create",
                             assignment: "service_record_assignment:updateMany",
                             schedule: "employee_schedule:updateMany",
                             revision: "service_record_revision:create",

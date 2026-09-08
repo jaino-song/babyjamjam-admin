@@ -182,6 +182,19 @@ describeE2E("atomic service-record confirmation (real disposable PostgreSQL)", (
             serviceDate: new Date("2026-09-10T00:00:00Z"),
         });
         expect(await prisma.service_record_day.count({ where: { serviceRecordCaseId: fixture.record.id } })).toBe(4);
+        const revision = await prisma.service_record_revision.findUniqueOrThrow({ where: { id: result.revisionId! } });
+        expect(revision.payload).toMatchObject({ completeness: "partial", sessions: expect.arrayContaining([
+            expect.objectContaining({ sessionIndex: 4, notes: "Administrator future note", locked: false,
+                submittedAt: null, clientSignature: null, clientSignedAt: null }),
+        ]) });
+        const existingDays = await prisma.service_record_day.findMany({
+            where: { id: { in: fixture.days.map((entry) => entry.id) } }, orderBy: { caseSessionIndex: "asc" },
+        });
+        for (const [index, existing] of existingDays.entries()) {
+            expect(existing).toMatchObject({ id: fixture.days[index]!.id,
+                clientSignature: fixture.days[index]!.clientSignature,
+                clientSignedAt: fixture.days[index]!.clientSignedAt, submittedAt: fixture.days[index]!.submittedAt });
+        }
         expect(await prisma.client.findUniqueOrThrow({ where: { id: fixture.client.id } }))
             .toMatchObject({ endDate: fixture.client.endDate, duration: 15, actualPrice: "600000" });
     });
