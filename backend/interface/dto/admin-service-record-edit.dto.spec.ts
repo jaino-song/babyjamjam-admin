@@ -35,6 +35,15 @@ describe("admin service-record edit DTO", () => {
         expect(errors).toHaveLength(0);
     });
 
+    it("accepts one typed dateMove command alongside a draft patch", async () => {
+        const errors = await validateStrict(UpdateServiceRecordEditDraftDto, {
+            expectedDraftVersion: 2,
+            changes: { sessions: [{ sessionIndex: 3, notes: "변경" }] },
+            dateMove: { sessionIndex: 3, toDate: "2026-09-11" },
+        });
+        expect(errors).toHaveLength(0);
+    });
+
     it.each([
         "branchId",
         "actorUserId",
@@ -69,6 +78,19 @@ describe("admin service-record edit DTO", () => {
                 submittedAt: "2026-09-08T00:00:00.000Z",
                 employeeId: 10,
             }],
+        });
+        expect(errors.length).toBeGreaterThan(0);
+    });
+
+    it("rejects authority fields nested under dateMove", async () => {
+        const errors = await validateStrict(UpdateServiceRecordEditDraftDto, {
+            expectedDraftVersion: 1,
+            changes: {},
+            dateMove: {
+                sessionIndex: 1,
+                toDate: "2026-09-08",
+                assignmentId: "forged-assignment",
+            },
         });
         expect(errors.length).toBeGreaterThan(0);
     });

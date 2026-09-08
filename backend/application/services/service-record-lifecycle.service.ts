@@ -64,19 +64,21 @@ function todayKst(now: Date): string {
     return new Date(now.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
-function requiredSessionCount(params: {
+function deriveInitialSessionCount(params: {
     startDate: Date | null;
     endDate: Date | null;
-    fallback: number | null;
 }): number | null {
-    // The stored count (fallback) is authoritative once set; the
-    // date-derived business-day count is only used when no count is
-    // stored yet.
-    if (params.fallback !== null) return params.fallback;
     const startDate = isoDate(params.startDate);
     const endDate = isoDate(params.endDate);
-    if (!startDate || !endDate) return params.fallback;
-    return countBusinessDaysKr(startDate, endDate) ?? params.fallback;
+    if (!startDate || !endDate) return null;
+    try {
+        const count = countBusinessDaysKr(startDate, endDate);
+        return count && count > 0 ? count : null;
+    } catch {
+        // Unsupported years and malformed periods remain viewable as legacy
+        // data, but they cannot initialize a new authoritative N.
+        return null;
+    }
 }
 
 function isWithinServicePeriod(serviceDate: Date, startDate: Date | null, endDate: Date | null): boolean {
@@ -252,18 +254,20 @@ export class ServiceRecordLifecycleService {
         const tokenExpiresAt = client.endDate
             ? getServiceRecordTokenExpiresAt(client.endDate)
             : null;
-        const sessionCount = requiredSessionCount({
-            startDate: client.startDate,
-            endDate: client.endDate,
-            fallback: client.duration,
-        });
-        // duration is the contracted session count and is authoritative
-        // once set; it must never be rewritten to match a later end-date
-        // change (e.g. a postponed session extending the period). Fill it
-        // in only when the client has no duration stored yet, so a client
-        // header created without one still ends up with a persisted count.
+        // N is a service-record fact, separate from the nominal voucher
+        // duration. A case keeps its initialized N through postponed or
+        // shortened outer periods; only a brand-new case may derive N from a
+        // complete supported client period. Legacy null/zero values remain
+        // visible and are not silently backfilled.
+        const sessionCount = existing
+            ? existing.requiredSessionCount
+            : deriveInitialSessionCount({ startDate: client.startDate, endDate: client.endDate });
+        // A new client without a nominal duration may still be initialized
+        // from its complete service period. Never derive a nominal duration
+        // from an existing case's N.
         if (
-            client.duration === null
+            !existing
+            && client.duration === null
             && sessionCount !== null
             && typeof db.client.updateMany === "function"
         ) {
@@ -665,11 +669,7 @@ export class ServiceRecordLifecycleService {
             endDate: params.endDate,
         }, tx);
 
-        // duration is authoritative once set on the client (per the contract
-        // lifecycle: duration/requiredSessionCount drive the schedule, not
-        // the reverse). Only derive and write it here when the client has no
-        // duration yet; otherwise this sync must leave duration untouched and
-        // only move the end date. A few legacy unit-test transaction doubles
+        // A few legacy unit-test transaction doubles
         // do not expose findUnique; those retain the historical
         // end-date-only update shape.
         let duration: number | null | undefined;
@@ -678,14 +678,26 @@ export class ServiceRecordLifecycleService {
                 where: { id: params.clientId },
                 select: { startDate: true, duration: true },
             });
-            if (currentClient && currentClient.duration === null) {
+            const existingCase = typeof tx.service_record_case?.findUnique === "function"
+                ? await tx.service_record_case.findUnique({
+                    where: { clientId: params.clientId },
+                    select: { id: true, requiredSessionCount: true },
+                })
+                : undefined;
+            // A null client duration on a case that already has persisted
+            // service-record state is legacy evidence, not permission to
+            // backfill the nominal voucher from a later period edit. Keep it
+            // visible for preview/repair instead of changing billing facts.
+            // The no-case path retains the historical initialization needed
+            // when a contract completes a client period for the first time.
+            if (currentClient && currentClient.duration === null && (existingCase === null || existingCase === undefined)) {
                 if (!currentClient.startDate) {
                     duration = null;
                 } else {
-                    const derived = countBusinessDaysKr(
-                        isoDate(currentClient.startDate)!,
-                        isoDate(params.endDate)!,
-                    );
+                    const derived = deriveInitialSessionCount({
+                        startDate: currentClient.startDate,
+                        endDate: params.endDate,
+                    });
                     if (derived === null) {
                         throw new ConflictException("서비스 기간을 계산할 수 없습니다.");
                     }
@@ -881,25 +893,25 @@ export class ServiceRecordLifecycleService {
             return record;
         }
 
-        const required = requiredSessionCount({
-            startDate: record.startDate,
-            endDate: record.endDate,
-            fallback: record.requiredSessionCount,
-        }) ?? 0;
+        // Recompute never initializes or changes N. The lifecycle ensure path
+        // owns initialization for a brand-new case; existing null/zero and
+        // inconsistent legacy evidence must remain visible and block preview.
+        const required = record.requiredSessionCount;
+        const usableRequired = required ?? 0;
         const inPeriodDays = record.days.filter((day) => (
             isWithinServicePeriod(day.serviceDate, record.startDate, record.endDate)
-            && (day.caseSessionIndex === null || day.caseSessionIndex <= required)
+            && (day.caseSessionIndex === null || day.caseSessionIndex <= usableRequired)
         ));
         const submitted = inPeriodDays.filter((day) => day.locked && day.momApproval === "approved").length;
-        const complete = required > 0
-            && inPeriodDays.length === required
-            && submitted === required
+        const complete = usableRequired > 0
+            && inPeriodDays.length === usableRequired
+            && submitted === usableRequired
             && hasCompleteHeader(record);
         const now = new Date();
         const hasActiveAssignment = record.assignments.some((assignment) => assignment.schedule && !assignment.schedule.replaced);
         let status: ServiceRecordCaseStatus;
 
-        if (!record.startDate || !record.endDate || required <= 0) {
+        if (!record.startDate || !record.endDate || usableRequired <= 0) {
             status = SERVICE_RECORD_CASE_STATUS.WAITING_FOR_DETAILS;
         } else if (!hasActiveAssignment) {
             status = SERVICE_RECORD_CASE_STATUS.WAITING_FOR_ASSIGNMENT;

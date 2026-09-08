@@ -251,6 +251,12 @@ Task3.1 실행 분리: 날짜 계산·서버 계약과 API에 의존하지 않�
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer (mirror_request_pg_races) · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `frontend/src/components/app/service-record/`의 날짜 선택 구성요소 및 관련 테스트, 필요한 `docs/design-system/component-manifest.json` 등록만. 관리자 wizard/API/backend/shared 파일은 이 단위에서 수정하지 않는다. **Depends:** Task3.0 독립 감사 SHIP 및 기존 공통 영업일 함수. **Worktree:** `admin-service-record-editor-units/task-3-1-date-ui`, branch `unit/admin-service-record-3-1-date-ui`.
 
+- **Task3.1 관리자 화면 연결** (feature, med)
+  - 공통 타입 checkpoint `db611b42c`와 날짜 선택 UI `aba1d25b7`를 받아 wizard·초안 날짜 이동·서버 미리보기 API를 연결한다. 서버 task의 구현·테스트와 병행하며 별도 task 감사를 두지 않는다.
+
+  **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer (기존 sdk_capability_probe worker, 이번 작업은 local 전용) · **Model:** gpt-5.6-luna · **Effort:** max  
+  **Paths:** 위 Task3.1 frontend wizard/features/API 경로와 `packages/service-record-ui/src/`의 관리자 opt-in props/slots, 해당 집중 테스트와 필요한 app 구성요소 등록. backend/shared 날짜 도메인 및 별도 날짜 선택 컴포넌트는 수정하지 않는다. **Depends:** 고정된 shared 계약 및 날짜 선택 UI checkpoint (수령 완료). **Worktree:** `admin-service-record-editor-units/task-3-1-wizard`, branch `unit/admin-service-record-3-1-wizard`.
+
 제안 API (기존 `/admin/service-records` 아래, 모두 지점 권한 검사):
 
 | 요청 | 책임 |

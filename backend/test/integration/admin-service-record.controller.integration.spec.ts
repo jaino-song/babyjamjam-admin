@@ -26,6 +26,7 @@ describe("AdminServiceRecordController (Integration)", () => {
         getDraft: jest.Mock;
         updateDraft: jest.Mock;
         discardDraft: jest.Mock;
+        previewDraft: jest.Mock;
     };
 
     beforeEach(async () => {
@@ -37,6 +38,7 @@ describe("AdminServiceRecordController (Integration)", () => {
             getDraft: jest.fn(),
             updateDraft: jest.fn(),
             discardDraft: jest.fn(),
+            previewDraft: jest.fn(),
         };
 
         moduleFixture = await Test.createTestingModule({
@@ -94,6 +96,7 @@ describe("AdminServiceRecordController (Integration)", () => {
         ["getDraft", RequestMethod.GET, "client/:clientId/draft"],
         ["updateDraft", RequestMethod.PATCH, "drafts/:draftId"],
         ["discardDraft", RequestMethod.POST, "drafts/:draftId/discard"],
+        ["previewDraft", RequestMethod.POST, "drafts/:draftId/preview"],
     ] as const)("protects %s with owner/admin authority", (methodName, httpMethod, path) => {
         const handler = AdminServiceRecordController.prototype[methodName];
         expect(Reflect.getMetadata(GUARDS_METADATA, handler) ?? []).toContain(OwnerOrAdminGuard);
@@ -107,6 +110,7 @@ describe("AdminServiceRecordController (Integration)", () => {
         adminServiceRecordEditService.startDraft.mockResolvedValue(response);
         adminServiceRecordEditService.updateDraft.mockResolvedValue(response);
         adminServiceRecordEditService.discardDraft.mockResolvedValue(response);
+        adminServiceRecordEditService.previewDraft.mockResolvedValue(response);
 
         await expect(controller.startDraft(tenant, 42, body)).resolves.toBe(response);
         await expect(controller.updateDraft(tenant, "draft-1", {
@@ -114,6 +118,7 @@ describe("AdminServiceRecordController (Integration)", () => {
             changes: {},
         })).resolves.toBe(response);
         await expect(controller.discardDraft(tenant, "draft-1", { expectedDraftVersion: 2 })).resolves.toBe(response);
+        await expect(controller.previewDraft(tenant, "draft-1", { expectedDraftVersion: 2 })).resolves.toBe(response);
 
         expect(adminServiceRecordEditService.startDraft).toHaveBeenCalledWith("branch-1", 42, "admin-1", body);
         expect(adminServiceRecordEditService.updateDraft).toHaveBeenCalledWith("branch-1", "draft-1", "admin-1", {
@@ -121,6 +126,9 @@ describe("AdminServiceRecordController (Integration)", () => {
             changes: {},
         });
         expect(adminServiceRecordEditService.discardDraft).toHaveBeenCalledWith("branch-1", "draft-1", "admin-1", {
+            expectedDraftVersion: 2,
+        });
+        expect(adminServiceRecordEditService.previewDraft).toHaveBeenCalledWith("branch-1", "draft-1", "admin-1", {
             expectedDraftVersion: 2,
         });
     });
