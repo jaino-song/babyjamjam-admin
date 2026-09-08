@@ -12,6 +12,7 @@ import {
 import {
     IReceiptLinkTokenIssuanceRepository,
     ReceiptLinkTokenRecord,
+    type CreateReceiptLinkTokenData,
 } from "domain/repositories/receipt-link-token.repository.interface";
 import { PdfPageRasterizerService } from "infrastructure/pdf/pdf-page-rasterizer.service";
 
@@ -506,7 +507,7 @@ export function createTransactionReceiptLinkIssuanceRepository(
     client: Prisma.TransactionClient,
 ): IReceiptLinkTokenIssuanceRepository {
     return {
-        createReplacingActive: async (data, now) => {
+        createOrRefreshContractLink: async (data: CreateReceiptLinkTokenData, now: Date) => {
             await client.receipt_link_token.updateMany({
                 where: {
                     eformsignDocId: data.eformsignDocId,

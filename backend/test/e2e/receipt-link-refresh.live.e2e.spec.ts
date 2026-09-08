@@ -223,12 +223,14 @@ async function createSyntheticFixture(
             slug: `phase0-receipt-refresh-${runId}`,
         },
     });
+    const serviceEndDate = new Date(now.getTime() + 86_400_000);
     const clientRow = await client.client.create({
         data: {
             name: `Phase0 receipt client ${runId}`,
             birthday: PHASE0_BIRTHDAY,
             voucherClient: false,
             branchId: branch.id,
+            endDate: serviceEndDate,
         },
     });
     ownership.clientId = clientRow.id;
@@ -275,6 +277,7 @@ async function createSyntheticFixture(
         clientId: clientRow.id,
         eformsignDocId: primaryDocument.id,
         birthday: PHASE0_BIRTHDAY,
+        serviceEndDate,
         storagePath: beforePath,
         contentSha256: baseline.pngSha256,
         byteSize: baseline.png.length,
@@ -288,6 +291,7 @@ async function createSyntheticFixture(
         clientId: clientRow.id,
         eformsignDocId: secondaryDocument.id,
         birthday: PHASE0_BIRTHDAY,
+        serviceEndDate,
         storagePath: beforePath,
         contentSha256: baseline.pngSha256,
         byteSize: baseline.png.length,
