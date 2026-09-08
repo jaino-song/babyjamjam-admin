@@ -293,6 +293,18 @@ DB 저장과 외부 문서 생성은 하나의 트랜잭션으로 묶을 수 없
 | 계약/영수증 연동 지연 중 자동 완료 선점 | 오래된 작업은 완료/발송하지 않음, 최신 버전의 두 필드/출력 반영 뒤 실행 |
 | 2차 문서 생성 중 1차 webhook 도착 | 1차 문서 상태만 갱신, 최신 수정본 또는 계약 포인터 승격 금지 |
 
+Phase 5에서 말하는 document/mirror 저장소 소유 경로는 `backend/domain/repositories/eformsign-doc.repository.interface.ts`, `backend/infrastructure/database/repositories/sb.eformsign-doc.repository.ts`, `backend/domain/repositories/eformsign-document-mirror.repository.interface.ts`, `backend/infrastructure/database/repositories/sb.eformsign-document-mirror.repository.ts`다. dispatch-intent 소유 경로는 `backend/domain/entities/eformsign-dispatch-intent.entity.ts`, `backend/domain/repositories/eformsign-dispatch-intent.repository.interface.ts`, `backend/application/services/eformsign-dispatch-boundary.service.ts`, `backend/infrastructure/database/repositories/sb.eformsign-dispatch-intent.repository.ts`다. 아래 추가 Paths의 해당 표기는 이 정확한 파일 집합을 의미한다.
+
+Phase 5 입력 감사 보정: 로컬 구현과 외부 활성화의 조건을 분리한다. Task0.1은 미통과 상태이며 같은 문서 API/PDF 갱신과 완료 계약 새 발급을 증명했다고 표시하지 않는다. 사용자가 승인한 로컬 구현은 계속하되 양식 버전·작업 종류에 결속된 capability 상태가 검증되지 않으면 `capability_unverified` 또는 `manual_review`로 보존하고 외부 작업을 실행하지 않는다. 환경변수나 임의 기본값으로 검증 완료를 만들지 않는다. Task0.1의 별도 승인된 실제 검증은 향후 활성화와 실사용 완료 주장에 필요한 조건이다. 기존 ambiguous ledger는 로컬 테스트·재시도에서 읽어 소비하거나 초기화하지 않는다.
+
+계약 작업은 실행 전에 branch/client/revision, 원본 document ID·template/version·실제 workflow 단계·mirror generation, 허용 원본 필드, 원본 본인부담금 수령일·금액, 새 시작일/종료일/영수증 기간을 고정한다. 누락된 수령일·금액을 오늘 날짜나 현재 고객 값으로 채우지 않고 확인 필요 상태로 남긴다. 기존 job/revision 문서 상태에 operation generation과 내구성 있는 세부 단계를 저장한다. 반려 요청 → 반려 상태 확인 → 참여자 수정/전송 → 검토 복귀 확인 → API 필드 확인 → PDF 확인 → 참조 승격의 각 단계는 별도로 재개하며 응답 유실 시 조회로 판정하기 전 같은 변경을 재전송하지 않는다. 신규 독립 queue는 만들지 않는다.
+
+기록지 청크는 `(revisionId, documentVersion, chunkIndex)`로 구분하고 고정 사본에서만 만든다. 재시도는 다른 버전의 청크를 삭제·크기 변경·재작성하지 않는다. 해당 버전의 모든 청크 완료 후 한 곳의 트랜잭션에서 현재 참조를 승격한다. 새 계약 ID를 얻어도 기존 `client.eDocId`는 유지하고 새 서명 워크플로우 및 API/PDF 검증 완료 후에만 승격한다. webhook/poller는 document ID·revision ID·대상 version·mirror generation을 비교하는 CAS를 사용하며 구문서 이벤트가 최신 일정이나 참조를 덮어쓰지 못하게 한다.
+
+영수증 출력 검증 기록에는 branch/client/revision/document ID, mirror/source generation, 기대 서비스 날짜/기간 및 보존할 수령일·금액, 공식 다운로드 PDF hash, 서버 검증 시각을 저장한다. 대상 generation의 공식 PDF를 새로 내려받아 실제 필드 출력을 검증하며 같은 문서 ID나 동일 metadata라는 이유로 기존 저장 PDF를 승인하지 않는다. 출력 검증과 이미지 생성 후 현재 revision/document/generation 및 검증 기록을 트랜잭션에서 다시 비교한 뒤 기존 token의 storagePath만 승격한다. 값이 바뀌었으면 이전 이미지를 유지하고 pending/failed 상태로 남긴다. 기존 토큰·접근 상태·만료는 그대로 유지한다.
+
+필수 로컬 검증은 capability 미검증 시 외부 호출0회, 각 vendor 세부 단계의 실패/응답 유실/재개, 원본 수령일·금액 고정 및 신규 계약 서명 미복사, 재시도의 고정 snapshot 사용, 구/신문서 webhook·poller 경쟁, metadata가 같지만 본문이 오래된 PDF 거부, PDF 검증과 token 승격 사이 revision 교체 CAS, 타 지점 조회/재시도 거부, 실패/수동 확인 UI와 포커스 복귀 갱신을 포함한다. SDK/API/PDF/storage/SMS/webhook/scheduler 경계를 모두 가짜 구현으로 주입하며 실시간 선택자·인증값·vendor endpoint를 호출하지 않는다.
+
 문서 버전 수락 테스트:
 
 | 시작 상태/사건 | 기대 결과 |
@@ -310,6 +322,7 @@ DB 저장과 외부 문서 생성은 하나의 트랜잭션으로 묶을 수 없
 
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-finalization.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-finalization-scheduler.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/service-record-lifecycle.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/usecases/eformsign-doc/`  
+  **추가 Paths:** `backend/domain/repositories/service-record-edit.repository.interface.ts`, `backend/infrastructure/database/repositories/service-record-edit.repository.ts`, `backend/domain/entities/eformsign-document-job.entity.ts`, `backend/domain/repositories/eformsign-document-job.repository.interface.ts`, `backend/application/services/eformsign-document-job.service.ts`, `backend/application/services/eformsign-document-job-worker.service.ts`, `backend/infrastructure/database/repositories/sb.eformsign-document-job.repository.ts`, `backend/application/services/eformsign-webhook.service.ts`, `backend/application/services/eformsign-document-mirror.service.ts`, `backend/module/eformsign-doc.module.ts`, `backend/prisma/schema.prisma`, `backend/prisma/migrations/**` (이 task 신규 migration), 해당 document/mirror 저장소 소유 경로 및 관련 단위/격리 DB 테스트.
   **Depends:** Task 4.2, Task 4.A
 
 계약 외부 단계별 처리 계약:
@@ -325,13 +338,14 @@ DB 저장과 외부 문서 생성은 하나의 트랜잭션으로 묶을 수 없
 위 코드와 단계 번호는 검증 양식의 관측값이며 모든 양식에 고정 적용하지 않는다. 상태는 표시 이름이 아니라 외부 단계 타입·문서 상태 및 저장 가능 권한으로 판단한다. 외부에서 서명 중인 동안 값을 덮어쓰지 않는다. 제공기관 확인으로 전환된 후 저장하되 원래 서명 당시 값과 날짜의 근거를 보존하고, 그 서명을 새 변경에 대한 동의로 기록하지 않는다. 저장 직전/직후 완료 경합은 재조회하며 결과 불명 상태에서는 중복 신규 생성하지 않는다. 이 단계 매트릭스의 자동화 가능성도 Phase 0의 통과 조건이다.
 
 - **Task 5.3: 계약서와 영수증 기간을 같은 수정 버전으로 갱신** (feature, high)
-  - 확정 사본에서 계약 시작/종료일과 영수증 서비스 기간을 모두 만든다. eformsign 문서별 ID·실제 단계·양식 버전·필드 권한을 확인하고, 미완료 계약은 Task 0.1에서 증명한 같은 문서 저장 경로를 사용한다. 변경 전 필드/서명 근거를 보존한다. 수령일·금액·실제 서명 시각을 변경 payload에 넣지 않는다. 오래된 검토 단계 문서에도 동일 이름의 확인 단계 설정이 적용됐다고 가정하지 않는다.
+  - 확정 사본에서 계약 시작/종료일과 영수증 서비스 기간을 모두 만든다. eformsign 문서별 ID·실제 단계·양식 버전·필드 권한을 확인하고, 미완료 계약은 Task 0.1의 활성화 검증을 통과한 경우에만 같은 문서 저장 경로를 실행한다. 로컬 구현에서는 검증되지 않은 capability를 차단하는 가짜 어댑터 검증을 사용한다. 변경 전 필드/서명 근거를 보존한다. 수령일·금액·실제 서명 시각을 변경 payload에 넣지 않는다. 오래된 검토 단계 문서에도 동일 이름의 확인 단계 설정이 적용됐다고 가정하지 않는다.
   - 완료된 계약은 고정 수정 사본의 날짜·고객 정보를 사용해 새 계약을 처음부터 생성하고 이용자에게 새 서명을 받는다. 원본 서명을 새 계약에 복사하지 않으며 원본 ID와 신규 계약 ID의 연결을 이력에 남긴다. 신규 계약은 서명 대기 상태부터 기존 워크플로우를 따른다. 기존 신규 계약 생성기의 생성 시점 기반 수령일과 duration 기반 서비스 기간 기본값을 재발급에 사용하지 않는다. 재발급 입력은 원본의 수령일·금액과 확정된 실제 서비스 기간을 명시하며 서비스 기간 필드를 중복 전달하지 않는다. 신규 계약 ID를 확보한 것만으로 계약 연동 완료나 영수증 최신 전환으로 표시하지 않는다. 완료/미완료 판단과 저장 사이에 완료된 경우 다시 조회해 분기를 재결정한다. 응답 유실만으로 새 문서를 생성하지 않는다. 문서별 `(revisionId, documentId, operation)` 중복 방지와 전체 필드 재조회로 부분 성공을 감지한다.
   - 계약/영수증 연동 완료는 두 필드 저장 및 출력 확인 후 표시한다. 후속 확정은 이전 연동 정리 후 허용하고 초안은 계속 저장할 수 있다. 기록지 청크와 계약 문서의 최신 포인터는 별도로 관리하며 기록지 생성이 고객 계약 eDocId를 덮어쓰면 실패다. 남동구·서구 및 완료 전/후, 저장 도중 완료·응답 유실·오래된 webhook을 검증한다.
 
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `backend/application/services/eformsign.service.ts`, `backend/application/usecases/eformsign-doc/`, `backend/application/services/admin-service-record-edit.service.ts`, `backend/prisma/schema.prisma`  
-  **Depends:** Task 0.1, Task 5.1
+  **추가 Paths:** `backend/application/dto/contract.dto.ts`, `backend/infrastructure/automation/eformsign-headless.service.ts`, `backend/infrastructure/automation/eformsign-finalize-gates.ts`, Task 5.1의 eformsign job/webhook/document/mirror 소유 경로와 module, 기존 dispatch-intent 소유 경로, 관련 단위/격리 DB 테스트 및 신규 migration.
+  **Depends:** Task 5.1, 사용자 로컬 구현 착수 승인. 외부 활성화 및 실제 완료 판정은 Task 0.1 통과가 별도로 필요하다.
 
 - **Task 5.4: 기존 영수증 URL에서 최신 이미지 제공** (feature, high)
   - 기존 영수증 링크·이미지 생성 및 메시지 템플릿 경로를 확장한다. URL 토큰과 만료 정책은 유지하고 해당 링크가 참조하는 계약/수정 버전을 명시한다. 템플릿을 복제하거나 별도 발송 체계를 만들지 않는다.
@@ -341,6 +355,7 @@ DB 저장과 외부 문서 생성은 하나의 트랜잭션으로 묶을 수 없
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `backend/application/services/receipt-link-issue.service.ts`, `backend/application/services/receipt-link-delivery-enricher.service.ts`, `backend/application/services/receipt-link-manual-send.service.ts`, `backend/interface/controllers/receipt-link.controller.ts`, `backend/domain/constants/system-template-registry.ts`, `backend/test/e2e/`  
   **추가 Paths:** `backend/test/e2e/helpers/receipt-link-refresh.live.helper.ts`, `backend/test/e2e/receipt-link-refresh.live.e2e.spec.ts`, 관련 오프라인 helper 테스트. 최신 `createOrRefreshContractLink`/`serviceEndDate` 계약으로 기존 진단 코드를 맞추고, 확정된 원본 수령일·금액·기존 링크 만료 보존 검증을 유지한다. Phase1 이전 기준9f00a89e6에서도 재현되는 해당5개 타입 오류를 해소한 뒤 전체 backend tsc 통과를 요구한다. 실제 live 검사는 별도 실행 권한 범위를 넘지 않는다.
+  **추가 Paths:** `backend/application/services/receipt-link-token.service.ts`, `backend/domain/repositories/receipt-link-token.repository.interface.ts`, `backend/infrastructure/database/repositories/sb.receipt-link-token.repository.ts`, `backend/application/services/eformsign-document-mirror.service.ts`, 해당 mirror 저장소 소유 경로, `backend/infrastructure/pdf/pdf-page-rasterizer.service.ts`, `backend/module/receipt-link.module.ts`, `backend/domain/repositories/service-record-edit.repository.interface.ts`, `backend/infrastructure/database/repositories/service-record-edit.repository.ts`, `backend/prisma/schema.prisma`, `backend/prisma/migrations/**` (이 task 신규 migration), 관련 테스트.
   **Depends:** Task 5.3
 
 - **Task 5.2: 확정 상태·문서 이력·원래 탭 갱신 연결** (feature, med)
@@ -350,6 +365,7 @@ DB 저장과 외부 문서 생성은 하나의 트랜잭션으로 묶을 수 없
 
   **Tier:** standard · **Sandbox:** local · **Agent:** luna_implementer · **Model:** gpt-5.6-luna · **Effort:** max  
   **Paths:** `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/frontend/src/features/service-records/`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/frontend/src/components/app/clients/ClientServiceRecordsTab.tsx`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/frontend/src/app/(service-record-admin)/`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/application/services/admin-service-record.service.ts`, `/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/packages/shared/src/types/service-record.ts`  
+  **추가 Paths:** `frontend/src/components/app/service-record/ServiceRecordAdminWizard.tsx`, `frontend/src/app/api/admin/service-records/`, `backend/application/services/admin-service-record-edit.service.ts`, `backend/interface/controllers/admin-service-record.controller.ts`, `backend/interface/dto/admin-service-record-edit.dto.ts`, `backend/domain/repositories/service-record-edit.repository.interface.ts`, `backend/infrastructure/database/repositories/service-record-edit.repository.ts`, `backend/module/service-record-entry.module.ts`, 관련 테스트.
   **Depends:** Task 5.1, Task 5.3, Task 5.4
 
 - **Task 5.A: 단계 독립 감사** (test, high)

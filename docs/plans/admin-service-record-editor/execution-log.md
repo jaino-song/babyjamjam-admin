@@ -377,3 +377,4 @@
 
 - Phase4 입력 Sol/high APPROVE: 같은 트랜잭션 enqueue/token, 변경 없는 확정까지 영구 중복 방지, 확정/발송 양방향 경쟁, 고정 revision payload 전달과 실제 소유 경로를 보완했다. 기존 message intent의 transaction 인자를 재사용한다.
 - 통합 ece1ce434에서 관리자 mock 브라우저 전체 24개 재실행 PASS(390/480/1280,1.5분). 마지막 outlier·상단높이 보완을 포함하며 앞선21+3 분리 검증의 공백을 닫았다. 결과 /tmp/bjj-service-record-admin-integrated-results. 실제 외부 API/DB/SMS 및 공식 Chrome 검증을 대신하지 않는다.
+- Phase5 보완 입력 Sol/high APPROVE. 로컬 구현과 Phase0 외부 활성화 조건을 분리하고 capability 미검증 시 외부 호출을 차단한다. 계약 원본 수령일/금액 고정, 단계별 응답 유실 복구, 구/신문서 참조 승격 CAS, 실제 공식 PDF 출력 검증과 영수증 참조 승격 결속, 상태/재시도 UI 소유 경로를 명시했다. 외부 성공 증명으로 취급하지 않는다.
