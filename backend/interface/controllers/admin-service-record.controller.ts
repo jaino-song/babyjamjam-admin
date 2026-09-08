@@ -12,6 +12,7 @@ import {
     SendAdminServiceRecordLinkDto,
 } from "interface/dto/admin-service-record.dto";
 import {
+    ConfirmServiceRecordEditDraftDto,
     CreateServiceRecordEditDraftDto,
     DiscardServiceRecordEditDraftDto,
     PreviewServiceRecordEditDraftDto,
@@ -90,6 +91,16 @@ export class AdminServiceRecordController {
         @Body() body: PreviewServiceRecordEditDraftDto,
     ) {
         return this.adminServiceRecordEditService.previewDraft(tenant.branchId, draftId, tenant.userId, body);
+    }
+
+    @Post("drafts/:draftId/confirm")
+    @UseGuards(OwnerOrAdminGuard)
+    confirmDraft(
+        @CurrentTenant() tenant: VerifiedTenantPrincipal,
+        @Param("draftId") draftId: string,
+        @Body() body: ConfirmServiceRecordEditDraftDto,
+    ) {
+        return this.adminServiceRecordEditService.confirmDraft(tenant.branchId, draftId, tenant.userId, body);
     }
 
     @Post("schedules/:scheduleId/prepare-link")

@@ -7,6 +7,7 @@ import {
     IsObject,
     IsOptional,
     IsString,
+    IsUUID,
     Matches,
     Min,
     MaxLength,
@@ -105,6 +106,21 @@ export class PreviewServiceRecordEditDraftDto {
     @IsInt()
     @Min(1)
     expectedDraftVersion!: number;
+}
+
+/** Body used for the one-shot atomic draft confirmation. */
+export class ConfirmServiceRecordEditDraftDto {
+    @IsInt()
+    @Min(1)
+    expectedDraftVersion!: number;
+
+    @IsString()
+    @MaxLength(100)
+    previewId!: string;
+
+    @IsString()
+    @IsUUID()
+    idempotencyKey!: string;
 }
 
 /** Body used for compare-and-swap draft discard. */

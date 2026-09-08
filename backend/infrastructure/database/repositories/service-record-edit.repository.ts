@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { createHash } from "node:crypto";
 
 import {
     ServiceRecordEditConflictError,
@@ -7,8 +8,12 @@ import {
     ServiceRecordEditNotFoundError,
 } from "domain/errors/service-record-edit.error";
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
+import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import {
     type AppendServiceRecordRevisionInput,
+    type ServiceRecordEditConfirmInput,
+    type ServiceRecordEditConfirmPlan,
+    type ServiceRecordEditConfirmSnapshot,
     type CreateServiceRecordEditDraftInput,
     type DiscardServiceRecordEditDraftInput,
     type IServiceRecordEditRepository,
@@ -26,6 +31,8 @@ import type {
     ServiceRecordEditDocumentChunk,
     ServiceRecordEditDocumentScope,
     ServiceRecordEditSignatureMetadata,
+    ServiceRecordEditConfirmResponse,
+    ServiceRecordRevisionDispatchContext,
 } from "@babyjamjam/shared/types/service-record";
 
 type DraftRow = Prisma.service_record_edit_draftGetPayload<Record<string, never>>;
@@ -295,9 +302,16 @@ function toDraft(row: DraftRow): ServiceRecordEditDraft {
         draftVersion: row.draftVersion,
         status: row.status as ServiceRecordEditDraft["status"],
         createdAt: row.createdAt,
-        updatedAt: row.updatedAt,
-        discardedAt: row.discardedAt,
-    };
+    updatedAt: row.updatedAt,
+    discardedAt: row.discardedAt,
+    confirmedByUserId: row.confirmedByUserId ?? null,
+    confirmedAt: row.confirmedAt ?? null,
+    confirmationIdempotencyKey: row.confirmationIdempotencyKey ?? null,
+    confirmationFingerprint: row.confirmationFingerprint ?? null,
+    confirmationResponse: row.confirmationResponse === null
+        ? null
+        : row.confirmationResponse as unknown as ServiceRecordEditJsonValue,
+};
 }
 
 function toRevision(row: RevisionRow): ServiceRecordRevision {
@@ -314,6 +328,120 @@ function toRevision(row: RevisionRow): ServiceRecordRevision {
         formVersionAtConfirm: row.formVersionAtConfirm,
         snapshotReference: row.snapshotReference,
     };
+}
+
+function dateValue(value: string | null): Date | null {
+    if (value === null) return null;
+    const parsed = new Date(`${value}T00:00:00.000Z`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function canonicalize(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(canonicalize);
+    if (value && typeof value === "object") {
+        return Object.fromEntries(
+            Object.entries(value as Record<string, unknown>)
+                .sort(([left], [right]) => left.localeCompare(right))
+                .map(([key, nested]) => [key, canonicalize(nested)]),
+        );
+    }
+    return value;
+}
+
+function jsonFingerprint(value: unknown): string {
+    return createHash("sha256").update(JSON.stringify(canonicalize(value))).digest("hex");
+}
+
+function sameSortedNumbers(left: number[], right: number[]): boolean {
+    const a = [...new Set(left)].sort((x, y) => x - y);
+    const b = [...new Set(right)].sort((x, y) => x - y);
+    return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+type OptionalQueryTransaction = Prisma.TransactionClient & {
+    $queryRaw?: <T = unknown>(query: Prisma.Sql) => Promise<T>;
+};
+
+async function lockRowsByBranchAndIds(
+    tx: Prisma.TransactionClient,
+    table: string,
+    delegateName: string,
+    branchId: string,
+    ids: Array<string | number>,
+    uuidIds: boolean,
+): Promise<void> {
+    if (ids.length === 0) return;
+    const transaction = tx as OptionalQueryTransaction;
+    if (typeof transaction.$queryRaw === "function") {
+        const values = Prisma.join(ids.map((id) => uuidIds
+            ? Prisma.sql`${String(id)}::uuid`
+            : Prisma.sql`${id}`));
+        await transaction.$queryRaw(Prisma.sql`
+            SELECT id
+            FROM ${Prisma.raw(table)}
+            WHERE branch_id = ${branchId}::uuid
+              AND id IN (${values})
+            FOR UPDATE
+        `);
+        return;
+    }
+    const delegate = (tx as unknown as Record<string, { findMany?: (args: unknown) => Promise<unknown> }>)[delegateName];
+    if (typeof delegate?.findMany === "function") {
+        await delegate.findMany({
+            where: { branchId, id: { in: ids } },
+            select: { id: true },
+        });
+    }
+}
+
+async function lockCaseChildren(
+    tx: Prisma.TransactionClient,
+    branchId: string,
+    caseId: string,
+    table: string,
+    delegateName: string,
+    caseColumn: string,
+): Promise<void> {
+    const transaction = tx as OptionalQueryTransaction;
+    if (typeof transaction.$queryRaw === "function") {
+        await transaction.$queryRaw(Prisma.sql`
+            SELECT id
+            FROM ${Prisma.raw(table)}
+            WHERE branch_id = ${branchId}::uuid
+              AND ${Prisma.raw(caseColumn)} = ${caseId}::uuid
+            FOR UPDATE
+        `);
+        return;
+    }
+    const delegate = (tx as unknown as Record<string, { findMany?: (args: unknown) => Promise<unknown> }>)[delegateName];
+    if (typeof delegate?.findMany === "function") {
+        await delegate.findMany({
+            where: { branchId, [caseColumn === "service_record_case_id" ? "serviceRecordCaseId" : caseColumn]: caseId },
+            select: { id: true },
+        });
+    }
+}
+
+function jsonValueForConfirmation(response: ServiceRecordEditConfirmResponse): ServiceRecordEditJsonValue {
+    return response as unknown as ServiceRecordEditJsonValue;
+}
+
+function parseConfirmationResponse(value: ServiceRecordEditJsonValue | null): ServiceRecordEditConfirmResponse | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    if (
+        (record["status"] !== "confirmed" && record["status"] !== "no_changes")
+        || typeof record["caseId"] !== "string"
+        || typeof record["clientId"] !== "number"
+        || typeof record["draftId"] !== "string"
+        || typeof record["draftVersion"] !== "number"
+        || typeof record["caseVersion"] !== "number"
+        || (record["revisionId"] !== null && typeof record["revisionId"] !== "string")
+        || (record["revisionNumber"] !== null && typeof record["revisionNumber"] !== "number")
+        || typeof record["documentStatus"] !== "string"
+        || typeof record["confirmedAt"] !== "string"
+    ) return null;
+    return record as unknown as ServiceRecordEditConfirmResponse;
 }
 
 /**
@@ -479,6 +607,12 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 clientId: true,
                 version: true,
                 formVersion: true,
+                status: true,
+                completedAt: true,
+                finalizationDueAt: true,
+                finalizationStartedAt: true,
+                finalizedAt: true,
+                documentsCompletedAt: true,
                 currentRevisionId: true,
                 currentUsableRevisionId: true,
                 currentUsableDocumentVersion: true,
@@ -625,6 +759,14 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             caseId: record.id,
             caseVersion: record.version,
             formVersion: record.formVersion,
+            caseLifecycle: {
+                status: record.status,
+                completedAt: instant(record.completedAt),
+                finalizationDueAt: instant(record.finalizationDueAt),
+                finalizationStartedAt: instant(record.finalizationStartedAt),
+                finalizedAt: instant(record.finalizedAt),
+                documentsCompletedAt: instant(record.documentsCompletedAt),
+            },
             requiredSessionCount: record.requiredSessionCount,
             startDate: dateOnly(record.startDate),
             endDate: dateOnly(record.endDate),
@@ -779,6 +921,469 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             }
             throw error;
         }
+    }
+
+    async confirmDraft(input: ServiceRecordEditConfirmInput): Promise<ServiceRecordEditConfirmResponse> {
+        return this.prisma.$transaction((tx) => this.confirmDraftWithClient(tx, input));
+    }
+
+    private async confirmDraftWithClient(
+        tx: Prisma.TransactionClient,
+        input: ServiceRecordEditConfirmInput,
+    ): Promise<ServiceRecordEditConfirmResponse> {
+        // Discovery is branch-scoped and intentionally happens before the
+        // common lock sequence. A confirmed row can replay without reading
+        // mutable case/provider state at all.
+        const discovered = await this.findDraftByIdWithClient(tx, input.branchId, input.draftId);
+        if (!discovered) throw new ServiceRecordEditNotFoundError();
+        if (discovered.status === "CONFIRMED") {
+            if (discovered.confirmationIdempotencyKey !== input.idempotencyKey) {
+                throw new ServiceRecordEditDraftConflictError("The service-record draft is already confirmed");
+            }
+            if (discovered.confirmationFingerprint !== input.requestFingerprint) {
+                throw new ServiceRecordEditDraftConflictError("The confirmation idempotency key was reused with different input");
+            }
+            const replay = parseConfirmationResponse(discovered.confirmationResponse);
+            if (!replay) throw new ServiceRecordEditConflictError("The stored confirmation result is invalid");
+            return replay;
+        }
+        if (discovered.status !== "ACTIVE") {
+            throw new ServiceRecordEditDraftConflictError("The service-record draft is already closed");
+        }
+
+        const discoveredSource = await this.loadSourceWithClient(
+            tx,
+            input.branchId,
+            { caseId: discovered.serviceRecordCaseId },
+        );
+        if (!discoveredSource) throw new ServiceRecordEditNotFoundError();
+        await this.lockConfirmTargets(tx, input.branchId, discoveredSource, input.draftId);
+
+        // The parent/case/employee locks serialize all cooperating writers.
+        // Re-read every business row after those locks and reject a writer
+        // that changed ownership while it was waiting instead of acquiring a
+        // second, potentially inverted lock set.
+        const draft = await this.findDraftByIdWithClient(tx, input.branchId, input.draftId);
+        if (!draft) throw new ServiceRecordEditNotFoundError();
+        if (draft.status !== "ACTIVE") {
+            if (
+                draft.status === "CONFIRMED"
+                && draft.confirmationIdempotencyKey === input.idempotencyKey
+                && draft.confirmationFingerprint === input.requestFingerprint
+            ) {
+                const replay = parseConfirmationResponse(draft.confirmationResponse);
+                if (replay) return replay;
+            }
+            throw new ServiceRecordEditDraftConflictError("The service-record draft is already closed");
+        }
+        if (draft.draftVersion !== input.expectedDraftVersion) {
+            throw new ServiceRecordEditDraftConflictError();
+        }
+        const source = await this.loadSourceWithClient(tx, input.branchId, { caseId: draft.serviceRecordCaseId });
+        if (!source) throw new ServiceRecordEditNotFoundError();
+        if (
+            source.client.id !== discoveredSource.client.id
+            || source.caseId !== discoveredSource.caseId
+            || !sameSortedNumbers(
+                source.assignments.map((assignment) => assignment.scheduleId).filter((id): id is number => id !== null),
+                discoveredSource.assignments.map((assignment) => assignment.scheduleId).filter((id): id is number => id !== null),
+            )
+            || !sameSortedNumbers(
+                source.assignments.map((assignment) => assignment.employeeId).filter((id): id is number => id !== null),
+                discoveredSource.assignments.map((assignment) => assignment.employeeId).filter((id): id is number => id !== null),
+            )
+        ) {
+            throw new ServiceRecordEditConflictError("Service-record ownership changed while confirmation was waiting");
+        }
+
+        const snapshot: ServiceRecordEditConfirmSnapshot = { draft, source };
+        const plan = await input.prepare(snapshot);
+        if (plan.caseId !== source.caseId || plan.clientId !== source.client.id) {
+            throw new ServiceRecordEditConflictError("Confirmation plan does not match the locked source");
+        }
+        if (!/^[0-9a-f]{64}$/i.test(plan.sourceFingerprint)) {
+            throw new ServiceRecordEditConflictError("Confirmation plan source fingerprint is invalid");
+        }
+
+        const now = new Date();
+        let revision: ServiceRecordRevision | null = null;
+        let caseVersion = source.caseVersion;
+        const documentStatus = plan.status === "no_changes" ? "not_required" : plan.documentStatus;
+        if (plan.status === "confirmed") {
+            if (plan.revision) {
+                revision = await this.appendRevisionWithClient(tx, plan.revision);
+            }
+            const caseUpdate = await tx.service_record_case.update({
+                where: { id: source.caseId },
+                data: {
+                    startDate: dateValue(plan.startDate),
+                    endDate: dateValue(plan.endDate),
+                    requiredSessionCount: plan.requiredSessionCount,
+                    plannedSessions: plan.plannedSessions === null ? Prisma.JsonNull : toPrismaJson(plan.plannedSessions),
+                    momName: plan.header.momName,
+                    momBirth: plan.header.momBirth,
+                    babyName: plan.header.babyName,
+                    babyBirth: plan.header.babyBirth,
+                    deliveryType: plan.header.deliveryType,
+                    babyWeight: plan.header.babyWeight,
+                    ...(revision ? { currentRevisionId: revision.id } : {}),
+                    version: { increment: 1 },
+                },
+                select: { version: true },
+            });
+            caseVersion = caseUpdate.version;
+
+            await tx.client.updateMany({
+                where: { id: source.client.id, branchId: input.branchId },
+                data: {
+                    startDate: dateValue(plan.startDate),
+                    endDate: dateValue(plan.endDate),
+                },
+            });
+            for (const session of plan.sessions) {
+                await tx.service_record_day.updateMany({
+                    where: { id: session.sourceRowId, branchId: input.branchId, serviceRecordCaseId: source.caseId },
+                    data: {
+                        serviceDate: dateValue(session.serviceDate) ?? undefined,
+                        answers: toPrismaJson(session.answers),
+                        etcService: session.etcService,
+                        notes: session.notes,
+                        paymentConfirmed: session.paymentConfirmed,
+                    },
+                });
+            }
+            for (const assignment of plan.assignments) {
+                if (assignment.assignmentId) {
+                    await tx.service_record_assignment.updateMany({
+                        where: { id: assignment.assignmentId, branchId: input.branchId, serviceRecordCaseId: source.caseId },
+                        data: {
+                            ...(dateValue(assignment.startDate) ? { startDate: dateValue(assignment.startDate)! } : {}),
+                            ...(dateValue(assignment.endDate) ? { endDate: dateValue(assignment.endDate)! } : {}),
+                        },
+                    });
+                }
+                if (assignment.scheduleId !== null) {
+                    await tx.employee_schedule.updateMany({
+                        where: { id: assignment.scheduleId, branchId: input.branchId },
+                        data: {
+                            ...(dateValue(assignment.startDate) ? { startDate: dateValue(assignment.startDate)! } : {}),
+                            ...(dateValue(assignment.endDate) ? { endDate: dateValue(assignment.endDate)! } : {}),
+                        },
+                    });
+                }
+            }
+            if (plan.endDate) {
+                await tx.service_record_token.updateMany({
+                    where: { branchId: input.branchId, serviceRecordCaseId: source.caseId, active: true, revokedAt: null },
+                    data: { expiresAt: getServiceRecordTokenExpiresAt(dateValue(plan.endDate)!) },
+                });
+            }
+            await this.invalidateSupersededJobs(tx, input.branchId, source.caseId, source.client.id);
+            if (revision && plan.documentJob && plan.dispatchContext) {
+                await this.enqueueRevisionJob(tx, input, plan, revision, caseVersion);
+            }
+        }
+
+        const response: ServiceRecordEditConfirmResponse = {
+            status: plan.status,
+            caseId: source.caseId,
+            clientId: source.client.id,
+            draftId: input.draftId,
+            draftVersion: draft.draftVersion + 1,
+            caseVersion,
+            revisionId: revision?.id ?? null,
+            revisionNumber: revision?.revisionNumber ?? null,
+            documentStatus,
+            confirmedAt: now.toISOString(),
+        };
+        const persisted = await tx.service_record_edit_draft.updateMany({
+            where: {
+                id: input.draftId,
+                branchId: input.branchId,
+                serviceRecordCaseId: source.caseId,
+                status: "ACTIVE",
+                draftVersion: input.expectedDraftVersion,
+            },
+            data: {
+                status: "CONFIRMED",
+                confirmedByUserId: input.actorUserId,
+                confirmedAt: now,
+                confirmationIdempotencyKey: input.idempotencyKey,
+                confirmationFingerprint: input.requestFingerprint,
+                confirmationResponse: toPrismaJson(jsonValueForConfirmation(response)),
+                updatedByUserId: input.actorUserId,
+                draftVersion: { increment: 1 },
+            },
+        });
+        if (persisted.count !== 1) throw new ServiceRecordEditDraftConflictError();
+        return response;
+    }
+
+    private async lockConfirmTargets(
+        tx: Prisma.TransactionClient,
+        branchId: string,
+        source: ServiceRecordEditSource,
+        draftId: string,
+    ): Promise<void> {
+        // Common order: client -> sorted employees -> case -> sorted child
+        // schedules/assignments/days/docs -> draft -> revision/jobs.
+        await lockRowsByBranchAndIds(tx, "client", "client", branchId, [source.client.id], false);
+        const employeeIds = source.assignments.flatMap((assignment) => [
+            assignment.employeeId,
+            assignment.primaryEmployeeId,
+            assignment.secondaryEmployeeId,
+        ]).filter((id): id is number => id !== null).sort((left, right) => left - right);
+        await lockRowsByBranchAndIds(tx, "employee", "employee", branchId, [...new Set(employeeIds)], false);
+        await lockRowsByBranchAndIds(tx, "service_record_case", "service_record_case", branchId, [source.caseId], true);
+
+        const scheduleIds = source.assignments
+            .map((assignment) => assignment.scheduleId)
+            .filter((id): id is number => id !== null)
+            .sort((left, right) => left - right);
+        await lockRowsByBranchAndIds(tx, "employee_schedule", "employee_schedule", branchId, [...new Set(scheduleIds)], false);
+        await lockCaseChildren(tx, branchId, source.caseId, "service_record_assignment", "service_record_assignment", "service_record_case_id");
+        await lockCaseChildren(tx, branchId, source.caseId, "service_record_day", "service_record_day", "service_record_case_id");
+        await lockCaseChildren(tx, branchId, source.caseId, "eformsign_doc", "eformsign_doc", "service_record_case_id");
+
+        await lockRowsByBranchAndIds(tx, "service_record_edit_draft", "service_record_edit_draft", branchId, [draftId], true);
+        await lockCaseChildren(tx, branchId, source.caseId, "service_record_revision", "service_record_revision", "service_record_case_id");
+
+        const transaction = tx as OptionalQueryTransaction;
+        if (typeof transaction.$queryRaw === "function") {
+            await transaction.$queryRaw(Prisma.sql`
+                SELECT id
+                FROM "eformsign_document_job"
+                WHERE branch_id = ${branchId}::uuid
+                  AND client_id = ${source.client.id}
+                FOR UPDATE
+            `);
+            await transaction.$queryRaw(Prisma.sql`
+                SELECT id
+                FROM "message_trigger_job"
+                WHERE branch_id = ${branchId}::uuid
+                  AND client_id = ${source.client.id}
+                FOR UPDATE
+            `);
+        } else {
+            const jobs = tx as unknown as {
+                eformsign_document_job?: { findMany?: (args: unknown) => Promise<unknown> };
+                message_trigger_job?: { findMany?: (args: unknown) => Promise<unknown> };
+            };
+            await jobs.eformsign_document_job?.findMany?.({
+                where: { branchId, clientId: source.client.id },
+                select: { id: true },
+            });
+            await jobs.message_trigger_job?.findMany?.({
+                where: { branchId, clientId: source.client.id },
+                select: { id: true },
+            });
+        }
+    }
+
+    private async invalidateSupersededJobs(
+        tx: Prisma.TransactionClient,
+        branchId: string,
+        caseId: string,
+        clientId: number,
+    ): Promise<void> {
+        const transaction = tx as OptionalQueryTransaction;
+        if (typeof transaction.$queryRaw === "function") {
+            // Once a provider worker has crossed its irreversible boundary,
+            // confirmation must not mark that work stale in the same
+            // transaction.  The row lock makes the decision deterministic
+            // against a worker that is claiming at the same time; the caller
+            // receives a conflict and the draft/case writes roll back.
+            const inFlightDocuments = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                SELECT id
+                FROM "eformsign_document_job"
+                WHERE branch_id = ${branchId}::uuid
+                  AND client_id = ${clientId}
+                  AND status IN ('processing', 'reconciling')
+                  AND progress_step IN ('creating', 'sent')
+                  AND (
+                      payload->'context'->>'serviceRecordCaseId' = ${caseId}
+                      OR payload->>'serviceRecordCaseId' = ${caseId}
+                  )
+                FOR UPDATE
+            `);
+            if (inFlightDocuments.length > 0) {
+                throw new ServiceRecordEditConflictError(
+                    "A service-record document dispatch is already irreversible",
+                );
+            }
+            const inFlightMessages = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                SELECT id
+                FROM "message_trigger_job"
+                WHERE branch_id = ${branchId}::uuid
+                  AND client_id = ${clientId}
+                  AND status = 'dispatching'
+                FOR UPDATE
+            `);
+            if (inFlightMessages.length > 0) {
+                throw new ServiceRecordEditConflictError(
+                    "A service-record message dispatch is already irreversible",
+                );
+            }
+            await transaction.$queryRaw(Prisma.sql`
+                UPDATE "eformsign_document_job"
+                SET status = 'failed',
+                    last_error_code = 'SERVICE_RECORD_REVISION_SUPERSEDED',
+                    active_key = NULL,
+                    payload = NULL,
+                    heartbeat_at = NULL,
+                    lease_token = NULL,
+                    completed_at = now(),
+                    updated_at = now()
+                WHERE branch_id = ${branchId}::uuid
+                  AND client_id = ${clientId}
+                  AND status IN ('queued', 'processing', 'reconciling')
+                  AND (
+                      payload->'context'->>'serviceRecordCaseId' = ${caseId}
+                      OR payload->>'serviceRecordCaseId' = ${caseId}
+                  )
+            `);
+            await transaction.$queryRaw(Prisma.sql`
+                UPDATE "message_trigger_job"
+                SET status = 'canceled',
+                    canceled_at = now(),
+                    cancel_reason = 'SERVICE_RECORD_REVISION_SUPERSEDED',
+                    canceled_by_user = false,
+                    updated_at = now()
+                WHERE branch_id = ${branchId}::uuid
+                  AND client_id = ${clientId}
+                  AND status IN ('pending', 'processing')
+            `);
+            return;
+        }
+        const fallback = tx as unknown as {
+            eformsign_document_job?: {
+                findMany?: (args: unknown) => Promise<Array<{ id?: string; progressStep?: string; status?: string }>>;
+                updateMany?: (args: unknown) => Promise<unknown>;
+            };
+            message_trigger_job?: {
+                findMany?: (args: unknown) => Promise<Array<{ id?: string; status?: string }>>;
+                updateMany?: (args: unknown) => Promise<unknown>;
+            };
+        };
+        const inFlightDocuments = await fallback.eformsign_document_job?.findMany?.({
+            where: {
+                branchId,
+                clientId,
+                status: { in: ["processing", "reconciling"] },
+                progressStep: { in: ["creating", "sent"] },
+            },
+            select: { id: true, status: true, progressStep: true },
+        }) ?? [];
+        if (inFlightDocuments.length > 0) {
+            throw new ServiceRecordEditConflictError(
+                "A service-record document dispatch is already irreversible",
+            );
+        }
+        const inFlightMessages = await fallback.message_trigger_job?.findMany?.({
+            where: { branchId, clientId, status: "dispatching" },
+            select: { id: true, status: true },
+        }) ?? [];
+        if (inFlightMessages.length > 0) {
+            throw new ServiceRecordEditConflictError(
+                "A service-record message dispatch is already irreversible",
+            );
+        }
+        await fallback.eformsign_document_job?.updateMany?.({
+            where: { branchId, clientId, status: { in: ["queued", "processing", "reconciling"] } },
+            data: {
+                status: "failed",
+                lastErrorCode: "SERVICE_RECORD_REVISION_SUPERSEDED",
+                activeKey: null,
+                payload: null,
+                heartbeatAt: null,
+                leaseToken: null,
+                completedAt: new Date(),
+            },
+        });
+        await fallback.message_trigger_job?.updateMany?.({
+            where: { branchId, clientId, status: { in: ["pending", "processing"] } },
+            data: {
+                status: "canceled",
+                canceledAt: new Date(),
+                cancelReason: "SERVICE_RECORD_REVISION_SUPERSEDED",
+                canceledByUser: false,
+            },
+        });
+    }
+
+    private async enqueueRevisionJob(
+        tx: Prisma.TransactionClient,
+        input: ServiceRecordEditConfirmInput,
+        plan: ServiceRecordEditConfirmPlan,
+        revision: ServiceRecordRevision,
+        caseVersion: number,
+    ): Promise<void> {
+        if (!plan.documentJob || !plan.dispatchContext) return;
+        const context = {
+            ...plan.dispatchContext,
+            revisionId: revision.id,
+            revisionNumber: revision.revisionNumber,
+        } satisfies ServiceRecordRevisionDispatchContext;
+        const payload = {
+            ...plan.documentJob.payload,
+            revisionId: revision.id,
+            revisionNumber: revision.revisionNumber,
+            caseVersion,
+            context,
+        };
+        const payloadFingerprint = jsonFingerprint(payload);
+        const transaction = tx as OptionalQueryTransaction;
+        if (typeof transaction.$queryRaw === "function") {
+            const inserted = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                INSERT INTO "eformsign_document_job" (
+                    branch_id, client_id, job_type, source, status, request_key,
+                    active_key, payload, payload_fingerprint, created_by_user_id
+                ) VALUES (
+                    ${input.branchId}::uuid, ${plan.clientId}, 'create_document', 'staff', 'queued',
+                    ${plan.documentJob.requestKey}, ${plan.documentJob.activeKey},
+                    ${JSON.stringify(payload)}::jsonb, ${payloadFingerprint}, ${input.actorUserId}::uuid
+                )
+                ON CONFLICT DO NOTHING
+                RETURNING id
+            `);
+            if (inserted.length > 0) return;
+            const existing = await transaction.$queryRaw<Array<{ id: string; request_key: string; payload_fingerprint: string | null }>>(Prisma.sql`
+                SELECT id, request_key, payload_fingerprint
+                FROM "eformsign_document_job"
+                WHERE request_key = ${plan.documentJob.requestKey}
+                   OR active_key = ${plan.documentJob.activeKey}
+                ORDER BY CASE WHEN request_key = ${plan.documentJob.requestKey} THEN 0 ELSE 1 END
+                LIMIT 1
+            `);
+            if (!existing[0] || (existing[0].request_key === plan.documentJob.requestKey
+                && existing[0].payload_fingerprint !== payloadFingerprint)) {
+                throw new ServiceRecordEditConflictError("The revision document job key was reused with different input");
+            }
+            return;
+        }
+        const delegate = tx.eformsign_document_job;
+        const existing = await delegate.findFirst({ where: { requestKey: plan.documentJob.requestKey } });
+        if (existing) {
+            if (existing.payloadFingerprint !== payloadFingerprint) {
+                throw new ServiceRecordEditConflictError("The revision document job key was reused with different input");
+            }
+            return;
+        }
+        await delegate.create({
+            data: {
+                branchId: input.branchId,
+                clientId: plan.clientId,
+                documentId: null,
+                jobType: "create_document",
+                source: "staff",
+                status: "queued",
+                requestKey: plan.documentJob.requestKey,
+                activeKey: plan.documentJob.activeKey,
+                payload: payload as unknown as Prisma.InputJsonValue,
+                payloadFingerprint,
+                createdByUserId: input.actorUserId,
+            },
+        });
     }
 
     private async assertCaseBelongsToBranchWithClient(

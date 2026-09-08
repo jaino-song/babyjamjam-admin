@@ -63,10 +63,25 @@ export interface ServiceRecordEditSourceAssignment {
     primaryEmployeeName: string | null;
 }
 
+/**
+ * Case lifecycle values observed while the confirm transaction owns the
+ * aggregate.  These timestamps are evidence for dispatch/finalization policy;
+ * they are never derived from submitted day counts or client status.
+ */
+export interface ServiceRecordEditCaseLifecycle {
+    status: string;
+    completedAt: string | null;
+    finalizationDueAt: string | null;
+    finalizationStartedAt: string | null;
+    finalizedAt: string | null;
+    documentsCompletedAt: string | null;
+}
+
 export interface ServiceRecordEditSource {
     caseId: string;
     caseVersion: number;
     formVersion: number;
+    caseLifecycle: ServiceRecordEditCaseLifecycle;
     requiredSessionCount: number | null;
     startDate: string | null;
     endDate: string | null;
