@@ -122,6 +122,43 @@ describeE2E("revision document version allocation and all-chunk promotion (dispo
         expect(await prisma.eformsign_doc.count({ where: { serviceRecordCaseId: data.fixture.record.id } })).toBe(3);
     });
 
+    it("replaces a prior usable revision only after the next version is fully verified", async () => {
+        const first = await fixtureWithRevision();
+        const firstVersion = await repository.allocateServiceRecordRevisionDocumentVersion({ ...first.scope, expectedDocumentVersion: null });
+        const firstDoc = await document(first, firstVersion, 1, first.revision.id);
+        await chunk(first, firstVersion, 1, firstDoc.documentId, 1);
+        expect(await repository.promoteServiceRecordRevisionSnapshot({ ...first.scope,
+            revisionNumber: first.revision.revisionNumber, documentVersion: firstVersion,
+            chunkCount: 1, documentIds: [firstDoc.documentId] })).toBe(true);
+        const revision = await repository.appendRevision({ branchId: first.scope.branchId,
+            serviceRecordCaseId: first.fixture.record.id, actorUserId: first.fixture.actorUserId,
+            payload: { next: true }, plannedSessions: [], provenance: { synthetic: true }, formVersionAtConfirm: 2 });
+        await prisma.service_record_case.update({ where: { id: first.fixture.record.id }, data: { currentRevisionId: revision.id } });
+        const immutableInput = { synthetic: true, revisionId: revision.id };
+        const state = await repository.createRevisionDocumentState({ ...first.scope,
+            revisionId: revision.id, operation: "record_snapshot", generation: randomUUID(), immutableInput,
+            inputFingerprint: sha256CanonicalJson(immutableInput), status: "processing", step: "preparing" });
+        const next = { ...first, revision, state, scope: { ...first.scope,
+            revisionId: revision.id, documentStateId: state.id, generation: state.generation } };
+        const version = await repository.allocateServiceRecordRevisionDocumentVersion({ ...next.scope, expectedDocumentVersion: null });
+        expect(version).toBe(firstVersion + 1);
+        const nextDoc = await document(next, version, 1, revision.id, "070");
+        await chunk(next, version, 1, nextDoc.documentId, 1);
+        const request = { ...next.scope, revisionNumber: revision.revisionNumber,
+            documentVersion: version, chunkCount: 1, documentIds: [nextDoc.documentId] };
+        expect(await repository.promoteServiceRecordRevisionSnapshot(request)).toBe(false);
+        expect(await prisma.service_record_case.findUniqueOrThrow({ where: { id: first.fixture.record.id } }))
+            .toMatchObject({ currentRevisionId: revision.id, currentUsableRevisionId: first.revision.id,
+                currentUsableDocumentVersion: firstVersion });
+        await prisma.eformsign_doc.update({ where: { id: nextDoc.id }, data: { statusType: "003" } });
+        expect(await repository.promoteServiceRecordRevisionSnapshot(request)).toBe(true);
+        expect(await prisma.service_record_case.findUniqueOrThrow({ where: { id: first.fixture.record.id } }))
+            .toMatchObject({ currentRevisionId: revision.id, currentUsableRevisionId: revision.id,
+                currentUsableDocumentVersion: version });
+        expect(await prisma.eformsign_doc.findUniqueOrThrow({ where: { id: firstDoc.id } }))
+            .toMatchObject({ revisionId: first.revision.id, snapshotVersion: firstVersion });
+    });
+
     it("refuses an older completed generation after a newer revision becomes current", async () => {
         const data = await fixtureWithRevision();
         const version = await repository.allocateServiceRecordRevisionDocumentVersion({ ...data.scope, expectedDocumentVersion: null });
