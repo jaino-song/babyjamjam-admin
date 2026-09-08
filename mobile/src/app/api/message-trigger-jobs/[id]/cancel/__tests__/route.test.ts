@@ -77,11 +77,14 @@ describe("POST /api/message-trigger-jobs/[id]/cancel", () => {
     );
   });
 
-  it("preserves a backend conflict response for a job that is no longer pending", async () => {
+  it("forwards a safe backend conflict message while omitting diagnostics", async () => {
     mockPost.mockRejectedValue({
       response: {
         status: 409,
-        data: { message: "이미 발송되었거나 취소할 수 없는 상태입니다." },
+        data: {
+          message: "이미 발송되었거나 취소할 수 없는 상태입니다.",
+          diagnostics: { authorization: "Bearer upstream-secret", query: "SELECT * FROM MessageJob" },
+        },
       },
     });
 
@@ -90,9 +93,31 @@ describe("POST /api/message-trigger-jobs/[id]/cancel", () => {
     });
 
     expect(response.status).toBe(409);
-    // errorResponse sanitizes upstream error bodies (packages/shared/src/api/route-utils.ts) —
-    // only a whitelisted `code`/`hasKakaoAccount` survive, so the upstream message text is
-    // replaced with the route's own fallback rather than passed through.
-    await expect(response.json()).resolves.toEqual({ error: "Failed to cancel message trigger job" });
+    const body = await response.json();
+    expect(body).toEqual({ error: "이미 발송되었거나 취소할 수 없는 상태입니다." });
+    expect(JSON.stringify(body)).not.toContain("upstream-secret");
+    expect(JSON.stringify(body)).not.toContain("SELECT * FROM MessageJob");
+  });
+
+  it.each([
+    [400, "Invalid access token: eyJ.secret"],
+    [500, "PrismaClientKnownRequestError: SELECT * FROM MessageJob"],
+  ])("suppresses unsafe cancel diagnostics from %i responses", async (status, message) => {
+    mockPost.mockRejectedValue({
+      response: {
+        status,
+        data: { message, diagnostics: { authorization: "Bearer upstream-secret" } },
+      },
+    });
+
+    const response = await POST(createRequest("job-1"), {
+      params: Promise.resolve({ id: "job-1" }),
+    });
+
+    expect(response.status).toBe(status);
+    const body = await response.json();
+    expect(body).toEqual({ error: "Failed to cancel message trigger job" });
+    expect(JSON.stringify(body)).not.toContain(message);
+    expect(JSON.stringify(body)).not.toContain("upstream-secret");
   });
 });

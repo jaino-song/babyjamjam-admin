@@ -4,6 +4,7 @@
 import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
+import { getErrorMessage } from "@/lib/errors/api-error-mapper";
 import { GET as getClients, POST as createClient } from "../route";
 import { GET as getClient, PATCH as updateClient, DELETE as deleteClient } from "../[id]/route";
 import { PATCH as terminateClient } from "../[id]/terminate/route";
@@ -37,10 +38,17 @@ function createRequest(path: string, init: { method?: string; body?: BodyInit; h
 }
 
 describe("client API routes", () => {
+  let consoleErrorSpy: jest.SpyInstance;
+
   beforeEach(() => {
     mockGet.mockReset();
     mockPatch.mockReset();
     mockPost.mockReset();
+    consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleErrorSpy.mockRestore();
   });
 
   it("preserves backend status and payload when listing clients", async () => {
@@ -110,6 +118,34 @@ describe("client API routes", () => {
     expect(mockPost).toHaveBeenCalledWith("/clients", payload, expect.any(Object));
   });
 
+  it("surfaces a safe backend validation message through the client error mapper", async () => {
+    const message = "duration must equal the Korean business-day count (15) for the submitted service period";
+    mockPost.mockRejectedValue({
+      response: {
+        status: 400,
+        data: { message, error: "Bad Request" },
+      },
+    });
+
+    const response = await createClient(
+      createRequest("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Baby Kim",
+          careCenter: false,
+          voucherClient: true,
+          breastPump: false,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body).toEqual({ error: message });
+    expect(getErrorMessage({ response: { status: 400, data: body } }, "ko")).toBe(message);
+  });
+
   it("preserves the safe duplicate-client conflict payload", async () => {
     mockPost.mockRejectedValue({
       response: {
@@ -140,6 +176,164 @@ describe("client API routes", () => {
       message: "이미 같은 전화번호의 고객이 있습니다.",
       clientId: 73,
     });
+  });
+
+  it.each([
+    [400, "SELECT 1 FROM clients"],
+    [409, "SELECT id + 1 FROM clients"],
+    [422, "SELECT CASE WHEN id = 1 THEN 'one' ELSE 'other' END FROM clients"],
+    [400, "SELECT u.id FROM users u"],
+    [409, "SELECT u.id FROM users u WHERE u.id = 1"],
+    [422, "SELECT u.id FROM users AS u WHERE u.id = 1"],
+    [400, "SELECT u.id FROM users u JOIN teams t ON t.id = u.team_id"],
+  ] as const)("does not expose SQL diagnostics in a %i BFF response", async (status, message) => {
+    mockGet.mockRejectedValue({
+      response: {
+        status,
+        data: { message },
+      },
+    });
+
+    const response = await getClients(createRequest("/api/clients"));
+
+    expect(response.status).toBe(status);
+    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch clients" });
+  });
+
+  it.each([
+    {
+      message: "Bearer upstream-secret",
+      clientId: 73,
+      internal: "should not reach the client",
+    },
+    {
+      message: "SELECT * FROM Client WHERE id = 73",
+      clientId: 73,
+      diagnostics: { query: "SELECT * FROM Client WHERE id = 73" },
+    },
+    {
+      message: "SELECT phone FROM Client WHERE id = 73",
+      clientId: 73,
+    },
+    {
+      message: "SELECT phone FROM Client",
+      clientId: 73,
+    },
+    {
+      message: "SELECT phone FROM Client;",
+      clientId: 73,
+    },
+    {
+      message: 'SELECT "phone", "email" FROM "Client" WHERE "id" = 73',
+      clientId: 73,
+    },
+    {
+      message: "SELECT count(*) FROM Client WHERE id = 73;",
+      clientId: 73,
+    },
+    {
+      message: "SELECT COUNT(*) FROM Client",
+      clientId: 73,
+    },
+    {
+      message: "SELECT 1 FROM clients",
+      clientId: 73,
+    },
+    {
+      message: "SELECT id + 1 FROM clients",
+      clientId: 73,
+    },
+    {
+      message: "SELECT 'client' AS label FROM clients",
+      clientId: 73,
+    },
+    {
+      message: "SELECT CASE WHEN id = 1 THEN 'one' ELSE 'other' END FROM clients",
+      clientId: 73,
+    },
+    {
+      message: "SELECT CAST(id AS TEXT) AS label FROM clients",
+      clientId: 73,
+    },
+    {
+      message: "SELECT (COALESCE(id, 0) + 1) AS next_id FROM clients",
+      clientId: 73,
+    },
+    {
+      message: "SELECT u.id FROM users u WHERE u.id = 1",
+      clientId: 73,
+    },
+    {
+      error: "Internal stack trace at /workspace/apps/api/client.service.ts:73",
+      clientId: 73,
+      internal: "should not reach the client",
+    },
+  ])("suppresses unsafe non-Prisma 409 conflict payloads (%o)", async (data) => {
+    mockPost.mockRejectedValue({
+      response: {
+        status: 409,
+        data,
+      },
+    });
+
+    const response = await createClient(
+      createRequest("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Baby Kim",
+          careCenter: false,
+          voucherClient: true,
+          breastPump: false,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body).toEqual({ error: "Failed to create client" });
+    expect(JSON.stringify(body)).not.toContain("upstream-secret");
+    expect(JSON.stringify(body)).not.toContain("SELECT * FROM Client");
+    expect(JSON.stringify(body)).not.toContain("clientId");
+    expect(JSON.stringify(body)).not.toContain("internal");
+    expect(JSON.stringify(body)).not.toContain("/workspace/apps/api");
+  });
+
+  it("preserves Prisma metadata for a message-less phone conflict", async () => {
+    mockPost.mockRejectedValue({
+      response: {
+        status: 409,
+        data: {
+          code: "P2002",
+          error: "Conflict",
+          field: "phone",
+        },
+      },
+    });
+
+    const response = await createClient(
+      createRequest("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Baby Kim",
+          careCenter: false,
+          voucherClient: true,
+          breastPump: false,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body).toEqual({
+      error: "Failed to create client",
+      code: "P2002",
+      field: "phone",
+    });
+    expect(getErrorMessage({ response: { status: 409, data: body } }, "ko")).toBe(
+      "이미 등록된 연락처입니다. 다른 연락처를 입력해주세요.",
+    );
   });
 
   it("rejects invalid client detail IDs before proxying", async () => {

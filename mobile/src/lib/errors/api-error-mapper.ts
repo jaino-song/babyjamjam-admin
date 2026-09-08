@@ -1,5 +1,7 @@
 import { t, Locale } from '@/lib/i18n/translations';
 
+import { getSafeApiDisplayMessage } from './safe-api-error-message';
+
 /**
  * Backend Prisma error response structure
  * (No user-facing message - frontend handles localization)
@@ -55,6 +57,28 @@ function isPrismaErrorResponse(error: unknown): error is PrismaErrorResponse {
     );
 }
 
+function getFieldSpecificPrismaMessage(
+    locale: Locale,
+    code: string,
+    field: string,
+): string | null {
+    const fieldSpecificKey = `errors.prisma.${code}.${field}`;
+    const pathMessage = t(locale, fieldSpecificKey);
+    if (typeof pathMessage === 'string' && pathMessage !== fieldSpecificKey) {
+        return pathMessage;
+    }
+
+    // The existing locale files keep field-specific Prisma entries as literal
+    // dotted keys (for example, `P2002.phone`) beside the base code entry.
+    const prismaMessages = t(locale, 'errors.prisma') as unknown;
+    if (!prismaMessages || typeof prismaMessages !== 'object' || Array.isArray(prismaMessages)) {
+        return null;
+    }
+
+    const literalMessage = (prismaMessages as Record<string, unknown>)[`${code}.${field}`];
+    return typeof literalMessage === 'string' ? literalMessage : null;
+}
+
 /**
  * Map Prisma error code to user-friendly message using i18n
  *
@@ -75,10 +99,9 @@ export function mapPrismaError(error: unknown, locale: Locale): string | null {
 
     // Try field-specific translation first (e.g., errors.prisma.P2002.phone)
     if (field) {
-        const fieldSpecificKey = `errors.prisma.${code}.${field}`;
-        const fieldSpecificMsg = t(locale, fieldSpecificKey);
-        if (fieldSpecificMsg !== fieldSpecificKey) {
-            return fieldSpecificMsg;
+        const fieldSpecificMessage = getFieldSpecificPrismaMessage(locale, code, field);
+        if (fieldSpecificMessage) {
+            return fieldSpecificMessage;
         }
     }
 
@@ -104,8 +127,19 @@ export function mapPrismaError(error: unknown, locale: Locale): string | null {
 }
 
 /**
+ * Pull the backend's own explanation out of an API error response. Nest puts it
+ * in `message`; the Next proxy flattens that into `error` before it reaches the
+ * browser, so both are read, `message` first.
+ *
+ * @returns The backend's message, or null when it carries no usable text
+ */
+export function getApiDisplayMessage(error: unknown): string | null {
+    return getSafeApiDisplayMessage(error);
+}
+
+/**
  * Get error message from any error type, with Prisma error handling
- * Falls back to generic error message if not a Prisma error
+ * Falls back to the backend's own message, then to a generic localized message
  */
 export function getErrorMessage(
     error: unknown,
@@ -113,5 +147,7 @@ export function getErrorMessage(
     fallbackKey: string = 'errors.generic'
 ): string {
     const apiError = extractApiError(error);
-    return mapPrismaError(apiError, locale) || t(locale, fallbackKey);
+    return mapPrismaError(apiError, locale)
+        || getApiDisplayMessage(error)
+        || t(locale, fallbackKey);
 }
