@@ -1,3 +1,5 @@
+import type { ServiceRecordEditContractStage } from "@babyjamjam/shared/types/service-record";
+
 import {
     AdminServiceRecordEditApiError,
     type AdminServiceRecordEditChanges,
@@ -41,6 +43,21 @@ function isValidDateOnly(value: unknown): value is string {
 
 function positiveInteger(value: unknown): number | null {
     return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+function nonNegativeInteger(value: unknown): number | null {
+    return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+const SERVICE_RECORD_EDIT_CONTRACT_STAGES = ["completed", "rejected", "in_progress", "unknown"] as const;
+type KnownServiceRecordEditContractStage = Exclude<ServiceRecordEditContractStage, null>;
+
+function normalizeContractStage(value: unknown): { value: ServiceRecordEditContractStage; valid: boolean } {
+    if (value === null) return { value: null, valid: true };
+    if (typeof value !== "string") return { value: null, valid: false };
+    return SERVICE_RECORD_EDIT_CONTRACT_STAGES.includes(value as KnownServiceRecordEditContractStage)
+        ? { value: value as KnownServiceRecordEditContractStage, valid: true }
+        : { value: null, valid: false };
 }
 
 function normalizeDraft(value: unknown): AdminServiceRecordEditDraft | null {
@@ -100,6 +117,7 @@ interface NormalizedPreviewVector {
     valid: boolean;
     hasEntries: boolean;
     hadRawEntries: boolean;
+    shapeValid: boolean;
 }
 
 function normalizePreviewVectorStrict(value: unknown, expectedCount: number | null): NormalizedPreviewVector {
@@ -109,10 +127,12 @@ function normalizePreviewVectorStrict(value: unknown, expectedCount: number | nu
             valid: false,
             hasEntries: false,
             hadRawEntries: false,
+            shapeValid: false,
         };
     }
 
     let valid = true;
+    let shapeValid = true;
     const startDate = value.startDate === null || value.startDate === undefined
         ? null
         : isValidDateOnly(value.startDate) ? value.startDate : null;
@@ -122,18 +142,30 @@ function normalizePreviewVectorStrict(value: unknown, expectedCount: number | nu
     if ((value.startDate !== null && value.startDate !== undefined && startDate === null)
         || (value.endDate !== null && value.endDate !== undefined && endDate === null)) {
         valid = false;
+        shapeValid = false;
     }
-    if (startDate && endDate && startDate > endDate) valid = false;
+    if (startDate && endDate && startDate > endDate) {
+        valid = false;
+        shapeValid = false;
+    }
 
     const seenIndexes = new Set<number>();
+    const seenServiceDates = new Set<string>();
     const sessions: ServiceRecordPlannedSession[] = [];
     for (const rawSession of value.sessions) {
         const normalized = normalizePreviewSession(rawSession);
         if (!normalized || seenIndexes.has(normalized.sessionIndex)) {
             valid = false;
+            shapeValid = false;
+            continue;
+        }
+        if (seenServiceDates.has(normalized.serviceDate)) {
+            valid = false;
+            shapeValid = false;
             continue;
         }
         seenIndexes.add(normalized.sessionIndex);
+        seenServiceDates.add(normalized.serviceDate);
         sessions.push(normalized);
     }
     sessions.sort((left, right) => left.sessionIndex - right.sessionIndex);
@@ -146,8 +178,7 @@ function normalizePreviewVectorStrict(value: unknown, expectedCount: number | nu
     if (sessions.length > 0 && (!startDate || !endDate)) valid = false;
     if (startDate && endDate) {
         for (const session of sessions) {
-            if (session.serviceDate < startDate || session.serviceDate > endDate
-                || session.originalDate < startDate || session.originalDate > endDate) {
+            if (session.serviceDate < startDate || session.serviceDate > endDate) {
                 valid = false;
             }
         }
@@ -157,6 +188,7 @@ function normalizePreviewVectorStrict(value: unknown, expectedCount: number | nu
         valid,
         hasEntries: sessions.length > 0,
         hadRawEntries: value.sessions.length > 0,
+        shapeValid,
     };
 }
 
@@ -195,19 +227,26 @@ function normalizePreviewProvenance(value: unknown): NormalizedPreviewProvenance
 }
 
 function hasCompleteProvenance(
-    sessions: ServiceRecordPlannedSession[],
+    beforeSessions: ServiceRecordPlannedSession[],
+    afterSessions: ServiceRecordPlannedSession[],
     provenance: ServiceRecordEditPreviewResponse["provenance"],
 ): boolean {
-    return sessions.every((session) => provenance.some((range) => (
+    const hasIdentity = (session: ServiceRecordPlannedSession) => provenance.some((range) => (
+        range.assignmentId === session.assignmentId
+        && range.scheduleId === session.scheduleId
+        && range.employeeId === session.employeeId
+        && range.provenanceVersion === session.provenanceVersion
+    ));
+    const hasAfterDateCoverage = (session: ServiceRecordPlannedSession) => provenance.some((range) => (
         range.assignmentId === session.assignmentId
         && range.scheduleId === session.scheduleId
         && range.employeeId === session.employeeId
         && range.provenanceVersion === session.provenanceVersion
         && session.serviceDate >= range.startDate
         && session.serviceDate <= range.endDate
-        && session.originalDate >= range.startDate
-        && session.originalDate <= range.endDate
-    )));
+    ));
+    return [...beforeSessions, ...afterSessions].every(hasIdentity)
+        && afterSessions.every(hasAfterDateCoverage);
 }
 
 const UNKNOWN_SIGNATURE_METADATA: ServiceRecordEditSignatureMetadata = {
@@ -238,6 +277,12 @@ const UNKNOWN_DOCUMENT_SCOPE: ServiceRecordEditDocumentScope = {
 function nullablePositiveInteger(value: unknown): { value: number | null; valid: boolean } {
     if (value === null) return { value: null, valid: true };
     const normalized = positiveInteger(value);
+    return normalized === null ? { value: null, valid: false } : { value: normalized, valid: true };
+}
+
+function nullableNonNegativeInteger(value: unknown): { value: number | null; valid: boolean } {
+    if (value === null) return { value: null, valid: true };
+    const normalized = typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
     return normalized === null ? { value: null, valid: false } : { value: normalized, valid: true };
 }
 
@@ -330,7 +375,7 @@ function normalizeDocumentScope(value: unknown): NormalizedDocumentScope {
         }
         const documentId = asString(rawChunk.documentId);
         const chunkSnapshotVersion = nullablePositiveInteger(rawChunk.snapshotVersion);
-        const snapshotChunkIndex = nullablePositiveInteger(rawChunk.snapshotChunkIndex);
+        const snapshotChunkIndex = nullableNonNegativeInteger(rawChunk.snapshotChunkIndex);
         const key = `${documentId}:${chunkSnapshotVersion.value ?? ""}:${snapshotChunkIndex.value ?? ""}`;
         if (!documentId || !chunkSnapshotVersion.valid || !snapshotChunkIndex.valid || seenChunks.has(key)) {
             valid = false;
@@ -348,13 +393,13 @@ function normalizeDocumentScope(value: unknown): NormalizedDocumentScope {
     const revisionFormVersion = nullablePositiveInteger(value.currentRevision.formVersion);
     const formVersion = nullablePositiveInteger(value.form.version);
     const currentDocumentId = value.contract.currentDocumentId === null ? null : asString(value.contract.currentDocumentId);
-    const stage = value.contract.stage === null ? null : asString(value.contract.stage);
+    const stageResult = normalizeContractStage(value.contract.stage);
     if ((value.currentRevision.id !== null && !revisionId)
         || !revisionNumber.valid
         || !revisionFormVersion.valid
         || !formVersion.valid
         || (value.contract.currentDocumentId !== null && !currentDocumentId)
-        || (value.contract.stage !== null && !stage)) {
+        || !stageResult.valid) {
         valid = false;
     }
     return {
@@ -363,7 +408,7 @@ function normalizeDocumentScope(value: unknown): NormalizedDocumentScope {
             serviceRecordSnapshot: { documentIds, snapshotVersion: snapshotVersion.value, chunks },
             currentRevision: { id: revisionId, revisionNumber: revisionNumber.value, formVersion: revisionFormVersion.value },
             form: { version: formVersion.value },
-            contract: { currentDocumentId, stage },
+            contract: { currentDocumentId, stage: stageResult.value },
         },
         valid,
     };
@@ -388,9 +433,10 @@ function stripServiceDateSnapshots(changes: AdminServiceRecordEditChanges): Admi
 
 export function normalizeAdminServiceRecordEditPreview(value: unknown): ServiceRecordEditPreviewResponse {
     const payload = isRecord(value) ? value : {};
-    const rawReasons = Array.isArray(payload.blockingReasons) ? payload.blockingReasons : [];
-    const malformedBlockingReason = Array.isArray(payload.blockingReasons)
-        && rawReasons.some((reason) => !isRecord(reason) || !asString(reason.code) || !asString(reason.message));
+    const blockingReasonsPresent = Array.isArray(payload.blockingReasons);
+    const rawReasons: unknown[] = Array.isArray(payload.blockingReasons) ? payload.blockingReasons : [];
+    const malformedBlockingReason = !blockingReasonsPresent
+        || rawReasons.some((reason) => !isRecord(reason) || !asString(reason.code) || !asString(reason.message));
     const blockingReasons = rawReasons.flatMap((reason): ServiceRecordEditPreviewResponse["blockingReasons"] => {
         if (!isRecord(reason)) return [];
         const code = asString(reason.code);
@@ -412,31 +458,46 @@ export function normalizeAdminServiceRecordEditPreview(value: unknown): ServiceR
     const provenanceResult = normalizePreviewProvenance(payload.provenance);
     const signatureResult = normalizeSignatureMetadata(payload.signatureMetadata);
     const documentResult = normalizeDocumentScope(payload.documentScope);
+    const draftVersion = positiveInteger(payload.draftVersion);
+    const sourceCaseVersion = nonNegativeInteger(payload.sourceCaseVersion);
+    const sourceFingerprint = typeof payload.sourceFingerprint === "string" && payload.sourceFingerprint.length > 0;
+    const calendarVersion = typeof payload.calendarVersion === "string" && payload.calendarVersion.length > 0;
     const hasPreviewEnvelope = isRecord(value)
         && typeof payload.previewId === "string"
+        && payload.previewId.length > 0
         && typeof payload.draftId === "string"
+        && payload.draftId.length > 0
         && isRecord(payload.before)
-        && isRecord(payload.after);
+        && isRecord(payload.after)
+        && draftVersion !== null
+        && sourceCaseVersion !== null
+        && sourceFingerprint
+        && calendarVersion;
     const hasLegitimateBlockingProjection = blockingReasons.length > 0
         && beforeResult.hadRawEntries === false
         && afterResult.hadRawEntries === false
+        && beforeResult.shapeValid
+        && afterResult.shapeValid
+        && provenanceResult.items.length === 0
         && hasPreviewEnvelope;
-    const vectorsValid = beforeResult.valid
-        && afterResult.valid
-        && provenanceResult.valid
-        && hasCompleteProvenance(
-            [...beforeResult.vector.sessions, ...afterResult.vector.sessions],
+    const vectorCoverageInvalid = requiredSessionCount === null
+        || !beforeResult.valid
+        || !afterResult.valid
+        || !hasCompleteProvenance(
+            beforeResult.vector.sessions,
+            afterResult.vector.sessions,
             provenanceResult.items,
         );
-    const invalidPreview = malformedBlockingReason
+    const envelopeOrMetadataInvalid = malformedBlockingReason
         || !hasPreviewEnvelope
-        || requiredSessionCount === null
-        || !vectorsValid
+        || !provenanceResult.valid
         || !signatureResult.valid
         || !documentResult.valid;
+    const invalidPreview = envelopeOrMetadataInvalid
+        || (!hasLegitimateBlockingProjection && vectorCoverageInvalid);
     const normalizedReasons = [
         ...blockingReasons,
-        ...(invalidPreview && !hasLegitimateBlockingProjection
+        ...(invalidPreview
             ? [{ code: "INVALID_PREVIEW_RESPONSE", message: "미리보기 응답을 확인할 수 없습니다." }]
             : []),
     ];
