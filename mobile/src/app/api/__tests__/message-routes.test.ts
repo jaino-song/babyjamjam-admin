@@ -112,11 +112,14 @@ describe("Message API routes", () => {
     await expect(response.json()).resolves.toEqual({ error: "Failed to fetch upcoming message trigger jobs" });
   });
 
-  it("preserves backend error status and sanitizes payload when listing trigger templates", async () => {
+  it("forwards a safe trigger-template message while omitting diagnostics", async () => {
     mockGet.mockRejectedValue({
       response: {
         status: 422,
-        data: { error: "invalid provider" },
+        data: {
+          error: "invalid provider",
+          diagnostics: { apiKey: "sk_test_secret", query: "SELECT * FROM Provider" },
+        },
       },
     });
 
@@ -125,7 +128,32 @@ describe("Message API routes", () => {
     );
 
     expect(response.status).toBe(422);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch message trigger templates" });
+    const body = await response.json();
+    expect(body).toEqual({ error: "invalid provider" });
+    expect(JSON.stringify(body)).not.toContain("sk_test_secret");
+    expect(JSON.stringify(body)).not.toContain("SELECT * FROM Provider");
+  });
+
+  it.each([
+    [400, "Invalid API key: sk_test_secret"],
+    [500, "PrismaClientKnownRequestError: SELECT * FROM Provider"],
+  ])("suppresses unsafe trigger-template diagnostics from %i responses", async (status, message) => {
+    mockGet.mockRejectedValue({
+      response: {
+        status,
+        data: { message, diagnostics: { apiKey: "sk_test_secret" } },
+      },
+    });
+
+    const response = await listTriggerTemplates(
+      createRequest("/api/message-trigger-templates?provider=unknown"),
+    );
+
+    expect(response.status).toBe(status);
+    const body = await response.json();
+    expect(body).toEqual({ error: "Failed to fetch message trigger templates" });
+    expect(JSON.stringify(body)).not.toContain(message);
+    expect(JSON.stringify(body)).not.toContain("sk_test_secret");
   });
 
 });

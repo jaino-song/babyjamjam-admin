@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, type MouseEvent } from "react";
 import { UserPlus } from "lucide-react";
 
 import { useEmployees, Employee } from "@/hooks/useEmployees";
@@ -37,6 +37,8 @@ interface EmployeeAutocompleteProps {
     manualEntryLabel?: string;
     manualEntryDescription?: string;
     onManualEntry?: (inputValue?: string) => void;
+    /** Refresh the shared employee list when the owning form mounts. */
+    refreshOnMount?: boolean;
 }
 
 export function EmployeeAutocomplete({
@@ -54,9 +56,12 @@ export function EmployeeAutocomplete({
     manualEntryLabel,
     manualEntryDescription,
     onManualEntry,
+    refreshOnMount = false,
 }: EmployeeAutocompleteProps) {
     const locale = useLocale();
-    const { data: employees, isLoading } = useEmployees();
+    const { data: employees, isLoading, refetch } = useEmployees({
+        refetchOnMount: refreshOnMount ? "always" : true,
+    });
     const setPrefillName = useEmployeeDialogStore((state) => state.setPrefillName);
 
     const availableEmployees = useMemo(() => {
@@ -69,69 +74,83 @@ export function EmployeeAutocomplete({
         return employees.find((emp) => emp.id === value) || null;
     }, [value, employees]);
 
+    const handleInputFocus = () => {
+        void refetch();
+    };
+
+    const handleInputClickCapture = (event: MouseEvent<HTMLDivElement>) => {
+        if (!(event.target instanceof HTMLElement)) return;
+        const input = event.target.closest('[data-slot="autocomplete-input"]');
+        if (input?.getAttribute("data-state") === "closed") {
+            void refetch();
+        }
+    };
+
     return (
-        <Autocomplete<Employee>
-            data-component={dataComponent}
-            name="employee"
-            value={selectedEmployee}
-            onChange={(emp) => onChange(emp?.id ?? null, emp)}
-            inputValue={inputValue}
-            onInputValueChange={onInputValueChange}
-            items={availableEmployees}
-            isLoading={isLoading}
-            getItemKey={(e) => e.id}
-            getItemLabel={(e) => e.name}
-            getItemHeaderExtra={(e, { highlighted }) => (
-                <span
-                    className={cn(
-                        "text-xs tabular-nums",
-                        highlighted ? "text-white/85" : "text-muted-foreground"
-                    )}
-                >
-                    {formatPhone(e.phone)}
-                </span>
-            )}
-            getItemMeta={(e, { highlighted }) => (
-                <div className="flex flex-wrap items-center gap-1">
-                    {e.workArea.map((area) => (
-                        <span
-                            key={area}
-                            className={cn(
-                                "px-2 py-0.5 rounded-full text-[0.7rem] font-medium",
-                                highlighted
-                                    ? "bg-white/20 text-white"
-                                    : "bg-v3-primary-light text-v3-primary"
-                            )}
-                        >
-                            {stripCityPrefix(area)}
-                        </span>
-                    ))}
-                </div>
-            )}
-            filter={(e, q) =>
-                matchesKoreanSearch(e.name, q) ||
-                e.workArea.some((area) => area.toLowerCase().includes(q.toLowerCase())) ||
-                e.phone.includes(q)
-            }
-            placeholder={t(locale, "clients.form.employee-search-placeholder")}
-            label={label}
-            required={required}
-            error={error}
-            helperText={helperText}
-            emptyMessage={t(locale, "clients.form.no-employee-found")}
-            manualEntry={
-                allowManualEntry
-                    ? {
-                          label: manualEntryLabel ?? t(locale, "contract-msg.employee-manual-entry"),
-                          description: manualEntryDescription ?? t(locale, "contract-msg.employee-manual-entry-description"),
-                          icon: <UserPlus className="h-4 w-4" />,
-                          onSelect: (query) => {
-                              setPrefillName(query);
-                              onManualEntry?.(query);
-                          },
-                      }
-                    : undefined
-            }
-        />
+        <div onFocusCapture={handleInputFocus} onClickCapture={handleInputClickCapture}>
+            <Autocomplete<Employee>
+                data-component={dataComponent}
+                name="employee"
+                value={selectedEmployee}
+                onChange={(emp) => onChange(emp?.id ?? null, emp)}
+                inputValue={inputValue}
+                onInputValueChange={onInputValueChange}
+                items={availableEmployees}
+                isLoading={isLoading}
+                getItemKey={(e) => e.id}
+                getItemLabel={(e) => e.name}
+                getItemHeaderExtra={(e, { highlighted }) => (
+                    <span
+                        className={cn(
+                            "text-xs tabular-nums",
+                            highlighted ? "text-white/85" : "text-muted-foreground"
+                        )}
+                    >
+                        {formatPhone(e.phone)}
+                    </span>
+                )}
+                getItemMeta={(e, { highlighted }) => (
+                    <div className="flex flex-wrap items-center gap-1">
+                        {e.workArea.map((area) => (
+                            <span
+                                key={area}
+                                className={cn(
+                                    "px-2 py-0.5 rounded-full text-[0.7rem] font-medium",
+                                    highlighted
+                                        ? "bg-white/20 text-white"
+                                        : "bg-v3-primary-light text-v3-primary"
+                                )}
+                            >
+                                {stripCityPrefix(area)}
+                            </span>
+                        ))}
+                    </div>
+                )}
+                filter={(e, q) =>
+                    matchesKoreanSearch(e.name, q) ||
+                    e.workArea.some((area) => area.toLowerCase().includes(q.toLowerCase())) ||
+                    e.phone.includes(q)
+                }
+                placeholder={t(locale, "clients.form.employee-search-placeholder")}
+                label={label}
+                required={required}
+                error={error}
+                helperText={helperText}
+                emptyMessage={t(locale, "clients.form.no-employee-found")}
+                manualEntry={
+                    allowManualEntry
+                        ? {
+                              label: manualEntryLabel ?? t(locale, "contract-msg.employee-manual-entry"),
+                              description: manualEntryDescription ?? t(locale, "contract-msg.employee-manual-entry-description"),
+                              icon: <UserPlus className="h-4 w-4" />,
+                              onSelect: (query) => {
+                                  setPrefillName(query);
+                                  onManualEntry?.(query);
+                              },
+                          }
+                        : undefined
+                }
+            />
+        </div>
     );
 }
