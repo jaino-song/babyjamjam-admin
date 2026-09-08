@@ -104,6 +104,25 @@ describe("ServiceRecordDateSelectionDialog", () => {
         expect(onOpenChange).not.toHaveBeenCalled();
     });
 
+    it("retains an explicitly controlled pending date after a failed save", () => {
+        const onApply = jest.fn();
+        const onReloadLatest = jest.fn();
+        renderDialog({
+            currentServiceDate: "2026-07-13",
+            selectedServiceDate: "2026-07-15",
+            error: "제공일을 저장하지 못했습니다.",
+            onApply,
+            onReloadLatest,
+        });
+
+        expect(screen.getByRole("combobox", { name: "일" })).toHaveTextContent("15일");
+        expect(screen.getByText("적용 예정일: 2026.07.15")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "날짜 적용" }));
+        expect(onApply).toHaveBeenCalledWith("2026-07-15");
+        fireEvent.click(screen.getByRole("button", { name: "최신 초안 불러오기" }));
+        expect(onReloadLatest).toHaveBeenCalledTimes(1);
+    });
+
     it("clears the provisional day whenever year or month changes", () => {
         const onApply = jest.fn();
         renderDialog({ onApply });

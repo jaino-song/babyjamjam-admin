@@ -24,6 +24,34 @@ function formatDate(value: string | null): string {
     return value.replace(/^(\d{4})-(\d{2})-(\d{2}).*$/, "$1.$2.$3");
 }
 
+function formatTimestamp(value: string | null): string {
+    if (!value) return "없음";
+    return value.replace("T", " ").replace(/\.\d{3}Z$/, "").replace(/Z$/, "");
+}
+
+function formatEvidence(value: "observed" | "unverified"): string {
+    return value === "observed" ? "서버 확인됨" : "확인되지 않음";
+}
+
+function formatSignatureTreatment(value: "preserve_existing" | "manual_review"): string {
+    return value === "preserve_existing"
+        ? "기존 제공기록지 서명과 실제 서명·제출 시각 보존"
+        : "서명 보존 근거가 없어 수동 검토 필요";
+}
+
+function formatContractStage(value: string | null): string {
+    switch (value) {
+        case "completed":
+            return "완료 계약 · 새 계약과 새 이용자 서명이 필요합니다.";
+        case "in_progress":
+            return "진행 중 계약 · 실제 문서 필드 확인 후 처리합니다.";
+        case "rejected":
+            return "반려·만료 계약 · 새 문서 검토가 필요합니다.";
+        default:
+            return "계약 상태 확인 필요 · 수동 검토가 필요합니다.";
+    }
+}
+
 function SessionDateList({
     dataComponent,
     sessions,
@@ -151,6 +179,49 @@ export function ServiceRecordEditPreviewDialog({
                                     기록 회차: {contentChanges.changedSessionIndexes.length > 0
                                         ? contentChanges.changedSessionIndexes.map((sessionIndex) => `${sessionIndex}회차`).join(", ")
                                         : "변경 없음"}
+                                </p>
+                            </section>
+
+                            <section data-component={`${dataComponent}_content_signature-metadata`} data-slot="signature-metadata" className="flex flex-col gap-2">
+                                <h3 className="text-sm font-semibold text-v3-dark">제공기록지 서명 메타데이터</h3>
+                                <p className="text-sm text-v3-text-muted">처리: {formatSignatureTreatment(preview.signatureMetadata.treatment)}</p>
+                                <p className="text-sm text-v3-text-muted">근거: {formatEvidence(preview.signatureMetadata.evidence)}</p>
+                                <p className="text-xs text-v3-text-muted">이 항목은 제공기록지 서명만 다루며 계약서 서명을 재사용하지 않습니다.</p>
+                                {preview.signatureMetadata.sessions.length > 0 ? (
+                                    <ul className="list-disc space-y-1 pl-5 text-sm text-v3-text-muted">
+                                        {preview.signatureMetadata.sessions.map((session) => (
+                                            <li key={session.sessionIndex}>
+                                                {session.sessionIndex}회차 · {session.hasSignature ? "서명 있음" : "서명 없음"}
+                                                · 서명 시각 {formatTimestamp(session.signedAt)}
+                                                · 제출 시각 {formatTimestamp(session.submittedAt)}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                ) : (
+                                    <p data-slot="none" className="text-sm text-v3-text-muted">회차별 서명 메타데이터가 없습니다.</p>
+                                )}
+                            </section>
+
+                            <section data-component={`${dataComponent}_content_document-scope`} data-slot="document-scope" className="flex flex-col gap-2">
+                                <h3 className="text-sm font-semibold text-v3-dark">전자문서 영향 범위</h3>
+                                <p className="text-sm text-v3-text-muted">근거: {formatEvidence(preview.documentScope.evidence)}</p>
+                                <p className="text-sm text-v3-text-muted">계약 상태: {formatContractStage(preview.documentScope.contract.stage)}</p>
+                                <p className="text-sm text-v3-text-muted">
+                                    현재 계약 문서: {preview.documentScope.contract.currentDocumentId ?? "확인되지 않음"}
+                                </p>
+                                <p className="text-sm text-v3-text-muted">
+                                    제공기록지 문서: {preview.documentScope.serviceRecordSnapshot.documentIds.length > 0
+                                        ? preview.documentScope.serviceRecordSnapshot.documentIds.join(", ")
+                                        : "확인되지 않음"}
+                                </p>
+                                <p className="text-sm text-v3-text-muted">
+                                    문서·버전 범위: snapshot {preview.documentScope.serviceRecordSnapshot.snapshotVersion ?? "확인되지 않음"}
+                                    · 청크 {preview.documentScope.serviceRecordSnapshot.chunks.length}개
+                                    · 현재 수정본 {preview.documentScope.currentRevision.revisionNumber ?? "확인되지 않음"}
+                                    · 양식 {preview.documentScope.form.version ?? "확인되지 않음"}
+                                </p>
+                                <p className="text-xs text-v3-text-muted">
+                                    날짜 표시 변경 범위와 문서 재생성 범위는 서버가 확인한 값만 표시합니다.
                                 </p>
                             </section>
                         </>

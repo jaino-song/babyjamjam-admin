@@ -111,6 +111,43 @@ const overview = {
     ],
 } as unknown as AdminServiceRecordEditorOverview;
 
+const plannedDates = [
+    "2026-07-01",
+    "2026-07-02",
+    "2026-07-03",
+    "2026-07-06",
+    "2026-07-07",
+    "2026-07-08",
+    "2026-07-09",
+    "2026-07-10",
+    "2026-07-13",
+    "2026-07-14",
+    "2026-07-15",
+    "2026-07-16",
+    "2026-07-20",
+];
+
+const plannedOverview = {
+    ...overview,
+    scheduleProjection: {
+        entries: plannedDates.map((serviceDate, index) => ({
+            sessionIndex: index + 1,
+            serviceDate,
+            originalDate: serviceDate,
+            assignmentId: "assignment-7",
+            scheduleId: 7,
+            employeeId: 7,
+            provenanceVersion: "projection-1",
+        })),
+        blockingReasons: [],
+    },
+    record: {
+        ...overview.record,
+        totalSessions: 13,
+    },
+    assignments: overview.assignments.map((item) => ({ ...item, totalSessions: 13 })),
+} as unknown as AdminServiceRecordEditorOverview;
+
 function makeDraftState(
     changes: Record<string, unknown> = {},
     draftVersion = 1,
@@ -233,6 +270,24 @@ describe("ServiceRecordAdminWizard", () => {
             fireEvent.click(screen.getByRole("button", { name: "다음" }));
         }
         expect(screen.getByRole("img", { name: "산모 서명" })).toHaveAttribute("src", "data:image/png;base64,stored-signature");
+    });
+
+    it("uses the authoritative 1..N schedule projection for unwritten future days without creating rows", () => {
+        const view = buildAdminServiceRecordView(plannedOverview);
+
+        expect(view.context.totalSessions).toBe(13);
+        expect(view.plannedSessions).toHaveLength(13);
+        expect(view.context.sessions.map((session) => session.sessionIndex)).toEqual([1, 3]);
+
+        const { container } = render(
+            <ServiceRecordAdminWizard clientId="42" overview={plannedOverview} initialDraftState={makeDraftState()} />,
+        );
+        expect(container.querySelectorAll('[data-slot="day"]')).toHaveLength(13);
+        expect(container).toHaveTextContent("2026.07.20");
+
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[12]);
+        expect(container).toHaveTextContent("2026.07.20");
+        expect(container.querySelectorAll('[data-slot="date-editor"]')).toHaveLength(1);
     });
 });
 
@@ -368,7 +423,48 @@ describe("administrator draft editing", () => {
         expect(container).toHaveTextContent("2026.07.16");
     });
 
+    it("moves an unwritten future session from the authoritative projection without changing its immutable original date", async () => {
+        const afterDateMove = makeDraftState({ sessions: [{ sessionIndex: 13, serviceDate: "2026-07-21" }] }, 2);
+        const fetchMock = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => afterDateMove });
+        global.fetch = fetchMock;
+        const { container } = render(
+            <ServiceRecordAdminWizard clientId="42" overview={plannedOverview} initialDraftState={makeDraftState()} />,
+        );
+
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[12]);
+        fireEvent.click(screen.getByRole("button", { name: /제공일 변경/ }));
+        expect(screen.getByRole("dialog", { name: "서비스 제공일 변경" })).toHaveTextContent("2026.07.20");
+        fireEvent.click(screen.getByRole("combobox", { name: "일" }));
+        fireEvent.click(screen.getByRole("option", { name: "21일" }));
+        fireEvent.click(screen.getByRole("button", { name: "날짜 적용" }));
+
+        await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: "서비스 제공일 변경" })).not.toBeInTheDocument());
+        expect(fetchMock).toHaveBeenCalledWith(
+            "/api/admin/service-records/drafts/draft-1",
+            expect.objectContaining({
+                method: "PATCH",
+                body: JSON.stringify({
+                    expectedDraftVersion: 1,
+                    changes: {},
+                    dateMove: { sessionIndex: 13, toDate: "2026-07-21" },
+                }),
+            }),
+        );
+        expect(container).toHaveTextContent("2026.07.21");
+        expect(container).toHaveTextContent("원본 2026.07.20");
+    });
+
     it("opens a read-only backend preview using the active draft version", async () => {
+        const previewSessions = ["2026-07-10", "2026-07-11", "2026-07-13"].map((serviceDate, index) => ({
+            sessionIndex: index + 1,
+            serviceDate,
+            originalDate: serviceDate,
+            assignmentId: "assignment-7",
+            scheduleId: 7,
+            employeeId: 7,
+            provenanceVersion: "projection-1",
+        }));
         const previewResponse = {
             previewId: "preview-1",
             draftId: "draft-1",
@@ -377,12 +473,31 @@ describe("administrator draft editing", () => {
             sourceFingerprint: "source-1",
             requiredSessionCount: 3,
             calendarVersion: "kr-2026",
-            before: { startDate: "2026-07-10", endDate: "2026-07-14", sessions: [] },
-            after: { startDate: "2026-07-10", endDate: "2026-07-14", sessions: [] },
-            provenance: [],
+            before: { startDate: "2026-07-10", endDate: "2026-07-14", sessions: previewSessions },
+            after: { startDate: "2026-07-10", endDate: "2026-07-14", sessions: previewSessions },
+            provenance: [{
+                assignmentId: "assignment-7",
+                scheduleId: 7,
+                employeeId: 7,
+                startDate: "2026-07-10",
+                endDate: "2026-07-14",
+                provenanceVersion: "projection-1",
+            }],
             contentChanges: { headerChanged: false, changedSessionIndexes: [] },
             impactedAssignments: [],
             blockingReasons: [],
+            signatureMetadata: {
+                treatment: "preserve_existing",
+                evidence: "observed",
+                sessions: [],
+            },
+            documentScope: {
+                evidence: "observed",
+                serviceRecordSnapshot: { documentIds: ["doc-1"], snapshotVersion: 1, chunks: [] },
+                currentRevision: { id: null, revisionNumber: null, formVersion: null },
+                form: { version: 1 },
+                contract: { currentDocumentId: "contract-1", stage: "in_progress" },
+            },
         };
         const fetchMock = jest.fn().mockResolvedValue({
             ok: true,
@@ -404,16 +519,20 @@ describe("administrator draft editing", () => {
                 body: JSON.stringify({ expectedDraftVersion: 1 }),
             }),
         );
-        expect(screen.getByText("변경 전")).toBeInTheDocument();
+        await waitFor(() => expect(screen.getByText("변경 전")).toBeInTheDocument());
         expect(screen.queryByRole("button", { name: /확정|완료/ })).not.toBeInTheDocument();
     });
 
-    it("closes the date dialog and keeps the current draft date on a permission failure", async () => {
-        global.fetch = jest.fn().mockResolvedValue({
-            ok: false,
-            status: 403,
-            json: async () => ({ code: "FORBIDDEN" }),
-        });
+    it("keeps the pending date in the dialog after a permission failure until an explicit retry", async () => {
+        const afterRetry = makeDraftState({ sessions: [{ sessionIndex: 3, serviceDate: "2026-07-15" }] }, 2);
+        const fetchMock = jest.fn()
+            .mockResolvedValueOnce({
+                ok: false,
+                status: 403,
+                json: async () => ({ code: "FORBIDDEN" }),
+            })
+            .mockResolvedValueOnce({ ok: true, status: 200, json: async () => afterRetry });
+        global.fetch = fetchMock;
         const { container } = render(
             <ServiceRecordAdminWizard clientId="42" overview={overview} initialDraftState={makeDraftState()} />,
         );
@@ -425,8 +544,39 @@ describe("administrator draft editing", () => {
         fireEvent.click(screen.getByRole("button", { name: "날짜 적용" }));
 
         await waitFor(() => expect(screen.getByText("제공일 변경 권한이 없습니다. 현재 입력은 유지됩니다.")).toBeInTheDocument());
-        expect(screen.queryByRole("dialog", { name: "서비스 제공일 변경" })).not.toBeInTheDocument();
-        expect(container).toHaveTextContent("2026.07.13");
+        expect(screen.getByRole("dialog", { name: "서비스 제공일 변경" })).toBeInTheDocument();
+        expect(screen.getByRole("combobox", { name: "일" })).toHaveTextContent("15일");
+        expect(screen.getByText("적용 예정일: 2026.07.15")).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole("button", { name: "날짜 적용" }));
+        await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: "서비스 제공일 변경" })).not.toBeInTheDocument());
+        expect(container).toHaveTextContent("2026.07.15");
+    });
+
+    it("keeps a pending date on a draft conflict and exposes an explicit latest-draft action", async () => {
+        const latest = makeDraftState({ sessions: [{ sessionIndex: 3, serviceDate: "2026-07-14" }] }, 3);
+        global.fetch = jest.fn().mockResolvedValue({
+            ok: false,
+            status: 409,
+            json: async () => ({ latestDraft: latest.draft, sourceChanged: true }),
+        });
+        const { container } = render(
+            <ServiceRecordAdminWizard clientId="42" overview={overview} initialDraftState={makeDraftState()} />,
+        );
+
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[2]);
+        fireEvent.click(screen.getByRole("button", { name: /제공일 변경/ }));
+        fireEvent.click(screen.getByRole("combobox", { name: "일" }));
+        fireEvent.click(screen.getByRole("option", { name: "15일" }));
+        fireEvent.click(screen.getByRole("button", { name: "날짜 적용" }));
+
+        await waitFor(() => expect(screen.getByText(/다른 관리자의 변경으로 제공일을 적용하지 못했습니다/)).toBeInTheDocument());
+        expect(screen.getByRole("dialog", { name: "서비스 제공일 변경" })).toBeInTheDocument();
+        expect(screen.getByRole("combobox", { name: "일" })).toHaveTextContent("15일");
+        fireEvent.click(screen.getByRole("button", { name: "최신 초안 불러오기" }));
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: "서비스 제공일 변경" })).not.toBeInTheDocument());
+        expect(container).toHaveTextContent("2026.07.14");
     });
 
     it("resumes changed sessions and lets admins navigate incomplete submitted pages", () => {
