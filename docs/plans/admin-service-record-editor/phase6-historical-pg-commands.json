@@ -67,8 +67,8 @@
   },
   "bjj-phase5-stale-lifecycle-green.log": {
     "cwd": "/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor",
-    "command": "SERVICE_RECORD_CONFIRM_E2E=1 DATABASE_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task4 DIRECT_URL=postgresql://bjj_revision_test@127.0.1:62295/bjj_revision_task4 pnpm --dir backend exec jest --runInBand --runTestsByPath test/e2e/service-record-mirrored-contract-event-fence.e2e.spec.ts --testPathIgnorePatterns='[]' > /tmp/bjj-phase5-stale-lifecycle-green.log 2>&1",
-    "source": "Exact test-launch shell line recovered from original exec input in this task session by log-name match; preceding unrelated shell steps omitted. No command rerun.",
+    "command": null,
+    "source": "Exact accepted invocation unavailable. Previously recovered command was the rejected typo attempt, not the accepted two-spec run. No exact-command provenance is claimed for this artifact; the 10 PASS log and prior Phase5 SHIP remain historical result evidence. No rerun.",
     "authorization": "Historical evidence only. Do not replay old DB targets; current sole approved database is task4."
   }
 }
