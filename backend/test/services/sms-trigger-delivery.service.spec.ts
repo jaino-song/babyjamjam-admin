@@ -16,6 +16,7 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { BranchSystemTemplateSnapshotError } from "domain/entities/branch-system-template-snapshot";
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
@@ -96,7 +97,7 @@ describe("SmsTriggerDeliveryService", () => {
             }),
         };
         const systemTemplateService = {
-            getByKey: jest.fn().mockResolvedValue({
+            getByKeyForBranch: jest.fn().mockResolvedValue({
                 content: "{{name}} 산모님 서비스 안내",
             }),
         };
@@ -111,7 +112,7 @@ describe("SmsTriggerDeliveryService", () => {
 
         await expect(service.sendJob(createServiceInfoJob())).resolves.toBe(true);
 
-        expect(systemTemplateService.getByKey).toHaveBeenCalledWith(SystemTemplateKey.SERVICE_INFO);
+        expect(systemTemplateService.getByKeyForBranch).toHaveBeenCalledWith(branchId, SystemTemplateKey.SERVICE_INFO);
         expect(aligoService.sendSms).toHaveBeenCalledWith({
             receiver: "010-1234-5678",
             message: "김지니 산모님 서비스 안내",
@@ -145,7 +146,7 @@ describe("SmsTriggerDeliveryService", () => {
             }),
         };
         const systemTemplateService = {
-            getByKey: jest.fn().mockResolvedValue({
+            getByKeyForBranch: jest.fn().mockResolvedValue({
                 id: "template-service-info",
                 updatedAt: new Date("2026-08-04T00:00:00.000Z"),
                 content: "{{name}} 산모님, 고정된 승인 본문",
@@ -183,7 +184,7 @@ describe("SmsTriggerDeliveryService", () => {
     it("rejects a staged retry when the canonical template changes", async () => {
         const aligoService = { sendSms: jest.fn() };
         const systemTemplateService = {
-            getByKey: jest.fn().mockResolvedValue({
+            getByKeyForBranch: jest.fn().mockResolvedValue({
                 id: "template-service-info",
                 updatedAt: new Date("2026-08-04T00:00:00.000Z"),
                 content: "승인 시점 본문 {{name}}",
@@ -199,7 +200,7 @@ describe("SmsTriggerDeliveryService", () => {
         const snapshot = await service.resolveDeliverySnapshot(job);
         job.payload.templateVariables["retrySafety"] = "pending-agent-retry";
         job.payload.templateVariables["__smsDeliverySnapshot"] = service.serializeSnapshot(snapshot);
-        systemTemplateService.getByKey.mockResolvedValue({
+        systemTemplateService.getByKeyForBranch.mockResolvedValue({
             id: "template-service-info",
             updatedAt: new Date("2026-08-05T00:00:00.000Z"),
             content: "변경된 본문 {{name}}",
@@ -222,7 +223,7 @@ describe("SmsTriggerDeliveryService", () => {
     ])("rejects staged SMS tampering in %s before any provider call", async (field, value) => {
         const aligoService = { sendSms: jest.fn() };
         const systemTemplateService = {
-            getByKey: jest.fn().mockResolvedValue({
+            getByKeyForBranch: jest.fn().mockResolvedValue({
                 id: "template-service-info",
                 updatedAt: new Date("2026-08-04T00:00:00.000Z"),
                 content: "승인 시점 본문 {{name}}",
@@ -248,7 +249,7 @@ describe("SmsTriggerDeliveryService", () => {
     it("rejects a staged snapshot when the current job receiver changes", async () => {
         const aligoService = { sendSms: jest.fn() };
         const systemTemplateService = {
-            getByKey: jest.fn().mockResolvedValue({
+            getByKeyForBranch: jest.fn().mockResolvedValue({
                 id: "template-service-info",
                 updatedAt: new Date("2026-08-04T00:00:00.000Z"),
                 content: "승인 시점 본문 {{name}}",
@@ -309,7 +310,7 @@ describe("SmsTriggerDeliveryService", () => {
             }),
         };
         const systemTemplateService = {
-            getByKey: jest.fn().mockResolvedValue({
+            getByKeyForBranch: jest.fn().mockResolvedValue({
                 content: "{{clientName}}님 {{registrationDate}} 등록 완료 ({{serviceType}})",
             }),
         };
@@ -322,7 +323,7 @@ describe("SmsTriggerDeliveryService", () => {
 
         await expect(service.sendJob(job)).resolves.toBe(true);
 
-        expect(systemTemplateService.getByKey).toHaveBeenCalledWith(SystemTemplateKey.CLIENT_WELCOME);
+        expect(systemTemplateService.getByKeyForBranch).toHaveBeenCalledWith(branchId, SystemTemplateKey.CLIENT_WELCOME);
         expect(aligoService.sendSms).toHaveBeenCalledWith(expect.objectContaining({
             receiver: "010-1234-5678",
             message: "김산모님 2026-07-17 등록 완료 (바우처)",
@@ -388,7 +389,7 @@ describe("SmsTriggerDeliveryService", () => {
             }),
         };
         const systemTemplateService = {
-            getByKey: jest.fn().mockResolvedValue({
+            getByKeyForBranch: jest.fn().mockResolvedValue({
                 content: "{{name}}님 안녕하세요! 아이미래입니다.",
             }),
         };
@@ -403,7 +404,7 @@ describe("SmsTriggerDeliveryService", () => {
 
         await expect(service.sendJob(greetingJob)).resolves.toBe(true);
 
-        expect(systemTemplateService.getByKey).toHaveBeenCalledWith(SystemTemplateKey.GREETING);
+        expect(systemTemplateService.getByKeyForBranch).toHaveBeenCalledWith(branchId, SystemTemplateKey.GREETING);
         expect(aligoService.sendSms).toHaveBeenCalledWith({
             receiver: "010-5678-1234",
             message: "김산모님 안녕하세요! 아이미래입니다.",
@@ -433,7 +434,7 @@ describe("SmsTriggerDeliveryService", () => {
 
     it("throws a plain error when branchId is missing", async () => {
         const aligoService = { sendSms: jest.fn() };
-        const systemTemplateService = { getByKey: jest.fn() };
+        const systemTemplateService = { getByKeyForBranch: jest.fn() };
         const logRepository = { save: jest.fn() };
         const service = new SmsTriggerDeliveryService(
             aligoService as unknown as AligoService,
@@ -454,11 +455,36 @@ describe("SmsTriggerDeliveryService", () => {
         expect(logRepository.save).not.toHaveBeenCalled();
     });
 
+    it("fails closed when a frozen branch snapshot cannot resolve a template", async () => {
+        const aligoService = { sendSms: jest.fn() };
+        const systemTemplateService = {
+            getByKeyForBranch: jest.fn().mockRejectedValue(
+                new BranchSystemTemplateSnapshotError(
+                    branchId,
+                    SystemTemplateKey.SERVICE_INFO,
+                    "template key is missing from the frozen snapshot",
+                ),
+            ),
+        };
+        const logRepository = { save: jest.fn() };
+        const service = new SmsTriggerDeliveryService(
+            aligoService as unknown as AligoService,
+            systemTemplateService as unknown as SystemTemplateService,
+            logRepository as unknown as IMessageLogRepository,
+        );
+
+        const error = await captureError(service.sendJob(createServiceInfoJob()));
+
+        expect(error).toBeInstanceOf(BranchSystemTemplateSnapshotError);
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+        expect(logRepository.save).not.toHaveBeenCalled();
+    });
+
     it("sms pre-provider transient DB error defers the job transiently", async () => {
         const prismaError = createTransientPrismaError();
         const aligoService = { sendSms: jest.fn() };
         const systemTemplateService = {
-            getByKey: jest.fn().mockRejectedValue(prismaError),
+            getByKeyForBranch: jest.fn().mockRejectedValue(prismaError),
         };
         const logRepository = { save: jest.fn() };
         const service = new SmsTriggerDeliveryService(
@@ -499,7 +525,7 @@ describe("SmsTriggerDeliveryService", () => {
             }),
         };
         const systemTemplateService = {
-            getByKey: jest.fn().mockResolvedValue({
+            getByKeyForBranch: jest.fn().mockResolvedValue({
                 content: "{{name}} 산모님 서비스 안내",
             }),
         };
@@ -538,7 +564,7 @@ describe("SmsTriggerDeliveryService", () => {
             }),
         };
         const systemTemplateService = {
-            getByKey: jest.fn().mockResolvedValue({
+            getByKeyForBranch: jest.fn().mockResolvedValue({
                 content: "{{name}} 산모님 서비스 안내",
             }),
         };
@@ -569,7 +595,7 @@ describe("SmsTriggerDeliveryService", () => {
             sendSms: jest.fn().mockRejectedValue(providerError),
         };
         const systemTemplateService = {
-            getByKey: jest.fn().mockResolvedValue({
+            getByKeyForBranch: jest.fn().mockResolvedValue({
                 content: "{{name}} 산모님 서비스 안내",
             }),
         };
@@ -632,7 +658,7 @@ https://mobile.test/service-record/efl_token`;
     }) =>
         new SmsTriggerDeliveryService(
             overrides.aligoService as unknown as AligoService,
-            (overrides.systemTemplateService ?? { getByKey: jest.fn() }) as unknown as SystemTemplateService,
+            (overrides.systemTemplateService ?? { getByKeyForBranch: jest.fn() }) as unknown as SystemTemplateService,
             overrides.logRepository as unknown as IMessageLogRepository,
         );
 
@@ -680,7 +706,7 @@ https://mobile.test/service-record/efl_token`;
             }),
         };
         const systemTemplateService = {
-            getByKey: jest.fn().mockResolvedValue({
+            getByKeyForBranch: jest.fn().mockResolvedValue({
                 content: serviceRecordLinkTemplate,
             }),
         };
@@ -689,7 +715,7 @@ https://mobile.test/service-record/efl_token`;
 
         await expect(service.sendJob(createServiceRecordJob())).resolves.toBe(true);
 
-        expect(systemTemplateService.getByKey).toHaveBeenCalledWith(SystemTemplateKey.SERVICE_RECORD_LINK);
+        expect(systemTemplateService.getByKeyForBranch).toHaveBeenCalledWith("branch-1", SystemTemplateKey.SERVICE_RECORD_LINK);
         expect(aligoService.sendSms).toHaveBeenCalledWith({
             receiver: "010-1111-2222",
             message: renderedServiceRecordLinkMessage,
@@ -718,7 +744,7 @@ https://mobile.test/service-record/efl_token`;
             }),
         };
         const systemTemplateService = {
-            getByKey: jest.fn().mockResolvedValue({
+            getByKeyForBranch: jest.fn().mockResolvedValue({
                 content: serviceRecordLinkTemplate,
             }),
         };
@@ -742,7 +768,7 @@ https://mobile.test/service-record/efl_token`;
             }),
         };
         const systemTemplateService = {
-            getByKey: jest.fn().mockRejectedValue(new Error("template row unavailable")),
+            getByKeyForBranch: jest.fn().mockRejectedValue(new Error("template row unavailable")),
         };
         const logRepository = { save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log) };
         const service = buildService({ aligoService, logRepository, systemTemplateService });
@@ -839,7 +865,7 @@ describe("SMS system-template variable coverage", () => {
             }),
         };
         const systemTemplateService = {
-            getByKey: jest.fn().mockImplementation(async (key: SystemTemplateKey) => ({
+            getByKeyForBranch: jest.fn().mockImplementation(async (_branchId: string, key: SystemTemplateKey) => ({
                 id: `template-${key}`,
                 content: SYSTEM_TEMPLATE_REGISTRY[key].defaultContent,
                 requiredVariables: SYSTEM_TEMPLATE_REGISTRY[key].requiredVariables,
@@ -925,9 +951,9 @@ describe("SMS system-template variable coverage", () => {
             { ...allTemplateVariables },
         );
         const systemTemplateService = (service as unknown as {
-            systemTemplateService: { getByKey: jest.Mock };
+            systemTemplateService: { getByKeyForBranch: jest.Mock };
         }).systemTemplateService;
-        systemTemplateService.getByKey.mockResolvedValue({
+        systemTemplateService.getByKeyForBranch.mockResolvedValue({
             id: "template-service-info-custom",
             content: "{{name}} 산모님 예약번호 {{reservationCode}}",
             requiredVariables: SYSTEM_TEMPLATE_REGISTRY[SystemTemplateKey.SERVICE_INFO].requiredVariables,
@@ -951,9 +977,9 @@ describe("SMS system-template variable coverage", () => {
             { ...allTemplateVariables },
         );
         const systemTemplateService = (service as unknown as {
-            systemTemplateService: { getByKey: jest.Mock };
+            systemTemplateService: { getByKeyForBranch: jest.Mock };
         }).systemTemplateService;
-        systemTemplateService.getByKey.mockResolvedValue({
+        systemTemplateService.getByKeyForBranch.mockResolvedValue({
             id: "template-service-info-phone",
             content: "{{name}} 산모님 연락처 {{phone}}",
             requiredVariables: SYSTEM_TEMPLATE_REGISTRY[SystemTemplateKey.SERVICE_INFO].requiredVariables,
@@ -976,9 +1002,9 @@ describe("SMS system-template variable coverage", () => {
             { ...allTemplateVariables, name: "" },
         );
         const systemTemplateService = (service as unknown as {
-            systemTemplateService: { getByKey: jest.Mock };
+            systemTemplateService: { getByKeyForBranch: jest.Mock };
         }).systemTemplateService;
-        systemTemplateService.getByKey.mockResolvedValue({
+        systemTemplateService.getByKeyForBranch.mockResolvedValue({
             id: "template-service-info-incomplete-contract",
             content: "{{name}} 산모님 안내",
             requiredVariables: [],
@@ -1027,7 +1053,7 @@ describe("PRICE_INFO data guard", () => {
         new SmsTriggerDeliveryService(
             overrides.aligoService as unknown as AligoService,
             (overrides.systemTemplateService ?? {
-                getByKey: jest.fn().mockResolvedValue({ content: "총 금액 {{fullPrice}}원 / {{bankName}} {{accNum}}" }),
+                getByKeyForBranch: jest.fn().mockResolvedValue({ content: "총 금액 {{fullPrice}}원 / {{bankName}} {{accNum}}" }),
             }) as unknown as SystemTemplateService,
             overrides.logRepository as unknown as IMessageLogRepository,
         );

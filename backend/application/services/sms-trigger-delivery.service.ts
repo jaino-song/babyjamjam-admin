@@ -8,6 +8,7 @@ import {
     type AligoSmsMessageType,
 } from "application/dto/aligo/send-sms.dto";
 import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey } from "domain/constants/system-template-registry";
+import { BranchSystemTemplateSnapshotError } from "domain/entities/branch-system-template-snapshot";
 import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import {
     SERVICE_RECORD_LINK_SMS_AUTOMATION_KEY,
@@ -622,6 +623,10 @@ export class SmsTriggerDeliveryService {
         job: MessageTriggerJobEntity,
         config: SmsTemplateDeliveryConfig,
     ): Promise<Readonly<SmsTriggerDeliverySnapshot>> {
+        const branchId = job.branchId;
+        if (!branchId) {
+            throw new Error(`SMS trigger job ${job.id} is missing branchId`);
+        }
         const payload = job.payload;
         const baseVariables: Record<string, string> = {
             name: payload.recipientName,
@@ -634,7 +639,7 @@ export class SmsTriggerDeliveryService {
         const usesPayloadMessage = config.usePayloadMessage || payload.templateVariables["triggerType"] === "agent_scheduled";
         const template = usesPayloadMessage
             ? this.resolvePayloadTemplate(job)
-            : await this.resolveSystemTemplate(config.systemTemplateKey);
+            : await this.resolveSystemTemplate(config.systemTemplateKey, branchId);
         const missingVariableKeys = template.requiredVariableKeys.filter(
             (key) => !baseVariables[key]?.trim(),
         );
@@ -691,12 +696,13 @@ export class SmsTriggerDeliveryService {
 
     private async resolveSystemTemplate(
         systemTemplateKey: SystemTemplateKey | undefined,
+        branchId: string,
     ): Promise<ResolvedSmsTemplate> {
         if (!systemTemplateKey) {
             throw new Error("systemTemplateKey is required for templated SMS delivery");
         }
         try {
-            const template = await this.systemTemplateService.getByKey(systemTemplateKey);
+            const template = await this.systemTemplateService.getByKeyForBranch(branchId, systemTemplateKey);
             const content = template.content;
             const hash = this.hash(content);
             const updatedAt = template.updatedAt instanceof Date && !Number.isNaN(template.updatedAt.getTime())
@@ -720,6 +726,9 @@ export class SmsTriggerDeliveryService {
                 requiredVariableKeys: [...requiredVariableKeys],
             };
         } catch (error) {
+            if (error instanceof BranchSystemTemplateSnapshotError) {
+                throw error;
+            }
             if (isTransientPrismaConnectivityError(error)) {
                 throw new TriggerJobDeferredError(
                     "transient",
