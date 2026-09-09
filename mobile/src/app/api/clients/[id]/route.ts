@@ -19,7 +19,7 @@ type RouteParams = { params: Promise<{ id: string }> };
 const updateClientSchema = z
     .object({
         name: z.string(),
-        primaryEmployeeId: z.number(),
+        primaryEmployeeId: z.number().nullable(),
         secondaryEmployeeId: z.number().nullable(),
         address: z.string().nullable(),
         phone: z.string().nullable(),
