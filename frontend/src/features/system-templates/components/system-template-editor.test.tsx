@@ -34,6 +34,7 @@ const contentPlaceholder = "템플릿 내용을 입력하세요. 변수는 {{변
 
 beforeEach(() => {
   jest.clearAllMocks();
+  document.cookie = "selected_branch_id=branch-test; path=/";
   mockMutateAsync.mockResolvedValue(undefined);
   jest.mocked(useUpdateSystemTemplate).mockReturnValue({
     mutateAsync: mockMutateAsync,
@@ -113,6 +114,44 @@ describe("SystemTemplateEditor", () => {
         key: "GREETING",
         content: "사용자가 계속 편집 중인 본문",
         customVariables: [{ key: "client", label: "고객명", required: true }],
+      });
+    });
+  });
+
+  it("uses the shared editor for a branch scope and captures its branch identity", async () => {
+    render(
+      <SystemTemplateEditor
+        template={buildTemplate()}
+        scope="branch"
+        branchId="branch-test"
+        dataComponent="desktop_messages_templates_editor"
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "이 템플릿을 처음 저장하면 지점의 모든 템플릿이 현재 기본값으로 고정됩니다. 이후 오너가 기본값을 바꿔도 이 지점에는 자동으로 적용되지 않습니다.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      document.querySelector('[data-component="desktop_messages_templates_editor_content-input"]'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+
+    fireEvent.change(screen.getByPlaceholderText(contentPlaceholder), {
+      target: { value: "지점 전용 본문" },
+    });
+    fireEvent.click(
+      document.querySelector('[data-component="desktop_messages_templates_editor_save-button"]') as HTMLElement,
+    );
+
+    await waitFor(() => {
+      expect(mockMutateAsync).toHaveBeenCalledWith({
+        key: "GREETING",
+        content: "지점 전용 본문",
+        customVariables: [],
+        scope: "branch",
+        branchId: "branch-test",
       });
     });
   });

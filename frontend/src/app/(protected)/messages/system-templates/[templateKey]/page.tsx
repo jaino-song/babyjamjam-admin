@@ -1,7 +1,5 @@
 import { redirect } from 'next/navigation';
 
-import { SYSTEM_TEMPLATE_KEYS } from '@/features/system-templates/types';
-
 /**
  * The default templates are edited in the owner admin console. This route only
  * survives so that old links keep working.
@@ -13,8 +11,8 @@ export default async function EditSystemTemplatePage({
 }) {
   const { templateKey } = await params;
 
-  if ((SYSTEM_TEMPLATE_KEYS as readonly string[]).includes(templateKey)) {
-    redirect(`/system-admin?section=templates&template=${templateKey}`);
+  if (templateKey) {
+    redirect(`/system-admin?section=templates&template=${encodeURIComponent(templateKey)}`);
   }
 
   redirect('/system-admin?section=templates');

@@ -51,7 +51,7 @@ export function VersionHistory({ templateKey, onRollback }: Props) {
   const { data: previewDetail, isLoading: isPreviewLoading } = useQuery<VersionDetail>({
     queryKey:
       previewVersion && templateKey
-        ? systemTemplateKeys.versionDetail(templateKey, previewVersion.versionNumber)
+        ? systemTemplateKeys.global.versionDetail(templateKey, previewVersion.versionNumber)
         : ['system-templates', 'version-detail', templateKey, 'disabled'],
     queryFn: async () => {
       if (!previewVersion) {

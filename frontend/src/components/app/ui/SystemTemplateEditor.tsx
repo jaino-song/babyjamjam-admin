@@ -9,16 +9,30 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
-import { useUpdateSystemTemplate } from '@/features/system-templates/hooks';
+import {
+  useUpdateSystemTemplate,
+  type SystemTemplateScope,
+} from '@/features/system-templates/hooks';
 import type { CustomVariable, SystemTemplate } from '@/features/system-templates/types';
+import { getActiveBranchId } from '@/features/system-templates/branch-context';
+import { getApiErrorMessage } from '@babyjamjam/shared';
 
 export interface SystemTemplateEditorProps {
   template: SystemTemplate;
   onPreviewMessageChange?: (message: string) => void;
+  /** Global defaults are the backwards-compatible editor mode. */
+  scope?: SystemTemplateScope;
+  /** Captured branch identity used to partition drafts and guard the save. */
+  branchId?: string | null;
+  onPendingChange?: (pending: boolean) => void;
+  /** Caller-owned path used to keep the editor in the surrounding component tree. */
+  dataComponent?: string;
 }
 
 interface EditorBaseline {
   templateKey: string;
+  scope: SystemTemplateScope;
+  branchId: string | null;
   content: string;
   customVariablesJson: string;
 }
@@ -34,6 +48,10 @@ function getCustomVariablesJson(customVariables: CustomVariable[]) {
 export function SystemTemplateEditor({
   template,
   onPreviewMessageChange,
+  scope = 'global',
+  branchId = null,
+  onPendingChange,
+  dataComponent = 'desktop_system-template-editor',
 }: SystemTemplateEditorProps) {
   const { content: templateContent, templateKey } = template;
   const templateCustomVariables = getCustomVariables(template);
@@ -48,12 +66,18 @@ export function SystemTemplateEditor({
   const previewCallbackRef = useRef(onPreviewMessageChange);
   const baselineRef = useRef<EditorBaseline>({
     templateKey,
+    scope,
+    branchId,
     content: templateContent,
     customVariablesJson: templateCustomVariablesJson,
   });
   const { toast } = useToast();
 
   const updateMutation = useUpdateSystemTemplate();
+
+  useEffect(() => {
+    onPendingChange?.(updateMutation.isPending);
+  }, [onPendingChange, updateMutation.isPending]);
 
   useEffect(() => {
     previewCallbackRef.current = onPreviewMessageChange;
@@ -63,7 +87,10 @@ export function SystemTemplateEditor({
     const nextCustomVariables = templateCustomVariables;
     const nextCustomVariablesJson = templateCustomVariablesJson;
     const baseline = baselineRef.current;
-    const isSameTemplate = baseline.templateKey === templateKey;
+    const isSameTemplate =
+      baseline.templateKey === templateKey &&
+      baseline.scope === scope &&
+      baseline.branchId === branchId;
     const contentChanged = baseline.content !== templateContent;
     const contentIsDirty = isSameTemplate && contentRef.current !== baseline.content;
     const customVariablesAreDirty =
@@ -73,7 +100,6 @@ export function SystemTemplateEditor({
     if (!contentIsDirty) {
       contentRef.current = templateContent;
       // The editor mirrors the latest server detail only while its field is pristine.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setContent(templateContent);
       if (contentChanged || !isSameTemplate) {
         previewCallbackRef.current?.(templateContent);
@@ -87,10 +113,19 @@ export function SystemTemplateEditor({
 
     baselineRef.current = {
       templateKey,
+      scope,
+      branchId,
       content: templateContent,
       customVariablesJson: nextCustomVariablesJson,
     };
-  }, [templateContent, templateKey, templateCustomVariables, templateCustomVariablesJson]);
+  }, [
+    branchId,
+    scope,
+    templateContent,
+    templateKey,
+    templateCustomVariables,
+    templateCustomVariablesJson,
+  ]);
 
   const handleContentChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     const nextContent = event.target.value;
@@ -137,21 +172,38 @@ export function SystemTemplateEditor({
 
   const handleSave = async () => {
     try {
-      await updateMutation.mutateAsync({
+      const baseParams = {
         key: templateKey,
         content,
         customVariables,
-      });
+      };
+
+      if (scope === 'branch') {
+        const capturedBranchId = branchId ?? getActiveBranchId();
+        if (!capturedBranchId) {
+          throw new Error('지점을 선택한 뒤 템플릿을 저장해 주세요.');
+        }
+
+        await updateMutation.mutateAsync({
+          ...baseParams,
+          scope,
+          branchId: capturedBranchId,
+        });
+      } else {
+        await updateMutation.mutateAsync(baseParams);
+      }
+
       toast({
         variant: 'success',
         description: '템플릿을 저장했어요',
       });
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : '템플릿을 저장하지 못했어요';
       toast({
         variant: 'destructive',
-        description: errorMessage,
+        description: getApiErrorMessage(
+          error,
+          error instanceof Error ? error.message : '템플릿을 저장하지 못했어요',
+        ),
       });
     }
   };
@@ -161,7 +213,11 @@ export function SystemTemplateEditor({
     JSON.stringify(customVariables) !== JSON.stringify(getCustomVariables(template));
 
   return (
-    <div className="flex flex-col gap-6">
+    <div
+      data-component={dataComponent}
+      data-source-component="SystemTemplateEditor"
+      className="flex flex-col gap-6"
+    >
       {template.requiredVariables && template.requiredVariables.length > 0 && (
         <div>
           <Label className="text-sm font-semibold mb-3 block">
@@ -198,8 +254,10 @@ export function SystemTemplateEditor({
           템플릿 내용
         </Label>
         <Textarea
+          data-component={`${dataComponent}_content-input`}
           rows={12}
           value={content}
+          disabled={updateMutation.isPending}
           onChange={handleContentChange}
           placeholder="템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다."
           className="font-mono text-sm"
@@ -223,6 +281,7 @@ export function SystemTemplateEditor({
                 <button
                   type="button"
                   onClick={() => handleRemoveCustomVariable(variable.key)}
+                  disabled={updateMutation.isPending}
                   className="ml-1 hover:text-destructive"
                 >
                   <X className="h-3 w-3" />
@@ -237,6 +296,7 @@ export function SystemTemplateEditor({
             <Input
               placeholder="변수 키 (예: user_name)"
               value={newVariable.key}
+              disabled={updateMutation.isPending}
               onChange={(event) =>
                 setNewVariable({ ...newVariable, key: event.target.value })
               }
@@ -245,6 +305,7 @@ export function SystemTemplateEditor({
             <Input
               placeholder="변수 레이블 (예: 사용자 이름)"
               value={newVariable.label}
+              disabled={updateMutation.isPending}
               onChange={(event) =>
                 setNewVariable({ ...newVariable, label: event.target.value })
               }
@@ -252,6 +313,7 @@ export function SystemTemplateEditor({
             />
             <Button
               size="sm"
+              disabled={updateMutation.isPending}
               onClick={handleAddCustomVariable}
             >
               <Plus className="h-4 w-4 mr-1" />
@@ -264,8 +326,19 @@ export function SystemTemplateEditor({
         </Card>
       </div>
 
+      {scope === 'branch' ? (
+        <p
+          data-component={`${dataComponent}_branch-freeze-note`}
+          className="text-sm text-v3-text-muted"
+          role="note"
+        >
+          이 템플릿을 처음 저장하면 지점의 모든 템플릿이 현재 기본값으로 고정됩니다. 이후 오너가 기본값을 바꿔도 이 지점에는 자동으로 적용되지 않습니다.
+        </p>
+      ) : null}
+
       <div className="flex gap-2 justify-end">
         <Button
+          data-component={`${dataComponent}_save-button`}
           onClick={handleSave}
           disabled={!hasChanges || updateMutation.isPending}
         >

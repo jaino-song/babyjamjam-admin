@@ -20,13 +20,15 @@ export function useMessageSenderApproval() {
 export function MessageApprovalGate({
   children,
   dataComponent,
+  enabled = true,
 }: {
   children: ReactNode;
   dataComponent: string;
+  enabled?: boolean;
 }) {
   const { data: senderApproval, isLoading } = useMessageSenderApproval();
 
-  if (isLoading || senderApproval?.isApproved) {
+  if (!enabled || isLoading || senderApproval?.isApproved) {
     return <>{children}</>;
   }
 
