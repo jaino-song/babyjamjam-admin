@@ -433,6 +433,8 @@ describe("SbEformsignDocumentMirrorRepository", () => {
                 serviceRecordTokens: { none: {} },
                 legacyHeaders: { none: {} },
                 snapshotChunks: { none: {} },
+                editDrafts: { none: {} },
+                revisions: { none: {} },
                 eformsignDocs: { none: {} },
             },
         });

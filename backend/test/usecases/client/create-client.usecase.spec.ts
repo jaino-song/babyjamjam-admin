@@ -29,6 +29,9 @@ describe("CreateClientUsecase", () => {
                 actualPrice: "500000",
                 startDate: new Date("2024-01-01"),
                 endDate: new Date("2024-12-31"),
+                // 2024 has 245 Korean business days; retaining the nominal
+                // 246-day duration requires the explicit mismatch confirmation.
+                allowBusinessDayMismatch: true,
                 careCenter: false,
                 voucherClient: true,
                 birthday: "1990-01-01",

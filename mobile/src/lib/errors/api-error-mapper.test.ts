@@ -159,14 +159,26 @@ describe("getErrorMessage", () => {
     });
 
     it.each([
-        "SELECT phone FROM Client WHERE id = 73",
-        "SELECT phone FROM Client",
-        "SELECT phone FROM Client;",
-        "SELECT phone, email FROM Client WHERE id = 73",
-        'SELECT "phone", "email" FROM "Client" WHERE "id" = 73',
-        "SELECT count(*) FROM Client WHERE id = 73;",
-        "SELECT COUNT(*) FROM Client",
-    ])("rejects SQL diagnostics from a 4xx response %p", (serverMessage) => {
+        ["simple identifier", "SELECT phone FROM Client WHERE id = 73"],
+        ["simple identifier without a clause", "SELECT phone FROM Client"],
+        ["statement terminator", "SELECT phone FROM Client;"],
+        ["multicolumn", "SELECT phone, email FROM Client WHERE id = 73"],
+        ["quoted multicolumn", 'SELECT "phone", "email" FROM "Client" WHERE "id" = 73'],
+        ["function", "SELECT count(*) FROM Client WHERE id = 73;"],
+        ["uppercase function", "SELECT COUNT(*) FROM Client"],
+        ["literal", "SELECT 1 FROM clients"],
+        ["arithmetic", "SELECT id + 1 FROM clients"],
+        ["string literal", "SELECT 'client' AS label FROM clients"],
+        ["case expression", "SELECT CASE WHEN id = 1 THEN 'one' ELSE 'other' END FROM clients"],
+        ["cast expression", "SELECT CAST(id AS TEXT) AS label FROM clients"],
+        ["nested expression", "SELECT (COALESCE(id, 0) + 1) AS next_id FROM clients"],
+        ["nested select", "SELECT (SELECT 1 FROM related_clients) AS related_count FROM clients"],
+        ["quoted expression", 'SELECT "id" AS "client_id" FROM "clients"'],
+        ["bare table alias", "SELECT u.id FROM users u"],
+        ["bare table alias with WHERE", "SELECT u.id FROM users u WHERE u.id = 1"],
+        ["explicit table alias", "SELECT u.id FROM users AS u WHERE u.id = 1"],
+        ["bare table alias with JOIN", "SELECT u.id FROM users u JOIN teams t ON t.id = u.team_id"],
+    ] as const)("rejects %s SQL diagnostics from a 4xx response", (_shape, serverMessage) => {
         const error = axiosError(409, { message: serverMessage, clientId: 73 });
 
         expect(getApiDisplayMessage(error)).toBeNull();

@@ -8,6 +8,7 @@ import { AdminServiceRecordController } from "interface/controllers/admin-servic
 import { ServiceRecordEntryController } from "interface/controllers/service-record-entry.controller";
 import { ScheduleChangeController } from "interface/controllers/schedule-change.controller";
 import { AdminServiceRecordService } from "application/services/admin-service-record.service";
+import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import { ServiceRecordEntryService } from "application/services/service-record-entry.service";
 import { ScheduleChangeService } from "application/services/schedule-change.service";
 import { ServiceRecordTokenService } from "application/services/service-record-token.service";
@@ -21,6 +22,8 @@ import { MessageAutomationIntentService } from "application/services/message-aut
 import { ServiceRecordSecurityEventService } from "application/services/service-record-security-event.service";
 import { RateLimitGuard } from "infrastructure/auth/rate-limit.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
+import { SERVICE_RECORD_EDIT_REPOSITORY } from "domain/repositories/service-record-edit.repository.interface";
+import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
 
 /**
  * No-login daily service-record capture (BJJ-247).
@@ -32,6 +35,7 @@ import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
     controllers: [ServiceRecordEntryController, ScheduleChangeController, AdminServiceRecordController],
     providers: [
         AdminServiceRecordService,
+        AdminServiceRecordEditService,
         ServiceRecordEntryService,
         ScheduleChangeService,
         ServiceRecordTokenService,
@@ -45,12 +49,14 @@ import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
         RateLimitGuard,
         OwnerOrAdminGuard,
         ServiceRecordGuard,
+        { provide: SERVICE_RECORD_EDIT_REPOSITORY, useClass: ServiceRecordEditRepository },
     ],
     exports: [
         ServiceRecordTokenService,
         ServiceRecordLinkService,
         ServiceRecordLifecycleService,
         MessageAutomationIntentService,
+        SERVICE_RECORD_EDIT_REPOSITORY,
     ],
 })
 export class ServiceRecordEntryModule {}

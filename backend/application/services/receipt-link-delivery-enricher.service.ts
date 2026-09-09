@@ -73,6 +73,24 @@ export class ReceiptLinkDeliveryEnricher implements SmsTriggerPayloadEnricher, O
         if (!linkToken || !this.tokenService) {
             throw receiptLinkUnusableError();
         }
+        const branchId = job.branchId;
+        const clientId = job.clientId;
+        if (!branchId || clientId === null) {
+            throw receiptLinkUnusableError();
+        }
+        const assertDocumentSyncReady = this.issueService.assertDocumentSyncReady;
+        if (typeof assertDocumentSyncReady === "function") {
+            const explicitDocId = job.payload.receiptEformsignDocId;
+            // The issue service resolves the client's authoritative contract
+            // when no explicit manual-send document was pinned. This check is
+            // deliberately before signing the object URL or handing control
+            // back to the SMS provider.
+            await assertDocumentSyncReady.call(this.issueService, {
+                branchId,
+                clientId,
+                ...(typeof explicitDocId === "number" ? { eformsignDocId: explicitDocId } : {}),
+            });
+        }
         const status = await this.tokenService.getStatus(linkToken, new Date());
         if (!status.ok) {
             throw receiptLinkUnusableError();

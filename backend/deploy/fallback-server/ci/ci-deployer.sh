@@ -105,6 +105,11 @@ validated_status() {
         && "$(status_value document_jobs_accepting "$output")" == "true" \
         && "$(status_value document_jobs_worker "$output")" == "true" ]] \
         || die "The active Fallback runtime is not safe for automatic replacement."
+    if [[ "$(status_value automatic_shutdown "$output" || true)" == disabled ]]; then
+        [[ "$(status_value lease_mode "$output")" == required \
+            && "$(status_value lease_held "$output")" == true ]] \
+            || die "The persistent Fallback host does not hold the scheduler lease."
+    fi
     printf '%s\n' "$output"
 }
 
@@ -133,6 +138,9 @@ write_automatic_approval() {
         && "$incident_id" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$ ]] \
         || die "The current active approval cannot authorize an automatic replacement."
 
+    # Persistent hosts still use fresh bounded approvals for each replacement,
+    # but the previous transaction expiry does not limit the next transaction.
+    if [[ "$(status_value automatic_shutdown "$(validated_status)" || true)" == disabled ]]; then old_expiry=0; fi
     issued_at="$(date +%s)"
     nonce="$(openssl rand -hex 32)"
     [[ "$nonce" =~ ^[0-9a-f]{64}$ ]] || die "Unable to create an automatic approval nonce."

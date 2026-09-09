@@ -180,6 +180,21 @@ export class ReconcileCompletedMirroredEformsignDocUsecase {
                             }
                             return;
                         }
+                        const fencedSync = lifecycle.syncEndDateFromCurrentContract;
+                        if (typeof fencedSync === "function") {
+                            const applied = await fencedSync.call(lifecycle, {
+                                branchId: params.branchId,
+                                clientId: target.clientId,
+                                endDate: target.endDate,
+                                documentId: params.documentId,
+                            });
+                            if (!applied && params.throwOnError) {
+                                throw new Error(
+                                    `Current contract changed before reconciliation for ${params.documentId}`,
+                                );
+                            }
+                            return;
+                        }
                         await lifecycle.syncEndDateFromContract({
                             branchId: params.branchId,
                             clientId: target.clientId,

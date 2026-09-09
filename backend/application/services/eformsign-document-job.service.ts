@@ -1,5 +1,6 @@
 import { BadRequestException, Inject, Injectable } from "@nestjs/common";
 import { createHash } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 
 import { ContractDataDto } from "application/dto/contract.dto";
 import {
@@ -10,11 +11,13 @@ import {
     EFORMSIGN_DOCUMENT_JOB_REPOSITORY,
     EformsignDocumentJobList,
     EformsignDocumentJobSummary,
+    AuthorizeEformsignDocumentJobForDispatchInput,
     IEformsignDocumentJobRepository,
 } from "domain/repositories/eformsign-document-job.repository.interface";
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import { assertRequiredPhone, invalidPhoneFieldMessage, InvalidPhoneError } from "application/utils/normalize-phone";
+import type { ServiceRecordDispatchAuthorizationResult } from "@babyjamjam/shared/types/service-record";
 
 export interface EnqueueCreateDocumentParams {
     branchId: string;
@@ -40,6 +43,24 @@ export interface EnqueueFinalizeDocumentParams {
 export interface EnqueueDocumentJobResult {
     job: Awaited<ReturnType<IEformsignDocumentJobRepository["enqueue"]>>["job"];
     existing: boolean;
+}
+
+/**
+ * Caller-owned transaction boundary used by atomic service-record confirm
+ * and finalization. The payload is already server-derived; this method never
+ * opens a nested transaction or performs a provider/client lookup.
+ */
+export interface EnqueueEformsignDocumentJobInTransactionParams {
+    branchId: string;
+    clientId?: number | null;
+    documentId?: string | null;
+    jobType: "create_document" | "finalize_document";
+    source: EformsignDocumentJobSource;
+    requestKey: string;
+    activeKey: string;
+    payload: EformsignDocumentJobPayload;
+    payloadFingerprint: string;
+    createdByUserId?: string | null;
 }
 
 function assertContractDataPhones(contractData: ContractDataDto): void {
@@ -125,6 +146,7 @@ export class EformsignDocumentJobService {
 
         return this.repository.enqueue({
             branchId: params.branchId,
+            clientId: document.clientId ?? null,
             documentId: params.documentId,
             jobType: "finalize_document",
             source: params.source,
@@ -134,6 +156,54 @@ export class EformsignDocumentJobService {
             payloadFingerprint: sha256CanonicalJson(payload),
             createdByUserId: params.createdByUserId,
         });
+    }
+
+    /**
+     * Enqueue a provider intent without escaping the caller's transaction.
+     * Authorization and ownership are deliberately the caller's
+     * responsibility; no root repository or external API is reached here.
+     */
+    async enqueueInTransaction(
+        tx: Prisma.TransactionClient,
+        params: EnqueueEformsignDocumentJobInTransactionParams,
+    ): Promise<EnqueueDocumentJobResult> {
+        return this.repository.enqueueInTransaction(tx, {
+            branchId: params.branchId,
+            clientId: params.clientId,
+            documentId: params.documentId,
+            jobType: params.jobType,
+            source: params.source,
+            requestKey: params.requestKey,
+            activeKey: params.activeKey,
+            payload: params.payload,
+            payloadFingerprint: params.payloadFingerprint,
+            createdByUserId: params.createdByUserId,
+        });
+    }
+
+    /**
+     * Resolve a stable request key without opening a nested transaction. The
+     * caller uses this only to replay an immutable generation payload; no
+     * mutable case/client data is read by this seam.
+     */
+    async findByRequestKeyInTransaction(
+        tx: Prisma.TransactionClient,
+        requestKey: string,
+    ) {
+        return this.repository.findByRequestKeyInTransaction(tx, requestKey);
+    }
+
+    /**
+     * Authorize the irreversible provider boundary inside the transaction
+     * owned by the caller. The repository locks and rereads the job, verifies
+     * the lease/context, and commits the durable `creating` marker before a
+     * worker is allowed to invoke a provider.
+     */
+    async authorizeForDispatchInTransaction(
+        tx: Prisma.TransactionClient,
+        input: AuthorizeEformsignDocumentJobForDispatchInput,
+    ): Promise<ServiceRecordDispatchAuthorizationResult> {
+        return this.repository.authorizeForDispatchInTransaction(tx, input);
     }
 
     async getSummary(branchId: string): Promise<EformsignDocumentJobSummary> {

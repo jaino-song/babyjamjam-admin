@@ -27,7 +27,11 @@ export interface IEmployeeScheduleRepository {
         schedule: EmployeeScheduleEntity,
         transaction?: Prisma.TransactionClient,
     ): Promise<EmployeeScheduleEntity>;
-    delete(branchid: string, id: number): Promise<void>;
+    delete(
+        branchid: string,
+        id: number,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<void>;
 }
 
 export const EMPLOYEE_SCHEDULE_REPOSITORY = "EMPLOYEE_SCHEDULE_REPOSITORY";

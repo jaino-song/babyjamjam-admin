@@ -553,6 +553,168 @@ describe("SbEformsignDocRepository", () => {
         });
     });
 
+    it("rejects a legacy completion when the owning case has current revision evidence", async () => {
+        const branchId = "44444444-4444-4444-4444-444444444444";
+        const caseId = "55555555-5555-4555-8555-555555555555";
+        const revisionId = "66666666-6666-4666-8666-666666666666";
+        const transaction = {
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([{
+                    id: 1,
+                    documentId: "doc-legacy",
+                    clientId: 55,
+                    branchId,
+                    documentKind: "contract",
+                    serviceRecordCaseId: caseId,
+                    revisionId: null,
+                    updatedDate: new Date("2026-08-01T00:00:00.000Z"),
+                    createdDate: new Date("2026-07-01T00:00:00.000Z"),
+                }])
+                .mockResolvedValueOnce([{
+                    id: 55,
+                    eDocId: "doc-legacy",
+                    branchId,
+                }])
+                .mockResolvedValueOnce([{
+                    id: caseId,
+                    branchId,
+                    clientId: 55,
+                    currentRevisionId: revisionId,
+                    currentUsableRevisionId: null,
+                    currentUsableDocumentVersion: null,
+                }]),
+        };
+        const prisma = {
+            eformsign_doc: eformsignDocModel,
+            $transaction: jest.fn((callback) => callback(transaction)),
+        } as unknown as PrismaService;
+        const fencedRepository = new SbEformsignDocRepository(prisma);
+
+        await expect(fencedRepository.isCurrentContractDocument(branchId, "doc-legacy"))
+            .resolves.toBe(false);
+        expect(transaction.$queryRaw).toHaveBeenCalledTimes(3);
+        expect(transaction.$queryRaw.mock.calls.every(([query]) =>
+            query.strings.join(" ").includes("FOR UPDATE"))).toBe(true);
+    });
+
+    it("allows the current legacy contract when its case has no revision evidence", async () => {
+        const branchId = "44444444-4444-4444-4444-444444444444";
+        const transaction = {
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([{
+                    id: 1,
+                    documentId: "doc-current",
+                    clientId: 55,
+                    branchId,
+                    documentKind: "contract",
+                    serviceRecordCaseId: null,
+                    revisionId: null,
+                    updatedDate: new Date("2026-08-01T00:00:00.000Z"),
+                    createdDate: new Date("2026-07-01T00:00:00.000Z"),
+                }])
+                .mockResolvedValueOnce([{
+                    id: 55,
+                    eDocId: "doc-current",
+                    branchId,
+                }])
+                .mockResolvedValueOnce([]),
+        };
+        const prisma = {
+            eformsign_doc: eformsignDocModel,
+            $transaction: jest.fn((callback) => callback(transaction)),
+        } as unknown as PrismaService;
+        const fencedRepository = new SbEformsignDocRepository(prisma);
+
+        await expect(fencedRepository.isCurrentContractDocument(branchId, "doc-current"))
+            .resolves.toBe(true);
+    });
+
+    it("allows a revision-bound contract only for the case's current revision", async () => {
+        const branchId = "44444444-4444-4444-4444-444444444444";
+        const caseId = "55555555-5555-4555-8555-555555555555";
+        const revisionId = "66666666-6666-4666-8666-666666666666";
+        const transaction = {
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([{
+                    id: 1,
+                    documentId: "doc-revision",
+                    clientId: 55,
+                    branchId,
+                    documentKind: "contract",
+                    serviceRecordCaseId: caseId,
+                    revisionId,
+                    updatedDate: new Date("2026-08-01T00:00:00.000Z"),
+                    createdDate: new Date("2026-07-01T00:00:00.000Z"),
+                }])
+                .mockResolvedValueOnce([{
+                    id: 55,
+                    eDocId: "doc-revision",
+                    branchId,
+                }])
+                .mockResolvedValueOnce([{
+                    id: caseId,
+                    branchId,
+                    clientId: 55,
+                    currentRevisionId: revisionId,
+                    currentUsableRevisionId: null,
+                    currentUsableDocumentVersion: null,
+                }]),
+        };
+        const prisma = {
+            eformsign_doc: eformsignDocModel,
+            $transaction: jest.fn((callback) => callback(transaction)),
+        } as unknown as PrismaService;
+        const fencedRepository = new SbEformsignDocRepository(prisma);
+
+        await expect(fencedRepository.isCurrentContractDocument(branchId, "doc-revision"))
+            .resolves.toBe(true);
+    });
+
+    it("does not replace a newer client pointer with a delayed completion", async () => {
+        const branchId = "44444444-4444-4444-4444-444444444444";
+        const transaction = {
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([{
+                    id: 1,
+                    documentId: "doc-old",
+                    clientId: 55,
+                    branchId,
+                    documentKind: "contract",
+                    serviceRecordCaseId: null,
+                    revisionId: null,
+                    updatedDate: new Date("2026-08-01T00:00:00.000Z"),
+                    createdDate: new Date("2026-07-01T00:00:00.000Z"),
+                }])
+                .mockResolvedValueOnce([{
+                    id: 55,
+                    eDocId: "doc-new",
+                    branchId,
+                }])
+                .mockResolvedValueOnce([{
+                    id: 2,
+                    documentId: "doc-new",
+                    clientId: 55,
+                    branchId,
+                    serviceRecordCaseId: null,
+                    revisionId: null,
+                    updatedDate: new Date("2026-08-02T00:00:00.000Z"),
+                    createdDate: new Date("2026-07-02T00:00:00.000Z"),
+                }]),
+            client: { updateMany: jest.fn() },
+            eformsign_doc: { updateMany: jest.fn() },
+        };
+        const prisma = {
+            eformsign_doc: eformsignDocModel,
+            $transaction: jest.fn((callback) => callback(transaction)),
+        } as unknown as PrismaService;
+        const fencedRepository = new SbEformsignDocRepository(prisma);
+
+        await expect(fencedRepository.linkClientIfActive(branchId, "doc-old", 55))
+            .resolves.toBe(false);
+        expect(transaction.client.updateMany).not.toHaveBeenCalled();
+        expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+    });
+
     it("leaves the old pointer untouched when the target client disappeared before locking", async () => {
         const transaction = {
             $queryRaw: jest.fn()

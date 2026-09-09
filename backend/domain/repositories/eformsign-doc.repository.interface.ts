@@ -195,6 +195,15 @@ export interface IEformsignDocRepository {
         documentId: string,
         clientId: number,
     ): Promise<boolean>;
+    /**
+     * Re-reads the completed contract's ownership fence while holding the
+     * document/client/case rows. A false result means the webhook belongs to
+     * an older document or revision and may update only its historical row.
+     */
+    isCurrentContractDocument(
+        branchid: string,
+        documentId: string,
+    ): Promise<boolean>;
     upsertByDocumentId(
         branchid: string,
         doc: EformsignDocEntity,

@@ -6,7 +6,7 @@
  * is therefore unsafe. Add a complete year and bump the version before that
  * year is used in production.
  */
-export declare const KOREAN_HOLIDAY_CALENDAR_VERSION: "kr-public-holidays-2024-2027.v1";
+export declare const KOREAN_HOLIDAY_CALENDAR_VERSION: "kr-public-holidays-2024-2027.v2";
 export declare const KOREAN_HOLIDAY_CALENDAR: Readonly<Record<number, readonly string[]>>;
 /** All dates in the authoritative calendar, useful for diagnostics and parity checks. */
 export declare const KOREAN_HOLIDAYS: Set<string>;
@@ -28,4 +28,10 @@ export declare function diffBusinessDaysKr(targetISO: string, baseISO?: string):
 export declare function calcEndDateBusinessDays(startISO: string, numberOfBusinessDays: number): string;
 export declare function nextBusinessDayKr(iso: string): string;
 export declare function addBusinessDaysKr(iso: string, n: number): string;
+/**
+ * Applies a signed business-day offset using the authoritative Korean
+ * calendar. Unlike addBusinessDaysKr this helper is intended for editor
+ * suffix moves, where a reverse move must restore the original vector.
+ */
+export declare function shiftBusinessDaysKr(iso: string, offset: number): string;
 export declare function countBusinessDaysKr(startISO: string, endISO: string): number | null;

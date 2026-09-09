@@ -8,12 +8,13 @@ import {
     isBusinessDayKr,
     KR_HOLIDAYS,
     nextBusinessDayKr,
+    shiftBusinessDaysKr,
     UnsupportedKoreanHolidayYearError,
 } from "./business-days";
 
 describe("versioned Korean holiday calendar", () => {
     it("exposes the calendar version and fails closed for an unpopulated year", () => {
-        expect(KOREAN_HOLIDAY_CALENDAR_VERSION).toBe("kr-public-holidays-2024-2027.v1");
+        expect(KOREAN_HOLIDAY_CALENDAR_VERSION).toBe("kr-public-holidays-2024-2027.v2");
         expect(() => assertSupportedKoreanHolidayYear(2028))
             .toThrow(UnsupportedKoreanHolidayYearError);
         expect(() => isBusinessDayKr("2028-01-03"))
@@ -29,7 +30,7 @@ describe("KR_HOLIDAYS fixtures", () => {
         expect(KR_HOLIDAYS.has("2026-07-17")).toBe(true); // Constitution Day (P0-3 fixture date)
         expect(KR_HOLIDAYS.has("2026-06-03")).toBe(true); // local elections
         expect(KR_HOLIDAYS.has("2027-12-25")).toBe(true); // Christmas
-        expect(KR_HOLIDAYS.size).toBe(44);
+        expect(KR_HOLIDAYS.size).toBe(46);
     });
 
     it("does not flag an ordinary weekday as a holiday", () => {
@@ -53,6 +54,22 @@ describe("isBusinessDayKr", () => {
 
     it("returns false for an empty input", () => {
         expect(isBusinessDayKr("")).toBe(false);
+    });
+
+    it.each([
+        ["2024-10-01"],
+        ["2025-01-27"],
+        ["2025-06-03"],
+        ["2027-05-03"],
+        ["2027-07-19"],
+        ["2027-10-11"],
+        ["2027-12-27"],
+    ])("uses the corrected public holiday calendar for %s", (date) => {
+        expect(isBusinessDayKr(date)).toBe(false);
+    });
+
+    it.each([["2026-09-28"], ["2027-06-07"]])("removes the stale holiday entry for %s", (date) => {
+        expect(isBusinessDayKr(date)).toBe(true);
     });
 });
 
@@ -108,5 +125,23 @@ describe("nextBusinessDayKr / addBusinessDaysKr", () => {
     it("does not bypass the calendar for an unsupported zero-step date", () => {
         expect(() => addBusinessDaysKr("2028-01-03", 0))
             .toThrow(UnsupportedKoreanHolidayYearError);
+    });
+});
+
+describe("shiftBusinessDaysKr", () => {
+    it.each([
+        ["2024-09-30", "2024-10-02"],
+        ["2025-01-24", "2025-01-31"],
+        ["2025-06-02", "2025-06-04"],
+        ["2026-09-23", "2026-09-28"],
+        ["2026-12-31", "2027-01-04"],
+        ["2027-04-30", "2027-05-04"],
+        ["2027-06-04", "2027-06-07"],
+        ["2027-07-16", "2027-07-20"],
+        ["2027-10-08", "2027-10-12"],
+        ["2027-12-24", "2027-12-28"],
+    ])("shifts +1 and reverses across the approved boundary %s -> %s", (base, expected) => {
+        expect(shiftBusinessDaysKr(base, 1)).toBe(expected);
+        expect(shiftBusinessDaysKr(expected, -1)).toBe(base);
     });
 });

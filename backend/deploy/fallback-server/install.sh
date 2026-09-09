@@ -70,6 +70,19 @@ for protected_path in "$ARTIFACT_ROOT" "$INSTALLED_OPERATOR" "$STATE_ROOT" "$IDE
     [[ ! -L "$protected_path" ]] || die "A Fallback Server installation path is a symbolic link."
 done
 validate_existing_approval
+shutdown_disabled=false
+policy_file="$STATE_ROOT/automatic-shutdown-policy"
+if [[ -e "$policy_file" || -L "$policy_file" ]]; then
+    [[ -f "$policy_file" && ! -L "$policy_file" \
+        && "$(stat -c '%u:%g:%a' "$policy_file")" == 0:0:400 \
+        && "$(cat "$policy_file")" == disabled && "$(wc -l <"$policy_file")" -eq 1 ]] \
+        || die "The automatic shutdown policy is invalid."
+    shutdown_disabled=true
+    for unit in babyjamjam-fallback-temporary-active-{guard,stop}.{service,timer}; do
+        [[ -L "$SYSTEMD_DIR/$unit" && "$(readlink "$SYSTEMD_DIR/$unit")" == /dev/null ]] \
+            || die "Persistent operation requires all automatic shutdown units masked."
+    done
+fi
 
 install -d -o root -g root -m 700 "$ARTIFACT_ROOT"
 if [[ ! -d "$SYSTEMD_DIR" ]]; then
@@ -102,16 +115,18 @@ chown root:root "$manifest"
 chmod 640 "$manifest"
 for live in "$INSTALLED_OPERATOR" "$ARTIFACT_ROOT/compose.yml" "$ACTIVE_COMPOSE_ARTIFACT" "$IDENTITY_HELPER_ARTIFACT" "$GUARD_SERVICE_ARTIFACT" "$GUARD_TIMER_ARTIFACT" "$ARTIFACT_ROOT/bundle.manifest"; do
     key="$(backup_key_for_destination "$live")" || die "Installer rollback mapping is invalid."
-    if [[ -e "$live" ]]; then cp -p "$live" "$backup/$key"; else : >"$backup/$key.absent"; fi
+    if [[ -e "$live" || -L "$live" ]]; then cp -Pp "$live" "$backup/$key"; else : >"$backup/$key.absent"; fi
 done
-rollback(){ for key in operator passive-compose active-compose db-helper guard-service guard-timer manifest; do dest="$(rollback_destination_for_key "$key" "$INSTALLED_OPERATOR" "$ARTIFACT_ROOT" "$SYSTEMD_DIR")"; if [[ -f "$backup/$key" ]]; then cp -p "$backup/$key" "$dest"; else rm -f "$dest"; fi; done; }
+rollback(){ for key in operator passive-compose active-compose db-helper guard-service guard-timer manifest; do dest="$(rollback_destination_for_key "$key" "$INSTALLED_OPERATOR" "$ARTIFACT_ROOT" "$SYSTEMD_DIR")"; if [[ -f "$backup/$key" || -L "$backup/$key" ]]; then rm -f "$dest"; cp -Pp "$backup/$key" "$dest"; else rm -f "$dest"; fi; done; }
 trap 'rollback; cleanup' ERR
 install -o root -g root -m 750 "$stage/operator.sh" "$INSTALLED_OPERATOR"
 install -o root -g root -m 640 "$stage/compose.yml" "$ARTIFACT_ROOT/compose.yml"
 install -o root -g root -m 640 "$stage/compose.temporary-active.yml" "$ACTIVE_COMPOSE_ARTIFACT"
 install -o root -g root -m 750 "$stage/production-db-identity.sh" "$IDENTITY_HELPER_ARTIFACT"
-install -o root -g root -m 640 "$stage/guard.service" "$GUARD_SERVICE_ARTIFACT"
-install -o root -g root -m 640 "$stage/guard.timer" "$GUARD_TIMER_ARTIFACT"
+if [[ "$shutdown_disabled" != true ]]; then
+    install -o root -g root -m 640 "$stage/guard.service" "$GUARD_SERVICE_ARTIFACT"
+    install -o root -g root -m 640 "$stage/guard.timer" "$GUARD_TIMER_ARTIFACT"
+fi
 install -o root -g root -m 640 "$manifest" "$ARTIFACT_ROOT/bundle.manifest"
 [[ "$(wc -l <"$ARTIFACT_ROOT/bundle.manifest")" -eq 6 ]] || die "Generated Fallback Server manifest is invalid."
 [[ "${FALLBACK_INSTALL_SKIP_DAEMON_RELOAD:-false}" == true ]] || /usr/bin/systemctl daemon-reload
