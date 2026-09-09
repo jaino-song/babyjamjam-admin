@@ -1,9 +1,10 @@
 import { type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
+import type { ReceiptLinkPreparation as ReceiptLinkPreparationResponse } from "@/services/api";
 import { TemplateFieldGrid } from "./TemplateFieldGrid";
 
-export type TemplateMessageDeliveryMode = "sms" | "service-feedback-link";
+export type TemplateMessageDeliveryMode = "sms" | "service-feedback-link" | "receipt-link";
 
 export interface ServiceRecordLinkPreparation {
   scheduleId: number;
@@ -14,12 +15,15 @@ export interface ServiceRecordLinkPreparation {
   recipientPhone: string;
 }
 
+export type ReceiptLinkPreparation = ReceiptLinkPreparationResponse;
+
 export interface TemplateMessageFormLayoutArgs {
   fields: ReactNode;
   messageCard: ReactNode;
   requiresRecipientName: boolean;
   deliveryMode: TemplateMessageDeliveryMode;
   serviceRecordLinkPreparation?: ServiceRecordLinkPreparation | null;
+  receiptLinkPreparation?: ReceiptLinkPreparation | null;
 }
 
 export type TemplateMessageFormLayout = (args: TemplateMessageFormLayoutArgs) => ReactNode;
@@ -33,6 +37,7 @@ interface TemplateMessageFormFrameProps {
   requiresRecipientName?: boolean;
   deliveryMode?: TemplateMessageDeliveryMode;
   serviceRecordLinkPreparation?: ServiceRecordLinkPreparation | null;
+  receiptLinkPreparation?: ReceiptLinkPreparation | null;
   renderLayout?: TemplateMessageFormLayout;
 }
 
@@ -45,6 +50,7 @@ export function TemplateMessageFormFrame({
   requiresRecipientName = false,
   deliveryMode = "sms",
   serviceRecordLinkPreparation,
+  receiptLinkPreparation,
   renderLayout,
 }: TemplateMessageFormFrameProps) {
   if (renderLayout) {
@@ -54,6 +60,7 @@ export function TemplateMessageFormFrame({
       requiresRecipientName,
       deliveryMode,
       serviceRecordLinkPreparation,
+      receiptLinkPreparation,
     })}</>;
   }
 

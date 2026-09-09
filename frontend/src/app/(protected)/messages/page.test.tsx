@@ -1,11 +1,19 @@
 import fs from "node:fs";
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { createContext, useContext, type ReactNode } from "react";
+import { fireEvent, render as renderView, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createContext, useContext, type ReactElement, type ReactNode } from "react";
 
 import MessagesPage from "./page";
 
 const source = fs.readFileSync(require.resolve("./page"), "utf8");
+
+function render(ui: ReactElement) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return renderView(ui, {
+    wrapper: ({ children }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>,
+  });
+}
 
 describe("MessagesPage template type labels", () => {
   it("keeps branch template semantics when the selected detail is unavailable", () => {
@@ -104,6 +112,10 @@ jest.mock("@/features/message-templates/hooks/use-message-templates", () => ({
 }));
 
 jest.mock("@/features/clients/hooks/use-clients", () => ({
+  useAllClients: () => mockUseAllClients(),
+}));
+
+jest.mock("@/hooks/useClients", () => ({
   useAllClients: () => mockUseAllClients(),
 }));
 
@@ -425,7 +437,7 @@ describe("messages page — server system-template catalog", () => {
     mockUseInitialUser.mockReturnValue({ id: "owner-1", role: "owner" });
     const secondVariables = [{ key: "second", label: "두 번째 변수", required: true }];
     const templates = [
-      buildSystemTemplate({ templateKey: "SERVICE_END_NOTICE", name: "서비스 종료 안내", content: "첫 번째 본문" }),
+      buildSystemTemplate({ templateKey: "FUTURE_TEMPLATE_A", name: "첫 서버 템플릿", content: "첫 번째 본문" }),
       buildSystemTemplate({ templateKey: "FUTURE_TEMPLATE", name: "새 서버 템플릿", content: "두 번째 본문", customVariables: secondVariables }),
     ];
     mockUseSystemTemplates.mockReturnValue({
@@ -440,7 +452,7 @@ describe("messages page — server system-template catalog", () => {
     }));
     render(<MessagesPage />);
     fireEvent.click(screen.getAllByRole("button", { name: "템플릿" })[0]);
-    fireEvent.click(screen.getByText("서비스 종료 안내"));
+    fireEvent.click(screen.getByText("첫 서버 템플릿"));
     const placeholder = "템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.";
     fireEvent.change(screen.getByPlaceholderText(placeholder), { target: { value: "첫 번째 미저장 수정" } });
     fireEvent.click(screen.getByText("새 서버 템플릿"));
@@ -452,7 +464,7 @@ describe("messages page — server system-template catalog", () => {
     }));
   });
 
-  it("renders server-added keys and selects SERVICE_END_NOTICE detail content without service-record routing", () => {
+  it("renders server-added keys and routes SERVICE_END_NOTICE through the receipt-link form", () => {
     mockUseSystemTemplates.mockReturnValue({
       data: [
         buildSystemTemplate({
@@ -481,15 +493,16 @@ describe("messages page — server system-template catalog", () => {
 
     render(<MessagesPage />);
 
-    expect(screen.getByText("서비스 종료 안내")).toBeInTheDocument();
+    expect(screen.getAllByText("서비스 종료 안내").length).toBeGreaterThan(0);
     expect(screen.getAllByText("새 서버 템플릿").length).toBeGreaterThan(0);
     expect(screen.queryByText("인사(소개)")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByText("서비스 종료 안내"));
+    fireEvent.click(screen.getByRole("button", { name: /서비스 종료 안내/ }));
 
-    expect(screen.getByLabelText("템플릿 내용")).toHaveValue("영수증 링크: {{receiptUrl}}");
-    expect(screen.getByText("이 화면에서는 직접 발송할 수 없습니다.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "즉시 발송" })).not.toBeInTheDocument();
+    expect(screen.queryByText("이 화면에서는 직접 발송할 수 없습니다.")).not.toBeInTheDocument();
+    expect(screen.getByText("산모님 성함")).toBeInTheDocument();
+    expect(screen.getByText("산모님 전화번호")).toBeInTheDocument();
+    expect(screen.getAllByText("서비스 종료 안내").length).toBeGreaterThan(0);
     expect(screen.queryByText("제공기록지 작성 링크")).not.toBeInTheDocument();
   });
 

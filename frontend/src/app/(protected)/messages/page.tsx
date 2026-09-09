@@ -210,6 +210,7 @@ const SYSTEM_TEMPLATE_ICON_BY_KEY: Record<string, typeof MessageCircle> = {
   THANKS: Heart,
   SURVEY: ClipboardList,
   INFO: Info,
+  SERVICE_END_NOTICE: FileText,
 };
 
 function getSystemTemplateIcon(templateKey: string) {
@@ -412,6 +413,11 @@ const BUILTIN_TEMPLATE_PREVIEW_META: Record<
     subtitle: "기본 안내 메시지",
     buttons: ["안내 확인"],
   },
+  "service-end-notice": {
+    headline: "서비스 종료 안내를 확인해 주세요",
+    subtitle: "영수증 링크 안내",
+    buttons: ["영수증 확인"],
+  },
 };
 
 const SCHEDULED_VARIABLE_LABELS: Record<string, string> = {
@@ -504,6 +510,7 @@ const FormComponents: Record<
     onPreviewMessageChange?: (message: string) => void;
     renderLayout?: TemplateMessageFormLayout;
     showMessageSide?: boolean;
+    mode?: "service-feedback-link" | "receipt-link";
   }>
 > = {
   greeting: GreetingMessageForm,
@@ -514,6 +521,7 @@ const FormComponents: Record<
   thanks: ThanksMessageForm,
   survey: SurveyMessageForm,
   info: InfoMessageForm,
+  "service-end-notice": ServiceRecordLinkMessageForm,
 };
 
 // The only reachable PlaceholderSectionId today is "settings" (see the render
@@ -1581,6 +1589,7 @@ export default function MessagesPage() {
     requiresRecipientName,
     deliveryMode,
     serviceRecordLinkPreparation,
+    receiptLinkPreparation,
   }) => {
     const flattenedMessageCard = isValidElement(messageCard)
       ? cloneElement(messageCard as ReactElement<{ layout?: "flat" }>, { layout: "flat" })
@@ -1599,6 +1608,7 @@ export default function MessagesPage() {
           requiresRecipientName={requiresRecipientName}
           deliveryMode={deliveryMode}
           serviceRecordLinkPreparation={serviceRecordLinkPreparation}
+          receiptLinkPreparation={receiptLinkPreparation}
           className="h-full"
           formId={TEMPLATE_SEND_FORM_ID}
           showSubmitButton={false}
@@ -1661,6 +1671,7 @@ export default function MessagesPage() {
           onPreviewMessageChange={handleTemplatePreviewMessageChange}
           renderLayout={selectedTemplateRenderLayout}
           showMessageSide={false}
+          mode={builtinType === "service-end-notice" ? "receipt-link" : undefined}
         />
       ) : null}
 
