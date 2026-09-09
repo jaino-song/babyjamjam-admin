@@ -91,7 +91,7 @@ jest.mock("@/components/app/clients/ClientAutocomplete", () => ({
     manualValue,
   }: {
     label: string;
-    onChange: (clientId: number, client: { id: number; name: string }) => void;
+    onChange: (clientId: number, client: { id: number; name: string; phone: string }) => void;
     onManualValueChange?: (value: string) => void;
     placeholder?: string;
     manualValue?: string;
@@ -414,6 +414,9 @@ describe("ServiceRecordLinkMessageForm", () => {
   });
 
   it("shows the receipt preparation failure even when the message side panel is hidden", async () => {
+    jest.mocked(useSystemTemplate).mockReturnValue({
+      data: { content: "{{name}} {{receiptUrl}}", description: "서비스 종료 안내" },
+    } as ReturnType<typeof useSystemTemplate>);
     jest.mocked(eformsignApi.prepareReceiptLink).mockRejectedValueOnce({
       response: { data: { reason: "pdf_unavailable" } },
     });
@@ -422,6 +425,12 @@ describe("ServiceRecordLinkMessageForm", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "계약서 PDF를 아직 불러올 수 없습니다. 잠시 후 다시 시도해 주세요.",
     );
+    fireEvent.click(screen.getByRole("button", { name: "링크 다시 준비" }));
+    await waitFor(() => {
+      expect(eformsignApi.prepareReceiptLink).toHaveBeenCalledTimes(2);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByTestId("generated-message")).toHaveTextContent("receipt/efr_prepared");
+    });
   });
 
   it("ignores an out-of-order receipt preparation response after changing the selected mother", async () => {

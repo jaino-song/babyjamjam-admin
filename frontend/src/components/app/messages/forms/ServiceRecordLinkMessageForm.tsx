@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { ClientAutocomplete } from "@/components/app/clients/ClientAutocomplete";
 import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocomplete";
+import { Button } from "@/components/ui/button";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { eformsignApi } from "@/services/api";
@@ -73,6 +74,7 @@ export const ServiceRecordLinkMessageForm = ({
   );
   const [preparedServiceRecordLink, setPreparedServiceRecordLink] = useState<PreparedServiceRecordLink | null>(null);
   const [preparedReceiptLink, setPreparedReceiptLink] = useState<PreparedReceiptLink | null>(null);
+  const [receiptPreparationAttempt, setReceiptPreparationAttempt] = useState(0);
   const [preparationErrorKey, setPreparationErrorKey] = useState<string | null>(null);
   const [receiptPreparationError, setReceiptPreparationError] = useState<{
     key: string;
@@ -248,6 +250,7 @@ export const ServiceRecordLinkMessageForm = ({
     clientId,
     mode,
     preparedReceiptLink?.selectionKey,
+    receiptPreparationAttempt,
     receiptSelectionKey,
     setClientName,
     setClientPhone,
@@ -420,13 +423,25 @@ ${resolvedReceiptUrl}
         />
       </TemplateFieldGridItem>
       {receiptSelectionKey !== null && receiptPreparationError?.key === receiptSelectionKey ? (
-        <p
-          role="alert"
+        <div
           data-component="desktop_messages_sections_service-end-notice-preparation-error"
-          className="text-sm text-destructive"
+          className="space-y-2"
         >
-          {receiptPreparationError.message}
-        </p>
+          <p role="alert" data-slot="message" className="text-sm text-destructive">
+            {receiptPreparationError.message}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setReceiptPreparationError(null);
+              setReceiptPreparationAttempt((attempt) => attempt + 1);
+            }}
+          >
+            링크 다시 준비
+          </Button>
+        </div>
       ) : null}
     </>
   ) : (
