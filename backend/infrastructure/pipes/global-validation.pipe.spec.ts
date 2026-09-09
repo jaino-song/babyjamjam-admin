@@ -132,25 +132,25 @@ describe("GlobalValidationPipe", () => {
             {
                 pointer: "/title",
                 code: "REQUIRED",
-                detail: "필수 항목을 입력해 주세요.",
+                detail: "필수 항목이에요.",
                 location: "body",
             },
             {
                 pointer: "/title",
                 code: "REQUIRED",
-                detail: "필수 항목을 입력해 주세요.",
+                detail: "필수 항목이에요.",
                 location: "body",
             },
             {
                 pointer: "/email",
                 code: "REQUIRED",
-                detail: "필수 항목을 입력해 주세요.",
+                detail: "필수 항목이에요.",
                 location: "body",
             },
             {
                 pointer: "/email",
                 code: "REQUIRED",
-                detail: "필수 항목을 입력해 주세요.",
+                detail: "필수 항목이에요.",
                 location: "body",
             },
         ]));
@@ -173,19 +173,19 @@ describe("GlobalValidationPipe", () => {
             {
                 pointer: "/email",
                 code: "INVALID_FORMAT",
-                detail: "입력 형식이 올바르지 않습니다.",
+                detail: "입력 형식이 올바르지 않아요.",
                 location: "body",
             },
             {
                 pointer: "/code",
                 code: "OUT_OF_RANGE",
-                detail: "입력값의 범위가 올바르지 않습니다.",
+                detail: "허용 범위를 벗어난 값이에요.",
                 location: "body",
             },
             {
                 pointer: "/count",
                 code: "OUT_OF_RANGE",
-                detail: "입력값의 범위가 올바르지 않습니다.",
+                detail: "허용 범위를 벗어난 값이에요.",
                 location: "body",
             },
         ]));
@@ -202,7 +202,7 @@ describe("GlobalValidationPipe", () => {
         expect(errors).toContainEqual({
             pointer: "/items/0/path~1with~0escape",
             code: "INVALID_FORMAT",
-            detail: "입력 형식이 올바르지 않습니다.",
+            detail: "입력 형식이 올바르지 않아요.",
             location: "body",
         });
     });
@@ -243,7 +243,7 @@ describe("GlobalValidationPipe", () => {
         expect(errors).toContainEqual({
             pointer: "/unsafe~1field~0name",
             code: "UNEXPECTED_FIELD",
-            detail: "허용되지 않은 항목입니다.",
+            detail: "허용되지 않는 항목이에요.",
             location: "body",
         });
         expect(serialized).not.toContain(secret);
@@ -262,7 +262,7 @@ describe("GlobalValidationPipe", () => {
         expect(getErrors(getResponse(exception))).toContainEqual({
             pointer: "/id",
             code: "INVALID_VALUE",
-            detail: "입력값이 올바르지 않습니다.",
+            detail: "허용되지 않는 값이에요.",
             location: "body",
         });
     });

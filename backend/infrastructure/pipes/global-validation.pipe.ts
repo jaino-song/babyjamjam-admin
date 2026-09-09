@@ -8,6 +8,7 @@ import {
     ValidationPipe,
     ValidationPipeOptions,
 } from "@nestjs/common";
+import { PROBLEM_CATALOG } from "@babyjamjam/shared/errors/problem-details";
 import { EformsignWebhookPayloadDto } from "interface/dto/eformsign-webhook.dto";
 
 type ValidationErrorCode =
@@ -32,14 +33,6 @@ interface StructuredValidationResponse {
     errors: StructuredValidationError[];
     outcome: "NOT_APPLIED";
 }
-
-const VALIDATION_ERROR_DETAILS: Readonly<Record<ValidationErrorCode, string>> = {
-    REQUIRED: "필수 항목을 입력해 주세요.",
-    UNEXPECTED_FIELD: "허용되지 않은 항목입니다.",
-    OUT_OF_RANGE: "입력값의 범위가 올바르지 않습니다.",
-    INVALID_FORMAT: "입력 형식이 올바르지 않습니다.",
-    INVALID_VALUE: "입력값이 올바르지 않습니다.",
-};
 
 const CONSTRAINT_ERROR_CODES: Readonly<Record<string, ValidationErrorCode>> = {
     isDefined: "REQUIRED",
@@ -81,7 +74,9 @@ function appendJsonPointerSegment(pointer: string, segment: string): string {
 }
 
 function getValidationErrorCode(constraint: string): ValidationErrorCode {
-    return CONSTRAINT_ERROR_CODES[constraint] ?? "INVALID_VALUE";
+    return Object.prototype.hasOwnProperty.call(CONSTRAINT_ERROR_CODES, constraint)
+        ? (CONSTRAINT_ERROR_CODES[constraint] ?? "INVALID_VALUE")
+        : "INVALID_VALUE";
 }
 
 function collectStructuredValidationErrors(
@@ -101,7 +96,7 @@ function collectStructuredValidationErrors(
             structuredErrors.push({
                 pointer,
                 code,
-                detail: VALIDATION_ERROR_DETAILS[code],
+                detail: PROBLEM_CATALOG.VALIDATION_FAILED.fieldErrors["ko-KR"][code],
                 location,
             });
         }
