@@ -20,6 +20,8 @@ export interface TemplateMessageFormLayoutArgs {
   requiresRecipientName: boolean;
   deliveryMode: TemplateMessageDeliveryMode;
   serviceRecordLinkPreparation?: ServiceRecordLinkPreparation | null;
+  /** False while the branch-effective system template is loading or failed. */
+  templateReady?: boolean;
 }
 
 export type TemplateMessageFormLayout = (args: TemplateMessageFormLayoutArgs) => ReactNode;
@@ -33,6 +35,7 @@ interface TemplateMessageFormFrameProps {
   requiresRecipientName?: boolean;
   deliveryMode?: TemplateMessageDeliveryMode;
   serviceRecordLinkPreparation?: ServiceRecordLinkPreparation | null;
+  templateReady?: boolean;
   renderLayout?: TemplateMessageFormLayout;
 }
 
@@ -45,6 +48,7 @@ export function TemplateMessageFormFrame({
   requiresRecipientName = false,
   deliveryMode = "sms",
   serviceRecordLinkPreparation,
+  templateReady = true,
   renderLayout,
 }: TemplateMessageFormFrameProps) {
   if (renderLayout) {
@@ -54,6 +58,7 @@ export function TemplateMessageFormFrame({
       requiresRecipientName,
       deliveryMode,
       serviceRecordLinkPreparation,
+      templateReady,
     })}</>;
   }
 
