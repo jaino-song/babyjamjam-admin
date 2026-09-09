@@ -1735,7 +1735,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                   </p>
                   {sendError.problem?.requestId ? (
                     <p data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_send-outcome_description_request-id">
-                      요청 ID: <code>{sendError.problem.requestId}</code>
+                      요청 ID: <code data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_send-outcome_description_request-id_value">{sendError.problem.requestId}</code>
                     </p>
                   ) : null}
                   {sendError.outcome === "UNKNOWN"
