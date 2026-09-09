@@ -46,6 +46,9 @@ packages/shared/src/errors/user-error-message.ts의 문자열 기반 번역은 �
 - 로컬 브라우저: 웹 고객 등록 panel과 모바일 dashboard 고객 편집에서 두 필드 오류/요청 ID/요약 초점/필드 링크/입력 보존을 확인했다. UNKNOWN 후 입력·단계를 변경해도 저장이 잠겨 있고 합성 백엔드 요청 횟수가 1회임을 확인했다. 고립된 로컬 합성 서버를 사용했으며 실제 고객/DB/문자 발송은 변경하지 않았다.
 - 공통 계약 독립 Sol 검수: `01939ec04`에서 SHIP. 기존 문구 단계와 UI 단계의 별도 검수는 쿠키 차단, 내부 필드명 표시, 공통 복구 안내 보완을 요구했으며 최종 통합 재검수 결과는 아래에 기록한다.
 
+- 최종 통합 `72ce5d3c6`: 웹 전체 216 suite / 1,376 test, 모바일 전체 219 suite / 1,365 test, shared 21 suite / 244 Jest test + 76 Node test 통과. shared/web/mobile 타입 검사와 UI architecture gate 통과. 공통 민감정보 정책은 auth_token, refresh_token, Cookie, Set-Cookie 및 접힌 다중 쿠키 헤더를 검사하며 진단 로그도 같은 정책으로 마스킹한다 (`EM-SEC-01`).
+- 의존성 변경은 없으며 기존 의존성 감사에는 critical 2 / high 7 / moderate 8 / low 1 항목이 남아 있다. 이번 오류 처리 변경이 해당 취약점을 해결했거나 실제 악용 가능성을 입증한 것은 아니다.
+
 위 미완료 목록은 전체 규격 준수 선언과 구분한다.
 
 ## 공개 오류 코드
