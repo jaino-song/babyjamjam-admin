@@ -151,3 +151,11 @@ packages/shared/src/errors/user-error-message.ts의 문자열 기반 번역은 �
 ### contract-already-signed
 
 `CONTRACT_ALREADY_SIGNED`
+
+## 2026-09-10 웹 직접 문자 후속 검증
+
+웹 `sendSms`가 원본 오류를 보존하며, TemplateSendForm은 검증된 NOT_APPLIED와 UNKNOWN/PARTIALLY_APPLIED를 구분한다. 불확실한 요청의 동일 화면 재발송 차단, 확정 접수 수신자 제외, 새 입력 보존, 중복 확인/발송 중 방식 전환 격리와 commit 이후 상태 갱신을 적용했다. 제공기록지의 외부 API와 발송 정책은 기존 동작을 유지한다.
+
+제품 SHA `8cc87adf33553f9cdb86e494391eb8da00a7b2db`: 관련29 tests/3 suites·타입·대상lint·UI gate 통과. fresh Sol correction SHIP/HIGH가 이전 지적을 모두 닫았다. 검토 순서/정확한 base/제한은 `docs/plans/bjj-319-remaining-plan.md`에 기록했다. 기존 unused-import 경고1개는 유지된다.
+
+잠금 수명은 mounted 웹 SMS 화면이며 새로고침/재접속의 영속 멱등성을 대신하지 않는다. Task1.1은 추적 소스3,111개/검색 후보797개를 조사 중이다. 후보는 결함 수가 아니며 `docs/error-management-inventory.json`의 미확인 항목은 완료로 승격하지 않았다. dev 병합·배포·실제 발송은 하지 않았다.

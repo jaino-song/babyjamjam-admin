@@ -261,3 +261,39 @@ TL;DR: 웹 문자 작성 화면에서 공급자 접수 여부가 불명확한 �
 **Phase close gate (not a task):** local tests → clean unit integration/cleanup → targeted integrated regression/types/UI architecture → exact base/SHA independent Sol SHIP. Backend/shared/runtime contracts remain unchanged; frontend sendSms 오류 전달 변경은 선언된 범위로 함께 검증한다. Any further required expansion returns to plan refinement. Task 1.1 remains open after this phase and full issue cannot close with its unverified backlog.
 
 **Phase 2a 계획 검토 결과:** Sol PLAN APPROVE / HIGH. 최초 HIGH 지적은 frontend sendSms가 원본 오류를 plain Error로 바꿔 outcome을 잃는 문제였으며, API 소유 메서드와 경계 테스트까지 정확한 네 파일로 범위를 확장해 해소했다. mounted 화면 수명 제한과 전수 조사 미완료 상태를 유지한다. 실행 SHA는 이 승인 기록이 포함된 실제 commit을 dispatch 직전에 확인해 결속한다.
+
+## Phase 2a-R — 확인된 웹 SMS 작업 크기 조정
+
+TL;DR: 기존 Task 2.0의 코드와 회귀를 잘라 중간 안전성을 완료로 표시하지 않고, 정확한 네 파일의 동일 발송 경로를 한 번에 검증한다. 기존 unit/base를 유지하고 이 문서의 독립 PLAN 승인 후 작업을 재개한다.
+
+- **Task 2.0: 웹 직접 문자 발송 결과·재진입 보호와 회귀 완성** (feature, high)
+  - 소유 파일과 성공/NOT_APPLIED/UNKNOWN/PARTIALLY_APPLIED 계약은 원 계획과 동일하다. 현재 제품 diff 약373줄, API 경계 테스트56줄이며 렌더 회귀가 추가로 필요하다. 정상·실패·혼합 결과와 비동기 제출은 동일 상태를 공유하므로, 중간 단계의 부분 수정에 안전장치 완료 판정을 내리지 않는다. 이 task만 650 changed lines 목표, Tier heavy로 명시적으로 조정한다. 650줄 초과 또는 추가 파일/공유 계약 영향이 필요하면 다시 범위와 분리안을 검토한다.
+  - main 중간 확인 지적도 회귀로 포함한다: await 뒤 최신 입력 비교는 낡은 render closure가 아니라 최신 ref로 수행; StrictMode effect 재실행 시 mounted 상태 복원; 제공기록지 경로에는 새 guard/reset을 적용하지 않음; 전체 잠금 중 NOT_APPLIED 수신자 재시도를 안내하지 않음. 범위를 넓히는 새 요구가 아니라 기존 계획의 입력 변경·수명·제외 범위를 정확히 구현한다.
+  - 현재 unit에서 구현과 모든 경계/렌더 테스트를 완료한 뒤 main 통합 검사와 fresh Sol FINAL을 받는다. 테스트 축소·skip·timeout 증가·UI 데이터 구조 재설계·별도 API/shared/provider 변경은 허용하지 않는다. Task 1.1 전수 조사와 전체 이슈 완료 gate는 열린 상태로 유지한다.
+  Dispatch metadata: `Phase: 2a-R` · `Parallel group: none` · `Execution: DELEGATE` · `Audit: SOL` · `Decision reason: 실제 diff로 확인한 동일 발송 상태의 결합과 회귀 분량; 정확한 네 파일 유지` · `Tier: heavy` · `Sandbox: local` · `Agent: luna_implementer` · `Model: gpt-5.6-luna` · `Effort: max` · `Phase starting integration commit: bab6abaa45032fc8454bb1bb2336bfe05827aa2a` · `Integration worktree: /Users/jaino/Development/babyjamjam-admin/korean-error-messages` · `Branch: codex/unit/bjj319-remain-2-0` · `Worktree: /Users/jaino/Development/babyjamjam-admin/unit-bjj319-remain-2-0` · `Service tier: fast` · `Paths: frontend/src/components/app/messages/forms/TemplateSendForm.tsx, frontend/src/components/app/messages/forms/__tests__/TemplateSendForm.component.test.tsx, frontend/src/services/api.ts [sendSms만], frontend/src/services/__tests__/api.test.ts [sendSms만]` · `Depends: Task 1.2`
+
+**착수 gate:** 원 계획 승인 SHA에 결속된 기존 unit을 보존하고 이 명시적 크기 조정의 PLAN 승인 후 재개한다. 크기 조정의 Sol PLAN APPROVE/HIGH 후 재개했고, 정확한 네 파일 649 changed lines로 구현했다. 구현 commit 091e6a38753e27a54aa5783c06c00263f4395d4a를 통합하고 clean unit worktree와 branch를 정리했다. 통합 검사 3 suites/24 tests, 타입, 대상 lint(기존 경고 1개), UI gate가 통과했다. 독립 FINAL 결과는 별도로 기록한다.
+
+**Phase close gate:** owned tests/types/lint/UI gate → main 통합/clean unit 정리 → 정확한 통합 SHA/base/diff의 Sol FINAL SHIP. mounted 화면 수명 밖의 재발송 안전성, provider/job 전체 규격 준수, dev 병합·배포·실제 발송 승인을 주장하지 않는다.
+
+## Phase 2a-C — 발송 방식 변경 시 이전 문자 작업 격리
+
+TL;DR: 같은 화면에서 발송 방식을 변경하면 이전 문자 확인은 무효화하고, 이미 진행 중인 문자 결과는 다른 발송 화면을 덮어쓰지 않게 한다. 문자 화면으로 돌아오면 불확실한 결과 잠금과 안내를 유지한다.
+
+- **Task 2.0C: 진행 중 문자 작업의 발송 방식 연결** (feature, high)
+  - Sol FINAL FIX_REQUIRED/HIGH at 091e6a38753e27a54aa5783c06c00263f4395d4a의 단일 지적을 수정한다. SMS snapshot/current continuation에 mode와 전환 세대를 연결해 SMS→다른 방식→SMS 전환에서도 오래된 lookup/confirm을 살리지 않는다. 발송 전 확인은 폐기하되 이미 보낸 요청은 취소되었다고 추측하지 않는다.
+  - 늦은 SMS 결과는 현재 다른 방식의 feedback/input/sending 상태를 덮어쓰지 않는다. UNKNOWN/PARTIAL은 SMS 전용 보관 상태에 잠금과 안내를 기록하고 복귀 때 표시한다. 진행 중 SMS와 다른 방식의 loading 소유권을 분리하되 제공기록지 API/요청 정책은 변경하지 않는다. 수신자 성공 제거와 새 입력 보존 계약을 유지한다.
+  - history pending / confirmation pending / send pending 중 같은 mounted mode 전환 세 가지 회귀를 추가한다. 같은 templateId/name/message를 유지해 mode 차이만 검증하고, 왕복 전환에도 stale lookup/confirmation 재실행이 없고 늦은 응답이 다른 화면 상태를 지우지 않는지 확인한다. 기존 24 tests, types, lint, UI gate, diff check 후 fresh Sol correction FINAL을 받는다.
+  Dispatch metadata: `Phase: 2a-C` · `Parallel group: none` · `Execution: DELEGATE` · `Audit: SOL` · `Decision reason: 확인된 동일 컴포넌트 비동기 상태 결합과 세 렌더 회귀; 유료 발송 재진입 위험` · `Tier: standard` · `Sandbox: local` · `Agent: luna_implementer` · `Model: gpt-5.6-luna` · `Effort: max` · `Phase starting integration commit: 091e6a38753e27a54aa5783c06c00263f4395d4a` · `Integration worktree: /Users/jaino/Development/babyjamjam-admin/korean-error-messages` · `Branch: codex/unit/bjj319-sms-mode-correction` · `Worktree: /Users/jaino/Development/babyjamjam-admin/unit-bjj319-sms-mode-correction` · `Service tier: fast` · `Paths: frontend/src/components/app/messages/forms/TemplateSendForm.tsx, frontend/src/components/app/messages/forms/__tests__/TemplateSendForm.component.test.tsx` · `Depends: Task 1.2`
+
+**크기와 착수 gate:** 원 Phase2a-R는 649줄 상태로 FIX_REQUIRED이며 완료가 아니다. 이 별도 correction은 350 changed lines 이내를 목표/상한으로 승인 요청한다. 전체 Phase2a 누적 950줄 이내, 원래 네 파일 경계 안의 두 파일만 변경한다. 순차 correction이며 Task2.0의 미해결 지적을 닫기 위한 것이고 완료되지 않은 Task2.0에 의존하는 후속 기능이 아니다. 추가 범위/상한 초과는 재검토한다. 독립 PLAN 승인 후 고정 SHA에서 unit 생성/착수한다.
+
+**위험과 대응:** 오래된 lookup이 새 lookup을 해제하는 경쟁은 전환 세대/작업 소유권으로 차단한다. 이미 전송한 요청을 무시해 재발송하는 위험은 결과 분류/잠금 보관을 유지해 막는다. 다른 방식의 draft/feedback 손실은 pending-mode 회귀로 검증한다. 실제 발송·DB·환경·의존성·API 변경은 없다.
+
+**Phase close gate:** local verification → clean unit integration/cleanup → integrated verification → fresh Sol FINAL. 기존 FINAL은 원래 네 파일의 불변 부분을 이미 검토했으므로 correction은 단일 지적과 상태 연결부를 재검토하되, 전수조사/전체 BJJ319 SHIP으로 확대하지 않는다. Task1.1은 계속 미완료다. 배포는 별도 승인 gate이며 필요시 correction commit을 되돌린다.
+
+**실측 크기 보정:** 구현 중 두 파일에서 242 additions +44 deletions =286 changed lines, 원 Phase2a 누적883줄을 확인해 일시 중지했다. 별도 loading 소유권, 전환 세대, 오래된 lookup 해제 방지와 세 회귀가 같은 상태에 결합되어 있다. 상한을 correction350/누적950으로 명시적으로 조정하며 파일·동작·검사 범위는 그대로다. 읽기 어려운 압축이나 회귀 축소는 하지 않는다. 독립 PLAN 재검토 후 재개한다.
+
+**실행 및 검토 결과 (2026-09-10):** Phase2a-R의 649줄 구현 `091e6a387`은 첫 FINAL에서 mode 전환 HIGH가 발견됐다. Phase2a-C의 크기 보정은 Sol PLAN APPROVE/HIGH를 받았으며 `d05e43c70`으로 통합했다. 재검토에서 이전 지적은 해소됐지만 서비스 응답 폐기 HIGH와 렌더 중 ref 변경 MEDIUM이 발견됐다. main이 정확한 두 파일에서 직접 수정했다(Execution DIRECT: 추가된 응답 폐기 guard를 복원하고 확인된 ref 갱신 위치를 commit effect로 옮기는 국소 수정; Audit SOL: 유료 발송과 동시성 영향). main runtime model/effort는 세션 메타데이터로 확인되지 않아 unknown으로 기록하며 선택된 main을 변경하지 않았다.
+
+최종 제품 `8cc87adf33553f9cdb86e494391eb8da00a7b2db`: correction base `091e6a387` 대비327 changed lines, 원 Phase2a base `bab6abaa4` 대비916 changed lines로 승인된350/950 상한 내다. 통합29 tests/3 suites·타입·대상lint·UI gate·diff check 통과, 기존 unused-import warning1개 유지. 추가 두 회귀는 수정 전 `d05e43c70`에서 실제 실패했다. fresh Sol FINAL SHIP/HIGH(base `d05e43c70` → `8cc87adf3`)에서 두 지적 모두 해소됐다. 기존 검토의 불변 범위와 단계별 correction 증거를 함께 보존하며 전체 BJJ-319 SHIP으로 확대하지 않는다. 두 unit worktree와 branch는 통합 직후 clean 상태로 정리했다. Task2.0은 해당 mounted 웹 SMS 범위에서 완료, Task1.1과 전체 이슈는 미완료다.

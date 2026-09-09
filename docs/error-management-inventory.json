@@ -161,15 +161,10 @@
     },
     {
       "id": "web-sms-unknown-replay",
-      "status": "legacy",
+      "status": "migrated",
       "path": "frontend/src/components/app/messages/forms/TemplateSendForm.tsx",
       "symbol": "sendMessages",
-      "lines": [
-        474,
-        535
-      ],
-      "observation": "Rejected requests and malformed successes are grouped as failed recipients and the UI invites retry without establishing NOT_APPLIED. handleSubmit also lacks a synchronous in-flight guard across duplicate-history lookup.",
-      "outcome_evidence": "Promise.allSettled rejection does not establish provider nonacceptance. Current feedback treats it as failure and retains retryable recipients.",
+      "outcome_evidence_at_base": "Promise.allSettled rejection does not establish provider nonacceptance. Current feedback treats it as failure and retains retryable recipients.",
       "spec_ids": [
         "EM-RETRY-05"
       ],
@@ -182,14 +177,258 @@
         "frontend/src/components/app/messages/forms/__tests__/TemplateSendForm.component.test.tsx",
         "frontend/src/services/__tests__/api.test.ts"
       ],
-      "owned_paths": ["frontend/src/components/app/messages/forms/TemplateSendForm.tsx", "frontend/src/components/app/messages/forms/__tests__/TemplateSendForm.component.test.tsx", "frontend/src/services/api.ts", "frontend/src/services/__tests__/api.test.ts"],
-      "api_boundary_gap": "sendSms currently replaces Axios errors with plain Error and loses Problem Details. Preserve original error in this method and verify the actual boundary.",
-      "dispatch_gate": "pending amended independent PLAN review and exact SHA binding",
-      "test_evidence": [],
+      "owned_paths": [
+        "frontend/src/components/app/messages/forms/TemplateSendForm.tsx",
+        "frontend/src/components/app/messages/forms/__tests__/TemplateSendForm.component.test.tsx",
+        "frontend/src/services/api.ts",
+        "frontend/src/services/__tests__/api.test.ts"
+      ],
+      "dispatch_gate": "Task2.0 completed through reviewed Phase2a corrections; no downstream broad task authorized by this record",
+      "test_evidence": [
+        {
+          "type": "local-integrated",
+          "sha": "8cc87adf33553f9cdb86e494391eb8da00a7b2db",
+          "suites": 3,
+          "tests": 29,
+          "result": "passed",
+          "checks": [
+            "types",
+            "targeted eslint:0 errors/1 existing warning",
+            "UI architecture",
+            "diff check"
+          ]
+        }
+      ],
       "implementation_task_id": "2.0",
-      "dispatch_ready": false
+      "dispatch_ready": false,
+      "observation_at_base": "Rejected requests and malformed successes are grouped as failed recipients and the UI invites retry without establishing NOT_APPLIED. handleSubmit also lacks a synchronous in-flight guard across duplicate-history lookup.",
+      "lines_at_base": [
+        474,
+        535
+      ],
+      "basis_sha": "bab6abaa45032fc8454bb1bb2336bfe05827aa2a",
+      "resolved_api_boundary_gap": "sendSms currently replaces Axios errors with plain Error and loses Problem Details. Preserve original error in this method and verify the actual boundary.",
+      "implementation_sha": "8cc87adf33553f9cdb86e494391eb8da00a7b2db",
+      "review_scope": "Mounted web SMS only; prior four-file review plus mode and committed-render correction reviews close all reported blockers."
     }
   ],
+  "root_review_evidence": [
+    {
+      "root": "backend/module/",
+      "review_status": "reviewed-no-direct-error-boundary",
+      "paths": [
+        "backend/module/agent.module.ts",
+        "backend/module/ai-chat.module.ts",
+        "backend/module/ai-chat.tokens.ts",
+        "backend/module/aligo.module.ts",
+        "backend/module/area-template.module.ts",
+        "backend/module/bank-account-info.module.ts",
+        "backend/module/call-inbox.module.ts",
+        "backend/module/chat-session.module.ts",
+        "backend/module/client.module.ts",
+        "backend/module/consultation-inquiry.module.ts",
+        "backend/module/document.module.ts",
+        "backend/module/eformsign-doc.module.ts",
+        "backend/module/eformsign-webhook.module.ts",
+        "backend/module/employee-schedule.module.ts",
+        "backend/module/employee.module.ts",
+        "backend/module/message-delivery.module.ts",
+        "backend/module/message-template.module.ts",
+        "backend/module/message.module.ts",
+        "backend/module/notification.module.ts",
+        "backend/module/out-of-pocket-price-info.module.ts",
+        "backend/module/receipt-link.module.ts",
+        "backend/module/scheduler-lease.module.ts",
+        "backend/module/service-record-entry.module.ts",
+        "backend/module/system-admin.module.ts",
+        "backend/module/system-setting.module.ts",
+        "backend/module/system-template.module.ts",
+        "backend/module/user.module.ts",
+        "backend/module/voucher-price-info.module.ts"
+      ],
+      "review_scope": "Module file bodies only; imported providers remain separately unverified. No global exception filter registration in this root.",
+      "evidence": "Read-only scout inspected 28 module bodies. Main verified exact HEAD bab6abaa45032fc8454bb1bb2336bfe05827aa2a, clean module paths and no diff vs dev in this root; source-scope uncertainty in scout report cannot affect this unchanged root.",
+      "direct_error_owner_count": 0,
+      "notes": [
+        "EformsignCredentialBoundary/EformsignDispatchBoundaryService are DI registrations, not proof of their implementation compliance.",
+        "scheduler-lease @Global denotes DI scope, not global error handling."
+      ]
+    },
+    {
+      "root": "packages/service-record-ui/src/",
+      "sha": "bab6abaa45032fc8454bb1bb2336bfe05827aa2a",
+      "scope": "Exact four runtime files inspected by read-only scout in the bound task worktree.",
+      "source_reviews": [
+        {
+          "path": "packages/service-record-ui/src/index.ts",
+          "review_status": "reviewed-no-direct-error-boundary",
+          "reason": "Public re-exports only."
+        },
+        {
+          "path": "packages/service-record-ui/src/types.ts",
+          "review_status": "reviewed-no-direct-error-boundary",
+          "reason": "Type contracts only."
+        },
+        {
+          "path": "packages/service-record-ui/src/form-definition.ts",
+          "review_status": "unverified",
+          "boundary_role": "Pure field completeness/formatting utilities; caller validation/presentation semantics still require review."
+        },
+        {
+          "path": "packages/service-record-ui/src/ServiceRecordWizard.tsx",
+          "review_status": "unverified",
+          "boundary_role": "Owns local date validation/read-only guards and error display, forwards mutation callbacks from props. No direct API mutation does not exempt UI error behavior.",
+          "symbols": [
+            "ServiceRecordWizard",
+            "isValidDateOnly"
+          ],
+          "discovery_task_id": "1.1.12",
+          "implementation_slot": "5.1"
+        }
+      ],
+      "limitations": [
+        "Callback owners and rendered accessibility/error preservation tests not yet connected.",
+        "Root is not fully migrated merely because lexical candidate count is zero."
+      ]
+    }
+  ],
+  "additional_contract_evidence": [
+    {
+      "id": "shared-public-contract-core",
+      "status": "migrated",
+      "path": "packages/shared/src/errors/problem-details.ts",
+      "symbols": [
+        "createProblemDetails",
+        "parseProblemDetails",
+        "normalizeApiError",
+        "resolveProblemMessage"
+      ],
+      "review_scope": "Common public contract and safe runtime normalization only; domain-code completeness and every caller remain outside this record.",
+      "spec_ids": [
+        "EM-CORE-01",
+        "EM-CORE-02",
+        "EM-API-02",
+        "EM-API-03",
+        "EM-API-04",
+        "EM-API-05",
+        "EM-FE-02",
+        "EM-FE-03",
+        "EM-RETRY-05"
+      ],
+      "consumer_paths": [
+        "backend/infrastructure/filters/problem-response.ts",
+        "packages/shared/src/api/route-utils.ts"
+      ],
+      "test_paths": [
+        "packages/shared/src/errors/problem-details.test.ts",
+        "packages/shared/src/api/problem-proxy.test.ts"
+      ],
+      "test_evidence": [
+        {
+          "type": "CI",
+          "sha": "6f38ab956193e06cd870107744077181e2b6ab65",
+          "result": "SUCCESS",
+          "url": "https://github.com/jaino-song/babyjamjam-admin/actions/runs/34373847282/job/102541524270",
+          "scope": "shared contracts type-check and tests"
+        }
+      ],
+      "current_source_equivalence": "git diff 6f38ab956 HEAD -- packages/shared/src backend/vendor/shared-agent is empty at bab6abaa4; regenerated24 runtimefiles match vendor.",
+      "prior_review_evidence": "docs/error-management.md records staged contract/UI/correction independent reviews; this record does not expand any narrow review into whole issue approval."
+    },
+    {
+      "id": "shared-message-legacy-adapter",
+      "status": "legacy",
+      "path": "packages/shared/src/errors/user-error-message.ts",
+      "review_scope": "Designated string-based compatibility adapter, pending full consumer migration and removal conditions.",
+      "spec_ids": [
+        "EM-CHANGE-03"
+      ],
+      "consumer_paths": [
+        "packages/shared/src/errors/api-error-message.ts"
+      ],
+      "test_paths": [
+        "packages/shared/src/errors/user-error-message.test.ts"
+      ],
+      "removal_gate": "docs/error-management.md compatibility section: all domain codes and consumers migrated, old-client/webhook compatibility verified.",
+      "implementation_task_id": "6.1",
+      "approved_exception": false
+    }
+  ],
+  "pending_findings": [
+    {
+      "id": "web-sms-bff-json-parse",
+      "path": "frontend/src/app/api/message-deliveries/sms/route.ts",
+      "symbol": "POST",
+      "observation": "request.json() is inside generic try/catch; no shared parseBody validation present. Verify malformed local JSON classification and status through errorResponse before marking confirmed defect.",
+      "classification": "unverified",
+      "task_id": "6.1",
+      "basis_sha": "bab6abaa45032fc8454bb1bb2336bfe05827aa2a",
+      "not_in_phase_2a": true
+    }
+  ],
+  "phase2a_evidence": {
+    "implementation_sha": "091e6a38753e27a54aa5783c06c00263f4395d4a",
+    "base_sha": "bab6abaa45032fc8454bb1bb2336bfe05827aa2a",
+    "integrated_tests": {
+      "suites": 3,
+      "tests": 29,
+      "result": "passed"
+    },
+    "review": "SHIP/HIGH correction at8cc87adf33553f9cdb86e494391eb8da00a7b2db; closes prior blockers through staged exact-scope reviews",
+    "status": "completed-mounted-web-sms-scope",
+    "whole_issue_complete": false,
+    "correction_sha": "8cc87adf33553f9cdb86e494391eb8da00a7b2db",
+    "correction_changed_lines": 327,
+    "cumulative_changed_lines": 916,
+    "review_history": [
+      "091e6a387 FIX_REQUIRED/HIGH: same-mounted mode isolation",
+      "d05e43c70: original mode finding closed; FIX_REQUIRED/HIGH: discarded service result and uncommitted render ref mutation"
+    ],
+    "limitations": [
+      "Same mounted SMS form only; reload/reentry durable safety deferred.",
+      "Full inventory and whole BJJ-319 incomplete.",
+      "Service-link provider/API behavior remains existing policy."
+    ]
+  },
+  "presend_review_evidence": {
+    "basis_sha": "091e6a38753e27a54aa5783c06c00263f4395d4a",
+    "path": "backend/interface/controllers/message-delivery.controller.ts",
+    "symbol": "resolveSmsRecipients",
+    "evidence": "Main verified exact controller lines80-110 and444-515 in integration. Recipient checks run before sender approval and pending-log/provider sequence; recipient lookup DOES perform DB reads. Do not describe this as before any DB action.",
+    "raw_branches": [
+      "missing branch",
+      "both client and employee",
+      "empty/invalid normalized recipients",
+      "client/employee requires one receiver",
+      "selected entity absent in tenant",
+      "selected entity phone mismatch",
+      "ambiguous freeform entity",
+      "freeform recipient absent"
+    ],
+    "status": "legacy; exact public-code mapping and complete regression mapping pending",
+    "task_id": "2.1",
+    "dispatch_ready": false
+  },
+  "shared_source_review": {
+    "basis_sha": "091e6a38753e27a54aa5783c06c00263f4395d4a",
+    "root": "packages/shared/src/",
+    "coverage": "44 runtime paths and21 test paths enumerated by read-only scout; source ownership pass only",
+    "semantic_review_complete": false,
+    "additional_zero_regex_candidates_requiring_review": [
+      "packages/shared/src/auth/register.ts",
+      "packages/shared/src/auth/reset-password-errors.ts",
+      "packages/shared/src/errors/korean-error-messages.ts",
+      "packages/shared/src/errors/problem-presentation.ts",
+      "packages/shared/src/errors/safe-api-error-message.ts",
+      "packages/shared/src/file-storage/capabilities.ts"
+    ],
+    "reason": "Schemas, error maps, sanitizers and presentation functions can own error behavior without matching discovery regex. Missing lexical owner entries do not establish compliance.",
+    "limitations": [
+      "Consumer and specification linkage not completed.",
+      "No new passing test evidence from this read-only pass.",
+      "Do not require one-to-one filename pairing between test and runtime files; agent-contracts/problem-proxy tests can cover multiple owners."
+    ]
+  },
   "source_manifest": [
     {"path":"backend/application/agent/action-coordinator.service.spec.ts","root":"backend/application/","kind":"test","candidate_count":17,"review_status":"unverified","discovery_task_id":"1.1.01"},
     {"path":"backend/application/agent/action-coordinator.service.ts","root":"backend/application/","kind":"runtime","candidate_count":40,"review_status":"unverified","discovery_task_id":"1.1.01"},
