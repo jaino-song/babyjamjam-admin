@@ -821,9 +821,21 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
                 expect.objectContaining({ id: rebuiltJob!.id, status: "sent" }),
             );
             expect(sendSpy).toHaveBeenCalledTimes(1);
-            expect(sendSpy.mock.calls[0]?.[0].payload).not.toMatchObject({
+            const preparedCall = sendSpy.mock.calls[0];
+            const preparedSnapshot = preparedCall?.[1]?.snapshot;
+            // The provider-bound payload is the frozen preparation snapshot
+            // (the second sendPreparedJob argument), not the persisted job
+            // envelope. Keep the envelope assertion as an additional guard,
+            // then prove the actual provider input carries the rebuilt R2
+            // template and cannot contain the obsolete R1 body.
+            expect(preparedCall?.[0].payload).not.toMatchObject({
                 messageBody: "obsolete R1 payload",
             });
+            expect(preparedSnapshot).toEqual(expect.objectContaining({
+                templateKey: r2TemplateKey,
+                message: expect.stringMatching(/\S/),
+            }));
+            expect(preparedSnapshot?.message).not.toContain("obsolete R1 payload");
         } finally {
             sendSpy.mockRestore();
             await prisma.message_trigger_job.deleteMany({ where: { ruleId } });
