@@ -65,6 +65,10 @@ packages/shared/src/errors/user-error-message.ts의 문자열 기반 번역은 �
 
 위 미완료 목록은 전체 규격 준수 선언과 구분한다.
 
+## 외부 문자 결과 해석 근거
+
+[알리고 공식 SMS API 문서](https://smartsms.aligo.in/smsapi.html)의 `result_code`는 API 수신 결과이고 `success_cnt`/`error_cnt`는 요청 성공/실패 건수다. 따라서 접수 결과를 최종 배달 완료라고 표현하지 않는다. 음수 결과 코드의 실패 응답은 건수 필드가 없을 수 있으며, 성공 응답의 건수 모순·형식 오류는 미처리로 단정하지 않는다.
+
 ## 후속 전환 검증 · 2026-09-09
 
 - 최신 `dev`의 메시지 템플릿 입력 보존 변경을 `a815224dd`에 통합했다. 웹 218 suite / 1,393 test, 타입 검사와 UI architecture gate 통과. 충돌한 이전 편집기는 새 공통 편집기를 재노출하고 안전한 오류 문구 처리를 실제 소유 컴포넌트로 옮겼다.
