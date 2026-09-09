@@ -27,6 +27,9 @@ describe("mobile contracts action lifecycle", () => {
     expect(source).toContain(
       "shouldOpenFinalizeIframe(fallbackHint, transportOutcomeUnknown)",
     );
+    expect(source).toContain("parseFinalizeHeadlessResult(headless)");
+    expect(source).toContain("setIsFinalizeProgressOpen(false)");
+    expect(source).not.toContain('console.warn("[finalize]');
   });
 
   it("wires the receipt-link send action through a busy confirm modal", () => {
@@ -47,13 +50,24 @@ describe("mobile contracts action lifecycle", () => {
   // opens the confirm modal — it must never call eformsignApi.sendReceiptLink or the
   // handleSendReceiptLink mutation itself. Mutant that must fail: the action's onClick
   // becoming a no-op (or calling the mutation directly, skipping the confirm modal).
-  it("pins the receipt-send trigger to opening the confirm modal, and the modal's approve action to the send mutation", () => {
+  it("pins the receipt-send trigger to opening the confirm modal, and the modal's approve action to the guarded send mutation", () => {
     expect(source).toContain("onClick: () => setIsReceiptSendConfirmOpen(true)");
     expect(source).toContain("onApprove={handleSendReceiptLink}");
     expect(source).toContain(
-      "const handleSendReceiptLink = async () => {\n    setIsSendingReceiptLink(true);",
+      "const handleSendReceiptLink = async () => {\n    if (isReceiptSendBlocked) return;\n    setIsSendingReceiptLink(true);",
     );
-    expect(source).toContain("const result = await eformsignApi.sendReceiptLink(doc.id);");
+    expect(source).toContain("onSendReceiptLink={handleReceiptLinkSend}");
+    expect(source).toContain("if (!beginContractMutation(\"receipt\", doc.id)) return;");
+    expect(source).toContain("const result = parseReceiptLinkResult(await eformsignApi.sendReceiptLink(doc.id));");
+    expect(source).toContain("normalizeContractMutationError(error, \"receipt\", doc.id)");
+  });
+
+  it("renders persistent mutation outcomes with the shared alert presentation and date target", () => {
+    expect(source).toContain("<Alert");
+    expect(source).toContain("dataComponents={{");
+    expect(source).toContain("resolveProblemPresentation(\"ko-KR\")");
+    expect(source).toContain("id={CONTRACT_FINALIZE_END_DATE_INPUT_ID}");
+    expect(source).toContain("onRefreshMutationOutcome={refreshMutationOutcome}");
   });
 
   it("blanks the shared UNKNOWN_CUSTOMER_NAME placeholder before building the receipt-send confirm copy (F6)", () => {
