@@ -233,3 +233,31 @@ TL;DR: 정확한 배포 후보와 되돌리기 절차를 준비하고 승인된 
 ### 계획 검토 결과
 
 독립 Sol PLAN 검토: APPROVE / HIGH. 최초 지적은 Phase 1 조사 범위에서 domain·provider adapter·persistence·automation 등이 빠질 수 있다는 점이었고, 모든 관련 source root와 발견/분류 수 대조를 추가해 해소했다. 현재 즉시 구체화 가능한 실행 범위는 Phase 1이며, 이후 슬롯은 inventory를 바탕으로 정확한 파일·작은 수직 작업·metadata를 확정하고 검토한 뒤 실행한다. 이 계획 승인 결과는 실제 발송·서명·병합·배포 승인이 아니다.
+
+## 실행 구체화 — 2026-09-10 Phase 1 조사 결과
+
+TL;DR: 모바일 회귀 수정은 완료했지만 전수 의미 검토는 진행 중이다. 전체 목록을 완료로 가장하지 않고, 현재 브랜치에서 직접 확인한 웹 문자 재발송 위험만 먼저 독립 작업으로 처리하도록 실행 순서를 구체화한다.
+
+- 사용자 `진행` 지시로 실행을 시작했다. Phase 1 실제 기준은 계획만 추가된 `09cfd40a60f244e5bc6d34dc7ab392af7cefa7d9`이며, 제품 기준 `fc3b2633a5f0f346c5cc6d04cc2ecf256784551b`와 제품 차이는 없다.
+- Task 1.2는 `6f38ab956193e06cd870107744077181e2b6ab65`에서 완료했다. 기존 P2002/내부 오류 응답을 유지하며 지속 UNKNOWN 요약, 입력 보존, 수정/반복 클릭 뒤 POST 1회, 화면 전체 민감정보 비노출을 검증했다. unit 7개와 통합 브라우저 7개, 타입/대상 lint/문구 drift gate 통과. 제품 코드는 불변이며 main SELF로 확인했다.
+- Task 1.1은 **미완료**다. `docs/error-management-inventory.json`에 추적 소스 3,111개와 정규식 후보 owner 797개를 기록했다. 모든 소스 파일은 root별 조사 task에 연결했으며 미확인 상태를 보존한다. 후보가 없는 module/Prisma/service-record-ui 파일도 검토 대기 목록에서 제외하지 않는다. 의미 검토, 규격 ID, 소비자와 검증 증거는 아직 채워지지 않았으므로 미분류 0이나 전수 완료를 주장하지 않는다.
+- 일부 조사 보고서의 줄 번호가 dev checkout과 일치해 채택하지 않았다. 아래 근거는 task worktree의 실제 HEAD와 절대 경로로 다시 확인했다.
+- 확인된 위험: `frontend/src/components/app/messages/forms/TemplateSendForm.tsx`의 `sendMessages`는 모든 reject/비정상 성공을 실패 목록으로 합쳐 재발송을 안내한다. `handleSubmit`과 중복 발송 확인도 React state만으로 같은 tick의 재진입을 막지 않는다. 공급자 접수 여부를 모르는 결과에 재실행을 안내하는 현재 흐름이 수정 대상이다. 제공기록지 링크 발송은 별도 흐름이며 이번 작은 작업에 포함하지 않는다.
+
+**순서 변경의 범위:** 아래 Phase 2a만 Task 1.1 전체 완료를 기다리는 기존 gate의 명시적 예외로 제안한다. 근거/소유 파일/검증이 확정된 SMS 소비자의 안전장치 수정이며, 전수 조사·나머지 phase의 선행 조건·전체 종료 기준은 유지한다. 이 변경은 독립 PLAN 검토 통과 뒤에만 실행한다. Task 1.1 또는 Phase 1 전체를 완료로 바꾸지 않는다. Phase 2의 서버 사전 조건 전환 및 모든 후속 광범위 슬롯은 별도 exact Paths와 검토 없이 dispatch하지 않는다.
+
+## Phase 2a — 웹 문자 결과 불명 시 재발송 차단
+
+TL;DR: 웹 문자 작성 화면에서 공급자 접수 여부가 불명확한 요청을 실패로 단정하지 않고, 입력과 상태 확인 안내를 유지하며 같은 화면의 재발송을 막는다. 이미 확정된 성공 수신자에게도 재전송하지 않는다.
+
+- **Task 2.0: 웹 직접 문자 발송의 결과 판정과 재진입 보호** (feature, high)
+  - 기존 공통 `normalizeApiError`/공개 표시 계약과 현재 인라인 feedback UI를 재사용한다. 요청별 성공은 resultCode 1, 정수 successCount 1, errorCount 0인 경우만 인정한다. malformed/transport/UNKNOWN/PARTIALLY_APPLIED는 상태 확인과 지속 잠금, 검증된 NOT_APPLIED만 수정 후 사용자 재제출을 허용한다. 상태코드나 영문 문구로 미처리를 추측하지 않는다.
+  - 동기 ref로 제출→이력 조회→확인→발송 경로의 중복 진입을 막는다. 다중 수신자 중 성공·미처리·불명확 결과를 구분하고 불명확 수신자나 성공 수신자를 재발송하지 않는다. 입력/템플릿 변경으로 불명확 잠금이 사라지지 않게 한다. 제공기록지 링크 발송, 공유 catalog와 provider/job/retry 정책은 변경하지 않는다. `frontend/src/services/api.ts`의 sendSms만 원본 Axios/Problem Details를 보존하도록 바꾸고, 실제 API 경계 테스트로 NOT_APPLIED/UNKNOWN/PARTIALLY_APPLIED 전달을 확인한다. 다른 API 메서드는 변경하지 않는다. 잠금은 같은 mounted 화면의 수명에 한정하며 새로고침·재접속 후 안전성은 inventory의 멱등성/상태 확인 후속 범위로 남긴다.
+  - 실제 렌더 테스트로 정상/잘못된 성공 응답, 409 레거시와 안전한 NOT_APPLIED, timeout/부분 접수, 동시 제출·확인, 수정 뒤 잠금, 혼합 수신자 결과·민감정보 비노출을 검증한다. API 테스트에서 원본 오류 객체와 응답 전달을 확인하고, 컴포넌트 테스트도 실제 경계가 전달하는 오류 형태를 사용한다. plain Error rejection은 UNKNOWN으로 잠긴다. 기존 정상/제공기록지 테스트를 유지한다. 목표 diff 400줄 이내이며 초과 예상 시 분리안을 보고한다.
+  Dispatch metadata: `Phase: 2a` · `Parallel group: none` · `Execution: DELEGATE` · `Audit: SOL` · `Decision reason: 독립된 웹 소비자 구현과 렌더 회귀 분량; 유료 발송의 중복 실행 위험` · `Tier: standard` · `Sandbox: local` · `Agent: luna_implementer` · `Model: gpt-5.6-luna` · `Effort: max` · `Phase starting integration commit: bind reviewed plan commit before dispatch; product baseline 6f38ab956193e06cd870107744077181e2b6ab65` · `Integration worktree: /Users/jaino/Development/babyjamjam-admin/korean-error-messages` · `Branch: codex/unit/bjj319-remain-2-0` · `Worktree: /Users/jaino/Development/babyjamjam-admin/unit-bjj319-remain-2-0` · `Service tier: fast` · `Paths: frontend/src/components/app/messages/forms/TemplateSendForm.tsx, frontend/src/components/app/messages/forms/__tests__/TemplateSendForm.component.test.tsx, frontend/src/services/api.ts [sendSms만], frontend/src/services/__tests__/api.test.ts [sendSms만]` · `Depends: Task 1.2`
+
+**착수 gate (not a task):** 현재 task worktree의 정확한 source/test 경로와 sendSms API 오류 보존 누락을 확인하고, 수정된 계획의 독립 PLAN APPROVE를 받은 뒤 그 계획을 포함한 정확한 시작 SHA를 dispatch에 결속한다.
+
+**Phase close gate (not a task):** local tests → clean unit integration/cleanup → targeted integrated regression/types/UI architecture → exact base/SHA independent Sol SHIP. Backend/shared/runtime contracts remain unchanged; frontend sendSms 오류 전달 변경은 선언된 범위로 함께 검증한다. Any further required expansion returns to plan refinement. Task 1.1 remains open after this phase and full issue cannot close with its unverified backlog.
+
+**Phase 2a 계획 검토 결과:** Sol PLAN APPROVE / HIGH. 최초 HIGH 지적은 frontend sendSms가 원본 오류를 plain Error로 바꿔 outcome을 잃는 문제였으며, API 소유 메서드와 경계 테스트까지 정확한 네 파일로 범위를 확장해 해소했다. mounted 화면 수명 제한과 전수 조사 미완료 상태를 유지한다. 실행 SHA는 이 승인 기록이 포함된 실제 commit을 dispatch 직전에 확인해 결속한다.
