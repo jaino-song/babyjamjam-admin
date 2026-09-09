@@ -60,6 +60,7 @@ packages/shared/src/errors/user-error-message.ts의 문자열 기반 번역은 �
 - 공통 계약 독립 Sol 검수: `01939ec04`에서 SHIP. 기존 문구 단계와 UI 단계의 별도 검수는 쿠키 차단, 내부 필드명 표시, 공통 복구 안내 보완을 요구했으며 최종 통합 재검수 결과는 아래에 기록한다.
 
 - 최종 통합 `72ce5d3c6`: 웹 전체 216 suite / 1,376 test, 모바일 전체 219 suite / 1,365 test, shared 21 suite / 244 Jest test + 76 Node test 통과. shared/web/mobile 타입 검사와 UI architecture gate 통과. 공통 민감정보 정책은 auth_token, refresh_token, Cookie, Set-Cookie 및 접힌 다중 쿠키 헤더를 검사하며 진단 로그도 같은 정책으로 마스킹한다 (`EM-SEC-01`).
+- 최신 dev `ec85e6265`(메시지 템플릿 목록 변경) 통합 후 웹 217 suite / 1,386 test, 웹 타입 검사 및 UI gate 통과. UI 기준 충돌은 기존 35개 경고의 소스가 동일함을 대조한 뒤 줄 위치만 맞췄다. backend/mobile/shared 오류 처리 코드는 이 동기화에서 변경하지 않았다.
 - 의존성 변경은 없으며 기존 의존성 감사에는 critical 2 / high 7 / moderate 8 / low 1 항목이 남아 있다. 이번 오류 처리 변경이 해당 취약점을 해결했거나 실제 악용 가능성을 입증한 것은 아니다.
 
 위 미완료 목록은 전체 규격 준수 선언과 구분한다.
