@@ -169,7 +169,7 @@ describe("AdminServiceRecordService", () => {
         expect(prisma.employee_schedule.findMany).toHaveBeenCalled();
     });
 
-    it("adds the canonical all-session projection for unwritten editor slots", async () => {
+    it("adds the canonical all-session projection to the regular overview for unwritten slots", async () => {
         const prisma = createPrisma();
         const assignmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
         const source = {
@@ -236,7 +236,7 @@ describe("AdminServiceRecordService", () => {
             editRepository as never,
         );
 
-        const overview = await service.getClientEditor("branch-1", 100);
+        const overview = await service.getClientOverview("branch-1", 100);
 
         expect(overview.scheduleProjection?.blockingReasons).toEqual([]);
         expect(overview.scheduleProjection?.entries.map((entry) => entry.serviceDate)).toEqual([
