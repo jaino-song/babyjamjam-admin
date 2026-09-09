@@ -273,6 +273,7 @@ model client {
   messageTriggerJobs     message_trigger_job[]
   serviceRecordCase      service_record_case?
   receiptLinkTokens      receipt_link_token[]
+  serviceRecordRevisionDocumentStates service_record_revision_document_state[]
 
   @@unique([branchId, phoneNormalized], map: "client_branch_phone_normalized_key")
   @@index([areaId], map: "idx_client_area")
@@ -364,6 +365,9 @@ model eformsign_doc {
   employeeScheduleId         Int?                           @map("employee_schedule_id")
   templateId                 String?                        @map("template_id")
   serviceRecordCaseId        String?                        @map("service_record_case_id") @db.Uuid
+  /// Nullable for legacy documents; revision-bound snapshots must populate
+  /// this server-owned identity before pointer promotion.
+  revisionId                 String?                        @map("revision_id") @db.Uuid
   snapshotVersion            Int?                           @map("snapshot_version")
   snapshotChunkIndex         Int?                           @map("snapshot_chunk_index")
   detailPayload              Json?                          @map("detail_payload") @db.JsonB
@@ -380,6 +384,7 @@ model eformsign_doc {
   client                     client?                        @relation("eformsign_doc_client_idToclient", fields: [clientId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   employeeSchedule           employee_schedule?             @relation(fields: [employeeScheduleId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   serviceRecordCase          service_record_case?           @relation(fields: [serviceRecordCaseId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  revision                   service_record_revision?       @relation("eformsign_doc_revision", fields: [branchId, serviceRecordCaseId, revisionId], references: [branchId, serviceRecordCaseId, id], onDelete: NoAction, onUpdate: NoAction, map: "eformsign_doc_revision_fkey")
   serviceRecordSnapshotChunk service_record_snapshot_chunk?
   branch                     branch?                        @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   files                      eformsign_doc_file[]
@@ -392,6 +397,7 @@ model eformsign_doc {
   @@index([employeeScheduleId], map: "idx_eformsign_doc_employee_schedule_id")
   @@index([templateId], map: "idx_eformsign_doc_template_id")
   @@index([serviceRecordCaseId], map: "idx_eformsign_doc_service_record_case_id")
+  @@index([branchId, serviceRecordCaseId, revisionId, snapshotVersion, snapshotChunkIndex], map: "idx_eformsign_doc_revision_version")
   @@index([permanentPurgeRequestedAt], map: "idx_eformsign_doc_permanent_purge_requested_at")
 }
 
@@ -630,6 +636,9 @@ model branch {
   serviceRecordCases            service_record_case[]
   serviceRecordAssignments      service_record_assignment[]
   serviceRecordSnapshotChunks   service_record_snapshot_chunk[]
+  serviceRecordEditDrafts       service_record_edit_draft[]
+  serviceRecordRevisions         service_record_revision[]
+  serviceRecordRevisionDocumentStates service_record_revision_document_state[]
   scheduleChangeRequests        schedule_change_request[]
   authSessions                  auth_session[]
   agentSessions                 agent_session[]
@@ -1206,9 +1215,124 @@ model service_record_case {
   legacyHeaders         service_record[]
   snapshotChunks        service_record_snapshot_chunk[]
   eformsignDocs         eformsign_doc[]
+  editDrafts            service_record_edit_draft[]
+  revisions             service_record_revision[]
+  revisionDocumentStates service_record_revision_document_state[]
 
+  // Revision pointers are intentionally nullable. Existing cases and legacy
+  // snapshot chunks are not backfilled or rewired by the editor foundation.
+  plannedSessions                 Json?    @map("planned_sessions")
+  currentRevisionId               String?  @map("current_revision_id") @db.Uuid
+  currentUsableRevisionId         String?  @map("current_usable_revision_id") @db.Uuid
+  currentUsableDocumentVersion    Int?     @map("current_usable_document_version")
+  currentRevision                 service_record_revision? @relation("service_record_case_current_revision", fields: [branchId, id, currentRevisionId], references: [branchId, serviceRecordCaseId, id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_case_current_revision_fkey")
+  currentUsableRevision           service_record_revision? @relation("service_record_case_current_usable_revision", fields: [branchId, id, currentUsableRevisionId], references: [branchId, serviceRecordCaseId, id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_case_current_usable_revision_fkey")
+
+  @@unique([branchId, id], map: "uniq_service_record_case_branch_id")
+  @@unique([branchId, clientId, id], map: "uniq_service_record_case_branch_client_id")
   @@index([branchId, status], map: "idx_service_record_case_branch_status")
   @@index([status, finalizationDueAt], map: "idx_service_record_case_finalization_due")
+}
+
+/// Branch-scoped, durable working copy for the future administrator editor.
+/// Actor ids are scalar audit snapshots on purpose: deleting a user must not
+/// erase or block this history. The source fields and snapshot are written only
+/// when a draft is first created; CAS updates change `changes` and its version.
+model service_record_edit_draft {
+  id                    String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId              String              @map("branch_id") @db.Uuid
+  serviceRecordCaseId   String              @map("service_record_case_id") @db.Uuid
+  createdByUserId       String              @map("created_by_user_id") @db.Uuid
+  updatedByUserId       String              @map("updated_by_user_id") @db.Uuid
+  discardedByUserId     String?             @map("discarded_by_user_id") @db.Uuid
+  sourceCaseVersion     Int                 @map("source_case_version")
+  sourceFingerprint     String              @map("source_fingerprint")
+  sourceSnapshot        Json                @map("source_snapshot") @db.JsonB
+  changes               Json                @default("{}") @db.JsonB
+  draftVersion          Int                 @default(1) @map("draft_version")
+  status                String              @default("ACTIVE") @db.VarChar(20)
+  createdAt             DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  discardedAt           DateTime?           @map("discarded_at") @db.Timestamptz(6)
+  confirmedByUserId     String?             @map("confirmed_by_user_id") @db.Uuid
+  confirmedAt           DateTime?           @map("confirmed_at") @db.Timestamptz(6)
+  confirmationIdempotencyKey String?        @map("confirmation_idempotency_key") @db.Uuid
+  confirmationFingerprint String?           @map("confirmation_fingerprint") @db.Char(64)
+  confirmationResponse  Json?               @map("confirmation_response") @db.JsonB
+  branch                branch              @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  serviceRecordCase     service_record_case @relation(fields: [branchId, serviceRecordCaseId], references: [branchId, id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_edit_draft_case_branch_fkey")
+
+  @@index([branchId, serviceRecordCaseId, status], map: "idx_service_record_edit_draft_branch_case_status")
+  @@index([serviceRecordCaseId, status], map: "idx_service_record_edit_draft_case_status")
+}
+
+/// Append-only immutable copy of a confirmed editor payload. Document
+/// generation state belongs to a later, separate model; this row is never
+/// updated after insertion.
+model service_record_revision {
+  id                    String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId              String              @map("branch_id") @db.Uuid
+  serviceRecordCaseId   String              @map("service_record_case_id") @db.Uuid
+  revisionNumber        Int                 @map("revision_number")
+  confirmedByUserId     String              @map("confirmed_by_user_id") @db.Uuid
+  confirmedAt           DateTime            @default(now()) @map("confirmed_at") @db.Timestamptz(6)
+  payload               Json                @db.JsonB
+  plannedSessions       Json                @map("planned_sessions") @db.JsonB
+  provenance            Json                @db.JsonB
+  formVersionAtConfirm Int                 @map("form_version_at_confirm")
+  snapshotReference     String?             @map("snapshot_reference") @db.VarChar(255)
+  branch                branch              @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  serviceRecordCase     service_record_case @relation(fields: [branchId, serviceRecordCaseId], references: [branchId, id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_revision_case_branch_fkey")
+  currentRevisionCases  service_record_case[] @relation("service_record_case_current_revision")
+  currentUsableRevisionCases service_record_case[] @relation("service_record_case_current_usable_revision")
+  documentStates        service_record_revision_document_state[]
+  eformsignDocs         eformsign_doc[] @relation("eformsign_doc_revision")
+  snapshotChunks        service_record_snapshot_chunk[] @relation("service_record_snapshot_chunk_revision")
+
+  @@unique([branchId, serviceRecordCaseId, id], map: "uniq_service_record_revision_branch_case_id")
+  @@unique([serviceRecordCaseId, revisionNumber], map: "uniq_service_record_revision_case_number")
+  @@index([branchId, serviceRecordCaseId], map: "idx_service_record_revision_branch_case")
+}
+
+/// Mutable per-operation state for one immutable service-record revision.
+/// This is separate from the append-only revision payload and reuses the
+/// existing eformsign_document_job system for provider work.
+model service_record_revision_document_state {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId            String   @map("branch_id") @db.Uuid
+  clientId            Int      @map("client_id")
+  serviceRecordCaseId String   @map("service_record_case_id") @db.Uuid
+  revisionId          String   @map("revision_id") @db.Uuid
+  operation           String   @db.VarChar(32)
+  generation          String   @db.VarChar(128)
+  immutableInput      Json     @map("immutable_input") @db.JsonB
+  inputFingerprint    String   @map("input_fingerprint") @db.Char(64)
+  documentVersion     Int?     @map("document_version")
+  sourceDocumentId    String?  @map("source_document_id")
+  targetDocumentId    String?  @map("target_document_id")
+  templateId          String?  @map("template_id")
+  templateVersion     String?  @map("template_version")
+  workflowScope       Json?    @map("workflow_scope") @db.JsonB
+  mirrorGeneration    String?  @map("mirror_generation")
+  outputProof         Json?    @map("output_proof") @db.JsonB
+  step                String   @default("pending") @db.VarChar(80)
+  status              String   @default("pending") @db.VarChar(32)
+  attempts            Int      @default(0)
+  nextAttemptAt       DateTime? @map("next_attempt_at") @db.Timestamptz(6)
+  lastErrorCode       String?  @map("last_error_code") @db.VarChar(120)
+  version             Int      @default(0)
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  branch              branch   @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_revision_document_state_branch_fkey")
+  client              client   @relation(fields: [clientId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_revision_document_state_client_fkey")
+  serviceRecordCase   service_record_case @relation(fields: [branchId, clientId, serviceRecordCaseId], references: [branchId, clientId, id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_revision_document_state_case_owner_fkey")
+  revision            service_record_revision @relation(fields: [branchId, serviceRecordCaseId, revisionId], references: [branchId, serviceRecordCaseId, id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_revision_document_state_revision_fkey")
+
+  @@index([branchId, revisionId, operation], map: "idx_service_record_revision_document_state_operation")
+  @@unique([generation], map: "service_record_revision_document_state_generation_key")
+  @@index([branchId, clientId, status], map: "idx_service_record_revision_document_state_owner_status")
+  @@index([serviceRecordCaseId, revisionId], map: "idx_service_record_revision_document_state_case_revision")
+  @@index([status, nextAttemptAt], map: "idx_service_record_revision_document_state_status_retry")
 }
 
 /// Assignment history for a client-owned service record.
@@ -1241,6 +1365,9 @@ model service_record_snapshot_chunk {
   branchId             String                     @map("branch_id") @db.Uuid
   serviceRecordCaseId  String                     @map("service_record_case_id") @db.Uuid
   assignmentId         String?                    @map("assignment_id") @db.Uuid
+  /// Nullable for legacy chunks; new revision generations bind every chunk
+  /// to the immutable revision before renderer promotion.
+  revisionId           String?                    @map("revision_id") @db.Uuid
   snapshotVersion      Int                        @default(1) @map("snapshot_version")
   chunkIndex           Int                        @map("chunk_index")
   chunkCount           Int                        @map("chunk_count")
@@ -1261,9 +1388,11 @@ model service_record_snapshot_chunk {
   serviceRecordCase    service_record_case        @relation(fields: [serviceRecordCaseId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   assignment           service_record_assignment? @relation(fields: [assignmentId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   eformsignDoc         eformsign_doc?             @relation(fields: [eformsignDocumentId], references: [documentId], onDelete: SetNull, onUpdate: NoAction)
+  revision             service_record_revision?   @relation("service_record_snapshot_chunk_revision", fields: [branchId, serviceRecordCaseId, revisionId], references: [branchId, serviceRecordCaseId, id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_snapshot_chunk_revision_fkey")
 
   @@unique([serviceRecordCaseId, snapshotVersion, chunkIndex], map: "uniq_service_record_snapshot_chunk")
   @@index([branchId], map: "idx_service_record_snapshot_chunk_branch")
+  @@index([branchId, serviceRecordCaseId, revisionId, snapshotVersion, chunkIndex], map: "idx_service_record_snapshot_chunk_revision_version")
   @@index([status, nextAttemptAt], map: "idx_service_record_snapshot_chunk_retry")
 }
 

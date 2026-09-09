@@ -55,7 +55,7 @@ describe("UpdateEmployeeScheduleUsecase", () => {
 
     const createInvariantHarness = (overlap: { id: number } | null = null) => {
         const transaction = {
-            $queryRaw: jest.fn().mockResolvedValue([]),
+            $queryRaw: jest.fn().mockResolvedValue([{ id: 31 }]),
             client: {},
             employee: {
                 findMany: jest.fn().mockResolvedValue([{

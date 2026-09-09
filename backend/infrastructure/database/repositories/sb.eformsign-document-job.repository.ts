@@ -1,4 +1,5 @@
-import { Injectable } from "@nestjs/common";
+import { ConflictException, Injectable } from "@nestjs/common";
+import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import {
     EformsignDocumentJobEntity,
@@ -10,10 +11,20 @@ import {
 import {
     EformsignDocumentJobList,
     EformsignDocumentJobSummary,
+    AuthorizeEformsignDocumentJobForDispatchInput,
     EnqueueEformsignDocumentJobInput,
     IEformsignDocumentJobRepository,
 } from "domain/repositories/eformsign-document-job.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import {
+    authorizeServiceRecordDispatch,
+    deriveServiceRecordDocumentSyncStatus,
+} from "application/policies/service-record-revision-state.policy";
+import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
+import type {
+    ServiceRecordDispatchAuthorizationResult,
+    ServiceRecordRevisionDispatchContext,
+} from "@babyjamjam/shared/types/service-record";
 
 type RawJob = {
     id: string; branch_id: string; client_id: number | null; document_id: string | null;
@@ -25,16 +36,158 @@ type RawJob = {
     created_by_user_id: string | null; created_at: Date | string; updated_at: Date | string;
 };
 
+type DispatchJobSnapshot = Pick<
+    RawJob,
+    "id" | "branch_id" | "client_id" | "document_id" | "job_type" | "status"
+    | "lease_token" | "progress_step" | "payload" | "payload_fingerprint"
+>;
+
+type DispatchDocumentSnapshot = {
+    id: number;
+    documentId: string;
+    branchId: string | null;
+    clientId: number | null;
+    serviceRecordCaseId: string | null;
+};
+
+function stableJson(value: unknown): string {
+    if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+    if (value && typeof value === "object") {
+        return `{${Object.entries(value as Record<string, unknown>)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([key, nested]) => `${JSON.stringify(key)}:${stableJson(nested)}`)
+            .join(",")}}`;
+    }
+    return JSON.stringify(value) ?? "null";
+}
+
+function plannedSessionDatesFromJson(value: Prisma.JsonValue | string | null): Array<{
+    sessionIndex: number;
+    serviceDate: string;
+}> {
+    let parsed: Prisma.JsonValue | null = value as Prisma.JsonValue | null;
+    if (typeof value === "string") {
+        try {
+            parsed = JSON.parse(value) as Prisma.JsonValue;
+        } catch {
+            parsed = null;
+        }
+    }
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+        .map((entry) => {
+            if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+            const row = entry as Record<string, Prisma.JsonValue>;
+            const sessionIndex = row["sessionIndex"];
+            const serviceDate = row["serviceDate"];
+            if (
+                typeof sessionIndex !== "number"
+                || !Number.isInteger(sessionIndex)
+                || typeof serviceDate !== "string"
+            ) return null;
+            return { sessionIndex, serviceDate };
+        })
+        .filter((entry): entry is { sessionIndex: number; serviceDate: string } => entry !== null)
+        .sort((left, right) => left.sessionIndex - right.sessionIndex);
+}
+
+function payloadDocumentId(value: Prisma.JsonValue | string | null): string | null {
+    let parsed: unknown = value;
+    if (typeof value === "string") {
+        try {
+            parsed = JSON.parse(value) as unknown;
+        } catch {
+            return null;
+        }
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const documentId = (parsed as Record<string, unknown>)["documentId"];
+    return typeof documentId === "string" && documentId.trim() ? documentId : null;
+}
+
 const ACTIVE_STATUSES = Prisma.sql`('queued', 'processing', 'reconciling')`;
 const TERMINAL_STATUSES = Prisma.sql`('completed', 'failed')`;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function payloadContext(value: RawJob["payload"]): ServiceRecordRevisionDispatchContext | null {
+    let parsed: unknown = value;
+    if (typeof value === "string") {
+        try {
+            parsed = JSON.parse(value) as unknown;
+        } catch {
+            return null;
+        }
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+    const context = (parsed as Record<string, unknown>)["context"];
+    if (typeof context !== "object" || context === null || Array.isArray(context)) return null;
+    return context as ServiceRecordRevisionDispatchContext;
+}
+
+function payloadRevisionJob(value: RawJob["payload"]): {
+    revisionId: string | null;
+    payloadFingerprint: string | null;
+    completeness: "complete" | "partial" | null;
+    manualReviewRequired: boolean;
+} | null {
+    let parsed: unknown = value;
+    if (typeof value === "string") {
+        try {
+            parsed = JSON.parse(value) as unknown;
+        } catch {
+            return null;
+        }
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const row = parsed as Record<string, unknown>;
+    const context = row["context"];
+    if (!context || typeof context !== "object" || Array.isArray(context)) return null;
+    const contextRevisionId = (context as Record<string, unknown>)["revisionId"];
+    const revisionId = typeof row["revisionId"] === "string"
+        ? row["revisionId"]
+        : typeof contextRevisionId === "string"
+            ? contextRevisionId
+            : null;
+    const payloadFingerprint = typeof row["payloadFingerprint"] === "string"
+        ? row["payloadFingerprint"]
+        : null;
+    const completeness = row["completeness"] === "complete" || row["completeness"] === "partial"
+        ? row["completeness"]
+        : null;
+    return {
+        revisionId,
+        payloadFingerprint,
+        completeness,
+        manualReviewRequired: row["manualReviewRequired"] === true,
+    };
+}
 
 @Injectable()
 export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRepository {
     constructor(private readonly prisma: PrismaService) {}
 
     async enqueue(input: EnqueueEformsignDocumentJobInput) {
-        return this.prisma.$transaction(async (tx) => {
-            const inserted = await tx.$queryRaw<RawJob[]>(Prisma.sql`
+        return this.prisma.$transaction((tx) => this.enqueueInTransaction(tx, input));
+    }
+
+    async findByRequestKeyInTransaction(
+        tx: Prisma.TransactionClient,
+        requestKey: string,
+    ) {
+        const rows = await tx.$queryRaw<RawJob[]>(Prisma.sql`
+            SELECT *
+            FROM "eformsign_document_job"
+            WHERE request_key = ${requestKey}
+            LIMIT 1
+        `);
+        return rows[0] ? this.toDomain(rows[0]) : null;
+    }
+
+    async enqueueInTransaction(
+        tx: Prisma.TransactionClient,
+        input: EnqueueEformsignDocumentJobInput,
+    ) {
+        const inserted = await tx.$queryRaw<RawJob[]>(Prisma.sql`
                 INSERT INTO "eformsign_document_job" (
                     branch_id, client_id, document_id, job_type, source, request_key,
                     active_key, payload, payload_fingerprint, progress_step, created_by_user_id
@@ -47,26 +200,368 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 ON CONFLICT DO NOTHING
                 RETURNING *
             `);
-            if (inserted[0]) return { job: this.toDomain(inserted[0]), existing: false };
+        if (inserted[0]) return { job: this.toDomain(inserted[0]), existing: false };
 
-            const existing = await tx.$queryRaw<RawJob[]>(Prisma.sql`
+        const existing = await tx.$queryRaw<RawJob[]>(Prisma.sql`
                 SELECT * FROM "eformsign_document_job"
                 WHERE request_key = ${input.requestKey} OR active_key = ${input.activeKey}
                 ORDER BY CASE WHEN request_key = ${input.requestKey} THEN 0 ELSE 1 END
                 LIMIT 1
             `);
-            if (!existing[0]) throw new Error("EFORMSIGN_DOCUMENT_JOB_KEY_CONFLICT");
-            if (existing[0].branch_id !== input.branchId) {
-                throw new Error("EFORMSIGN_DOCUMENT_JOB_KEY_CONFLICT");
+        if (!existing[0]) throw new Error("EFORMSIGN_DOCUMENT_JOB_KEY_CONFLICT");
+        if (existing[0].branch_id !== input.branchId) {
+            throw new Error("EFORMSIGN_DOCUMENT_JOB_KEY_CONFLICT");
+        }
+        if (
+            existing[0].request_key === input.requestKey
+            && existing[0].payload_fingerprint !== input.payloadFingerprint
+        ) {
+            throw new Error("EFORMSIGN_DOCUMENT_JOB_IDEMPOTENCY_MISMATCH");
+        }
+        return { job: this.toDomain(existing[0]), existing: true };
+    }
+
+    /**
+     * Authorize a claimed job through the repository-owned transaction. The
+     * worker only supplies the claim token and optional revision context; all
+     * branch, client, document, case, and revision ownership is discovered
+     * from durable rows here before the marker CAS runs.
+     */
+    async authorizeForDispatch(
+        input: AuthorizeEformsignDocumentJobForDispatchInput,
+    ): Promise<ServiceRecordDispatchAuthorizationResult> {
+        if (!UUID_PATTERN.test(input.jobId) || !UUID_PATTERN.test(input.leaseToken)) {
+            return { kind: "lost", reason: "invalid_job_claim" } as const;
+        }
+
+        try {
+            return await this.prisma.$transaction(async (tx) => {
+                const initial = await this.readDispatchJob(tx, input.jobId, false);
+                if (!initial) return { kind: "lost", reason: "job_not_found" } as const;
+
+                const expected = input.expectedContext;
+                // Phase0 has not verified the revised-record provider path.
+                // A revision-bound claim therefore remains manual-review only,
+                // even if a forged worker context says pending/completed.
+                if (expected?.revisionId !== null && expected?.revisionId !== undefined) {
+                    return {
+                        kind: "stale",
+                        reason: "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED",
+                    } as const;
+                }
+                const isFinalize = initial.job_type === "finalize_document";
+                const isCreate = initial.job_type === "create_document";
+                if (!isFinalize && !isCreate) {
+                    return { kind: "lost", reason: "unsupported_job_type" } as const;
+                }
+
+                let branchId = initial.branch_id;
+                let clientId = initial.client_id;
+                let caseId: string | null = expected?.serviceRecordCaseId ?? null;
+                const documentId = initial.document_id ?? payloadDocumentId(initial.payload);
+                let document: DispatchDocumentSnapshot | null = null;
+
+                if (expected) {
+                    if (
+                        !isCreate
+                        || initial.branch_id !== expected.branchId
+                        || initial.client_id !== expected.clientId
+                    ) {
+                        return { kind: "lost", reason: "ownership_changed" } as const;
+                    }
+                    branchId = expected.branchId;
+                    clientId = expected.clientId;
+                    caseId = expected.serviceRecordCaseId;
+                } else if (isFinalize) {
+                    if (!documentId) {
+                        return {
+                            kind: "stale",
+                            reason: "SERVICE_RECORD_FINALIZE_OWNER_UNAVAILABLE",
+                        } as const;
+                    }
+                    document = await this.findDispatchDocument(tx, documentId);
+                    if (
+                        !document
+                        || document.documentId !== documentId
+                        || document.branchId !== initial.branch_id
+                        || document.clientId === null
+                        || (initial.client_id !== null && initial.client_id !== document.clientId)
+                    ) {
+                        return {
+                            kind: "stale",
+                            reason: "SERVICE_RECORD_FINALIZE_OWNER_UNAVAILABLE",
+                        } as const;
+                    }
+                    branchId = initial.branch_id;
+                    clientId = document.clientId;
+                    caseId = document.serviceRecordCaseId;
+                }
+
+                if (clientId !== null) {
+                    await lockServiceRecordWriteSet(tx, {
+                        branchId,
+                        clientId,
+                        caseId,
+                        ...(document ? { documentIds: [document.id] } : {}),
+                    });
+                } else if (isFinalize) {
+                    return {
+                        kind: "stale",
+                        reason: "SERVICE_RECORD_FINALIZE_OWNER_UNAVAILABLE",
+                    } as const;
+                }
+
+                // Common locks are acquired before the job lock. This reread
+                // proves that a confirm or ownership change which won first
+                // cannot be followed by an old provider operation.
+                const current = await this.readDispatchJob(tx, input.jobId, true);
+                if (
+                    !current
+                    || current.branch_id !== branchId
+                    || current.job_type !== initial.job_type
+                    || current.document_id !== initial.document_id
+                    || current.client_id !== initial.client_id
+                ) {
+                    return { kind: "lost", reason: "ownership_changed" } as const;
+                }
+
+                if (isFinalize) {
+                    if (!documentId) {
+                        return {
+                            kind: "stale",
+                            reason: "SERVICE_RECORD_FINALIZE_OWNER_UNAVAILABLE",
+                        } as const;
+                    }
+                    const currentDocument = await this.findDispatchDocument(tx, documentId);
+                    if (
+                        !currentDocument
+                        || currentDocument.id !== document?.id
+                        || currentDocument.documentId !== documentId
+                        || currentDocument.branchId !== branchId
+                        || currentDocument.clientId !== clientId
+                        || currentDocument.serviceRecordCaseId !== caseId
+                        || (current.document_id !== null && current.document_id !== documentId)
+                        || payloadDocumentId(current.payload) !== (current.document_id ?? documentId)
+                    ) {
+                        return {
+                            kind: "stale",
+                            reason: "SERVICE_RECORD_FINALIZE_OWNER_CHANGED",
+                        } as const;
+                    }
+                }
+
+                if (expected) {
+                    const caseDelegate = tx.service_record_case as unknown as {
+                        findUnique?: (args: unknown) => Promise<{
+                            id: string;
+                            branchId: string;
+                            clientId: number | null;
+                            requiredSessionCount: number | null;
+                            plannedSessions: Prisma.JsonValue | null;
+                            currentRevisionId: string | null;
+                            currentUsableRevisionId: string | null;
+                            currentUsableDocumentVersion: number | null;
+                            formVersion: number;
+                            status: string;
+                        } | null>;
+                    } | undefined;
+                    const revisionDelegate = tx.service_record_revision as unknown as {
+                        findUnique?: (args: unknown) => Promise<{
+                            revisionNumber: number;
+                            payload: Prisma.JsonValue;
+                        } | null>;
+                    } | undefined;
+                    if (typeof caseDelegate?.findUnique !== "function") {
+                        return { kind: "lost", reason: "SERVICE_RECORD_REVISION_CASE_UNAVAILABLE" } as const;
+                    }
+                    const currentCase = await caseDelegate.findUnique({
+                        where: { id: expected.serviceRecordCaseId },
+                        select: {
+                            id: true,
+                            branchId: true,
+                            clientId: true,
+                            requiredSessionCount: true,
+                            plannedSessions: true,
+                            currentRevisionId: true,
+                            currentUsableRevisionId: true,
+                            currentUsableDocumentVersion: true,
+                            formVersion: true,
+                            status: true,
+                        },
+                    });
+                    if (
+                        !currentCase
+                        || currentCase.id !== expected.serviceRecordCaseId
+                        || currentCase.branchId !== expected.branchId
+                        || currentCase.clientId !== expected.clientId
+                    ) {
+                        return { kind: "lost", reason: "SERVICE_RECORD_REVISION_OWNERSHIP_CHANGED" } as const;
+                    }
+
+                    let revisionNumber = currentCase.currentRevisionId === null
+                        ? null
+                        : expected.revisionNumber;
+                    let businessFingerprint = expected.businessFingerprint;
+                    if (currentCase.currentRevisionId !== null) {
+                        if (typeof revisionDelegate?.findUnique !== "function") {
+                            return { kind: "lost", reason: "SERVICE_RECORD_REVISION_UNAVAILABLE" } as const;
+                        }
+                        const revision = await revisionDelegate.findUnique({
+                            where: { id: currentCase.currentRevisionId },
+                            select: { revisionNumber: true, payload: true },
+                        });
+                        if (!revision) {
+                            return { kind: "lost", reason: "SERVICE_RECORD_REVISION_MISSING" } as const;
+                        }
+                        revisionNumber = revision.revisionNumber;
+                        businessFingerprint = createHash("sha256")
+                            .update(stableJson(revision.payload))
+                            .digest("hex");
+                    }
+
+                    const persistedRevisionJob = payloadRevisionJob(current.payload);
+                    const documentSyncStatus = expected.revisionId === null
+                        ? expected.documentSyncStatus
+                        : deriveServiceRecordDocumentSyncStatus({
+                            currentRevisionId: currentCase.currentRevisionId,
+                            currentUsableRevisionId: currentCase.currentUsableRevisionId,
+                            currentUsableDocumentVersion: currentCase.currentUsableDocumentVersion,
+                            revisionJob: persistedRevisionJob
+                                ? {
+                                    ...persistedRevisionJob,
+                                    status: current.status,
+                                    progressStep: current.progress_step,
+                                }
+                                : null,
+                        });
+                    const authorization = authorizeServiceRecordDispatch(expected, {
+                        branchId: currentCase.branchId,
+                        clientId: currentCase.clientId!,
+                        serviceRecordCaseId: currentCase.id,
+                        revisionId: currentCase.currentRevisionId,
+                        revisionNumber,
+                        businessFingerprint,
+                        plannedSessionCount: currentCase.requiredSessionCount,
+                        plannedSessionDates: plannedSessionDatesFromJson(currentCase.plannedSessions),
+                        documentSyncStatus,
+                        lifecycleStatus: currentCase.status,
+                        formVersion: currentCase.formVersion,
+                    });
+                    if (authorization.kind !== "allow") return authorization;
+                }
+
+                return this.authorizeForDispatchInTransaction(tx, {
+                    ...input,
+                    expectedContext: expected,
+                });
+            });
+        } catch (error) {
+            if (error instanceof ConflictException) {
+                return { kind: "lost", reason: "SERVICE_RECORD_WRITE_TARGET_CHANGED" } as const;
             }
-            if (
-                existing[0].request_key === input.requestKey
-                && existing[0].payload_fingerprint !== input.payloadFingerprint
-            ) {
-                throw new Error("EFORMSIGN_DOCUMENT_JOB_IDEMPOTENCY_MISMATCH");
-            }
-            return { job: this.toDomain(existing[0]), existing: true };
+            throw error;
+        }
+    }
+
+    private async readDispatchJob(
+        tx: Prisma.TransactionClient,
+        jobId: string,
+        forUpdate: boolean,
+    ): Promise<DispatchJobSnapshot | null> {
+        const rows = await tx.$queryRaw<DispatchJobSnapshot[]>(Prisma.sql`
+            SELECT
+                "id", "branch_id", "client_id", "document_id", "job_type", "status",
+                "lease_token", "progress_step", "payload", "payload_fingerprint"
+            FROM "eformsign_document_job"
+            WHERE "id" = ${jobId}::uuid
+            ${forUpdate ? Prisma.sql`FOR UPDATE` : Prisma.empty}
+        `);
+        return rows[0] ?? null;
+    }
+
+    private async findDispatchDocument(
+        tx: Prisma.TransactionClient,
+        documentId: string,
+    ): Promise<DispatchDocumentSnapshot | null> {
+        const delegate = tx.eformsign_doc as unknown as {
+            findUnique?: (args: unknown) => Promise<DispatchDocumentSnapshot | null>;
+        } | undefined;
+        if (typeof delegate?.findUnique !== "function") return null;
+        return delegate.findUnique({
+            where: { documentId },
+            select: {
+                id: true,
+                documentId: true,
+                branchId: true,
+                clientId: true,
+                serviceRecordCaseId: true,
+            },
         });
+    }
+
+    /**
+     * Lock a claimed job and commit the irreversible provider marker before
+     * the worker leaves the caller-owned transaction. No transaction is
+     * opened here; callers must already hold the service-record common lock
+     * order (client -> employees -> case -> children -> jobs).
+     */
+    async authorizeForDispatchInTransaction(
+        tx: Prisma.TransactionClient,
+        input: AuthorizeEformsignDocumentJobForDispatchInput,
+    ) {
+        if (!UUID_PATTERN.test(input.jobId) || !UUID_PATTERN.test(input.leaseToken)) {
+            return { kind: "lost", reason: "invalid_job_claim" } as const;
+        }
+        if (input.expectedContext?.revisionId !== null && input.expectedContext?.revisionId !== undefined) {
+            return {
+                kind: "stale",
+                reason: "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED",
+            } as const;
+        }
+
+        const rows = await tx.$queryRaw<RawJob[]>(Prisma.sql`
+            SELECT *
+            FROM "eformsign_document_job"
+            WHERE id = ${input.jobId}::uuid
+            FOR UPDATE
+        `);
+        const current = rows[0];
+        if (!current) return { kind: "lost", reason: "job_not_found" } as const;
+        if (current.status !== "processing") {
+            return { kind: "lost", reason: "job_not_active" } as const;
+        }
+        if (current.lease_token !== input.leaseToken) {
+            return { kind: "lost", reason: "lease_lost" } as const;
+        }
+        if (current.progress_step === "creating" || current.progress_step === "sent") {
+            return { kind: "lost", reason: "dispatch_already_claimed" } as const;
+        }
+
+        if (input.expectedContext) {
+            const observed = payloadContext(current.payload);
+            if (
+                !observed
+                || current.branch_id !== input.expectedContext.branchId
+                || current.client_id !== input.expectedContext.clientId
+            ) {
+                return { kind: "lost", reason: "ownership_changed" } as const;
+            }
+            const authorization = authorizeServiceRecordDispatch(input.expectedContext, observed);
+            if (authorization.kind !== "allow") return authorization;
+        }
+
+        const claimed = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            UPDATE "eformsign_document_job"
+            SET progress_step = 'creating', heartbeat_at = now(), updated_at = now()
+            WHERE id = ${input.jobId}::uuid
+              AND lease_token = ${input.leaseToken}::uuid
+              AND status = 'processing'
+              AND COALESCE(progress_step, '') NOT IN ('creating', 'sent')
+            RETURNING id
+        `);
+        return claimed.length > 0
+            ? { kind: "allow" as const }
+            : { kind: "lost" as const, reason: "lease_lost" };
     }
 
     async claimDue(limit = 1): Promise<EformsignDocumentJobEntity[]> {
@@ -120,7 +615,12 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
     async markReconciling(id: string, leaseToken: string, progressStep = "reconciling") {
         return this.updateOne(Prisma.sql`
             UPDATE "eformsign_document_job" SET status = 'reconciling', progress_step = ${progressStep},
-                payload = NULL, heartbeat_at = now(), updated_at = now()
+                payload = CASE
+                    WHEN jsonb_typeof(payload) = 'object'
+                        AND payload->>'kind' = 'service_record_revision' THEN payload
+                    ELSE NULL
+                END,
+                heartbeat_at = now(), updated_at = now()
             WHERE id = ${id}::uuid AND lease_token = ${leaseToken}::uuid
               AND status IN ('processing', 'reconciling') RETURNING *
         `);
@@ -130,7 +630,12 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         return this.updateOne(Prisma.sql`
             UPDATE "eformsign_document_job" SET status = 'completed',
                 document_id = COALESCE(${documentId ?? null}, document_id), completed_at = now(),
-                payload = NULL, active_key = NULL, heartbeat_at = NULL, lease_token = NULL,
+                payload = CASE
+                    WHEN jsonb_typeof(payload) = 'object'
+                        AND payload->>'kind' = 'service_record_revision' THEN payload
+                    ELSE NULL
+                END,
+                active_key = NULL, heartbeat_at = NULL, lease_token = NULL,
                 last_error_code = NULL, updated_at = now()
             WHERE id = ${id}::uuid AND lease_token = ${leaseToken}::uuid
               AND status IN ('processing', 'reconciling') RETURNING *
@@ -158,6 +663,8 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 END,
                 payload = CASE
                     WHEN progress_step IS NULL OR progress_step IN ('queued', 'validating', 'preparing') THEN payload
+                    WHEN jsonb_typeof(payload) = 'object'
+                        AND payload->>'kind' = 'service_record_revision' THEN payload
                     ELSE NULL
                 END,
                 heartbeat_at = NULL,
@@ -194,7 +701,13 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
 
     async deleteExpiredTerminal(cutoff: Date) {
         const count = await this.prisma.$executeRaw(Prisma.sql`
-            DELETE FROM "eformsign_document_job" WHERE status IN ${TERMINAL_STATUSES} AND completed_at < ${cutoff}
+            DELETE FROM "eformsign_document_job"
+            WHERE status IN ${TERMINAL_STATUSES}
+              AND completed_at < ${cutoff}
+              AND NOT (
+                  COALESCE(jsonb_typeof(payload) = 'object', false)
+                  AND COALESCE(payload->>'kind' = 'service_record_revision', false)
+              )
         `);
         return Number(count);
     }
@@ -209,7 +722,12 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         return this.prisma.$transaction(async (tx) => {
             const rows = await tx.$queryRaw<RawJob[]>(Prisma.sql`
                 UPDATE "eformsign_document_job" SET status = ${status}, last_error_code = ${errorCode},
-                    completed_at = now(), payload = NULL,
+                    completed_at = now(),
+                    payload = CASE
+                        WHEN jsonb_typeof(payload) = 'object'
+                            AND payload->>'kind' = 'service_record_revision' THEN payload
+                        ELSE NULL
+                    END,
                     active_key = CASE
                         WHEN ${releaseActiveKey} AND source <> 'auto_finalize' THEN NULL
                         ELSE active_key

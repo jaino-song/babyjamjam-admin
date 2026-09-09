@@ -35,6 +35,25 @@ const row = (overrides: Record<string, unknown> = {}) => ({
     ...overrides,
 });
 
+const dispatchJobId = "00000000-0000-4000-8000-000000000001";
+const dispatchLeaseToken = "00000000-0000-4000-8000-000000000099";
+const dispatchBranchId = "00000000-0000-4000-8000-000000000010";
+const dispatchCaseId = "00000000-0000-4000-8000-000000000020";
+
+const dispatchContext = {
+    branchId: dispatchBranchId,
+    clientId: 7,
+    serviceRecordCaseId: dispatchCaseId,
+    revisionId: null,
+    revisionNumber: null,
+    businessFingerprint: "a".repeat(64),
+    plannedSessionCount: 1,
+    plannedSessionDates: [{ sessionIndex: 1, serviceDate: "2026-09-01" }],
+    documentSyncStatus: "pending" as const,
+    lifecycleStatus: "IN_PROGRESS",
+    formVersion: 3,
+};
+
 describe("SbEformsignDocumentJobRepository", () => {
     let queryRaw: jest.Mock;
     let executeRaw: jest.Mock;
@@ -102,6 +121,198 @@ describe("SbEformsignDocumentJobRepository", () => {
         })).rejects.toThrow("EFORMSIGN_DOCUMENT_JOB_IDEMPOTENCY_MISMATCH");
     });
 
+    it("authorizes a live lease and commits the creating marker in the caller transaction", async () => {
+        queryRaw
+            .mockResolvedValueOnce([row({
+                id: dispatchJobId,
+                branch_id: dispatchBranchId,
+                status: "processing",
+                progress_step: "preparing",
+                lease_token: dispatchLeaseToken,
+                payload: { context: dispatchContext },
+            })])
+            .mockResolvedValueOnce([{ id: dispatchJobId }]);
+
+        const tx = { $queryRaw: queryRaw } as never;
+        await expect(repository.authorizeForDispatchInTransaction(tx, {
+            jobId: dispatchJobId,
+            leaseToken: dispatchLeaseToken,
+            expectedContext: dispatchContext,
+        })).resolves.toEqual({ kind: "allow" });
+
+        expect(queryRaw).toHaveBeenCalledTimes(2);
+        expect(sqlText(queryRaw.mock.calls[0][0])).toContain("FOR UPDATE");
+        expect(sqlText(queryRaw.mock.calls[1][0])).toContain("progress_step = 'creating'");
+        expect(sqlText(queryRaw.mock.calls[1][0])).toContain("status = 'processing'");
+    });
+
+    it("returns stale without claiming when the locked revision context changed", async () => {
+        queryRaw.mockResolvedValueOnce([row({
+            id: dispatchJobId,
+            branch_id: dispatchBranchId,
+            status: "processing",
+            progress_step: "preparing",
+            lease_token: dispatchLeaseToken,
+            payload: { context: dispatchContext },
+        })]);
+
+        await expect(repository.authorizeForDispatchInTransaction({ $queryRaw: queryRaw } as never, {
+            jobId: dispatchJobId,
+            leaseToken: dispatchLeaseToken,
+            expectedContext: { ...dispatchContext, businessFingerprint: "b".repeat(64) },
+        })).resolves.toEqual({ kind: "stale", reason: "revision_or_business_state_changed" });
+        expect(queryRaw).toHaveBeenCalledTimes(1);
+    });
+
+    it("owns the root legacy authorization transaction and commits the marker after the client lock", async () => {
+        const legacy = row({
+            id: dispatchJobId,
+            branch_id: dispatchBranchId,
+            client_id: 7,
+            status: "processing",
+            progress_step: "preparing",
+            lease_token: dispatchLeaseToken,
+            payload: { clientId: 7 },
+        });
+        queryRaw.mockImplementation(async (query: unknown) => {
+            const statement = sqlText(query);
+            if (statement.includes("UPDATE \"eformsign_document_job\"")) return [{ id: dispatchJobId }];
+            if (statement.includes("FROM \"eformsign_document_job\"")) return [legacy];
+            if (statement.includes("FROM \"client\"")) return [{ id: 7 }];
+            return [];
+        });
+
+        const result = await repository.authorizeForDispatch({
+            jobId: dispatchJobId,
+            leaseToken: dispatchLeaseToken,
+            expectedContext: null,
+        });
+
+        expect(result).toEqual({ kind: "allow" });
+        const statements = queryRaw.mock.calls.map(([query]) => sqlText(query));
+        const clientLockIndex = statements.findIndex((statement) => statement.includes("FROM \"client\""));
+        const markerIndex = statements.findIndex((statement) => statement.includes("progress_step = 'creating'"));
+        expect(clientLockIndex).toBeGreaterThanOrEqual(0);
+        expect(markerIndex).toBeGreaterThan(clientLockIndex);
+        expect(statements[markerIndex]).toContain("status = 'processing'");
+    });
+
+    it("rereads the current case under the common lock before authorizing a revision job", async () => {
+        const revisionJob = row({
+            id: dispatchJobId,
+            branch_id: dispatchBranchId,
+            client_id: 7,
+            status: "processing",
+            progress_step: "preparing",
+            lease_token: dispatchLeaseToken,
+            payload: { context: dispatchContext },
+        });
+        const currentCase = {
+            id: dispatchCaseId,
+            branchId: dispatchBranchId,
+            clientId: 7,
+            requiredSessionCount: 1,
+            plannedSessions: [{ sessionIndex: 1, serviceDate: "2026-09-01" }],
+            currentRevisionId: null,
+            formVersion: 3,
+            status: "IN_PROGRESS",
+        };
+        queryRaw.mockImplementation(async (query: unknown) => {
+            const statement = sqlText(query);
+            if (statement.includes("UPDATE \"eformsign_document_job\"")) return [{ id: dispatchJobId }];
+            if (statement.includes("FROM \"eformsign_document_job\"")) return [revisionJob];
+            if (statement.includes("FROM \"client\"")) return [{ id: 7 }];
+            if (statement.includes("FROM \"service_record_case\"")) return [{ id: dispatchCaseId }];
+            return [];
+        });
+        const transaction = {
+            $queryRaw: queryRaw,
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(currentCase),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn(async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction)),
+        } as unknown as PrismaService;
+        const revisionRepository = new SbEformsignDocumentJobRepository(prisma);
+
+        await expect(revisionRepository.authorizeForDispatch({
+            jobId: dispatchJobId,
+            leaseToken: dispatchLeaseToken,
+            expectedContext: dispatchContext,
+        })).resolves.toEqual({ kind: "allow" });
+
+        expect(transaction.service_record_case.findUnique).toHaveBeenCalledTimes(2);
+        const statements = queryRaw.mock.calls.map(([query]) => sqlText(query));
+        const markerIndex = statements.findIndex((statement) => statement.includes("progress_step = 'creating'"));
+        expect(markerIndex).toBeGreaterThan(
+            statements.findIndex((statement) => statement.includes("FROM \"service_record_case\"")),
+        );
+    });
+
+    it("fails closed before the marker when a legacy finalize document has no client owner", async () => {
+        const finalizeJob = row({
+            id: dispatchJobId,
+            branch_id: dispatchBranchId,
+            client_id: null,
+            document_id: "legacy-finalize",
+            job_type: "finalize_document",
+            status: "processing",
+            progress_step: "preparing",
+            lease_token: dispatchLeaseToken,
+            payload: { documentId: "legacy-finalize" },
+        });
+        queryRaw.mockResolvedValueOnce([finalizeJob]);
+        const transaction = {
+            $queryRaw: queryRaw,
+            eformsign_doc: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 91,
+                    documentId: "legacy-finalize",
+                    branchId: dispatchBranchId,
+                    clientId: null,
+                    serviceRecordCaseId: null,
+                }),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn(async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction)),
+        } as unknown as PrismaService;
+        const finalizeRepository = new SbEformsignDocumentJobRepository(prisma);
+
+        await expect(finalizeRepository.authorizeForDispatch({
+            jobId: dispatchJobId,
+            leaseToken: dispatchLeaseToken,
+            expectedContext: null,
+        })).resolves.toEqual({
+            kind: "stale",
+            reason: "SERVICE_RECORD_FINALIZE_OWNER_UNAVAILABLE",
+        });
+        expect(transaction.eformsign_doc.findUnique).toHaveBeenCalledTimes(1);
+        expect(queryRaw).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        { status: "failed", lease_token: dispatchLeaseToken, progress_step: "preparing" },
+        { status: "processing", lease_token: "00000000-0000-4000-8000-000000000098", progress_step: "preparing" },
+        { status: "processing", lease_token: dispatchLeaseToken, progress_step: "creating" },
+        { status: "reconciling", lease_token: dispatchLeaseToken, progress_step: "reconciling" },
+    ])("fails closed for a non-dispatchable job state %#", async (state) => {
+        queryRaw.mockResolvedValueOnce([row({
+            id: dispatchJobId,
+            branch_id: dispatchBranchId,
+            payload: { context: dispatchContext },
+            ...state,
+        })]);
+
+        await expect(repository.authorizeForDispatchInTransaction({ $queryRaw: queryRaw } as never, {
+            jobId: dispatchJobId,
+            leaseToken: dispatchLeaseToken,
+            expectedContext: dispatchContext,
+        })).resolves.toMatchObject({ kind: "lost" });
+        expect(queryRaw).toHaveBeenCalledTimes(1);
+    });
+
     it("serializes replicas and refuses a fourth global active job", async () => {
         executeRaw.mockResolvedValue(1);
         queryRaw.mockResolvedValueOnce([{ count: 3 }]);
@@ -127,7 +338,8 @@ describe("SbEformsignDocumentJobRepository", () => {
         queryRaw.mockResolvedValueOnce([row({ status: "completed", payload: null, active_key: null })]);
         await repository.markCompleted(row().id, "00000000-0000-0000-0000-000000000099", "doc-1");
         const statement = sqlText(queryRaw.mock.calls[0][0]);
-        expect(statement).toContain("payload = NULL");
+        expect(statement).toContain("payload = CASE");
+        expect(statement).toContain("service_record_revision");
         expect(statement).toContain("active_key = NULL");
     });
 
@@ -139,8 +351,56 @@ describe("SbEformsignDocumentJobRepository", () => {
             "AMBIGUOUS_PROVIDER_STATE",
         );
         const statement = sqlText(queryRaw.mock.calls[0][0]);
-        expect(statement).toContain("payload = NULL");
+        expect(statement).toContain("payload = CASE");
+        expect(statement).toContain("service_record_revision");
         expect(statement).not.toContain("active_key = NULL");
+    });
+
+    it.each([
+        "markReconciling",
+        "markCompleted",
+        "markFailed",
+        "markRequiresAttention",
+    ] as const)("retains a revision immutable payload through %s", async (transition) => {
+        const immutablePayload = {
+            kind: "service_record_revision",
+            context: { revisionId: dispatchCaseId },
+            immutablePayload: { generationId: "generation-1" },
+            payloadFingerprint: "b".repeat(64),
+            completeness: "complete",
+        };
+        queryRaw.mockResolvedValueOnce([row({
+            status: transition === "markReconciling"
+                ? "reconciling"
+                : transition === "markCompleted"
+                    ? "completed"
+                    : transition === "markFailed"
+                        ? "failed"
+                        : "requires_attention",
+            payload: immutablePayload,
+            payload_fingerprint: immutablePayload.payloadFingerprint,
+            active_key: transition === "markCompleted" ? null : row().active_key,
+        })]);
+
+        const transitioned = transition === "markReconciling"
+            ? await repository.markReconciling(row().id, "00000000-0000-0000-0000-000000000099")
+            : transition === "markCompleted"
+                ? await repository.markCompleted(row().id, "00000000-0000-0000-0000-000000000099")
+                : transition === "markFailed"
+                    ? await repository.markFailed(
+                        row().id,
+                        "00000000-0000-0000-0000-000000000099",
+                        "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED",
+                    )
+                    : await repository.markRequiresAttention(
+                        row().id,
+                        "00000000-0000-0000-0000-000000000099",
+                        "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED",
+                    );
+
+        expect(transitioned?.payload).toEqual(immutablePayload);
+        expect(transitioned?.payloadFingerprint).toBe(immutablePayload.payloadFingerprint);
+        expect(sqlText(queryRaw.mock.calls[0][0])).toContain("jsonb_typeof(payload)");
     });
 
     it("records an auto-finalize terminal attempt atomically and releases retry capacity below the cap", async () => {
@@ -211,16 +471,43 @@ describe("SbEformsignDocumentJobRepository", () => {
     });
 
     it("recovers only pre-send progress to queued and reconciles possible sends", async () => {
+        const revisionPayload = {
+            kind: "service_record_revision",
+            context: { revisionId: dispatchCaseId },
+            immutablePayload: { generationId: "generation-1" },
+            payloadFingerprint: "b".repeat(64),
+            completeness: "complete",
+        };
         queryRaw.mockResolvedValueOnce([
             row({ progress_step: "validating", status: "queued" }),
-            row({ id: "00000000-0000-0000-0000-000000000002", progress_step: "creating", status: "reconciling", payload: null }),
+            row({
+                id: "00000000-0000-0000-0000-000000000002",
+                progress_step: "creating",
+                status: "reconciling",
+                payload: revisionPayload,
+                payload_fingerprint: revisionPayload.payloadFingerprint,
+            }),
         ]);
         const recovered = await repository.recoverStale(new Date());
         expect(recovered.map((job) => job.status)).toEqual(["queued", "reconciling"]);
+        expect(recovered[1]?.payload).toEqual(revisionPayload);
         const statement = sqlText(queryRaw.mock.calls[0][0]);
         expect(statement).toContain("progress_step IS NULL");
         expect(statement).toContain("ELSE 'reconciling'");
+        expect(statement).toContain("jsonb_typeof(payload)");
         expect(statement).toContain("status IN ('processing', 'reconciling')");
+    });
+
+    it("retains revision generation rows during terminal retention cleanup", async () => {
+        executeRaw.mockResolvedValueOnce(1);
+
+        await expect(repository.deleteExpiredTerminal(new Date("2026-09-01T00:00:00Z"))).resolves.toBe(1);
+
+        const statement = sqlText(executeRaw.mock.calls[0][0]);
+        expect(statement).toContain("jsonb_typeof(payload)");
+        expect(statement).toContain("payload->>'kind' = 'service_record_revision'");
+        expect(statement).toContain("COALESCE");
+        expect(statement).toContain("NOT (");
     });
 
     it("scopes summary and every list section to the authenticated branch", async () => {

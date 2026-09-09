@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Interval } from "@nestjs/schedule";
 
@@ -29,6 +29,20 @@ import {
 } from "domain/repositories/client.repository.interface";
 import { createEformsignWorkerPrincipal } from "application/services/eformsign-credential-boundary.service";
 import { SchedulerLeaseService } from "application/services/scheduler-lease.service";
+import type {
+    ServiceRecordRevisionGenerationInput,
+    ServiceRecordRevisionDispatchContext,
+} from "@babyjamjam/shared/types/service-record";
+import {
+    SERVICE_RECORD_REVISION_OPERATION_COORDINATOR,
+    type ServiceRecordRevisionDocumentCoordinatorProcessInput,
+    type ServiceRecordRevisionDocumentCoordinatorProcessResult,
+} from "application/services/service-record-revision-document-coordinator.service";
+import type { EformsignProviderPrincipal } from "application/services/eformsign-credential-boundary.service";
+import {
+    isRevisionDocumentDispatchAllowed,
+    isValidServiceRecordDispatchContext,
+} from "application/policies/service-record-revision-state.policy";
 
 const WORKER_INTERVAL_MS = 5_000;
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -51,6 +65,254 @@ interface FinalizeDocumentJobPayload {
     documentId?: string;
     prefillEndDate?: string;
     progressId?: string;
+}
+
+type RevisionDocumentJobPayload = {
+    kind: "service_record_revision";
+    generationKind?: "REVISION_SNAPSHOT" | "INITIAL_FINALIZATION";
+    context: ServiceRecordRevisionDispatchContext;
+    immutablePayload: Record<string, unknown>;
+    payloadFingerprint: string;
+    completeness: "complete";
+    revisionId?: string;
+    revisionNumber?: number;
+    documentStateId?: string;
+    documentVersion?: number;
+    snapshotReference?: string | null;
+    generation?: string | null;
+    manualReviewRequired?: boolean;
+};
+
+type RevisionOperationContractDescriptor = {
+    documentStateId: string;
+    generation: string;
+};
+
+type RevisionOperationReceiptDescriptor = {
+    documentStateId: string;
+    expectedGeneration: string;
+};
+
+/**
+ * Operation jobs carry only persisted state identities and server-derived
+ * dispatch context. Immutable snapshots and capability evidence stay behind
+ * their operation services and are never accepted from a queued payload.
+ */
+export interface ServiceRecordRevisionOperationsJobPayload {
+    kind: "service_record_revision_operations";
+    context: ServiceRecordRevisionDispatchContext & { revisionId: string };
+    operations: {
+        contract?: RevisionOperationContractDescriptor;
+        receipt?: RevisionOperationReceiptDescriptor;
+    };
+}
+
+export interface ServiceRecordRevisionOperationCoordinatorPort {
+    process(
+        input: ServiceRecordRevisionDocumentCoordinatorProcessInput,
+    ): Promise<ServiceRecordRevisionDocumentCoordinatorProcessResult>;
+}
+
+type CreateDispatchAuthorizationResult = {
+    kind: "allow" | "stale" | "lost";
+    reason?: string;
+    /** The durable progress marker was committed before the provider call. */
+    irreversible?: boolean;
+};
+
+const REVISION_JOB_KIND = "service_record_revision";
+const REVISION_OPERATIONS_JOB_KIND = "service_record_revision_operations";
+const INITIAL_FINALIZATION_REQUEST_PREFIX = "service-record-initial-finalization:";
+const REVISION_REQUEST_PREFIX = "service-record-revision:";
+const REVISION_OPERATIONS_REQUEST_PREFIX = "service-record-revision-operations:";
+
+/**
+ * Narrow caller boundary for a frozen revision generation.  The renderer is
+ * provided by EformsignDocModule, but the job worker owns dispatch selection
+ * and never reaches into its implementation.  Keeping this as an optional
+ * token also leaves legacy test/module graphs fail-closed while a deployment
+ * rolls out the renderer provider.
+ */
+export const SERVICE_RECORD_REVISION_GENERATION = Symbol("SERVICE_RECORD_REVISION_GENERATION");
+
+export interface ServiceRecordRevisionGenerationPort {
+    executeRevision(
+        input: ServiceRecordRevisionGenerationInput,
+        principal: EformsignProviderPrincipal,
+    ): Promise<{
+        documentIds: string[];
+        documentVersion: number;
+        chunkCount: number;
+    }>;
+}
+
+function revisionPayload(value: unknown): RevisionDocumentJobPayload | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const row = value as Record<string, unknown>;
+    if (row["kind"] !== REVISION_JOB_KIND) return null;
+    const context = row["context"];
+    if (!context || typeof context !== "object" || Array.isArray(context)) return null;
+    const candidate = row as unknown as RevisionDocumentJobPayload;
+    const initialGeneration = row["generationKind"] === "INITIAL_FINALIZATION";
+    const outerRevisionId = row["revisionId"];
+    const outerRevisionNumber = row["revisionNumber"];
+    return isValidServiceRecordDispatchContext(candidate.context)
+        && (!initialGeneration || (
+            typeof outerRevisionId === "string"
+            && outerRevisionId.length > 0
+            && candidate.context.revisionId === outerRevisionId
+            && Number.isInteger(outerRevisionNumber)
+            && Number(outerRevisionNumber) > 0
+        ))
+        && candidate.completeness === "complete"
+        && typeof candidate.payloadFingerprint === "string"
+        && candidate.immutablePayload !== null
+        && typeof candidate.immutablePayload === "object"
+        && !Array.isArray(candidate.immutablePayload)
+        ? candidate
+        : null;
+}
+
+function revisionOperationsPayload(value: unknown): ServiceRecordRevisionOperationsJobPayload | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const row = value as Record<string, unknown>;
+    if (row["kind"] !== REVISION_OPERATIONS_JOB_KIND) return null;
+
+    const context = row["context"];
+    if (
+        !context
+        || typeof context !== "object"
+        || Array.isArray(context)
+        || !isValidServiceRecordDispatchContext(context as ServiceRecordRevisionDispatchContext)
+    ) {
+        return null;
+    }
+    const revisionId = (context as Record<string, unknown>)["revisionId"];
+    if (typeof revisionId !== "string" || revisionId.trim().length === 0) return null;
+
+    const operations = row["operations"];
+    if (!operations || typeof operations !== "object" || Array.isArray(operations)) return null;
+    const operationRow = operations as Record<string, unknown>;
+
+    const contractValue = operationRow["contract"];
+    const contract = contractValue === undefined
+        ? undefined
+        : parseRevisionOperationContractDescriptor(contractValue);
+    if (contract === null) return null;
+
+    const receiptValue = operationRow["receipt"];
+    const receipt = receiptValue === undefined
+        ? undefined
+        : parseRevisionOperationReceiptDescriptor(receiptValue);
+    if (receipt === null) return null;
+    if (contract === undefined && receipt === undefined) return null;
+    if (contract && receipt && contract.generation === receipt.expectedGeneration) return null;
+
+    return {
+        kind: REVISION_OPERATIONS_JOB_KIND,
+        context: context as ServiceRecordRevisionOperationsJobPayload["context"],
+        operations: {
+            ...(contract ? { contract } : {}),
+            ...(receipt ? { receipt } : {}),
+        },
+    };
+}
+
+function parseRevisionOperationContractDescriptor(
+    value: unknown,
+): RevisionOperationContractDescriptor | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const row = value as Record<string, unknown>;
+    const documentStateId = row["documentStateId"];
+    const generation = row["generation"];
+    if (typeof documentStateId !== "string" || documentStateId.trim().length === 0) return null;
+    if (typeof generation !== "string" || generation.trim().length === 0) return null;
+    return { documentStateId: documentStateId.trim(), generation: generation.trim() };
+}
+
+function parseRevisionOperationReceiptDescriptor(
+    value: unknown,
+): RevisionOperationReceiptDescriptor | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const row = value as Record<string, unknown>;
+    const documentStateId = row["documentStateId"];
+    const expectedGeneration = row["expectedGeneration"];
+    if (typeof documentStateId !== "string" || documentStateId.trim().length === 0) return null;
+    if (typeof expectedGeneration !== "string" || expectedGeneration.trim().length === 0) return null;
+    return {
+        documentStateId: documentStateId.trim(),
+        expectedGeneration: expectedGeneration.trim(),
+    };
+}
+
+function toRevisionGenerationInput(
+    payload: RevisionDocumentJobPayload,
+): ServiceRecordRevisionGenerationInput | null {
+    const context = payload.context;
+    const documentStateId = payload.documentStateId;
+    const documentVersion = payload.documentVersion;
+    const snapshotReference = payload.snapshotReference;
+    const generation = payload.generation;
+    if (
+        typeof documentStateId !== "string"
+        || documentStateId.trim().length === 0
+        || typeof documentVersion !== "number"
+        || !Number.isInteger(documentVersion)
+        || documentVersion < 1
+        || typeof snapshotReference !== "string"
+        || snapshotReference.trim().length === 0
+        || typeof generation !== "string"
+        || generation.trim().length === 0
+        || typeof payload.payloadFingerprint !== "string"
+        || !/^[0-9a-f]{64}$/i.test(payload.payloadFingerprint)
+        || !payload.immutablePayload
+        || typeof payload.immutablePayload !== "object"
+        || Array.isArray(payload.immutablePayload)
+    ) {
+        return null;
+    }
+    return {
+        ...context,
+        generationKind: payload.generationKind ?? "REVISION_SNAPSHOT",
+        documentStateId,
+        documentVersion,
+        snapshotReference,
+        generation,
+        immutablePayload: payload.immutablePayload,
+        payloadFingerprint: payload.payloadFingerprint,
+        completeness: "complete",
+    };
+}
+
+function isRevisionJobMarker(value: unknown): boolean {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const row = value as Record<string, unknown>;
+    if (
+        row["kind"] === REVISION_JOB_KIND
+        || row["kind"] === REVISION_OPERATIONS_JOB_KIND
+        || row["generationKind"] === "INITIAL_FINALIZATION"
+        || row["revisionId"] !== undefined
+    ) {
+        return true;
+    }
+    const context = row["context"];
+    return Boolean(
+        context
+        && typeof context === "object"
+        && !Array.isArray(context)
+        && "revisionId" in (context as Record<string, unknown>),
+    );
+}
+
+function revisionRecoveryBlockReason(job: EformsignDocumentJobEntity): string | null {
+    const revisionMarker = isRevisionJobMarker(job.payload)
+        || job.requestKey.startsWith(INITIAL_FINALIZATION_REQUEST_PREFIX)
+        || job.requestKey.startsWith(REVISION_REQUEST_PREFIX)
+        || job.requestKey.startsWith(REVISION_OPERATIONS_REQUEST_PREFIX);
+    if (!revisionMarker) return null;
+    return revisionPayload(job.payload)
+        ? "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED"
+        : "INVALID_SERVICE_RECORD_REVISION_JOB_PAYLOAD";
 }
 
 /**
@@ -77,6 +339,12 @@ export class EformsignDocumentJobWorkerService {
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
         private readonly schedulerLease: SchedulerLeaseService,
+        @Optional()
+        @Inject(SERVICE_RECORD_REVISION_GENERATION)
+        private readonly revisionGenerator?: ServiceRecordRevisionGenerationPort,
+        @Optional()
+        @Inject(SERVICE_RECORD_REVISION_OPERATION_COORDINATOR)
+        private readonly revisionOperationCoordinator?: ServiceRecordRevisionOperationCoordinatorPort,
     ) {}
 
     @Interval(WORKER_INTERVAL_MS)
@@ -134,13 +402,55 @@ export class EformsignDocumentJobWorkerService {
             return;
         }
 
+        let revisionAuthorization: CreateDispatchAuthorizationResult;
+        try {
+            revisionAuthorization = await this.authorizeRevisionJob(job);
+        } catch {
+            await this.handlePreSendFailure(job, "SERVICE_RECORD_REVISION_AUTHORIZATION_FAILURE");
+            return;
+        }
+        if (revisionAuthorization.kind !== "allow") {
+            const attention = await this.repository.markRequiresAttention(
+                job.id,
+                job.leaseToken,
+                revisionAuthorization.reason ?? "SERVICE_RECORD_REVISION_DISPATCH_NOT_AUTHORIZED",
+            );
+            await this.recordAutoFinalizeTerminalOutcome(
+                job,
+                attention,
+                revisionAuthorization.reason ?? "SERVICE_RECORD_REVISION_DISPATCH_NOT_AUTHORIZED",
+            );
+            return;
+        }
+        if (revisionAuthorization.irreversible) {
+            // The database marker is the source of truth for confirm races;
+            // mirror it on this claimed copy so any exception after the
+            // marker follows reconciliation instead of a retry path.
+            Object.assign(job, { progressStep: "creating" });
+        }
+
         let latestProgressStep: EformsignHeadlessProgressStep | undefined;
-        const heartbeat = this.startHeartbeat(job.id, job.leaseToken, () => latestProgressStep);
+        const heartbeat = this.startHeartbeat(
+            job.id,
+            job.leaseToken,
+            () => latestProgressStep,
+            job.progressStep === "creating" || job.progressStep === "sent",
+        );
         try {
             if (job.jobType === "create_document") {
-                await this.processCreation(job, (step) => {
-                    latestProgressStep = step;
-                });
+                const revisionOperations = revisionOperationsPayload(job.payload);
+                if (revisionOperations) {
+                    await this.processRevisionOperations(job, revisionOperations);
+                } else {
+                    const revision = revisionPayload(job.payload);
+                    if (revision) {
+                        await this.processRevision(job, revision);
+                    } else {
+                        await this.processCreation(job, (step) => {
+                            latestProgressStep = step;
+                        });
+                    }
+                }
             } else if (job.jobType === "finalize_document") {
                 await this.processFinalization(job, (step) => {
                     latestProgressStep = step;
@@ -158,6 +468,136 @@ export class EformsignDocumentJobWorkerService {
             await this.handleExecutionFailure(job, latestProgressStep);
         } finally {
             clearInterval(heartbeat);
+        }
+    }
+
+    /**
+     * Revision operation jobs resume the persisted contract-period and receipt
+     * state rows through the coordinator. They must never fall through to the
+     * legacy mutable contract renderer or the immutable record renderer.
+     */
+    private async processRevisionOperations(
+        job: EformsignDocumentJobEntity,
+        payload: ServiceRecordRevisionOperationsJobPayload,
+    ): Promise<void> {
+        const leaseToken = job.leaseToken;
+        if (!leaseToken) return;
+        if (!this.revisionOperationCoordinator) {
+            const attention = await this.repository.markRequiresAttention(
+                job.id,
+                leaseToken,
+                "SERVICE_RECORD_REVISION_OPERATION_COORDINATOR_UNAVAILABLE",
+            );
+            await this.recordAutoFinalizeTerminalOutcome(
+                job,
+                attention,
+                "SERVICE_RECORD_REVISION_OPERATION_COORDINATOR_UNAVAILABLE",
+            );
+            return;
+        }
+
+        const input: ServiceRecordRevisionDocumentCoordinatorProcessInput = {
+            ...payload.context,
+            ...(payload.operations.contract ? { contract: payload.operations.contract } : {}),
+            ...(payload.operations.receipt ? { receipt: payload.operations.receipt } : {}),
+        };
+
+        let result: ServiceRecordRevisionDocumentCoordinatorProcessResult;
+        try {
+            result = await this.revisionOperationCoordinator.process(input);
+        } catch {
+            const attention = await this.repository.markRequiresAttention(
+                job.id,
+                leaseToken,
+                "SERVICE_RECORD_REVISION_OPERATION_COORDINATOR_FAILURE",
+            );
+            await this.recordAutoFinalizeTerminalOutcome(
+                job,
+                attention,
+                "SERVICE_RECORD_REVISION_OPERATION_COORDINATOR_FAILURE",
+            );
+            return;
+        }
+
+        if (!result || typeof result !== "object" || typeof result.status !== "string") {
+            const attention = await this.repository.markRequiresAttention(
+                job.id,
+                leaseToken,
+                "INVALID_SERVICE_RECORD_REVISION_OPERATION_RESULT",
+            );
+            await this.recordAutoFinalizeTerminalOutcome(
+                job,
+                attention,
+                "INVALID_SERVICE_RECORD_REVISION_OPERATION_RESULT",
+            );
+            return;
+        }
+
+        if (result.status === "completed" || result.status === "not_required") {
+            await this.repository.markCompleted(job.id, leaseToken, job.documentId ?? undefined);
+            return;
+        }
+
+        const reason = (typeof result.reason === "string" ? result.reason.trim() : "")
+            || `SERVICE_RECORD_REVISION_OPERATION_${result.status.toUpperCase()}`;
+        const attention = await this.repository.markRequiresAttention(job.id, leaseToken, reason);
+        await this.recordAutoFinalizeTerminalOutcome(job, attention, reason);
+    }
+
+    /**
+     * A revision job carries a complete immutable generation input rather than
+     * legacy contractData.  Route it only through the renderer boundary after
+     * repository authorization has committed the durable `creating` marker;
+     * malformed/missing renderer wiring is a terminal attention outcome and
+     * never falls back to the mutable live-case renderer or contract sender.
+     */
+    private async processRevision(
+        job: EformsignDocumentJobEntity,
+        payload: RevisionDocumentJobPayload,
+    ): Promise<void> {
+        const leaseToken = job.leaseToken;
+        if (!leaseToken) return;
+        const input = toRevisionGenerationInput(payload);
+        if (!input || !this.revisionGenerator) {
+            const attention = await this.repository.markRequiresAttention(
+                job.id,
+                leaseToken,
+                !input
+                    ? "INVALID_SERVICE_RECORD_REVISION_JOB_PAYLOAD"
+                    : "SERVICE_RECORD_REVISION_RENDERER_UNAVAILABLE",
+            );
+            await this.recordAutoFinalizeTerminalOutcome(
+                job,
+                attention,
+                !input
+                    ? "INVALID_SERVICE_RECORD_REVISION_JOB_PAYLOAD"
+                    : "SERVICE_RECORD_REVISION_RENDERER_UNAVAILABLE",
+            );
+            return;
+        }
+
+        try {
+            const result = await this.revisionGenerator.executeRevision(
+                input,
+                createEformsignWorkerPrincipal(job.branchId),
+            );
+            if (!Number.isInteger(result.documentVersion) || result.documentVersion < 1
+                || !Number.isInteger(result.chunkCount) || result.chunkCount < 1
+                || !Array.isArray(result.documentIds)
+                || result.documentIds.length !== result.chunkCount
+                || result.documentIds.some((documentId) => typeof documentId !== "string" || documentId.length === 0)) {
+                throw new Error("SERVICE_RECORD_REVISION_RENDERER_RESULT_INVALID");
+            }
+            await this.repository.markCompleted(
+                job.id,
+                leaseToken,
+                result.documentIds[0],
+            );
+        } catch {
+            // A renderer failure after the durable marker cannot be retried as
+            // a new generation. Keep the existing job reconciliation path and
+            // immutable payload available for an operator/reconciler.
+            await this.markAndReconcile(job, "creating");
         }
     }
 
@@ -201,7 +641,12 @@ export class EformsignDocumentJobWorkerService {
                 onProgress: async (step) => {
                     latestProgressStep = step;
                     onProgressStep?.(step);
-                    await this.recordProgress(job.id, leaseToken, step);
+                    await this.recordProgress(
+                        job.id,
+                        leaseToken,
+                        step,
+                        job.progressStep === "creating" || job.progressStep === "sent",
+                    );
                 },
             },
             createEformsignWorkerPrincipal(job.branchId),
@@ -215,7 +660,75 @@ export class EformsignDocumentJobWorkerService {
             await this.markAndReconcile(job, latestProgressStep);
             return;
         }
+        if (job.progressStep === "creating") {
+            // A durable pre-send authorization marker makes this attempt
+            // irreversible from the confirm race's perspective. Even when
+            // the provider reports a synchronous failure before its callback,
+            // reconcile instead of reopening a second send via retry.
+            await this.markAndReconcile(job, "creating");
+            return;
+        }
         await this.handlePreSendFailure(job, "HEADLESS_CREATE_PRE_SEND_FAILURE");
+    }
+
+    /**
+     * The worker owns provider orchestration only. The repository owns the
+     * transaction, aggregate locks, authoritative rereads, and durable
+     * creating marker so every caller reaches the same dispatch boundary.
+     */
+    private async authorizeRevisionJob(
+        job: EformsignDocumentJobEntity,
+    ): Promise<CreateDispatchAuthorizationResult> {
+        if (!job.leaseToken) return { kind: "lost", reason: "invalid_job_claim" };
+        if (job.jobType === "create_document") {
+            const rawPayload = job.payload ?? {};
+            const operations = revisionOperationsPayload(rawPayload);
+            if (rawPayload["kind"] === REVISION_OPERATIONS_JOB_KIND) {
+                if (!operations) {
+                    return { kind: "stale", reason: "INVALID_SERVICE_RECORD_REVISION_OPERATION_JOB_PAYLOAD" };
+                }
+                return this.authorizeThroughRepository(job, operations.context);
+            }
+            const payload = revisionPayload(rawPayload);
+            if (payload?.generationKind === "INITIAL_FINALIZATION") {
+                // Initial revised finalization is a persisted manual-review
+                // generation intent. Phase0 has not proved the provider path,
+                // so this discriminator must never reach a live credential or
+                // document-generation call even if a forged context says it
+                // is pending or complete.
+                return { kind: "stale", reason: "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED" };
+            }
+            if (payload && !isRevisionDocumentDispatchAllowed(payload.context)) {
+                return { kind: "stale", reason: "SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED" };
+            }
+            if (!payload && rawPayload["kind"] !== undefined) {
+                return { kind: "stale", reason: "INVALID_SERVICE_RECORD_REVISION_JOB_PAYLOAD" };
+            }
+            return this.authorizeThroughRepository(job, payload?.context ?? null);
+        }
+        if (job.jobType === "finalize_document") {
+            const payload = parseFinalizePayload(job.payload ?? {});
+            const documentId = job.documentId ?? payload?.documentId;
+            if (!payload || !documentId) {
+                return { kind: "stale", reason: "INVALID_FINALIZE_JOB_PAYLOAD" };
+            }
+            return this.authorizeThroughRepository(job, null);
+        }
+        return { kind: "allow" };
+    }
+
+    private async authorizeThroughRepository(
+        job: EformsignDocumentJobEntity,
+        expectedContext: ServiceRecordRevisionDispatchContext | null,
+    ): Promise<CreateDispatchAuthorizationResult> {
+        const authorization = await this.repository.authorizeForDispatch({
+            jobId: job.id,
+            leaseToken: job.leaseToken!,
+            expectedContext,
+        });
+        return authorization.kind === "allow"
+            ? { kind: "allow", irreversible: true }
+            : authorization;
     }
 
     private async processFinalization(
@@ -247,7 +760,12 @@ export class EformsignDocumentJobWorkerService {
                     onProgress: async (progressStep) => {
                         latestProgressStep = progressStep;
                         onProgressStep?.(progressStep);
-                        await this.recordProgress(job.id, leaseToken, progressStep);
+                        await this.recordProgress(
+                            job.id,
+                            leaseToken,
+                            progressStep,
+                            job.progressStep === "creating" || job.progressStep === "sent",
+                        );
                     },
                 },
                 createEformsignWorkerPrincipal(job.branchId),
@@ -321,10 +839,10 @@ export class EformsignDocumentJobWorkerService {
             progressStep ?? "reconciling",
         );
         if (!reconciling) return;
-        // markReconciling intentionally clears the persisted payload so a
-        // reconciling row cannot retain customer data. Keep the claimed copy
-        // in memory for this immediate provider lookup, otherwise creation
-        // matching loses its customer/template hints on the first pass.
+        // Legacy jobs may redact their payload on reconciliation. Revision
+        // jobs retain the immutable generation input in the repository, while
+        // this fallback keeps older adapters compatible with their claimed
+        // in-memory hints for the immediate reconciliation attempt.
         const reconciliationJob = reconciling && !reconciling.payload
             ? new EformsignDocumentJobEntity({ ...reconciling, payload: job.payload })
             : reconciling ?? job;
@@ -332,6 +850,20 @@ export class EformsignDocumentJobWorkerService {
     }
 
     private async reconcile(job: EformsignDocumentJobEntity): Promise<void> {
+        const revisionBlockReason = revisionRecoveryBlockReason(job);
+        if (revisionBlockReason) {
+            if (!job.leaseToken) {
+                this.logger.warn(`Eformsign revision job ${job.id} has no recovery lease`);
+                return;
+            }
+            const attention = await this.repository.markRequiresAttention(
+                job.id,
+                job.leaseToken,
+                revisionBlockReason,
+            );
+            await this.recordAutoFinalizeTerminalOutcome(job, attention, revisionBlockReason);
+            return;
+        }
         if (!(await this.ownsTarget(job))) {
             if (job.leaseToken) {
                 await this.repository.markRequiresAttention(
@@ -363,9 +895,14 @@ export class EformsignDocumentJobWorkerService {
         jobId: string,
         jobLeaseToken: string,
         progressStep: () => string | undefined,
+        preserveDispatchMarker = false,
     ): ReturnType<typeof setInterval> {
         const heartbeat = setInterval(() => {
-            void this.repository.updateProgress(jobId, jobLeaseToken, progressStep() ?? "processing", new Date()).catch(() => {
+            const observed = progressStep();
+            const persisted = preserveDispatchMarker
+                ? observed === "sent" ? "sent" : "creating"
+                : observed ?? "processing";
+            void this.repository.updateProgress(jobId, jobLeaseToken, persisted, new Date()).catch(() => {
                 this.logger.warn(`Eformsign document job ${jobId} heartbeat failed`);
             });
         }, HEARTBEAT_INTERVAL_MS);
@@ -373,8 +910,14 @@ export class EformsignDocumentJobWorkerService {
         return heartbeat;
     }
 
-    private async recordProgress(jobId: string, leaseToken: string, step: EformsignHeadlessProgressStep): Promise<void> {
-        const updated = await this.repository.updateProgress(jobId, leaseToken, step, new Date());
+    private async recordProgress(
+        jobId: string,
+        leaseToken: string,
+        step: EformsignHeadlessProgressStep,
+        preserveDispatchMarker = false,
+    ): Promise<void> {
+        const persistedStep = preserveDispatchMarker && step !== "sent" ? "creating" : step;
+        const updated = await this.repository.updateProgress(jobId, leaseToken, persistedStep, new Date());
         if (!updated) {
             throw new Error("EFORMSIGN_DOCUMENT_JOB_LEASE_LOST");
         }

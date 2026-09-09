@@ -21,6 +21,17 @@ describe('Korean error presentation', () => {
     expect(getErrorMessage(response(status as number, {}), 'ko')).toBe(expected);
   });
   it.each([
+    "SELECT 1 FROM clients",
+    "SELECT id + 1 FROM clients",
+    "SELECT 'client' AS label FROM clients",
+    "SELECT CASE WHEN id = 1 THEN 'one' ELSE 'other' END FROM clients",
+    "SELECT CAST(id AS TEXT) AS label FROM clients",
+    "SELECT (COALESCE(id, 0) + 1) AS next_id FROM clients",
+    "SELECT (SELECT 1 FROM related_clients) AS related_count FROM clients",
+    "SELECT \"id\" AS \"client_id\" FROM \"clients\"",
+    "SELECT u.id FROM users u",
+    "SELECT u.id FROM users AS u WHERE u.id = 1",
+    "SELECT u.id FROM users u JOIN teams t ON t.id = u.team_id",
     'SELECT phone FROM Client WHERE id = 73',
     'SELECT phone FROM Client',
     'SELECT phone FROM Client;',

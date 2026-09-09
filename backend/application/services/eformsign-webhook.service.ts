@@ -956,6 +956,23 @@ export class EformsignWebhookService {
             await this.linkDocumentUsecase.execute(branchid, documentId);
             this.logger.log(`Document ${documentId} successfully linked to client`);
 
+            // The legacy linker resolves a client by recipient phone before it
+            // enters the repository transaction. Re-read the complete
+            // document/client/revision tuple after that transaction so a
+            // delayed completion cannot continue into reconciler/end-date
+            // writes after a newer contract or admin revision has won.
+            const currentContractCheck = this.eformsignDocRepository
+                .isCurrentContractDocument;
+            if (
+                typeof currentContractCheck === "function"
+                && !await currentContractCheck.call(this.eformsignDocRepository, branchid, documentId)
+            ) {
+                this.logger.log(
+                    `Ignoring stale contract completion effects for document ${documentId}`,
+                );
+                return;
+            }
+
             if (mirroredDocument && this.completedMirrorReconciler) {
                 await this.completedMirrorReconciler.syncLinkedContract({
                     branchId: branchid,
@@ -966,12 +983,24 @@ export class EformsignWebhookService {
                 try {
                     const persist = this.serviceRecordLifecycle
                         ? {
-                            persist: (target: SyncedClientEndDate) =>
-                                this.serviceRecordLifecycle!.syncEndDateFromContract({
+                            persist: async (target: SyncedClientEndDate) => {
+                                const fencedSync = this.serviceRecordLifecycle
+                                    ?.syncEndDateFromCurrentContract;
+                                if (typeof fencedSync === "function") {
+                                    await fencedSync.call(this.serviceRecordLifecycle, {
+                                        branchId: branchid,
+                                        clientId: target.clientId,
+                                        endDate: target.endDate,
+                                        documentId,
+                                    });
+                                    return;
+                                }
+                                await this.serviceRecordLifecycle!.syncEndDateFromContract({
                                     branchId: branchid,
                                     clientId: target.clientId,
                                     endDate: target.endDate,
-                                }),
+                                });
+                            },
                         }
                         : {};
                     if (mirroredDocument) {

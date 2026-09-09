@@ -859,6 +859,20 @@ export default function ClientsPage() {
                                             </DropdownMenuItem>
                                         )}
                                         <DropdownMenuItem
+                                            asChild
+                                            data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_view-service-record"
+                                        >
+                                            <a
+                                                href={`/service-record-admin/${encodeURIComponent(String(activeSelectedClient.id))}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="w-full"
+                                            >
+                                                <FileSignature className="w-4 h-4" />
+                                                제공기록지 보기
+                                            </a>
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
                                             data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_change-service-schedule"
                                             disabled={isPreparingScheduleChange}
                                             onClick={() => void handleOpenServiceScheduleChange(activeSelectedClient.id)}

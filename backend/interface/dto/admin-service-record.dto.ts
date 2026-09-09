@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { IsOptional, IsString, Matches, MaxLength } from "class-validator";
+import type { ServiceRecordScheduleProjection } from "@babyjamjam/shared/types/service-record";
 
 const RECIPIENT_PHONE_PATTERN = /^01[016789]-?\d{3,4}-?\d{4}$/;
 
@@ -86,6 +87,8 @@ export interface AdminServiceRecordSessionDto {
     notes: string | null;
     paymentConfirmed: boolean;
     hasMomApproval: boolean;
+    clientSignature?: string | null;
+    clientSignedAt?: Date | null;
     employeeId: number | null;
     employeeName: string | null;
     formVersion: number;
@@ -134,4 +137,6 @@ export interface AdminServiceRecordAssignmentDto {
 export interface AdminServiceRecordOverviewDto {
     record: AdminServiceRecordCaseDto | null;
     assignments: AdminServiceRecordAssignmentDto[];
+    /** Canonical all-session projection used by the administrator date editor. */
+    scheduleProjection?: ServiceRecordScheduleProjection;
 }

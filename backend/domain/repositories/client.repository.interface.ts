@@ -51,7 +51,11 @@ export interface IClientRepository {
         schedule: InitialClientSchedule,
         transaction?: Prisma.TransactionClient,
     ): Promise<ClientWithInitialSchedule>;
-    update(branchid: string, client: ClientEntity): Promise<ClientEntity>;
+    update(
+        branchid: string,
+        client: ClientEntity,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<ClientEntity>;
     /**
      * Apply a date-derived status only when the branch-owned row still has the
      * status observed by the caller. A stale result is benign and must not be

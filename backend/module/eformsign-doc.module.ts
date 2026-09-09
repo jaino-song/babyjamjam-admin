@@ -68,6 +68,11 @@ import { FindClientByIdUsecase } from "application/usecases/client/find-client-b
 import { CreateEmployeeUsecase } from "application/usecases/employee/create-employee.usecase";
 import { EformsignDocumentJobService } from "application/services/eformsign-document-job.service";
 import { EformsignDocumentJobWorkerService } from "application/services/eformsign-document-job-worker.service";
+import {
+    SERVICE_RECORD_REVISION_GENERATION,
+} from "application/services/eformsign-document-job-worker.service";
+import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
+import { SERVICE_RECORD_EDIT_REPOSITORY } from "domain/repositories/service-record-edit.repository.interface";
 import { EformsignDocumentJobReconciliationService } from "application/services/eformsign-document-job-reconciliation.service";
 import { EFORMSIGN_DOCUMENT_JOB_REPOSITORY } from "domain/repositories/eformsign-document-job.repository.interface";
 import { EMPLOYEE_REPOSITORY } from "domain/repositories/employee.repository.interface";
@@ -76,6 +81,32 @@ import { SbEmployeeRepository } from "infrastructure/database/repositories/sb.em
 import { EFORMSIGN_DISPATCH_INTENT_REPOSITORY } from "domain/repositories/eformsign-dispatch-intent.repository.interface";
 import { SbEformsignDispatchIntentRepository } from "infrastructure/database/repositories/sb.eformsign-dispatch-intent.repository";
 import { EformsignDispatchBoundaryService } from "application/services/eformsign-dispatch-boundary.service";
+import {
+    ServiceRecordContractRevisionService,
+    SERVICE_RECORD_CONTRACT_REVISION_PROVIDER,
+    SERVICE_RECORD_CONTRACT_REVISION_DISPATCH,
+} from "application/services/service-record-contract-revision.service";
+import {
+    ReceiptLinkRevisionRefreshService,
+    RECEIPT_LINK_REVISION_PDF_SOURCE,
+    RECEIPT_LINK_REVISION_RASTERIZER,
+    RECEIPT_LINK_REVISION_PDF_VERIFIER,
+} from "application/services/receipt-link-revision-refresh.service";
+import {
+    SERVICE_RECORD_REVISION_OPERATION_COORDINATOR,
+    ServiceRecordRevisionDocumentCoordinator,
+} from "application/services/service-record-revision-document-coordinator.service";
+import {
+    UnverifiedReceiptLinkRevisionPdfSource,
+    UnverifiedServiceRecordContractRevisionDispatch,
+    UnverifiedServiceRecordContractRevisionProvider,
+} from "application/services/service-record-revision-unverified-adapters.service";
+import { FILE_STORAGE_PORT } from "domain/ports/file-storage.port";
+import { RECEIPT_LINK_TOKEN_REPOSITORY } from "domain/repositories/receipt-link-token.repository.interface";
+import { SbReceiptLinkTokenRepository } from "infrastructure/database/repositories/sb.receipt-link-token.repository";
+import { SupabaseStorageAdapter } from "infrastructure/adapters/supabase-storage.adapter";
+import { PdfPageRasterizerService } from "infrastructure/pdf/pdf-page-rasterizer.service";
+import { ReceiptPdfVerifierService } from "infrastructure/pdf/receipt-pdf-verifier.service";
 
 @Module({
     imports: [
@@ -146,6 +177,57 @@ import { EformsignDispatchBoundaryService } from "application/services/eformsign
         EformsignDocumentJobService,
         EformsignDocumentJobWorkerService,
         EformsignDocumentJobReconciliationService,
+        // Revision document operations.  Revised provider capability is
+        // intentionally fail-closed until an identity-bound Phase0 registry
+        // entry exists; the adapter bindings below never call a vendor.
+        ServiceRecordContractRevisionService,
+        ReceiptLinkRevisionRefreshService,
+        ServiceRecordRevisionDocumentCoordinator,
+        UnverifiedServiceRecordContractRevisionProvider,
+        UnverifiedServiceRecordContractRevisionDispatch,
+        UnverifiedReceiptLinkRevisionPdfSource,
+        ReceiptPdfVerifierService,
+        PdfPageRasterizerService,
+        SupabaseStorageAdapter,
+        {
+            provide: SERVICE_RECORD_REVISION_OPERATION_COORDINATOR,
+            useExisting: ServiceRecordRevisionDocumentCoordinator,
+        },
+        {
+            provide: SERVICE_RECORD_CONTRACT_REVISION_PROVIDER,
+            useExisting: UnverifiedServiceRecordContractRevisionProvider,
+        },
+        {
+            provide: SERVICE_RECORD_CONTRACT_REVISION_DISPATCH,
+            useExisting: UnverifiedServiceRecordContractRevisionDispatch,
+        },
+        {
+            provide: RECEIPT_LINK_REVISION_PDF_SOURCE,
+            useExisting: UnverifiedReceiptLinkRevisionPdfSource,
+        },
+        {
+            provide: RECEIPT_LINK_REVISION_RASTERIZER,
+            useExisting: PdfPageRasterizerService,
+        },
+        {
+            provide: RECEIPT_LINK_REVISION_PDF_VERIFIER,
+            useExisting: ReceiptPdfVerifierService,
+        },
+        {
+            provide: FILE_STORAGE_PORT,
+            useExisting: SupabaseStorageAdapter,
+        },
+        {
+            provide: RECEIPT_LINK_TOKEN_REPOSITORY,
+            useClass: SbReceiptLinkTokenRepository,
+        },
+        // The snapshot renderer owns the revision-generation implementation;
+        // the worker consumes it through a narrow token so legacy contract
+        // jobs never receive revision payloads as mutable contractData.
+        {
+            provide: SERVICE_RECORD_REVISION_GENERATION,
+            useExisting: CreateAndSendServiceRecordSnapshotUsecase,
+        },
         EformsignDispatchBoundaryService,
         // Repository bindings
         {
@@ -172,6 +254,14 @@ import { EformsignDispatchBoundaryService } from "application/services/eformsign
         {
             provide: EFORMSIGN_DOCUMENT_JOB_REPOSITORY,
             useClass: SbEformsignDocumentJobRepository,
+        },
+        // EformsignDocModule is also used as a standalone worker graph. Keep
+        // its snapshot renderer's transaction-bound repository available
+        // without importing ServiceRecordEntryModule (which imports this
+        // module and would create a cycle).
+        {
+            provide: SERVICE_RECORD_EDIT_REPOSITORY,
+            useClass: ServiceRecordEditRepository,
         },
         {
             provide: EFORMSIGN_DISPATCH_INTENT_REPOSITORY,
@@ -203,6 +293,10 @@ import { EformsignDispatchBoundaryService } from "application/services/eformsign
         GetContractClientCandidateUsecase,
         EformsignDocumentJobService,
         EformsignDispatchBoundaryService,
+        ServiceRecordRevisionDocumentCoordinator,
+        SERVICE_RECORD_REVISION_OPERATION_COORDINATOR,
+        ServiceRecordContractRevisionService,
+        ReceiptLinkRevisionRefreshService,
     ],
 })
 export class EformsignDocModule {}

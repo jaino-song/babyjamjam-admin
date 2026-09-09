@@ -27,7 +27,13 @@ import {
 import { ClientServiceRecordsTab } from "@/components/app/clients/ClientServiceRecordsTab";
 import { getClientDisplayLabel } from "@/components/app/clients/client-display";
 import { clientKeys } from "@/features/clients/hooks/keys";
-import { useClientServiceRecords } from "@/features/service-records/hooks/use-service-records";
+import {
+    useClientServiceRecordRevisionHistory,
+    useClientServiceRecords,
+    useRetryServiceRecordDocument,
+} from "@/features/service-records/hooks/use-service-records";
+import { serviceRecordKeys } from "@/features/service-records/hooks/keys";
+import { subscribeServiceRecordRevisionSync } from "@/features/service-records/revision-sync";
 import { dashboardQueryKeys } from "@/hooks/useDashboardStats";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
@@ -542,6 +548,45 @@ function ClientDetailPanelBody({
     const serviceRecordsQuery = useClientServiceRecords(clientId, {
         enabled: activeDetailTab === "service-records",
     });
+    const revisionHistoryQuery = useClientServiceRecordRevisionHistory(clientId, {
+        enabled: activeDetailTab === "service-records",
+    });
+    const retryRevisionDocumentMutation = useRetryServiceRecordDocument();
+    const knownServiceRecordCaseId = serviceRecordsQuery.data?.record?.id
+        ?? revisionHistoryQuery.data?.caseId
+        ?? null;
+
+    useEffect(() => {
+        if (clientId === null) return undefined;
+
+        return subscribeServiceRecordRevisionSync((event) => {
+            if (knownServiceRecordCaseId && event.caseId !== knownServiceRecordCaseId) return;
+            void queryClient.invalidateQueries({ queryKey: serviceRecordKeys.clientOverview(clientId) });
+            void queryClient.invalidateQueries({ queryKey: serviceRecordKeys.revisionHistory(clientId) });
+            void queryClient.invalidateQueries({ queryKey: clientKeys.all });
+            void queryClient.invalidateQueries({ queryKey: clientKeys.detail(clientId) });
+            void queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.overviewAll() });
+        });
+    }, [clientId, knownServiceRecordCaseId, queryClient]);
+
+    useEffect(() => {
+        if (clientId === null) return undefined;
+
+        const refreshOnFocus = () => {
+            if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+            void queryClient.invalidateQueries({ queryKey: serviceRecordKeys.clientOverview(clientId) });
+            void queryClient.invalidateQueries({ queryKey: serviceRecordKeys.revisionHistory(clientId) });
+            void queryClient.invalidateQueries({ queryKey: clientKeys.all });
+            void queryClient.invalidateQueries({ queryKey: clientKeys.detail(clientId) });
+            void queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.overviewAll() });
+        };
+        window.addEventListener("focus", refreshOnFocus);
+        document.addEventListener("visibilitychange", refreshOnFocus);
+        return () => {
+            window.removeEventListener("focus", refreshOnFocus);
+            document.removeEventListener("visibilitychange", refreshOnFocus);
+        };
+    }, [clientId, queryClient]);
 
     const {
         data: clientContracts,
@@ -988,6 +1033,20 @@ function ClientDetailPanelBody({
                                     }
                                     isTextRefreshing={serviceRecordsQuery.isRefetching}
                                     onRefresh={() => void serviceRecordsQuery.refetch()}
+                                    revisionHistory={revisionHistoryQuery.data}
+                                    isRevisionHistoryLoading={revisionHistoryQuery.isLoading}
+                                    isRevisionHistoryError={revisionHistoryQuery.isError}
+                                    isRevisionHistoryRefreshing={revisionHistoryQuery.isFetching && !revisionHistoryQuery.isLoading}
+                                    onRefreshRevisionHistory={() => void revisionHistoryQuery.refetch()}
+                                    onRetryRevisionDocument={(revisionId, documentStateId, expectedGeneration) =>
+                                        retryRevisionDocumentMutation.mutateAsync({
+                                            revisionId,
+                                            documentStateId,
+                                            expectedGeneration,
+                                        }).then(() => undefined)}
+                                    retryingDocumentKey={retryRevisionDocumentMutation.isPending
+                                        ? `${retryRevisionDocumentMutation.variables?.revisionId ?? ""}:${retryRevisionDocumentMutation.variables?.documentStateId ?? ""}`
+                                        : null}
                                 />
                             ),
                         },

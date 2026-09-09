@@ -13,7 +13,7 @@ describe('getUserErrorMessage', () => {
   });
   it('distinguishes network failures, response timeouts and access refusal', () => {
     expect(getUserErrorMessage('Failed to fetch')).toContain('서버에 연결하지 못했어요');
-    expect(getUserErrorMessage(response(400, { message: 'Failed to fetch' }))).toContain('서버에 연결하지 못했어요');
+    expect(getUserErrorMessage(response(400, { message: 'Failed to fetch' }))).toContain('입력 정보가 요청 조건에 맞지 않아요');
     expect(getUserErrorMessage(new Error('Network Error'))).toContain('서버에 연결하지 못했어요');
     expect(getUserErrorMessage({ code: 'ECONNABORTED' })).toContain('시간이 초과됐어요');
     expect(getUserErrorMessage(response(403, {}))).toBe('이 작업을 할 권한이 없어요.');

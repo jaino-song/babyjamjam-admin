@@ -1,0 +1,74 @@
+{
+  "bjj-task3-integrated-pg.log": {
+    "cwd": "/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend",
+    "command": "SERVICE_RECORD_WRITE_LOCK_E2E=1 DATABASE_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task3 DIRECT_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task3 pnpm exec jest --runInBand --runTestsByPath test/e2e/service-record-write-lock-order.e2e.spec.ts test/e2e/service-record-write-lock-races-lifecycle-client.e2e.spec.ts test/e2e/service-record-mirror-request-races.e2e.spec.ts --testPathIgnorePatterns='[]' > /tmp/bjj-task3-integrated-pg.log 2>&1",
+    "source": "Exact test-launch shell line recovered from original exec input in this task session by log-name match; preceding unrelated shell steps omitted. No command rerun.",
+    "authorization": "Historical evidence only. Do not replay old DB targets; current sole approved database is task4."
+  },
+  "bjj-phase4-dispatch-race-green.log": {
+    "cwd": "/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend",
+    "command": "SERVICE_RECORD_CONFIRM_E2E=1 DATABASE_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task4 DIRECT_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task4 pnpm exec jest --runInBand --runTestsByPath test/e2e/service-record-confirm-message-races.e2e.spec.ts test/e2e/service-record-confirm-document-races.e2e.spec.ts --testPathIgnorePatterns='[]' > /tmp/bjj-phase4-dispatch-race-green.log 2>&1",
+    "source": "Exact test-launch shell line recovered from original exec input in this task session by log-name match; preceding unrelated shell steps omitted. No command rerun.",
+    "authorization": "Historical evidence only. Do not replay old DB targets; current sole approved database is task4."
+  },
+  "bjj-phase4-future-content-pg.log": {
+    "cwd": "/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend",
+    "command": "SERVICE_RECORD_CONFIRM_E2E=1 DATABASE_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task4 DIRECT_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task4 pnpm exec jest --runInBand --runTestsByPath test/e2e/service-record-confirm-atomic.e2e.spec.ts test/e2e/service-record-confirm-rollback.e2e.spec.ts --testPathIgnorePatterns='[]' > /tmp/bjj-phase4-future-content-pg.log 2>&1",
+    "source": "Exact test-launch shell line recovered from original exec input in this task session by log-name match; preceding unrelated shell steps omitted. No command rerun.",
+    "authorization": "Historical evidence only. Do not replay old DB targets; current sole approved database is task4."
+  },
+  "bjj-phase4-final-postgres.log": {
+    "cwd": "/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend",
+    "command": "SERVICE_RECORD_CONFIRM_E2E=1 DATABASE_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task4 DIRECT_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task4 pnpm exec jest --runInBand --runTestsByPath test/e2e/service-record-confirm-atomic.e2e.spec.ts test/e2e/service-record-confirm-draft-source.e2e.spec.ts test/e2e/service-record-confirm-rollback.e2e.spec.ts test/e2e/service-record-confirm-provider-races.e2e.spec.ts test/e2e/service-record-confirm-message-races.e2e.spec.ts test/e2e/service-record-confirm-document-races.e2e.spec.ts test/e2e/service-record-confirm-legacy-owner.e2e.spec.ts --testPathIgnorePatterns='[]' > /tmp/bjj-phase4-final-postgres.log 2>&1",
+    "source": "Exact test-launch shell line recovered from original exec input in this task session by log-name match; preceding unrelated shell steps omitted. No command rerun.",
+    "authorization": "Historical evidence only. Do not replay old DB targets; current sole approved database is task4."
+  },
+  "bjj-phase4-provider-audit-green.log": {
+    "cwd": "/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend",
+    "command": "SERVICE_RECORD_CONFIRM_E2E=1 DATABASE_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task4 DIRECT_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task4 pnpm exec jest --runInBand --runTestsByPath test/e2e/service-record-confirm-provider-context.e2e.spec.ts test/e2e/service-record-confirm-provider-races.e2e.spec.ts --testPathIgnorePatterns='[]' > /tmp/bjj-phase4-provider-audit-green.log 2>&1",
+    "source": "Exact test-launch shell line recovered from original exec input in this task session by log-name match; preceding unrelated shell steps omitted. No command rerun.",
+    "authorization": "Historical evidence only. Do not replay old DB targets; current sole approved database is task4."
+  },
+  "bjj-phase5-receipt-promotion-postgres-green.log": {
+    "cwd": "/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend",
+    "command": "SERVICE_RECORD_CONFIRM_E2E=1 DATABASE_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task4 DIRECT_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task4 pnpm exec jest --runInBand --runTestsByPath test/e2e/service-record-receipt-promotion.e2e.spec.ts --testPathIgnorePatterns='[]' > /tmp/bjj-phase5-receipt-promotion-postgres-green.log 2>&1",
+    "source": "Exact test-launch shell line recovered from original exec input in this task session by log-name match; preceding unrelated shell steps omitted. No command rerun.",
+    "authorization": "Historical evidence only. Do not replay old DB targets; current sole approved database is task4."
+  },
+  "bjj-phase5-receipt-access-postgres.log": {
+    "cwd": "/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend",
+    "command": "SERVICE_RECORD_CONFIRM_E2E=1 DATABASE_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task4 DIRECT_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task4 pnpm exec jest --runInBand --runTestsByPath test/e2e/service-record-receipt-promotion.e2e.spec.ts --testPathIgnorePatterns='[]' > /tmp/bjj-phase5-receipt-access-postgres.log 2>&1",
+    "source": "Exact test-launch shell line recovered from original exec input in this task session by log-name match; preceding unrelated shell steps omitted. No command rerun.",
+    "authorization": "Historical evidence only. Do not replay old DB targets; current sole approved database is task4."
+  },
+  "bjj-phase5-finalizer-version-green.log": {
+    "cwd": "/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor",
+    "command": "SERVICE_RECORD_CONFIRM_E2E=1 DATABASE_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task4 DIRECT_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task4 pnpm --dir backend exec jest --runInBand --runTestsByPath test/e2e/service-record-confirm-finalization.e2e.spec.ts --testPathIgnorePatterns='[]' > /tmp/bjj-phase5-finalizer-version-green.log 2>&1",
+    "source": "Exact test-launch shell line recovered from original exec input in this task session by log-name match; preceding unrelated shell steps omitted. No command rerun.",
+    "authorization": "Historical evidence only. Do not replay old DB targets; current sole approved database is task4."
+  },
+  "bjj-phase5-second-promotion-green.log": {
+    "cwd": "/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor",
+    "command": "SERVICE_RECORD_CONFIRM_E2E=1 DATABASE_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task4 DIRECT_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task4 pnpm --dir backend exec jest --runInBand --runTestsByPath test/e2e/service-record-revision-version-promotion.e2e.spec.ts test/e2e/service-record-revision-operation-intents.e2e.spec.ts --testPathIgnorePatterns='[]' > /tmp/bjj-phase5-second-promotion-green.log 2>&1",
+    "source": "Exact test-launch shell line recovered from original exec input in this task session by log-name match; preceding unrelated shell steps omitted. No command rerun.",
+    "authorization": "Historical evidence only. Do not replay old DB targets; current sole approved database is task4."
+  },
+  "bjj-phase5-audit-event-postgres.log": {
+    "cwd": "/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor",
+    "command": "SERVICE_RECORD_CONFIRM_E2E=1 DATABASE_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task4 DIRECT_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task4 pnpm --dir backend exec jest --runInBand --runTestsByPath test/e2e/service-record-contract-event-fence.e2e.spec.ts --testPathIgnorePatterns='[]' > /tmp/bjj-phase5-audit-event-postgres.log 2>&1",
+    "source": "Exact test-launch shell line recovered from original exec input in this task session by log-name match; preceding unrelated shell steps omitted. No command rerun.",
+    "authorization": "Historical evidence only. Do not replay old DB targets; current sole approved database is task4."
+  },
+  "bjj-phase5-mirror-event-postgres-green.log": {
+    "cwd": "/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor",
+    "command": "SERVICE_RECORD_CONFIRM_E2E=1 DATABASE_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task4 DIRECT_URL=postgresql://bjj_revision_test@127.0.0.1:62295/bjj_revision_task4 pnpm --dir backend exec jest --runInBand --runTestsByPath test/e2e/service-record-mirrored-contract-event-fence.e2e.spec.ts test/e2e/service-record-contract-event-fence.e2e.spec.ts --testPathIgnorePatterns='[]' > /tmp/bjj-phase5-mirror-event-postgres-green.log 2>&1",
+    "source": "Exact test-launch shell line recovered from original exec input in this task session by log-name match; preceding unrelated shell steps omitted. No command rerun.",
+    "authorization": "Historical evidence only. Do not replay old DB targets; current sole approved database is task4."
+  },
+  "bjj-phase5-stale-lifecycle-green.log": {
+    "cwd": "/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor",
+    "command": null,
+    "source": "Exact accepted invocation unavailable. Previously recovered command was the rejected typo attempt, not the accepted two-spec run. No exact-command provenance is claimed for this artifact; the 10 PASS log and prior Phase5 SHIP remain historical result evidence. No rerun.",
+    "authorization": "Historical evidence only. Do not replay old DB targets; current sole approved database is task4."
+  }
+}

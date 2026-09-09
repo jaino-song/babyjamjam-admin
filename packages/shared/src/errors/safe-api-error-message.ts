@@ -21,19 +21,356 @@ const UNINFORMATIVE_MESSAGES = new Set([
     "gateway timeout",
 ]);
 
+type SqlTokenKind = "number" | "operator" | "punctuation" | "quoted" | "word";
+
+interface SqlToken {
+    kind: SqlTokenKind;
+    value: string;
+}
+
 /**
- * Match a complete projection list followed by FROM and a complete table
- * identifier. English text such as "Select a provider from the list." fails
- * this grammar because "provider" cannot follow the first projection without
- * a comma or FROM.
+ * This is deliberately a small SQL-shaped scanner, not a SQL parser. It only
+ * recognizes a complete SELECT projection followed by FROM and a relation,
+ * which is enough to keep query diagnostics out of controlled 4xx messages.
  */
-const SQL_IDENTIFIER = String.raw`(?:["'\x60][^"'\x60]+["'\x60]|[a-z_][\w$]*(?:\s*\.\s*(?:["'\x60][^"'\x60]+["'\x60]|[a-z_][\w$]*))?)`;
-const SQL_FUNCTION = String.raw`[a-z_][\w$]*\s*\(\s*(?:(?:distinct\s+)?(?:\*|${SQL_IDENTIFIER})(?:\s*,\s*(?:${SQL_IDENTIFIER}|\*))*)?\s*\)`;
-const SQL_PROJECTION_EXPRESSION = String.raw`(?:${SQL_FUNCTION}|${SQL_IDENTIFIER}|(?:${SQL_IDENTIFIER}\s*\.\s*)?\*)`;
-const SQL_SELECT_FROM_PATTERN = new RegExp(
-    String.raw`\bselect\s+${SQL_PROJECTION_EXPRESSION}(?:\s*,\s*${SQL_PROJECTION_EXPRESSION})*\s+from\s+${SQL_IDENTIFIER}(?=\s|;|$)`,
-    "i",
-);
+const SQL_PROJECTION_KEYWORDS = new Set([
+    "all",
+    "as",
+    "case",
+    "distinct",
+    "else",
+    "end",
+    "false",
+    "filter",
+    "null",
+    "over",
+    "then",
+    "true",
+    "when",
+]);
+const SQL_RELATION_TAIL_KEYWORDS = new Set([
+    "except",
+    "fetch",
+    "for",
+    "group",
+    "having",
+    "intersect",
+    "join",
+    "limit",
+    "lock",
+    "offset",
+    "on",
+    "order",
+    "returning",
+    "union",
+    "where",
+    "window",
+]);
+const SQL_OPERATOR_CHARS = "+-*/%<>=!|&^~:";
+const SQL_PUNCTUATION_CHARS = ".,()[];";
+
+function isSqlWordStart(char: string | undefined): boolean {
+    return char !== undefined && /[A-Za-z_$]/.test(char);
+}
+
+function isSqlWordPart(char: string | undefined): boolean {
+    return char !== undefined && /[A-Za-z0-9_$]/.test(char);
+}
+
+function isSqlNumberPart(char: string | undefined): boolean {
+    return char !== undefined && /[A-Za-z0-9_.]/.test(char);
+}
+
+function tokenizeSqlLikeMessage(message: string): SqlToken[] {
+    const tokens: SqlToken[] = [];
+    let index = 0;
+
+    while (index < message.length) {
+        const char = message[index];
+
+        if (/\s/.test(char)) {
+            index += 1;
+            continue;
+        }
+
+        if (char === "'" || char === '"' || char === "`") {
+            const quote = char;
+            const start = index;
+            index += 1;
+
+            while (index < message.length) {
+                if (message[index] === "\\") {
+                    index += 2;
+                    continue;
+                }
+
+                if (message[index] === quote) {
+                    if (message[index + 1] === quote) {
+                        index += 2;
+                        continue;
+                    }
+
+                    index += 1;
+                    break;
+                }
+
+                index += 1;
+            }
+
+            tokens.push({ kind: "quoted", value: message.slice(start, index) });
+            continue;
+        }
+
+        if (isSqlWordStart(char)) {
+            const start = index;
+            index += 1;
+            while (isSqlWordPart(message[index])) {
+                index += 1;
+            }
+            tokens.push({ kind: "word", value: message.slice(start, index).toLowerCase() });
+            continue;
+        }
+
+        if (/[0-9]/.test(char)) {
+            const start = index;
+            index += 1;
+            while (isSqlNumberPart(message[index])) {
+                index += 1;
+            }
+            tokens.push({ kind: "number", value: message.slice(start, index) });
+            continue;
+        }
+
+        if (SQL_OPERATOR_CHARS.includes(char)) {
+            const start = index;
+            index += 1;
+            if ("=<>|".includes(message[index] ?? "")) {
+                index += 1;
+            }
+            tokens.push({ kind: "operator", value: message.slice(start, index) });
+            continue;
+        }
+
+        if (SQL_PUNCTUATION_CHARS.includes(char)) {
+            tokens.push({ kind: "punctuation", value: char });
+            index += 1;
+            continue;
+        }
+
+        tokens.push({ kind: "punctuation", value: char });
+        index += 1;
+    }
+
+    return tokens;
+}
+
+function isSqlKeyword(token: SqlToken | undefined, keyword: string): boolean {
+    return token?.kind === "word" && token.value === keyword;
+}
+
+function isSqlIdentifierToken(token: SqlToken | undefined): boolean {
+    return token?.kind === "word" || token?.kind === "quoted";
+}
+
+function splitSqlProjection(tokens: SqlToken[]): SqlToken[][] | null {
+    const segments: SqlToken[][] = [];
+    let segment: SqlToken[] = [];
+    let parentheses = 0;
+    let brackets = 0;
+
+    for (const token of tokens) {
+        if (token.value === "(") {
+            parentheses += 1;
+        } else if (token.value === ")") {
+            parentheses -= 1;
+            if (parentheses < 0) {
+                return null;
+            }
+        } else if (token.value === "[") {
+            brackets += 1;
+        } else if (token.value === "]") {
+            brackets -= 1;
+            if (brackets < 0) {
+                return null;
+            }
+        }
+
+        if (token.value === "," && parentheses === 0 && brackets === 0) {
+            if (segment.length === 0) {
+                return null;
+            }
+            segments.push(segment);
+            segment = [];
+            continue;
+        }
+
+        segment.push(token);
+    }
+
+    if (parentheses !== 0 || brackets !== 0 || segment.length === 0) {
+        return null;
+    }
+
+    segments.push(segment);
+    return segments;
+}
+
+function isSqlProjectionSegment(segment: SqlToken[]): boolean {
+    if (segment.length === 1 && isSqlIdentifierToken(segment[0])) {
+        return true;
+    }
+
+    return segment.some((token) => (
+        token.kind === "number"
+        || token.kind === "operator"
+        || token.kind === "quoted"
+        || token.value === "."
+        || token.value === "("
+        || token.value === ")"
+        || token.value === "["
+        || token.value === "]"
+        || SQL_PROJECTION_KEYWORDS.has(token.value)
+    ));
+}
+
+function isSqlProjection(tokens: SqlToken[]): boolean {
+    const segments = splitSqlProjection(tokens);
+    return segments !== null && segments.every(isSqlProjectionSegment);
+}
+
+function findTopLevelFrom(tokens: SqlToken[], selectIndex: number): number | null {
+    let parentheses = 0;
+    let brackets = 0;
+
+    for (let index = selectIndex + 1; index < tokens.length; index += 1) {
+        const token = tokens[index];
+        if (token.value === "(") {
+            parentheses += 1;
+        } else if (token.value === ")") {
+            if (parentheses === 0) {
+                return null;
+            }
+            parentheses -= 1;
+        } else if (token.value === "[") {
+            brackets += 1;
+        } else if (token.value === "]") {
+            if (brackets === 0) {
+                return null;
+            }
+            brackets -= 1;
+        } else if (parentheses === 0 && brackets === 0 && isSqlKeyword(token, "from")) {
+            return index;
+        }
+    }
+
+    return null;
+}
+
+function consumeSqlRelationIdentifier(tokens: SqlToken[], start: number): number | null {
+    if (!isSqlIdentifierToken(tokens[start])) {
+        return null;
+    }
+
+    let index = start + 1;
+    while (tokens[index]?.value === ".") {
+        if (!isSqlIdentifierToken(tokens[index + 1])) {
+            return null;
+        }
+        index += 2;
+    }
+
+    return index;
+}
+
+function consumeSqlDerivedRelation(tokens: SqlToken[], start: number): number | null {
+    if (tokens[start]?.value !== "(") {
+        return null;
+    }
+
+    let depth = 0;
+    for (let index = start; index < tokens.length; index += 1) {
+        if (tokens[index].value === "(") {
+            depth += 1;
+        } else if (tokens[index].value === ")") {
+            depth -= 1;
+            if (depth === 0) {
+                return index + 1;
+            }
+        }
+    }
+
+    return null;
+}
+
+function hasSqlRelationAfterFrom(
+    tokens: SqlToken[],
+    fromIndex: number,
+    projection: SqlToken[],
+): boolean {
+    const relationStart = fromIndex + 1;
+    const isDerivedRelation = tokens[relationStart]?.value === "(";
+    let index = isDerivedRelation
+        ? consumeSqlDerivedRelation(tokens, relationStart)
+        : consumeSqlRelationIdentifier(tokens, relationStart);
+    if (index === null) {
+        return false;
+    }
+
+    if (isDerivedRelation && !tokens.slice(relationStart + 1, index - 1).some((token) => isSqlKeyword(token, "select"))) {
+        return false;
+    }
+
+    if (isSqlKeyword(tokens[index], "as")) {
+        index += 1;
+        if (!isSqlIdentifierToken(tokens[index])) {
+            return false;
+        }
+        index += 1;
+    }
+
+    const tail = tokens[index];
+    if (
+        tail === undefined
+        || tail.value === ";"
+        || (tail.kind === "word" && SQL_RELATION_TAIL_KEYWORDS.has(tail.value))
+    ) {
+        return true;
+    }
+
+    // SQL commonly continues with a bare table alias or a dialect-specific
+    // clause. Once the projection and relation are SQL-shaped, an unknown tail
+    // should remain hidden instead of making the diagnostic displayable. Keep
+    // the natural-language "from the list" near-miss visible when it has a
+    // single plain-word projection.
+    return !(
+        projection.length === 1
+        && projection[0]?.kind === "word"
+        && tokens[relationStart]?.kind === "word"
+        && tokens[relationStart]?.value === "the"
+    );
+}
+
+function looksLikeSqlSelectDiagnostic(message: string): boolean {
+    const tokens = tokenizeSqlLikeMessage(message);
+
+    for (let index = 0; index < tokens.length; index += 1) {
+        if (!isSqlKeyword(tokens[index], "select")) {
+            continue;
+        }
+
+        const fromIndex = findTopLevelFrom(tokens, index);
+        if (fromIndex === null) {
+            continue;
+        }
+
+        const projection = tokens.slice(index + 1, fromIndex);
+        if (isSqlProjection(projection) && hasSqlRelationAfterFrom(tokens, fromIndex, projection)) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 /**
  * Keep ordinary validation text visible while rejecting technical diagnostics
@@ -67,7 +404,7 @@ interface ResponsePayload {
 
 function isUninformative(message: string): boolean {
     const normalized = message.trim().toLowerCase();
-    return UNINFORMATIVE_MESSAGES.has(normalized) || (normalized.startsWith("failed to ") && normalized !== "failed to fetch");
+    return UNINFORMATIVE_MESSAGES.has(normalized) || normalized.startsWith("failed to ");
 }
 
 function isUnsafeServerMessage(message: string, status: number | undefined): boolean {
@@ -75,7 +412,7 @@ function isUnsafeServerMessage(message: string, status: number | undefined): boo
         return true;
     }
 
-    if (SQL_SELECT_FROM_PATTERN.test(message)) {
+    if (looksLikeSqlSelectDiagnostic(message)) {
         return true;
     }
 

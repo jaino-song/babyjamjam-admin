@@ -443,7 +443,17 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
             {
                 $transaction: jest.fn().mockImplementation(async (work: (transaction: unknown) => Promise<unknown>) =>
                     work({
-                        $queryRaw: jest.fn().mockResolvedValue([{ status: "processing", claim_token: "claim-a" }]),
+                        $queryRaw: jest.fn().mockImplementation(async () => [{
+                            status: "processing",
+                            claim_token: "claim-a",
+                            branch_id: principal.branchId,
+                            rule_id: source.ruleId,
+                            client_id: source.clientId,
+                            employee_schedule_id: source.employeeScheduleId,
+                            recipient_type: source.recipientType,
+                            template_key: source.templateKey,
+                            payload: stagedRetry?.payload ?? source.payload,
+                        }]),
                     })),
             } as never,
             triggerDelivery,
