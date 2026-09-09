@@ -42,16 +42,19 @@ export class UpdateClientUsecase {
     async execute(
         branchid: string,
         id: number,
-        updates: UpdateClientParams
+        updates: UpdateClientParams,
+        transaction?: Prisma.TransactionClient,
     ): Promise<ClientEntity> {
         assertNonNullableClientPatch(updates);
-        const client = await this.clientRepository.findById(branchid, id);
+        const client = transaction
+            ? await this.clientRepository.findByIdForUpdate(branchid, id, transaction)
+            : await this.clientRepository.findById(branchid, id);
         if (!client) {
             throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${id})`);
         }
 
         client.update(updates);
-        return this.clientRepository.update(branchid, client);
+        return this.clientRepository.update(branchid, client, transaction);
     }
 
     /**

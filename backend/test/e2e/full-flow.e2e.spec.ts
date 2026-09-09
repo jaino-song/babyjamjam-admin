@@ -969,7 +969,7 @@ describeE2E("BJJ-275 full connected flow", () => {
 
         const submitted = await request(app.getHttpServer()).post("/service-record/sessions/1/submit").set(auth).send({
             serviceDate: startDate,
-            answers: { sitzBath: "실시", sleep: "잘 잠", stool: "정상" },
+            answers: { sitzBath: "실시", sleep: "잘 잠", stool: "정상변" },
             paymentConfirmed: true,
             momApproval: "approved",
             clientSignature: "data:image/png;base64,aQ==",
@@ -977,7 +977,7 @@ describeE2E("BJJ-275 full connected flow", () => {
         expect(submitted.status).toBe(201);
         const secondSubmitted = await request(app.getHttpServer()).post("/service-record/sessions/2/submit").set(auth).send({
             serviceDate: endDate,
-            answers: { sitzBath: "실시", sleep: "잘 잠", stool: "정상" },
+            answers: { sitzBath: "실시", sleep: "잘 잠", stool: "정상변" },
             paymentConfirmed: true,
             momApproval: "approved",
             clientSignature: "data:image/png;base64,aQ==",

@@ -22,7 +22,13 @@ describe("SbEmployeeScheduleRepository.delete", () => {
         const prisma = {
             $transaction: jest.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)),
         };
-        return { repository: new SbEmployeeScheduleRepository(prisma as never), scheduleModel, queryRaw };
+        return {
+            repository: new SbEmployeeScheduleRepository(prisma as never),
+            scheduleModel,
+            queryRaw,
+            transaction,
+            prisma,
+        };
     }
 
     it("locks the branch-owned schedule, checks dependencies, then deletes", async () => {
@@ -30,6 +36,18 @@ describe("SbEmployeeScheduleRepository.delete", () => {
 
         await harness.repository.delete(branchId, scheduleId);
 
+        expect(harness.queryRaw).toHaveBeenCalledTimes(2);
+        expect(harness.scheduleModel.deleteMany).toHaveBeenCalledWith({
+            where: { id: scheduleId, branchId },
+        });
+    });
+
+    it("uses the supplied transaction without opening a nested root transaction", async () => {
+        const harness = createHarness();
+
+        await harness.repository.delete(branchId, scheduleId, harness.transaction as never);
+
+        expect(harness.prisma.$transaction).not.toHaveBeenCalled();
         expect(harness.queryRaw).toHaveBeenCalledTimes(2);
         expect(harness.scheduleModel.deleteMany).toHaveBeenCalledWith({
             where: { id: scheduleId, branchId },

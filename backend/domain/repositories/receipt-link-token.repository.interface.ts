@@ -56,6 +56,52 @@ export interface ExpiredReceiptLinkToken {
 }
 
 /**
+ * Server-produced semantic evidence carried by a receipt refresh generation.
+ * This intentionally contains only verification metadata; PDF bytes, tokens,
+ * provider responses, and receipt PII stay outside the token repository.
+ */
+export interface ReceiptLinkRevisionArtifactProof {
+    officialPdfSha256: string;
+    verifiedAt: string;
+    pageCount: number;
+    scope: Record<string, unknown>;
+    expected: Record<string, unknown>;
+    artifact?: {
+        storagePath: string;
+        contentSha256: string;
+        byteSize: number;
+    };
+}
+
+export interface PromoteReceiptLinkRevisionArtifactInput {
+    branchId: string;
+    clientId: number;
+    serviceRecordCaseId: string;
+    revisionId: string;
+    documentStateId: string;
+    expectedGeneration: string;
+    expectedStateVersion: number;
+    /** Current contract document's external eformsign document id. */
+    targetDocumentId: string;
+    documentVersion: number | null;
+    templateId: string;
+    templateVersion: string;
+    mirrorGeneration: string;
+    /** Original contract document row id(s) held by the stable receipt link. */
+    eformsignDocId: number;
+    tokenIds: string[];
+    storagePath: string;
+    contentSha256: string;
+    byteSize: number;
+    proof: ReceiptLinkRevisionArtifactProof;
+    now?: Date;
+}
+
+export type ReceiptLinkRevisionArtifactPromotionResult =
+    | { disposition: "promoted"; tokenIds: string[]; stateVersion: number }
+    | { disposition: "stale" | "not_found" | "not_required"; tokenIds: []; stateVersion: number | null };
+
+/**
  * Outcome of `reserveVerificationAttempt`. `"locked"` means the token was already inside an
  * earlier lock window when the reservation ran — the row's values are unchanged (the statement
  * still writes them and takes the row lock; it just writes back the pre-write value) and no
@@ -141,4 +187,15 @@ export interface IReceiptLinkTokenRepository extends IReceiptLinkTokenIssuanceRe
      *  `cutoff` (i.e. still "live"). Used to find which expired tokens' storage objects are safe
      *  to delete — no live token needs them — without removing any row first. */
     findStoragePathsInUse(storagePaths: string[], cutoff: Date): Promise<string[]>;
+    /**
+     * Atomically promotes a verified receipt artifact for one frozen revision
+     * generation. The implementation rechecks current client/case/revision,
+     * target contract identity, state CAS/proof, and every frozen token row in
+     * one transaction before swapping artifact fields and completing state.
+     * Optional keeps existing isolated token fakes source-compatible; the
+     * refresh service fails closed when the production adapter is absent.
+     */
+    promoteReceiptRevisionArtifact?: (
+        input: PromoteReceiptLinkRevisionArtifactInput,
+    ) => Promise<ReceiptLinkRevisionArtifactPromotionResult>;
 }

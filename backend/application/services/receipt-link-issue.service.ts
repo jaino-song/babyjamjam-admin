@@ -141,10 +141,47 @@ export class ReceiptLinkIssueService {
             : await this.findContractDocument(params.branchId, client);
         if (!doc) throw new ReceiptLinkSkipError("no_contract_document");
 
+        // A stored PDF is publishable only when the mirror generation that
+        // produced it is locally ready. Review-stage documents may be readable
+        // from a partial mirror for operational inspection, but receipt links
+        // must fail closed until the complete synchronized generation exists.
+        await this.assertDocumentSyncReady(doc.documentId);
         const pdf = await this.loadContractPdf(params.branchId, doc);
         if (!pdf) throw new ReceiptLinkSkipError("pdf_unavailable");
 
         return { client: { id: client.id, name: client.name, phone: client.phone, birthday, endDate: client.endDate }, doc, pdf };
+    }
+
+    /**
+     * Recheck mirror readiness without rendering or issuing a token. Delivery
+     * callers use this immediately before an SMS authorization boundary so a
+     * sync that superseded the preflight cannot publish its old image.
+     */
+    async assertDocumentSyncReady(
+        target: string | { branchId: string; clientId: number; eformsignDocId?: number },
+    ): Promise<void> {
+        const findState = this.mirrorRepository.findState;
+        if (typeof findState !== "function") return;
+        try {
+            let documentId: string | null = typeof target === "string" ? target : null;
+            if (typeof target !== "string") {
+                const client = await this.clientRepository.findById(target.branchId, target.clientId);
+                const doc = client
+                    ? target.eformsignDocId !== undefined
+                        ? await this.findExplicitContractDocument(target.branchId, target.eformsignDocId, client.id)
+                        : await this.findContractDocument(target.branchId, client)
+                    : null;
+                documentId = doc?.documentId ?? null;
+            }
+            if (!documentId) throw new ReceiptLinkSkipError("no_contract_document");
+            const state = await findState.call(this.mirrorRepository, documentId);
+            if (!state || state.syncStatus !== "ready") {
+                throw new ReceiptLinkSkipError("pdf_unavailable");
+            }
+        } catch (error) {
+            if (error instanceof ReceiptLinkSkipError) throw error;
+            throw new ReceiptLinkSkipError("pdf_unavailable");
+        }
     }
 
     /** Refresh the contract's stable URL; overlapping retries in this process share preparation. */
@@ -177,6 +214,7 @@ export class ReceiptLinkIssueService {
 
     private async prepare(params: IssueReceiptLinkParams): Promise<PreparedReceiptLink> {
         const { client, doc, pdf } = await this.preflight(params);
+        await this.assertDocumentSyncReady(doc.documentId);
 
         let png: Buffer;
         try {

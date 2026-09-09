@@ -4,6 +4,7 @@ import { FileStorageObjectNotFoundError } from "domain/ports/file-storage.port";
 import {
     SMS_DELIVERY_SNAPSHOT_VARIABLE,
     SmsTriggerDeliveryService,
+    type SmsTriggerDeliveryPreparation,
 } from "application/services/sms-trigger-delivery.service";
 import {
     SmsTriggerDeliverySkipError,
@@ -217,6 +218,139 @@ describe("SmsTriggerDeliveryService.sendJob with enrichers", () => {
         expect(job.status).toBe("canceled");
         expect(sendSmsJob).not.toHaveBeenCalled();
         expect(aligo.sendSms).not.toHaveBeenCalled();
+    });
+});
+
+describe("SmsTriggerDeliveryService prepared delivery boundary", () => {
+    it("enriches and persists one frozen snapshot before prepared sending", async () => {
+        const registry = new SmsTriggerPayloadEnricherRegistry();
+        const enrich = jest.fn(async (job: MessageTriggerJobEntity) => {
+            job.payload.templateVariables["receiptUrl"] = "https://m.admin.example/receipt/efr_prepared";
+        });
+        registry.register(MessageTriggerTemplateKey.SERVICE_END_NOTICE, { enrich });
+
+        const aligo = { sendSms: jest.fn() };
+        const templates = {
+            getByKey: jest.fn().mockRejectedValue(new Error("no template override in this test")),
+        };
+        const logRepository = { save: jest.fn(), update: jest.fn() };
+        const service = new SmsTriggerDeliveryService(
+            aligo as never,
+            templates as never,
+            logRepository as never,
+            undefined,
+            registry,
+        );
+        const sendSmsJob = jest
+            .spyOn(service as unknown as { sendSmsJob: (...args: unknown[]) => Promise<boolean> }, "sendSmsJob")
+            .mockResolvedValue(true);
+        const job = makeJob();
+
+        const preparation = await service.prepareJob(job);
+
+        expect(preparation).toEqual(expect.objectContaining({
+            serializedSnapshot: expect.any(String),
+            snapshot: expect.objectContaining({
+                message: expect.stringContaining("https://m.admin.example/receipt/efr_prepared"),
+            }),
+        }));
+        expect(enrich).toHaveBeenCalledTimes(1);
+        expect(job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE]).toBe(
+            (preparation as SmsTriggerDeliveryPreparation).serializedSnapshot,
+        );
+
+        await expect(service.sendPreparedJob(job, preparation as SmsTriggerDeliveryPreparation)).resolves.toBe(true);
+        expect(sendSmsJob).toHaveBeenCalledWith(
+            job,
+            expect.objectContaining({ triggerType: "service_end_notice" }),
+            (preparation as SmsTriggerDeliveryPreparation).snapshot,
+        );
+        expect(aligo.sendSms).not.toHaveBeenCalled();
+    });
+
+    it("restores the provisional payload when preparation is skipped", async () => {
+        const registry = new SmsTriggerPayloadEnricherRegistry();
+        registry.register(MessageTriggerTemplateKey.SERVICE_END_NOTICE, {
+            enrich: async (job) => {
+                job.payload.templateVariables["receiptUrl"] = "https://should-be-restored.example/receipt";
+                throw new SmsTriggerDeliverySkipError("receipt_link_unusable", "영수증 링크를 준비할 수 없습니다");
+            },
+        });
+        const service = new SmsTriggerDeliveryService(
+            { sendSms: jest.fn() } as never,
+            { getByKey: jest.fn() } as never,
+            { save: jest.fn(), update: jest.fn() } as never,
+            undefined,
+            registry,
+        );
+        const job = makeJob();
+
+        await expect(service.prepareJob(job)).resolves.toBeNull();
+
+        expect(job.status).toBe("canceled");
+        expect(job.payload.templateVariables["receiptUrl"]).toBeUndefined();
+        expect(job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE]).toBeUndefined();
+    });
+
+    it("rejects a prepared send when the persisted frozen snapshot was changed", async () => {
+        const registry = new SmsTriggerPayloadEnricherRegistry();
+        registry.register(MessageTriggerTemplateKey.SERVICE_END_NOTICE, {
+            enrich: async (job) => {
+                job.payload.templateVariables["receiptUrl"] = "https://m.admin.example/receipt/efr_changed";
+            },
+        });
+        const service = new SmsTriggerDeliveryService(
+            { sendSms: jest.fn() } as never,
+            { getByKey: jest.fn().mockRejectedValue(new Error("no template override in this test")) } as never,
+            { save: jest.fn(), update: jest.fn() } as never,
+            undefined,
+            registry,
+        );
+        const job = makeJob();
+        const preparation = await service.prepareJob(job);
+
+        job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] = "tampered";
+
+        await expect(service.sendPreparedJob(job, preparation as SmsTriggerDeliveryPreparation))
+            .rejects.toThrow("prepared delivery snapshot changed");
+    });
+
+    it("issues the receipt link during preparation and never enriches again for the prepared send", async () => {
+        const registry = new SmsTriggerPayloadEnricherRegistry();
+        const issue = jest.fn().mockResolvedValue({
+            url: "https://m.admin.example/receipt/efr_once",
+            tokenId: "token-once",
+            expiresAt: new Date("2026-09-30T00:00:00.000Z"),
+        });
+        const enricher = new ReceiptLinkDeliveryEnricher(registry, { issue } as never);
+        enricher.onModuleInit();
+
+        const service = new SmsTriggerDeliveryService(
+            { sendSms: jest.fn() } as never,
+            { getByKey: jest.fn().mockRejectedValue(new Error("no template override in this test")) } as never,
+            { save: jest.fn(), update: jest.fn() } as never,
+            undefined,
+            registry,
+        );
+        const sendSmsJob = jest
+            .spyOn(service as unknown as { sendSmsJob: (...args: unknown[]) => Promise<boolean> }, "sendSmsJob")
+            .mockResolvedValue(true);
+        const job = makeJob();
+
+        const preparation = await service.prepareJob(job);
+        expect(issue).toHaveBeenCalledTimes(1);
+        expect(job.payload.templateVariables["receiptUrl"]).toBe(
+            "https://m.admin.example/receipt/efr_once",
+        );
+
+        await expect(service.sendPreparedJob(job, preparation as SmsTriggerDeliveryPreparation)).resolves.toBe(true);
+
+        expect(issue).toHaveBeenCalledTimes(1);
+        expect(sendSmsJob).toHaveBeenCalledWith(
+            job,
+            expect.objectContaining({ triggerType: "service_end_notice" }),
+            (preparation as SmsTriggerDeliveryPreparation).snapshot,
+        );
     });
 });
 

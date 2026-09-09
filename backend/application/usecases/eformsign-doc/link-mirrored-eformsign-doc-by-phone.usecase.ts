@@ -38,8 +38,12 @@ import {
 import {
     assertNoActiveEmployeeScheduleOverlap,
     EMPLOYEE_SCHEDULE_OVERLAP_CODE,
+    lockClientForScheduleWrite,
     lockEmployeesForScheduleWrite,
 } from "application/policies/employee-schedule-invariants.policy";
+import {
+    lockServiceRecordWriteSet,
+} from "application/policies/service-record-write-lock.policy";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 /**
@@ -78,6 +82,25 @@ const AUTO_REGISTRATION_ELIGIBLE_STATUS_CODES = new Set([
 const PHONE_LOOKUP_SUFFIX_LENGTH = 4;
 const MAX_TRANSACTION_ATTEMPTS = 3;
 
+/**
+ * A generation/ownership fence failure must abort the owning transaction so
+ * client, schedule, case, and document writes cannot commit from a stale
+ * mirror snapshot. The outer retry wrapper maps this rollback sentinel back to
+ * the public mirror_not_ready result.
+ */
+class MirrorGenerationConflict extends Error {
+    readonly code = "MIRROR_GENERATION_CONFLICT" as const;
+
+    constructor() {
+        super("Mirrored document generation changed while linking");
+        this.name = "MirrorGenerationConflict";
+    }
+}
+
+function isMirrorGenerationConflict(error: unknown): error is MirrorGenerationConflict {
+    return error instanceof MirrorGenerationConflict;
+}
+
 export type LinkMirroredEformsignDocResult =
     | "created"
     | "linked"
@@ -101,6 +124,13 @@ export interface LinkMirroredEformsignDocOptions {
      * client claim the document; never create a client from this attempt.
      */
     linkExistingOnly?: boolean;
+    /**
+     * Client-originated partial-document linking supplies its owning client
+     * and branch explicitly. This avoids treating an unscoped branchless
+     * mirror as eligible for every branch with the same phone.
+     */
+    existingClientId?: number;
+    existingClientBranchId?: string;
 }
 
 /**
@@ -160,6 +190,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                 documentId: true,
                 documentKind: true,
                 serviceRecordCaseId: true,
+                revisionId: true,
                 templateId: true,
                 templateName: true,
                 stepRecipientSms: true,
@@ -177,19 +208,40 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         if (this.isServiceRecord(document)) {
             return "skipped";
         }
+        if (
+            (options.existingClientId !== undefined)
+            !== (options.existingClientBranchId !== undefined)
+        ) {
+            return "ambiguous";
+        }
         const assignedClientId = document.clientId;
         if (assignedClientId !== null) {
+            if (
+                options.existingClientId !== undefined
+                && options.existingClientId !== assignedClientId
+            ) {
+                return "ambiguous";
+            }
+            if (
+                options.existingClientBranchId !== undefined
+                && options.existingClientBranchId !== document.branchId
+            ) {
+                return "ambiguous";
+            }
             const result = await this.repairAssignedDocument({
                 id: document.id,
                 documentId: document.documentId,
                 branchId: document.branchId,
                 clientId: assignedClientId,
+                serviceRecordCaseId: document.serviceRecordCaseId,
+                revisionId: document.revisionId,
                 createdDate: document.createdDate,
-            }, expectedMirrorGeneration);
+            }, expectedMirrorGeneration, !options.linkExistingOnly);
             if (result !== "mirror_not_ready" && !options.linkExistingOnly) {
                 const postLinkApplied = await this.applyPostLinkEffects({
                     documentId,
                     clientId: assignedClientId,
+                    branchId: document.branchId,
                     expectedMirrorGeneration,
                 });
                 if (!postLinkApplied) return "mirror_not_ready";
@@ -227,18 +279,30 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             return "skipped";
         }
 
-        const documentOwningBranchId = await this.resolveDocumentOwningBranch(
-            document.branchId,
-            document.templateId,
-            document.createdDate,
-        );
+        // A branchless mirror may still be authorized for one destination
+        // branch by its template (or by the known creator's membership). Keep
+        // that tenant boundary for existing-client lookup even when the
+        // destination branch has auto-registration disabled. Without this
+        // discovery fence a same-phone client in any branch could claim a
+        // global mirror before the template branch is considered.
+        const existingClientId = options.existingClientId;
+        const existingClientBranchId = options.existingClientBranchId
+            ?? document.branchId
+            ?? await this.resolveExistingClientBranch(
+                detail,
+                document.templateId,
+                document.createdDate,
+            );
         const creationBranchId = options.linkExistingOnly
             ? null
             : AUTO_REGISTRATION_ELIGIBLE_STATUS_CODES.has(document.statusType)
                 && candidate?.phone === phone
                 ? await this.resolveAutoRegistrationBranch(
-                    documentOwningBranchId,
+                    document.branchId,
                     detail,
+                    document.templateId,
+                    document.createdDate,
+                    existingClientBranchId,
                 )
                 : null;
         const canCreate = creationBranchId !== null;
@@ -254,13 +318,16 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         const result = await this.runTransactionWithRetry({
             documentId,
             phone,
-            documentOwningBranchId,
             canCreate,
             creationBranchId,
             suppressGreetingSms,
             applyMessageAutomation: !options.suppressOutboundAutomation,
             intentAt: new Date(),
             expectedMirrorGeneration,
+            initializeLifecycle: !options.linkExistingOnly,
+            existingClientBranchId,
+            existingClientId,
+            observedSourceBranchId: document.branchId,
         });
         if (
             result.status === "created"
@@ -270,6 +337,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             const postLinkApplied = await this.applyPostLinkEffects({
                 documentId,
                 clientId: result.createdClientId,
+                branchId: result.createdBranchId,
                 expectedMirrorGeneration,
                 creation: {
                     branchId: result.createdBranchId,
@@ -338,6 +406,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
     private async applyPostLinkEffects(params: {
         documentId: string;
         clientId: number;
+        branchId?: string | null;
         expectedMirrorGeneration?: ExpectedEformsignMirrorGeneration;
         creation?: {
             branchId: string;
@@ -346,7 +415,6 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         };
     }): Promise<boolean> {
         if (!params.expectedMirrorGeneration) {
-            await this.ensureServiceRecordLifecycle(params.clientId);
             if (params.creation && !params.creation.suppressOutboundAutomation) {
                 await this.applyClientCreationAutomation(
                     params.creation.branchId,
@@ -358,18 +426,49 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         }
 
         return this.prisma.$transaction(async (transaction) => {
+            // The first claim fence observes the source branch (which may be
+            // NULL for a global mirror). After that claim commits, this
+            // post-link check must fence the document's destination branch.
+            // Resolve it from the now-linked client when the caller retained
+            // the original branchless discovery snapshot.
+            let destinationBranchId = params.branchId ?? null;
+            if (!destinationBranchId) {
+                const client = await transaction.client.findUnique({
+                    where: { id: params.clientId },
+                    select: { branchId: true },
+                });
+                destinationBranchId = client?.branchId ?? null;
+            }
+            if (!destinationBranchId) return false;
             if (!await this.lockExpectedMirrorGeneration(
                 transaction,
                 params.documentId,
                 params.expectedMirrorGeneration,
+                destinationBranchId,
             )) {
                 return false;
             }
-            await this.ensureServiceRecordLifecycle(
-                params.clientId,
-                transaction,
-                true,
-            );
+            // The generation fence locks the document row, but a concurrent
+            // claimant can still replace its client pointer after the first
+            // claim transaction commits. Re-read both sides while that row is
+            // held so completion effects never run for a different client.
+            const linkedDocument = await transaction.eformsign_doc.findUnique({
+                where: { documentId: params.documentId },
+                select: { branchId: true, clientId: true },
+            });
+            const linkedClient = await transaction.client.findUnique({
+                where: { id: params.clientId },
+                select: { id: true, branchId: true },
+            });
+            if (
+                !linkedDocument
+                || linkedDocument.clientId !== params.clientId
+                || linkedDocument.branchId !== destinationBranchId
+                || !linkedClient
+                || linkedClient.branchId !== destinationBranchId
+            ) {
+                return false;
+            }
             if (params.creation && !params.creation.suppressOutboundAutomation) {
                 await this.applyClientCreationAutomation(
                     params.creation.branchId,
@@ -384,13 +483,16 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
     private async runTransactionWithRetry(params: {
         documentId: string;
         phone: string;
-        documentOwningBranchId: string | null;
         canCreate: boolean;
         creationBranchId: string | null;
         suppressGreetingSms: boolean;
         applyMessageAutomation: boolean;
         intentAt: Date;
         expectedMirrorGeneration?: ExpectedEformsignMirrorGeneration;
+        observedSourceBranchId?: string | null;
+        initializeLifecycle: boolean;
+        existingClientBranchId: string | null;
+        existingClientId?: number;
     }): Promise<TransactionResult> {
         let lastError: unknown;
         for (let attempt = 1; attempt <= MAX_TRANSACTION_ATTEMPTS; attempt += 1) {
@@ -406,11 +508,15 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                             )
                         `;
 
-                        if (!await this.lockExpectedMirrorGeneration(
-                            transaction,
-                            params.documentId,
-                            params.expectedMirrorGeneration,
-                        )) {
+                        const completeLockSurface = this.hasCompleteServiceRecordWriteLockSurface(transaction);
+                        if (
+                            !completeLockSurface
+                            && !await this.lockExpectedMirrorGeneration(
+                                transaction,
+                                params.documentId,
+                                params.expectedMirrorGeneration,
+                            )
+                        ) {
                             return { status: "mirror_not_ready" };
                         }
 
@@ -421,6 +527,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                 documentId: true,
                                 documentKind: true,
                                 serviceRecordCaseId: true,
+                                revisionId: true,
                                 templateId: true,
                                 templateName: true,
                                 stepRecipientSms: true,
@@ -435,6 +542,28 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                         if (!document) return { status: "no_match" };
                         if (this.isServiceRecord(document)) return { status: "skipped" };
                         if (document.clientId !== null) return { status: "already_linked" };
+
+                        // A serializable retry must retain the original
+                        // branch observation. If a concurrent claimant moved
+                        // a branchless mirror (or changed its owning branch)
+                        // while this attempt was waiting, do not recalculate
+                        // tenant policy from the new row and accidentally
+                        // return disabled/created. The original generation
+                        // fence is stale; fail closed and let reconciliation
+                        // retry against the new snapshot.
+                        if (
+                            params.expectedMirrorGeneration
+                            && params.observedSourceBranchId !== undefined
+                            && document.branchId !== params.observedSourceBranchId
+                        ) {
+                            throw new MirrorGenerationConflict();
+                        }
+
+                        // For a complete Prisma transaction the document is
+                        // only discovered above. Client/schedule/case ids are
+                        // collected and locked before the generation fence;
+                        // narrow test doubles retain the legacy fence-first
+                        // branch above.
 
                         const detail = toEformsignDocumentDetail(document.detailPayload);
                         const candidate = detail
@@ -456,19 +585,26 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                         }
 
                         const phoneSuffix = params.phone.slice(-PHONE_LOOKUP_SUFFIX_LENGTH);
-                        const clients = await transaction.client.findMany({
-                            where: {
-                                phone: { not: null },
-                                branchId: params.documentOwningBranchId ?? { not: null },
-                                OR: [{ phone: { endsWith: phoneSuffix } }],
-                            },
-                            select: {
-                                id: true,
-                                branchId: true,
-                                phone: true,
-                                eDocId: true,
-                            },
-                        });
+                        const existingClientBranchId = document.branchId
+                            ?? params.existingClientBranchId;
+                        const clients = existingClientBranchId
+                            ? await transaction.client.findMany({
+                                where: {
+                                    ...(params.existingClientId === undefined
+                                        ? {}
+                                        : { id: params.existingClientId }),
+                                    phone: { not: null },
+                                    branchId: existingClientBranchId,
+                                    OR: [{ phone: { endsWith: phoneSuffix } }],
+                                },
+                                select: {
+                                    id: true,
+                                    branchId: true,
+                                    phone: true,
+                                    eDocId: true,
+                                },
+                            })
+                            : [];
                         const matches = clients.filter((client) =>
                             client.branchId !== null
                             && normalizePhone(client.phone) === params.phone,
@@ -477,17 +613,80 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                             return { status: "ambiguous" };
                         }
                         if (matches.length === 1) {
-                            return {
-                                status: await this.linkExistingClient(
+                            if (completeLockSurface) {
+                                const matched = matches[0]!;
+                                const locked = await this.lockClientOwnedServiceRecordWrites(transaction, {
+                                    branchId: existingClientBranchId,
+                                    clientId: matched.id,
+                                    documentRowId: document.id,
+                                });
+                                if (!locked) return { status: "ambiguous" };
+                                if (!await this.lockExpectedMirrorGeneration(
                                     transaction,
-                                    document,
-                                    matches[0]!,
-                                ),
-                            };
+                                    params.documentId,
+                                    params.expectedMirrorGeneration,
+                                    locked.branchId,
+                                    document.branchId,
+                                )) {
+                                    throw new MirrorGenerationConflict();
+                                }
+                                const current = await transaction.eformsign_doc.findUnique({
+                                    where: { documentId: params.documentId },
+                                    select: {
+                                        id: true,
+                                        documentId: true,
+                                        documentKind: true,
+                                        serviceRecordCaseId: true,
+                                        revisionId: true,
+                                        branchId: true,
+                                        clientId: true,
+                                        createdDate: true,
+                                    },
+                                });
+                                if (
+                                    !current
+                                    || current.id !== document.id
+                                    || current.branchId !== document.branchId
+                                    || current.clientId !== null
+                                ) {
+                                    throw new MirrorGenerationConflict();
+                                }
+                                const linked = await this.linkExistingClient(transaction, current, locked.client);
+                                if (
+                                    params.initializeLifecycle
+                                    && (linked === "linked" || linked === "already_linked")
+                                ) {
+                                    await this.ensureServiceRecordLifecycle(matched.id, transaction, true);
+                                }
+                                return { status: linked };
+                            }
+                            const linked = await this.linkExistingClient(
+                                transaction,
+                                document,
+                                matches[0]!,
+                            );
+                            if (
+                                params.initializeLifecycle
+                                && (linked === "linked" || linked === "already_linked")
+                            ) {
+                                await this.ensureServiceRecordLifecycle(
+                                    matches[0]!.id,
+                                    transaction,
+                                    true,
+                                );
+                            }
+                            return { status: linked };
                         }
 
+                        // A branchless document with an independently
+                        // authorized destination still has a tenant scope even
+                        // when that branch has auto-registration disabled. Use
+                        // it for the policy result (disabled), while keeping
+                        // params.creationBranchId as the separate permission
+                        // bit that controls whether creation may proceed.
                         const creationBranchId = document.branchId
-                            ?? params.creationBranchId;
+                            ?? params.creationBranchId
+                            ?? params.existingClientBranchId;
                         if (!creationBranchId) {
                             return { status: "no_branch" };
                         }
@@ -574,6 +773,51 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                             },
                             select: { id: true },
                         });
+                        const scheduleId = await this.assignInitialScheduleFromContract(
+                            transaction,
+                            {
+                                branchId: creationBranchId,
+                                clientId: client.id,
+                                candidate,
+                            },
+                        );
+                        if (params.initializeLifecycle) {
+                            await this.ensureServiceRecordLifecycle(client.id, transaction, true);
+                        }
+                        if (completeLockSurface) {
+                            await lockServiceRecordWriteSet(transaction, {
+                                branchId: creationBranchId,
+                                clientId: client.id,
+                                scheduleIds: scheduleId === null ? [] : [scheduleId],
+                                expectedScheduleIds: scheduleId === null ? [] : [scheduleId],
+                                documentIds: [document.id],
+                            });
+                            if (!await this.lockExpectedMirrorGeneration(
+                                transaction,
+                                params.documentId,
+                                params.expectedMirrorGeneration,
+                                creationBranchId,
+                                document.branchId,
+                            )) {
+                                throw new MirrorGenerationConflict();
+                            }
+                            const currentDocument = await transaction.eformsign_doc.findUnique({
+                                where: { documentId: params.documentId },
+                                select: {
+                                    id: true,
+                                    branchId: true,
+                                    clientId: true,
+                                },
+                            });
+                            if (
+                                !currentDocument
+                                || currentDocument.id !== document.id
+                                || currentDocument.branchId !== document.branchId
+                                || currentDocument.clientId !== null
+                            ) {
+                                throw new MirrorGenerationConflict();
+                            }
+                        }
                         const claimed = await transaction.eformsign_doc.updateMany({
                             where: {
                                 id: document.id,
@@ -593,14 +837,6 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                 `Eformsign document ${document.documentId} was claimed concurrently`,
                             );
                         }
-                        const scheduleId = await this.assignInitialScheduleFromContract(
-                            transaction,
-                            {
-                                branchId: creationBranchId,
-                                clientId: client.id,
-                                candidate,
-                            },
-                        );
                         if (params.applyMessageAutomation) {
                             await persistClientMessageAutomationIntent(transaction, {
                                 branchId: creationBranchId,
@@ -631,6 +867,9 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
                 );
             } catch (error) {
+                if (isMirrorGenerationConflict(error)) {
+                    return { status: "mirror_not_ready" };
+                }
                 lastError = error;
                 if (!isRetryableTransactionError(error) || attempt === MAX_TRANSACTION_ATTEMPTS) {
                     throw error;
@@ -687,6 +926,21 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         const { startDate, endDate } = params.candidate;
         if (!startDate || !endDate) return null;
 
+        // The client row is the stable serialization point for all assignment
+        // writes. It is already inserted by the owning transaction, but take
+        // the same lock explicitly before discovering/creating employees.
+        const completeLockSurface = this.hasCompleteServiceRecordWriteLockSurface(transaction);
+        if (completeLockSurface) {
+            const clientLocked = await lockClientForScheduleWrite(
+                transaction,
+                params.branchId,
+                params.clientId,
+            );
+            if (!clientLocked) {
+                throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+            }
+        }
+
         const primaryEmployeeId = await this.resolveOrCreateEmployee(
             transaction,
             params.branchId,
@@ -713,11 +967,19 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         // skips the assignment instead of failing the whole auto-registration
         // — the client is still created, and the ambiguity is left to an
         // operator, exactly as an ambiguous provider match already is.
-        await lockEmployeesForScheduleWrite(
-            transaction,
-            params.branchId,
-            [primaryEmployeeId, secondaryEmployeeId],
-        );
+        if (completeLockSurface) {
+            await lockServiceRecordWriteSet(transaction, {
+                branchId: params.branchId,
+                clientId: params.clientId,
+                employeeIds: [primaryEmployeeId, secondaryEmployeeId],
+            });
+        } else {
+            await lockEmployeesForScheduleWrite(
+                transaction,
+                params.branchId,
+                [primaryEmployeeId, secondaryEmployeeId],
+            );
+        }
         try {
             await assertNoActiveEmployeeScheduleOverlap(transaction, {
                 branchId: params.branchId,
@@ -751,6 +1013,114 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             select: { id: true },
         });
         return schedule.id;
+    }
+
+    /**
+     * Discover and lock every row owned by a client in the common writer
+     * order. The discovery happens before waiting on the client row; the
+     * policy rereads schedules after that lock and rejects a changed target
+     * set before any document/client write can occur.
+     *
+     * The narrow capability check exists only for the existing unit doubles,
+     * which intentionally model the document/client seam without the full
+     * service-record tables. A real Prisma transaction always exposes all of
+     * these delegates and therefore always takes the complete path.
+     */
+    private async lockClientOwnedServiceRecordWrites(
+        transaction: Prisma.TransactionClient,
+        params: {
+            branchId: string | null;
+            clientId: number;
+            documentRowId?: number;
+        },
+    ): Promise<{
+        branchId: string;
+        client: { id: number; branchId: string | null; eDocId: string | null };
+        schedules: Array<{
+            id: number;
+            primaryEmployeeId: number;
+            secondaryEmployeeId: number | null;
+        }>;
+        caseId: string | null;
+    } | null> {
+        if (!this.hasCompleteServiceRecordWriteLockSurface(transaction)) return null;
+
+        const initialClient = await transaction.client.findUnique({
+            where: { id: params.clientId },
+            select: { id: true, branchId: true, eDocId: true },
+        });
+        if (!initialClient?.branchId) return null;
+        if (params.branchId && params.branchId !== initialClient.branchId) {
+            return null;
+        }
+        const branchId = initialClient.branchId;
+        const initialSchedules = await transaction.employee_schedule.findMany({
+            where: { branchId, clientId: params.clientId },
+            select: {
+                id: true,
+                primaryEmployeeId: true,
+                secondaryEmployeeId: true,
+            },
+            orderBy: { id: "asc" },
+        });
+        const initialCase = await transaction.service_record_case.findUnique({
+            where: { clientId: params.clientId },
+            select: { id: true, branchId: true, clientId: true },
+        });
+        const caseId = initialCase?.branchId === branchId && initialCase.clientId === params.clientId
+            ? initialCase.id
+            : null;
+
+        await lockServiceRecordWriteSet(transaction, {
+            branchId,
+            clientId: params.clientId,
+            caseId,
+            expectedScheduleIds: initialSchedules.map((schedule) => schedule.id),
+            scheduleIds: initialSchedules.map((schedule) => schedule.id),
+            employeeIds: initialSchedules.flatMap((schedule) => [
+                schedule.primaryEmployeeId,
+                schedule.secondaryEmployeeId,
+            ]),
+            documentIds: params.documentRowId === undefined ? [] : [params.documentRowId],
+        });
+
+        const rereadClient = await transaction.client.findUnique({
+            where: { id: params.clientId },
+            select: { id: true, branchId: true, eDocId: true },
+        });
+        if (!rereadClient || rereadClient.branchId !== branchId) {
+            throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+        }
+        const rereadCase = await transaction.service_record_case.findUnique({
+            where: { clientId: params.clientId },
+            select: { id: true, branchId: true, clientId: true },
+        });
+        if (
+            rereadCase
+            && (rereadCase.branchId !== branchId || rereadCase.clientId !== params.clientId)
+        ) {
+            throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+        }
+        return {
+            branchId,
+            client: rereadClient,
+            schedules: initialSchedules,
+            caseId: rereadCase?.id ?? null,
+        };
+    }
+
+    private hasCompleteServiceRecordWriteLockSurface(
+        transaction: Prisma.TransactionClient,
+    ): boolean {
+        const scheduleDelegate = transaction.employee_schedule as unknown as {
+            findMany?: unknown;
+        };
+        const caseDelegate = transaction.service_record_case as unknown as {
+            findUnique?: unknown;
+        };
+        return typeof transaction.$queryRaw === "function"
+            && typeof scheduleDelegate.findMany === "function"
+            && typeof caseDelegate.findUnique === "function";
     }
 
     private async resolveOrCreateEmployee(
@@ -815,13 +1185,65 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         documentId: string;
         branchId: string | null;
         clientId: number;
+        serviceRecordCaseId: string | null;
+        revisionId: string | null;
         createdDate: Date;
-    }, expectedMirrorGeneration?: ExpectedEformsignMirrorGeneration): Promise<LinkMirroredEformsignDocResult> {
+    }, expectedMirrorGeneration?: ExpectedEformsignMirrorGeneration, initializeLifecycle = true): Promise<LinkMirroredEformsignDocResult> {
         return this.prisma.$transaction(async (transaction) => {
+            if (this.hasCompleteServiceRecordWriteLockSurface(transaction)) {
+                const locked = await this.lockClientOwnedServiceRecordWrites(transaction, {
+                    branchId: document.branchId,
+                    clientId: document.clientId,
+                    documentRowId: document.id,
+                });
+                if (!locked) return "ambiguous";
+                if (!await this.lockExpectedMirrorGeneration(
+                    transaction,
+                    document.documentId,
+                    expectedMirrorGeneration,
+                    locked.branchId,
+                    document.branchId,
+                )) {
+                    return "mirror_not_ready";
+                }
+                const current = await transaction.eformsign_doc.findUnique({
+                    where: { documentId: document.documentId },
+                    select: {
+                        id: true,
+                        documentId: true,
+                        documentKind: true,
+                        serviceRecordCaseId: true,
+                        revisionId: true,
+                        branchId: true,
+                        clientId: true,
+                        createdDate: true,
+                    },
+                });
+                if (
+                    !current
+                    || current.id !== document.id
+                    || current.branchId !== locked.branchId
+                    || (current.clientId !== null && current.clientId !== document.clientId)
+                ) {
+                    return "ambiguous";
+                }
+                const linked = await this.linkExistingClient(transaction, current, locked.client);
+                if (
+                    initializeLifecycle
+                    && (linked === "linked" || linked === "already_linked")
+                ) {
+                    await this.ensureServiceRecordLifecycle(document.clientId, transaction, true);
+                }
+                return linked;
+            }
+
+            // Narrow document-only unit doubles retain the historical fence
+            // seam; production transactions always take the complete path.
             if (!await this.lockExpectedMirrorGeneration(
                 transaction,
                 document.documentId,
                 expectedMirrorGeneration,
+                document.branchId,
             )) {
                 return "mirror_not_ready";
             }
@@ -843,7 +1265,14 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             ) {
                 return "ambiguous";
             }
-            return this.linkExistingClient(transaction, document, client);
+            const linked = await this.linkExistingClient(transaction, document, client);
+            if (
+                initializeLifecycle
+                && (linked === "linked" || linked === "already_linked")
+            ) {
+                await this.ensureServiceRecordLifecycle(document.clientId, transaction, true);
+            }
+            return linked;
         });
     }
 
@@ -851,8 +1280,18 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         transaction: Prisma.TransactionClient,
         documentId: string,
         expectedMirrorGeneration?: ExpectedEformsignMirrorGeneration,
+        branchId?: string | null,
+        observedSourceBranchId?: string | null,
     ): Promise<boolean> {
         if (!expectedMirrorGeneration) return true;
+        const sourceBranchId = observedSourceBranchId === undefined
+            ? branchId
+            : observedSourceBranchId;
+        const sourceBranchFence = sourceBranchId === undefined
+            ? Prisma.empty
+            : sourceBranchId === null
+                ? Prisma.sql`AND doc.branch_id IS NULL`
+                : Prisma.sql`AND doc.branch_id = ${sourceBranchId}::uuid`;
         const readinessFence = expectedMirrorGeneration.readiness === "detail"
             ? Prisma.sql`AND doc.detail_payload IS NOT NULL`
             : Prisma.sql`
@@ -876,6 +1315,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             SELECT doc.id
             FROM eformsign_doc AS doc
             WHERE doc.document_id = ${documentId}
+              ${sourceBranchFence}
               AND doc.detail_source_updated_date = ${expectedMirrorGeneration.detailSourceUpdatedDate}
               AND doc.detail_synced_at = ${expectedMirrorGeneration.detailSyncedAt}
               AND doc.permanent_purge_requested_at IS NULL
@@ -892,6 +1332,8 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             documentId: string;
             branchId: string | null;
             clientId: number | null;
+            serviceRecordCaseId: string | null;
+            revisionId: string | null;
             createdDate: Date;
         },
         client: {
@@ -904,6 +1346,18 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         if (!clientBranchId) {
             return "ambiguous";
         }
+
+        // A ready mirror is not automatically the current contract. The
+        // complete production transaction has already acquired the common
+        // client/case/document locks; reread the pointer and revision state
+        // here before assigning the row or replacing client.eDocId.
+        if (
+            this.hasCompleteServiceRecordWriteLockSurface(transaction)
+            && !await this.isCurrentContractWriteTarget(transaction, document, client)
+        ) {
+            return "ambiguous";
+        }
+
         const wasAlreadyLinked =
             document.branchId === clientBranchId
             && document.clientId === client.id
@@ -941,10 +1395,22 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         if (!shouldPointToMirroredDocument && client.eDocId) {
             const currentDocument = await transaction.eformsign_doc.findUnique({
                 where: { documentId: client.eDocId },
-                select: { createdDate: true },
+                select: {
+                    createdDate: true,
+                    revisionId: true,
+                    serviceRecordCaseId: true,
+                    branchId: true,
+                    clientId: true,
+                },
             });
+            const candidateRevisionId = document.revisionId;
+            const pointedRevisionId = currentDocument?.revisionId ?? null;
+            const revisionSupersedesCreatedDate = candidateRevisionId !== null
+                && candidateRevisionId !== undefined
+                && pointedRevisionId !== candidateRevisionId;
             shouldPointToMirroredDocument =
                 currentDocument === null
+                || revisionSupersedesCreatedDate
                 || document.createdDate >= currentDocument.createdDate;
         }
         if (shouldPointToMirroredDocument) {
@@ -960,46 +1426,135 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         return wasAlreadyLinked ? "already_linked" : "linked";
     }
 
+    private async isCurrentContractWriteTarget(
+        transaction: Prisma.TransactionClient,
+        document: {
+            id: number;
+            documentId: string;
+            branchId: string | null;
+            clientId: number | null;
+            serviceRecordCaseId: string | null;
+            revisionId: string | null;
+        },
+        client: {
+            id: number;
+            branchId: string | null;
+            eDocId: string | null;
+        },
+    ): Promise<boolean> {
+        const currentDocument = await transaction.eformsign_doc.findUnique({
+            where: { documentId: document.documentId },
+            select: {
+                id: true,
+                documentId: true,
+                branchId: true,
+                clientId: true,
+                serviceRecordCaseId: true,
+                revisionId: true,
+            },
+        });
+        if (
+            !currentDocument
+            || currentDocument.id !== document.id
+            || currentDocument.documentId !== document.documentId
+            || (
+                currentDocument.branchId !== null
+                && currentDocument.branchId !== client.branchId
+            )
+            || (
+                currentDocument.clientId !== null
+                && currentDocument.clientId !== client.id
+            )
+        ) return false;
+
+        const ownerCase = await transaction.service_record_case.findUnique({
+            where: { clientId: client.id },
+            select: {
+                id: true,
+                branchId: true,
+                clientId: true,
+                currentRevisionId: true,
+                currentUsableRevisionId: true,
+                currentUsableDocumentVersion: true,
+            },
+        });
+        if (!ownerCase) {
+            return (currentDocument.revisionId ?? null) === null
+                && (currentDocument.serviceRecordCaseId ?? null) === null;
+        }
+        if (
+            ownerCase.branchId !== client.branchId
+            || ownerCase.clientId !== client.id
+            || (
+                currentDocument.serviceRecordCaseId !== null
+                && ownerCase.id !== currentDocument.serviceRecordCaseId
+            )
+        ) return false;
+        const currentRevisionId = currentDocument.revisionId ?? null;
+        if (currentRevisionId === null) {
+            return (ownerCase.currentRevisionId ?? null) === null
+                && (ownerCase.currentUsableRevisionId ?? null) === null
+                && (ownerCase.currentUsableDocumentVersion ?? null) === null;
+        }
+        return ownerCase.id === currentDocument.serviceRecordCaseId
+            && ownerCase.currentRevisionId === currentRevisionId;
+    }
+
     private isServiceRecord(document: {
         documentKind: string | null;
         serviceRecordCaseId: string | null;
         templateId: string | null;
     }): boolean {
+        // An explicitly classified contract may carry the owning service
+        // record case for revision scope. The explicit kind is authoritative;
+        // retain the broad case-id fallback only for legacy/unknown rows.
+        if (document.documentKind === EFORMSIGN_DOCUMENT_KIND.CONTRACT) {
+            return false;
+        }
         return isServiceRecordEformsignDocument(
             document,
             configuredServiceRecordTemplateIds(this.configService),
         );
     }
 
-    private async resolveDocumentOwningBranch(
+    private async resolveAutoRegistrationBranch(
         documentBranchId: string | null,
+        detail: EformsignApiDocumentResponse | null,
         templateId: string | null,
         documentCreatedDate: Date,
+        existingClientBranchId?: string | null,
     ): Promise<string | null> {
-        if (documentBranchId) return documentBranchId;
-        if (templateId === null) return null;
+        if (documentBranchId) {
+            return await this.systemSettingService
+                .getClientAutoRegistrationEnabled(documentBranchId)
+                ? documentBranchId
+                : null;
+        }
+
+        // Reuse a branch that was independently authorized for an existing
+        // client. This preserves template/creator tenant selection while still
+        // requiring the normal auto-registration policy for creation.
+        if (existingClientBranchId) {
+            return await this.systemSettingService
+                .getClientAutoRegistrationEnabled(existingClientBranchId)
+                ? existingClientBranchId
+                : null;
+        }
 
         // A document authored inside eformsign arrives with no branch, and its creator
-        // account may belong to none. A contract template belongs to exactly one branch,
-        // so it provides the factual tenant boundary. Documents older than
+        // account may belong to none — which is the empty candidate set below, and the
+        // reason auto-registration never fired for these. A contract template belongs to
+        // exactly one branch, so it answers what the creator cannot. Documents older than
         // the mapping's effectiveFrom fall through unchanged: the sweep reprocesses every
         // active document, and without that bound adding a mapping would auto-register the
         // whole backlog on the next pass.
-        const templateBranch = await this.systemSettingService
-            .getEformsignTemplateBranch(templateId);
-        return templateBranch && documentCreatedDate >= templateBranch.effectiveFrom
-            ? templateBranch.branchId
-            : null;
-    }
-
-    private async resolveAutoRegistrationBranch(
-        documentOwningBranchId: string | null,
-        detail: EformsignApiDocumentResponse | null,
-    ): Promise<string | null> {
-        if (documentOwningBranchId) {
+        const templateBranch = templateId === null
+            ? null
+            : await this.systemSettingService.getEformsignTemplateBranch(templateId);
+        if (templateBranch && documentCreatedDate >= templateBranch.effectiveFrom) {
             return await this.systemSettingService
-                .getClientAutoRegistrationEnabled(documentOwningBranchId)
-                ? documentOwningBranchId
+                .getClientAutoRegistrationEnabled(templateBranch.branchId)
+                ? templateBranch.branchId
                 : null;
         }
 
@@ -1053,6 +1608,60 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         return this.singleEnabledBranch(
             activeBranches.map((branch) => branch.id),
         );
+    }
+
+    /**
+     * Resolve only a branch that can authorize an existing-client claim. A
+     * branchless document without a unique template or creator owner is left
+     * unscoped; existing-client lookup must never fall back to every branch.
+     */
+    private async resolveExistingClientBranch(
+        detail: EformsignApiDocumentResponse | null,
+        templateId: string | null,
+        documentCreatedDate: Date,
+    ): Promise<string | null> {
+        const templateBranch = templateId === null
+            ? null
+            : await this.systemSettingService.getEformsignTemplateBranch(templateId);
+        if (templateBranch && documentCreatedDate >= templateBranch.effectiveFrom) {
+            return templateBranch.branchId;
+        }
+
+        const creatorEmail = detail?.creator?.id?.trim();
+        if (!creatorEmail) return null;
+        const creator = await this.prisma.user.findFirst({
+            where: {
+                email: {
+                    equals: creatorEmail,
+                    mode: "insensitive",
+                },
+            },
+            select: {
+                ownedBranches: {
+                    where: { isActive: true },
+                    select: { id: true },
+                },
+                userBranches: {
+                    where: {
+                        branch: {
+                            isActive: true,
+                        },
+                    },
+                    select: {
+                        branch: {
+                            select: { id: true },
+                        },
+                    },
+                },
+            },
+        });
+        if (!creator) return null;
+        const branchIds = [
+            ...creator.ownedBranches.map((branch) => branch.id),
+            ...creator.userBranches.map(({ branch }) => branch.id),
+        ];
+        const uniqueBranchIds = [...new Set(branchIds)];
+        return uniqueBranchIds.length === 1 ? uniqueBranchIds[0]! : null;
     }
 
     private async singleEnabledBranch(
@@ -1129,5 +1738,12 @@ function isRetryableTransactionError(error: unknown): boolean {
     if (typeof error !== "object" || error === null || !("code" in error)) {
         return false;
     }
-    return error.code === "P2002" || error.code === "P2034";
+    if (error.code === "P2002" || error.code === "P2034") {
+        return true;
+    }
+    // PostgreSQL serializable conflicts raised by a raw query are wrapped by
+    // Prisma as P2010 with the native SQLSTATE in meta.code.
+    return error.code === "P2010"
+        && typeof (error as { meta?: unknown }).meta === "object"
+        && (error as { meta?: { code?: unknown } }).meta?.code === "40001";
 }

@@ -242,17 +242,22 @@ export class SbClientRepository implements IClientRepository {
         };
     }
 
-    async update(branchid: string, client: ClientEntity): Promise<ClientEntity> {
-        const select = await this.getClientSelect();
-        const data = await this.getClientUpdateData(client);
-        const result = await this.prismaService.client.updateMany({
+    async update(
+        branchid: string,
+        client: ClientEntity,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<ClientEntity> {
+        const db = transaction ?? this.prismaService;
+        const select = await this.getClientSelect(db);
+        const data = await this.getClientUpdateData(client, db);
+        const result = await db.client.updateMany({
             where: { id: client.id, branchId: branchid },
             data,
         });
         if (result.count === 0) {
             throw new Error("Client not found for branch");
         }
-        const updated = await this.prismaService.client.findFirst({
+        const updated = await db.client.findFirst({
             where: { id: client.id, branchId: branchid },
             select,
         });

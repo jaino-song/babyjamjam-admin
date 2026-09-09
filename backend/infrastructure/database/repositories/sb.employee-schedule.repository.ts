@@ -97,11 +97,15 @@ export class SbEmployeeScheduleRepository implements IEmployeeScheduleRepository
         return EmployeeScheduleMapper.toDomain(updated);
     }
 
-    async delete(branchid: string, id: number): Promise<void> {
-        await this.prismaService.$transaction(async (transaction) => {
+    async delete(
+        branchid: string,
+        id: number,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<void> {
+        const remove = async (ownedTransaction: Prisma.TransactionClient): Promise<void> => {
             // Hold the branch-scoped schedule row while checking and deleting
             // so child inserts that honour the FK cannot race this guard.
-            const lockedRows = await transaction.$queryRaw<Array<{ id: number }>>`
+            const lockedRows = await ownedTransaction.$queryRaw<Array<{ id: number }>>`
                 SELECT "id"
                 FROM "employee_schedule"
                 WHERE "id" = ${id} AND "branch_id" = ${branchid}::uuid
@@ -111,7 +115,7 @@ export class SbEmployeeScheduleRepository implements IEmployeeScheduleRepository
                 throw new ScopedDeleteNotFoundError("schedule", id);
             }
 
-            const dependencyRows = await transaction.$queryRaw<Array<{ count: number }>>`
+            const dependencyRows = await ownedTransaction.$queryRaw<Array<{ count: number }>>`
                 SELECT COUNT(*)::int AS "count"
                 FROM (
                     SELECT 1 FROM "employee_schedule"
@@ -148,12 +152,14 @@ export class SbEmployeeScheduleRepository implements IEmployeeScheduleRepository
                 );
             }
 
-            const result = await transaction.employee_schedule.deleteMany({
+            const result = await ownedTransaction.employee_schedule.deleteMany({
                 where: { id, branchId: branchid },
             });
             if (result.count !== 1) {
                 throw new ScopedDeleteNotFoundError("schedule", id);
             }
-        });
+        };
+        if (transaction) return remove(transaction);
+        await this.prismaService.$transaction(remove);
     }
 }

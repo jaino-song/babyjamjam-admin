@@ -1,4 +1,8 @@
 import { api } from "@/lib/api/client";
+import {
+    normalizeServiceRecordRevisionDocumentSummary,
+    normalizeServiceRecordRevisionHistory,
+} from "../types";
 import type {
     ApplyServiceScheduleChangeRequest,
     ApplyServiceScheduleChangeResponse,
@@ -9,11 +13,28 @@ import type {
     SendServiceRecordLinkResponse,
     ServiceScheduleChangePreviewResponse,
     ServiceRecordOverview,
+    RetryServiceRecordDocumentInput,
+    ServiceRecordRevisionDocumentSummary,
+    ServiceRecordRevisionHistoryResponse,
 } from "../types";
 
 export const serviceRecordsApi = {
     getClientOverview: (clientId: number) =>
         api.get<ServiceRecordOverview>(`/admin/service-records/client/${clientId}`),
+    getClientRevisionHistory: (clientId: number) =>
+        api.get<unknown>(`/admin/service-records/clients/${encodeURIComponent(String(clientId))}/revisions`)
+            .then((response) => ({
+                ...response,
+                data: normalizeServiceRecordRevisionHistory(response.data),
+            } as typeof response & { data: ServiceRecordRevisionHistoryResponse })),
+    retryRevisionDocument: ({ revisionId, documentStateId, expectedGeneration }: RetryServiceRecordDocumentInput) =>
+        api.post<unknown>(
+            `/admin/service-records/revisions/${encodeURIComponent(revisionId)}/documents/${encodeURIComponent(documentStateId)}/retry`,
+            { expectedGeneration },
+        ).then((response) => ({
+            ...response,
+            data: normalizeServiceRecordRevisionDocumentSummary(response.data),
+        } as typeof response & { data: ServiceRecordRevisionDocumentSummary })),
     prepareLink: (scheduleId: number, request: PrepareServiceRecordLinkRequest = {}) =>
         api.post<PrepareServiceRecordLinkResponse>(
             `/admin/service-records/schedules/${scheduleId}/prepare-link`,

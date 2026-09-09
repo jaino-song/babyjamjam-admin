@@ -37,9 +37,11 @@ import {
     assertNoActiveEmployeeScheduleOverlap,
     employeeScheduleHandoverPeriod,
     employeeScheduleReplacementEndDate,
-    lockClientForScheduleWrite,
     lockEmployeesForScheduleWrite,
 } from "application/policies/employee-schedule-invariants.policy";
+import {
+    lockServiceRecordWriteSet,
+} from "application/policies/service-record-write-lock.policy";
 import { ClientEntity, clientDurationOutOfRangeMessage, CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE } from "domain/entities/client.entity";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
@@ -218,6 +220,17 @@ export class ClientService {
         @Optional() private readonly configService?: ConfigService,
         @Optional() private readonly linkMirroredDocumentByPhoneUsecase?: LinkMirroredEformsignDocByPhoneUsecase,
     ) {}
+
+    private async transactionNow(transaction: Prisma.TransactionClient): Promise<Date> {
+        if (typeof transaction.$queryRaw === "function") {
+            const rows = await transaction.$queryRaw<Array<{ now?: Date }>>(Prisma.sql`
+                SELECT CURRENT_TIMESTAMP AS "now"
+            `);
+            const now = rows[0]?.now;
+            if (now instanceof Date && !Number.isNaN(now.getTime())) return now;
+        }
+        return new Date();
+    }
 
     private async revokeServiceRecordLinkAfterCommit(clientId: number, scheduleId: number): Promise<void> {
         try {
@@ -534,7 +547,11 @@ export class ClientService {
         for (const candidate of candidates) {
             const result = await this.linkMirroredDocumentByPhoneUsecase.execute(
                 candidate.documentId,
-                { linkExistingOnly: true },
+                {
+                    linkExistingOnly: true,
+                    existingClientId: client.id,
+                    existingClientBranchId: branchId,
+                },
             );
             if (result === "linked") {
                 ownershipChanged = true;
@@ -788,6 +805,7 @@ export class ClientService {
         secondaryEmployeeId: number | null,
         transaction: Prisma.TransactionClient,
         retainedEmployeeIds?: ReadonlySet<number>,
+        employeesAlreadyLocked = false,
     ): Promise<void> {
         assertEmployeeAssignmentShape(primaryEmployeeId, secondaryEmployeeId);
         if (primaryEmployeeId === null) return;
@@ -795,11 +813,13 @@ export class ClientService {
         const employeeIds = [primaryEmployeeId, secondaryEmployeeId].filter(
             (employeeId): employeeId is number => employeeId !== null,
         );
-        await lockEmployeesForScheduleWrite(
-            transaction,
-            branchid,
-            [...employeeIds, ...(retainedEmployeeIds ? [...retainedEmployeeIds] : [])],
-        );
+        if (!employeesAlreadyLocked) {
+            await lockEmployeesForScheduleWrite(
+                transaction,
+                branchid,
+                [...employeeIds, ...(retainedEmployeeIds ? [...retainedEmployeeIds] : [])],
+            );
+        }
         const employees: EmployeeAssignmentCandidate[] = await transaction.employee.findMany({
             where: {
                 id: { in: employeeIds },
@@ -832,7 +852,16 @@ export class ClientService {
     }): Promise<{ createdScheduleId: number | null; replacedScheduleId: number | null }> {
         const intentAt = new Date();
         const newSchedule = await this.prismaService.$transaction(async (transaction) => {
-            await lockClientForScheduleWrite(transaction, branchid, params.clientId);
+            // The common policy rereads every historical schedule after the
+            // client lock and locks the complete employee union (including the
+            // requested providers) before any case or schedule write. This
+            // prevents ensureForClient from discovering a lower-id historical
+            // employee after the case lock and creating a cross-client cycle.
+            await lockServiceRecordWriteSet(transaction, {
+                branchId: branchid,
+                clientId: params.clientId,
+                employeeIds: [params.primaryEmployeeId, params.secondaryEmployeeId],
+            });
             const currentSchedule = await transaction.employee_schedule.findFirst({
                 where: { clientId: params.clientId, branchId: branchid, replaced: false },
                 orderBy: { id: "desc" },
@@ -866,6 +895,7 @@ export class ClientService {
                 newSecondaryEmployeeId,
                 transaction,
                 retainedEmployeeIds,
+                true,
             );
             // One handover instant for the whole transaction. The outgoing row has to
             // end on exactly the day the incoming row starts, so the clock is read
@@ -929,6 +959,10 @@ export class ClientService {
                     intentAt,
                 });
             }
+            await this.serviceRecordLifecycleService?.ensureForClient(
+                params.clientId,
+                transaction,
+            );
             return {
                 schedule: newSchedule,
                 replacedScheduleId: currentSchedule?.id ?? null,
@@ -1048,9 +1082,16 @@ export class ClientService {
                         });
                     }
                 }
+            } else {
+                // A duplicate-phone reuse without an assignment still needs a
+                // service-record case. Keep lifecycle initialization inside its
+                // own owning transaction so the lifecycle service can lock and
+                // reread the client/schedule set before any case repair.
+                await this.prismaService.$transaction(async (transaction) => {
+                    await this.serviceRecordLifecycleService?.ensureForClient(existing.id, transaction);
+                });
             }
             await this.linkContractDocumentsByPhone(branchid, existing, normalizedPhone);
-            await this.serviceRecordLifecycleService?.ensureForClient(existing.id);
             return existing;
         }
 
@@ -1134,6 +1175,10 @@ export class ClientService {
                         intentAt: automationIntentAt,
                     });
                 }
+                await this.serviceRecordLifecycleService?.ensureForClient(
+                    created.client.id,
+                    transaction,
+                );
                 return created;
             });
             client = result.client;
@@ -1150,6 +1195,10 @@ export class ClientService {
                         intentAt: automationIntentAt,
                     });
                 }
+                await this.serviceRecordLifecycleService?.ensureForClient(
+                    created.id,
+                    transaction,
+                );
                 return created;
             });
         }
@@ -1157,7 +1206,6 @@ export class ClientService {
         if (normalizedPhone) {
             await this.linkContractDocumentsByPhone(branchid, client, normalizedPhone);
         }
-        await this.serviceRecordLifecycleService?.ensureForClient(client.id);
 
         if (applyMessageAutomation) {
             await this.messageAutomationIntentService.fulfillClientIntent({
@@ -1619,20 +1667,6 @@ export class ClientService {
         // untouched (undefined => no column update), except to fill a null
         // duration once the service period becomes complete, so a client
         // created without dates still ends up with a persisted count.
-        const duration = params.duration !== undefined
-            ? params.duration
-            : existingClient.duration === null && derivedDuration !== null
-                ? derivedDuration
-                : undefined;
-        await this.serviceRecordLifecycleService?.validatePeriodChange({
-            clientId: id,
-            startDate: startDateUpdate,
-            endDate: endDateUpdate,
-            duration,
-        });
-        const startDate = mergedServicePeriod.startDate ?? new Date();
-        const endDate = mergedServicePeriod.endDate ?? new Date(startDate.getTime() + DEFAULT_SERVICE_PERIOD_MS);
-
         // Check if employee assignment is being changed
         const employeeChanged = params.primaryEmployeeId !== undefined || params.secondaryEmployeeId !== undefined;
         const clientNameSupplied = params.name !== undefined;
@@ -1641,8 +1675,114 @@ export class ClientService {
         let replacedScheduleId: number | null = null;
 
         await this.prismaService.$transaction(async (transaction) => {
+            // Always serialize client-owned service-record state before any
+            // update write. The policy rereads historical schedules after the
+            // client lock and locks their complete employee union, plus any
+            // newly requested providers, so nested lifecycle reconciliation
+            // cannot expand the lock set after the case lock.
+            await lockServiceRecordWriteSet(transaction, {
+                branchId: branchid,
+                clientId: id,
+                employeeIds: employeeChanged
+                    ? [params.primaryEmployeeId, params.secondaryEmployeeId]
+                    : [],
+            });
+
+            const completeWriteSurface = typeof transaction.$queryRaw === "function"
+                && typeof transaction.employee_schedule?.findMany === "function"
+                && typeof transaction.service_record_case?.findUnique === "function";
+            const lockedClient = typeof transaction.client.findUnique === "function"
+                ? await transaction.client.findUnique({
+                    where: { id },
+                    select: {
+                        id: true,
+                        branchId: true,
+                        name: true,
+                        address: true,
+                        phone: true,
+                        type: true,
+                        duration: true,
+                        fullPrice: true,
+                        grant: true,
+                        actualPrice: true,
+                        startDate: true,
+                        endDate: true,
+                        careCenter: true,
+                        voucherClient: true,
+                        birthday: true,
+                        dueDate: true,
+                        birthDate: true,
+                        serviceStatus: true,
+                        breastPump: true,
+                        eDocId: true,
+                        areaId: true,
+                    },
+                })
+                : null;
+            if (
+                completeWriteSurface
+                && (!lockedClient || (
+                    lockedClient.branchId !== null
+                    && lockedClient.branchId !== branchid
+                ))
+            ) {
+                throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+            }
+            // Narrow unit doubles do not expose the complete service-record
+            // delegates. Production always takes the locked reread above;
+            // retaining the preflight entity here keeps those doubles focused
+            // on the client repository seam.
+            const currentClient = lockedClient ?? existingClient;
+            const lockedMergedServicePeriod = mergeAndValidateClientServicePeriod(currentClient, {
+                startDate: startDateUpdate,
+                endDate: endDateUpdate,
+            });
+            const lockedHasDateUpdate = params.startDate !== undefined || params.endDate !== undefined;
+            const lockedDerivedDuration = deriveClientDuration(
+                lockedMergedServicePeriod.startDate,
+                lockedMergedServicePeriod.endDate,
+            );
+            assertClientDurationMatchesDates(
+                params.duration,
+                lockedDerivedDuration,
+                params.allowBusinessDayMismatch,
+            );
+            if (lockedHasDateUpdate && params.duration === null && lockedDerivedDuration !== null) {
+                throw new BadRequestException(clientDurationOutOfRangeMessage(lockedDerivedDuration));
+            }
+            if (
+                lockedHasDateUpdate
+                && lockedDerivedDuration === null
+                && params.duration !== undefined
+                && params.duration !== null
+            ) {
+                throw new BadRequestException(CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE);
+            }
+            const duration = params.duration !== undefined
+                ? params.duration
+                : currentClient.duration === null && lockedDerivedDuration !== null
+                    ? lockedDerivedDuration
+                    : undefined;
+            await this.serviceRecordLifecycleService?.validatePeriodChange({
+                clientId: id,
+                startDate: startDateUpdate,
+                endDate: endDateUpdate,
+                duration,
+            }, transaction);
+            const lockedPricing = hasPricingUpdate
+                ? normalizeClientPricing({
+                    voucherClient: params.voucherClient ?? currentClient.voucherClient,
+                    type: params.type === undefined ? currentClient.type : params.type,
+                    fullPrice: params.fullPrice === undefined ? currentClient.fullPrice : params.fullPrice,
+                    grant: params.grant === undefined ? currentClient.grant : params.grant,
+                    actualPrice: params.actualPrice === undefined ? currentClient.actualPrice : params.actualPrice,
+                })
+                : normalizedPricing;
+            const startDate = lockedMergedServicePeriod.startDate ?? new Date();
+            const endDate = lockedMergedServicePeriod.endDate
+                ?? new Date(startDate.getTime() + DEFAULT_SERVICE_PERIOD_MS);
+
             if (employeeChanged) {
-                await lockClientForScheduleWrite(transaction, branchid, id);
                 const currentSchedule = await transaction.employee_schedule.findFirst({
                     where: { clientId: id, branchId: branchid, replaced: false },
                     orderBy: { id: "desc" },
@@ -1670,6 +1810,7 @@ export class ClientService {
                         secondaryEmployeeId,
                         transaction,
                         retainedEmployeeIds,
+                        true,
                     );
                     // One handover instant for the whole transaction. The outgoing row has to
                     // end on exactly the day the incoming row starts, so the clock is read
@@ -1719,7 +1860,7 @@ export class ClientService {
                             branchId: branchid,
                             primaryEmployeeId,
                             secondaryEmployeeId,
-                            workAddress: params.address ?? existingClient.address ?? "",
+                            workAddress: params.address ?? currentClient.address ?? "",
                             startDate: incomingStartDate,
                             endDate: incomingEndDate,
                             replaced: false,
@@ -1729,34 +1870,45 @@ export class ClientService {
                 }
             }
 
-            const result = await transaction.client.updateMany({
-                where: { id, branchId: branchid },
-                data: {
-                    name: params.name,
-                    address: params.address === undefined ? undefined : params.address,
-                    phone: params.phone === undefined ? undefined : params.phone,
-                    phoneNormalized: normalizedPhoneUpdate,
-                    type: normalizedPricing?.type,
-                    duration: duration === undefined ? undefined : duration,
-                    fullPrice: normalizedPricing?.fullPrice,
-                    grant: normalizedPricing?.grant,
-                    actualPrice: normalizedPricing?.actualPrice,
-                    startDate: startDateUpdate,
-                    endDate: endDateUpdate,
-                    careCenter: params.careCenter === undefined ? undefined : params.careCenter,
-                    voucherClient: params.voucherClient,
-                    birthday: params.birthday === undefined ? undefined : params.birthday,
-                    dueDate: dueDateUpdate,
-                    birthDate: birthDateUpdate,
-                    serviceStatus: params.serviceStatus === undefined ? undefined : params.serviceStatus,
-                    breastPump: params.breastPump,
-                    eDocId: params.eDocId === undefined ? undefined : params.eDocId,
-                    areaId: params.areaId === undefined ? undefined : params.areaId,
-                },
-            });
-            if (result.count === 0) {
+            const clientUpdateData = {
+                name: params.name,
+                address: params.address === undefined ? undefined : params.address,
+                phone: params.phone === undefined ? undefined : params.phone,
+                phoneNormalized: normalizedPhoneUpdate,
+                type: lockedPricing?.type,
+                duration: duration === undefined ? undefined : duration,
+                fullPrice: lockedPricing?.fullPrice,
+                grant: lockedPricing?.grant,
+                actualPrice: lockedPricing?.actualPrice,
+                startDate: startDateUpdate,
+                endDate: endDateUpdate,
+                careCenter: params.careCenter === undefined ? undefined : params.careCenter,
+                voucherClient: params.voucherClient,
+                birthday: params.birthday === undefined ? undefined : params.birthday,
+                dueDate: dueDateUpdate,
+                birthDate: birthDateUpdate,
+                serviceStatus: params.serviceStatus === undefined ? undefined : params.serviceStatus,
+                breastPump: params.breastPump,
+                eDocId: params.eDocId === undefined ? undefined : params.eDocId,
+                areaId: params.areaId === undefined ? undefined : params.areaId,
+            };
+            // An employee-only edit still owns the client lock and may create
+            // a replacement schedule, but Prisma reports zero rows for an
+            // updateMany whose data is entirely undefined. Keep the target
+            // existence guard while avoiding a false NotFound after the
+            // schedule write.
+            if (Object.values(clientUpdateData).some((value) => value !== undefined)) {
+                const result = await transaction.client.updateMany({
+                    where: { id, branchId: branchid },
+                    data: clientUpdateData,
+                });
+                if (result.count === 0) {
+                    throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${id})`);
+                }
+            } else if (!currentClient) {
                 throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${id})`);
             }
+            await this.serviceRecordLifecycleService?.ensureForClient(id, transaction);
         });
 
         if (replacedScheduleId !== null) {
@@ -1770,7 +1922,6 @@ export class ClientService {
         if (updatedPhone) {
             await this.linkContractDocumentsByPhone(branchid, updatedClient, updatedPhone);
         }
-        await this.serviceRecordLifecycleService?.ensureForClient(id);
         if (this.triggerService) {
             await this.triggerService.syncClientRulesForClient(branchid, id, false).catch((error) => {
                 this.logger.error(`Failed to sync client trigger rules: ${error}`);
@@ -1824,15 +1975,57 @@ export class ClientService {
             (reason ? `: ${reason}` : "")
         );
 
-        await this.serviceRecordLifecycleService?.validatePeriodChange({
-            clientId,
-            endDate: new Date(),
-        });
-
-        // Update client with terminated status and set endDate to today
-        const updatedClient = await this.updateClientUsecase.execute(branchid, clientId, {
-            serviceStatus: SERVICE_STATUS.TERMINATED,
-            endDate: new Date(),
+        // Update the client, mark schedules, and advance the service-record
+        // case in one owning transaction. Passing the transaction through the
+        // update usecase avoids a nested root transaction while locks are held.
+        const terminationAt = new Date();
+        const updatedClient = await this.prismaService.$transaction(async (transaction) => {
+            const existingCase = transaction.service_record_case?.findUnique
+                ? await transaction.service_record_case.findUnique({
+                    where: { clientId },
+                    select: { id: true, branchId: true, clientId: true },
+                })
+                : null;
+            const schedules = transaction.employee_schedule?.findMany
+                ? await transaction.employee_schedule.findMany({
+                    where: { clientId, branchId: branchid },
+                    select: {
+                        id: true,
+                        primaryEmployeeId: true,
+                        secondaryEmployeeId: true,
+                    },
+                    orderBy: { id: "asc" },
+                })
+                : [];
+            await lockServiceRecordWriteSet(transaction, {
+                branchId: branchid,
+                clientId,
+                caseId: existingCase?.branchId === branchid && existingCase.clientId === clientId
+                    ? existingCase.id
+                    : undefined,
+                expectedScheduleIds: schedules.map((schedule) => schedule.id),
+                scheduleIds: schedules.map((schedule) => schedule.id),
+                employeeIds: schedules.flatMap((schedule) => [
+                    schedule.primaryEmployeeId,
+                    schedule.secondaryEmployeeId,
+                ]),
+            });
+            // Revalidate after the client and dependent rows are locked. The
+            // initial existence lookup is only a fast preflight.
+            await this.serviceRecordLifecycleService?.validatePeriodChange({
+                clientId,
+                endDate: terminationAt,
+            }, transaction);
+            const updated = await this.updateClientUsecase.execute(branchid, clientId, {
+                serviceStatus: SERVICE_STATUS.TERMINATED,
+                endDate: terminationAt,
+            }, transaction);
+            await transaction.employee_schedule.updateMany({
+                where: { clientId, branchId: branchid, replaced: false, terminatedAt: null },
+                data: { terminatedAt: terminationAt },
+            });
+            await this.serviceRecordLifecycleService?.markTerminated(clientId, transaction);
+            return updated;
         });
         if (this.triggerService) {
             await this.triggerService.syncClientRulesForClient(branchid, clientId, false).catch((error) => {
@@ -1845,11 +2038,6 @@ export class ClientService {
         // stays readable, and a service terminated before it started can no longer
         // produce start_date > end_date. Readers that ask "is this assignment live"
         // filter on terminatedAt, not on the dates.
-        await this.prismaService.employee_schedule.updateMany({
-            where: { clientId, branchId: branchid, replaced: false, terminatedAt: null },
-            data: { terminatedAt: new Date() },
-        });
-
         // Revoke any outstanding service-record links for this client's active assignments
         const activeSchedules = await this.prismaService.employee_schedule.findMany({
             where: { clientId, branchId: branchid, replaced: false },
@@ -1858,8 +2046,6 @@ export class ClientService {
         for (const activeSchedule of activeSchedules) {
             await this.revokeServiceRecordLinkAfterCommit(clientId, activeSchedule.id);
         }
-        await this.serviceRecordLifecycleService?.markTerminated(clientId);
-
         return updatedClient;
     }
 
@@ -1882,11 +2068,9 @@ export class ClientService {
         }
         assertEmployeeAssignmentShape(newPrimaryEmployeeId, newSecondaryEmployeeId ?? null);
 
+        // This preflight only validates the caller's snapshot. The actual
+        // replacement period is derived again from the locked client below.
         mergeAndValidateClientServicePeriod(client, {});
-        const replacementStartDate = new Date();
-        const replacementEndDate = client.endDate && client.endDate.getTime() >= replacementStartDate.getTime()
-            ? client.endDate
-            : new Date(replacementStartDate.getTime() + DEFAULT_SERVICE_PERIOD_MS);
 
         this.logger.log(
             `Replacement requested for client ${clientId}: ` +
@@ -1895,7 +2079,51 @@ export class ClientService {
 
         let replacedScheduleId: number | null = null;
         const replacementSchedule = await this.prismaService.$transaction(async (transaction) => {
-            await lockClientForScheduleWrite(transaction, branchid, clientId);
+            // Lock the full historical schedule/employee union before any
+            // case or schedule write. The requested providers are part of the
+            // same deterministic employee lock set.
+            await lockServiceRecordWriteSet(transaction, {
+                branchId: branchid,
+                clientId,
+                employeeIds: [newPrimaryEmployeeId, newSecondaryEmployeeId],
+            });
+
+            const completeWriteSurface = typeof transaction.$queryRaw === "function"
+                && typeof transaction.employee_schedule?.findMany === "function"
+                && typeof transaction.service_record_case?.findUnique === "function";
+            const lockedClient = typeof transaction.client.findUnique === "function"
+                ? await transaction.client.findUnique({
+                    where: { id: clientId },
+                    select: {
+                        id: true,
+                        branchId: true,
+                        address: true,
+                        startDate: true,
+                        endDate: true,
+                        duration: true,
+                        serviceStatus: true,
+                    },
+                })
+                : null;
+            if (
+                completeWriteSurface
+                && (!lockedClient || (
+                    lockedClient.branchId !== null
+                    && lockedClient.branchId !== branchid
+                ))
+            ) {
+                throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+            }
+            const currentClient = lockedClient ?? client;
+            mergeAndValidateClientServicePeriod(currentClient, {});
+            // Use the owning transaction's timestamp so a client edit that
+            // waited on this lock cannot derive a replacement from a stale
+            // preflight clock or an invented value.
+            const replacementStartDate = await this.transactionNow(transaction);
+            const replacementEndDate = currentClient.endDate
+                && currentClient.endDate.getTime() >= replacementStartDate.getTime()
+                ? currentClient.endDate
+                : new Date(replacementStartDate.getTime() + DEFAULT_SERVICE_PERIOD_MS);
             const currentSchedule = await transaction.employee_schedule.findFirst({
                 where: { clientId, branchId: branchid, replaced: false },
                 orderBy: { id: "desc" },
@@ -1910,6 +2138,7 @@ export class ClientService {
                 newSecondaryEmployeeId ?? null,
                 transaction,
                 retainedEmployeeIds,
+                true,
             );
             await assertNoActiveEmployeeScheduleOverlap(transaction, {
                 branchId: branchid,
@@ -1940,18 +2169,20 @@ export class ClientService {
                 replacedScheduleId = currentSchedule.id;
             }
 
-            return transaction.employee_schedule.create({
+            const createdSchedule = await transaction.employee_schedule.create({
                 data: {
                     clientId,
                     branchId: branchid,
                     primaryEmployeeId: newPrimaryEmployeeId,
                     secondaryEmployeeId: newSecondaryEmployeeId ?? null,
-                    workAddress: client.address ?? "",
+                    workAddress: currentClient.address ?? "",
                     startDate: replacementStartDate,
                     endDate: replacementEndDate,
                     replaced: false,
                 },
             });
+            await this.serviceRecordLifecycleService?.ensureForClient(clientId, transaction);
+            return createdSchedule;
         });
         if (replacedScheduleId !== null) {
             await this.revokeServiceRecordLinkAfterCommit(clientId, replacedScheduleId);
@@ -1961,7 +2192,6 @@ export class ClientService {
             ?.catch((error) => {
                 this.logger.error(`Failed to sync replacement assignment triggers: ${error}`);
             });
-        await this.serviceRecordLifecycleService?.ensureForClient(clientId);
         await this.serviceRecordLinkService
             ?.scheduleForServiceStart(replacementSchedule.id)
             ?.catch((error) => {
@@ -1995,17 +2225,59 @@ export class ClientService {
 
         this.logger.log(`Completing replacement for client ${clientId}`);
 
-        // Compute what the status should be based on dates (usually 'active')
-        const computedStatus = computeServiceStatus(
-            null, // Ignore current status, compute fresh
-            client.startDate,
-            client.endDate,
-        );
-
-        const updatedClient = await this.updateClientUsecase.execute(branchid, clientId, {
-            serviceStatus: computedStatus,
+        const updatedClient = await this.prismaService.$transaction(async (transaction) => {
+            const existingCase = transaction.service_record_case?.findUnique
+                ? await transaction.service_record_case.findUnique({
+                    where: { clientId },
+                    select: { id: true, branchId: true, clientId: true },
+                })
+                : null;
+            const schedules = transaction.employee_schedule?.findMany
+                ? await transaction.employee_schedule.findMany({
+                    where: { clientId, branchId: branchid },
+                    select: {
+                        id: true,
+                        primaryEmployeeId: true,
+                        secondaryEmployeeId: true,
+                    },
+                    orderBy: { id: "asc" },
+                })
+                : [];
+            await lockServiceRecordWriteSet(transaction, {
+                branchId: branchid,
+                clientId,
+                caseId: existingCase?.branchId === branchid && existingCase.clientId === clientId
+                    ? existingCase.id
+                    : undefined,
+                expectedScheduleIds: schedules.map((schedule) => schedule.id),
+                scheduleIds: schedules.map((schedule) => schedule.id),
+                employeeIds: schedules.flatMap((schedule) => [
+                    schedule.primaryEmployeeId,
+                    schedule.secondaryEmployeeId,
+                ]),
+            });
+            // Re-read the locked client before deriving the replacement status;
+            // the pre-transaction snapshot can be stale after a concurrent
+            // date edit.
+            const lockedClient = await this.clientRepository.findByIdForUpdate(
+                branchid,
+                clientId,
+                transaction,
+            );
+            if (!lockedClient) {
+                throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${clientId})`);
+            }
+            const computedStatus = computeServiceStatus(
+                null,
+                lockedClient.startDate,
+                lockedClient.endDate,
+            );
+            const updated = await this.updateClientUsecase.execute(branchid, clientId, {
+                serviceStatus: computedStatus,
+            }, transaction);
+            await this.serviceRecordLifecycleService?.ensureForClient(clientId, transaction);
+            return updated;
         });
-        await this.serviceRecordLifecycleService?.ensureForClient(clientId);
         return updatedClient;
     }
 
