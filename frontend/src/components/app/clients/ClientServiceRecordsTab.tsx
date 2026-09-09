@@ -31,6 +31,7 @@ import { useSendServiceRecordLink } from "@/features/service-records/hooks/use-s
 import type {
     ServiceRecordAssignment,
     ServiceRecordCase,
+    ServiceRecordEditPreviewBlockingReason,
     ServiceRecordLinkStatus,
     ServiceRecordOverview,
     ServiceRecordRevisionDocumentSummary,
@@ -38,6 +39,7 @@ import type {
     ServiceRecordRevisionDocumentOperation,
     ServiceRecordRevisionDocumentStatus,
     ServiceRecordSession,
+    ServiceRecordPlannedSession,
     SignatureDocStatus,
 } from "@/features/service-records/types";
 
@@ -82,6 +84,7 @@ interface SessionSlot {
     sessionIndex: number;
     record: ServiceRecordSession | null;
     expectedDate: string | null;
+    plannedSession: ServiceRecordPlannedSession | null;
 }
 
 const LINK_STATUS_META: Record<ServiceRecordLinkStatus, {
@@ -129,6 +132,11 @@ function ClientServiceRecordsTabContent({
     const sendLinkMutation = useSendServiceRecordLink();
     const assignments = overview?.assignments ?? [];
     const record = overview?.record ?? null;
+    const scheduleProjection = overview?.scheduleProjection;
+    const hasAuthoritativeProjection = scheduleProjection !== undefined;
+    const projectionEntries = scheduleProjection && scheduleProjection.blockingReasons.length === 0
+        ? scheduleProjection.entries
+        : [];
     const activeAssignment = assignments.find((assignment) => !assignment.replaced)
         ?? assignments[0]
         ?? null;
@@ -215,7 +223,7 @@ function ClientServiceRecordsTabContent({
     const hasRevisionHistoryState = revisionHistory !== undefined
         || isRevisionHistoryLoading
         || isRevisionHistoryError;
-    if (assignments.length === 0 && !record && !hasRevisionHistoryState) {
+    if (assignments.length === 0 && !record && !hasRevisionHistoryState && !hasAuthoritativeProjection) {
         return (
             <DetailEmptyState
                 message="제공기록지 배정 정보가 없습니다"
@@ -226,6 +234,9 @@ function ClientServiceRecordsTabContent({
     return (
         <>
             <div data-component={dataComponent} data-source-component="ClientServiceRecordsTab" className="space-y-[calc(16px*var(--glint-ui-scale,1))]">
+                {scheduleProjection && scheduleProjection.blockingReasons.length > 0 ? (
+                    <ScheduleProjectionAlert reasons={scheduleProjection.blockingReasons} />
+                ) : null}
                 {record ? (
                     <>
                         <div
@@ -269,6 +280,8 @@ function ClientServiceRecordsTabContent({
                             endDate={record.endDate}
                             totalSessions={record.totalSessions}
                             sessions={record.sessions}
+                            plannedSessions={hasAuthoritativeProjection ? projectionEntries : undefined}
+                            hasAuthoritativeProjection={hasAuthoritativeProjection}
                             isTextRefreshing={isTextRefreshing}
                             isRefreshing={isRefreshing}
                             onRefresh={onRefresh}
@@ -315,6 +328,10 @@ function ClientServiceRecordsTabContent({
                             endDate={assignment.endDate}
                             totalSessions={assignment.totalSessions}
                             sessions={assignment.sessions}
+                            plannedSessions={hasAuthoritativeProjection
+                                ? projectionEntries.filter((entry) => entry.scheduleId === assignment.scheduleId)
+                                : undefined}
+                            hasAuthoritativeProjection={hasAuthoritativeProjection}
                             isTextRefreshing={isTextRefreshing}
                             enableMissingRecordAlert={
                                 !assignment.replaced
@@ -451,6 +468,22 @@ function ClientServiceRecordsSkeleton() {
                 ))}
             </InfoCard>
         </div>
+    );
+}
+
+function ScheduleProjectionAlert({ reasons }: { reasons: ServiceRecordEditPreviewBlockingReason[] }) {
+    const dataComponent = useClientServiceRecordsDataComponent("schedule-projection-alert");
+    return (
+        <Alert data-component={dataComponent} variant="warning">
+            <AlertTitle>예정 회차를 확인할 수 없습니다.</AlertTitle>
+            <AlertDescription>
+                <ul className="list-disc space-y-1 pl-5">
+                    {reasons.map((reason, index) => (
+                        <li key={`${reason.code}-${reason.sessionIndex ?? "all"}-${index}`}>{reason.message}</li>
+                    ))}
+                </ul>
+            </AlertDescription>
+        </Alert>
     );
 }
 
@@ -883,6 +916,8 @@ function ServiceSessionsCard({
     endDate,
     totalSessions: configuredSessions,
     sessions,
+    plannedSessions,
+    hasAuthoritativeProjection = false,
     enableMissingRecordAlert = true,
     isTextRefreshing,
     isRefreshing,
@@ -892,6 +927,8 @@ function ServiceSessionsCard({
     endDate: string | null;
     totalSessions: number;
     sessions: ServiceRecordSession[];
+    plannedSessions?: ReadonlyArray<ServiceRecordPlannedSession>;
+    hasAuthoritativeProjection?: boolean;
     enableMissingRecordAlert?: boolean;
     isTextRefreshing: boolean;
     isRefreshing: boolean;
@@ -908,8 +945,14 @@ function ServiceSessionsCard({
         [configuredSessions, endDate, sessions, startDate],
     );
     const slots = useMemo(
-        () => buildSessionSlots(startDate, configuredSessions, activeSessions),
-        [activeSessions, configuredSessions, startDate],
+        () => buildSessionSlots(
+            startDate,
+            configuredSessions,
+            activeSessions,
+            plannedSessions,
+            hasAuthoritativeProjection,
+        ),
+        [activeSessions, configuredSessions, hasAuthoritativeProjection, plannedSessions, startDate],
     );
     const missingRecordAlertThreshold = useMemo(
         () => enableMissingRecordAlert ? getMissingRecordAlertThreshold(slots) : null,
@@ -986,7 +1029,11 @@ function ServiceSessionsCard({
                 </div>
             </InfoCard>
             {outsideSessions.length > 0 ? (
-                <OutOfPeriodSessionsCard sessions={outsideSessions} isRefreshing={isTextRefreshing} />
+                <OutOfPeriodSessionsCard
+                    sessions={outsideSessions}
+                    plannedSessions={plannedSessions}
+                    isRefreshing={isTextRefreshing}
+                />
             ) : null}
         </>
     );
@@ -995,11 +1042,14 @@ function ServiceSessionsCard({
 function OutOfPeriodSessionsCard({
     sessions,
     isRefreshing,
+    plannedSessions,
 }: {
     sessions: ServiceRecordSession[];
     isRefreshing: boolean;
+    plannedSessions?: ReadonlyArray<ServiceRecordPlannedSession>;
 }) {
     const dataComponent = useClientServiceRecordsDataComponent("out-of-period-sessions");
+    const plannedByIndex = new Map(plannedSessions?.map((entry) => [entry.sessionIndex, entry]) ?? []);
     return (
         <InfoCard
             data-component={dataComponent}
@@ -1008,15 +1058,16 @@ function OutOfPeriodSessionsCard({
         >
             <div data-component={`${dataComponent}_list`} className="mt-[calc(8px*var(--glint-ui-scale,1))]">
                 {sessions.map((record, index) => (
-                        <SessionRow
-                            key={`${record.sessionIndex}-${record.serviceDate}`}
-                            slot={{
-                                sessionIndex: record.sessionIndex,
-                                record,
-                                expectedDate: null,
-                            }}
-                            isRefreshing={isRefreshing}
-                            defaultOpen={index === 0}
+                    <SessionRow
+                        key={`${record.sessionIndex}-${record.serviceDate}`}
+                        slot={{
+                            sessionIndex: record.sessionIndex,
+                            record,
+                            expectedDate: null,
+                            plannedSession: plannedByIndex.get(record.sessionIndex) ?? null,
+                        }}
+                        isRefreshing={isRefreshing}
+                        defaultOpen={index === 0}
                         outsidePeriod
                     />
                 ))}
@@ -1057,7 +1108,12 @@ function SessionRow({
                         <SessionNumber index={slot.sessionIndex} state="idle" />
                         <div className="min-w-0">
                             <div className="text-[calc(13px*var(--glint-ui-scale,1))] font-semibold text-v3-dark">{slot.sessionIndex}회차</div>
-                            <div className="mt-0.5 text-[calc(11.5px*var(--glint-ui-scale,1))] text-v3-text-muted">예정일 {formatDateKo(slot.expectedDate)}</div>
+                            <div className="mt-0.5 flex flex-wrap gap-x-[calc(8px*var(--glint-ui-scale,1))] text-[calc(11.5px*var(--glint-ui-scale,1))] text-v3-text-muted">
+                                <span data-slot="revised-date">예정일 {formatDateKo(slot.expectedDate)}</span>
+                                {getOriginalDateLabel(slot.plannedSession, slot.expectedDate) ? (
+                                    <span data-slot="original-date">원본 {formatDateKo(slot.plannedSession?.originalDate ?? null)}</span>
+                                ) : null}
+                            </div>
                         </div>
                         <div className="ml-auto flex shrink-0 items-center gap-[calc(10px*var(--glint-ui-scale,1))] text-right">
                             {isRefreshing ? (
@@ -1092,7 +1148,12 @@ function SessionRow({
                     <SessionNumber index={slot.sessionIndex} state={state} />
                     <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-[calc(8px*var(--glint-ui-scale,1))] text-[calc(13px*var(--glint-ui-scale,1))] font-semibold text-v3-dark">
-                            <span>{slot.sessionIndex}회차 · {formatDateKo(record.serviceDate)}</span>
+                            <span data-slot="revised-date">{slot.sessionIndex}회차 · {formatDateKo(record.serviceDate)}</span>
+                            {getOriginalDateLabel(slot.plannedSession, record.serviceDate) ? (
+                                <span data-slot="original-date" className="text-[calc(11.5px*var(--glint-ui-scale,1))] font-normal text-v3-text-muted">
+                                    원본 {formatDateKo(slot.plannedSession?.originalDate ?? null)}
+                                </span>
+                            ) : null}
                         </div>
                         <div className="mt-0.5 text-[calc(11.5px*var(--glint-ui-scale,1))] text-v3-text-muted">
                             {isRefreshing ? (
@@ -1394,17 +1455,34 @@ function buildSessionSlots(
     startDate: string | null,
     configuredSessions: number,
     sessions: ServiceRecordSession[],
+    plannedSessions?: ReadonlyArray<ServiceRecordPlannedSession>,
+    hasAuthoritativeProjection = false,
 ): SessionSlot[] {
     const total = Math.max(0, configuredSessions);
     const sessionsByIndex = new Map(sessions.map((session) => [session.sessionIndex, session]));
+    const plannedByIndex = new Map(plannedSessions?.map((entry) => [entry.sessionIndex, entry]) ?? []);
     return Array.from({ length: total }, (_, index) => {
         const sessionIndex = index + 1;
+        const plannedSession = plannedByIndex.get(sessionIndex) ?? null;
+        const record = sessionsByIndex.get(sessionIndex) ?? null;
         return {
             sessionIndex,
-            record: sessionsByIndex.get(sessionIndex) ?? null,
-            expectedDate: getExpectedSessionDate(startDate, sessionIndex, sessions),
+            record,
+            expectedDate: hasAuthoritativeProjection
+                ? plannedSession?.serviceDate ?? null
+                : getExpectedSessionDate(startDate, sessionIndex, sessions),
+            plannedSession,
         };
     });
+}
+
+function getOriginalDateLabel(
+    plannedSession: ServiceRecordPlannedSession | null,
+    revisedDate: string | null,
+): string | null {
+    const originalDate = datePartOf(plannedSession?.originalDate ?? null);
+    const currentDate = datePartOf(revisedDate);
+    return originalDate && currentDate && originalDate !== currentDate ? originalDate : null;
 }
 
 function getMissingRecordAlertThreshold(slots: SessionSlot[]): number | null {

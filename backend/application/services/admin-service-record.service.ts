@@ -192,6 +192,14 @@ export class AdminServiceRecordService {
             record?.id ?? null,
         );
         const signatureDocByScheduleId = latestSignatureDocByScheduleId(signatureDocs);
+        // The editor source is the authoritative schedule vector for dates
+        // that do not have persisted day rows yet.  Expose the same
+        // tenant-scoped projection to the regular overview when the edit
+        // repository is available, while retaining the legacy two-key shape
+        // for callers that do not register that optional repository.
+        const scheduleProjection = this.editRepository
+            ? await this.loadScheduleProjection(branchId, clientId)
+            : undefined;
 
         return {
             record: record ? this.mapCase(record, signatureDocs, options.includeSignatures === true) : null,
@@ -205,6 +213,7 @@ export class AdminServiceRecordService {
                 signatureDocByScheduleId.get(schedule.id) ?? null,
                 options.includeSignatures === true,
             )),
+            ...(scheduleProjection ? { scheduleProjection } : {}),
         };
     }
 
@@ -217,6 +226,10 @@ export class AdminServiceRecordService {
     async getClientEditor(branchId: string, clientId: number): Promise<AdminServiceRecordOverviewDto> {
         await this.assertClientBelongsToBranch(branchId, clientId);
         const overview = await this.getClientOverview(branchId, clientId, { includeSignatures: true });
+        // getClientOverview carries the projection for the production DI
+        // graph.  Keep the editor's explicit unavailable result for tests or
+        // legacy modules that omit the optional edit repository.
+        if (overview.scheduleProjection) return overview;
         const scheduleProjection = await this.loadScheduleProjection(branchId, clientId);
         return { ...overview, scheduleProjection };
     }
