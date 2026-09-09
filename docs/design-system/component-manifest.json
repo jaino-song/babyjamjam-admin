@@ -751,6 +751,22 @@
         ]
       },
       {
+        "name": "SystemTemplateEditor",
+        "layer": "organism",
+        "import": "@/components/app/ui/SystemTemplateEditor",
+        "file": "frontend/src/components/app/ui/SystemTemplateEditor.tsx",
+        "exports": [
+          "SystemTemplateEditor",
+          "SystemTemplateEditorProps"
+        ],
+        "replaces": [
+          "feature-local system template editor in pages"
+        ],
+        "requiredFor": [
+          "system template editing"
+        ]
+      },
+      {
         "name": "Tabs",
         "layer": "molecule",
         "import": "@/components/app/ui/tabs",
