@@ -141,7 +141,7 @@ async function addManualRecipient(value: string) {
   fireEvent.keyDown(receiverInput, { key: "Enter" });
 
   await waitFor(() => {
-    expect(screen.getByRole("button", { name: /수신자 제거/ })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /수신자 제거/ }).length).toBeGreaterThan(0);
   });
 }
 
@@ -151,7 +151,7 @@ async function openTemplateSelect() {
   await screen.findByRole("option", { name: "인사 메시지" });
 }
 
-function validSmsResponse(receiver = "010-1234-5678") {
+function validSmsResponse(receiver = "010-1234-5678", resultOverrides: Record<string, unknown> = {}) {
   return {
     data: {
       provider: "aligo_sms",
@@ -167,6 +167,7 @@ function validSmsResponse(receiver = "010-1234-5678") {
         successCount: 1,
         errorCount: 0,
         msgType: "SMS",
+        ...resultOverrides,
       },
     },
   };
@@ -476,6 +477,82 @@ describe("NewMessagePage", () => {
 
     expect(api.post).toHaveBeenCalledTimes(1);
     expect(bodyInput).toHaveValue("형식 확인 수정 본문");
+  });
+
+  it.each([
+    ["missing success count", { successCount: undefined }],
+    ["negative success count", { successCount: -1 }],
+    ["fractional success count", { successCount: 0.5 }],
+    ["missing error count", { errorCount: undefined }],
+    ["negative error count", { errorCount: -1 }],
+    ["fractional error count", { errorCount: 0.5 }],
+  ] as Array<[string, Record<string, unknown>]>)
+  ("treats a %s as unknown and blocks another send", async (_label, resultOverrides) => {
+    (api.post as jest.Mock).mockResolvedValueOnce(validSmsResponse(undefined, resultOverrides));
+
+    renderPage();
+    await addManualRecipient("010-1234-5678");
+    fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "카운터 검증 본문" } });
+    const sendButton = screen.getByRole("button", { name: "즉시 발송" });
+    fireEvent.click(sendButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("변경 결과를 확인할 수 없으니 다시 실행하기 전에 작업 상태를 확인해 주세요.")).toBeInTheDocument();
+    });
+    expect(sendButton).toBeDisabled();
+    expect(screen.queryByText("메시지 발송 요청이 접수되었습니다.")).not.toBeInTheDocument();
+  });
+
+  it("requires accepted counters to cover every submitted recipient", async () => {
+    (api.post as jest.Mock).mockResolvedValueOnce(
+      validSmsResponse("010-1234-5678,010-9999-0000", { successCount: 1, errorCount: 0 }),
+    );
+
+    renderPage();
+    await addManualRecipient("010-1234-5678,010-9999-0000");
+    fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "다중 수신자 카운터 검증" } });
+    const sendButton = screen.getByRole("button", { name: "즉시 발송" });
+    fireEvent.click(sendButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("변경 결과를 확인할 수 없으니 다시 실행하기 전에 작업 상태를 확인해 주세요.")).toBeInTheDocument();
+    });
+    expect(sendButton).toBeDisabled();
+    expect(screen.queryByText("메시지 발송 요청이 접수되었습니다.")).not.toBeInTheDocument();
+  });
+
+  it("requires the provider response recipient count to match the submission", async () => {
+    (api.post as jest.Mock).mockResolvedValueOnce(
+      validSmsResponse("010-1234-5678", { successCount: 2, errorCount: 0 }),
+    );
+
+    renderPage();
+    await addManualRecipient("010-1234-5678,010-9999-0000");
+    fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "응답 수신자 검증" } });
+    const sendButton = screen.getByRole("button", { name: "즉시 발송" });
+    fireEvent.click(sendButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("변경 결과를 확인할 수 없으니 다시 실행하기 전에 작업 상태를 확인해 주세요.")).toBeInTheDocument();
+    });
+    expect(sendButton).toBeDisabled();
+    expect(screen.queryByText("메시지 발송 요청이 접수되었습니다.")).not.toBeInTheDocument();
+  });
+
+  it("accepts a successful response when counters and response recipient count match the submission", async () => {
+    (api.post as jest.Mock).mockResolvedValueOnce(
+      validSmsResponse("01012345678,01099990000", { successCount: 2, errorCount: 0 }),
+    );
+
+    renderPage();
+    await addManualRecipient("010-1234-5678,010-9999-0000");
+    fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "다중 수신자 정상 발송" } });
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("메시지 발송 요청이 접수되었습니다.")).toBeInTheDocument();
+    });
+    expect(api.post).toHaveBeenCalledTimes(1);
   });
 
   it("rotates the idempotency key after a not-started correction", async () => {

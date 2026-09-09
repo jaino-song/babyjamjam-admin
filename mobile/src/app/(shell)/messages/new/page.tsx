@@ -127,6 +127,18 @@ function isOptionalFiniteNumber(value: unknown): boolean {
   return value === undefined || (typeof value === "number" && Number.isFinite(value));
 }
 
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function countSmsRecipients(receiver: string): number {
+  return receiver
+    .split(",")
+    .map((phone) => phone.trim())
+    .filter(Boolean)
+    .length;
+}
+
 function isSmsSendResponse(value: unknown): value is SendResponse {
   if (!isRecord(value)) return false;
 
@@ -146,8 +158,8 @@ function isSmsSendResponse(value: unknown): value is SendResponse {
     typeof result.message !== "string" ||
     result.message.trim().length === 0 ||
     !isOptionalFiniteNumber(result.msgId) ||
-    !isOptionalFiniteNumber(result.successCount) ||
-    !isOptionalFiniteNumber(result.errorCount)
+    !isNonNegativeInteger(result.successCount) ||
+    !isNonNegativeInteger(result.errorCount)
   ) {
     return false;
   }
@@ -164,6 +176,25 @@ function isSmsSendResponse(value: unknown): value is SendResponse {
   }
 
   return true;
+}
+
+function isAcceptedSmsSendResponse(
+  value: unknown,
+  submittedReceiver: unknown,
+): value is SendResponse {
+  if (!isSmsSendResponse(value) || typeof submittedReceiver !== "string") {
+    return false;
+  }
+
+  // The backend canonicalizes phone formatting, so compare recipient counts
+  // against the submitted receiver list instead of requiring string equality.
+  const expectedRecipientCount = countSmsRecipients(submittedReceiver);
+
+  return expectedRecipientCount > 0
+    && countSmsRecipients(value.request.receiver) === expectedRecipientCount
+    && value.result.resultCode === 1
+    && value.result.successCount === expectedRecipientCount
+    && value.result.errorCount === 0;
 }
 
 function stablePayloadFingerprint(payload: Record<string, unknown>): string {
@@ -983,11 +1014,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
 
       const res = await api.post<SendResponse>("/message-deliveries/sms", submission.payload);
       const data = res.data;
-      if (
-        !isSmsSendResponse(data) ||
-        data.result.resultCode !== 1 ||
-        (data.result.errorCount ?? 0) > 0
-      ) {
+      if (!isAcceptedSmsSendResponse(data, submission.payload.receiver)) {
         throw new Error(INVALID_SMS_RESPONSE_MESSAGE);
       }
       return data;
