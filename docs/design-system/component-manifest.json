@@ -1434,6 +1434,17 @@
     ],
     "mobile": [
       {
+        "name": "Alert",
+        "layer": "atom",
+        "import": "@/components/ui/alert",
+        "file": "mobile/src/components/ui/alert.tsx",
+        "exports": [
+          "Alert",
+          "AlertTitle",
+          "AlertDescription"
+        ]
+      },
+      {
         "name": "AgentActionApprovalCard",
         "layer": "organism",
         "import": "@/components/app/ui/AgentActionApprovalCard",
