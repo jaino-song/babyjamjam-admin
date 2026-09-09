@@ -20,6 +20,7 @@ import { validateServiceRecordAnswers } from "application/policies/service-recor
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { SERVICE_RECORD_TEXT_LIMITS } from "domain/constants/service-record-text-limits";
 import { addBusinessDaysKr } from "domain/utils/business-days";
+import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { SaveServiceHeaderDto, UpsertSessionDto } from "interface/dto/service-record-entry.dto";
 import {
@@ -205,7 +206,7 @@ export class ServiceRecordEntryService {
         return {
             employee: { id: schedule.primaryEmployee.id, name: schedule.primaryEmployee.name },
             client: { id: schedule.client.id, name: schedule.client.name },
-            totalSessions: record.requiredSessionCount ?? 0,
+            totalSessions: serviceRecordSessionCount(record.startDate, record.endDate, record.requiredSessionCount) ?? 0,
             startDate: record.startDate,
             endDate: record.endDate,
             recordStatus: record.status,
@@ -430,7 +431,7 @@ export class ServiceRecordEntryService {
                 throw new ConflictException({ code: "SERVICE_RECORD_FINALIZED" });
             }
 
-            const total = record.requiredSessionCount ?? 0;
+            const total = serviceRecordSessionCount(record.startDate, record.endDate, record.requiredSessionCount) ?? 0;
             if (sessionIndex < 1 || sessionIndex > total) {
                 throw new BadRequestException(`Session ${sessionIndex} is outside the contracted range 1..${total}`);
             }

@@ -6,7 +6,8 @@ import {
 } from "domain/constants/service-record-link-message";
 import { EFORMSIGN_COMPLETED_STATUS_CODES } from "domain/constants/eformsign-doc-status.constants";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
-import { countBusinessDaysKr } from "domain/utils/business-days";
+import { countBusinessDaysKr, UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
+import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
     lockServiceRecordCaseForWrite,
@@ -71,6 +72,33 @@ function normalizeRevisionId(value: string | null | undefined): string | null {
 
 function normalizeSnapshotVersion(value: number | null | undefined): number | null {
     return value ?? null;
+}
+
+function hasAuthoritativeRevision(record: {
+    currentRevisionId?: string | null;
+    currentUsableRevisionId?: string | null;
+    currentUsableDocumentVersion?: number | null;
+    plannedSessions?: Prisma.JsonValue | null;
+}): boolean {
+    return record.currentRevisionId != null
+        || record.currentUsableRevisionId != null
+        || record.currentUsableDocumentVersion != null
+        || record.plannedSessions != null;
+}
+
+function legacySessionCount(
+    startDate: Date | null,
+    endDate: Date | null,
+    storedCount: number | null,
+): number | null {
+    try {
+        return serviceRecordSessionCount(startDate, endDate, storedCount);
+    } catch (error) {
+        // Unsupported legacy years remain visible and retain their stored N;
+        // the editor/preview path carries the explicit calendar blocker.
+        if (error instanceof UnsupportedKoreanHolidayYearError) return storedCount;
+        throw error;
+    }
 }
 
 /**
@@ -292,7 +320,13 @@ export class ServiceRecordLifecycleService {
         // complete supported client period. Legacy null/zero values remain
         // visible and are not silently backfilled.
         const sessionCount = existing
-            ? existing.requiredSessionCount
+            ? hasAuthoritativeRevision(existing)
+                ? existing.requiredSessionCount
+                : legacySessionCount(
+                    existing.startDate,
+                    existing.endDate,
+                    existing.requiredSessionCount,
+                )
             : deriveInitialSessionCount({ startDate: client.startDate, endDate: client.endDate });
         const immutableFinalized = Boolean(
             existing && IMMUTABLE_FINALIZATION_STATUSES.has(existing.status),
@@ -1172,10 +1206,15 @@ export class ServiceRecordLifecycleService {
             return record;
         }
 
-        // Recompute never initializes or changes N. The lifecycle ensure path
-        // owns initialization for a brand-new case; existing null/zero and
-        // inconsistent legacy evidence must remain visible and block preview.
-        const required = record.requiredSessionCount;
+        // Confirmed revision rows keep their persisted actual N. Legacy rows
+        // retain the provider flow's in-period cap so transferred cases with
+        // a nominal 15-day voucher expose only their actual remaining days.
+        // The lifecycle ensure path owns initialization for a brand-new case;
+        // existing null/zero and inconsistent legacy evidence remain visible
+        // and block preview.
+        const required = hasAuthoritativeRevision(record)
+            ? record.requiredSessionCount
+            : legacySessionCount(record.startDate, record.endDate, record.requiredSessionCount);
         const usableRequired = required ?? 0;
         const inPeriodDays = record.days.filter((day) => (
             isWithinServicePeriod(day.serviceDate, record.startDate, record.endDate)

@@ -314,6 +314,84 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         );
     });
 
+    it("does not link a client from another branch when a branchless document template has an owner", async () => {
+        const { transaction, settings, usecase } = setup();
+        settings.getEformsignTemplateBranch.mockResolvedValue({
+            branchId: "branch-2",
+            effectiveFrom: new Date("2026-07-01T00:00:00.000Z"),
+        });
+        transaction.client.findMany.mockImplementation(({ where }) =>
+            Promise.resolve(
+                where.branchId === "branch-2"
+                    ? []
+                    : [{
+                        id: 21,
+                        branchId: "branch-1",
+                        phone: "010-1234-5678",
+                        eDocId: null,
+                    }],
+            ),
+        );
+
+        await expect(usecase.execute("doc-1")).resolves.toBe("no_match");
+
+        expect(transaction.client.findMany).toHaveBeenCalledWith({
+            where: {
+                phone: { not: null },
+                branchId: "branch-2",
+                OR: [{ phone: { endsWith: "5678" } }],
+            },
+            select: {
+                id: true,
+                branchId: true,
+                phone: true,
+                eDocId: true,
+            },
+        });
+        expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        expect(transaction.client.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("links the matching client in the owning branch of a branchless document template", async () => {
+        const { transaction, settings, usecase } = setup();
+        settings.getEformsignTemplateBranch.mockResolvedValue({
+            branchId: "branch-2",
+            effectiveFrom: new Date("2026-07-01T00:00:00.000Z"),
+        });
+        transaction.client.findMany.mockImplementation(({ where }) =>
+            Promise.resolve(
+                where.branchId === "branch-2"
+                    ? [{
+                        id: 22,
+                        branchId: "branch-2",
+                        phone: "+82 10 1234 5678",
+                        eDocId: null,
+                    }]
+                    : [],
+            ),
+        );
+
+        await expect(usecase.execute("doc-1")).resolves.toBe("linked");
+
+        expect(transaction.eformsign_doc.updateMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: {
+                    branchId: "branch-2",
+                    clientId: 22,
+                    documentKind: "contract",
+                },
+            }),
+        );
+        expect(transaction.client.updateMany).toHaveBeenCalledWith({
+            where: {
+                id: 22,
+                branchId: "branch-2",
+                eDocId: null,
+            },
+            data: { eDocId: "doc-1" },
+        });
+    });
+
     it("uses the server-owned client scope for a client-initiated branchless link", async () => {
         const document = mirroredDocument({ branchId: null, clientId: null });
         const { transaction, usecase } = setup(document);
@@ -344,6 +422,24 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 eDocId: true,
             },
         });
+    });
+
+    it("does not use a global phone lookup when a branchless document has no owner", async () => {
+        const { transaction, settings, usecase } = setup();
+        transaction.client.findMany.mockResolvedValue([{
+            id: 21,
+            branchId: "branch-1",
+            phone: "010-1234-5678",
+            eDocId: null,
+        }]);
+
+        await expect(usecase.execute("doc-1")).resolves.toBe("no_branch");
+
+        expect(settings.getEformsignTemplateBranch)
+            .toHaveBeenCalledWith("contract-template");
+        expect(transaction.client.findMany).not.toHaveBeenCalled();
+        expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        expect(transaction.client.updateMany).not.toHaveBeenCalled();
     });
 
     it("limits a completed-status mirror to an existing client without completion effects", async () => {

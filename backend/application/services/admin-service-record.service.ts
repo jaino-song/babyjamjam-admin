@@ -14,7 +14,8 @@ import {
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
 } from "domain/constants/service-record-link-message";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
-import { countBusinessDaysKr, UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
+import { UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
+import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
 import {
     resolveServiceRecordScheduleProjection,
 } from "application/policies/service-record-edit-preview.policy";
@@ -80,6 +81,18 @@ export interface ServiceRecordAdminActor {
     branchRole: string;
 }
 
+function hasAuthoritativeRevision(record: {
+    currentRevisionId?: string | null;
+    currentUsableRevisionId?: string | null;
+    currentUsableDocumentVersion?: number | null;
+    plannedSessions?: Prisma.JsonValue | null;
+}): boolean {
+    return record.currentRevisionId != null
+        || record.currentUsableRevisionId != null
+        || record.currentUsableDocumentVersion != null
+        || record.plannedSessions != null;
+}
+
 function isoDate(date: Date | null | undefined): string | null {
     return date ? date.toISOString().slice(0, 10) : null;
 }
@@ -88,17 +101,17 @@ function servicePeriodSessionCount(
     startDate: Date | null | undefined,
     endDate: Date | null | undefined,
     fallback: number | null,
+    authoritative = false,
 ): number {
-    // The stored session count is authoritative once set; the period may
-    // be longer than its business-day span (e.g. a postponed session
-    // extended the end date while the count stayed fixed), so only derive
-    // from the dates when no count is stored.
-    if (fallback !== null) return fallback;
+    // Confirmed revision rows carry the authoritative actual N. Legacy rows
+    // retain the existing in-period cap used by the provider flow, while a
+    // postponed span never inflates the stored count.
+    if (authoritative) return fallback ?? 0;
     const startDateIso = isoDate(startDate);
     const endDateIso = isoDate(endDate);
     if (!startDateIso || !endDateIso) return fallback ?? 0;
     try {
-        return countBusinessDaysKr(startDateIso, endDateIso) ?? fallback ?? 0;
+        return serviceRecordSessionCount(startDate, endDate, fallback) ?? 0;
     } catch (error) {
         // Unsupported legacy years remain viewable. A presentation total of
         // zero means the authoritative N is unknown; the editor projection
@@ -107,7 +120,6 @@ function servicePeriodSessionCount(
         throw error;
     }
 }
-
 @Injectable()
 export class AdminServiceRecordService {
     private readonly logger = new Logger(AdminServiceRecordService.name);
@@ -318,6 +330,7 @@ export class AdminServiceRecordService {
                 record.startDate,
                 record.endDate,
                 record.requiredSessionCount,
+                hasAuthoritativeRevision(record),
             ),
             completedAt: record.completedAt,
             finalizationDueAt: record.finalizationDueAt,
