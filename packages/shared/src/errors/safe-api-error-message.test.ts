@@ -40,6 +40,15 @@ describe("sanitizeApiDisplayMessage", () => {
         expect(sanitized).not.toContain("refresh-secret");
     });
 
+    it("redacts folded Set-Cookie values that contain comma-separated cookies", () => {
+        const message = "Set-Cookie: sid=first-secret; Expires=Wed, 21 Oct 2030 07:28:00 GMT, session=second-secret; Path=/";
+        const sanitized = sanitizeApiDisplayMessage(message);
+
+        expect(sanitized).toBe("Set-Cookie: [REDACTED]");
+        expect(sanitized).not.toContain("first-secret");
+        expect(sanitized).not.toContain("second-secret");
+    });
+
     it("preserves ordinary text around a redacted value", () => {
         expect(sanitizeApiDisplayMessage("입력값 auth_token=auth-secret 이 올바르지 않아요.")).toBe(
             "입력값 auth_token=[REDACTED] 이 올바르지 않아요.",

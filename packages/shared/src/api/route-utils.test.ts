@@ -69,6 +69,22 @@ describe("logUpstreamError", () => {
         expect(loggedText).not.toContain("set-cookie-secret");
         expect(loggedText).toContain("safe");
     });
+
+    it("redacts folded Set-Cookie values before the logger truncates them", () => {
+        const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+        logUpstreamError(
+            "proxy",
+            new Error("provider failed"),
+            "Set-Cookie: sid=first-secret; Expires=Wed, 21 Oct 2030 07:28:00 GMT, "
+            + "session=second-secret; Path=/",
+        );
+
+        const logged = errorSpy.mock.calls[0]?.[1] as { body?: string };
+        expect(logged.body).toBe("Set-Cookie: [REDACTED]");
+        expect(JSON.stringify(logged)).not.toContain("first-secret");
+        expect(JSON.stringify(logged)).not.toContain("second-secret");
+    });
 });
 
 describe("createRouteUtils legacy-message errorResponse", () => {

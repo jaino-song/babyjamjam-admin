@@ -101,7 +101,7 @@ const SENSITIVE_QUERY_PATTERN = new RegExp(
 );
 
 const COOKIE_HEADER_PATTERN = new RegExp(
-    `(^|[^A-Za-z0-9_])(["']?(?:cookie|set-cookie)["']?\\s*[:=]\\s*)(?:["'][^"']*["']|[^\\n\\r,}]+)`,
+    `(^|[^A-Za-z0-9_])(["']?(?:cookie|set-cookie)["']?\\s*[:=]\\s*)(?:["'][^"']*["']|[^\\n\\r}]+)`,
     "gi",
 );
 
