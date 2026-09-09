@@ -1,4 +1,16 @@
-import { createRouteUtils, logUpstreamError } from "./route-utils";
+import { NextRequest } from "next/server";
+import { z } from "zod";
+
+import { normalizeApiError } from "../errors/problem-details";
+import { createRouteUtils, logUpstreamError, parseBody } from "./route-utils";
+
+function createJsonRequest(body: string): NextRequest {
+    return new NextRequest("http://localhost/api/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", cookie: "auth_token=test-token" },
+        body,
+    });
+}
 
 describe("logUpstreamError", () => {
     afterEach(() => {
@@ -186,5 +198,88 @@ describe("createRouteUtils legacy-message errorResponse", () => {
         expect(body.error).toBe("입력 정보가 요청 조건에 맞지 않아요. 입력 내용을 확인해 주세요.");
         expect(JSON.stringify(body)).not.toContain("auth-secret");
         expect(JSON.stringify(body)).not.toContain("refresh-secret");
+    });
+});
+
+describe("local request-body validation", () => {
+    it("returns a canonical validation problem for every issue without reflecting custom messages", async () => {
+        const secret = "Bearer validation-secret";
+        const schema = z.object({
+            "a/b": z.string().refine(() => false, { message: secret }),
+            "tilde~field": z.string(),
+            one: z.number(),
+            two: z.boolean(),
+            three: z.string(),
+            four: z.number(),
+            five: z.boolean(),
+        });
+
+        const { data, response } = await parseBody(schema, createJsonRequest(JSON.stringify({ "a/b": "value" })));
+
+        expect(data).toBeNull();
+        expect(response?.status).toBe(400);
+        expect(response?.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+        expect(response?.headers.get("Content-Type")).toBe("application/problem+json");
+        expect(response?.headers.get("Content-Language")).toBe("ko-KR");
+
+        const body = await response!.json();
+        expect(body).toEqual(expect.objectContaining({
+            type: expect.stringContaining("#validation-failed"),
+            code: "VALIDATION_FAILED",
+            status: 400,
+            outcome: "NOT_APPLIED",
+            error: "Invalid request body",
+        }));
+        expect(body.requestId).toEqual(response?.headers.get("X-Request-Id"));
+        expect(body.requestId).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
+        expect(body.errors).toHaveLength(7);
+        expect(body.errors).toEqual(expect.arrayContaining([
+            expect.objectContaining({ pointer: "/a~1b", code: "INVALID_VALUE" }),
+            expect.objectContaining({ pointer: "/tilde~0field", code: "REQUIRED" }),
+            expect.objectContaining({ pointer: "/one", code: "REQUIRED" }),
+        ]));
+        expect(body.issues).toHaveLength(7);
+        expect(JSON.stringify(body)).not.toContain(secret);
+
+        const normalized = normalizeApiError({ response: { status: 400, data: body } }, { operation: "mutation" });
+        expect(normalized.problem?.code).toBe("VALIDATION_FAILED");
+        expect(normalized.outcome).toBe("NOT_APPLIED");
+        expect(normalized.problem?.requestId).toBe(body.requestId);
+    });
+
+    it("maps malformed JSON to a known NOT_APPLIED validation problem", async () => {
+        const { data, response } = await parseBody(z.object({}), createJsonRequest("{bad-json"));
+
+        expect(data).toBeNull();
+        expect(response?.status).toBe(400);
+        expect(response?.headers.get("Content-Type")).toBe("application/problem+json");
+
+        const body = await response!.json();
+        expect(body).toEqual(expect.objectContaining({
+            code: "VALIDATION_FAILED",
+            outcome: "NOT_APPLIED",
+            error: "Request body must be valid JSON",
+        }));
+        expect(body.errors).toEqual([
+            expect.objectContaining({ pointer: "", code: "INVALID_FORMAT" }),
+        ]);
+        expect(body.requestId).toBe(response?.headers.get("X-Request-Id"));
+    });
+
+    it("maps unsafe or overlong issue paths to form-level errors", async () => {
+        const schema = z.object({}).superRefine((_value, context) => {
+            context.addIssue({ code: "custom", path: ["x".repeat(513)], message: "secret-long-path" });
+            context.addIssue({ code: "custom", path: ["unsafe\u0000path"], message: "secret-control-path" });
+        });
+
+        const { response } = await parseBody(schema, createJsonRequest("{}"));
+        const body = await response!.json();
+
+        expect(body.errors).toEqual([
+            expect.objectContaining({ pointer: "", code: "INVALID_VALUE" }),
+            expect.objectContaining({ pointer: "", code: "INVALID_VALUE" }),
+        ]);
+        expect(JSON.stringify(body)).not.toContain("secret-long-path");
+        expect(JSON.stringify(body)).not.toContain("secret-control-path");
     });
 });

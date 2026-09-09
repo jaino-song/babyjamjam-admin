@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { parseProblemDetails, normalizeApiError, type ProblemDetails } from "../errors/problem-details";
+import {
+    createProblemDetails,
+    normalizeApiError,
+    parseProblemDetails,
+    type ProblemDetails,
+    type ProblemError,
+    type ProblemErrorCode,
+} from "../errors/problem-details";
 
 import { sanitizeApiDisplayMessage } from "../errors/safe-api-error-message";
 import { getUserErrorMessage } from "../errors/user-error-message";
@@ -62,6 +69,114 @@ export interface ProxyBodyOptions {
     bodySchema?: z.ZodType<unknown>;
 }
 
+const RFC6901_POINTER_MAX_LENGTH = 512;
+const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
+const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+function createLocalRequestId(): string {
+    try {
+        const cryptoObject = globalThis.crypto as { randomUUID?: () => string } | undefined;
+        if (cryptoObject && typeof cryptoObject.randomUUID === "function") {
+            const requestId = cryptoObject.randomUUID();
+            if (SAFE_REQUEST_ID_PATTERN.test(requestId)) {
+                return requestId;
+            }
+        }
+    } catch {
+        // Runtime crypto can be unavailable in older Next.js test environments.
+    }
+
+    return `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
+}
+
+function toJsonPointer(path: readonly unknown[]): string {
+    if (!Array.isArray(path)) {
+        return "";
+    }
+
+    let pointer = "";
+    for (const segment of path) {
+        if (typeof segment !== "string" && typeof segment !== "number") {
+            return "";
+        }
+        if (typeof segment === "number" && !Number.isInteger(segment)) {
+            return "";
+        }
+
+        const rawToken = String(segment);
+        if (CONTROL_CHARACTER_PATTERN.test(rawToken)) {
+            return "";
+        }
+        const token = rawToken.replaceAll("~", "~0").replaceAll("/", "~1");
+        pointer += `/${token}`;
+        if (pointer.length > RFC6901_POINTER_MAX_LENGTH) {
+            return "";
+        }
+    }
+
+    return pointer;
+}
+
+function zodIssueCode(issue: { code?: unknown; input?: unknown; received?: unknown; origin?: unknown; minimum?: unknown }): ProblemErrorCode {
+    switch (issue.code) {
+        case "unrecognized_keys":
+            return "UNEXPECTED_FIELD";
+        case "too_small":
+            if (issue.origin === "string" && issue.minimum === 1 && issue.input === "") {
+                return "REQUIRED";
+            }
+            return "OUT_OF_RANGE";
+        case "too_big":
+        case "not_multiple_of":
+            return "OUT_OF_RANGE";
+        case "invalid_format":
+        case "invalid_string":
+            return "INVALID_FORMAT";
+        case "invalid_type":
+            return issue.input === undefined || issue.received === "undefined"
+                ? "REQUIRED"
+                : "INVALID_FORMAT";
+        case "invalid_value":
+        case "invalid_union":
+        case "invalid_key":
+        case "invalid_element":
+        case "custom":
+        default:
+            return "INVALID_VALUE";
+    }
+}
+
+function toProblemErrors(issues: readonly { path?: unknown; code?: unknown; input?: unknown; received?: unknown; origin?: unknown; minimum?: unknown }[]): ProblemError[] {
+    return issues.map((issue) => ({
+        pointer: toJsonPointer(Array.isArray(issue.path) ? issue.path : []),
+        code: zodIssueCode(issue),
+        detail: "Invalid input",
+        location: "body",
+    }));
+}
+
+function localValidationResponse(
+    legacyError: "Request body must be valid JSON" | "Invalid request body",
+    errors: ProblemError[],
+): NextResponse {
+    const problem = createProblemDetails({
+        code: "VALIDATION_FAILED",
+        requestId: createLocalRequestId(),
+        outcome: "NOT_APPLIED",
+        errors,
+    });
+    const issues = problem.errors?.map(({ pointer, detail }) => `${pointer || "body"}: ${detail}`) ?? [];
+    const response = NextResponse.json(
+        { ...problem, error: legacyError, issues },
+        { status: problem.status },
+    );
+    response.headers.set("Cache-Control", NO_STORE_CACHE_CONTROL);
+    response.headers.set("Content-Type", "application/problem+json");
+    response.headers.set("Content-Language", "ko-KR");
+    response.headers.set("X-Request-Id", problem.requestId);
+    return response;
+}
+
 export async function readJsonObjectBody(request: NextRequest): Promise<Record<string, unknown>> {
     const text = await request.text();
 
@@ -83,7 +198,10 @@ export async function readJsonObjectBody(request: NextRequest): Promise<Record<s
 
 export function invalidJsonResponse(error: unknown): NextResponse | null {
     if (error instanceof InvalidJsonBodyError) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
+        return localValidationResponse(
+            "Request body must be valid JSON",
+            [{ pointer: "", code: "INVALID_FORMAT", detail: "Invalid input", location: "body" }],
+        );
     }
 
     return null;
@@ -102,7 +220,10 @@ export async function parseBody<T>(
             data: null,
             response:
                 invalidJson ??
-                NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 }),
+                localValidationResponse(
+                    "Request body must be valid JSON",
+                    [{ pointer: "", code: "INVALID_FORMAT", detail: "Invalid input", location: "body" }],
+                ),
         };
     }
 
@@ -120,15 +241,9 @@ function validateBodyWithSchema<T>(
 ): { data: T; response: null } | { data: null; response: NextResponse } {
     const result = schema.safeParse(body);
     if (!result.success) {
-        const issues = result.error.issues
-            .slice(0, 5)
-            .map((issue) => `${issue.path.join(".") || "body"}: ${issue.message}`);
         return {
             data: null,
-            response: NextResponse.json(
-                { error: "Invalid request body", issues },
-                { status: 400 },
-            ),
+            response: localValidationResponse("Invalid request body", toProblemErrors(result.error.issues)),
         };
     }
 

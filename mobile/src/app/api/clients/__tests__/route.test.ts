@@ -37,6 +37,26 @@ function createRequest(path: string, init: { method?: string; body?: BodyInit; h
   });
 }
 
+async function expectLocalValidationResponse(response: Response, legacyError: string) {
+  expect(response.status).toBe(400);
+  expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+  expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+  expect(response.headers.get("Content-Language")).toBe("ko-KR");
+
+  const body = await response.json();
+  expect(body).toEqual(expect.objectContaining({
+    code: "VALIDATION_FAILED",
+    status: 400,
+    outcome: "NOT_APPLIED",
+    error: legacyError,
+    requestId: response.headers.get("X-Request-Id"),
+  }));
+  expect(body.requestId).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
+  expect(Array.isArray(body.errors)).toBe(true);
+  expect(Array.isArray(body.issues)).toBe(true);
+  return body;
+}
+
 describe("client API routes", () => {
   let consoleErrorSpy: jest.SpyInstance;
 
@@ -73,10 +93,7 @@ describe("client API routes", () => {
       }),
     );
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Request body must be valid JSON",
-    });
+    await expectLocalValidationResponse(response, "Request body must be valid JSON");
     expect(mockPost).not.toHaveBeenCalled();
   });
 
@@ -364,10 +381,7 @@ describe("client API routes", () => {
       { params: Promise.resolve({ id: "12" }) },
     );
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Request body must be valid JSON",
-    });
+    await expectLocalValidationResponse(response, "Request body must be valid JSON");
     expect(mockPatch).not.toHaveBeenCalled();
   });
 
@@ -381,10 +395,7 @@ describe("client API routes", () => {
       { params: Promise.resolve({ id: "12" }) },
     );
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Request body must be valid JSON",
-    });
+    await expectLocalValidationResponse(response, "Request body must be valid JSON");
     expect(mockPatch).not.toHaveBeenCalled();
   });
 
@@ -399,7 +410,7 @@ describe("client API routes", () => {
       { params: Promise.resolve({ id: "12" }) },
     );
 
-    expect(response.status).toBe(400);
+    await expectLocalValidationResponse(response, "Invalid request body");
     expect(mockPatch).not.toHaveBeenCalled();
   });
 
@@ -422,6 +433,24 @@ describe("client API routes", () => {
     expect(mockPatch).toHaveBeenCalledWith("/clients/12", payload, expect.any(Object));
   });
 
+  it("forwards a nullable primary employee id when an edit clears the assignment", async () => {
+    mockPatch.mockResolvedValue({ status: 200, data: { id: 12, primaryEmployeeId: null } });
+
+    const payload = { primaryEmployeeId: null };
+    const response = await updateClient(
+      createRequest("/api/clients/12", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+      { params: Promise.resolve({ id: "12" }) },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ id: 12, primaryEmployeeId: null });
+    expect(mockPatch).toHaveBeenCalledWith("/clients/12", payload, expect.any(Object));
+  });
+
   it("rejects malformed terminate JSON before proxying", async () => {
     const response = await terminateClient(
       createRequest("/api/clients/12/terminate", {
@@ -432,10 +461,7 @@ describe("client API routes", () => {
       { params: Promise.resolve({ id: "12" }) },
     );
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Request body must be valid JSON",
-    });
+    await expectLocalValidationResponse(response, "Request body must be valid JSON");
     expect(mockPatch).not.toHaveBeenCalled();
   });
 
@@ -521,10 +547,7 @@ describe("client API routes", () => {
       { params: Promise.resolve({ id: "12" }) },
     );
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Request body must be valid JSON",
-    });
+    await expectLocalValidationResponse(response, "Request body must be valid JSON");
     expect(mockPatch).not.toHaveBeenCalled();
   });
 
