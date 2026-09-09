@@ -33,7 +33,7 @@ import { ROLES } from "@/lib/constants/roles";
 import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
 import { useSystemTemplate, useSystemTemplates } from "@/features/system-templates/hooks";
 import type { SystemTemplate } from "@/features/system-templates/types";
-import { SystemTemplateEditor } from "@/features/system-templates/components/system-template-editor";
+import { SystemTemplateEditor } from "@/components/app/ui/SystemTemplateEditor";
 import {
   buildSystemTemplateCatalog,
   type LegacyBuiltinTemplateType,
@@ -1417,7 +1417,7 @@ export default function MessagesPage() {
   const userTemplates = useMemo(() => userTemplatesData ?? [], [userTemplatesData]);
 
   const systemTemplateItems = useMemo<TemplateListItem[]>(() => {
-    if (isSystemTemplatesError) return [];
+    if (isSystemTemplatesError && !systemTemplatesData) return [];
 
     return buildSystemTemplateCatalog(systemTemplatesData as ServerSystemTemplate[] | undefined).map(
       (item) => ({
@@ -1450,7 +1450,8 @@ export default function MessagesPage() {
   const isTemplateListLoading = templateFilter === "builtin"
     ? isLoadingSystemTemplates
     : isLoadingUserTemplates;
-  const isTemplateListError = templateFilter === "builtin" && isSystemTemplatesError;
+  const isTemplateListError =
+    templateFilter === "builtin" && isSystemTemplatesError && !systemTemplatesData;
 
   const handleTemplateSelect = useCallback((id: string) => {
     setSelectedValue(id);
@@ -1497,8 +1498,12 @@ export default function MessagesPage() {
   const selectedUserTemplate = userTemplateId ? userTemplates.find((template) => template.id === userTemplateId) : null;
   const SelectedBuiltinForm = builtinType ? FormComponents[builtinType] : null;
   const selectedSystemTemplateKey = isBuiltin ? selectedTemplateItem?.templateKey ?? "" : "";
-  const { data: selectedSystemTemplateDetail } = useSystemTemplate(selectedSystemTemplateKey);
-  const selectedSystemTemplate =
+  const {
+    data: selectedSystemTemplateDetail,
+    isLoading: isLoadingSystemTemplateDetail,
+    isError: isSystemTemplateDetailError,
+  } = useSystemTemplate(selectedSystemTemplateKey);
+  const selectedSystemTemplatePreview =
     selectedSystemTemplateDetail ?? (isBuiltin ? selectedTemplateItem?.template ?? null : null);
   const selectedTemplateIcon = selectedTemplateItem?.icon ?? FileText;
   const SelectedTemplateIcon = selectedTemplateIcon;
@@ -1514,7 +1519,7 @@ export default function MessagesPage() {
   const templatePreviewMessage =
     templatePreviewOverride ??
     selectedUserTemplate?.content ??
-    selectedSystemTemplate?.content ??
+    selectedSystemTemplatePreview?.content ??
     "";
   const templatePreviewHeadline = isBranchTemplate
     ? selectedTemplateTitle
@@ -1567,6 +1572,9 @@ export default function MessagesPage() {
 
     return items;
   }, [selectedUserTemplate, templatePreviewMessage]);
+  const handleTemplatePreviewMessageChange = useCallback((message: string) => {
+    setTemplatePreviewOverride(message);
+  }, []);
   const sendTemplateFormLayout: TemplateMessageFormLayout = ({
     fields,
     messageCard,
@@ -1650,7 +1658,7 @@ export default function MessagesPage() {
     <>
       {SelectedBuiltinForm ? (
         <SelectedBuiltinForm
-          onPreviewMessageChange={(message) => setTemplatePreviewOverride(message)}
+          onPreviewMessageChange={handleTemplatePreviewMessageChange}
           renderLayout={selectedTemplateRenderLayout}
           showMessageSide={false}
         />
@@ -1659,33 +1667,42 @@ export default function MessagesPage() {
       {selectedUserTemplate ? (
         <CustomTemplateForm
           template={selectedUserTemplate as never}
-          onPreviewMessageChange={(message) => setTemplatePreviewOverride(message)}
+          onPreviewMessageChange={handleTemplatePreviewMessageChange}
           renderLayout={selectedTemplateRenderLayout}
           showMessageSide={false}
         />
       ) : null}
 
-      {isBuiltin && !SelectedBuiltinForm && selectedSystemTemplate ? (
+      {isBuiltin && !SelectedBuiltinForm ? (
         activeSection === "templates" ? (
-          <SystemTemplateEditor
-            key={selectedSystemTemplate.templateKey}
-            // Registry keys can be added server-side before the shared package
-            // union is updated; the editor consumes the same wire shape.
-            template={selectedSystemTemplate as SystemTemplate}
-          />
+          selectedSystemTemplateDetail ? (
+            <SystemTemplateEditor
+              key={selectedSystemTemplateDetail.templateKey}
+              // Registry keys can be added server-side before the shared package
+              // union is updated; the editor consumes the same wire shape.
+              template={selectedSystemTemplateDetail as SystemTemplate}
+              onPreviewMessageChange={handleTemplatePreviewMessageChange}
+            />
+          ) : isLoadingSystemTemplateDetail ? null : isSystemTemplateDetailError ? (
+            <DetailEmptyState message="선택한 템플릿 정보를 불러오지 못했습니다." />
+          ) : null
         ) : (
-          <AppContentCard
-            data-component="desktop_messages_sections_template-detail-readonly-content"
-            title="템플릿 내용"
-            description="선택한 템플릿의 내용을 확인하세요."
-            contentClassName="min-h-0"
-          >
-            <MsgField label="템플릿 내용" value={templatePreviewMessage} />
-          </AppContentCard>
+          selectedSystemTemplatePreview ? (
+            <AppContentCard
+              data-component="desktop_messages_sections_template-detail-readonly-content"
+              title="템플릿 내용"
+              description="선택한 템플릿의 내용을 확인하세요."
+              contentClassName="min-h-0"
+            >
+              <MsgField label="템플릿 내용" value={templatePreviewMessage} />
+            </AppContentCard>
+          ) : isLoadingSystemTemplateDetail ? null : isSystemTemplateDetailError ? (
+            <DetailEmptyState message="선택한 템플릿 정보를 불러오지 못했습니다." />
+          ) : null
         )
       ) : null}
 
-      {!SelectedBuiltinForm && !selectedUserTemplate && !selectedSystemTemplate ? (
+      {!isBuiltin && !SelectedBuiltinForm && !selectedUserTemplate ? (
         <DetailEmptyState
           message="선택한 템플릿 정보를 불러오지 못했습니다."
         />
@@ -1811,7 +1828,11 @@ export default function MessagesPage() {
                               subtitle={item.source === "system" ? item.description : undefined}
                               status={
                                 item.source === "system" && item.manualSendAvailability === "disabled" ? (
-                                  <StatusBadge variant="neutral" size="sm">
+                                  <StatusBadge
+                                    data-component="desktop_messages_sections_template-item_status_badge"
+                                    variant="neutral"
+                                    size="sm"
+                                  >
                                     직접 발송 불가
                                   </StatusBadge>
                                 ) : undefined
@@ -1824,7 +1845,9 @@ export default function MessagesPage() {
                   ) : null}
                 </ListPanel>
 
-                <DetailPanel data-component="desktop_messages_sections_templates_split-layout_detail-panel"
+                <DetailPanel
+                  data-component="desktop_messages_sections_templates_split-layout_detail-panel"
+                  isLoading={isBuiltin && !SelectedBuiltinForm && isLoadingSystemTemplateDetail}
                   avatar={
                     activeTemplateId ? (
                       <div
