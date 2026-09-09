@@ -413,6 +413,17 @@ describe("ServiceRecordLinkMessageForm", () => {
     expect(screen.getByText("{{receiptUrl}}")).toBeInTheDocument();
   });
 
+  it("shows the receipt preparation failure even when the message side panel is hidden", async () => {
+    jest.mocked(eformsignApi.prepareReceiptLink).mockRejectedValueOnce({
+      response: { data: { reason: "pdf_unavailable" } },
+    });
+    render(<ServiceRecordLinkMessageForm mode="receipt-link" showMessageSide={false} />);
+    fireEvent.click(screen.getByRole("combobox", { name: "산모님 성함" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "계약서 PDF를 아직 불러올 수 없습니다. 잠시 후 다시 시도해 주세요.",
+    );
+  });
+
   it("ignores an out-of-order receipt preparation response after changing the selected mother", async () => {
     jest.mocked(useSystemTemplate).mockReturnValue({
       data: {

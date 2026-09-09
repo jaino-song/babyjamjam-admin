@@ -419,6 +419,15 @@ ${resolvedReceiptUrl}
           dataComponent="desktop_messages_sections_service-end-notice-client-phone-input"
         />
       </TemplateFieldGridItem>
+      {receiptSelectionKey !== null && receiptPreparationError?.key === receiptSelectionKey ? (
+        <p
+          role="alert"
+          data-component="desktop_messages_sections_service-end-notice-preparation-error"
+          className="text-sm text-destructive"
+        >
+          {receiptPreparationError.message}
+        </p>
+      ) : null}
     </>
   ) : (
     <>
